@@ -153,6 +153,65 @@ public class BillingClassesTests : IDisposable
         Assert.Equal(BillingClasses.Plan, new AiAttemptStore(_db).Get(id)!.BillingClass);
     }
 
+    // ---- U-billing-followups item 1: the class is re-read before exec ---------------------------------------------------------
+
+    /// <summary>
+    /// <c>U-billing-followups</c> item 1 (the P1 of U-billing-classes' Codex second pass): A SEAT WHOSE SIGN-IN TURNS TO A KEY AFTER ADMISSION
+    /// STARTS NO PROCESS. The class is fixed on the row at admission, and the start re-verified only the profile, which by design leaves the
+    /// sign-in out — so a seat read as the ChatGPT plan when the row went in, and signed in with a pasted key before its start, ran on the key
+    /// under a plan reservation, outside the real-money cap. With the money cap at 0 the start now re-reads the class from the same reading
+    /// the admission used and refuses in words naming both classes; the row closes, no process starts.
+    /// </summary>
+    [Fact]
+    public async Task A_seat_whose_signin_turns_to_a_key_after_admission_starts_no_process() =>
+        await SignInTurnsAfterAdmission(nameof(A_seat_whose_signin_turns_to_a_key_after_admission_starts_no_process),
+            admittedAs: BillingClasses.Plan, startsAs: BillingClasses.Key, money: 0m, plan: 100m);
+
+    /// <summary>Item 1's twin: KEY AT ADMISSION, THE PLAN BEFORE EXEC — a turn reserved against the money cap never runs on a plan whose
+    /// capacity is spent.</summary>
+    [Fact]
+    public async Task A_seat_whose_signin_turns_to_the_plan_after_admission_starts_no_process() =>
+        await SignInTurnsAfterAdmission(nameof(A_seat_whose_signin_turns_to_the_plan_after_admission_starts_no_process),
+            admittedAs: BillingClasses.Key, startsAs: BillingClasses.Plan, money: 100m, plan: 0m);
+
+    async Task SignInTurnsAfterAdmission(string name, string admittedAs, string startsAs, decimal money, decimal plan)
+    {
+        var (codex, exe, dump) = SeatHomeTests.Seat(name);
+        var workspace = Path.GetDirectoryName(exe)!;
+        // THE SIGN-IN, AS THE APP READS IT: the admitted class until the row is in, the other one from then on — between admission and exec.
+        var probe = new SignInProbe(() => Rows().Count == 0 ? admittedAs : startsAs);
+        var session = SeatHomeTests.Session(codex, exe, workspace, probe);
+        var meter = Meter(money, plan);
+        using var metering = meter.Attach(session, CouncilRoles.Operations);
+
+        string? said = null;
+        void On(AgentTurnEnded e) => said = e.Raw;
+        session.TurnEnded += On;
+        try { await session.SendAsync("what are you doing?"); }
+        finally { session.TurnEnded -= On; }
+
+        var row = Assert.Single(Rows());
+        Assert.Equal(admittedAs, row.BillingClass);
+        Assert.True(probe.Reads >= 2, $"the start did not read the sign-in again ({probe.Reads} reads)");
+        Assert.DoesNotContain(SeatHomeTests.Argv(dump), line => line.StartsWith("exec", StringComparison.Ordinal));
+        Assert.NotNull(said);
+        Assert.Contains(BillingClasses.Words(admittedAs), said, StringComparison.Ordinal);
+        Assert.Contains(BillingClasses.Words(startsAs), said, StringComparison.Ordinal);
+        Assert.NotEqual(AiAttemptState.LAUNCHED, row.State);
+    }
+
+    /// <summary>The CLI's own report with a sign-in whose class <paramref name="billing"/> answers at each read.</summary>
+    sealed class SignInProbe(Func<string> billing) : ISeatProbe
+    {
+        public int Reads;
+
+        public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Reads);
+            return Task.FromResult(new SeatReading(SeatHomeTests.FakeProbe.Allowed + "plugins   stable   false\n", "[]", true, billing()));
+        }
+    }
+
     // ---- (a) (b) (c) admission per class ----------------------------------------------------------------------------------
 
     /// <summary>A row of <paramref name="billing"/> still open at <paramref name="reserved"/>: committed money of that class today.</summary>

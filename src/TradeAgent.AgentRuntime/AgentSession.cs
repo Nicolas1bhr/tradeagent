@@ -376,8 +376,10 @@ public sealed class AgentSession(
             // ON THE POOL, because the meter that asks is synchronous and may be on the window's thread.
             var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, launch, CancellationToken.None))
                 .GetAwaiter().GetResult();
-            // THE PROFILE THE ROW WILL CARRY, held for the start to compare against what it verifies itself.
-            Volatile.Write(ref _admittedProfile, verdict.Profile);
+            // THE PROFILE THE ROW WILL CARRY, AND WHO ITS SIGN-IN BILLS (U-billing-followups item 1), held for the start to compare
+            // against what it verifies itself — one pair, written at once, so the start never compares one admission's profile with
+            // another's class.
+            Volatile.Write(ref _admitted, verdict.Refused ? null : new AdmittedSeat(verdict.Profile, BillingClasses.Of(verdict.BillingClass)));
             return verdict.Refused ? verdict : verdict with { SeatClass = seatClass };
         }
         catch (Exception ex)
@@ -535,8 +537,14 @@ public sealed class AgentSession(
     /// <summary>How the turn in flight handed over its prompt (<see cref="AgentTurnEnded.PromptIn"/>); null until it launches.</summary>
     string? _promptIn;
 
-    /// <summary>The runtime profile the last admission verified, taken by the start that follows it (<c>U-seat-home</c>).</summary>
-    string? _admittedProfile;
+    /// <summary>
+    /// The seat the last admission verified — its runtime profile (<c>U-seat-home</c>) and the billing class of its sign-in, the class
+    /// the row was written and reserved under (<c>U-billing-followups</c>) — taken by the start that follows it.
+    /// </summary>
+    AdmittedSeat? _admitted;
+
+    /// <summary>What an admission verified of the seat, for the start to hold itself to.</summary>
+    sealed record AdmittedSeat(string? Profile, string BillingClass);
 
     /// <summary>The runtime profile the CLI session this conversation resumes was opened under, or null for none yet.</summary>
     string? _sessionProfile;
@@ -959,10 +967,22 @@ public sealed class AgentSession(
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
         // line would run under a profile its row does not name.
-        if (Interlocked.Exchange(ref _admittedProfile, null) is { } admitted && seat.Profile is { } now && admitted != now)
+        var admitted = Interlocked.Exchange(ref _admitted, null);
+        if (admitted?.Profile is { } was && seat.Profile is { } now && was != now)
             throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
                 "TradeAgent did not start the AI: its own settings changed between the moment the turn was recorded and its start. " +
                 "The next turn checks them again.");
+
+        // AND THE CLASS THE LEDGER RESERVED UNDER IS THE CLASS THAT PAYS (U-billing-followups item 1; BUDGET-001). The profile above
+        // leaves the sign-in out by design, so a seat read as the ChatGPT plan when its row went in and signed in with a pasted key
+        // before this line would run on the key under a plan reservation — outside the real-money cap. Re-read here from the same
+        // reading the admission used (the app's own, of the seat's sign-in; never an agent's word): another class — or one that can no
+        // longer be read, unknown where the row says plan or key — starts nothing, and the row closes on this sentence.
+        if (admitted is not null && BillingClasses.Of(seat.BillingClass) is var billed && billed != admitted.BillingClass)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+                $"TradeAgent did not start the AI: the turn was recorded against {BillingClasses.Words(admitted.BillingClass)}, and its " +
+                $"sign-in now reads as {BillingClasses.Words(billed)}. Nothing was started; the next turn is checked against the limit of " +
+                "the sign-in it runs on.");
 
         // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE PROCESS (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked
         // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — or a
