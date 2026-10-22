@@ -404,4 +404,197 @@ public partial class AuditLineTests(ITestOutputHelper log)
         using (var again = new AuditStore(policyFile, now))
             Assert.Empty(new AuditSweep(db.FilePath, again).Run(now).Drawn);
     }
+
+    // ---- (d) the seal ----------------------------------------------------------------------------------------------------
+
+    /// <summary>Every text value in the audit file, every table — what a test searches for words the line must never copy in.</summary>
+    static string AllText(string file)
+    {
+        using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");
+        c.Open();
+        var tables = new List<string>();
+        using (var t = c.CreateCommand())
+        {
+            t.CommandText = "SELECT name FROM sqlite_master WHERE type='table'";
+            using var r = t.ExecuteReader();
+            while (r.Read()) tables.Add(r.GetString(0));
+        }
+        var all = new System.Text.StringBuilder();
+        foreach (var table in tables)
+        {
+            using var q = c.CreateCommand();
+            q.CommandText = $"SELECT * FROM \"{table}\"";
+            using var r = q.ExecuteReader();
+            while (r.Read())
+                for (var i = 0; i < r.FieldCount; i++)
+                    if (r.GetValue(i) is string text) all.Append(text).Append('\n');
+        }
+        return all.ToString();
+    }
+
+    /// <summary>
+    /// (d) A DELIVERY REWRITTEN PAST ITS TRIGGERS IS A SEVERE FINDING. An unconfined shell can drop a trigger: with the seal's update trigger
+    /// dropped, one accepted delivery has its report AND its manifest's report rewritten together — columns and manifest agree, and only the
+    /// re-hash sees it — and another its report column alone. Swept at rate 1, each is a <c>severe</c> <c>seal</c> finding citing the
+    /// delivery, mandate and attempt by id; an untouched one passes; and the rewritten words are nowhere in the audit file. RED at base: no
+    /// seal check existed. THE WATCHED MUTANT: the seal comparing the stored id with itself (the re-hash skipped) lets the first through.
+    /// </summary>
+    [Fact]
+    public void A_delivery_rewritten_past_its_triggers_is_a_severe_finding()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var whole = Accepted(org, now, "the honest answer", attempt: "turn-honest-1");
+        var rehashed = Accepted(org, now, "the first answer", attempt: "turn-first-1");
+        var column = Accepted(org, now, "the second answer", attempt: "turn-second-1");
+        const string forged = "a better answer written later";
+        using (var c = OversightSeed.Open(db.FilePath))
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = """
+                DROP TRIGGER org_delivery_sealed_u;
+                UPDATE org_delivery SET report = $forged, manifest = json_set(manifest, '$.report', $forged) WHERE id = $rehashed;
+                UPDATE org_delivery SET report = $forged WHERE id = $column;
+                """;
+            cmd.Parameters.AddWithValue("$forged", forged);
+            cmd.Parameters.AddWithValue("$rehashed", rehashed);
+            cmd.Parameters.AddWithValue("$column", column);
+            cmd.ExecuteNonQuery();
+        }
+        Assert.Equal(forged, org.Delivery(rehashed)!.Report);
+
+        var file = NewFile();
+        using var store = new AuditStore(file, now);
+        var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
+        Assert.Null(swept.Failure);
+        Assert.Equal(3, swept.Drawn.Count);
+        foreach (var k in store.Checks().Where(k => k.Name == AuditCheckName.Seal)) log.WriteLine($"{k.DeliveryId[..12]} seal {k.Passed}: {k.Reason}");
+
+        Assert.True(Assert.Single(store.Checks(whole), k => k.Name == AuditCheckName.Seal).Passed);
+        foreach (var (rewritten, attempt) in new[] { (rehashed, "turn-first-1"), (column, "turn-second-1") })
+        {
+            Assert.False(Assert.Single(store.Checks(rewritten), k => k.Name == AuditCheckName.Seal).Passed);
+            var finding = Assert.Single(store.Findings(), f => f.DeliveryId == rewritten && f.Check == AuditCheckName.Seal);
+            Assert.Equal(AuditSeverity.Severe, finding.Severity);
+            Assert.Equal((org.Delivery(rewritten)!.MandateId, attempt), (finding.MandateId, finding.AttemptId));
+        }
+        Assert.DoesNotContain(store.Findings(), f => f.DeliveryId == whole);
+        var text = AllText(file);
+        foreach (var words in new[] { forged, "the honest answer", "the first answer", "the second answer" })
+            Assert.DoesNotContain(words, text, StringComparison.Ordinal);
+    }
+
+    // ---- (f) the refs, now, and the acceptance ----------------------------------------------------------------------------
+
+    /// <summary>A launch the ledger recorded as charged to <paramref name="mandate"/>, and a strategy version it wrote — as only a test may.</summary>
+    static void VersionOf(string file, string version, string attempt, string mandate)
+    {
+        using var c = OversightSeed.Open(file);
+        OversightSeed.Insert(c, "ai_attempt", ("id", attempt), ("started_at", Stamp), ("state", "ENDED"), ("role", Member), ("mandate_id", mandate));
+        OversightSeed.Insert(c, "strategy_version", ("id", version), ("created_at", Stamp), ("role", Member), ("attempt", attempt));
+    }
+
+    /// <summary>
+    /// (f) A SAMPLE WHOSE REFS VANISHED OR CAME FROM ANOTHER MANDATE IS FOUND. One delivery names a version its own mandate's launch wrote —
+    /// every check passed at the seal — and the version is gone by the audit: <c>refs-exist-now</c> and <c>refs-of-this-mandate-now</c>
+    /// fail. Another names a version a launch of ANOTHER mandate wrote (and says so as a deviation, so its acceptance is clean): only
+    /// <c>refs-of-this-mandate-now</c> fails. Each failure is an <c>info</c> finding citing ids. RED at base: no ref was re-resolved.
+    /// </summary>
+    [Fact]
+    public void A_sample_whose_refs_vanished_or_came_from_another_mandate_is_found()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+
+        var own = Issued(org, now);
+        VersionOf(db.FilePath, "ver-own", "turn-own-1", own.Id);
+        var vanished = org.Deliver(own.Id, Member, "turn-own-1", "the version", [], [new MandateRef(MandateRefKind.Version, "ver-own")], now);
+        Assert.All(vanished.Checks, k => Assert.True(k.Passed, k.Reason));
+        org.Accept(vanished.Delivery.Id, Head, null, now);
+        using (var c = OversightSeed.Open(db.FilePath))
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM strategy_version WHERE id = 'ver-own'";
+            Assert.Equal(1, cmd.ExecuteNonQuery());
+        }
+
+        var elsewhere = Issued(org, now);
+        var mine = Issued(org, now);
+        VersionOf(db.FilePath, "ver-other", "turn-other-1", elsewhere.Id);
+        var borrowed = org.Deliver(mine.Id, Member, null, "the version", [new MandateDeviation("used a version made elsewhere", "it fits", "none")],
+            [new MandateRef(MandateRefKind.Version, "ver-other")], now);
+        org.Accept(borrowed.Delivery.Id, Head, null, now);
+
+        using var store = new AuditStore(NewFile(), now);
+        Assert.Null(new AuditSweep(db.FilePath, store, rate: 1).Run(now).Failure);
+        foreach (var k in store.Checks()) log.WriteLine($"{k.DeliveryId[..12]} {k.Name} {k.Passed}: {k.Reason}");
+
+        string[] Failed(string d) => [.. store.Findings().Where(f => f.DeliveryId == d).Select(f => f.Check).Order(StringComparer.Ordinal)];
+        Assert.Equal([AuditCheckName.RefsExistNow, AuditCheckName.RefsOfThisMandateNow], Failed(vanished.Delivery.Id));
+        Assert.Equal([AuditCheckName.RefsOfThisMandateNow], Failed(borrowed.Delivery.Id));
+        Assert.All(store.Findings(), f => Assert.Equal(AuditSeverity.Info, f.Severity));
+        Assert.Equal((own.Id, "turn-own-1"), store.Findings().Where(f => f.DeliveryId == vanished.Delivery.Id).Select(f => (f.MandateId, f.AttemptId)).Distinct().Single());
+        Assert.DoesNotContain("ver-own", AllText(store.File), StringComparison.Ordinal);
+        Assert.DoesNotContain("ver-other", AllText(store.File), StringComparison.Ordinal);
+    }
+
+    /// <summary>A report longer than the relay's cap: it fails the app's <c>report-size</c> check at the seal.</summary>
+    static readonly string TooLong = string.Join("\n", Enumerable.Range(1, MandateLimits.ReportLines + 1).Select(i => $"line {i}"));
+
+    /// <summary>
+    /// (f) AN ACCEPTED DELIVERY WITH A FAILED CHECK AND NO DEVIATION IS FOUND: its report fails <c>report-size</c> at the seal and the head
+    /// accepted it anyway, naming nothing — <c>accepted-clean</c> fails, an <c>info</c> finding. The same failure on a delivery that named a
+    /// deviation is clean. RED at base: no acceptance was audited.
+    /// </summary>
+    [Fact]
+    public void An_accepted_delivery_with_a_failed_check_and_no_deviation_is_found()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var silent = Accepted(org, now, TooLong);
+        var said = Accepted(org, now, TooLong, deviations: [new MandateDeviation("a longer report", "the detail matters", "none")]);
+        Assert.Contains(org.Checks(silent), k => !k.Passed);
+
+        using var store = new AuditStore(NewFile(), now);
+        Assert.Null(new AuditSweep(db.FilePath, store, rate: 1).Run(now).Failure);
+        var finding = Assert.Single(store.Findings());
+        Assert.Equal((silent, AuditCheckName.AcceptedClean, AuditSeverity.Info), (finding.DeliveryId, finding.Check, finding.Severity));
+        Assert.True(Assert.Single(store.Checks(said), k => k.Name == AuditCheckName.AcceptedClean).Passed);
+    }
+
+    // ---- (g) the dormant reader ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) A FLAG RECORDS THE DORMANT AUDIT AGENT AND LAUNCHES NOTHING: a sample that named deviations and passed every check is one a model
+    /// reader would be wanted for — a flag row in the line's own words that the audit agent did NOT run, and no launch: the launch ledger is
+    /// unchanged and no wake was raised. A sample with no deviation carries no flag. RED at base: nothing flagged.
+    /// </summary>
+    [Fact]
+    public void A_flag_records_the_dormant_audit_agent_and_launches_nothing()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var deviated = Accepted(org, now, "the answer, a little wider", attempt: "turn-wide-1",
+            deviations: [new MandateDeviation("widened the window", "the effect holds", "one extra run")]);
+        var plain = Accepted(org, now, "the answer");
+        var (attempts, wakes) = (Count(db.FilePath, "ai_attempt"), Count(db.FilePath, "mission_event"));
+
+        using var store = new AuditStore(NewFile(), now);
+        Assert.Null(new AuditSweep(db.FilePath, store, rate: 1).Run(now).Failure);
+        Assert.Empty(store.Findings());
+        var flag = Assert.Single(store.Flags());
+        log.WriteLine(flag.What);
+        Assert.Equal((deviated, "turn-wide-1", AuditChecks.DormantFlag), (flag.DeliveryId, flag.AttemptId, flag.What));
+        Assert.Contains("audit agent NOT RUN", flag.What, StringComparison.Ordinal);
+        Assert.DoesNotContain(store.Flags(), f => f.DeliveryId == plain);
+        Assert.Equal((attempts, wakes), (Count(db.FilePath, "ai_attempt"), Count(db.FilePath, "mission_event")));
+    }
 }
