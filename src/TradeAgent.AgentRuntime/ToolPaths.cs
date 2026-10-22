@@ -50,7 +50,10 @@ public static class ToolPaths
 
         // A `.` NAMES THE FOLDER IT IS IN and is dropped before any rule reads the path (fix pass 4, the second re-review's [P3] 7), so
         // `./out/x` is `out/x` under the write grant too — exactly as the open (HomeFiles) reads it. `..` is never dropped: it is refused.
-        var segments = path.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries).Where(s => s != ".").ToArray();
+        // SPLIT ON `/` ALONE, as HomeFiles splits it (fix pass 5, D1): a backslash is a character of a name on Linux and macOS. This is what
+        // `Split('/', '\\', options)` already did — it binds the backslash as a count — and on Windows the full-path check below still
+        // refuses a backslash path that leaves the folder.
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries).Where(s => s != ".").ToArray();
         if (segments.Any(s => s == ".."))
             return (null, $"'{path}' climbs out of your own folder with '..', which is never allowed. "
                           + "You can only read and write inside the folder TradeAgent gave you.");
