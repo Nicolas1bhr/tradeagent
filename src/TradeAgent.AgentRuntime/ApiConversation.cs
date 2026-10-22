@@ -60,8 +60,35 @@ public sealed class ApiConversation(
     HttpMessageHandler? transport = null,
     Func<DateTimeOffset>? now = null,
     AppFileManifest? appFiles = null,
-    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatedConversation, ISeatLaunch, IDisposable
+    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatedConversation, ISeatLaunch, ILaunchGate, IDisposable
 {
+    /// <summary>
+    /// WHY A HARNESS TURN OF THIS POSITION MAY NOT START NOW, or null (<c>U-execution-environment</c> fix pass 5, the fourth re-review's
+    /// D3): a home the last start could not rebuild (<see cref="WorkspaceBuilder.RefusalFor"/>) refuses its position's harness turns as it
+    /// refuses its process launches (<c>AgentSession.Barred</c>) — lasting, its wakes kept, in words that name the position. That start
+    /// stopped before it rebuilt the harness's canon, so what lies at <see cref="Canon.HarnessFile"/> may be the cell's, never to be sent
+    /// as a system text. The harness holds no order grant of its own, so nothing else bars it here.
+    /// </summary>
+    public LaunchBar? Barred() => UnbuiltHome() is { } unbuilt ? new LaunchBar(unbuilt, Lasting: true) : null;
+
+    /// <inheritdoc />
+    /// <remarks>The harness issues no launch grant: a claim is the look itself, and nothing is held to give back.</remarks>
+    public LaunchBar? Claim(out string? ordersWithheld)
+    {
+        ordersWithheld = null;
+        return Barred();
+    }
+
+    /// <inheritdoc />
+    public void Unclaim() { }
+
+    /// <summary>Why this position may not start because the last start could not rebuild its home, or null; a read that throws refuses.</summary>
+    string? UnbuiltHome()
+    {
+        try { return WorkspaceBuilder.RefusalFor(workspace()); }
+        catch (Exception ex) { return $"TradeAgent did not start the position {role}: it could not tell whether its folder was rebuilt ({ex.Message})."; }
+    }
+
     /// <summary>
     /// THE SEAT A HARNESS TURN RUNS ON (<c>U-thinking-seats-a</c>): the app's own in-process harness, brokered — no process, every
     /// tool the app's own code. Nothing here reads a file to say so. Asked by the meter inside every admission.
@@ -240,6 +267,10 @@ public sealed class ApiConversation(
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         if (_busy) { Queue(message); return; }
+
+        // NOT STARTED, NOT ADMITTED, NOT LOST (fix pass 5, D3): a position whose home the last start could not rebuild is refused before
+        // the ledger is asked, and the owner's words are held with the reason — see AgentSession.SendAsync.
+        if (Barred() is { } bar) { Hold(message, bar.Why); return; }
 
         // No admission attached is a refusal, not a pass — see AgentSession.SendAsync.
         var admission = Admit?.Invoke(message) ?? AiAdmission.NoLedgerOpen;
@@ -451,6 +482,15 @@ public sealed class ApiConversation(
         var bound = admitted?.Allowance ?? allowance?.Invoke() ?? TurnAllowance.Default;
         var seatModel = admitted?.Model;
         var surface = tools();
+
+        // THE HARD LINE BEHIND THE LOOK (fix pass 5, D3): a home refused after the look above is still refused here, before its canon is
+        // read — the first request is withheld, so nothing is sent, and the meter charges the turn nothing on that sentence.
+        if (UnbuiltHome() is { } unbuilt)
+        {
+            Append(new ChatTurn(ChatRole.System, unbuilt, _now()));
+            transcript.Note(unbuilt);
+            return (NotStarted, null, EndedNotStarted, null, null, unbuilt);
+        }
         var mission = Mission();
         _canon = Canon.SeenByHarness(mission, role, appFiles ?? AppFileManifest.Shared);
         var messages = new List<ProviderMessage>
@@ -874,7 +914,10 @@ public sealed record LaunchBar(string Why, bool Lasting)
         "change or cancel an order this turn.\n\n";
 }
 
-/// <summary>A conversation whose launches are processes, and can say before admission why one may not start (<c>U-grant-tree</c>).</summary>
+/// <summary>
+/// A conversation that can say before admission why a launch may not start (<c>U-grant-tree</c>): a process session, and since
+/// <c>U-execution-environment</c> fix pass 5 the harness, for a home the last start could not rebuild.
+/// </summary>
 public interface ILaunchGate
 {
     /// <summary>Why a launch may not start now, or null.</summary>
