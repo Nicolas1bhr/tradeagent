@@ -78,6 +78,59 @@ public class SeatSignInTests
     }
 
     /// <summary>
+    /// A RE-SIGN WITH A PASTED KEY WAKES THE LOOP (U-billing-classes, fix pass 3; the fix-2 re-review's DEFECT 1). Signed in with
+    /// ChatGPT, Research is held to the plan's ceiling — 0 here, with 40 of real money — so its look waits for midnight. The owner signs
+    /// out and pastes a key: the card's own read after the press lands the new class first, and the next background pass (thirty seconds
+    /// on, the card no longer wanted) then compares a reading already at <c>key</c> with itself. The wake is raised where the reading
+    /// changes class, so the loop is nudged whichever read lands it. Red at 2ebf3cd8: only the pass's own comparison woke the loop.
+    /// </summary>
+    [Fact]
+    public async Task A_re_sign_with_a_pasted_key_wakes_the_loop_a_plan_ceiling_held_until_midnight()
+    {
+        using var rig = new Rig(nameof(A_re_sign_with_a_pasted_key_wakes_the_loop_a_plan_ceiling_held_until_midnight));
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            host.SeatSignIn = rig.Service;
+            host.Gateway.Update(s => { s.AiDailyCostCap = 40m; s.AiPlanDailyCapacity = 0m; });
+            File.WriteAllText(rig.Plan, "");
+            File.WriteAllText(rig.Marker, "");
+            Rig.OnThisThread(host.SeatSignInPass(0, CancellationToken.None));
+            rig.Card.Update();
+            Assert.Equal(TradeAgent.Core.Db.BillingClasses.Plan, host.BillingClassOf(CouncilRoles.Research));
+            Assert.False(host.Meter!.TodayFor(CouncilRoles.Research).AdmitsAnotherTurn, "the plan's ceiling is 0: Research waits");
+
+            // SIGNED OUT on the card's two presses — whatever that read woke is not what this test is about.
+            rig.Press(rig.Card.SignOutButton);
+            rig.Press(rig.Card.SignOutButton);
+            Assert.True(rig.Card.Root.IsVisible);
+            Nudged(host.Mission);
+
+            // THE KEY PATH: SignInWithKeyAsync, then the card's own RefreshAsync, which reads `key` before any background pass.
+            rig.KeyField.Text = FakeKey;
+            rig.Press(rig.Button(SeatSignInCard.Key));
+            Assert.Equal(TradeAgent.Core.Db.BillingClasses.Key, host.BillingClassOf(CouncilRoles.Research));
+            Assert.True(host.Meter.TodayFor(CouncilRoles.Research).AdmitsAnotherTurn, "40 of real money has room for Research");
+            Assert.False(host.SeatSignIn.Wanted);
+
+            // THE NEXT BACKGROUND PASS, on the thirty-second cadence.
+            Rig.OnThisThread(host.SeatSignInPass(6, CancellationToken.None));
+            Assert.True(Nudged(host.Mission), "the loop held until midnight on the plan's ceiling was never woken by the re-sign");
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>Whether the loop has been nudged since this was last asked — and the nudge cleared. The loop is not running here.</summary>
+    static bool Nudged(MissionLoop loop)
+    {
+        var field = typeof(MissionLoop).GetField("_nudged", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var was = (bool)field.GetValue(loop)!;
+        field.SetValue(loop, false);
+        return was;
+    }
+
+    /// <summary>
     /// (b) EVERY SIGN-IN PATH RUNS UNDER THE SEAT HOME, NEVER THE OWNER'S — the status, the browser, the code, the key and the sign-out,
     /// each pressed on the card with the owner's own <c>CODEX_HOME</c> set in the app's environment. Red at base: no card and no code,
     /// key-from-the-dashboard or sign-out path existed. THE WATCHED MUTANT drops the seat-home <c>Apply</c> on the code path ⇒ red here.
@@ -563,6 +616,8 @@ public class SeatSignInTests
         public DateTimeOffset Clock { get; set; } = new(2026, 10, 11, 20, 0, 0, TimeSpan.Zero);
 
         public string Marker => Path.Combine(Dir, "signed-in");
+        /// <summary>Beside <see cref="Marker"/>: the sign-in is ChatGPT's, so the status says "Logged in using ChatGPT" (U-billing-classes).</summary>
+        public string Plan => Path.Combine(Dir, "chatgpt");
         public string Refuse => Path.Combine(Dir, "refuse");
         public string RefusePart => Path.Combine(Dir, "refuse-part");
         public string BrowserPid => Path.Combine(Dir, "browser.pid");
@@ -605,6 +660,9 @@ public class SeatSignInTests
 
         /// <summary>A task waited for ON THIS THREAD, which owns the controls the next line touches.</summary>
         public static T OnThisThread<T>(Task<T> task) => task.GetAwaiter().GetResult();
+
+        /// <inheritdoc cref="OnThisThread{T}(Task{T})"/>
+        public static void OnThisThread(Task task) => task.GetAwaiter().GetResult();
 
         /// <summary>A status read, waited for ON THIS THREAD — the card belongs to it — and the card's pass.</summary>
         public void Refresh()
@@ -662,7 +720,7 @@ public class SeatSignInTests
         }
 
         /// <summary>
-        /// A PROGRAM THAT ANSWERS LIKE codex-cli 0.160.1, on either platform: status by a marker file (held while a "status-gate" one exists), a key read from stdin (and
+        /// A PROGRAM THAT ANSWERS LIKE codex-cli 0.160.1, on either platform: status by a marker file (ChatGPT's words while a "chatgpt" one exists beside it; held while a "status-gate" one exists), a key read from stdin (and
         /// refused, printing it back, while a "refuse" file exists — or all but its first four characters, while a "refuse-part" one does), the device prompt from a file (held open while a "hold" file
         /// exists), the browser sign-in's address on stderr then a wait (its process id written first, off Windows), and logout. Every start appends "== args" and its environment.
         /// </summary>
@@ -687,6 +745,7 @@ public class SeatSignInTests
                     "exit /b 0",
                     ":status",
                     $"if exist \"{StatusGate}\" (ping -n 2 127.0.0.1 >nul& goto status)",
+                    $"if exist \"{Marker}\" if exist \"{Plan}\" (echo Logged in using ChatGPT 1>&2& exit /b 0)",
                     $"if exist \"{Marker}\" (echo Logged in using an API key - *** 1>&2& exit /b 0)",
                     "echo Not logged in 1>&2",
                     "exit /b 1",
@@ -695,6 +754,7 @@ public class SeatSignInTests
                     $"> \"{Stdin}\" echo %KEY%",
                     $"if exist \"{Refuse}\" (echo refused: %KEY% 1>&2& exit /b 1)",
                     $"if exist \"{RefusePart}\" (echo the key ending %KEY:~4% is not valid 1>&2& exit /b 1)",
+                    $"del /q \"{Plan}\" 2>nul",
                     $"type nul > \"{Marker}\"",
                     "echo Successfully logged in 1>&2",
                     "exit /b 0",
@@ -708,6 +768,7 @@ public class SeatSignInTests
                     "exit /b 0",
                     ":logout",
                     $"del /q \"{Marker}\" 2>nul",
+                    $"del /q \"{Plan}\" 2>nul",
                     "echo Successfully logged out 1>&2",
                     "exit /b 0",
                     ""));
@@ -720,11 +781,11 @@ public class SeatSignInTests
                 $"echo \"$*\" >> \"{ArgvFile}\"",
                 "case \"$*\" in",
                 "  --version) echo 'codex-cli 0.160.1' ;;",
-                $"  'login status') while [ -f \"{StatusGate}\" ]; do sleep 0.1; done; if [ -f \"{Marker}\" ]; then echo 'Logged in using an API key - ***' >&2; exit 0; fi; echo 'Not logged in' >&2; exit 1 ;;",
-                $"  'login --with-api-key') read -r KEY; printf '%s\\n' \"$KEY\" > \"{Stdin}\"; if [ -f \"{Refuse}\" ]; then echo \"refused: $KEY\" >&2; exit 1; fi; if [ -f \"{RefusePart}\" ]; then echo \"the key ending ${{KEY#????}} is not valid\" >&2; exit 1; fi; : > \"{Marker}\"; echo 'Successfully logged in' >&2 ;;",
+                $"  'login status') while [ -f \"{StatusGate}\" ]; do sleep 0.1; done; if [ -f \"{Marker}\" ] && [ -f \"{Plan}\" ]; then echo 'Logged in using ChatGPT' >&2; exit 0; fi; if [ -f \"{Marker}\" ]; then echo 'Logged in using an API key - ***' >&2; exit 0; fi; echo 'Not logged in' >&2; exit 1 ;;",
+                $"  'login --with-api-key') read -r KEY; printf '%s\\n' \"$KEY\" > \"{Stdin}\"; if [ -f \"{Refuse}\" ]; then echo \"refused: $KEY\" >&2; exit 1; fi; if [ -f \"{RefusePart}\" ]; then echo \"the key ending ${{KEY#????}} is not valid\" >&2; exit 1; fi; rm -f \"{Plan}\"; : > \"{Marker}\"; echo 'Successfully logged in' >&2 ;;",
                 $"  'login --device-auth') cat \"{DeviceFile}\"; if [ -f \"{Hold}\" ]; then sleep 30; fi ;;",
                 $"  login) echo $$ > \"{BrowserPid}\"; echo 'https://auth.example.test/oauth/authorize?x=1' >&2; exec sleep 30 ;;",
-                $"  logout) rm -f \"{Marker}\"; echo 'Successfully logged out' >&2 ;;",
+                $"  logout) rm -f \"{Marker}\" \"{Plan}\"; echo 'Successfully logged out' >&2 ;;",
                 "  *) exit 2 ;;",
                 "esac",
                 ""));
