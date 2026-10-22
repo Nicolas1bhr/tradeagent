@@ -1035,13 +1035,18 @@ public static class Labels
     /// <summary>
     /// What the second press of <see cref="SaveLimits"/> will do, when the values in the boxes give
     /// the AI more room than the ones it is working under. A save that only narrows is one press.
-    /// One widened cap is named; several are counted, because five of these names on one button is
-    /// a sentence nobody reads.
+    /// Every widened limit is named WITH THE FIGURE THE SECOND PRESS WRITES, exactly (<c>U-number-entry-culture</c>, fix pass 1):
+    /// a confirmation that named only the limit could be completed for any figure typed under it. Several are counted first.
     /// </summary>
-    public static string WidenLimitsArmed(IReadOnlyList<string> wider) =>
+    public static string WidenLimitsArmed(IReadOnlyList<(string Limit, string Figure)> wider) =>
         wider.Count == 1
-            ? $"Confirm: widen “{wider[0]}”"
-            : $"Confirm: widen {wider.Count} of your safety limits";
+            ? $"Confirm: widen “{wider[0].Limit}” to {wider[0].Figure}"
+            : $"Confirm: widen {wider.Count} of your safety limits — "
+              + string.Join(", ", wider.Select(w => $"“{w.Limit}” to {w.Figure}"));
+
+    /// <summary>What a limits save says it wrote: each limit it changed, with the figure now in force.</summary>
+    public static string LimitsNowAre(IReadOnlyList<(string Limit, string Figure)> changed) =>
+        string.Join("; ", changed.Select(c => $"“{c.Limit}” is now {c.Figure}")) + ".";
 
     // ---- the review hold and its release (U-reopen-2) ---------------------------------------------
 

@@ -1338,10 +1338,30 @@ sealed class SafetyPage
         // A BOX THAT READS AS NOTHING REFUSES THE PRESS, either press (U-number-entry-culture): never the figure in force.
         var b = Ui.ConfirmIf(Labels.SaveLimits, () =>
         {
-            var wider = RiskPolicy.Widenings(current(), pending());
-            return wider.Count == 0 ? null : Labels.WidenLimitsArmed(wider);
+            // EACH WIDENED LIMIT WITH THE FIGURE THE SECOND PRESS WRITES (fix pass 1), read once so the sentence and its figures agree.
+            var p = pending();
+            var wider = RiskPolicy.Widenings(current(), p);
+            return wider.Count == 0 ? null : Labels.WidenLimitsArmed([.. wider.Select(l => (l, p.FigureOf(l)))]);
         }, save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// A CONFIRMATION COMPLETES ONLY THE FIGURES IT NAMED (<c>U-number-entry-culture</c>, fix pass 1): an edit of any box the press reads —
+    /// a figure that reads differently, or a word in a text box — disarms it, so the next press asks again over what is typed now. The
+    /// ceilings, the lanes and the envelope did this already; the limits, the AI's price and the review interval did not, and a press
+    /// armed for one figure wrote whatever was typed under it.
+    /// </summary>
+    internal static Button DisarmedByEdits(Button b, IEnumerable<AmountField> boxes, params TextBox[] texts)
+    {
+        foreach (var box in boxes) box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
+        // THE PROPERTY, NOT TextChanged, as AmountField reads it: it changes on every keystroke whatever the box is attached to.
+        foreach (var text in texts)
+            text.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == TextBox.TextProperty) Ui.DisarmConfirm(b);
+            };
         return b;
     }
 
@@ -1884,8 +1904,8 @@ sealed class SafetyPage
                 "0 means it is woken only when something actually happens. Waking it more often spends "
                 + "more of your money, so it asks again first."),
             Ui.Spacer(Theme.S2),
-            BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
-                SaveReviewEvery, () => Ui.Refusal((Labels.ReviewEvery, _reviewEvery)), why => Ui.Refuse(_reviewNote, why)),
+            DisarmedByEdits(BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
+                SaveReviewEvery, () => Ui.Refusal((Labels.ReviewEvery, _reviewEvery)), why => Ui.Refuse(_reviewNote, why)), [_reviewEvery]),
             _reviewNote,
             Ui.Divider(),
             // THE LANES (U-org-lanes), BESIDE THE CEILING: how many positions may work at once is how fast the limit above
@@ -1962,8 +1982,9 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.AiPriceIn, _priceIn),
             Ui.FieldRow(Labels.AiPriceOut, _priceOut, ShippedRateHint(shipped)),
             Ui.Spacer(Theme.S2),
-            BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice,
+            DisarmedByEdits(BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice,
                 () => Ui.Refusal((Labels.AiPriceIn, _priceIn), (Labels.AiPriceOut, _priceOut)), why => Ui.Refuse(_priceNote, why)),
+                [_priceIn, _priceOut]),
             _priceNote));
 
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
@@ -1992,8 +2013,10 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
-            BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,
-                why => Ui.Refuse(_limitsNote, why)),
+            DisarmedByEdits(BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,
+                    why => Ui.Refuse(_limitsNote, why)),
+                [_maxQty, _maxNotional, _maxPositions, _maxPerMinute, _maxLossPerTrade, _maxDailyLoss, _lossMinClosure,
+                    _lossStrikeWindow, _valuationExit], _allowlist),
             _limitsNote));
 
         // THE CAPITAL ALLOCATION. Here rather than beside the holdout on the Settings page because it
@@ -2747,6 +2770,8 @@ sealed class SafetyPage
     void SaveLimits()
     {
         var pending = PendingLimits();
+        // WHAT THIS SAVE WRITES, NAMED BACK WITH ITS FIGURES (fix pass 1) — read before the write, which changes the policy in place.
+        var changed = RiskPolicy.Changes(_host.Gateway.Settings.Risk, pending);
         _host.Gateway.Update(s =>
         {
             s.Risk.MaxOrderQuantity = pending.MaxOrderQuantity;
@@ -2766,9 +2791,10 @@ sealed class SafetyPage
         // authority to every instrument the platform offers, silently; it now removes all of it,
         // just as silently, unless this sentence says which one happened.
         var nothingAllowed = _host.Gateway.Settings.Risk.InstrumentAllowlist.Count == 0;
+        var named = changed.Count == 0 ? "" : " " + Labels.LimitsNowAre([.. changed.Select(l => (l, pending.FigureOf(l)))]);
         _limitsNote.Text = nothingAllowed
-            ? $"Saved. {Labels.NoInstrumentAllowed}"
-            : "Saved. New orders are checked against these immediately.";
+            ? $"Saved.{named} {Labels.NoInstrumentAllowed}"
+            : $"Saved.{named} New orders are checked against these immediately.";
         _limitsNote.Foreground = nothingAllowed ? Theme.Caution : Theme.Positive;
 
         // The save above rewrote the row, so the warning stops HERE rather than up to five seconds
