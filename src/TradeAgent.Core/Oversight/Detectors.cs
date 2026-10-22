@@ -255,8 +255,11 @@ public sealed class RefusalsDetector : OversightDetector
     public static readonly string[] SevereEvents = ["protocol_rejected", "operator_session_refused"];
 
     public override string Blind =>
-        "It sees only what the app refused and recorded: a tool call the app did not serve, whatever the reason, and a frame on the pipe "
-        + "refused on rights or authority — a malformed frame on the pipe is not a refusal and is not counted; " + CliBlind + ".";
+        "It sees only what the app refused and recorded: a tool call the app did not serve, whatever the reason; and on the pipe, a launch "
+        + "grant it refused (grant_rejected), a frame without the app's machine token (auth_rejected), a frame with no protocol version or "
+        + "another one — a client that is not this app's (protocol_rejected, severe), a frame naming the owner's reserved session "
+        + "(operator_session_refused, severe), and a request its handler refused on rights or authority (op_refused). A request the handler "
+        + "refused only because what it said was malformed is not counted; " + CliBlind + ".";
 
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {

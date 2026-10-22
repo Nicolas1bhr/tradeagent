@@ -355,4 +355,24 @@ public partial class OversightTests
         Assert.Contains(RefusalMark.Event, OrgSnapshot.PipeRefusalEvents);
         Assert.DoesNotContain("not yet a row", new RefusalsDetector().Blind, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// (e9) THE REFUSALS LINE'S BLIND SENTENCE NAMES EXACTLY WHAT IT COUNTS (fix pass 2): every pipe event the line reads
+    /// (<see cref="OrgSnapshot.PipeRefusalEvents"/>) is named in the sentence the owner reads, each SEVERE one as severe, and the unserved
+    /// tool call too — and the sentence no longer claims a malformed frame on the pipe is uncounted, since a frame with no protocol version
+    /// or another one is counted as <c>protocol_rejected</c>, severe. RED before the fix: the sentence named none of the events and said a
+    /// malformed frame on the pipe was not counted.
+    /// </summary>
+    [Fact]
+    public void The_refusals_blind_sentence_names_every_event_it_counts()
+    {
+        var blind = new RefusalsDetector().Blind;
+        log.WriteLine(blind);
+        foreach (var e in OrgSnapshot.PipeRefusalEvents)
+            Assert.Contains($"({e}", blind, StringComparison.Ordinal);
+        foreach (var e in RefusalsDetector.SevereEvents)
+            Assert.Contains($"({e}, severe)", blind, StringComparison.Ordinal);
+        Assert.Contains("a tool call the app did not serve, whatever the reason", blind, StringComparison.Ordinal);
+        Assert.DoesNotContain("malformed frame on the pipe is not a refusal", blind, StringComparison.Ordinal);
+    }
 }
