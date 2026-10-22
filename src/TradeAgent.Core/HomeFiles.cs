@@ -7,8 +7,11 @@ namespace TradeAgent.Core;
 /// <summary>A name inside a home that <see cref="HomeFiles"/> would have had to follow a link, or step through a non-folder, to act on.</summary>
 public sealed class HomeLinkRefused(string message) : IOException(message);
 
-/// <summary>One name in a home's folder as <see cref="HomeFiles.List"/> saw it: never followed, so a link is said to be one.</summary>
-public sealed record HomeEntry(string Name, bool Folder, bool Link, long Length);
+/// <summary>
+/// One name in a home's folder as <see cref="HomeFiles.List"/> or <see cref="HomeFiles.Describe"/> saw it: never followed, so a link is
+/// said to be one (its length and time are the link's own, never its target's).
+/// </summary>
+public sealed record HomeEntry(string Name, bool Folder, bool Link, long Length, DateTime WrittenUtc = default);
 
 /// <summary>
 /// ACTING INSIDE A HOME A CELL CAN WRITE (<c>U-execution-environment</c> fix pass 3; the re-review's P1-a, P1-b and P2). An executor's
@@ -145,28 +148,130 @@ public static class HomeFiles
             var names = Directory.EnumerateFileSystemEntries(OperatingSystem.IsLinux() ? $"/proc/self/fd/{dir}" : Full(root, parts))
                 .Select(Path.GetFileName).OfType<string>().ToList();
             var entries = new List<HomeEntry>(names.Count);
+            // EACH NAME EXAMINED WHERE IT IS, NEVER OPENED OR FOLLOWED (fstatat/statx with AT_SYMLINK_NOFOLLOW): a link is listed as one,
+            // and a file the app may not open is still listed — a pass that skipped it would count it gone.
             foreach (var name in names)
-            {
-                var fd = openat(dir, name, F.ReadOnly | F.NoFollow | F.NonBlock | F.CloseOnExec, 0);
-                if (fd < 0)
-                {
-                    var errno = Marshal.GetLastPInvokeError();
-                    if (errno == F.ELOOP) entries.Add(new HomeEntry(name, Folder: false, Link: true, 0));
-                    continue;   // gone since the listing, or nothing a file tool can open (a socket): not listed
-                }
-                using var handle = new SafeFileHandle(fd, ownsHandle: true);
-                var (mode, _) = Stat(fd);
-                var folder = (mode & S_IFMT) == S_IFDIR;
-                entries.Add(new HomeEntry(name, folder, Link: false, folder ? 0 : RandomAccess.GetLength(handle)));
-            }
+                if (Entry(dir, name) is { } entry) entries.Add(entry);   // gone since the listing: not listed
             return entries;
         }
         finally { close(dir); }
     }
 
+    /// <summary>
+    /// Creates <paramref name="relative"/> as a NEW file holding <paramref name="bytes"/> — false, and nothing written, where the name is
+    /// already taken by anything at all (a file, a folder, a link: never followed, never replaced). Its folders are made without following
+    /// a link. With <paramref name="flush"/> the bytes are on disk before this returns.
+    /// </summary>
+    public static bool TryCreate(string root, string relative, ReadOnlySpan<byte> bytes, bool flush = false)
+    {
+        var parts = Parts(relative, allowRoot: false);
+        if (OperatingSystem.IsWindows())
+        {
+            WindowsFolders(root, parts, parts.Length - 1, create: true, replaceLinks: false);
+            var full = Full(root, parts);
+            if (File.Exists(full) || Directory.Exists(full)) return false;
+            FileStream fs;
+            try { fs = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
+            catch (IOException) when (File.Exists(full) || Directory.Exists(full)) { return false; }
+            using (fs) { fs.Write(bytes); if (flush) fs.Flush(flushToDisk: true); }
+            return true;
+        }
+        var dir = Descend(root, parts, parts.Length - 1, create: true, replaceLinks: false);
+        try
+        {
+            var fd = openat(dir, parts[^1], F.WriteOnly | F.Create | F.Exclusive | F.NoFollow | F.CloseOnExec, 0x1B6);
+            if (fd < 0)
+            {
+                var errno = Marshal.GetLastPInvokeError();
+                if (errno == F.EEXIST || errno == F.ELOOP || errno == F.EISDIR) return false;
+                throw Failure(relative, "created", errno);
+            }
+            using var handle = new SafeFileHandle(fd, ownsHandle: true);
+            if (OperatingSystem.IsMacOS()) fchmod(fd, 0x1A4);
+            RandomAccess.Write(handle, bytes, 0);
+            if (flush && fsync(fd) != 0) throw Failure(relative, "flushed", Marshal.GetLastPInvokeError());
+            return true;
+        }
+        finally { close(dir); }
+    }
+
+    /// <summary>
+    /// Moves the name <paramref name="from"/> to <paramref name="to"/>, replacing whatever file or link is there — the name itself, never
+    /// what a link points at, and never through a link at any folder of either path (<c>renameat</c> between two descriptors). The
+    /// destination's folder must exist; a folder at the destination refuses.
+    /// </summary>
+    public static void Move(string root, string from, string to)
+    {
+        var src = Parts(from, allowRoot: false);
+        var dst = Parts(to, allowRoot: false);
+        if (OperatingSystem.IsWindows())
+        {
+            WindowsFolders(root, src, src.Length - 1, create: false, replaceLinks: false);
+            WindowsFolders(root, dst, dst.Length - 1, create: false, replaceLinks: false);
+            File.Move(Full(root, src), Full(root, dst), overwrite: true);
+            return;
+        }
+        var fromDir = Descend(root, src, src.Length - 1, create: false, replaceLinks: false);
+        try
+        {
+            var toDir = Descend(root, dst, dst.Length - 1, create: false, replaceLinks: false);
+            try
+            {
+                if (renameat(fromDir, src[^1], toDir, dst[^1]) != 0)
+                {
+                    var errno = Marshal.GetLastPInvokeError();
+                    throw errno == F.ENOENT ? new FileNotFoundException($"'{from}' does not exist.")
+                        : errno == F.EISDIR || errno == F.ENOTEMPTY || errno == F.EEXIST
+                            ? new HomeLinkRefused($"'{to}' is a folder, so TradeAgent did not move '{from}' over it.")
+                            : Failure(from, "moved", errno);
+                }
+            }
+            finally { close(toDir); }
+        }
+        finally { close(fromDir); }
+    }
+
+    /// <summary>
+    /// What is at <paramref name="relative"/>, examined without opening or following it — a link is said to be one — or null where
+    /// nothing is. A link or a non-folder at a folder ABOVE it refuses (<see cref="HomeLinkRefused"/>); a folder above it that is not
+    /// there is null.
+    /// </summary>
+    public static HomeEntry? Describe(string root, string relative)
+    {
+        var parts = Parts(relative, allowRoot: false);
+        if (OperatingSystem.IsWindows())
+        {
+            try { WindowsFolders(root, parts, parts.Length - 1, create: false, replaceLinks: false); }
+            catch (DirectoryNotFoundException) { return null; }
+            FileSystemInfo info = new FileInfo(Full(root, parts));
+            if (!info.Exists) { info = new DirectoryInfo(info.FullName); if (!info.Exists) return null; }
+            var link = info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint);
+            return new HomeEntry(parts[^1], info is DirectoryInfo && !link, link, info is FileInfo f && !link ? f.Length : 0, info.LastWriteTimeUtc);
+        }
+        int dir;
+        try { dir = Descend(root, parts, parts.Length - 1, create: false, replaceLinks: false); }
+        catch (DirectoryNotFoundException) { return null; }
+        try { return Entry(dir, parts[^1]); }
+        finally { close(dir); }
+    }
+
+    /// <summary>One name in the folder <paramref name="dir"/>, examined without following it; null where nothing is there.</summary>
+    static HomeEntry? Entry(int dir, string name)
+    {
+        var at = StatAt(dir, name);
+        if (at is not { } s) return null;
+        var type = s.Mode & S_IFMT;
+        return new HomeEntry(name, type == S_IFDIR, type == S_IFLNK, type == S_IFDIR ? 0 : s.Size, s.WrittenUtc);
+    }
+
     // ---- Linux and macOS ------------------------------------------------------------------------------------------------------
 
-    static SafeFileHandle OpenRead(string root, string relative)
+    /// <summary>
+    /// The regular file at <paramref name="relative"/>, opened for reading with no link followed at any component. With
+    /// <paramref name="oneName"/> (the default) a file with another name somewhere else (a hard link) is refused too; a caller that only
+    /// MEASURES what a name in the home holds — the material pass's hash — may take one. The caller disposes the handle.
+    /// </summary>
+    public static SafeFileHandle OpenRead(string root, string relative, bool oneName = true)
     {
         var parts = Parts(relative, allowRoot: false);
         if (OperatingSystem.IsWindows())
@@ -194,12 +299,19 @@ public static class HomeFiles
             }
             var handle = new SafeFileHandle(fd, ownsHandle: true);
             var (mode, links) = Stat(fd);
-            if ((mode & S_IFMT) != S_IFREG || links != 1)
+            if ((mode & S_IFMT) != S_IFREG || (oneName && links != 1))
             {
                 handle.Dispose();
                 throw new HomeLinkRefused((mode & S_IFMT) != S_IFREG
                     ? $"'{relative}' is not a file."
                     : $"'{relative}' has another name somewhere else (a hard link), so TradeAgent does not read it.");
+            }
+            // AS File.ReadAllBytes OPENS ON UNIX: a shared advisory lock, refused while another holds the file exclusively (.NET's
+            // FileShare.None), so a file being rewritten under one is not read half-written.
+            if (flock(fd, LockShared | LockNonBlocking) != 0 && Marshal.GetLastPInvokeError() == F.EWOULDBLOCK)
+            {
+                handle.Dispose();
+                throw new IOException($"'{relative}' is open elsewhere and cannot be read now.");
             }
             return handle;
         }
@@ -286,9 +398,57 @@ public static class HomeFiles
         return (BitConverter.ToUInt16(buf, 4), BitConverter.ToUInt16(buf, 6));
     }
 
-    const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFREG = 0x8000;
-    const int AtEmptyPath = 0x1000;
-    const uint StatxType = 0x1, StatxMode = 0x2, StatxNlink = 0x4;
+    /// <summary>
+    /// The name's file type and permission bits, its size and its last write time (UTC), examined WITHOUT FOLLOWING it and without
+    /// opening it; null where nothing is there.
+    /// </summary>
+    static (int Mode, long Size, DateTime WrittenUtc)? StatAt(int dir, string name)
+    {
+        var buf = new byte[256];
+        int rc;
+        long size, sec, nsec;
+        int mode;
+        if (OperatingSystem.IsLinux())
+        {
+            // struct statx: stx_mode at 28 (u16), stx_size at 40 (u64), stx_mtime at 112 (tv_sec i64, tv_nsec u32 at 120).
+            rc = statx(dir, name, AtSymlinkNoFollow, StatxType | StatxMode | StatxSize | StatxMtime, buf);
+            if (rc == 0)
+            {
+                mode = BitConverter.ToUInt16(buf, 28);
+                size = (long)BitConverter.ToUInt64(buf, 40);
+                sec = BitConverter.ToInt64(buf, 112);
+                nsec = BitConverter.ToUInt32(buf, 120);
+                return (mode, size, Written(sec, nsec));
+            }
+        }
+        else
+        {
+            // macOS's struct stat (64-bit inodes): st_mode at 4 (u16), st_mtimespec at 48 (i64, i64), st_size at 96 (i64).
+            rc = RuntimeInformation.ProcessArchitecture == Architecture.X64
+                ? fstatat64(dir, name, buf, MacAtSymlinkNoFollow)
+                : fstatat(dir, name, buf, MacAtSymlinkNoFollow);
+            if (rc == 0)
+            {
+                mode = BitConverter.ToUInt16(buf, 4);
+                size = BitConverter.ToInt64(buf, 96);
+                sec = BitConverter.ToInt64(buf, 48);
+                nsec = BitConverter.ToInt64(buf, 56);
+                return (mode, size, Written(sec, nsec));
+            }
+        }
+        var errno = Marshal.GetLastPInvokeError();
+        if (errno == F.ENOENT) return null;
+        throw Failure(name, "examined", errno);
+    }
+
+    /// <summary>A write time as .NET reads one from the same fields (<c>FileSystemInfo.LastWriteTimeUtc</c>), to the tick.</summary>
+    static DateTime Written(long sec, long nsec) =>
+        DateTimeOffset.FromUnixTimeSeconds(sec).AddTicks(nsec / TimeSpan.NanosecondsPerTick).UtcDateTime;
+
+    const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFREG = 0x8000, S_IFLNK = 0xA000;
+    const int AtEmptyPath = 0x1000, AtSymlinkNoFollow = 0x100, MacAtSymlinkNoFollow = 0x20;
+    const uint StatxType = 0x1, StatxMode = 0x2, StatxNlink = 0x4, StatxMtime = 0x40, StatxSize = 0x200;
+    const int LockShared = 1, LockNonBlocking = 4;
 
     /// <summary>The open flags and error numbers, as this platform numbers them.</summary>
     static class F
@@ -304,6 +464,8 @@ public static class HomeFiles
         public static readonly int CloseOnExec = Mac ? 0x1000000 : 0x80000;
         public const int EPERM = 1, ENOENT = 2, EEXIST = 17, ENOTDIR = 20, EISDIR = 21;
         public static readonly int ELOOP = Mac ? 62 : 40;
+        public static readonly int ENOTEMPTY = Mac ? 66 : 39;
+        public static readonly int EWOULDBLOCK = Mac ? 35 : 11;
     }
 
     [DllImport("libc", SetLastError = true)]
@@ -323,6 +485,22 @@ public static class HomeFiles
 
     [DllImport("libc", SetLastError = true)]
     static extern int fchmod(int fd, int mode);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int fsync(int fd);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int flock(int fd, int operation);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int renameat(int fromDir, [MarshalAs(UnmanagedType.LPUTF8Str)] string from, int toDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string to);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int fstatat(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, byte[] buf, int flags);
+
+    [DllImport("libc", EntryPoint = "fstatat$INODE64", SetLastError = true)]
+    static extern int fstatat64(int dirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, byte[] buf, int flags);
 
     [DllImport("libc", SetLastError = true)]
     static extern int close(int fd);
