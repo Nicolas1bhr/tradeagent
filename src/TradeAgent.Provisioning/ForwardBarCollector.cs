@@ -64,7 +64,7 @@ public sealed class ForwardBarCollector : IAsyncDisposable
     {
         AllowAutoRedirect = true,
         MaxAutomaticRedirections = 5,
-        AutomaticDecompression = DecompressionMethods.All
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
     })
     { Timeout = Timeout.InfiniteTimeSpan };
 

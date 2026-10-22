@@ -101,7 +101,7 @@ public static class Downloader
         {
             AllowAutoRedirect = true,          // GitHub redirects release assets to its object store,
             MaxAutomaticRedirections = 10,     // and redirects the API itself when a repo is renamed.
-            AutomaticDecompression = DecompressionMethods.All
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
         };
         var http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(30) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
