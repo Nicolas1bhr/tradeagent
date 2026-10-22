@@ -76,6 +76,12 @@ public sealed class ApiConversation(
     CanonSeen? _canon;
 
     /// <summary>
+    /// WHETHER THIS TURN SENT A REQUEST (fix pass 1 of <c>U-org-packets-a</c>): set as the first one leaves, before its answer. A turn
+    /// cancelled after that ran in a session — fresh, as every harness turn is — though its exit code says it did not start.
+    /// </summary>
+    bool _sent;
+
+    /// <summary>
     /// THE MOST REQUESTS ONE TURN MAY MAKE, however cheap they are.
     ///
     /// The token bounds stop a turn that is spending; this stops a turn that is not. A model that
@@ -320,6 +326,7 @@ public sealed class ApiConversation(
 
         SetBusy(true);
         _canon = null;
+        _sent = false;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -367,8 +374,9 @@ public sealed class ApiConversation(
 
                 // AND THE CANON IT SENT: the system text's hash, version and whether it is the app's own.
                 Canon = _canon,
-                // AND ITS SESSION: the harness keeps none between turns, so every turn it started is fresh (U-org-packets-a).
-                Session = exitCode == NotStarted ? null : TurnSession.FreshBecause(SessionWhy.Harness),
+                // AND ITS SESSION: the harness keeps none between turns, so every turn that sent a request is fresh (U-org-packets-a) —
+                // a cancelled one included, whose exit code still says not started (fix pass 1).
+                Session = _sent || exitCode != NotStarted ? TurnSession.FreshBecause(SessionWhy.Harness) : null,
 
                 // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
                 // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
@@ -433,6 +441,7 @@ public sealed class ApiConversation(
                 throw new GateRefusedException(gate, beforeAnyWork: requests == 0, soFar: total);
 
             requests++;
+            _sent = true;
             // THE INPUT THE APP IS ABOUT TO SEND, COUNTED BY THE APP, beside the attempt the cost is
             // committed against. Bytes, because bytes are what this end can measure — the token
             // figures above are the provider's own and are never derived from these.
