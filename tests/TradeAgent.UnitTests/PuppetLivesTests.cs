@@ -467,7 +467,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             Assert.Equal("the owner", data.GetProperty("chain")[2].GetProperty("head").GetString());
             Assert.Contains(successor, data.GetProperty(mine).EnumerateArray().Select(m => m.GetProperty("mandate").GetString()));
             Assert.DoesNotContain(old.Id, view.RootElement.GetRawText(), StringComparison.Ordinal);
-            Assert.True(data.GetProperty("chain")[2].TryGetProperty("ai_envelope", out _), $"the root's envelope was not shown: {data.GetRawText()}");
+            Assert.True(data.GetProperty("chain")[2].TryGetProperty("ai_envelopes", out var rootDays) && rootDays.ValueKind == JsonValueKind.Array
+                        && rootDays.EnumerateArray().Any() && rootDays.EnumerateArray().All(d => d.TryGetProperty("ceiling", out _)),
+                $"the root's envelope was not shown, each reading naming its ceiling: {data.GetRawText()}");
             output.WriteLine($"life (org-verbs) {role} turn {turn} org show: {data.GetProperty("chain").GetRawText()}");
         }
         output.WriteLine($"life (org-verbs): {life.Counts()}");
