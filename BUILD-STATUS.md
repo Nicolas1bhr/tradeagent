@@ -11166,3 +11166,37 @@ Survey S-attempt4 D2/D3; ORCHESTRATION § 2.5. The owner's plan is ChatGPT Plus 
 **Fix pass 1 (review P2, REAL, in scope; fresh opus/high fixer):** an owner wake ALREADY `Blocked` for an earlier reason kept its stale detail (`Release` kept `Blocked`; `SettleWithoutTurn` updated only NULL dispositions). Now the refusal's own sentence is shown — the vendor's limit and the gate's last check alike (shared code, `MissionEventStore`) — still owed, never failed. Re-review `fleet/tmp/B-scratch/u-vendor-limit-wakes-fix/rereview.md`: "No defects found … closes the stale-reason finding". `MissionEventStore.BlockAgain` writes `blocked` + the current sentence over NULL or an earlier `blocked` only (`disposition_detail` is a standing reason, not a ledger; no final outcome touched). RED before: "Expected: You've hit your usage limit… Actual: the day's spending ceiling is reached"; mutant (BlockAgain → SettleWithoutTurn) same red; restored. VendorLimitTests 3× 10/10. The gate's own path is fixed by the shared code but has no test of its own (it needs a full fake provider).
 **Gate:** Release --no-incremental 0 warnings; VendorLimitTests 3× Passed 9/9 (builder); ThinkingSeats + OwnerDisposition + VendorLimit* Passed 51; names 2968 → 2971, removed 0. Review `fleet/tmp/B-scratch/u-vendor-limit-wakes/U-vendor-limit-wakes-review.md` (one point → fix pass 1).
 **NOT VERIFIED:** the vendor's own server's 429 body (the mock's is codex's parsed shape); the U+2019 sentence under the owner's real limited plan — attempt 4 is the first chance to see it; a limit met after work (out of scope); tests box NOT RUN (busy).
+
+## U-cell-linux-c — route (a) for codex seats: the harness in `attempt-<id>/harness`, `codex exec-server --listen stdio` in `attempt-<id>/cell` with its environment built from scratch and an empty read-only home, the host benchmark that writes `cell_proof` (egress `none` AND `web`), and the cell's assurance profile on the attempt; RUNG 43 (landed 2026-10-22, seat A)
+
+**Landed** at `f23ec082` (rebased on main `fbd1afa4`; fix pass 1 code `8e2425fd`; builder code `beb1ccd8`). A protection unit — ORCHESTRATION § 2.8 (route (a): the
+login outside the cell), R-exec-server DECISION 1, CRED-001, Law 2, recorded assurance honesty (every class measured on its build and host), refuse-never-guess.
+Builder a2aa1b576ca8b11d2; fixer a84bb711bc7e56572 (opus/high, BUILD RUN 2026-10-22). **Rung 43** (main was 42 at its rebase): `cell_proof.boot`, `cell_proof.egress`,
+`cell_proof_row` (PASS | GAP per row, sealed), `cell_proof_revocation`, `cell_assurance` + its rows — edits and deletes refused.
+**The owner's word it carries** (2026-10-21, ORGANISATION § 16): "Web (443) for every executor" — `web` is proved beside `none`; loopback-443 and LAN-443 reach are GAP rows.
+**CI:** landing run **39719433791** at `8e2425fd`, CARRIED to `f23ec082` (tree equal outside bookkeeping): 12/12 success; Cell step Unit 21/21, Integration 91/91; linux-host
+green. Names sets 3001 → 3030, removed 0. Scan: bearer/token/secret/API_KEY/apikey prose and FAKE test values judged (sk-FAKE…, "harness-secret", FAKE bearers).
+Builder run 39708954504 12/12. A known red elsewhere in fix runs: ubuntu Unit PromptStdinTests (39714654199) — the launcher race, U-launcher-race's.
+**What changed:** the cell stage's environment built from scratch (TRADEAGENT_HOME, DOTNET_EnableDiagnostics=0, DOTNET_ROOT); a program root may lie strictly inside
+`tools/` (read+run, never written). Per attempt `harness/` and `cell/` cgroup leaves; the supervisor joins only an empty leaf of an `attempt-*`; the grant binds to the
+harness leaf; a supervisor started as a process-group leader relays to a copy that can `setsid` (codex starts its stdio program so — found on CI). The cell class: the
+harness carries the door as the broker class does (L1); gpt-5.5 pinned and its surface checked before every launch, exec and sub-agents refused (L2); `--ignore-user-config`
+DROPPED (under it codex exec never reads environments.toml and ran every tool in the harness — CI run 397009641…); the cell's codex home per attempt, app-written, read-only,
+never granted; the workspace is the turn's working directory (L5); launch only under a counted proof whose egress classes include the policy's. CellBenchmark at every
+Linux start inside the presence register runs every survey Q-a row — environment, state/ unwritable, AF_UNIX denied, signals/environ/trace denied, io_uring denied, cgroup
+escape denied, descendants cancelled, egress none, and egress web (443 through, other ports EACCES, fast-open/UDP/bind/listen denied; GAP rows recorded) — and writes a
+proof only when every row holds, bound to machine, full kernel release, boot, version + deployed trade SHA-256 and profile; a missing deployed hash refuses the proof in
+words (no `trade-sha256:none`); each launch recomputes the profile, a mismatch refuses and revokes. A failed cell launch ends what it started, reports survivors on
+TurnEnded and keeps presence held. Attempt assurance takes the weaker side (state and inbox MEDIATED; cmdline and stat GAP); a cell seat is refused while live trading is armed.
+**Evidence:** builder RED per item (e.g. stage env "Assert.Null() Failure"; setsid relay "exit 126 … could not start a new session (errno 1)"; boot filter "Assert.Empty()
+Failure"); mutant (CI 39707228675): the stage's execve passes its inherited environ ⇒ row (a) red (3 variables, not the policy's 10) and the benchmark writes no proof. Fix
+pass REDs on throwaway branch u-cell-linux-c-red (CI 39712628612): "the start benchmark holds no row 'state-unwritable'", "a proof was written with no deployed trade hash",
+"the benchmark holds no row 'web-443-granted'"; R2 (CI 39715221856) "a cell launch whose cgroup could not be killed was reported ended while its daemon … ran"; mutant
+(CI 39715221856): AF_UNIX allowed ⇒ "ipc-denied: FAILED … a listener WAS reached" and "no cell proof". Release `--no-incremental` 0 warnings; touched classes 3× 60/60.
+**Judged** (records/U-cell-linux-c-review-triage.md): R1–R4 REAL → fixed; re-review on 5159ce80 "All four findings close in code; no new regression found" (the two later
+commits change R2's test only — its failed teardown stands in through the session's EndTree seam, a declared deviation).
+**Overlap (the orchestrator, 04:0x):** B's U-org-packets-a edits RuntimeManifest.cs / AgentSession.cs — it lands second and rebases over this.
+**Tests box:** run 20261022-062022-f23ec082 on the landed tip: GREEN — Fault 498/498, Unit 2034 passed 0 failed, Integration 728 passed 0 failed (Linux-only Cell rows not run), timing 111/111 + 1 not run; his files unchanged (Windows unchanged by the Linux provider).
+**NOT VERIFIED:** AgentSession.StartInCell end to end (no product position runs `cell` yet, L6 — U-execution-environment's); python3 is now required for a proof (absent ⇒
+no proof, stated reason) — unchecked on the owner's host; a real token refresh through the auth.json symlink; aarch64; per-attempt homes swept at turn end, not at start.
+Leftover branch `u-cell-linux-c-red` on origin (deleting branches is not granted).
