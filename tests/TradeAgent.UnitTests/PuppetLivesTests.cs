@@ -293,6 +293,73 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// A NOTE BETWEEN TWO EXECUTORS RIDES THE RECIPIENT'S NEXT PACKET ONCE (<c>U-org-packets-b</c>; ORCHESTRATION §§ 2.6, 2.10), on the
+    /// real kernel with puppet seats: two members of a team and their head; member 2 turns once, member 1 sends it a note through the
+    /// pipe in its turn, and member 2's second packet carries the note under its sender's stamp while its third does not. The two
+    /// member-2 attempts' input rows and their packets' bytes per block are printed. No model.
+    /// </summary>
+    [Fact]
+    public async Task A_note_between_two_executors_rides_the_recipients_next_packet_once()
+    {
+        const string head = "pos-5e55bb000001", one = "pos-5e55bb000002", two = "pos-5e55bb000003", team = "team-5e55bb00";
+        await using var life = await PuppetLife.Begin("notes", seed: db => db.Write(_ =>
+        {
+            foreach (var sql in new[]
+                     {
+                         $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{team}', '{OrgIds.Research}', 'team', NULL, 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{head}', '{team}', 'org/{head}', 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{one}', '{team}', 'org/{one}', 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{two}', '{team}', 'org/{two}', 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"UPDATE org_unit SET head_position_id='{head}' WHERE id='{team}'"
+                     })
+            {
+                using var c = db.Cmd(sql);
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        }));
+        life.Script(two, ["usage 100 0 10", "final One."], ["usage 100 0 10", "final Two."], ["usage 100 0 10", "final Three."]);
+        life.Script(one, [$"trade lateral send {two} \"the funding skew looks venue-specific; check the second venue\"", "usage 100 0 10", "final Sent."]);
+
+        async Task Turn(string role, int n)
+        {
+            life.Wake(role);
+            await life.RunUntil(() => life.AttemptsOf(role).Count(a => a.State == AiAttemptState.ENDED) >= n, $"{role}'s turn {n} ended");
+        }
+
+        await Turn(two, 1);
+        await Turn(one, 1);
+        var send = Assert.Single(life.Log(one, 1), s => (string?)s["step"] == "trade");
+        Assert.True((int?)send["exit"] == 0, $"member 1's note was refused: {send.ToJsonString()}");
+        var note = Assert.Single(new OrgStore(life.Host.Db).LateralsOf(two));
+        Assert.Equal(one, note.Sender);
+        Assert.Equal(life.AttemptsOf(one).Single().Id, note.Attempt);
+
+        await Turn(two, 2);
+        await Turn(two, 3);
+
+        Assert.DoesNotContain(note.Id, life.Prompt(two, 1)!, StringComparison.Ordinal);
+        Assert.Contains($"Note `{note.Id}` from `{one}`", life.Prompt(two, 2)!, StringComparison.Ordinal);
+        Assert.Contains("    > the funding skew looks venue-specific; check the second venue", life.Prompt(two, 2)!, StringComparison.Ordinal);
+        Assert.DoesNotContain(note.Id, life.Prompt(two, 3)!, StringComparison.Ordinal);
+
+        foreach (var line in life.Prompt(two, 2)!.Split('\n').SkipWhile(l => !l.StartsWith("- Notes sent to you", StringComparison.Ordinal)).Take(3))
+            output.WriteLine($"life (notes) member 2 turn 2 org block: {line.TrimEnd()}");
+
+        var attempts = life.AttemptsOf(two).Where(a => a.State == AiAttemptState.ENDED).OrderBy(a => a.StartedAt).ToList();
+        var store = new AiAttemptStore(life.Host.Db);
+        Assert.Equal([new PacketInput(PacketInputKind.Lateral, note.Id)], store.InputsOf(attempts[1].Id));
+        Assert.Empty(store.InputsOf(attempts[2].Id));
+        foreach (var (a, turn) in attempts.Skip(1).Take(2).Select((a, i) => (a, i + 2)))
+        {
+            using var context = JsonDocument.Parse(a.Context!);
+            var packet = context.RootElement.GetProperty("packet").EnumerateObject().Select(p => $"{p.Name}={p.Value.GetInt32()}");
+            output.WriteLine($"life (notes) member 2 turn {turn} {a.Id}: inputs [{string.Join(", ", store.InputsOf(a.Id).Select(i => $"{i.Kind}:{i.RefId}"))}]; "
+                             + $"packet bytes {string.Join(", ", packet)}");
+        }
+    }
+
+    /// <summary>
     /// THE MATERIAL PASS WAITS FOR A PUPPET TURN'S QUIESCENCE (COUNCIL rule 7): while the chair's puppet is mid-turn its process is
     /// in the host's presence register and the app's own pass refuses to walk the inbox — nothing walked, the window unmoved; once
     /// the turn is over the same call walks it.
