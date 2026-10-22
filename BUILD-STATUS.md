@@ -11215,3 +11215,22 @@ ORCHESTRATION §§ 2.5, 2.6, 0.5; ORGANISATION §§ 6, 17. **Protects:** BUDGET-
 **Tests box:** GREEN on fix 1's code c0478248 (Unit 2037 / Integration 728 / Fault 498, 0 failed; his files unchanged); not re-run on fix 2.
 **Scan:** exclusions by exact phrase only — model-usage prose and identifiers (listed in the brief's fix-pass reports); the builder's first pushes used a loosened bare-word exclusion, superseded.
 **NOT VERIFIED:** any real model turn — the input figures wait for M-org0 / M-org1; the Windows-only red not reproduced locally.
+
+## U-launcher-race — ubuntu's Unit step stops failing on a shared launcher that parallel test classes rewrote while others ran it; tests only, no rung (landed 2026-10-22, seat A, train A2)
+
+**Landed** at `c223c5fe` (train A2 on main `54c7857e`; fix pass 1 `6ec27db6`; builder `e930f3d2`). Arrow: a red that blocked landings, seen FOUR times on ubuntu's Unit step —
+39685897934 attempt 1 (7 PromptStdinTests + 3 LinuxHostRuntimeTests, "the turn ended 154" = ETXTBSY), 39692232483 (PromptStdin + PuppetLivesTests:290, launcher bytes ELF
+for a script), 39699108133 and 39714654199 (PromptStdin). Builder ab044233d17fc40a0; fixer af377ed1c2c39c5aa (sonnet/high, BUILD RUN 2026-10-22).
+**CI:** train A2 run **39732556969**. Earlier: builder 39696526489 green (Unit 2011/0/6 on ubuntu and macOS); fix 1 39722943251 green.
+**Cause (reproduced locally, 4 of 16 parallel runs):** LinuxHostRuntimeTests in no collection ran beside classes that replace `Paths.Bin`'s launcher —
+`PuppetLife.DeployTrade` deleted it then copied the real `trade` over it (the device-auth link came back as the dotnet telemetry URL or null); `ProcessWide.PutBack`
+rewrote the launcher in place and swallowed the IOException (ETXTBSY on a running program), leaving the real command where the script had been.
+**What changed (tests only, no product code):** `TestEnv.WriteExecutable` (temp name, close, mode, rename) used by EnsureLauncher, AgentTreeTests.DeployLauncher,
+ProcessWide.PutBack and `PuppetLife.DeployTrade` (whole rename — never absent or half-written); `VendorOverrideFiles` is a real `[CollectionDefinition(…, DisableParallelization
+= true)]` (51 classes, LinuxHostRuntimeTests joined), so uncollected executors such as QuiescenceBarrierTests never run beside a deployment. No retry, no timeout, no test weakened.
+**Evidence:** fix 1 RED `PuppetLivesTests.A_deployment_never_leaves_the_launcher_absent_or_half_written` (reads during 200 deployments) "Expected: 0, Actual: 9609" on the old
+delete-then-copy; green after. The three classes 16× 16/16 after the builder's fix; nine involved classes 5× "Passed! 86/86". Names removed 0.
+**Judged** (records/U-launcher-race-review-triage.md): R1 REAL → fixed; re-review: "R1 is closed by 6ec27db6; no regression found".
+**Tests box:** 20261022-081315-a044daed on the stacked tip a044daed GREEN — Unit 2083/0 (22 not run), Integration 733/0 (54 not run), Fault 498/0; his files unchanged
+**NOT VERIFIED:** ETXTBSY's fork-race reading itself (not reproduced; serialization removes it); `ToolDeployer.EnsureTradeCli` still copies trade.dll in place (product, now only
+under non-parallel collections); IntegrationTests' ContainmentTests.DeployLauncher / ProtectedConfigurationTests.Installed still write in place (own assembly, own home).
