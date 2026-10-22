@@ -1825,7 +1825,6 @@ sealed class SafetyPage
             _planCapNote,
             Ui.Micro(Labels.PlanVendorLimit),
             Ui.Micro(Labels.PlanSharedWithYou),
-            Ui.Micro(Labels.PlanBoughtCredits),
             Ui.Spacer(Theme.S2),
             _seatClasses,
             Ui.Divider(),

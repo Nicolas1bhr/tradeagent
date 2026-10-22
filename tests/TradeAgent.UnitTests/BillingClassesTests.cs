@@ -538,7 +538,8 @@ public class BillingClassesTests : IDisposable
 
     /// <summary>
     /// (g), THE SAFETY PAGE'S HALF: today against each ceiling — the money in real money, the plan's at list price and named "not money" —
-    /// the three sentences the plan's figure cannot see, and every seat's class in words.
+    /// the two sentences the plan's figure cannot see, NO sentence about bought or extra credits (the owner's answer, 2026-10-22: "Leave it
+    /// out"), and every seat's class in words.
     /// </summary>
     [Fact]
     public void The_safety_page_shows_both_ceilings_and_every_seats_class()
@@ -560,7 +561,14 @@ public class BillingClassesTests : IDisposable
 
         Assert.Contains("may stop the AI's turns sooner", Labels.PlanVendorLimit, StringComparison.Ordinal);
         Assert.Contains("does not count it here", Labels.PlanSharedWithYou, StringComparison.Ordinal);
-        Assert.Contains("real money that TradeAgent cannot see", Labels.PlanBoughtCredits, StringComparison.Ordinal);
+        // The page says nothing about credits: no label carries the word, and the Safety page's own text has none (fix pass 3).
+        var withCredits = typeof(Labels).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(string) && f.GetValue(null) is string t
+                && t.Contains("credit", StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.Name).ToList();
+        Assert.Empty(withCredits);
+        Assert.DoesNotContain("credit",
+            File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.App", "DashboardView.cs")), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

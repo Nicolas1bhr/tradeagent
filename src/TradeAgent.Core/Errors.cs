@@ -274,8 +274,8 @@ public static class Labels
         $"Confirm: let the AI use up to {amount} a day of your ChatGPT plan, counted at list price";
 
     /// <summary>
-    /// THE THREE THINGS THE PLAN'S FIGURE CANNOT SEE, in the owner's words, beside it on the Safety page (<c>U-billing-classes</c>): the
-    /// vendor's own limit, his own use of the same plan, and bought credits — which are real money no figure here shows.
+    /// THE TWO THINGS THE PLAN'S FIGURE CANNOT SEE, beside it on the Safety page (<c>U-billing-classes</c>): the vendor's own limit
+    /// and his own use of the same plan. Bought or extra credits are left out on the owner's answer ("Leave it out", 2026-10-22).
     /// </summary>
     public const string PlanVendorLimit =
         "OpenAI's own limit on your plan may stop the AI's turns sooner than this; its usage figures are estimates, not fixed limits.";
@@ -283,11 +283,6 @@ public static class Labels
     /// <inheritdoc cref="PlanVendorLimit"/>
     public const string PlanSharedWithYou =
         "Your own use of Codex with the same ChatGPT account shares this plan, and TradeAgent does not count it here.";
-
-    /// <inheritdoc cref="PlanVendorLimit"/>
-    public const string PlanBoughtCredits =
-        "If your plan's included use runs out and you have bought extra credits, turns past it spend those credits — real money that "
-        + "TradeAgent cannot see or count.";
 
     /// <summary>
     /// What the second press of <see cref="SaveDailyCap"/> will do. RAISING the ceiling is a grant —
