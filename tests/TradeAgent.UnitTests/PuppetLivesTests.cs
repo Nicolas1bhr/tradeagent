@@ -213,7 +213,14 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     public async Task Every_attempt_records_fresh_or_resumed_and_why()
     {
         const string head = "pos-5e55aa000001", member = "pos-5e55aa000002", team = "team-5e55aa00";
-        await using var life = await PuppetLife.Begin("sessions", settings: s => s.MissionTurnsPerSession = 2, seed: db => db.Write(_ =>
+        // EVERY RE-WAKE FLOOR ZERO (U-rewake-floor): this life reads the sessions of a member the sweep wakes again after each turn
+        // that delivered nothing, on the wall clock, so it runs the sweep as it was before the floor — under the shipped floors its
+        // third turn would wait a quarter of an hour. The floor itself is CouncilLoopTests' (h), on the loop's own clock.
+        await using var life = await PuppetLife.Begin("sessions", settings: s =>
+        {
+            s.MissionTurnsPerSession = 2;
+            s.RewakeFloorMinutes = OrgLevel.All.ToDictionary(l => l, _ => 0);
+        }, seed: db => db.Write(_ =>
         {
             foreach (var sql in new[]
                      {
