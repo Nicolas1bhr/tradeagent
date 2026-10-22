@@ -357,22 +357,28 @@ public partial class OversightTests
     }
 
     /// <summary>
-    /// (e9) THE REFUSALS LINE'S BLIND SENTENCE NAMES EXACTLY WHAT IT COUNTS (fix pass 2): every pipe event the line reads
-    /// (<see cref="OrgSnapshot.PipeRefusalEvents"/>) is named in the sentence the owner reads, each SEVERE one as severe, and the unserved
-    /// tool call too — and the sentence no longer claims a malformed frame on the pipe is uncounted, since a frame with no protocol version
-    /// or another one is counted as <c>protocol_rejected</c>, severe. RED before the fix: the sentence named none of the events and said a
-    /// malformed frame on the pipe was not counted.
+    /// (e9) THE REFUSALS LINE'S BLIND SENTENCE SAYS EXACTLY WHAT IS RECORDED (fix passes 2 and 3): one gloss per pipe event the line reads
+    /// — no more, no fewer — each in the sentence word for word beside its event, each SEVERE one as severe; the unserved tool call; and
+    /// what the pipe answers WITHOUT a row, named as unseen. The glosses are pinned to their write sites in <c>PipeRefusalRecordTests</c>
+    /// (e10). RED before fix pass 2: no event was named; RED before fix pass 3: no gloss table existed (the sentence called a deployment
+    /// probe "the owner's reserved session" and a stale half "a client that is not this app's").
     /// </summary>
     [Fact]
     public void The_refusals_blind_sentence_names_every_event_it_counts()
     {
         var blind = new RefusalsDetector().Blind;
         log.WriteLine(blind);
+        Assert.Equal(OrgSnapshot.PipeRefusalEvents.Order(StringComparer.Ordinal), RefusalsDetector.Recorded.Keys.Order(StringComparer.Ordinal));
         foreach (var e in OrgSnapshot.PipeRefusalEvents)
-            Assert.Contains($"({e}", blind, StringComparison.Ordinal);
-        foreach (var e in RefusalsDetector.SevereEvents)
-            Assert.Contains($"({e}, severe)", blind, StringComparison.Ordinal);
+        {
+            var severe = Array.IndexOf(RefusalsDetector.SevereEvents, e) >= 0 ? ", severe" : "";
+            Assert.Contains($"{RefusalsDetector.Recorded[e]} ({e}{severe})", blind, StringComparison.Ordinal);
+        }
         Assert.Contains("a tool call the app did not serve, whatever the reason", blind, StringComparison.Ordinal);
-        Assert.DoesNotContain("malformed frame on the pipe is not a refusal", blind, StringComparison.Ordinal);
+        foreach (var unseen in RefusalsDetector.NotRecorded)
+            Assert.Contains(unseen, blind, StringComparison.Ordinal);
+        Assert.Contains("It does not see what the pipe answers without recording it: ", blind, StringComparison.Ordinal);
+        foreach (var wrong in new[] { "malformed frame on the pipe is not a refusal", "a client that is not this app's", "the owner's reserved session" })
+            Assert.DoesNotContain(wrong, blind, StringComparison.Ordinal);
     }
 }

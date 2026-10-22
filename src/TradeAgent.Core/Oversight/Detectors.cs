@@ -254,12 +254,35 @@ public sealed class RefusalsDetector : OversightDetector
     /// <summary>The pipe refusals this line holds SEVERE.</summary>
     public static readonly string[] SevereEvents = ["protocol_rejected", "operator_session_refused"];
 
+    /// <summary>
+    /// WHAT EACH PIPE EVENT THIS LINE READS IS, AS <c>GatewayPipeServer</c> WRITES IT (fix pass 3): the gloss the owner reads for it, word
+    /// for word, one per event of <see cref="OrgSnapshot.PipeRefusalEvents"/>. Each is pinned to its write site by a test that drives
+    /// the pipe there (<c>PipeRefusalRecordTests</c>).
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> Recorded = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["grant_rejected"] = "a hello whose launch grant TradeAgent refused, or a later frame on a connection whose grant has ended",
+        ["auth_rejected"] = "a hello whose machine token did not match",
+        ["protocol_rejected"] = "a frame that names no protocol version, or a hello that names another one — one half out of date, or a "
+                                + "peer that is not TradeAgent",
+        ["operator_session_refused"] = "a request, hello included, naming the reserved session 'operator' or a session starting "
+                                       + "'deployment:', the paper deployment's identity",
+        [RefusalMark.Event] = "a request from the pipe's read loop that its handler refused on rights or authority",
+    };
+
+    /// <summary>What the pipe answers WITHOUT a row, so this line cannot see it (fix pass 3; recording them is a later card).</summary>
+    public static readonly string[] NotRecorded =
+    [
+        "a frame other than hello that names another protocol version",
+        "a frame sent before hello",
+        "a request its handler refused only because what it said was malformed",
+    ];
+
     public override string Blind =>
-        "It sees only what the app refused and recorded: a tool call the app did not serve, whatever the reason; and on the pipe, a launch "
-        + "grant it refused (grant_rejected), a frame without the app's machine token (auth_rejected), a frame with no protocol version or "
-        + "another one — a client that is not this app's (protocol_rejected, severe), a frame naming the owner's reserved session "
-        + "(operator_session_refused, severe), and a request its handler refused on rights or authority (op_refused). A request the handler "
-        + "refused only because what it said was malformed is not counted; " + CliBlind + ".";
+        "It sees only what the app refused and recorded: a tool call the app did not serve, whatever the reason; and on the pipe, "
+        + string.Join("; ", OrgSnapshot.PipeRefusalEvents.Select(e =>
+            $"{Recorded[e]} ({e}{(Array.IndexOf(SevereEvents, e) >= 0 ? ", severe" : "")})"))
+        + ". It does not see what the pipe answers without recording it: " + string.Join("; ", NotRecorded) + "; " + CliBlind + ".";
 
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {

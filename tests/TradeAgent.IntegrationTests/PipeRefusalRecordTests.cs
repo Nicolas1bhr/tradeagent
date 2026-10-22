@@ -386,6 +386,111 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// (e10) EACH PIPE EVENT THE OWNER'S LINE COUNTS IS WRITTEN WHERE ITS GLOSS SAYS, AND NOWHERE ITS BLIND SENTENCE SAYS IT IS NOT (fix
+    /// pass 3): the pipe is driven to every write site — a frame with no <c>v</c>, a hello with another one, a hello with a wrong machine
+    /// token, a hello with a grant TradeAgent refuses, a frame on a connection whose grant ended, a session of <c>operator</c> and one
+    /// starting <c>deployment:</c>, a read-loop request refused on rights — and each leaves exactly its one row, whose gloss in
+    /// <see cref="Core.Oversight.RefusalsDetector.Recorded"/> names that very case. Then the two cases the sentence names as unseen — a frame
+    /// before hello, and a non-hello frame naming another version after it — leave no refusal row at all. RED before the fix: no gloss
+    /// table existed, and the sentence called both unseen cases seen.
+    /// </summary>
+    [Fact]
+    public async Task Each_pipe_event_is_written_where_its_gloss_says_and_nowhere_its_blind_sentence_says_not()
+    {
+        var pipe = NewPipe();
+        var now = DateTimeOffset.UtcNow;
+        var grants = new AgentGrants(() => now);
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+        var gloss = Core.Oversight.RefusalsDetector.Recorded;
+        var counted = Core.Oversight.OrgSnapshot.PipeRefusalEvents;
+        int All() => counted.Sum(e => Rows(db, e).Count);
+        var before = new Dictionary<string, int>(StringComparer.Ordinal);
+        void Mark() { foreach (var e in counted) before[e] = Rows(db, e).Count; }
+        // EXACTLY ONE ROW, OF THIS EVENT, and its gloss names this case.
+        void Wrote(string @event, string glossSays)
+        {
+            Assert.Contains(glossSays, gloss[@event], StringComparison.Ordinal);
+            foreach (var e in counted) Assert.Equal(before[e] + (e == @event ? 1 : 0), Rows(db, e).Count);
+        }
+        IpcRequest Hello(string? grant = null, int? v = null, string? token = null, string? session = null) => new()
+        {
+            Op = Ops.Hello, Token = token ?? IpcToken.Ensure(), Grant = grant, Session = session, V = v ?? Versions.ProtocolVersion
+        };
+
+        // A FRAME THAT NAMES NO PROTOCOL VERSION — any frame, before hello.
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+            Assert.Equal(nameof(ErrorCode.INCOMPATIBLE_PROTOCOL), (await c.SendLineAsync("""{"op":"status"}""")).Error?.Code);
+        Wrote("protocol_rejected", "a frame that names no protocol version");
+
+        // A HELLO THAT NAMES ANOTHER ONE.
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+            Assert.Equal(nameof(ErrorCode.INCOMPATIBLE_PROTOCOL), (await c.SendAsync(Hello(v: Versions.ProtocolVersion + 1))).Error?.Code);
+        Wrote("protocol_rejected", "a hello that names another one");
+
+        // A HELLO WHOSE MACHINE TOKEN DOES NOT MATCH.
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), (await c.SendAsync(Hello(token: "not-the-machine-token"))).Error?.Code);
+        Wrote("auth_rejected", "a hello whose machine token did not match");
+
+        // A HELLO WHOSE LAUNCH GRANT TRADEAGENT REFUSES.
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+            Assert.False((await c.SendAsync(Hello(grant: "no-such-grant"))).Ok);
+        Wrote("grant_rejected", "a hello whose launch grant TradeAgent refused");
+
+        // A LATER FRAME ON A CONNECTION WHOSE GRANT HAS ENDED.
+        var ending = grants.IssueHere(CouncilRoles.Research, "attempt-refrow-gloss", TimeSpan.FromMinutes(5));
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await c.SendAsync(Hello(grant: ending.Token))).Ok);
+            now = now.AddHours(1);
+            Assert.False((await c.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure(), Grant = ending.Token })).Ok);
+        }
+        Wrote("grant_rejected", "a later frame on a connection whose grant has ended");
+
+        // THE RESERVED SESSIONS: 'operator', and any session starting 'deployment:' — a hello included.
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-refrow-gloss2");
+        foreach (var (session, says) in new[] { ("operator", "the reserved session 'operator'"), ("deployment:x", "a session starting 'deployment:'") })
+        {
+            Mark();
+            await using (var c = await Raw.ConnectAsync(pipe))
+                Assert.False((await c.SendAsync(Hello(grant: research.Token, session: session))).Ok);
+            Wrote("operator_session_refused", says);
+        }
+
+        // A READ-LOOP REQUEST REFUSED ON RIGHTS OR AUTHORITY.
+        Mark();
+        await using (var c = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await c.SendAsync(Hello(grant: research.Token))).Ok);
+            Assert.Equal(nameof(ErrorCode.ROLE_MAY_NOT_TRADE), (await c.SendAsync(Buy(research.Token))).Error?.Code);
+        }
+        Wrote(Core.RefusalMark.Event, "refused on rights or authority");
+
+        // WHAT THE SENTENCE NAMES AS UNSEEN IS UNRECORDED: a frame before hello, and a non-hello frame naming another version.
+        var blind = new Core.Oversight.RefusalsDetector().Blind;
+        var total = All();
+        await using (var c = await Raw.ConnectAsync(pipe))
+            Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), (await c.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure() })).Error?.Code);
+        Assert.Contains("a frame sent before hello", blind, StringComparison.Ordinal);
+        await using (var c = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await c.SendAsync(Hello(grant: research.Token))).Ok);
+            await c.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure(), Grant = research.Token, V = Versions.ProtocolVersion + 1 });
+        }
+        Assert.Contains("a frame other than hello that names another protocol version", blind, StringComparison.Ordinal);
+        Assert.Equal(total, All());
+    }
+
+    /// <summary>
     /// (e1) GUARD: AN ENDED GRANT KEEPS ITS ONE <c>grant_rejected</c> ROW. A grant whose turn ended under a live connection is refused before
     /// <c>Handle</c> (<c>EndedGrantRefusal</c>), as it was: one <c>grant_rejected</c> row, and no <c>op_refused</c> beside it. Green at base.
     /// </summary>
@@ -466,9 +571,12 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
             return c;
         }
 
-        public async Task<IpcResponse> SendAsync(IpcRequest req)
+        public Task<IpcResponse> SendAsync(IpcRequest req) => SendLineAsync(Core.Json.Write(req));
+
+        /// <summary>Sends exactly <paramref name="frame"/> — a frame the typed request could not express, one with no <c>v</c>.</summary>
+        public async Task<IpcResponse> SendLineAsync(string frame)
         {
-            await _w.WriteLineAsync(Core.Json.Write(req));
+            await _w.WriteLineAsync(frame);
             var line = await _r.ReadLineAsync() ?? throw new IOException("the gateway closed the connection");
             return Core.Json.Read<IpcResponse>(line) ?? throw new IOException("unreadable reply");
         }
