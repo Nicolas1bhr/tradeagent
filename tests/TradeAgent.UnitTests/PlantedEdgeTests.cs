@@ -3,6 +3,7 @@ using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Features;
 using TradeAgent.Core.Proving;
 using TradeAgent.Core.Strategy;
 using Xunit;
@@ -287,5 +288,103 @@ public class PlantedEdgeTests(ITestOutputHelper log)
         Assert.Equal("beside", Truth(beside).GetProperty("planted")[0].GetProperty("doctrine").GetString());
         Assert.Equal(["fundingRate", "sumOpenInterest", "buySellRatio"],
             Truth(inside).GetProperty("series").EnumerateArray().Select(s => s.GetProperty("field").GetString()!).ToArray());
+    }
+
+    /// <summary>Pearson's correlation of two equal-length series.</summary>
+    static double Correlation(IReadOnlyList<double> x, IReadOnlyList<double> y)
+    {
+        double mx = x.Average(), my = y.Average(), sxy = 0, sxx = 0, syy = 0;
+        for (var i = 0; i < x.Count; i++)
+        {
+            sxy += (x[i] - mx) * (y[i] - my);
+            sxx += (x[i] - mx) * (x[i] - mx);
+            syy += (y[i] - my) * (y[i] - my);
+        }
+        return sxy / Math.Sqrt(sxx * syy);
+    }
+
+    /// <summary>
+    /// (b) THE LEAKY JOIN IS SEEN BY A SOURCE-TIME JOIN AND NEVER THROUGH THE AS-OF GATE. A market whose signal readings are
+    /// each first seen two hours after their source time — after the move each predicts. At every hourly close, the reading a
+    /// join by source time holds is strongly correlated with the move over the next hour; the reading the app's gate
+    /// (<see cref="FeatureEvaluator.Counts"/>, five seconds' latency) holds is not, because none had arrived. The manifest says
+    /// what an honest app must say, and a leak first seen before its move ends is refused as no leak at all.
+    ///
+    /// <para><b>The watched mutant</b> — the trap's first-seen offset set to zero, the leak made honest — goes red here.</para>
+    /// </summary>
+    [Fact]
+    public void The_leaky_join_is_seen_by_a_source_time_join_and_never_through_the_as_of_gate()
+    {
+        using var scratch = TestEnv.NewScratch("leaky-join");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        var leak = p.Write(new SyntheticMarketSpec(41, "SYNA", VenueCatalog.BinanceSpot, Start, 21,
+            SyntheticEdge.LeakyJoin(16, TimeSpan.FromHours(2))));
+        var closes = Closes(leak);
+        var rows = Readings(p.Tape, ProvingSources.Signal, "SYNA");
+        var latency = TimeSpan.FromSeconds(5);
+
+        var (bySource, byGate, moves) = (new List<double>(), new List<double>(), new List<double>());
+        for (var close = Start.AddHours(4); closes.ContainsKey(close.AddMinutes(59)); close = close.AddHours(1))
+        {
+            var c = close;
+            var source = rows.Last(r => r.SourceTime <= c);
+            var gate = rows.Where(r => FeatureEvaluator.Counts(r, c, latency)).MaxBy(r => r.SourceTime)!;
+            bySource.Add((double)Value(source, ProvingSources.ValueField));
+            byGate.Add((double)Value(gate, ProvingSources.ValueField));
+            moves.Add((double)Move(closes, c));
+        }
+        var (seen, unseen) = (Correlation(bySource, moves), Correlation(byGate, moves));
+        log.WriteLine($"{moves.Count} hourly closes: the source-time join's correlation with the next hour's move {seen:0.000}, the as-of gate's {unseen:0.000}");
+
+        Assert.True(seen > 0.5, $"a join by source time does not see the leak: correlation {seen:0.000}");
+        Assert.True(Math.Abs(unseen) < 0.15, $"the as-of gate sees the leak: correlation {unseen:0.000}");
+
+        var trap = Truth(leak).GetProperty("traps")[0];
+        Assert.Equal("leaky-join", trap.GetProperty("trap").GetString());
+        Assert.Equal(7200, trap.GetProperty("first_seen_after_seconds").GetInt64());
+        Assert.StartsWith("no edge:", trap.GetProperty("honest_app_says").GetString(), StringComparison.Ordinal);
+        Assert.Empty(Truth(leak).GetProperty("planted").EnumerateArray());
+        Assert.Equal(7200, Truth(leak).GetProperty("series")[0].GetProperty("first_seen_after_seconds").GetInt64());
+
+        // A "LEAK" FIRST SEEN BEFORE ITS MOVE ENDS IS NO LEAK, and is refused before anything is written.
+        var honest = Assert.Throws<ArgumentException>(() => p.Write(new SyntheticMarketSpec(42, "SYNB", VenueCatalog.BinanceSpot, Start, 2,
+            SyntheticEdge.LeakyJoin(16, TimeSpan.FromMinutes(30)))));
+        log.WriteLine(honest.Message);
+        Assert.Contains("first seen after the move they predict", honest.Message, StringComparison.Ordinal);
+        Assert.Empty(Readings(p.Tape, ProvingSources.Signal, "SYNB"));
+    }
+
+    /// <summary>
+    /// (c) THE PRE-FEE EDGE PASSES FRICTIONLESS AND FAILS AT THE VENUE COST. A trap whose gross move per signal is below the
+    /// venue's round trip: the unchanged backtest of a program that trades it nets above zero under
+    /// <see cref="ExecutionModel.Frictionless"/> and below zero under the app's own venue cost model. The manifest states the
+    /// gross under the round trip; a "pre-fee" edge above it is refused as a real edge.
+    /// </summary>
+    [Fact]
+    public void The_pre_fee_edge_passes_frictionless_and_fails_at_the_venue_cost()
+    {
+        using var scratch = TestEnv.NewScratch("pre-fee");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        var market = p.Write(new SyntheticMarketSpec(51, "SYNA", VenueCatalog.BinanceSpot, Start, 21, SyntheticEdge.PreFeeOnly(3)));
+        new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
+
+        var program = Program("SYNA", ProvingSources.Signal, ProvingSources.ValueField, "x > 0.0030", "x <= 0.0030");
+        var free = Backtest(log, p.Home, p.Db, market.Dataset, program, ExecutionModel.Frictionless);
+        var venue = Backtest(log, p.Home, p.Db, market.Dataset, program, VenueCost(p.Db, market.Dataset));
+        Assert.True(free.Metrics.Trades >= 20, $"the program traded {free.Metrics.Trades} times");
+        Assert.True(free.Metrics.NetPnl > 0m, $"frictionless, the pre-fee edge nets {free.Metrics.NetPnl}");
+        Assert.True(venue.Metrics.NetPnl < 0m, $"at the venue's cost, the pre-fee edge nets {venue.Metrics.NetPnl}");
+
+        var trap = Truth(market).GetProperty("traps")[0];
+        Assert.Equal("pre-fee-only", trap.GetProperty("trap").GetString());
+        var figures = trap.GetProperty("figures");
+        Assert.True(figures.GetProperty("bps_per_signal").GetDecimal() < figures.GetProperty("round_trip_bps").GetDecimal());
+        Assert.True(figures.GetProperty("expected_sharpe_before_cost").GetDecimal() > 0m);
+        Assert.True(figures.GetProperty("expected_sharpe_after_cost").GetDecimal() < 0m);
+
+        var real = Assert.Throws<ArgumentException>(() => p.Write(new SyntheticMarketSpec(52, "SYNB", VenueCatalog.BinanceSpot, Start, 2,
+            SyntheticEdge.PreFeeOnly(16))));
+        log.WriteLine(real.Message);
+        Assert.Contains("it is a real edge, not a trap", real.Message, StringComparison.Ordinal);
     }
 }
