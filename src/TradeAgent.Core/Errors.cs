@@ -799,6 +799,42 @@ public static class Labels
     public static string Money(decimal amount, string currency) =>
         currency.Length == 0 ? amount.ToString("0.####") : $"{amount:0.####} {currency}";
 
+    // ---- a typed number, read one way (U-number-entry-culture) ------------------------------------
+
+    /// <summary>An empty money or limit box: never read as 0 and never as the figure already saved.</summary>
+    public const string AmountEmpty = "Nothing is typed here: write a number, 0 for none.";
+
+    /// <summary>A box that holds something other than digits and one decimal mark.</summary>
+    public static string AmountUnreadable(string typed) =>
+        $"\u201c{typed}\u201d is not a number TradeAgent reads: write digits with at most one decimal mark, "
+        + "a point or a comma (0.05 and 0,05 are the same), and no thousands separators.";
+
+    /// <summary>A mark in a box that counts whole things.</summary>
+    public static string AmountNotWhole(string typed) =>
+        $"\u201c{typed}\u201d is not a whole number: this box counts whole things, so write it without a decimal mark.";
+
+    /// <summary>One mark and three digits after it: a thousands separator and a decimal mark look the same.</summary>
+    public static string AmountAmbiguous(string typed, string grouped, string decimals) =>
+        $"\u201c{typed}\u201d could be {grouped} or {decimals}: write {grouped} or {decimals}.";
+
+    /// <summary>More digits than a figure holds.</summary>
+    public static string AmountTooLarge(string typed) =>
+        $"\u201c{typed}\u201d is too large a number for this box.";
+
+    /// <summary>Below what the box takes.</summary>
+    public static string AmountBelow(string typed, string min) =>
+        $"\u201c{typed}\u201d is less than this box takes: at least {min}.";
+
+    /// <summary>Above what the box takes.</summary>
+    public static string AmountAbove(string typed, string max) =>
+        $"\u201c{typed}\u201d is more than this box takes: at most {max}.";
+
+    /// <summary>The live line under a box: the figure its text reads as, before any press.</summary>
+    public static string AmountReads(string figure) => $"reads as {figure}";
+
+    /// <summary>What a press over a refused box says, in its own note line, instead of saving anything.</summary>
+    public static string PressRefused(string field, string why) => $"Nothing was done \u2014 {field}: {why}";
+
     /// <summary>
     /// WHAT THE OWNER READS WHEN THE SAVED SETTINGS ROW CANNOT BE PARSED.
     ///
