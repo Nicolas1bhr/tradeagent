@@ -161,7 +161,7 @@ public sealed record CellPolicy
             if (string.IsNullOrWhiteSpace(p) || !Path.IsPathFullyQualified(p) || p.Contains('\0'))
                 return $"the cell's {what} '{p}' is not an absolute path";
             foreach (var form in Forms(p))
-                if (guarded.Refuses(form) is { } why) return $"the cell's {what} {p} {why}";
+                if (guarded.Refuses(form, executable: what == ProgramRoot) is { } why) return $"the cell's {what} {p} {why}";
         }
         if (!System.IO.Directory.Exists(Workspace)) return $"the cell's workspace {Workspace} is not a directory";
         // A READ-ONLY INPUT THAT OVERLAPS THE WORKSPACE IS NOT READ-ONLY (triage #4): Landlock adds up the rights of every rule along
@@ -187,8 +187,10 @@ public sealed record CellPolicy
     {
         yield return ("workspace", Workspace);
         foreach (var p in ReadOnly) yield return ("read-only input", p);
-        foreach (var p in Executable) yield return ("program root", p);
+        foreach (var p in Executable) yield return (ProgramRoot, p);
     }
+
+    const string ProgramRoot = "program root";
 
     /// <summary>
     /// WHAT NO GRANT MAY REACH, IN EVERY SPELLING (triage #3): the app's home and everything above it, and its <c>state/</c> — the
@@ -223,6 +225,12 @@ public sealed record CellPolicy
             (Paths.Logs, "TradeAgent's logs"),
         ];
 
+        /// <summary>Whether <paramref name="folder"/> is one spelling of <see cref="Paths.Tools"/>, the one folder a program root may lie inside.</summary>
+        bool IsTools(string folder) => ToolsForms.Contains(folder, StringComparer.Ordinal);
+
+        /// <summary>Every spelling of the tools folder in <see cref="Owned"/>.</summary>
+        public IReadOnlyList<string> ToolsForms { get; init; } = [];
+
         public static Guarded Of(string? appHome = null)
         {
             var home = appHome ?? Paths.Home;
@@ -241,11 +249,19 @@ public sealed record CellPolicy
                     .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, f.Path)))).Concat(Forms(f.Path))
                     .Select(p => (p, f.What)))
                 .Distinct().ToList();
-            return new Guarded(homes, inside, inboxes, cgroups, owned);
+            var tools = homes.Select(h => Path.Combine(h, Path.GetRelativePath(Paths.Home, Paths.Tools)))
+                .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, Paths.Tools)))).Concat(Forms(Paths.Tools))
+                .Distinct(StringComparer.Ordinal).ToList();
+            return new Guarded(homes, inside, inboxes, cgroups, owned) { ToolsForms = tools };
         }
 
-        /// <summary>Why a path — one already resolved, or one spelling of it — may not be granted, or null.</summary>
-        public string? Refuses(string form)
+        /// <summary>
+        /// Why a path — one already resolved, or one spelling of it — may not be granted, or null. <paramref name="executable"/>: the
+        /// grant is a PROGRAM ROOT, read and run and never written (<c>U-cell-linux-c</c> item 2), which may name a folder strictly
+        /// inside <see cref="Paths.Tools"/> — the pinned runtime a route-(a) cell runs — and never <c>tools/</c> itself or anything
+        /// holding it; every other folder stays refused for every kind of grant.
+        /// </summary>
+        public string? Refuses(string form, bool executable = false)
         {
             foreach (var home in Homes)
                 if (Within(home, form))
@@ -257,7 +273,7 @@ public sealed record CellPolicy
                 if (Within(form, root))
                     return $"lies inside TradeAgent's state or its cell policies ({root})";
             foreach (var (folder, what) in Owned)
-                if (Within(form, folder) || Within(folder, form))
+                if ((Within(form, folder) || Within(folder, form)) && !(executable && form != folder && Within(form, folder) && IsTools(folder)))
                     return $"would grant {what} {folder} (it is, lies inside or holds it): no cell's to reach";
             if (Path.GetFileName(form) == CodexEnvironments)
                 return $"names {CodexEnvironments}, which codex reads in place of the broker its seat is held to: no cell's to reach";

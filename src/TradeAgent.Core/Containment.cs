@@ -172,6 +172,7 @@ public static class ContainedLaunch
                 psi.ArgumentList.Add(CellExecFlag);
                 psi.ArgumentList.Add(cellPolicy);
                 psi.ArgumentList.Add(run[0]);
+                StageEnvironment(psi);
             }
             foreach (var a in run.Skip(1)) psi.ArgumentList.Add(a);
             command = Process.Start(psi) ?? throw new InvalidOperationException("the program did not start");
@@ -232,6 +233,29 @@ public static class ContainedLaunch
         var now = AttemptCgroups.OwnCgroup();
         return now == dir ? null : $"the kernel places this process in {now ?? "an unreadable cgroup"}, not {dir}";
     }
+
+    /// <summary>
+    /// THE STAGE'S ENVIRONMENT, BUILT FROM SCRATCH (<c>U-cell-linux-c</c> item 2): whoever started this supervisor — the app, or in
+    /// route (a) the codex harness that holds the login, its <c>CODEX_HOME</c>, <c>HOME</c> and the launch's bearer — none of it
+    /// reaches the stage. The stage gets the app's home (where it finds its cell folder, read here from this process's own
+    /// <see cref="Paths.Home"/>), the .NET runtime's diagnostics OFF — so it leaves no <c>dotnet-diagnostic-*</c> socket or
+    /// <c>clr-debug-pipe-*</c> in <c>/tmp</c> when it becomes the program — and, for a framework-dependent build, the runtime's
+    /// root. What the program itself starts with is the policy's alone (<see cref="CellNative.Enter"/>).
+    /// </summary>
+    internal static void StageEnvironment(ProcessStartInfo psi)
+    {
+        var root = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        psi.Environment.Clear();
+        foreach (var (name, value) in StageVariables(Paths.Home, root)) psi.Environment[name] = value;
+    }
+
+    /// <summary>The whole environment of a cell stage: <see cref="StageEnvironment"/>'s three names, the runtime's root only where one is set.</summary>
+    public static IReadOnlyList<KeyValuePair<string, string>> StageVariables(string home, string? dotnetRoot) =>
+    [
+        new("TRADEAGENT_HOME", home),
+        new("DOTNET_EnableDiagnostics", "0"),
+        .. string.IsNullOrEmpty(dotnetRoot) ? Array.Empty<KeyValuePair<string, string>>() : [new("DOTNET_ROOT", dotnetRoot)]
+    ];
 
     /// <summary>
     /// How to run this program again: its executable, and under the <c>dotnet</c> host the entry assembly beside it (how a test
