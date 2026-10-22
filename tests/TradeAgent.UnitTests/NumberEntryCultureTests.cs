@@ -339,4 +339,50 @@ public class NumberEntryCultureTests
         Assert.Contains("up to 0.00005", (string)perception.SaveBudget.Content!, StringComparison.Ordinal);
         return Task.CompletedTask;
     });
+
+    static string Repo()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
+
+    /// <summary>
+    /// (item 6) NO REFRESH WRITES A BOX: the owner types into the cap box, the five-second tick's page pass runs — the Safety page's
+    /// <c>Update</c>, its own <c>Refresh</c>, and the perception card's — and the half-typed text, and what it reads as, are exactly
+    /// as typed. And the guard behind it: nothing in the app assigns a field's text or figure after construction — the only writer
+    /// of an <see cref="AmountField"/>'s text is the owner's keyboard, and its figure has no setter outside the field.
+    /// </summary>
+    [Fact]
+    public Task A_refresh_never_rewrites_a_box_being_edited() => OnThePage(async (page, host) =>
+    {
+        var cap = Field<AmountField>(page, "_dailyCap");
+        var budget = Field<PerceptionCard>(page, "_perception").BudgetBox;
+        cap.Box.Text = "0,0";
+        budget.Box.Text = "1.000";
+        var fields = page.Root.GetLogicalDescendants().OfType<AmountField>().ToList();
+        var before = fields.Select(f => (f.Box.Text, f.Value, f.Reading.Text)).ToList();
+
+        host.Gateway.Update(s => s.AiDailyCostCap = 42m);           // the setting moves under the box the owner is typing in
+        page.Update(await host.Gateway.StatusAsync());
+        typeof(SafetyPage).GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
+        Field<PerceptionCard>(page, "_perception").Update();
+
+        Assert.Equal(before, fields.Select(f => (f.Box.Text, f.Value, f.Reading.Text)).ToList());
+        Assert.Equal("0,0", cap.Box.Text);
+        Assert.Equal(0m, cap.Value);
+        Assert.Equal("1.000", budget.Box.Text);
+        Assert.Null(budget.Value);
+
+        // THE GUARD: no app code outside the field writes a field's text, and the figure's setter is the field's own.
+        foreach (var file in Directory.GetFiles(Path.Combine(Repo(), "src", "TradeAgent.App"), "*.cs"))
+        {
+            var text = File.ReadAllText(file);
+            Assert.DoesNotMatch(@"\.Box\.Text\s*=[^=]", text);
+            Assert.DoesNotMatch(@"\.Box\.SetValue\(|\.Box\.Clear\(|\.Box\.Paste\(", text);
+        }
+        Assert.False(typeof(AmountField).GetProperty(nameof(AmountField.Value))!.SetMethod!.IsPublic);
+        Assert.False(typeof(AmountField).GetProperty(nameof(AmountField.Value))!.SetMethod!.IsAssembly);
+    });
 }
