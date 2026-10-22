@@ -189,11 +189,13 @@ public static class AppPrincipals
 public sealed record FundedUnit(string UnitId, decimal? Envelope);
 
 /// <summary>
-/// ONE UNIT OF A POSITION'S FUNDING CHAIN AS <c>org-show</c> SHOWS IT (<c>U-org-verbs-a</c>): its envelope as admission resolves it
-/// (<see cref="FundedUnit.Envelope"/>; null is no separate cap) and the day's spent and reserved charged to it
-/// (<see cref="AiAttemptStore.UnitTotalsBetween"/>) — O4's readers, read by the host that meters launches, never recomputed.
+/// ONE UNIT OF A POSITION'S FUNDING CHAIN IN ONE CEILING, AS <c>org-show</c> SHOWS IT (<c>U-org-verbs-a</c>): the ceiling it is counted
+/// in (<see cref="BillingClasses.Key"/>, the money cap, or <see cref="BillingClasses.Plan"/>, the plan's capacity — never money;
+/// <c>U-billing-classes</c>), its envelope in that ceiling as admission resolves it (<see cref="FundedUnit.Envelope"/>; null is no
+/// separate cap) and the day's spent and reserved charged to it in that ceiling's rows (<see cref="AiAttemptStore.UnitTotalsBetween"/>)
+/// — O4's readers, read by the host that meters launches, never recomputed.
 /// </summary>
-public sealed record UnitDay(string UnitId, decimal? Envelope, decimal Spent, decimal Reserved);
+public sealed record UnitDay(string UnitId, string Ceiling, decimal? Envelope, decimal Spent, decimal Reserved);
 
 /// <summary>
 /// HOW A UNIT'S ENVELOPE IS RESOLVED (<c>docs/ORCHESTRATION.md</c> § 2.4): <c>envelope_share</c> is a FRACTION of the parent's

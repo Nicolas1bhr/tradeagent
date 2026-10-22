@@ -381,20 +381,30 @@ public partial class OrgAssignmentTests
         using var _db = db;
         await using var _server = server;
         gw.AiEnvelopes = position => position == Member
-            ? [new UnitDay(Team, null, 0.30m, 0.10m), new UnitDay(OrgIds.Research, 6m, 1.25m, 0.10m), new UnitDay(OrgIds.Root, 12m, 2.5m, 0.2m)]
+            ? [new UnitDay(Team, BillingClasses.Key, null, 0.30m, 0.10m), new UnitDay(OrgIds.Research, BillingClasses.Key, 6m, 1.25m, 0.10m),
+               new UnitDay(OrgIds.Root, BillingClasses.Key, 12m, 2.5m, 0.2m), new UnitDay(OrgIds.Root, BillingClasses.Plan, 40m, 7m, 0m)]
             : null;
 
         var view = Body(await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member)));
         var chain = view.GetProperty("chain").EnumerateArray().ToList();
-        Assert.True(Absent(chain[0].GetProperty("ai_envelope"), "envelope"), "a unit with no separate cap was shown one");
-        Assert.Equal("0.30", chain[0].GetProperty("ai_envelope").GetProperty("spent_today").GetString());
-        Assert.Equal("6", chain[1].GetProperty("ai_envelope").GetProperty("envelope").GetString());
-        Assert.Equal("1.25", chain[1].GetProperty("ai_envelope").GetProperty("spent_today").GetString());
-        Assert.Equal("0.2", chain[2].GetProperty("ai_envelope").GetProperty("reserved_today").GetString());
+        JsonElement Key(JsonElement u) => Assert.Single(u.GetProperty("ai_envelopes").EnumerateArray(),
+            e => e.GetProperty("ceiling").GetString() == BillingClasses.Key);
+        Assert.True(Absent(Key(chain[0]), "envelope"), "a unit with no separate cap was shown one");
+        Assert.Equal("0.30", Key(chain[0]).GetProperty("spent_today").GetString());
+        Assert.Equal("6", Key(chain[1]).GetProperty("envelope").GetString());
+        Assert.Equal("1.25", Key(chain[1]).GetProperty("spent_today").GetString());
+        Assert.Equal("0.2", Key(chain[2]).GetProperty("reserved_today").GetString());
+        Assert.Equal(BillingClasses.Words(BillingClasses.Key), Key(chain[2]).GetProperty("counted_in").GetString());
+
+        // THE PLAN'S CAPACITY IS ITS OWN READING, named, and never added into the money figure (U-billing-classes).
+        var plan = Assert.Single(chain[2].GetProperty("ai_envelopes").EnumerateArray(), e => e.GetProperty("ceiling").GetString() == BillingClasses.Plan);
+        Assert.Equal(("40", "7"), (plan.GetProperty("envelope").GetString(), plan.GetProperty("spent_today").GetString()));
+        Assert.Equal(BillingClasses.Words(BillingClasses.Plan), plan.GetProperty("counted_in").GetString());
+        Assert.Equal("2.5", Key(chain[2]).GetProperty("spent_today").GetString());
 
         // NOTHING METERS THE HEAD'S CHAIN HERE: unknown, said so, never zero.
         var head = Body(await server.CallAsync(Frame(Ops.OrgShow), Head, Launch(db, Head)));
-        Assert.All(head.GetProperty("chain").EnumerateArray(), u => Assert.True(Absent(u, "ai_envelope"), "an unmetered unit was shown an envelope"));
+        Assert.All(head.GetProperty("chain").EnumerateArray(), u => Assert.True(Absent(u, "ai_envelopes"), "an unmetered unit was shown an envelope"));
         Assert.Contains("not metered", head.GetProperty("envelopes_note").GetString(), StringComparison.Ordinal);
     }
 }

@@ -1550,6 +1550,33 @@ public sealed class TurnMeter
     public AiSpendToday TodayFor(string role) => Reading(role, ClassOf(role));
 
     /// <summary>
+    /// EACH UNIT OF <paramref name="role"/>'S FUNDING CHAIN, its envelope and TODAY'S spent and reserved, PER CEILING (<c>U-org-verbs-a</c>,
+    /// <c>org-show</c>; <c>U-billing-classes</c>): one reading for each ceiling the class <paramref name="role"/>'s seat bills now holds it
+    /// to (<see cref="ClassOf"/>, <see cref="BillingClasses.CeilingsOf"/>) — <c>key</c> the money cap's envelopes over the key and unknown
+    /// rows, <c>plan</c> the plan capacity's over the plan and unknown rows, an unknown class both — so a plan-capacity row is never
+    /// folded into a money figure. The chain is resolved from one reading of each ceiling as <see cref="Begin"/> resolves it, and each
+    /// unit's totals are read off the funding chains recorded with the rows (<see cref="AiAttemptStore.UnitTotalsBetween"/>) — the
+    /// figures the gate compares, never a second computation. Nearest unit first within each ceiling. Null where the chain or a total
+    /// cannot be read: unknown, never zero.
+    /// </summary>
+    public IReadOnlyList<UnitDay>? EnvelopesFor(string role)
+    {
+        try
+        {
+            var (from, to) = OwnerDay.Window(_now());
+            var cap = Cap();
+            var (money, plan) = FundingOf(role, cap, PlanCap(cap));
+            return [.. BillingClasses.CeilingsOf(ClassOf(role)).SelectMany(ceiling =>
+                (ceiling == BillingClasses.Plan ? plan : money).Select(u =>
+                {
+                    var day = _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling);
+                    return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved);
+                }))];
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix passes 1 and 2), never from an admission: a role
     /// the app declares on its harness is <c>key</c> — code, the harness's own verdict; otherwise the class the app's latest reading of the
     /// seat home's sign-in found (<see cref="_signIn"/>) — the sign-in the seat holds now, read on the app's cadence whether or not the role
