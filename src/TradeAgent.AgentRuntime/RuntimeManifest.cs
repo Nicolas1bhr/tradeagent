@@ -766,6 +766,14 @@ public static class RuntimeCatalog
     /// <summary>
     /// THE CODEX CLI CLASS'S DENY SET, proved on codex-cli 0.160.1 on 2026-10-11 against a local mock provider over a HOSTILE home (a
     /// copy of the owner's config, plugins and skills, survey case (d)): see the seat plan below.
+    ///
+    /// <para><b>CODE MODE'S HOST STAYS ON HERE</b> (<c>U-cli-code-mode</c>): every model on the owner's account is <c>code_mode_only</c>, its
+    /// one command tool code mode's <c>exec</c>, and under <c>--disable code_mode_host</c> codex 0.160.1 offers <c>exec</c> but fails every
+    /// call closed with "code-mode host is disabled" (vendor <c>core/src/thread_manager.rs:557-564</c>, <c>code-mode/src/remote_session.rs:88-95</c>)
+    /// — attempt 4's every turn, since this set carried the pair from ca235dcc. With the host on, the JavaScript runs in a
+    /// <c>codex-code-mode-host</c> child of the codex that holds the sign-in, its nested tools the <c>exec_command</c> and <c>apply_patch</c>
+    /// this class already has; that program is pinned beside codex (<see cref="InstallPlan"/>). The broker and the cell add the pair back
+    /// below: model-written JavaScript must never run in their harness (Law 2).</para>
     /// </summary>
     static string[] CodexCliDeny =>
     [
@@ -778,7 +786,7 @@ public static class RuntimeCatalog
         "--disable", "tool_suggest", "--disable", "skill_mcp_dependency_install", "--disable", "skill_search",
         "--disable", "workspace_dependencies", "--disable", "realtime_conversation", "--disable", "daemon_auto_start",
         "--disable", "auth_elicitation", "--disable", "tool_call_mcp_elicitation", "--disable", "worktrees",
-        "--disable", "code_mode_host", "--disable", "in_app_updates",
+        "--disable", "in_app_updates",
         "-c", "mcp_servers={}", "-c", "marketplaces={}", "-c", "notify=[]", "-c", "web_search=\"disabled\"",
         "-c", "skills.bundled.enabled=false", "-c", "skills.include_instructions=false",
         "-c", "include_apps_instructions=false", "-c", "check_for_update_on_startup=false",
@@ -796,6 +804,8 @@ public static class RuntimeCatalog
     static string[] CodexBrokerDeny =>
     [
         .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}"),
+        // CODE MODE'S HOST OFF, EXPLICITLY (U-cli-code-mode): the CLI class's set no longer carries it, and a broker seat runs no JavaScript.
+        "--disable", "code_mode_host",
         "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "view_image", "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
@@ -822,6 +832,8 @@ public static class RuntimeCatalog
     static string[] CodexCellDeny =>
     [
         .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}").Where(a => a != "--ignore-user-config"),
+        // CODE MODE'S HOST OFF, EXPLICITLY (U-cli-code-mode): its JavaScript would run in the HARNESS, outside the cell, beside the login.
+        "--disable", "code_mode_host",
         "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
@@ -840,10 +852,14 @@ public static class RuntimeCatalog
         }
     }
 
-    /// <summary>The features on under the CLI class's keys, RUN 2026-10-11 over an empty home: anything else on is a release or a key that changed.</summary>
+    /// <summary>
+    /// The features on under the CLI class's keys, RUN 2026-10-11 over an empty home: anything else on is a release or a key that changed.
+    /// <c>code_mode_host</c> since <c>U-cli-code-mode</c>: the vendor's Stable default (features/src/lib.rs:1074-1079 at rust-v0.160.1),
+    /// on now that the class no longer disables it — and refused for the broker and the cell below, which do.
+    /// </summary>
     static string[] CodexCliFeatures =>
     [
-        "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
+        "code_mode_host", "collaboration_modes", "compaction_image_budget", "content_item_kinds", "enable_request_compression", "fast_mode",
         "guardian_approval", "guardian_reuse_parent_compaction", "in_app_dictation", "item_ids", "mentions_v2",
         "resize_all_images", "shell_snapshot", "shell_tool", "sleep_tool", "sqlite", "steer", "system_proxy_fallback",
         "terminal_resize_reflow", "tool_search_always_defer_mcp_tools", "tui_app_server", "unbounded_connection_retries",
@@ -1021,9 +1037,11 @@ public static class RuntimeCatalog
                     [SeatPlan.CliClass] = CodexCliFeatures,
                     // Under the broker's keys, RUN 2026-10-17 (broker.sh, `features list`): the CLI class's list less shell_tool, sleep_tool
                     // and view_image. unified_exec still REPORTS on — with no environment it offers no tool, which the surface verifier proves.
-                    [SeatPlan.BrokerClass] = [.. CodexCliFeatures.Except(["shell_tool", "sleep_tool", "view_image"], StringComparer.Ordinal)],
-                    // Under the cell class's keys, RUN 2026-10-22 (cellclass.sh, `features list`): the CLI class's list less sleep_tool.
-                    [SeatPlan.CellClass] = [.. CodexCliFeatures.Except(["sleep_tool"], StringComparer.Ordinal)]
+                    // And less code_mode_host (U-cli-code-mode): the class disables it, so one reported on is a key that stopped working.
+                    [SeatPlan.BrokerClass] = [.. CodexCliFeatures.Except(["code_mode_host", "shell_tool", "sleep_tool", "view_image"], StringComparer.Ordinal)],
+                    // Under the cell class's keys, RUN 2026-10-22 (cellclass.sh, `features list`): the CLI class's list less sleep_tool —
+                    // and less code_mode_host, which the class disables (U-cli-code-mode).
+                    [SeatPlan.CellClass] = [.. CodexCliFeatures.Except(["code_mode_host", "sleep_tool"], StringComparer.Ordinal)]
                 },
                 McpArgs = ["mcp", "list", "--json"],
                 McpAllowlist = new(StringComparer.Ordinal)
