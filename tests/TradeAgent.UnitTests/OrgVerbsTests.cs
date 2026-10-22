@@ -315,6 +315,65 @@ public partial class OrgAssignmentTests
         Assert.Equal(t + Shipped.After(OrgLevel.Executor, 1), reraise!.DueAt);
     }
 
+    /// <summary>
+    /// (2d) A PROPOSAL A LOST TURN TOOK IS RAISED AGAIN (fix pass 1; ORCHESTRATION § 2.5: an off-path finding always reaches the head;
+    /// recovery is at-least-once, as <c>delivery</c> and <c>escalation</c> are): the decider's launch consumed the <c>proposal</c> wake
+    /// and a restart declared it LOST; while the proposal is open the sweep raises ONE <c>proposal</c> wake to the decider, and a
+    /// second sweep raises nothing — never a second while one is untaken. One taken by a turn that ENDED had its turn: nothing; and
+    /// after a judgment closes the proposal, nothing. RED before the fix: no wake was raised again.
+    /// </summary>
+    [Fact]
+    public void A_proposal_a_lost_turn_took_is_raised_again_once()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var attempts = new AiAttemptStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue(allocation: 50m), t);
+        org.Propose(m.Id, Member, null, Finding, [new OrgRef(OrgRefKind.Mandate, m.Id)], t);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Proposal));
+        Assert.Equal(0, org.Sweep(t, RewakeFloors.None));
+
+        // THE HEAD TAKES IT AND ITS TURN IS LOST: no untaken wake remains, and the head's unread proposal is forgotten.
+        var head = Begin(db, Head, 0.10m, [wake.Id]);
+        Assert.True(head.Admitted, head.Refusal);
+        Assert.Equal(0, org.Sweep(t, RewakeFloors.None));
+        Assert.Equal(1, attempts.LoseOpen(t));
+        Assert.DoesNotContain(m.Id, org.ProposalsUnread(Head));
+
+        Assert.Equal(1, org.Sweep(t, RewakeFloors.None));
+        Assert.Equal(0, org.Sweep(t, RewakeFloors.None));
+        var wakes = events.OfKind(MissionEventKind.Proposal);
+        Assert.Equal(2, wakes.Count);
+        var again = Assert.Single(wakes, e => !e.Consumed);
+        Assert.Equal((MissionEventKind.Proposal, Head, m.Id), (again.Kind, again.Role, again.Payload));
+        Assert.Contains(m.Id, org.ProposalsUnread(Head));
+
+        // TAKEN BY A TURN THAT ENDED, it had its turn: nothing more is raised.
+        var ended = Begin(db, Head, 0.10m, [again.Id]);
+        Assert.True(ended.Admitted, ended.Refusal);
+        attempts.End(ended.Id!, 0, t, 10, null, null, 10, null, "model-x", 0.01m, null, null);
+        Assert.Equal(0, org.Sweep(t, RewakeFloors.None));
+        Assert.Equal(2, events.OfKind(MissionEventKind.Proposal).Count);
+
+        // A JUDGMENT CLOSES THE PROPOSAL, the mandate still open: a lost turn on its taken wake raises nothing for it.
+        var m2 = org.Assign(Issue(holder: Other, allocation: 50m), t);
+        var work = Begin(db, Other, 0.10m, [Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == m2.Id).Id]);
+        var d2 = org.Deliver(m2.Id, Other, work.Id, "the answer", [], [], t).Delivery;
+        attempts.End(work.Id!, 0, t, 10, null, null, 10, null, "model-x", 0.01m, null, null);
+        org.Propose(m2.Id, Other, null, Finding, [new OrgRef(OrgRefKind.Mandate, m2.Id)], t);
+        var w2 = Assert.Single(events.OfKind(MissionEventKind.Proposal), e => e.Payload == m2.Id);
+        var judge = Begin(db, Head, 0.10m, [w2.Id, .. events.OfKind(MissionEventKind.Delivery).Where(e => e.Payload == m2.Id).Select(e => e.Id)]);
+        Assert.True(judge.Admitted, judge.Refusal);
+        org.Reject(d2.Id, Head, judge.Id, null, "the answer names no hour", t);
+        Assert.Equal(MandateEventKind.Rejected, org.MandateStatus(m2.Id));
+        Assert.Equal(1, attempts.LoseOpen(t));
+        org.Sweep(t, RewakeFloors.None);
+        Assert.Single(events.OfKind(MissionEventKind.Proposal), e => e.Payload == m2.Id);
+    }
+
     // ---- item 3: org-show ------------------------------------------------------------------------------------------
 
     /// <summary>
