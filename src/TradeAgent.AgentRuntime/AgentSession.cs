@@ -363,7 +363,8 @@ public sealed class AgentSession(
         // A BROKER SEAT IS ADMITTED ONLY VERIFIED (U-thinking-seats-c): its mediated assurance is a claim about a profile, a door and an
         // offered surface the app has checked, never one about a manifest with nothing to check.
         var seatClass = SeatClass;
-        if (manifest.Seat is null && !BrokerSeat.IsVerified(seatClass)) return Seated;
+        if (manifest.Seat is null && !BrokerSeat.IsVerified(seatClass))
+            return DeadSeats.Refusal(manifest, null, LaunchModel) is { } deadHere ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, deadHere) : Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
         if (resolveExecutable() is not { } exe)
             return BrokerSeat.IsVerified(seatClass)
@@ -377,6 +378,9 @@ public sealed class AgentSession(
             // ON THE POOL, because the meter that asks is synchronous and may be on the window's thread.
             var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, launch, CancellationToken.None))
                 .GetAwaiter().GetResult();
+            // A SEAT WHOSE TOOLS COULD NOT RUN ON ITS LAST TURN IS NOT STARTED AGAIN UNCHANGED (U-cli-code-mode).
+            if (!verdict.Refused && DeadSeats.Refusal(manifest, verdict.Profile, LaunchModel) is { } dead)
+                return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, dead);
             // THE PROFILE THE ROW WILL CARRY, AND WHO ITS SIGN-IN BILLS (U-billing-followups item 1), held for the start to compare
             // against what it verifies itself — one pair, written at once, so the start never compares one admission's profile with
             // another's class.
@@ -611,6 +615,10 @@ public sealed class AgentSession(
 
     /// <summary>The session the turn in flight runs in (<see cref="AgentTurnEnded.Session"/>); null until it launches.</summary>
     TurnSession? _session;
+
+    /// <summary>The vendor's warnings and the dead-tools sentence of the turn in flight (<c>U-cli-code-mode</c>); null until it reads one.</summary>
+    IReadOnlyList<string>? _warnings;
+    string? _toolsDead;
 
     public bool Busy => _busy;
 
@@ -859,6 +867,8 @@ public sealed class AgentSession(
         _promptIn = null;
         _session = null;
         _billingMoved = null;
+        _warnings = null;
+        _toolsDead = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -919,7 +929,10 @@ public sealed class AgentSession(
                 // AND THE SESSION IT RAN IN: fresh, with why, or resumed — null for a turn that launched nothing (U-org-packets-a).
                 Session = _session,
                 // AND THE APP'S OWN REFUSAL FOR A BILLING CLASS THAT MOVED AFTER ADMISSION, where there was one: nothing started.
-                BillingMoved = _billingMoved
+                BillingMoved = _billingMoved,
+                // AND THE VENDOR'S WARNINGS, AND THE SENTENCE FOR A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode).
+                VendorWarnings = _warnings,
+                ToolsUnavailable = _toolsDead
             });
         }
         return gateRefused;
@@ -971,6 +984,8 @@ public sealed class AgentSession(
         // the turn: a host with no meter starts turns too, and this is the last moment before the start.
         var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, launchSeat, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
+        if (DeadSeats.Refusal(manifest, seat.Profile, LaunchModel) is { } deadSeat)
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, deadSeat);
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
         // line would run under a profile its row does not name.
@@ -1208,6 +1223,10 @@ public sealed class AgentSession(
             var errorText = (await stderr).Trim();
             await feed;
 
+            // THE VENDOR'S WARNINGS, AND A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): marked before the turn's last words, so the
+            // next launch of the same seat is refused in the same sentence.
+            _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
+            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, LaunchModel, vendorSaid);
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
             return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
         }
@@ -1344,6 +1363,10 @@ public sealed class AgentSession(
         {
             Append(new ChatTurn(ChatRole.System, limit.Message, DateTimeOffset.UtcNow));
         }
+        else if (_toolsDead is { } dead)
+        {
+            Append(new ChatTurn(ChatRole.System, dead, DateTimeOffset.UtcNow));
+        }
         else if (exitCode != 0)
         {
             var detail = errorText.Length > 0 ? Tail(errorText) : $"it stopped with code {exitCode}";
@@ -1386,6 +1409,12 @@ public sealed class AgentSession(
 
         /// <summary>The vendor's refusal of this turn for its usage limit, or null. The first one stands.</summary>
         public VendorLimit? Limit { get; set; }
+
+        /// <summary>The vendor's warning items' messages, in order (<c>U-cli-code-mode</c>).</summary>
+        public List<string> Warnings { get; } = [];
+
+        /// <summary>The first warning that says the seat's tools cannot run (<see cref="RuntimeManifest.ToolsUnavailablePattern"/>), or null.</summary>
+        public string? ToolsDead { get; set; }
 
         readonly List<string> _pending = [];
 
@@ -1510,6 +1539,19 @@ public sealed class AgentSession(
         var id = Text(item, "id") ?? itemType;
         var completed = eventType.EndsWith(".completed", StringComparison.Ordinal);
 
+        // THE VENDOR'S OWN WARNING, NEVER A TOOL LINE (U-cli-code-mode): codex prints one as an `error` item. Shown in words, carried
+        // out for the logs; the one that says the seat's tools cannot run — the manifest's sentence — is held for the turn's last words.
+        if (itemType.Equals("error", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!completed || !state.AnnouncedTools.Add("warning:" + id)) return;
+            var said = Text(item, "message") ?? FindText(item, 3);
+            if (string.IsNullOrWhiteSpace(said)) return;
+            state.Warnings.Add(said.Trim());
+            if (state.ToolsDead is null && ToolsUnavailable(said)) state.ToolsDead = said.Trim();
+            else Append(new ChatTurn(ChatRole.System, said.Trim(), DateTimeOffset.UtcNow));
+            return;
+        }
+
         if (itemType.Contains("agent_message", StringComparison.OrdinalIgnoreCase) ||
             itemType.Equals("assistant_message", StringComparison.OrdinalIgnoreCase) ||
             itemType.Equals("message", StringComparison.OrdinalIgnoreCase))
@@ -1530,6 +1572,15 @@ public sealed class AgentSession(
 
         var described = DescribeTool(itemType, item);
         if (described is not null) Append(new ChatTurn(ChatRole.Tool, described, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>Whether <paramref name="message"/> is the manifest's sentence for a seat whose tools cannot run. Never throws.</summary>
+    bool ToolsUnavailable(string message)
+    {
+        if (manifest.ToolsUnavailablePattern is not { Length: > 0 } pattern) return false;
+        try { return Regex.IsMatch(message, pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); }
+        catch (ArgumentException) { return false; }
+        catch (RegexMatchTimeoutException) { return false; }
     }
 
     static string? DescribeTool(string itemType, JsonElement item)

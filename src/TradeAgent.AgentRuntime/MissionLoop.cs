@@ -431,6 +431,20 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// session — what this app did — but no model received the packet, so the loop records none of what it showed and shows it again.
     /// </summary>
     public bool NoRequestAccepted { get; init; }
+
+    /// <summary>
+    /// THE VENDOR'S WARNINGS THIS TURN'S STREAM CARRIED (<c>U-cli-code-mode</c>): each <c>error</c> item's message, in order — never a
+    /// command, never the model's words. Written to the engineering log and as an activity line by the meter; null for none.
+    /// </summary>
+    public IReadOnlyList<string>? VendorWarnings { get; init; }
+
+    /// <summary>
+    /// THE APP'S SENTENCE FOR A TURN WHOSE TOOLS COULD NOT RUN, quoting the vendor's (<see cref="RuntimeManifest.ToolsUnavailablePattern"/>),
+    /// or null. Set by the conversation that read the stream: the loop gives back every wake the turn took, as for the gate's refusal,
+    /// and the seat's next launch is refused in the same words until its program, settings or model change — the turn ran, and was
+    /// charged, but its commands could not, so it answered nothing and is never counted as the model's behaviour.
+    /// </summary>
+    public string? ToolsUnavailable { get; init; }
 }
 
 /// <summary>
@@ -4225,12 +4239,15 @@ public sealed class MissionLoop
 
     /// <summary>
     /// THE SENTENCE OF A REFUSAL THAT LET THE TURN DO NO WORK, or null where the turn ran: the activation gate's at its last
-    /// check, or the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>). Such a turn answered
+    /// check, the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>), or a seat whose tools could not
+    /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>). Such a turn answered
     /// nothing, so it gives back every wake it took and every word typed into it.
     /// </summary>
     static string? UnworkedRefusal(AgentTurnEnded? ended) =>
         ended?.GateRefused is { } late ? late.Refusal.Words
         : ended?.Limit is { BeforeAnyWork: true } limit ? limit.Message
+        // A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): the model wrote, but nothing it tried ran, so nothing was answered.
+        : ended?.ToolsUnavailable is { } dead ? dead
         : null;
 
     /// <summary>

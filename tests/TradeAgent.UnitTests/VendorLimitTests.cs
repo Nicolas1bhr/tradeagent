@@ -150,7 +150,7 @@ public class VendorLimitTests : IDisposable
     // ---- (b) the wait -----------------------------------------------------------------------------
 
     /// <summary>The mission's world: the real wake queue, the real launch ledger, and a turn counter.</summary>
-    sealed class Host(Database db, MissionEventStore events, IAgentConversation conversation, string home)
+    internal sealed class Host(Database db, MissionEventStore events, IAgentConversation conversation, string home)
         : IMissionHost
     {
         readonly string _tag = Guid.NewGuid().ToString("n")[..8];

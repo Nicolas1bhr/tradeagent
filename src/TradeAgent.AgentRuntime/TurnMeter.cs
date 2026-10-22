@@ -364,7 +364,11 @@ public sealed record TurnContext
     static bool IsToolItem(JsonElement item) =>
         Text(item, "type") is { } type
         && !type.Equals("agent_message", StringComparison.OrdinalIgnoreCase)
-        && !type.Equals("reasoning", StringComparison.OrdinalIgnoreCase);
+        && !type.Equals("reasoning", StringComparison.OrdinalIgnoreCase)
+        // NOR THE VENDOR'S OWN WARNING (U-cli-code-mode): codex prints a warning as an `error` item (exec/src/
+        // event_processor_with_jsonl_output.rs:409-419 at rust-v0.160.1), and attempt 4's every turn read one command and no output —
+        // the warning that its tools could not run, counted as the work they did not do. It goes to the logs (AgentTurnEnded.VendorWarnings).
+        && !type.Equals("error", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Bytes of output an item carries, where it carries any. <c>aggregated_output</c> is the
@@ -705,6 +709,8 @@ public sealed class TurnMeter
     /// </param>
     public void Record(AgentTurnEnded ended, string? role = null)
     {
+        Warned(ended, role);
+
         if (ended.Survivors is { Count: > 0 } left)
             lock (_gate)
             {
@@ -811,6 +817,28 @@ public sealed class TurnMeter
             ? new TurnPrice(0m, Currency(), null)
             : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
 
+    /// <summary>
+    /// THE VENDOR'S WARNINGS, WHERE THE OWNER AND THE ENGINEER LOOK (<c>U-cli-code-mode</c>): each one to the engineering log, and one
+    /// activity line — the app's sentence for a seat whose tools could not run where there is one, else the warning itself. A log that
+    /// cannot be written costs the turn nothing: the conversation already showed the words.
+    /// </summary>
+    void Warned(AgentTurnEnded ended, string? role)
+    {
+        var warnings = ended.VendorWarnings ?? [];
+        if (warnings.Count == 0 && ended.ToolsUnavailable is null) return;
+        try
+        {
+            var log = new LogStore(_db);
+            foreach (var warning in warnings)
+                log.Engineering("AgentRuntime", "vendor_warning", "warn",
+                    metadataJson: System.Text.Json.JsonSerializer.Serialize(new { role, runtime = RuntimeOf(role), message = warning }));
+            var who = role is { Length: > 0 } r ? CouncilRoles.Title(r) + ": " : "";
+            if (ended.ToolsUnavailable is { } dead) log.Activity(who + dead, "warn");
+            else foreach (var warning in warnings) log.Activity($"{who}the AI's program warned: {warning}", "warn");
+        }
+        catch (Exception) { /* a record, not a gate */ }
+    }
+
     /// <summary>The currency a zero is written in: the price list's, or none where it cannot be read.</summary>
     static string Currency()
     {
@@ -830,7 +858,7 @@ public sealed class TurnMeter
         with
         {
             Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld ?? ended.GateRefused?.Refusal.Words
-                ?? ended.FirstRequestWithheld ?? ended.BillingMoved,
+                ?? ended.FirstRequestWithheld ?? ended.BillingMoved ?? ended.ToolsUnavailable,
             GateKind = ended.GateRefused?.Refusal.Kind.ToString(),
             CanonVersion = ended.Canon?.Version,
             CanonSha256 = ended.Canon?.Sha256,
