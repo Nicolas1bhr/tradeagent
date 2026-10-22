@@ -279,14 +279,15 @@ public sealed partial class OrgStore
     public string? AssignRefusal(MandateIssue issue, DateTimeOffset now) => AssignVerdict(issue, now).Why;
 
     /// <summary>
-    /// <see cref="AssignRefusal"/>'s words, and whether they refuse the DECIDER'S RIGHTS OR AUTHORITY (fix pass 2) — <c>operations</c>
-    /// named as a holder (RULING Q4), a decider that heads no unit, a holder outside the subtree it heads — rather than what the issue
+    /// <see cref="AssignRefusal"/>'s words, and whether they refuse the DECIDER'S RIGHTS OR AUTHORITY (fix pass 2) — the decider's own
+    /// position as holder (fix pass 3), <c>operations</c> named as a holder (RULING Q4), a decider that heads no unit, a holder outside
+    /// the subtree it heads — rather than what the issue
     /// says. Only the first kind is marked (<see cref="RefusalMark"/>), so only it leaves a refusal row at the pipe.
     /// </summary>
     (string? Why, bool Rights) AssignVerdict(MandateIssue issue, DateTimeOffset now)
     {
         if (issue.Holder == issue.Decider)
-            return ($"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.", false);
+            return ($"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.", true);
         if (IsAppPrincipal(issue.Holder))
             return ($"'{issue.Holder}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it holds no mandate.", false);
         // RULING Q4 — THE OWNER'S: operations places orders, and an order is never a mandate's to shape (no instrument, side, size or

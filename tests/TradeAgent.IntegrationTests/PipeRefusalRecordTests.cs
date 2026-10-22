@@ -297,9 +297,10 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
 
     /// <summary>
     /// (e8) AN ASSIGNMENT REFUSED ON THE DECIDER'S AUTHORITY LEAVES ONE ROW; ONE REFUSED ON ITS CONTENT NONE (fix pass 2): over the read
-    /// loop, an eligible head's <c>mandate-assign</c> to a holder outside the subtree it heads, and to <c>operations</c> (RULING Q4), each
-    /// leaves exactly one <c>op_refused</c> row; the same head's assignment into its own team with an allocation of zero is refused for
-    /// what it says and leaves none. RED before the fix: every <c>AssignRefusal</c> was thrown unmarked, so the two left no row.
+    /// loop, an eligible head's <c>mandate-assign</c> to a holder outside the subtree it heads, to <c>operations</c> (RULING Q4), and to its
+    /// own position (fix pass 3, seat A's ruling: a rule on whom the decider may assign to) each leaves exactly one <c>op_refused</c> row;
+    /// the same head's assignment into its own team with an allocation of zero is refused for what it says and leaves none. RED before
+    /// the fix: every <c>AssignRefusal</c> was thrown unmarked, so the two left no row; before fix pass 3 the self-assignment left none.
     /// </summary>
     [Fact]
     public async Task An_assignment_refused_on_authority_leaves_one_row_and_one_refused_on_content_none()
@@ -327,11 +328,15 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
             var operations = await client.SendAsync(Assign(head.Token, holder: CouncilRoles.Operations));
             Assert.Contains("holds no mandate", operations.Error!.Message, StringComparison.Ordinal);
             Assert.All([outside, operations], r => Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), r.Error!.Code));
+            Assert.Equal(2, Rows(db, "op_refused").Count);
+
+            var self = await client.SendAsync(Assign(head.Token, holder: Head));
+            Assert.Contains("never to yourself", self.Error!.Message, StringComparison.Ordinal);
         }
 
         var rows = Rows(db, "op_refused");
         foreach (var r in rows) log.WriteLine(r.Metadata);
-        Assert.Equal(2, rows.Count);
+        Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.Equal((Ops.MandateAssign, Head, headAttempt), (r.M("op"), r.M("role"), r.M("attempt"))));
     }
 
