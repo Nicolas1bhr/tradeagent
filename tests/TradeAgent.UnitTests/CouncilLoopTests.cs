@@ -234,7 +234,14 @@ public partial class CouncilLoopTests
         public CouncilBoundaries? Boundaries { get; }
 
         public IAgentConversation? Conversation => Conversations[CouncilRoles.Operations];
-        public IAgentConversation? ConversationFor(string role) => Conversations.GetValueOrDefault(role);
+        public IAgentConversation? ConversationFor(string role) =>
+            Harnessed.TryGetValue(role, out var harness) ? harness : Conversations.GetValueOrDefault(role);
+
+        /// <summary>
+        /// A position's REAL harness conversation, where a test hands one in place of its double (<c>U-org-packets-b</c> fix pass 1):
+        /// pointed at the loopback fake, with no key that is real — and, in the tests that use it, no request that ever leaves.
+        /// </summary>
+        public Dictionary<string, IAgentConversation> Harnessed { get; } = [];
 
         /// <summary>
         /// The activation seam's refusals, by position: empty is today's legacy pair, refused by nobody — and every other id

@@ -85,6 +85,69 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// A HARNESS TURN THAT HANDED NO REQUEST OVER RECORDS NO INPUT, AND ITS NOTE RIDES THE NEXT PACKET (fix pass 1, the review's
+    /// first point; ORCHESTRATION § 2.6: the cursor advances only with an outcome a model was shown). The executor runs on a REAL
+    /// harness conversation over the loopback fake, twice: its seat's input allowance is smaller than its first request's body, so
+    /// that request is withheld; then its worker tools throw before any request is built. Neither hands anything to the transport —
+    /// the provider receives nothing — so neither records the note, and the executor's next launch is still shown it.
+    ///
+    /// <para>RED at base 4d38cada: "Assert.Empty() Failure: Collection was not empty Collection: ["lateral:lat-0752a1b6544b"]" — the
+    /// withheld turn named a fresh session, so its packet was marked shown. MUTANT, the session keyed on the exit code again
+    /// (<c>_sent || exitCode != NotStarted</c>): the same failure; with only the withheld turn excused, the thrown one's lineage
+    /// held the note (line 143).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_that_handed_no_request_over_records_no_input_and_its_note_rides_the_next_packet()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = SessionChart(db, root);
+        var loop = new MissionLoop(host, NoHeartbeat);
+        var note = new OrgStore(db).SendLateral(TeamHead, null, Executor, "The second venue has gaps.", [], DateTimeOffset.UtcNow);
+
+        using var provider = new FakeProvider();
+        // A MANIFEST BUILT HERE, never the catalogue's: nothing here reads the override file another test may be writing.
+        var manifest = new RuntimeManifest
+        {
+            Id = ApiAgentRuntime.RuntimeId, DisplayName = "Loopback harness", BaseUrl = provider.BaseUrl,
+            CompletionsPath = "chat/completions", DefaultModel = "loopback-model"
+        };
+        using var withheld = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            allowance: _ => new TurnAllowance(100, 20_000), requestTimeout: TimeSpan.FromSeconds(10));
+        using var threw = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            tools: _ => throw new TradeAgentException(ErrorCode.IPC_UNAVAILABLE, "the worker's tools could not be read"),
+            requestTimeout: TimeSpan.FromSeconds(10));
+
+        var endings = new List<AgentTurnEnded>();
+        foreach (var (runtime, tag) in new[] { (withheld, "harness-withheld"), (threw, "harness-threw") })
+        {
+            var conversation = runtime.OpenConversation(Executor, () => host.HomeFor(Executor),
+                () => new Dictionary<string, string>(), () => null);
+            conversation.TurnEnded += endings.Add;
+            host.Harnessed[Executor] = conversation;
+            var before = endings.Count;
+            SelfWake(host, Executor, tag);
+            for (var i = 0; i < 12 && endings.Count == before; i++) await loop.TurnAsync();
+            Assert.Equal(before + 1, endings.Count);
+        }
+        Assert.Empty(provider.Requests);
+        Assert.NotNull(endings[0].FirstRequestWithheld);
+        Assert.Equal(ApiConversation.EndedProviderFailed, endings[1].Outcome);
+
+        host.Harnessed.Remove(Executor);
+        host.Conversations[Executor].Session = TurnSession.Resumed;
+        SelfWake(host, Executor, "double-after");
+        await TurnsUntil(loop, host, Executor, 1);
+
+        var launches = LaunchesOf(db, Executor);
+        Assert.Equal(3, launches.Count);
+        Assert.Empty(InputsOf(db, launches[0]));   // its first request was withheld
+        Assert.Empty(InputsOf(db, launches[1]));   // it threw before any request was built
+        Assert.Contains($"Note `{note.Id}` from `{TeamHead}`", host.Conversations[Executor].Sent[0], StringComparison.Ordinal);
+        Assert.Equal([$"lateral:{note.Id}"], InputsOf(db, launches[2]));
+    }
+
+    /// <summary>
     /// (h) INPUT LINEAGE IS APPEND-ONLY AND WRITTEN ONLY WITH THE COMMITTED OUTCOME: the loop hands the host what a packet showed only
     /// from inside the turn's committed transition; the rows refuse UPDATE and DELETE and a kind outside the closed list; and a
     /// second commit of the same attempt writes nothing twice. RED at base: no <c>ai_attempt_input</c> table existed.
