@@ -12,8 +12,14 @@ namespace TradeAgent.Tests.Unit;
 /// that corrupts one is changing what every other class in this assembly would read. xUnit runs
 /// classes in parallel; naming this collection on each of them is what stops a deliberate corruption
 /// in one test from being an unexplained failure in another.
+///
+/// <para>It is also a real non-parallel definition (U-launcher-race, review R1): these classes replace the launcher at
+/// <c>Paths.Bin</c>, write fake runtimes and start programs through them, so no other collection and no uncollected class
+/// runs beside them. A thread that forks while another holds a script's write handle makes that script's exec fail with
+/// ETXTBSY ("the turn ended 154"); only running them apart removes that, and a rename into place does not.</para>
 /// </summary>
-public static class VendorOverrideFiles
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class VendorOverrideFiles
 {
     public const string Name = "vendor override files";
 }

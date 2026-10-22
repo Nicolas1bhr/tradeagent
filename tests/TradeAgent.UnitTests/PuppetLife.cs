@@ -187,12 +187,19 @@ sealed class PuppetLife : IAsyncDisposable
 
     /// <summary>
     /// TradeAgent's own trade command, deployed the way the app deploys it at start, from this configuration's build. Whatever
-    /// another test left at that path goes first: the deployer copies only over an OLDER file.
+    /// another test left at that path goes first — the deployer copies only over an OLDER file — but it is REPLACED, never
+    /// deleted and copied (U-launcher-race, review R1): the real command is renamed over the launcher whole, so a held launch
+    /// that a class beside this one starts at any moment finds a complete launcher, never none and never half of one.
     /// </summary>
-    static void DeployTrade()
+    internal static void DeployTrade()
     {
         var exe = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
-        if (File.Exists(exe)) File.Delete(exe);
+        var built = Path.Combine(Puppet.TradeCliDir, ToolDeployer.TradeCliName);
+        if (File.Exists(built))
+        {
+            Directory.CreateDirectory(Paths.Bin);
+            TestEnv.WriteExecutable(exe, File.ReadAllBytes(built));   // newer than the build's: the deployer then leaves it, and deploys the rest
+        }
         Assert.Equal(exe, ToolDeployer.EnsureTradeCli(Puppet.TradeCliDir));
     }
 
