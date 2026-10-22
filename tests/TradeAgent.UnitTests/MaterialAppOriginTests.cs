@@ -303,4 +303,42 @@ public class MaterialAppOriginTests
                 $"research/{name} was measured as another file: {row.SizeBytes} bytes, {row.Sha256}");
         }
     }
+
+    /// <summary>
+    /// THE APP'S WORD IS NEVER MEASURED THROUGH A LINK (<c>U-execution-environment</c> fix pass 5, the fourth re-review's D2). The pass
+    /// asks whether the app wrote a home's file by hashing it, and that read followed links: a cell that swapped the app's language
+    /// reference, after the walk described it, for a link to a file outside the home holding the same bytes had the link recorded as
+    /// <see cref="MaterialOrigin.App"/> — and a link to <c>/dev/zero</c> or a FIFO would have hung the pass. The read now opens the name
+    /// itself, link-free, so the swapped name is measured as the agent's: the weaker word, the direction this must fail in.
+    /// </summary>
+    [UnixFact]
+    public void The_apps_word_is_never_measured_through_a_link_swapped_in_after_the_walk()
+    {
+        var (db, root, files) = World();
+        using var _ = db;
+        WorkspaceBuilder.BuildAll(Context(CouncilRoles.Operations), root, files);
+        var reference = Path.Combine(Home(root, CouncilRoles.Research), ResearchLibrary.ReferencePath);
+        var sentinel = Path.Combine(root, "outside-the-home.md");
+        File.Copy(reference, sentinel);                                     // the app's bytes, outside every home
+
+        var disk = WorkspaceReads.Under(root);
+        var swapped = false;
+        var reads = new WorkspaceReads(disk.FolderIsThere, disk.List, file =>
+        {
+            var seen = disk.Stat(file);
+            if (!swapped && Path.GetFullPath(file) == Path.GetFullPath(reference))
+            {
+                File.Delete(reference);                                     // after the walk described it, before the origin is asked
+                File.CreateSymbolicLink(reference, sentinel);
+                swapped = true;
+            }
+            return seen;
+        });
+        new MaterialScanner(db, root, at => true, files, reads: reads).Scan();
+
+        Assert.True(swapped, "the walk never described the reference");
+        var row = Row(db, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/{ResearchLibrary.ReferencePath}");
+        Assert.True(row.Origin == MaterialOrigin.Agent,
+            $"the app's word was measured through a link to a file outside the home: {row.Origin}");
+    }
 }
