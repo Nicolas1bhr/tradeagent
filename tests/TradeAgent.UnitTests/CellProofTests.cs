@@ -38,6 +38,28 @@ public class CellProofTests
         Assert.False(new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa").HoldsProof());
     }
 
+    /// <summary>
+    /// R3 (fix pass 1): NO DEPLOYED HASH, NO BUILD, NO PROOF. A hash file that is missing, empty or not one SHA-256 names no build — never
+    /// a shared word like <c>none</c> — and a store with no build writes no proof (refused in words) and counts none, even one written
+    /// under a build before.
+    /// </summary>
+    [Fact]
+    public void A_missing_deployed_trade_hash_names_no_build_and_no_proof_is_written_or_counted()
+    {
+        foreach (var text in new string?[] { null, "", "   ", "none", new string('a', 63), new string('g', 64) })
+            Assert.Null(CellProofStore.BuildOf(text));
+        Assert.Equal($"{Versions.App}+trade-sha256:{new string('a', 64)}", CellProofStore.BuildOf(new string('A', 64) + "\n"));
+
+        using var db = TestEnv.NewDb();
+        var ex = Assert.Throws<TradeAgentException>(() => new CellProofStore(db, () => Here, () => null).Record("p", "profile-1", ["none"]));
+        Assert.Contains("state/trade.sha256", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, Scalar(db, "SELECT COUNT(*) FROM cell_proof"));
+
+        new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa").Record("p", "profile-1", ["none"]);
+        Assert.Empty(new CellProofStore(db, () => Here, () => null).Proven());
+        Assert.False(new CellProofStore(db, () => Here, () => null).HoldsProof());
+    }
+
     /// <summary>A proof's build names the deployed trade, so two builds of one version are two builds; a host's release is the full string.</summary>
     [Fact]
     public void A_proofs_build_is_the_version_and_the_deployed_trade_and_its_release_is_the_full_kernel_string()
