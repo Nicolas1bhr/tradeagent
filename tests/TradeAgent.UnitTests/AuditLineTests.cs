@@ -302,4 +302,106 @@ public partial class AuditLineTests(ITestOutputHelper log)
             .Select(n => $"{Path.GetFileName(f)} names {n}")).ToList();
         Assert.True(naming.Count == 0, "the audit line names what it may never read: " + string.Join(", ", naming));
     }
+
+    // ---- deliveries, as the app seals and judges them ----------------------------------------------------------------------
+
+    /// <summary>A mandate <see cref="Head"/> issues to <see cref="Member"/>: a task whose output is a report, with open latitude.</summary>
+    static MandateRow Issued(OrgStore org, DateTimeOffset now) =>
+        org.Assign(new MandateIssue(Head, null, Member, MandateKind.Task, "find out whether the funding skew predicts the next hour", null,
+            MandateShape.Report, false, now.AddDays(7), 5m, MandateLimits.MaxRetryLimit), now);
+
+    /// <summary>A delivery the member sealed and the head accepted: its id.</summary>
+    static string Accepted(OrgStore org, DateTimeOffset now, string report = "the answer", IReadOnlyList<MandateDeviation>? deviations = null,
+        IReadOnlyList<MandateRef>? refs = null, string? attempt = null)
+    {
+        var m = Issued(org, now);
+        var d = org.Deliver(m.Id, Member, attempt, report, deviations ?? [], refs ?? [], now).Delivery.Id;
+        org.Accept(d, Head, null, now);
+        return d;
+    }
+
+    /// <summary>A delivery the head rejected, stating a defect: its id.</summary>
+    static string Rejected(OrgStore org, DateTimeOffset now)
+    {
+        var m = Issued(org, now);
+        var d = org.Deliver(m.Id, Member, null, "a rejected answer", [], [], now).Delivery.Id;
+        org.Reject(d, Head, null, null, "it answers another question", now);
+        return d;
+    }
+
+    /// <summary>A delivery nobody has judged: its id.</summary>
+    static string Unjudged(OrgStore org, DateTimeOffset now)
+    {
+        var m = Issued(org, now);
+        return org.Deliver(m.Id, Member, null, "an unjudged answer", [], [], now).Delivery.Id;
+    }
+
+    static long Count(string file, string table)
+    {
+        using var c = OversightSeed.Open(file);
+        using var q = c.CreateCommand();
+        q.CommandText = $"SELECT COUNT(*) FROM {table}";
+        return (long)q.ExecuteScalar()!;
+    }
+
+    // ---- (e) the draw ----------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (e) THE DRAW IS SALTED, IDEMPOTENT AND SURVIVES A RESTART. The draw is a function of the salt and the delivery's id: the same salt
+    /// draws the same ids, another salt draws differently, and over many ids about one in four is drawn at the policy rate. In a home: at
+    /// rate 1 every accepted delivery is drawn and no rejected or unjudged one; a second sweep draws nothing; a restart (the file reopened)
+    /// draws nothing; and at the policy rate exactly the deliveries the file's salt predicts are drawn. RED at base: no sampler existed.
+    /// </summary>
+    [Fact]
+    public void The_draw_is_salted_idempotent_and_survives_a_restart()
+    {
+        Assert.Equal(0.25, AuditPolicy.SampleRate);
+        var ids = Enumerable.Range(0, 2000).Select(i => Sha256Hex.Of("delivery " + i)).ToList();
+        var one = System.Security.Cryptography.RandomNumberGenerator.GetBytes(AuditStore.SaltBytes);
+        var two = System.Security.Cryptography.RandomNumberGenerator.GetBytes(AuditStore.SaltBytes);
+        var byOne = ids.Where(id => AuditSampler.Draws(one, id, AuditPolicy.SampleRate)).ToList();
+        Assert.Equal(byOne, ids.Where(id => AuditSampler.Draws(one, id, AuditPolicy.SampleRate)));
+        var byTwo = ids.Where(id => AuditSampler.Draws(two, id, AuditPolicy.SampleRate)).ToList();
+        Assert.NotEqual(byOne, byTwo);
+        log.WriteLine($"drawn at 1/4: {byOne.Count} and {byTwo.Count} of {ids.Count}; {byOne.Intersect(byTwo).Count()} in both");
+        Assert.InRange(byOne.Count, 400, 600);
+        Assert.InRange(byTwo.Count, 400, 600);
+        Assert.All(ids, id => Assert.True(AuditSampler.Draws(one, id, 1)));
+        Assert.All(ids, id => Assert.False(AuditSampler.Draws(one, id, 0)));
+
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var accepted = Enumerable.Range(0, 8).Select(i => Accepted(org, now, $"answer {i}")).ToList();
+        var rejected = Rejected(org, now);
+        var unjudged = Unjudged(org, now);
+
+        var file = NewFile();
+        using (var store = new AuditStore(file, now))
+        {
+            var first = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
+            Assert.Null(first.Failure);
+            Assert.Equal(accepted.Order(StringComparer.Ordinal), first.Drawn.Select(s => s.DeliveryId).Order(StringComparer.Ordinal));
+            Assert.DoesNotContain(first.Drawn, s => s.DeliveryId == rejected || s.DeliveryId == unjudged);
+            Assert.All(first.Drawn, s => Assert.Equal(Team, s.UnitId));
+            Assert.Empty(new AuditSweep(db.FilePath, store, rate: 1).Run(now.AddMinutes(1)).Drawn);
+        }
+        using (var restarted = new AuditStore(file, now.AddHours(1)))
+        {
+            Assert.Empty(new AuditSweep(db.FilePath, restarted, rate: 1).Run(now.AddHours(1)).Drawn);
+            Assert.Equal(accepted.Count, restarted.Samples().Count);
+        }
+
+        // AT THE POLICY RATE, THE FILE'S OWN SALT DECIDES — and a restart draws the same.
+        var policyFile = NewFile();
+        using (var store = new AuditStore(policyFile, now))
+        {
+            var predicted = accepted.Where(d => AuditSampler.Draws(store.Salt(), d, AuditPolicy.SampleRate)).Order(StringComparer.Ordinal).ToList();
+            var drawn = new AuditSweep(db.FilePath, store).Run(now);
+            Assert.Equal(predicted, drawn.Drawn.Select(s => s.DeliveryId).Order(StringComparer.Ordinal));
+        }
+        using (var again = new AuditStore(policyFile, now))
+            Assert.Empty(new AuditSweep(db.FilePath, again).Run(now).Drawn);
+    }
 }
