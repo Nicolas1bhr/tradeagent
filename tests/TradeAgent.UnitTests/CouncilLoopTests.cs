@@ -245,7 +245,9 @@ public partial class CouncilLoopTests
         public MandateView? MandateFor(string mandateId)
         {
             var org = new OrgStore(_db);
-            return org.Mandate(mandateId) is { } m ? new MandateView(m, org.MandateEvents(m.Id)) : null;
+            if (org.Mandate(mandateId) is not { } m) return null;
+            var latest = org.Deliveries(m.Id).LastOrDefault();
+            return new MandateView(m, org.MandateEvents(m.Id), org.SpendOf(m.Id), latest, latest is null ? null : org.Checks(latest.Id));
         }
 
         /// <summary>The position's last woken turn, from the real launch ledger.</summary>

@@ -1952,7 +1952,14 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (host._db is not { } db) return null;
             var org = new OrgStore(db);
-            return db.Read(_ => org.Mandate(mandateId) is { } m ? new MandateView(m, org.MandateEvents(m.Id)) : null);
+            return db.Read(_ => org.Mandate(mandateId) is { } m ? View(org, m) : null);
+        }
+
+        /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
+        internal static MandateView View(OrgStore org, MandateRow m)
+        {
+            var latest = org.Deliveries(m.Id).LastOrDefault();
+            return new MandateView(m, org.MandateEvents(m.Id), org.SpendOf(m.Id), latest, latest is null ? null : org.Checks(latest.Id));
         }
 
         /// <summary>
