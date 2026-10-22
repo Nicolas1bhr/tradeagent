@@ -377,6 +377,7 @@ public partial class CellLinuxTests
         var (second, two) = await ExecutorTurn(w, [Exec("h2", "./scripts/tool.sh two")]);
         Assert.Contains("TOOL-RAN two", Out(two, "h2", second));
         Assert.Equal(0, second.ExitCode);
+        Assert.Equal(new TurnSession(true, SessionWhy.Cell), second.Session);   // fresh, and the record says why: a cell seat never resumes
     }
 
     /// <summary>
