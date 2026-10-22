@@ -276,44 +276,51 @@ public sealed partial class OrgStore
     /// <c>operations</c>, no active position, or outside the subtree the decider heads; an unknown kind, shape or latitude; an
     /// objective too long; a deadline not in the future; an allocation not above zero; a retry limit out of range.
     /// </summary>
-    public string? AssignRefusal(MandateIssue issue, DateTimeOffset now)
+    public string? AssignRefusal(MandateIssue issue, DateTimeOffset now) => AssignVerdict(issue, now).Why;
+
+    /// <summary>
+    /// <see cref="AssignRefusal"/>'s words, and whether they refuse the DECIDER'S RIGHTS OR AUTHORITY (fix pass 2) — <c>operations</c>
+    /// named as a holder (RULING Q4), a decider that heads no unit, a holder outside the subtree it heads — rather than what the issue
+    /// says. Only the first kind is marked (<see cref="RefusalMark"/>), so only it leaves a refusal row at the pipe.
+    /// </summary>
+    (string? Why, bool Rights) AssignVerdict(MandateIssue issue, DateTimeOffset now)
     {
         if (issue.Holder == issue.Decider)
-            return $"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.";
+            return ($"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.", false);
         if (IsAppPrincipal(issue.Holder))
-            return $"'{issue.Holder}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it holds no mandate.";
+            return ($"'{issue.Holder}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it holds no mandate.", false);
         // RULING Q4 — THE OWNER'S: operations places orders, and an order is never a mandate's to shape (no instrument, side, size or
         // timing, § 2.2). Refused whoever asks, before the chart is read.
         if (issue.Holder == CouncilRoles.Operations)
-            return $"'{CouncilRoles.Operations}' holds no mandate: what the {CouncilRoles.Title(CouncilRoles.Operations)} trades is never shaped by an assignment (ORCHESTRATION § 2.2).";
+            return ($"'{CouncilRoles.Operations}' holds no mandate: what the {CouncilRoles.Title(CouncilRoles.Operations)} trades is never shaped by an assignment (ORCHESTRATION § 2.2).", true);
         if (Position(issue.Holder) is not { } holder)
-            return $"'{issue.Holder}' is no position on the chart.";
+            return ($"'{issue.Holder}' is no position on the chart.", false);
         if (holder.Status != OrgPositionStatus.Active)
-            return $"'{issue.Holder}' is {holder.Status}, not active: only an active position holds a mandate.";
+            return ($"'{issue.Holder}' is {holder.Status}, not active: only an active position holds a mandate.", false);
 
         var subtree = SubtreeOf(issue.Decider);
         if (subtree.Count == 0)
-            return $"'{issue.Decider}' heads no unit, so there is no subtree it may assign into.";
+            return ($"'{issue.Decider}' heads no unit, so there is no subtree it may assign into.", true);
         if (!subtree.Any(u => u.Id == holder.UnitId))
-            return $"'{issue.Holder}' is not in the subtree you head ({string.Join(", ", subtree.Select(u => u.Id))}): a mandate goes only into your own subtree.";
+            return ($"'{issue.Holder}' is not in the subtree you head ({string.Join(", ", subtree.Select(u => u.Id))}): a mandate goes only into your own subtree.", true);
 
         if (!MandateKind.IsKnown(issue.Kind))
-            return $"'{issue.Kind}' is no mandate kind: {string.Join(" | ", MandateKind.All)}.";
+            return ($"'{issue.Kind}' is no mandate kind: {string.Join(" | ", MandateKind.All)}.", false);
         if (issue.Kind == MandateKind.Task && !MandateShape.IsKnown(issue.OutputShape))
-            return $"a task names its output shape, one of {string.Join(" | ", MandateShape.All)} — '{issue.OutputShape}' is none of them.";
+            return ($"a task names its output shape, one of {string.Join(" | ", MandateShape.All)} — '{issue.OutputShape}' is none of them.", false);
         if (issue.Kind == MandateKind.Exploration && issue.OutputShape is not null)
-            return "an exploration has no output shape: name the shape only for a task.";
+            return ("an exploration has no output shape: name the shape only for a task.", false);
         if (string.IsNullOrWhiteSpace(issue.Objective))
-            return "a mandate states its objective.";
+            return ("a mandate states its objective.", false);
         if (issue.Objective.Length > MandateLimits.MaxObjectiveChars || issue.Scope?.Length > MandateLimits.MaxObjectiveChars)
-            return $"the objective and the scope hold at most {MandateLimits.MaxObjectiveChars:N0} characters each; longer is refused, never cut.";
+            return ($"the objective and the scope hold at most {MandateLimits.MaxObjectiveChars:N0} characters each; longer is refused, never cut.", false);
         if (issue.Deadline <= now)
-            return $"the deadline {issue.Deadline:u} is not in the future.";
+            return ($"the deadline {issue.Deadline:u} is not in the future.", false);
         if (issue.Allocation <= 0m)
-            return $"the AI allocation must be above zero — '{issue.Allocation.ToString(CultureInfo.InvariantCulture)}' is not.";
+            return ($"the AI allocation must be above zero — '{issue.Allocation.ToString(CultureInfo.InvariantCulture)}' is not.", false);
         if (issue.RetryLimit is < 1 or > MandateLimits.MaxRetryLimit)
-            return $"the retry limit is a whole number from 1 to {MandateLimits.MaxRetryLimit}.";
-        return null;
+            return ($"the retry limit is a whole number from 1 to {MandateLimits.MaxRetryLimit}.", false);
+        return (null, false);
     }
 
     /// <summary>
@@ -325,8 +332,8 @@ public sealed partial class OrgStore
     /// (<c>U-org-decisions</c>) — a forecast on its own mandate's state is recorded, never scored: its decider controls it.</param>
     public MandateRow Assign(MandateIssue issue, DateTimeOffset now, IReadOnlyList<ForecastClaim>? forecasts = null) => db.Write(_ =>
     {
-        if (AssignRefusal(issue, now) is { } refused)
-            throw new TradeAgentException(ErrorCode.INVALID_REQUEST, refused + " Nothing was written.");
+        if (AssignVerdict(issue, now) is { Why: { } refused, Rights: var rights })
+            throw rights ? Forbidden(refused) : Refused(refused);
 
         var holderUnit = Position(issue.Holder)!.UnitId;
         // THE UNIT IT IS ISSUED FROM: the nearest unit the decider heads above (or at) the holder's.

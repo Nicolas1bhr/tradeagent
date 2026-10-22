@@ -36,18 +36,18 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         return id;
     }
 
-    static IpcRequest Assign(string? grant = null) => new()
+    static IpcRequest Assign(string? grant = null, string holder = CouncilRoles.Research, decimal allocation = 5m) => new()
     {
         Op = Ops.MandateAssign, Token = IpcToken.Ensure(), Grant = grant, Session = "refusal-row",
         RequestId = "refrow-" + Guid.NewGuid().ToString("n")[..12],
         Args = new()
         {
-            ["holder"] = JsonSerializer.SerializeToElement(CouncilRoles.Research),
+            ["holder"] = JsonSerializer.SerializeToElement(holder),
             ["goal"] = JsonSerializer.SerializeToElement("find out whether the skew predicts the next hour"),
             ["kind"] = JsonSerializer.SerializeToElement(MandateKind.Task),
             ["shape"] = JsonSerializer.SerializeToElement(MandateShape.Report),
             ["due"] = JsonSerializer.SerializeToElement(DateTimeOffset.UtcNow.AddDays(7).ToString("O")),
-            ["allocation"] = JsonSerializer.SerializeToElement(5m),
+            ["allocation"] = JsonSerializer.SerializeToElement(allocation),
         }
     };
 
@@ -194,6 +194,9 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
 
     const string Head = "pos-r3c0ffee0001", Member = "pos-r3c0ffee0002", Other = "pos-r3c0ffee0003", Team = "team-r3c0ffee";
 
+    /// <summary>A position in a second team, outside the subtree <see cref="Head"/> heads.</summary>
+    const string Outsider = "pos-r3c0ffee0004", Elsewhere = "team-r3c0ffe2";
+
     static void Exec(Database db, string sql, params (string, object?)[] ps) => db.Write(_ =>
     {
         using var c = db.Cmd(sql, ps);
@@ -210,6 +213,10 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
             Exec(db, "INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'active',$at)",
                 ("$id", id), ("$u", Team), ("$h", $"org/{id}"), ("$at", at));
         Exec(db, "UPDATE org_unit SET head_position_id=$id WHERE id=$t", ("$id", Head), ("$t", Team));
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,'team',NULL,'active',$at)",
+            ("$t", Elsewhere), ("$p", OrgIds.Research), ("$at", at));
+        Exec(db, "INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'active',$at)",
+            ("$id", Outsider), ("$u", Elsewhere), ("$h", $"org/{Outsider}"), ("$at", at));
     }
 
     /// <summary>A launch the ledger recorded for <paramref name="position"/> on the app's own HARNESS seat — eligible for the verbs; never a real model.</summary>
@@ -286,6 +293,46 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         Assert.Null(swept.Failure);
         var found = Assert.Single(swept.Added, f => f.Detector == "refusals" && f.ScopeId == Core.Oversight.OversightStore.RootScope);
         Assert.Equal(Ops.MandateDecline, found.Measured["op"]);
+    }
+
+    /// <summary>
+    /// (e8) AN ASSIGNMENT REFUSED ON THE DECIDER'S AUTHORITY LEAVES ONE ROW; ONE REFUSED ON ITS CONTENT NONE (fix pass 2): over the read
+    /// loop, an eligible head's <c>mandate-assign</c> to a holder outside the subtree it heads, and to <c>operations</c> (RULING Q4), each
+    /// leaves exactly one <c>op_refused</c> row; the same head's assignment into its own team with an allocation of zero is refused for
+    /// what it says and leaves none. RED before the fix: every <c>AssignRefusal</c> was thrown unmarked, so the two left no row.
+    /// </summary>
+    [Fact]
+    public async Task An_assignment_refused_on_authority_leaves_one_row_and_one_refused_on_content_none()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        Chart(db);
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        var headAttempt = Eligible(db, Head);
+        using var head = grants.IssueHere(Head, headAttempt);
+        await using (var client = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = head.Token })).Ok);
+            var content = await client.SendAsync(Assign(head.Token, holder: Member, allocation: 0m));
+            Assert.Contains("the AI allocation must be above zero", content.Error!.Message, StringComparison.Ordinal);
+            Assert.Empty(Rows(db, "op_refused"));
+
+            var outside = await client.SendAsync(Assign(head.Token, holder: Outsider));
+            Assert.Contains("is not in the subtree you head", outside.Error!.Message, StringComparison.Ordinal);
+            var operations = await client.SendAsync(Assign(head.Token, holder: CouncilRoles.Operations));
+            Assert.Contains("holds no mandate", operations.Error!.Message, StringComparison.Ordinal);
+            Assert.All([outside, operations], r => Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), r.Error!.Code));
+        }
+
+        var rows = Rows(db, "op_refused");
+        foreach (var r in rows) log.WriteLine(r.Metadata);
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal((Ops.MandateAssign, Head, headAttempt), (r.M("op"), r.M("role"), r.M("attempt"))));
     }
 
     /// <summary>
