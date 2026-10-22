@@ -21,11 +21,20 @@ public static class ProvingSources
     /// <summary>Its origin: a reserved name that resolves nowhere, so nothing is ever fetched from it.</summary>
     public const string Origin = "https://synthetic.invalid";
 
-    /// <summary>The one series a first-cut market writes: a signal per instrument, one reading an hour.</summary>
+    /// <summary>The bare series, part a's: a signal per instrument, one reading an hour.</summary>
     public const string Signal = "signal";
 
     /// <summary>The field of a signal reading a feature reads: a plain decimal.</summary>
     public const string ValueField = "value";
+
+    /// <summary>A funding/premium-like rate, published every eight hours (<c>U-proving-ground-b</c> item 2).</summary>
+    public const string Funding = "funding";
+
+    /// <summary>An open-interest-like level, an hour.</summary>
+    public const string OpenInterest = "open-interest";
+
+    /// <summary>A taker-ratio-like ratio, an hour.</summary>
+    public const string TakerRatio = "taker-ratio";
 
     /// <summary>The synthetic instruments a proving market may name. Not any venue's symbols.</summary>
     public static readonly IReadOnlyList<string> Subjects = ["SYNA", "SYNB", "SYNC", "SYND"];
@@ -43,7 +52,13 @@ public static class ProvingSources
     public static readonly IReadOnlyList<SyntheticSeriesShape> Shapes =
     [
         new(Signal, "time", ValueField, 60, SyntheticMarket.SignalMinute, Family: false,
-            "the proving ground's bare signal: a plain decimal an hour, shaped like no real family, so no playbook names it")
+            "the proving ground's bare signal: a plain decimal an hour, shaped like no real family, so no playbook names it"),
+        new(Funding, "fundingTime", "fundingRate", 480, 0, Family: true,
+            "a funding/premium-like rate: a small decimal around zero, published every eight hours at 00:00, 08:00 and 16:00 UTC"),
+        new(OpenInterest, "timestamp", "sumOpenInterest", 60, 0, Family: true,
+            "an open-interest-like level: a running total on the hour, whose change over the hour carries any planted relation"),
+        new(TakerRatio, "timestamp", "buySellRatio", 60, 0, Family: true,
+            "a taker-ratio-like ratio: taker buys over taker sells on the hour, a decimal around one")
     ];
 
     /// <summary>The shape of series <paramref name="id"/>, or null when the proving ground writes none by that name.</summary>

@@ -431,15 +431,46 @@ public static class SyntheticMarket
         _ => System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("proving-series:" + series)))
     };
 
-    /// <summary>The payload text of each reading of a series, from its integer values.</summary>
-    static string[] Texts(SyntheticSeriesShape shape, long[] z) => shape.Id switch
+    /// <summary>The open-interest-like level a market starts from, in thousandths: 10,000,000.000.</summary>
+    public const long OpenInterestStart = 10_000_000_000;
+
+    /// <summary>One unit of the open-interest-like series' value, in thousandths of its level: 100.000.</summary>
+    public const long OpenInterestStep = 100_000;
+
+    /// <summary>
+    /// THE PAYLOAD TEXT OF EACH READING OF A SERIES, from its integer values z: the bare signal z/10,000 (part a's); the
+    /// funding-like rate z/100,000 to eight places; the open-interest-like level its start plus 100 for every unit of z so
+    /// far, to three places — so a reading's z is the level's change since the reading before; and the taker-ratio-like
+    /// ratio 1 + z/1,000 to four places.
+    /// </summary>
+    static string[] Texts(SyntheticSeriesShape shape, long[] z)
     {
-        _ => [.. z.Select(SignalText)]
-    };
+        switch (shape.Id)
+        {
+            case ProvingSources.Funding:
+                return [.. z.Select(v => (v / 100_000m).ToString("0.00000000", CultureInfo.InvariantCulture))];
+            case ProvingSources.OpenInterest:
+                var level = OpenInterestStart;
+                var texts = new string[z.Length];
+                for (var k = 0; k < z.Length; k++)
+                {
+                    level += z[k] * OpenInterestStep;
+                    texts[k] = (level / 1000m).ToString("0.000", CultureInfo.InvariantCulture);
+                }
+                return texts;
+            case ProvingSources.TakerRatio:
+                return [.. z.Select(v => ((1000m + v) / 1000m).ToString("0.0000", CultureInfo.InvariantCulture))];
+            default:
+                return [.. z.Select(SignalText)];
+        }
+    }
 
     /// <summary>What one unit of a series' integer value is, in its payload's terms.</summary>
     static string Unit(SyntheticSeriesShape shape) => shape.Id switch
     {
+        ProvingSources.Funding => "0.00001",
+        ProvingSources.OpenInterest => "a change of 100.000 since the reading before",
+        ProvingSources.TakerRatio => "0.001 above or below 1",
         _ => "0.0001"
     };
 

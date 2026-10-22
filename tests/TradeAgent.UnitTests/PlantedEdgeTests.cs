@@ -4,6 +4,7 @@ using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Proving;
+using TradeAgent.Core.Strategy;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -178,5 +179,113 @@ public class PlantedEdgeTests(ITestOutputHelper log)
             Assert.Equal(GoldenPayloads, m.PayloadDigest);
             Assert.Equal(48, m.Readings);
         }
+    }
+
+    /// <summary>A program over one feature of the proving source: long while the condition holds, flat otherwise, hourly.</summary>
+    internal static string Program(string symbol, string series, string field, string entry, string exit, int maxAgeSeconds = 7200,
+        string kind = "latest") => $$"""
+        instrument {{symbol}}
+        bars 1h
+        timeframe 1h
+        data_freshness 2h
+        max_decision_age 10m
+        feature x = {"kind":"{{kind}}","input":{"source":"proving-synthetic","series":"{{series}}","subject":"{{symbol}}","field":"{{field}}"},"latency_s":5,"max_age_s":{{maxAgeSeconds}}}
+        size fixed 1
+        stop percent 50
+        exit when {{exit}}
+        entry when {{entry}}
+        """;
+
+    /// <summary>The venue's own cost model for a proving dataset, as the app resolves it.</summary>
+    internal static ExecutionModel VenueCost(Database db, DatasetRecord set)
+    {
+        var cost = TradeAgent.Core.Strategy.VenueCostModel.For(set, new VenueStore(db), 10_000m);
+        Assert.True(cost.Ok, cost.Why);
+        Assert.False(cost.Model!.IsFrictionless);
+        return cost.Model.Model;
+    }
+
+    /// <summary>
+    /// THE UNCHANGED BACKTEST OVER ONE PROVING DATASET: the program parsed in a proving home, its bars from the proving ledger,
+    /// its features from the proving tape, under <paramref name="model"/> and the Research Director's audience.
+    /// </summary>
+    internal static BacktestResult Backtest(ITestOutputHelper log, ProvingHome home, Database db, DatasetRecord set, string text,
+        ExecutionModel model, DateTimeOffset? from = null, DateTimeOffset? to = null)
+    {
+        var program = StrategyParser.Parse(text, HomeKind.Proving);
+        Assert.True(program.Ok, program.Why);
+        var run = TradeAgent.Core.Strategy.Backtest.Over(new DatasetStore(db), set.Id, program.Program!, model,
+            BarAudience.Pipe(CouncilRoles.Research), from, to, tape: new TapeReader(home.TapeFile, kind: HomeKind.Proving));
+        Assert.True(run.Ok, run.Why);
+        var m = run.Result!.Metrics;
+        log.WriteLine($"{set.Pair} under {model.Canonical}: {run.Result.Outcome}, {m.Trades} trades, gross {m.GrossPnl}, fees {m.Fees}, net {m.NetPnl}");
+        Assert.Equal(BacktestOutcome.COMPLETED, run.Result.Outcome);
+        return run.Result;
+    }
+
+    /// <summary>
+    /// ITEM 2: EACH SERIES FAMILY HAS ITS OWN FIELDS AND CADENCE, AND A PLAYBOOK'S PROGRAM FINDS AN EDGE INSIDE DOCTRINE AND NOT
+    /// ONE BESIDE IT. Two markets of twelve weeks writing the three family-shaped series: one plants a contrarian relation on the funding-like
+    /// rate, inside doctrine; the other plants one on the taker-ratio-like ratio, beside it. Each series' payload carries its
+    /// own field names at its own cadence, every reading O-LIVE; the one program a playbook would recall — long after deeply
+    /// negative funding — nets above zero at the venue's cost on the first and not on the second. An edge flagged inside
+    /// doctrine on the bare signal, which no playbook can name, is refused before anything is written.
+    /// </summary>
+    [Fact]
+    public void Each_series_family_has_its_own_fields_and_cadence_and_a_playbook_program_finds_an_inside_edge_and_not_a_beside_one()
+    {
+        using var scratch = TestEnv.NewScratch("series-families");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        IReadOnlyList<string> families = [ProvingSources.Funding, ProvingSources.OpenInterest, ProvingSources.TakerRatio];
+        const int Days = 84;
+        var inside = p.Write(new SyntheticMarketSpec(31, "SYNA", VenueCatalog.BinanceSpot, Start, Days,
+            new SyntheticEdge(-16) { Series = ProvingSources.Funding, Doctrine = EdgeDoctrine.Inside }) { Series = families });
+        var beside = p.Write(new SyntheticMarketSpec(32, "SYNB", VenueCatalog.BinanceSpot, Start, Days,
+            new SyntheticEdge(6) { Series = ProvingSources.TakerRatio }) { Series = families });
+        Assert.Equal(Days * 3 + 2 * Days * 24, inside.Readings);
+
+        // THE SHAPES: each family's own fields and cadence, recorded on time.
+        foreach (var (series, fields, every) in new[]
+                 {
+                     (ProvingSources.Funding, new[] { "symbol", "fundingTime", "fundingRate" }, TimeSpan.FromHours(8)),
+                     (ProvingSources.OpenInterest, new[] { "symbol", "timestamp", "sumOpenInterest" }, TimeSpan.FromHours(1)),
+                     (ProvingSources.TakerRatio, new[] { "symbol", "timestamp", "buySellRatio" }, TimeSpan.FromHours(1))
+                 })
+        {
+            var rows = Readings(p.Tape, series, "SYNA");
+            Assert.Equal((int)(TimeSpan.FromDays(Days) / every), rows.Count);
+            Assert.All(rows, r => Assert.Equal(TapeClass.Live, r.EvidenceClass));
+            Assert.Equal(Start, rows[0].SourceTime);
+            Assert.All(rows.Zip(rows.Skip(1)), pair => Assert.Equal(every, pair.Second.SourceTime - pair.First.SourceTime));
+            Assert.Equal(fields.Order(StringComparer.Ordinal),
+                JsonDocument.Parse(rows[0].Payload!).RootElement.EnumerateObject().Select(f => f.Name).Order(StringComparer.Ordinal));
+            log.WriteLine($"{series}: {rows.Count} readings, first {rows[0].Payload}");
+        }
+        Assert.Empty(Readings(p.Tape, ProvingSources.Signal, "SYNA"));
+
+        // THE OPEN-INTEREST-LIKE LEVEL MOVES IN STEPS OF 100.000 FROM ITS START, and its readings' changes are the series' units.
+        var levels = Readings(p.Tape, ProvingSources.OpenInterest, "SYNA").Select(r => Value(r, "sumOpenInterest")).ToList();
+        Assert.All(levels.Prepend(10_000_000m).Zip(levels), pair => Assert.Equal(0m, (pair.Second - pair.First) % 100m));
+
+        // INSIDE DOCTRINE ON THE BARE SIGNAL IS REFUSED, NOTHING WRITTEN.
+        var refused = Assert.Throws<ArgumentException>(() => p.Write(new SyntheticMarketSpec(33, "SYNC", VenueCatalog.BinanceSpot, Start, 2,
+            new SyntheticEdge(16) { Doctrine = EdgeDoctrine.Inside })));
+        log.WriteLine(refused.Message);
+        Assert.Contains("INSIDE doctrine rides a series shaped like a real family's", refused.Message, StringComparison.Ordinal);
+        Assert.Empty(Readings(p.Tape, ProvingSources.Signal, "SYNC"));
+
+        // THE PLAYBOOK'S PROGRAM, UNCHANGED APP: long after deeply negative funding, flat once it is not.
+        new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA", "SYNB"]));
+        string Playbook(string symbol) => Program(symbol, ProvingSources.Funding, "fundingRate", "x < -0.00030", "x >= -0.00030", 9 * 3600);
+        var found = Backtest(log, p.Home, p.Db, inside.Dataset, Playbook("SYNA"), VenueCost(p.Db, inside.Dataset));
+        var missed = Backtest(log, p.Home, p.Db, beside.Dataset, Playbook("SYNB"), VenueCost(p.Db, beside.Dataset));
+        Assert.True(found.Metrics.Trades >= 20 && missed.Metrics.Trades >= 20, $"the playbook traded {found.Metrics.Trades} and {missed.Metrics.Trades} times");
+        Assert.True(found.Metrics.NetPnl > 0m, $"the playbook nets {found.Metrics.NetPnl} on the edge inside doctrine");
+        Assert.True(missed.Metrics.NetPnl <= 0m, $"the playbook nets {missed.Metrics.NetPnl} where the edge is beside doctrine");
+
+        Assert.Equal("inside", Truth(inside).GetProperty("planted")[0].GetProperty("doctrine").GetString());
+        Assert.Equal("beside", Truth(beside).GetProperty("planted")[0].GetProperty("doctrine").GetString());
+        Assert.Equal(["fundingRate", "sumOpenInterest", "buySellRatio"],
+            Truth(inside).GetProperty("series").EnumerateArray().Select(s => s.GetProperty("field").GetString()!).ToArray());
     }
 }
