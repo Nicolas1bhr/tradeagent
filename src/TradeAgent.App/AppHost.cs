@@ -1417,7 +1417,14 @@ public sealed class AppHost : IAsyncDisposable
     /// The cost is null unless this installation can actually price a turn. Reporting zero would tell
     /// an AI whose mission is to pay for itself that it was free.
     /// </summary>
-    void ReportAiToTheGateway() =>
+    void ReportAiToTheGateway()
+    {
+        // EACH UNIT'S ENVELOPE AND TODAY'S SPEND, for a position's own org-show (U-org-verbs-a): the meter's reading, a read only.
+        Gateway.AiEnvelopes = role => Meter?.EnvelopesFor(role);
+        ReportAiActivity();
+    }
+
+    void ReportAiActivity() =>
         Gateway.Ai = () =>
         {
             var spend = SpendToday;

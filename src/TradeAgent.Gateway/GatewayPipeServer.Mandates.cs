@@ -234,6 +234,98 @@ public sealed partial class GatewayPipeServer
         note = "Each goal is its issuer's words; the status, the allocation and the measured spend are TradeAgent's records."
     };
 
+    /// <summary>
+    /// THE CALLER'S OWN PLACE ON THE CHART (<c>org-show</c>, <c>U-org-verbs-a</c>; ORCHESTRATION § 2.9) — and nobody else's: its unit,
+    /// the chain of units above it to the root, whose head is the owner and is named so (the chain is the caller's own line, so no
+    /// watcher or audit line is in it), each unit's head, and each unit's AI envelope beside today's spent and reserved as the
+    /// host that meters launches resolves them (<see cref="TradingGateway.AiEnvelopes"/>; not metered is said, never zero); and
+    /// its OPEN mandates, held and decided, newest first, each with its status and measured spend — read from
+    /// <see cref="OrgStore"/>'s own reads (<see cref="OrgStore.UnitOf"/>, <see cref="OrgStore.Ancestors"/>,
+    /// <see cref="OrgStore.MandatesOf"/>, <see cref="OrgStore.SpendOf"/>), never a packet. Bounded by
+    /// <see cref="MandateListMax"/> mandates and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes it; 'more' says
+    /// it stopped, and <c>mandate-list</c> reads them all.
+    /// </summary>
+    object OrgShow(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, "org-show reads YOUR place on the chart and nothing else: it takes no argument, and names no other "
+                          + "position's. Nothing was read.");
+        var caller = OrgVerbCaller(ctx, Capability.Reads);
+        var org = Gateway.Org;
+        var unit = org.UnitOf(caller)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{caller}' belongs to no unit the chart holds, so it has no place to show.");
+        IReadOnlyList<OrgUnitRow> chain = [unit, .. org.Ancestors(unit.Id)];
+
+        IReadOnlyList<UnitDay>? days;
+        try { days = Gateway.AiEnvelopes?.Invoke(caller); }
+        catch (Exception) { days = null; }
+        // ONE READING PER CEILING THE CALLER'S SEAT IS HELD TO (U-billing-classes): key is real money, plan is the plan's capacity and
+        // never money, and a seat whose class is not known is held to both — so each reading names its ceiling and none is summed.
+        var byUnit = days?.ToLookup(d => d.UnitId, StringComparer.Ordinal);
+        var units = chain.Select(u => (object)new
+        {
+            id = u.Id,
+            kind = u.Kind,
+            name = OrgEnvelopes.NameOf(u.Id),
+            head = u.IsRoot ? "the owner" : u.HeadPositionId ?? "vacant",
+            ai_envelopes = byUnit is not null && byUnit.Contains(u.Id)
+                ? byUnit[u.Id].Select(d => new
+                {
+                    ceiling = d.Ceiling,
+                    counted_in = BillingClasses.Words(d.Ceiling),
+                    envelope = d.Envelope?.ToString(CultureInfo.InvariantCulture),
+                    spent_today = d.Spent.ToString(CultureInfo.InvariantCulture),
+                    reserved_today = d.Reserved.ToString(CultureInfo.InvariantCulture)
+                }).ToList()
+                : null
+        }).ToList();
+        var note = byUnit is null
+            ? "Envelopes are not metered here: nothing gave a reading of this chain's envelopes, so each is unknown — never zero."
+            : "Each envelope is TradeAgent's, resolved as admission resolves it (none: no separate cap — the units above bind); spent "
+              + "and reserved are today's, charged to the unit's funding chain. Each reading is counted in ONE ceiling, named: 'key' is "
+              + "real money, 'plan' is your ChatGPT plan's capacity and never money; a seat whose class is not known is shown against "
+              + "both, as admission holds it to both. The two are never added.";
+
+        var held = new List<object>();
+        var decided = new List<object>();
+        var open = org.MandatesOf(caller).Where(m => org.IsOpen(m.Id)).ToList();
+        long spent = ReplyBytes(ShowOrg(caller, units, held, decided, true, note)) + 64;
+        var more = false;
+        foreach (var m in open)
+        {
+            if (held.Count + decided.Count == MandateListMax) { more = true; break; }
+            var mine = m.Holder == caller;
+            var row = new
+            {
+                mandate = m.Id,
+                status = org.MandateStatus(m.Id),
+                holder = m.Holder,
+                decider = m.Decider,
+                kind = m.Kind,
+                deadline = m.Deadline,
+                allocation = m.Allocation.ToString(CultureInfo.InvariantCulture),
+                measured_spend = Measured(org.SpendOf(m.Id))
+            };
+            var cost = ReplyBytes(row) + 1;
+            if (spent + cost > ResearchLedger.MaxReadBytes) { more = true; break; }
+            spent += cost;
+            (mine ? held : decided).Add(row);
+        }
+        return ShowOrg(caller, units, held, decided, more, note);
+    }
+
+    static object ShowOrg(string caller, List<object> chain, List<object> held, List<object> decided, bool more, string envelopes) => new
+    {
+        position = caller,
+        unit = chain[0],
+        chain,
+        held,
+        decided,
+        more,
+        envelopes_note = envelopes,
+        note = "Your own place on the chart: your unit, the line above it to the owner, and your open mandates. The chart, the "
+               + "statuses, the envelopes and the spend are TradeAgent's records; a goal is its issuer's words — 'mandate-show' reads one."
+    };
+
     /// <summary>What <c>mandate-show</c>'s <c>part</c> names: its deliveries (the default), its events or its forecasts.</summary>
     public const string ShowDeliveries = "deliveries", ShowEvents = "events", ShowForecasts = "forecasts";
 
