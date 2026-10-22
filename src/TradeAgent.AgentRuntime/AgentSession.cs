@@ -427,29 +427,19 @@ public sealed class AgentSession(
     {
         var files = appFiles ?? AppFileManifest.Shared;
         var text = files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile));
+        // ONE BODY FOR EVERY APP-SIDE WRITE INTO A HOME A CELL WRITES (fix pass 3): HomeFiles unlinks the name itself, never what it
+        // points at, and creates the canon exclusively; a folder at the name refuses, never walked into.
         try
         {
-            Unlink(Path.Combine(home, Canon.OverrideFile));
+            HomeFiles.Remove(home, Canon.OverrideFile);
             if (text is null) return;
-            var file = Path.Combine(home, Canon.CliFile);
-            Unlink(file);
-            using var fresh = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            fresh.Write(Encoding.UTF8.GetBytes(text));
+            HomeFiles.Write(home, Canon.CliFile, Encoding.UTF8.GetBytes(text));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 $"TradeAgent did not start the AI as a cell seat: it could not put its own canon back in the position's folder ({ex.Message}). " +
                 "Nothing was started; the next turn tries again.", ex);
-        }
-
-        // THE NAME ITSELF, NEVER WHAT IT POINTS AT: File.Delete is unlink(2) — a symbolic link is removed, its target untouched. A folder
-        // at the name is not removed (that would walk into what the cell planted): it refuses, above.
-        static void Unlink(string path)
-        {
-            if (Directory.Exists(path) && new DirectoryInfo(path).LinkTarget is null)
-                throw new IOException($"'{Path.GetFileName(path)}' in the position's folder is a folder, not the canon");
-            File.Delete(path);
         }
     }
 
