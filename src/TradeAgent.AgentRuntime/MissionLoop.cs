@@ -3722,13 +3722,14 @@ public sealed class MissionLoop
             // swallow the one thing in the block that was waiting for an answer.
             //
             // AND WHAT THE PACKET GAVE THE LAUNCH (U-org-packets-b), in the same transition: the position's cursor advances with the
-            // committed outcome and with nothing else. A launch with no ending the loop saw (its send threw), one the gate refused at
-            // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
-            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too.
+            // committed outcome and with nothing else. A launch with no ending the loop saw (its send threw), one that launched no
+            // session (its process never started — part a's record), one the gate refused at its last check and one its vendor
+            // refused before any work never put the packet in front of a model, so nothing is recorded and what it was shown is
+            // shown again (at-least-once, stated). A crash before this commit records nothing too.
             _host.CommitTurn(role, attempt, () =>
             {
                 if (events is not null) Settle(events, wake, failed, ended, consumer);
-                if (attempt is not null && shown.Count > 0 && ended is not null && UnworkedRefusal(ended) is null)
+                if (attempt is not null && shown.Count > 0 && ended is { Session: not null } && UnworkedRefusal(ended) is null)
                     _host.RecordInputs(attempt, shown);
             });
         }

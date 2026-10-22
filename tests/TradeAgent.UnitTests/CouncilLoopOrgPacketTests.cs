@@ -28,9 +28,10 @@ public partial class CouncilLoopTests
 
     /// <summary>
     /// (a) A NOTE RIDES ITS RECIPIENT'S NEXT PACKET ONCE — AND AGAIN AFTER A LOST OR GATE-REFUSED LAUNCH. The head sends the executor a
-    /// note, which wakes nobody; the executor's own self-wakes then launch it four times: the gate refuses the first at its last check
+    /// note, which wakes nobody; the executor's own self-wakes then launch it five times: the gate refuses the first at its last check
     /// (its packet carried the note, nothing recorded), the second's transition never commits (a launch the next start loses; nothing
-    /// recorded), the third commits and records the note as its input, and the fourth's packet no longer carries it.
+    /// recorded), the third launches no session (its process never started; nothing recorded), the fourth commits and records the note
+    /// as its input, and the fifth's packet no longer carries it.
     ///
     /// <para>RED at base: no packet carried a note (the first send held no <c>lat-</c> id). MUTANT, the lineage written whatever the
     /// launch's ending (the gate-refusal condition removed): the second launch's packet no longer carried the note.</para>
@@ -47,6 +48,7 @@ public partial class CouncilLoopTests
         Assert.DoesNotContain(host.Events!.Due(DateTimeOffset.UtcNow.AddMinutes(1)), e => e.Role == Executor);   // it woke nobody
 
         var executor = host.Conversations[Executor];
+        executor.Session = TurnSession.Resumed;
         executor.GateRefused = new LateRefusal(new TurnRefusal(RefusalKind.HostOrLaunch, "the host's cell proof changed"), true);
         SelfWake(host, Executor, "packet-1");
         await TurnsUntil(loop, host, Executor, 1);
@@ -57,22 +59,28 @@ public partial class CouncilLoopTests
         await TurnsUntil(loop, host, Executor, 2);
 
         host.CommitThrows = false;
+        executor.Session = null;
         SelfWake(host, Executor, "packet-3");
         await TurnsUntil(loop, host, Executor, 3);
 
+        executor.Session = TurnSession.Resumed;
         SelfWake(host, Executor, "packet-4");
         await TurnsUntil(loop, host, Executor, 4);
 
+        SelfWake(host, Executor, "packet-5");
+        await TurnsUntil(loop, host, Executor, 5);
+
         var sent = executor.Sent;
-        Assert.All(sent.Take(3), prompt => Assert.Contains($"Note `{note.Id}` from `{TeamHead}`", prompt, StringComparison.Ordinal));
-        Assert.DoesNotContain(note.Id, sent[3], StringComparison.Ordinal);
+        Assert.All(sent.Take(4), prompt => Assert.Contains($"Note `{note.Id}` from `{TeamHead}`", prompt, StringComparison.Ordinal));
+        Assert.DoesNotContain(note.Id, sent[4], StringComparison.Ordinal);
 
         var launches = LaunchesOf(db, Executor);
-        Assert.Equal(4, launches.Count);
+        Assert.Equal(5, launches.Count);
         Assert.Empty(InputsOf(db, launches[0]));   // the gate refused it at its last check
         Assert.Empty(InputsOf(db, launches[1]));   // its transition never committed
-        Assert.Equal([$"lateral:{note.Id}"], InputsOf(db, launches[2]));
-        Assert.Empty(InputsOf(db, launches[3]));
+        Assert.Empty(InputsOf(db, launches[2]));   // it launched no session
+        Assert.Equal([$"lateral:{note.Id}"], InputsOf(db, launches[3]));
+        Assert.Empty(InputsOf(db, launches[4]));
         Assert.Empty(host.InputsOutsideCommit);
     }
 
@@ -89,6 +97,7 @@ public partial class CouncilLoopTests
         var host = SessionChart(db, root);
         var loop = new MissionLoop(host, NoHeartbeat);
         var note = new OrgStore(db).SendLateral(TeamHead, null, Executor, "a note", [], DateTimeOffset.UtcNow);
+        host.Conversations[Executor].Session = TurnSession.FreshBecause(SessionWhy.First);
         SelfWake(host, Executor, "lineage-1");
         await TurnsUntil(loop, host, Executor, 1);
 
