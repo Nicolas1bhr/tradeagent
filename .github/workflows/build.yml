@@ -455,6 +455,7 @@ jobs:
       # health) and stop, on the home the twenty minutes just made. Nothing here seeds anything.
       - name: The fleet's tool, against this host
         run: |
+          set -o pipefail
           command -v sshd > /dev/null || sudo apt-get install -y --no-install-recommends openssh-server
           sudo systemctl start ssh
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/ta-key"
@@ -466,6 +467,7 @@ jobs:
           chmod 600 ~/.tradeagent/linux.env
           ev="$GITHUB_WORKSPACE/linux-host-evidence"
           mkdir -p "$ev"
+          sudo chown -R "$USER" "$ev"   # prove.sh ran as root and made it: the tool's outputs are written as the runner
 
           tools/linux-host.sh recon | tee "$ev/tool-recon.txt"
           grep -q ' x86_64$' "$ev/tool-recon.txt" || { echo "recon read no x86_64 kernel line"; exit 1; }
