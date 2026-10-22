@@ -391,6 +391,51 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         finally { Environment.SetEnvironmentVariable("DOTNET_ROOT", root); }
     }
 
+    /// <summary>
+    /// A LAUNCH BESIDE A DEPLOYMENT NEVER FINDS NO LAUNCHER (U-launcher-race, review R1). <c>DeployTrade</c> used to delete the
+    /// launcher and then copy the real command over the gap; a turn of another class that began in that interval was refused
+    /// ("the trade command is not at ...", CONTAINMENT_UNAVAILABLE). Deployed over and over while another thread looks for the
+    /// file as a launch does, the launcher is there every time and is always whole: the real command, with its mode.
+    /// </summary>
+    [Fact]
+    public async Task A_deployment_never_leaves_the_launcher_absent_or_half_written()
+    {
+        if (OperatingSystem.IsWindows()) return;   // there is no launcher: a launch is held in a job
+        TestEnv.EnsureLauncher();
+        var launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
+        var found = ProcessWide.Note();
+        var real = await File.ReadAllBytesAsync(Path.Combine(Puppet.TradeCliDir, ToolDeployer.TradeCliName));
+        var stop = false;
+        var gaps = 0;
+        var wrong = 0;
+        var looker = Task.Run(() =>
+        {
+            while (!Volatile.Read(ref stop))
+            {
+                try
+                {
+                    var now = File.ReadAllBytes(launcher);
+                    if (!now.AsSpan().StartsWith("#!"u8) && now.Length != real.Length) Interlocked.Increment(ref wrong);
+                }
+                catch (FileNotFoundException) { Interlocked.Increment(ref gaps); }
+                catch (DirectoryNotFoundException) { Interlocked.Increment(ref gaps); }
+            }
+        });
+        try
+        {
+            for (var i = 0; i < 200; i++) PuppetLife.DeployTrade();
+        }
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            await looker;
+            found.PutBack();
+        }
+
+        Assert.Equal(0, gaps);
+        Assert.Equal(0, wrong);
+    }
+
     static int Occurrences(string text, string of)
     {
         var n = 0;
