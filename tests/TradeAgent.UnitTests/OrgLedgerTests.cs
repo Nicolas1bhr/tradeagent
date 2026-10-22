@@ -316,7 +316,14 @@ public class OrgLedgerTests
     public void No_pipe_op_writes_an_org_table()
     {
         string[] chart = ["org", "unit", "chart", "hire", "seat", "division", "team", "headship", "envelope"];
-        foreach (var op in GatewaySchema.Ops())
+        // REVISITED, OUT LOUD, BY U-org-verbs-a (declared): ONE op names the organisation — `org-show`, `trade org show`, the READ
+        // of the caller's own place on the chart. It takes no argument (so none can address a unit, a head or a seat), is not
+        // mutating, and writes nothing (it is a reader of OrgStore's reads only, below). Every other op keeps the whole check.
+        var show = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.OrgShow);
+        Assert.Empty(show.Args);
+        Assert.False(show.Mutating);
+        Assert.Equal("trade org show", show.Cli);
+        foreach (var op in GatewaySchema.Ops().Where(o => o.Op != Ops.OrgShow))
         {
             foreach (var word in chart)
             {
@@ -352,6 +359,10 @@ public class OrgLedgerTests
         // committed launch of it was shown, its own forecasts due and resolutions unshown, its open escalations by direction, a
         // decider's deliveries to judge. None writes anything; what a packet showed is written by AiAttemptStore, never OrgStore.
         mandate = [.. mandate, "DeliveriesToJudgeOf", "EscalationsOpen", "ForecastsDue", "LateralsUnshown", "ResolutionsUnshown"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-a: Rescope writes org_mandate and org_mandate_event (a successor and two events, the
+        // decider's, behind OrgVerbCaller and the store's own decider check), Propose writes org_mandate_event (the holder's claim);
+        // PredecessorOf, SuccessorOf and ProposalsUnread are reads. None writes the chart.
+        mandate = [.. mandate, "PredecessorOf", "ProposalsUnread", "Propose", "Rescope", "SuccessorOf"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

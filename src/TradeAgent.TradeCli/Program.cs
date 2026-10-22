@@ -357,7 +357,8 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
-        // `trade mandate assign <holder> <goal> --kind K --due T --allocation A …` and `cancel <mandate> <why>` (U-org-assignments-a):
+        // `trade mandate assign <holder> <goal> --kind K --due T --allocation A …` and `cancel <mandate> <why>` (U-org-assignments-a),
+        // `rescope <mandate> <why> <goal> --kind K --due T --allocation A …` and `propose <mandate> <claim> --refs JSON` (U-org-verbs-a):
         // the organisation's verbs. Every flag is sent on under its own name and the gateway refuses one the verb does not take; the
         // positionals fill, in the form's order, what no flag named, and the last takes every word left.
         case "mandate":
@@ -392,9 +393,29 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "show":
                     Fill(a, rest, "mandate");
                     return (Ops.MandateShow, a);
+                case "rescope":
+                    Fill(a, rest, "mandate", "why", "goal");
+                    return (Ops.MandateRescope, a);
+                case "propose":
+                    Fill(a, rest, "mandate", "claim");
+                    return (Ops.MandatePropose, a);
                 default:
                     return (null, a);
             }
+        }
+
+        // `trade org show` (U-org-verbs-a): the caller's own place on the chart. It takes no argument; one sent is refused by the gateway.
+        case "org":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            return (pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant() switch
+            {
+                "show" => (Ops.OrgShow, a),
+                _ => (null, a)
+            };
         }
 
         // `trade decision record <choice> <rationale> --options JSON …`, `list` and `show <id>` (U-org-decisions): the
