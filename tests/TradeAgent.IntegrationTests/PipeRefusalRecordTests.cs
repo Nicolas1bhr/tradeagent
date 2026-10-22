@@ -390,9 +390,10 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     /// pass 3): the pipe is driven to every write site — a frame with no <c>v</c>, a hello with another one, a hello with a wrong machine
     /// token, a hello with a grant TradeAgent refuses, a frame on a connection whose grant ended, a session of <c>operator</c> and one
     /// starting <c>deployment:</c>, a read-loop request refused on rights — and each leaves exactly its one row, whose gloss in
-    /// <see cref="Core.Oversight.RefusalsDetector.Recorded"/> names that very case. Then the two cases the sentence names as unseen — a frame
-    /// before hello, and a non-hello frame naming another version after it — leave no refusal row at all. RED before the fix: no gloss
-    /// table existed, and the sentence called both unseen cases seen.
+    /// <see cref="Core.Oversight.RefusalsDetector.Recorded"/> names that very case. Then every refusal the sentence names as unseen
+    /// (<see cref="Core.Oversight.RefusalsDetector.NotRecorded"/>, fix pass 4) — a versioned frame before hello, a frame that is not valid
+    /// JSON or is empty, a handler's refusal of malformed content — is driven and leaves no row; and a post-hello frame naming another
+    /// version is served (pre-existing, carded), so the sentence does not call it refused. RED before fix pass 3: no gloss table existed.
     /// </summary>
     [Fact]
     public async Task Each_pipe_event_is_written_where_its_gloss_says_and_nowhere_its_blind_sentence_says_not()
@@ -475,18 +476,37 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         }
         Wrote(Core.RefusalMark.Event, "refused on rights or authority");
 
-        // WHAT THE SENTENCE NAMES AS UNSEEN IS UNRECORDED: a frame before hello, and a non-hello frame naming another version.
+        // WHAT THE SENTENCE NAMES AS UNSEEN IS EXACTLY WHAT THE PIPE REFUSES WITHOUT A ROW (fix pass 4), each driven here.
         var blind = new Core.Oversight.RefusalsDetector().Blind;
+        Assert.All(Core.Oversight.RefusalsDetector.NotRecorded, unseen => Assert.Contains(unseen, blind, StringComparison.Ordinal));
         var total = All();
+        // A frame that names a protocol version but arrives before hello.
         await using (var c = await Raw.ConnectAsync(pipe))
             Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), (await c.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure() })).Error?.Code);
-        Assert.Contains("a frame sent before hello", blind, StringComparison.Ordinal);
+        Assert.Equal(total, All());
         await using (var c = await Raw.ConnectAsync(pipe))
         {
+            // A frame that is not valid JSON, one that is not an object, and an empty one.
+            foreach (var (frame, says) in new[] { ("this is not json", "frame is not valid JSON"), ("[1]", "frame is not valid JSON"), ("null", "empty frame") })
+                Assert.Equal(says, (await c.SendLineAsync(frame)).Error?.Message);
+            Assert.Equal(total, All());
+
+            // A request the handler refused only because what it said was malformed: a quote that names no symbol.
             Assert.True((await c.SendAsync(Hello(grant: research.Token))).Ok);
-            await c.SendAsync(new IpcRequest { Op = Ops.Positions, Token = IpcToken.Ensure(), Grant = research.Token, V = Versions.ProtocolVersion + 1 });
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), (await c.SendAsync(new IpcRequest
+            {
+                Op = Ops.Quote, Token = IpcToken.Ensure(), Grant = research.Token, Args = []
+            })).Error?.Code);
+            Assert.Equal(total, All());
+
+            // PRE-EXISTING, OUT OF THIS UNIT (seat A's card "the pipe serves a post-hello frame naming another protocol version"): after
+            // hello, a frame naming another version is SERVED — no refusal at all, so it is not in the refusals sentence.
+            Assert.True((await c.SendAsync(new IpcRequest
+            {
+                Op = Ops.Positions, Token = IpcToken.Ensure(), Grant = research.Token, V = Versions.ProtocolVersion + 1
+            })).Ok);
         }
-        Assert.Contains("a frame other than hello that names another protocol version", blind, StringComparison.Ordinal);
+        Assert.DoesNotContain("names another protocol version", blind.Replace("a hello that names another one", ""), StringComparison.Ordinal);
         Assert.Equal(total, All());
     }
 

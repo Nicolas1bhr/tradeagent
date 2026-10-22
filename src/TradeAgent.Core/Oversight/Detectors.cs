@@ -270,11 +270,16 @@ public sealed class RefusalsDetector : OversightDetector
         [RefusalMark.Event] = "a request from the pipe's read loop that its handler refused on rights or authority",
     };
 
-    /// <summary>What the pipe answers WITHOUT a row, so this line cannot see it (fix pass 3; recording them is a later card).</summary>
+    /// <summary>
+    /// EXACTLY THE PIPE'S REFUSALS THAT LEAVE NO ROW, so this line cannot see them (fix pass 4; recording them is a later card): a frame
+    /// that names a protocol version but arrives before hello (<c>GatewayPipeServer</c>'s unauthenticated answer); a
+    /// frame that is not valid JSON or is empty (its "frame is not valid JSON" and "empty frame"); and the handler's refusal of malformed
+    /// content (unmarked, <see cref="RefusalMark"/>). Each is driven over the pipe by <c>PipeRefusalRecordTests</c> (e10).
+    /// </summary>
     public static readonly string[] NotRecorded =
     [
-        "a frame other than hello that names another protocol version",
-        "a frame sent before hello",
+        "a frame that names a protocol version but arrives before hello",
+        "a frame that is not valid JSON or is empty",
         "a request its handler refused only because what it said was malformed",
     ];
 
