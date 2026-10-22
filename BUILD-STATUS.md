@@ -11234,3 +11234,25 @@ delete-then-copy; green after. The three classes 16× 16/16 after the builder's 
 **Tests box:** 20261022-081315-a044daed on the stacked tip a044daed GREEN — Unit 2083/0 (22 not run), Integration 733/0 (54 not run), Fault 498/0; his files unchanged
 **NOT VERIFIED:** ETXTBSY's fork-race reading itself (not reproduced; serialization removes it); `ToolDeployer.EnsureTradeCli` still copies trade.dll in place (product, now only
 under non-parallel collections); IntegrationTests' ContainmentTests.DeployLauncher / ProtectedConfigurationTests.Installed still write in place (own assembly, own home).
+
+## U-host-recording — a recording-only start on the Linux host is proved on CI, the kit carries its read path (`tape-health`, sqlite3), and `tools/linux-host.sh` reads, deploys and stops it on the owner's dated word; CI and tooling, no rung (landed 2026-10-22, seat A, train A2)
+
+**Landed** at `df2c8ad6` (train A2 on main `54c7857e`; fix pass 1 `36668d82` R1, `8f615788` R2, `c5055a5c` R3; builder `a260d014`). Arrow: the owner's word of 2026-10-21
+("Yes, the Linux server") — a recording-only deploy; PRINCIPLES "The edge and the moat"; survey S-tape-host G1–G3 (G4 `U-tape-run-record` stays a CARD).
+Builder a970a5fa49c272bc2; fixer aeb3fd55d43a7ffc5 (sonnet/high, BUILD RUN 2026-10-22). The deploy itself is the orchestrator's; this unit never touched a real host.
+**CI:** train A2 run **39732556969**. Earlier: builder 39686471711 red on linux-host (an evidence folder created as root, a pipe failure uncaught — fixed: chown + pipefail);
+39711410266 green but ubuntu `CellLinuxTests.A_cell_installs_a_python_package_into_its_workspace_from_a_loopback_index` "/tmp changed: /tmp/systemd-private-…" — the
+runner's own systemd timer; FIRST SIGHTING, unreachable (no C#; the diff's build.yml hunks are in package-linux and linux-host only); fix 1 39722205078 green.
+**What changed:** prove.sh phase 0b, never seeding the home: tape-sources.json installed without the SQL seed, a guarded negative (sources withheld ⇒ "the app recorded 73
+tape rows from its built-in sources and no loopback row in 90 s"), then "a loopback tape row 1 s after the start of a home nobody onboarded"; ai_attempt 0, no codex/
+opencode/node process; 10 min on the setup screen: 40 samples, peak RSS 277168 kB, mean CPU 0.4 % of a core, 11 loopback rows (guards CPU < 50 %, RSS < 1 GiB, ≥ 5 rows —
+chosen, not measured limits); linux-host timeout 45 → 65 min. `packaging/linux/tape-health` beside display-prepare (per-source counts, newest delivery age — only a parsed
+200 counts, parse failures reported apart — NRestarts, the daily report's tape line); sqlite3 in the kit; linted in package-linux. `tools/linux-host.sh`: recon, health,
+install, stop — host/account/key from `~/.tradeagent/linux.env` only; install and stop refuse without the owner's dated word, today in the host's zone
+(`TA_LINUX_ZONE`, default Europe/Brussels; tomorrow, yesterday and malformed refused); install backs up tape.db*/tradeagent.db* first and restores the recorder on every
+exit until the kit takes over. CI ran all four verbs over ssh to its own runner with a throwaway key and env file.
+**Evidence:** fix 1 REDs: a 200 with "parse failed" printed `delivery|broken|age_s=0`; a 1 kB-free df stub left the log ending at `systemctl stop`; tomorrow's word accepted.
+shellcheck 0.11 + actionlint clean. Names removed 0.
+**Judged** (records/U-host-recording-review-triage.md): R1–R3 REAL → fixed; re-review: "R1–R3 close; no regressions found within the requested scope".
+**Tests box:** not applicable (Linux kit and tooling).
+**NOT VERIFIED:** the ssh path on a real host; a first install on a host with no home; arm64; a non-apt host.
