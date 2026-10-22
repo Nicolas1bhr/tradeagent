@@ -318,10 +318,65 @@ public sealed class AppHost : IAsyncDisposable
     /// place the choice above becomes an object, so <see cref="ConversationFor"/> and the reservation's
     /// pricing cannot disagree about which runtime a role is on.
     /// </summary>
-    IAgentRuntime? RuntimeObjectFor(string role) =>
-        RuntimeCatalog.IsHarness(RuntimeForRole(role)) && ApiAgentRuntime.Serves(role)
+    IAgentRuntime? RuntimeObjectFor(string role)
+    {
+        // A SEAT THAT CANNOT BE READ HAS NO RUNTIME (U-org-seats): no object, so nothing is opened on a guess; the activation seam
+        // says why in words (ActivationRefusal) and the meter refuses the launch if it is asked anyway.
+        string? runtime;
+        try { runtime = SeatRuntimeFor(role); }
+        catch (Exception) { return null; }
+        return RuntimeCatalog.IsHarness(runtime) && ApiAgentRuntime.Serves(role)
             ? Harness
             : Agent?.Current;
+    }
+
+    /// <summary>
+    /// THE RUNTIME A POSITION IS SEATED ON — its own seat where it has one, else <see cref="RuntimeForRole(string)"/>. Throws
+    /// <see cref="SeatRefusedException"/> for a seat that cannot be read or served (<see cref="SeatedOf"/>).
+    /// </summary>
+    string? SeatRuntimeFor(string role) => SeatedOf(role)?.Runtime ?? RuntimeForRole(role);
+
+    /// <summary>
+    /// A POSITION'S OWN SEAT (<c>U-org-seats</c>; <see cref="SeatResolver.Seated"/>), checked against what this host can serve: a seat
+    /// on a vendor program other than the one this computer runs is refused in words — run on the prepared one, its row would name a
+    /// runtime the turn never ran on. Null where the position has none and today's sources stand.
+    /// </summary>
+    SeatColumns? SeatedOf(string role)
+    {
+        if (SeatResolver.Seated(_db, role) is not { } seated) return null;
+        if (!RuntimeCatalog.IsHarness(seated.Runtime) && Agent?.Current is { } cli && cli.Id != seated.Runtime)
+            throw SeatColumns.Refused(role, SeatColumns.RuntimeColumn,
+                $"names “{seated.Runtime}”, but this computer's AI program is “{cli.Id}”");
+        return seated;
+    }
+
+    /// <summary>
+    /// THE APP-WIDE ALLOWANCE, read where asked (the Safety page changes it while the AI works): the seat of every position that has
+    /// none of its own, and the chair's.
+    /// </summary>
+    TurnAllowance AppAllowance => TurnAllowance.From(
+        Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens);
+
+    /// <summary>
+    /// ONE POSITION'S SEAT, RESOLVED (<c>U-org-seats</c>): its own seat columns when set — all four, or the launch is refused in words —
+    /// else today's sources: the Safety page's runtime and model for the role (the broker pin included) and the app-wide allowance.
+    /// Its bound is <see cref="TurnBound.Enforced"/> only on the app's harness (<see cref="SeatResolver.BoundOf"/>). The meter reserves
+    /// at it, records it, and the conversation and the harness read the one the meter admitted (<see cref="TurnMeter.OpenSeatFor"/>).
+    /// Throws <see cref="SeatRefusedException"/> for a seat that cannot be read or served.
+    /// </summary>
+    public SeatSpec SeatFor(string role)
+    {
+        var seated = SeatedOf(role);
+        var runtime = seated?.Runtime ?? RuntimeForRole(role);
+        return SeatResolver.Of(role, runtime, ModelOn(role, runtime, seated?.Model ?? Gateway.Settings.ModelForRole(role)),
+            seated?.Allowance ?? AppAllowance);
+    }
+
+    /// <summary>
+    /// THE CHAIR'S SEAT FOR A LAUNCH NOBODY NAMED (the owner's typed turn): the app's own runtime and model, the app-wide allowance.
+    /// </summary>
+    SeatSpec AppSeat() => SeatResolver.Of(null, PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId),
+        RequestedModel, AppAllowance);
 
     /// <summary>
     /// ONE COUNCIL ROLE'S CONVERSATION: its own session, in its own folder, on its own model.
@@ -392,6 +447,12 @@ public sealed class AppHost : IAsyncDisposable
         PositionStanding? standing;
         try { standing = StandingOf(role); }
         catch (Exception ex) { return PositionActivation.ChartUnreadable(role, ex.Message); }
+        // A SEAT THAT CANNOT BE READ OR SERVED (U-org-seats) refuses the launch in words, about this launch and not the position: its
+        // wakes are kept and its owner's words shown undelivered with the sentence, until the owner seats it again. Asked BEFORE the
+        // gate below, which reads the declared seat class — none, for a seat that cannot be read — and would refuse the POSITION.
+        try { SeatedOf(role); }
+        catch (SeatRefusedException ex) { return new TurnRefusal(RefusalKind.HostOrLaunch, ex.Message); }
+        catch (Exception ex) { return PositionActivation.ChartUnreadable(role, ex.Message); }
         return PositionActivation.Ask(role, standing, _seats);
     }
 
@@ -460,14 +521,51 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public string? RequestedModelFor(string role)
     {
-        var chosen = Gateway.Settings.ModelForRole(role);
+        try { return SeatFor(role).Model; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// THE MODEL <paramref name="chosen"/> RESOLVES TO for this role on <paramref name="runtime"/>: a broker-only seat's pin, whatever was
+    /// chosen (U-thinking-seats-c); otherwise the role's own runtime's answer.
+    /// </summary>
+    string? ModelOn(string role, string? runtime, string? chosen)
+    {
         // A BROKER-ONLY SEAT RUNS ON ITS PIN, so its reservation is priced at the pin (U-thinking-seats-c).
         if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is { } pinned) return pinned;
         // THE ROLE'S OWN RUNTIME RESOLVES IT. Asking the app's runtime for a role that is on the
         // harness answers with the CLI's rules — which is how a reservation gets priced at a model the
         // turn will not run on, in whichever direction the two happen to differ.
         return RuntimeObjectFor(role)?.ModelFor(chosen)
-               ?? (RuntimeForRole(role) is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
+               ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
+    }
+
+    /// <summary>
+    /// WHAT A ROLE'S CONVERSATION IS OPENED ON (<c>U-org-seats</c>): the model of the seat the meter admitted its launch on, so the argv or
+    /// request body names exactly the row's <c>requested_model</c>; before any admission, the seat as it resolves now. A BROKER-ONLY seat
+    /// is handed the CHOICE instead, unresolved — its session launches its pin whatever it is handed, and verifies the choice against the
+    /// pin, refusing one that names another model (U-thinking-seats-c). Never throws: a seat that cannot be read opens nothing that runs
+    /// — the meter refused its launch before this is asked.
+    /// </summary>
+    string? ConversationModelFor(string role)
+    {
+        try
+        {
+            if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
+                return SeatedOf(role)?.Model ?? Gateway.Settings.ModelForRole(role);
+            return SeatFor(role).Model;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// THE ALLOWANCE A ROLE'S HARNESS TURN IS HELD TO (<c>U-org-seats</c>): the admitted seat's, the one its reservation was priced at;
+    /// before any admission, the seat as it resolves now; a seat that cannot be read, the shipped bound — its launch was refused.
+    /// </summary>
+    TurnAllowance HarnessAllowanceFor(string role)
+    {
+        try { return SeatFor(role).Allowance; }
+        catch (Exception) { return TurnAllowance.Default; }
     }
 
     /// <summary>

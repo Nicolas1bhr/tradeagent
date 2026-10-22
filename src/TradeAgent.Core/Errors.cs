@@ -609,6 +609,14 @@ public static class Labels
         + "allowance is a safer limit and fewer turns a day; a smaller one buys more turns and holds "
         + "less back. 0 in either box means the shipped default.";
 
+    /// <summary>
+    /// A POSITION'S SEAT THAT CANNOT BE READ OR SERVED AS WRITTEN (<c>U-org-seats</c>): refused before anything is written, its wakes
+    /// kept, in words naming the position and the column.
+    /// </summary>
+    public static string SeatUnreadable(string position, string column, string why) =>
+        $"Position “{position}” was not started: its seat's {column} {why}. Nothing was set aside and its waiting work is kept; "
+        + "the owner seats it again.";
+
     /// <summary>What the page says once the two boxes are written, naming what it works out to.</summary>
     public static string TurnAllowanceReads(long input, long output, string reservation) =>
         $"Saved. One turn now sets aside up to {reservation}: {input:N0} input tokens and "
