@@ -148,8 +148,8 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE ANSWERS OF ONE PASS, ON A FIXED CLOCK: every ISO instant an answer carries — the wall clock it was asked at (a report's
-    /// <c>snapshot_at</c>, a status's health times, pnl's <c>as_of</c>) — is masked to one token, so two passes compare everything but the
+    /// THE ANSWERS OF ONE PASS, ON A FIXED CLOCK: every instant an answer carries, ISO or as the report prints it — the wall clock it was asked at (a report's
+    /// <c>snapshot_at</c> and "snapshot taken", a status's health times, pnl's <c>as_of</c>) — is masked to one token, so two passes compare everything but the
     /// moment they ran. A seeded row's own instant is the same in both and masked in both alike.
     /// </summary>
     sealed partial class Seen(params string[] own)
@@ -168,7 +168,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
 
         static string JsonEncoded(string s) => JsonSerializer.Serialize(s)[1..^1];
 
-        [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)?")]
+        [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?(Z|(\\u002B|[+-])\d\d:\d\d)?")]
         private static partial System.Text.RegularExpressions.Regex Instant();
     }
 
