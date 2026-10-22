@@ -376,7 +376,10 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 + "inside your own role folder, for example strategies/ma-crossover.strategy.");
         }
 
-        if (!Inside(home, candidate))
+        // AN EARLY REFUSAL IN WORDS, kept from main: a link on the way down that leads out is refused here on every platform — on
+        // Windows, where no cell runs and HomeFiles checks each component for a reparse point by path, this walk is what the CI's
+        // linked-directory row (BacktestRequestTests) proved. It is never what guards the read: the read below goes through HomeFiles.
+        if (!Inside(home, candidate) || !Inside(Real(home), Real(candidate)))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Outside(role, strategy));
 
         return (home, Path.GetRelativePath(home, candidate));
@@ -388,6 +391,41 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         + "a program from inside it and from nowhere else — not from the other role's folder, and "
         + "not from anywhere else on this machine. Put the program in your own folder; "
         + "strategies/ is what it is for.";
+
+    /// <summary>
+    /// The path with every symlink ON IT resolved, segment by segment — not only the last one.
+    ///
+    /// <para>Resolving only the final component would leave a symlinked DIRECTORY inside the folder as a
+    /// door out of it, which is the same hole one level up. A link that is broken, looping or
+    /// unreadable resolves to itself, which keeps it inside the folder and therefore refusable by the
+    /// ordinary rule rather than by an exception.</para>
+    /// </summary>
+    static string Real(string path)
+    {
+        var full = Full(path);
+        var root = Path.GetPathRoot(full) ?? "";
+        var here = root;
+
+        foreach (var segment in full[root.Length..]
+                     .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            here = Path.Combine(here, segment);
+            if (Link(here) is { } target) here = Full(target);
+        }
+
+        return here;
+    }
+
+    static string? Link(string path)
+    {
+        try
+        {
+            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+            return info.LinkTarget is null ? null : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+        }
+        catch (IOException) { return null; }                  // a broken or looping link is not a way out
+        catch (UnauthorizedAccessException) { return null; }
+    }
 
     static string Full(string path) => Path.GetFullPath(path);
 
