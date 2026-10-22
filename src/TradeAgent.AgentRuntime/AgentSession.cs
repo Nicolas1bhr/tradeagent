@@ -911,7 +911,8 @@ public sealed class AgentSession(
 
         // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed only where the resume template is
         // what launches — a runtime that declares none starts fresh every turn, and says so (fix pass 1) — or fresh with why.
-        _session = AgentArgs.Resumes(manifest, _sessionExists) ? TurnSession.Resumed
+        // RECORDED ONLY ONCE THE PROCESS EXISTS (fix pass 1): a start that throws launched nothing, and its turn names no session.
+        var session = AgentArgs.Resumes(manifest, _sessionExists) ? TurnSession.Resumed
             : TurnSession.FreshBecause(_sessionExists ? SessionWhy.NoResume : _freshWhy);
 
         var psi = new ProcessStartInfo
@@ -1004,6 +1005,7 @@ public sealed class AgentSession(
         }
         var process = contained.Process;
         _current = contained;
+        _session = session;
 
         // THE GRANT IS BOUND TO WHAT HOLDS THE LAUNCH, NOW AND NEVER BEFORE (U-grant-tree). Until this line it is pending
         // and the pipe serves it to nobody; from it, only to a peer inside this container — the job the process was put

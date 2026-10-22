@@ -225,6 +225,29 @@ public partial class CouncilLoopTests
         Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.NoResume)], ended.Select(e => (e.Session?.State, e.Session?.Why)));
     }
 
+    /// <summary>
+    /// GUARD (fix pass 1, the review's third point): A LAUNCH THAT NEVER STARTED RECORDS NO SESSION. The seat is verified and the
+    /// argv built, then the process cannot be created — its working directory is not there, so the start throws on every platform
+    /// — and the turn ends with no session on its record: a session is the process's, and none ran.
+    ///
+    /// <para>RED at base 385ac3b1: "Assert.Null() Failure: Value is not null … Actual: TurnSession { Fresh = True, Why = first,
+    /// State = fresh }" — assigned before the start that threw.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_launch_whose_process_never_started_records_no_session()
+    {
+        var missing = Path.Combine(TestEnv.Home, $"no-start-{Guid.NewGuid():n}", "not-there");
+        var session = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, workspace: missing);
+        var ended = new List<AgentTurnEnded>();
+        session.TurnEnded += ended.Add;
+
+        await session.SendAsync("anything");
+
+        var turn = Assert.Single(ended);
+        Assert.NotEqual(0, turn.ExitCode);
+        Assert.Null(turn.Session);
+    }
+
     // ---- item 4: the mandate block --------------------------------------------------------------------------------------
 
     /// <summary>The index of the first line of <paramref name="prompt"/> that starts with <paramref name="start"/>, or fails saying so.</summary>
