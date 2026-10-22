@@ -105,7 +105,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
                     : detection.Reason ?? $"{manifest.DisplayName} is not installed");
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-            var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
+            var homes = BuildAll(ctx);
             Workspaces = homes;
             var workspace = homes[CouncilRoles.Operations];
             Workspace = workspace;
@@ -164,10 +164,21 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         finally { _gate.Release(); }
     }
 
+    /// <summary>
+    /// Every position's home, rebuilt. A home that could not be rebuilt refuses only its own position (<see cref="WorkspaceBuilder.BuildAll"/>)
+    /// — except the chair's, which is this supervisor's own working directory: a start whose chair has no home is no start.
+    /// </summary>
+    Dictionary<string, string> BuildAll(WorkspaceContext ctx)
+    {
+        var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
+        if (WorkspaceBuilder.RefusalFor(homes[CouncilRoles.Operations]) is { } why) throw new IOException(why);
+        return homes;
+    }
+
     /// <summary>Refreshes the instruction file so a restarted agent never reads a stale world.</summary>
     public async Task RestartAsync(WorkspaceContext ctx, CancellationToken ct = default)
     {
-        Workspaces = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
+        Workspaces = BuildAll(ctx);
         await StopAsync(ct);
         await StartAsync(ct);
     }

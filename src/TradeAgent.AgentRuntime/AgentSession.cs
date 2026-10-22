@@ -403,6 +403,9 @@ public sealed class AgentSession(
         // cell runs on — in RouteA.Admission's own words, lasting until a start measures a proof, its wakes kept. NEVER RE-DECLARED:
         // nothing here or anywhere moves a Member to another class; the launch itself meets the same admission as its hard line.
         if (CellRefusal() is { } cell) return new LaunchBar(cell, Lasting: true);
+        // A HOME THE LAST START COULD NOT REBUILD REFUSES THIS POSITION ALONE, in words that name it (U-execution-environment fix pass 4,
+        // the second re-review's [P2] 5): lasting until a start rebuilds it, its wakes kept; every other position starts.
+        if (UnbuiltHome() is { } unbuilt) return new LaunchBar(unbuilt, Lasting: true);
         return (grants ?? AgentGrants.Shared).HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
     }
 
@@ -441,6 +444,13 @@ public sealed class AgentSession(
                 $"TradeAgent did not start the AI as a cell seat: it could not put its own canon back in the position's folder ({ex.Message}). " +
                 "Nothing was started; the next turn tries again.", ex);
         }
+    }
+
+    /// <summary>Why this position may not start because the last start could not rebuild its home (<see cref="WorkspaceBuilder.RefusalFor"/>), or null.</summary>
+    string? UnbuiltHome()
+    {
+        try { return WorkspaceBuilder.RefusalFor(workspace()); }
+        catch (Exception ex) { return $"TradeAgent did not start the position {role}: it could not tell whether its folder was rebuilt ({ex.Message})."; }
     }
 
     /// <summary>
@@ -1026,6 +1036,8 @@ public sealed class AgentSession(
 
         // AN EXECUTOR'S CANON IS THE APP'S AGAIN BEFORE ITS TURN (U-execution-environment item 3): its cell writes its whole home,
         // AGENTS.md included, so the text the app last wrote there is put back — the record below then reads the app's own.
+        // AND NEVER IN A HOME THE LAST START COULD NOT REBUILD (fix pass 4): the look in Barred is only a look; this is its hard line.
+        if (WorkspaceBuilder.RefusalFor(psi.WorkingDirectory) is { } unbuilt) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, unbuilt);
         if (seatClass == SeatPlan.CellClass) RestoreCanon(psi.WorkingDirectory);
 
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it

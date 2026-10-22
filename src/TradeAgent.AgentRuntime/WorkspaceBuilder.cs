@@ -143,10 +143,49 @@ public static class WorkspaceBuilder
     /// home is representable, never runnable: building one opens no conversation (<c>U-org-principals</c>).
     /// </summary>
     /// <param name="kindOf">Each position's kind as the chart derives it (<c>U-execution-environment</c>), which picks its canon's class.</param>
+    /// <remarks>
+    /// <para><b>A HOME THAT CANNOT BE REBUILT REFUSES ITS OWN POSITION AND NO OTHER</b> (<c>U-execution-environment</c> fix pass 4, the
+    /// second re-review's [P2] 5; the orchestrator's ruling). An executor's cell writes its whole home, so it can leave a real folder where
+    /// the app's canon belongs, or a file where <c>in/</c>, <c>out/</c> or <c>.tradeagent</c> does — and <see cref="HomeFiles"/> refuses
+    /// to replace either, rightly. That refusal is caught HERE, per position: its home is still returned (its path does not change), its
+    /// words are recorded (<see cref="RefusalFor"/>) and every launch of that position is refused in them, lasting — while every other
+    /// position, the legacy pair included, is built and starts. Nothing of the cell's is deleted beyond the app-owned names
+    /// <see cref="Build"/> replaces, and the next start that can rebuild the home clears the refusal.</para>
+    /// </remarks>
     public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
-        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null) =>
-        CouncilRoles.All.Concat(positions ?? []).Distinct(StringComparer.Ordinal)
-            .ToDictionary(r => r, r => Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles), StringComparer.Ordinal);
+        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null)
+    {
+        var ws = root ?? Paths.Workspace;
+        var homes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in CouncilRoles.All.Concat(positions ?? []).Distinct(StringComparer.Ordinal))
+        {
+            var home = HomeOf(ws, r);
+            try
+            {
+                homes[r] = Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles);
+                Unbuilt.TryRemove(Key(homes[r]), out _);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Unbuilt[Key(home)] = $"TradeAgent did not start the position {r}: the last start could not rebuild its folder — {ex.Message} "
+                                     + "Nothing in the folder was deleted. This position stays refused until a start can rebuild its folder; "
+                                     + "every other position started.";
+                homes[r] = home;
+            }
+        }
+        return homes;
+    }
+
+    /// <summary>
+    /// Why the position whose home is <paramref name="home"/> may not start, because the last start could not rebuild that home (see
+    /// <see cref="BuildAll"/>), or null. Asked by its session before every launch.
+    /// </summary>
+    public static string? RefusalFor(string home) => Unbuilt.TryGetValue(Key(home), out var why) ? why : null;
+
+    /// <summary>The homes the last start of this process could not rebuild, by full path, with the words their positions are refused in.</summary>
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Unbuilt = new(StringComparer.Ordinal);
+
+    static string Key(string home) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(home));
 
     /// <summary>Environment handed to the agent process. The trade CLI is on PATH; no secrets are present.</summary>
     public static Dictionary<string, string> EnvironmentFor(string sessionId, string workspace)
