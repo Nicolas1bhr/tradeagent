@@ -2203,17 +2203,19 @@ public sealed class AppHost : IAsyncDisposable
         /// naming both numbers. It is written where they already look for what the software did,
         /// rather than only on a card they may not be in front of.
         /// </summary>
-        public void SpendCapReached(AiSpendToday spend)
+        public void SpendCapReached(AiSpendToday reading)
         {
+            // THE CEILING THAT STOPPED IT, IN ITS OWN WORDS (U-billing-classes): the plan's capacity is never called money.
+            var spend = reading.Binding;
             var money = MissionSituation.Money(spend.Spent, spend.Currency);
-            var cap = MissionSituation.Money(spend.Cap, spend.Currency);
+            var cap = MissionSituation.Money(spend.Cap, spend.Currency) + " " + spend.CeilingWords("your");
             var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
             host.Gateway.Log.Activity(spend.CapCannotFundATurn
                     // Midnight does not repair this one, so the line must not promise that it will.
-                    ? $"One AI turn can cost up to {reservation}, which is more than the whole {cap} daily limit, so "
+                    ? $"One AI turn can cost up to {reservation}, which is more than the whole {cap}, so "
                       + "the AI cannot start a turn at all. Raise the limit on the Safety page, or choose a cheaper "
                       + "model there."
-                    : $"The AI has spent {money} today, and the next turn would take it past its {cap} daily limit. "
+                    : $"The AI has used {money} today, and the next turn would take it past its {cap}. "
                       + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety "
                       + "page to let it carry on.",
                 "warn");

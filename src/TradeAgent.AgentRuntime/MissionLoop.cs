@@ -1604,23 +1604,34 @@ public sealed record MissionSituation
     public static string? SpendLine(AiSpendToday spend)
     {
         if (!spend.Metered) return null;
+        // TWO CEILINGS, TWO SENTENCES (U-billing-classes): a launch of unknown class must fit both, so the AI is told both — each
+        // figure in its own ceiling's words, the plan's never as money.
+        return spend.PlanReading is { } plan
+            ? SpendLineOf(spend with { PlanReading = null }) + " " + SpendLineOf(plan)
+            : SpendLineOf(spend);
+    }
+
+    /// <summary>ONE CEILING'S COST LINE: the figures of <paramref name="spend"/> against its own ceiling, named in its own words.</summary>
+    static string SpendLineOf(AiSpendToday spend)
+    {
+        var ceiling = spend.CeilingWords("your owner's");
 
         var turns = spend.Turns == 1 ? "1 turn" : $"{spend.Turns} turns";
 
         if (!spend.CanPrice)
             return $"What you have cost today: {turns}, price unknown — {spend.WhyNoPrice}. "
-                   + $"Your owner's daily limit of {Money(spend.Cap, spend.Currency)} cannot be applied to that, "
+                   + $"Your owner's {Money(spend.Cap, spend.Currency)} {ceiling} cannot be applied to that, "
                    + "so nothing is holding your spending back but you.";
 
         if (spend.CapCannotFundATurn)
             return $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
-                   + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}. One turn can cost up to "
+                   + $"{Money(spend.Cap, spend.Currency)} {ceiling}, over {turns}. One turn can cost up to "
                    + $"{Money(spend.NextTurnReservation, spend.Currency)}, which is more than that whole limit, so "
                    + "your owner has to raise it or choose a cheaper model before you can work again. Midnight "
                    + "will not change it.";
 
         var spent = $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
-                    + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}";
+                    + $"{Money(spend.Cap, spend.Currency)} {ceiling}, over {turns}";
 
         // The AI is told the figure is an upper bound in the same words the owner reads. An agent
         // asked to cover what it costs and given a number without that word would plan against a
@@ -4371,6 +4382,8 @@ public sealed class MissionLoop
             _nextTurnAt = spend.ResumesAt;
             _waitingFor = spend.Role is { } r && !spend.RoleAdmitsAnotherTurn && spend.AdmitsGlobally
                 ? $"the {CouncilRoles.Title(r)}'s share of the day to reset"
+                // THE CEILING THAT STOPPED IT, by name (U-billing-classes): the plan's capacity is not the money limit.
+                : spend.Binding.Class == BillingClasses.Plan ? "the daily plan-capacity limit to reset"
                 : "the daily spending limit to reset";
             _role = spend.Role;
             if (spend.Role is { } capped) _refusedLast.Remove(capped);

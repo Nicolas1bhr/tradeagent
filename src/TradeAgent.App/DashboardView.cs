@@ -148,9 +148,13 @@ sealed class DashboardPage
 
         if (!spend.Metered) return head;
 
-        return spend.CanPrice
-            ? head + $", up to {MissionSituation.Money(spend.Cap, spend.Currency)} a day"
-            : head + " — TradeAgent cannot price this AI, so your daily limit will not stop it";
+        if (!spend.CanPrice) return head + " — TradeAgent cannot price this AI, so your daily limit will not stop it";
+        // BOTH GRANTS, EACH IN ITS OWN WORDS (U-billing-classes): real money, and the plan's capacity — which is not money.
+        var line = head + $", up to {MissionSituation.Money(spend.Cap, spend.Currency)} a day"
+                   + (spend.Class == BillingClasses.Plan ? " of your ChatGPT plan's capacity" : " of real money");
+        return spend.PlanReading is { } plan
+            ? line + $" and {MissionSituation.Money(plan.Cap, plan.Currency)} a day of your ChatGPT plan's capacity, counted at list price"
+            : line;
     }
 
     /// <summary>The other direction. One press: it only ever takes work away.</summary>
@@ -478,21 +482,29 @@ sealed class DashboardPage
     internal static string MissionCost(AiSpendToday spend)
     {
         if (!spend.Metered) return "";
+        // BOTH CEILINGS, EACH IN ITS OWN WORDS (U-billing-classes): real money, and the plan's capacity — never shown as money.
+        return spend.PlanReading is { } plan
+            ? MissionCostOf(spend with { PlanReading = null }) + " " + MissionCostOf(plan)
+            : MissionCostOf(spend);
+    }
 
-        var cap = MissionSituation.Money(spend.Cap, spend.Currency);
+    static string MissionCostOf(AiSpendToday spend)
+    {
+        var cap = MissionSituation.Money(spend.Cap, spend.Currency) + " " + spend.CeilingWords("your");
+        var head = spend.Class == BillingClasses.Plan ? "Plan capacity used today" : "Cost today";
 
         if (!spend.CanPrice)
-            return $"Cost today: unknown — {spend.WhyNoPrice}. Your {cap} daily limit cannot stop it.";
+            return $"{head}: unknown — {spend.WhyNoPrice}. Your {cap} cannot stop it.";
 
         // THE ONE READING MIDNIGHT DOES NOT REPAIR. A ceiling smaller than one turn's worst case
         // admits no turn today and none tomorrow, so the card must not say "starts again at 00:00".
         if (spend.CapCannotFundATurn)
-            return $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap} — but one turn "
+            return $"{head}: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap} — but one turn "
                    + $"can cost up to {MissionSituation.Money(spend.NextTurnReservation, spend.Currency)}, which is "
                    + "more than the whole limit, so the AI cannot start a turn at all. Raise the limit, or choose a "
                    + "cheaper model above.";
 
-        var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
+        var line = $"{head}: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
         // WHICH MODEL IS SPENDING IT, beside what it has spent. The same turn on gpt-6-astra and on
         // gpt-5.6-luna differs by a factor of fifty, so a total with no model beside it is a number
         // the owner cannot act on — and this is the choice they make one press away, on this page.
