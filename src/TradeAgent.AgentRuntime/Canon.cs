@@ -67,6 +67,12 @@ public static class Canon
     public const string HarnessGuideFile = ".tradeagent/harness/GUIDE.md";
 
     /// <summary>
+    /// THE MOST OF A CANON FILE IN A HOME THE APP READS (<c>U-execution-environment</c> fix pass 5, P1): far past the canon this build
+    /// writes, so only a file the cell grew is refused by it — unread, never allocated.
+    /// </summary>
+    public const int MaxReadBytes = 1024 * 1024;
+
+    /// <summary>
     /// WHAT A CLI TURN RECEIVED, read at its launch: the <see cref="CliFile"/> in the role's folder as it is on disk — its
     /// bytes, hashed as they lie, the app's own only when <see cref="AppFileManifest.Wrote"/> says these exact bytes are
     /// what the app put there — and whether an <see cref="OverrideFile"/> lay beside it, which a codex CLI reads in its
@@ -81,7 +87,8 @@ public static class Canon
             // NEVER THROUGH A LINK (U-execution-environment fix pass 4): an executor's cell writes its whole home, so the canon's name may
             // be a link to a login outside — refused by HomeFiles, so the record says the canon is unknown and hashes nothing outside.
             // ANYTHING at the override's name lies beside it, a link included: the vendor in the cell follows one.
-            var sha = Sha256Hex.Of(HomeFiles.Read(home, CliFile, long.MaxValue, out _));
+            // AND NEVER PAST MaxReadBytes (fix pass 5, P1): a canon the cell grew past it is refused unread — unknown, said by nothing.
+            var sha = Sha256Hex.Of(HomeFiles.ReadAll(home, CliFile, MaxReadBytes));
             var own = files.Wrote(AppFileManifest.Key(CouncilRoles.HomeDir(role), CliFile), sha);
             var beside = HomeFiles.Describe(home, OverrideFile) is not null;
             return new CanonSeen(own && !beside ? Version : null, sha, own, beside);

@@ -60,6 +60,12 @@ public sealed class CouncilRelay
     public const int AgendaLines = 40;
 
     /// <summary>
+    /// THE BYTES ONE LINE OF A REPORT OR AGENDA MAY TAKE, ON AVERAGE (<c>U-execution-environment</c> fix pass 5, P1): a staged file is read
+    /// under its line limit times this, and one over it is refused by its size before a byte is read.
+    /// </summary>
+    public const int LineBytes = 1024;
+
+    /// <summary>
     /// The most publications one pass will take from one role's <c>out/</c>. A role that filled its
     /// folder with a thousand files would otherwise buy a thousand paid turns for the other one.
     /// </summary>
@@ -374,7 +380,15 @@ public sealed class CouncilRelay
             string content;
             // NEVER THROUGH A LINK (fix pass 3, P2): a report name the cell made a link to a login or the app's state is refused by the
             // descriptor that would be read, so no byte of what it points at reaches a held publication.
-            try { content = HomeFiles.ReadAllText(home, $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}"); }
+            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its line limit in bytes (LineBytes); one over it is refused unread, said
+            // as a rejection — never allocated, and never left to be read again on every pass.
+            try { content = HomeFiles.ReadAllText(home, $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}", (long)Limit(kind) * LineBytes); }
+            catch (HomeFileTooLarge big)
+            {
+                pass.Rejecting.Add($"{CouncilRoles.Title(role)}: {Path.GetFileName(file)} is {big.Length:N0} bytes, over the {big.Cap:N0} a "
+                                   + $"{Limit(kind)}-line {kind} may take, so it was not read or published. The last one it published still stands.");
+                continue;
+            }
             catch (Exception) { continue; }         // being written now, or refused; the next pass takes it
 
             if (!Valid(content, kind))

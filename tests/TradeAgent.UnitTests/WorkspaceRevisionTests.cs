@@ -560,4 +560,42 @@ public class WorkspaceRevisionTests
         Assert.True(Directory.GetFiles(elsewhere).Length == 0, "the app kept the refused plan in a folder outside the home");
         Assert.Equal(overCap, world.Read(CouncilRoles.Research, PublicationKind.Plan));
     }
+
+    /// <summary>
+    /// A PLAN OVER ITS SIZE IS REFUSED UNREAD (<c>U-execution-environment</c> fix pass 5, the fourth re-review's P1). An executor's cell can
+    /// make <c>trading/PLAN.md</c> a sparse file of a gigabyte in an instant (<c>ftruncate</c>), and the UNCONFINED app read every byte
+    /// of it into memory and decoded it on every turn before the line cap was ever asked. Now the read names its cap in bytes — the plan's
+    /// lines times <see cref="WorkspaceRevisions.LineBytes"/> — and a file over it is refused by its size, never allocated: nothing is
+    /// recorded, nothing kept (there are no bytes to keep) and so nothing put back over it, and the turn is told the size and the limit.
+    /// </summary>
+    [UnixFact]
+    public void A_sparse_plan_of_a_gigabyte_is_refused_unread_and_never_allocated()
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");                      // an earlier revision stands
+        var plan = world.PathOf(CouncilRoles.Research, PublicationKind.Plan);
+        const long Gigabyte = 1L << 30;
+        using (var fs = new FileStream(plan, FileMode.Create)) fs.SetLength(Gigabyte);   // sparse: made in an instant, no bytes written
+        try
+        {
+            var notices = new List<string>();
+            var revisions = world.Revisions();
+            revisions.Rejected = notices.Add;
+            List<WorkspaceRevisions.Restore> restores = [];
+            Exception? threw = null;
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            try { restores = revisions.Snapshot(CouncilRoles.Research, "turn-b"); }
+            catch (Exception ex) { threw = ex; }
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.True(threw is null && allocated < 16L * 1024 * 1024,
+                $"the app allocated {allocated:N0} bytes for a sparse 1 GB plan" + (threw is null ? "" : $", then threw {threw.GetType().Name}"));
+            Assert.Contains(notices, n => n.Contains($"{Gigabyte:N0} bytes", StringComparison.Ordinal));
+            Assert.Empty(restores);
+            Assert.Equal(Gigabyte, new FileInfo(plan).Length);
+            Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Plan));
+        }
+        finally { File.Delete(plan); }
+    }
 }
