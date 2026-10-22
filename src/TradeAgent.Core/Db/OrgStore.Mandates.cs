@@ -894,7 +894,7 @@ public sealed partial class OrgStore
     /// later than the holder's earliest requested wake when this is the mandate that wake serves (<see cref="HolderAsked"/>), so
     /// that turn is charged to the mandate; no later than the deadline
     /// less one floor, so a last chance before expiry remains; and never before <paramref name="now"/>. A zero floor, or no launch
-    /// of this owing (k = 0), is due now. A function of the records alone, so a restart computes the same instant.
+    /// of this owing (k = 0), is due now. A function of the records and <paramref name="now"/> alone, so a restart computes the same instant.
     /// </summary>
     DateTimeOffset RewakeDue(MandateRow m, MandateEventRow latest, string last, string level, RewakeFloors floors, DateTimeOffset now)
     {
@@ -932,13 +932,26 @@ public sealed partial class OrgStore
     /// mandate, and the turn it asked for must still be charged to the work it does (BUDGET-001) — but for ONE owed mandate of the
     /// holder only, never every one it holds: the one its latest launch served while that is still owed, else its oldest owed one
     /// (<see cref="AskedFor"/>). Null for any other mandate, or when no such wake is pending.
+    ///
+    /// <para><b>A requested wake is spoken for once</b> (fix pass 2): null, too, while ANOTHER mandate of the holder has an untaken
+    /// <c>mandate</c> wake due at or before it — that launch already carries a mandate, and the choice above is made again each
+    /// pass against the holder's LATEST launch, which an owner-woken turn changes, while a wake brought forward is never moved
+    /// back. Read from the wakes alone, so every pass and a restart see the same answer, and the second mandate keeps its floor
+    /// (BUDGET-001).</para>
     /// </summary>
     DateTimeOffset? HolderAsked(MandateRow m, DateTimeOffset now)
     {
         if (AskedFor(m.Holder, now) != m.Id) return null;
-        using var c = db.Cmd("SELECT MIN(due_at) FROM mission_event WHERE kind=$self AND role=$h AND consumed_at IS NULL",
-            ("$self", MissionEventKind.Self), ("$h", m.Holder));
-        return Sql.TimeN(c.ExecuteScalar());
+        DateTimeOffset? asked;
+        using (var c = db.Cmd("SELECT MIN(due_at) FROM mission_event WHERE kind=$self AND role=$h AND consumed_at IS NULL",
+                   ("$self", MissionEventKind.Self), ("$h", m.Holder)))
+            asked = Sql.TimeN(c.ExecuteScalar());
+        if (asked is null) return null;
+        using var taken = db.Cmd("""
+            SELECT EXISTS (SELECT 1 FROM mission_event
+                            WHERE kind=$mandate AND role=$h AND payload<>$m AND consumed_at IS NULL AND due_at<=$asked)
+            """, ("$mandate", MissionEventKind.Mandate), ("$h", m.Holder), ("$m", m.Id), ("$asked", Sql.T(asked.Value)));
+        return Convert.ToInt64(taken.ExecuteScalar(), CultureInfo.InvariantCulture) != 0 ? null : asked;
     }
 
     /// <summary>
