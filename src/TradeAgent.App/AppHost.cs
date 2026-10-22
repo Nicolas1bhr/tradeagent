@@ -1125,8 +1125,11 @@ public sealed class AppHost : IAsyncDisposable
         _seats.Neighbours = ActiveBeyondLegacy;
 
         // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
-        // page while the agent is running, and the next turn is the one that has to obey.
-        Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
+        // page while the agent is running, and the next turn is the one that has to obey. THE CHAIR'S
+        // SEAT'S (U-org-seats): its launches are admitted on the Operations Director's seat, so they
+        // name that seat's model — the app-wide choice read here named another wherever the owner had
+        // chosen one for the Operations Director, and the row recorded a model the argv did not.
+        Agent = new AgentSupervisor(Health, () => ConversationModelFor(CouncilRoles.Operations),
             // The attempt the meter opened for the launch about to happen. A function, because
             // the launch is minutes away from this line and the attempt it belongs to does not
             // exist yet.
