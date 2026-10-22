@@ -13,6 +13,8 @@ namespace TradeAgent.Tests.Unit;
 /// no degraded start (c), the executor cell's one egress (e), and the attempt's assurance under it (k). The Linux rows — a turn through
 /// <c>AgentSession.StartInCell</c> against CI's pinned codex — are <c>CellLinuxTests.Executor.cs</c>.
 /// </summary>
+// Row (e) writes a runtimes.json and reads the catalog back.
+[Collection(VendorOverrideFiles.Name)]
 public class ExecutorCellTests : IDisposable
 {
     const string Member = "pos-e7ec0001";
