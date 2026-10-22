@@ -607,4 +607,93 @@ public class WorkerToolTests : IAsyncLifetime
     const string ReadFile = GrantedWorkerTools.ReadFile;
     const string ListFiles = GrantedWorkerTools.ListFiles;
     const string WriteFile = GrantedWorkerTools.WriteFile;
+
+    /// <summary>
+    /// A LINK THE CELL FLIPS IN AFTER THE CHECK IS NEVER FOLLOWED (fix pass 3, the re-review's P1-a). An executor's cell writes its own
+    /// home while the unconfined app serves it the file tools there, so a loop in the cell can swap <c>out/x</c> between a file and a link
+    /// to the seat home's login or the app's state between the path check and the open. Across many reads and writes under that loop
+    /// the sentinel outside the home is never read back and never changed.
+    /// </summary>
+    [UnixFact]
+    public async Task A_file_tool_never_reads_or_writes_through_a_link_the_cell_flips_in()
+    {
+        var home = Home(CouncilRoles.Research);
+        var sentinel = Path.Combine(_root, "outside-auth.json");
+        File.WriteAllText(sentinel, "SENTINEL-sk-FAKE");
+        var x = Path.Combine(home, CouncilRoles.OutDir, "x");
+        var asFile = Path.Combine(home, CouncilRoles.OutDir, ".flip-file");
+        var asLink = Path.Combine(home, CouncilRoles.OutDir, ".flip-link");
+        File.WriteAllText(x, "own");
+        using var stop = new CancellationTokenSource();
+        var flipper = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                try { File.CreateSymbolicLink(asLink, sentinel); Rename(asLink, x); } catch (IOException) { }
+                try { File.WriteAllText(asFile, "own"); Rename(asFile, x); } catch (IOException) { }
+            }
+        });
+        var tools = Tools(CouncilRoles.Research);
+        var leaked = 0;
+        try
+        {
+            for (var i = 0; i < 4000; i++)
+            {
+                if ((await tools.InvokeAsync(Call(ReadFile, new { path = "out/x" }))).Content.Contains("SENTINEL")) leaked++;
+                await tools.InvokeAsync(Call(WriteFile, new { path = "out/x", content = "WRITTEN" }));
+            }
+        }
+        finally { stop.Cancel(); await flipper; }
+        Assert.True(leaked == 0, $"the app read the sentinel outside the home {leaked} times");
+        Assert.True(File.ReadAllText(sentinel) == "SENTINEL-sk-FAKE", "the app wrote the sentinel outside the home");
+    }
+
+    /// <summary>
+    /// THE SAME RACE, WON BY THE CELL EVERY TIME (fix pass 3, P1-a, deterministic): a link is planted at <c>out/x</c> after the path check
+    /// passed and just before the open (HomeFiles' seam). The read is refused, not followed; the write finds the name taken again
+    /// before its exclusive create and is refused, not written through; a hard link to the outside file is refused too. The sentinel
+    /// is never read back and never changed.
+    /// </summary>
+    [UnixFact]
+    public async Task A_link_planted_between_the_check_and_the_open_is_refused_never_followed()
+    {
+        var home = Home(CouncilRoles.Research);
+        var sentinel = Path.Combine(_root, "outside-auth-2.json");
+        File.WriteAllText(sentinel, "SENTINEL-sk-FAKE");
+        var x = Path.Combine(home, CouncilRoles.OutDir, "x");
+        File.WriteAllText(x, "own");
+        var tools = Tools(CouncilRoles.Research);
+        HomeFiles.BeforeOpen = p => { if (p == x) { File.Delete(x); File.CreateSymbolicLink(x, sentinel); } };
+        ToolAnswer read, wrote;
+        try
+        {
+            read = await tools.InvokeAsync(Call(ReadFile, new { path = "out/x" }));
+            File.Delete(x);
+            File.WriteAllText(x, "own");
+            wrote = await tools.InvokeAsync(Call(WriteFile, new { path = "out/x", content = "WRITTEN" }));
+        }
+        finally { HomeFiles.BeforeOpen = null; }
+        Assert.False(read.Served, $"the read was served through the link: {read.Content}");
+        Assert.DoesNotContain("SENTINEL", read.Content);
+        Assert.False(wrote.Served, $"the write was served through the link: {wrote.Content}");
+        Assert.Equal("SENTINEL-sk-FAKE", File.ReadAllText(sentinel));
+
+        File.Delete(x);
+        if (HardLink(sentinel, x) != 0) return;   // a file system that will not hard-link cannot exercise the last rule
+        var hard = await tools.InvokeAsync(Call(ReadFile, new { path = "out/x" }));
+        Assert.False(hard.Served, $"a hard link to a file outside the home was read: {hard.Content}");
+        Assert.DoesNotContain("SENTINEL", hard.Content);
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    static extern int HardLink(string existing, string created);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "rename", SetLastError = true)]
+    static extern int RenameNative(string from, string to);
+
+    /// <summary>rename(2): replaces <paramref name="to"/> in one step, whatever it is, and follows no link.</summary>
+    static void Rename(string from, string to)
+    {
+        if (RenameNative(from, to) != 0) throw new IOException($"rename failed: {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()}");
+    }
 }
