@@ -91,7 +91,7 @@ public partial class CouncilLoopTests
 
         async Task Run(string message, CancellationToken ct)
         {
-            lock (Sent) Sent.Add(message);
+            lock (Sent) { Sent.Add(message); Timeline.Add("send"); }
             Busy = true;
             StateChanged?.Invoke();
             using (concurrency.Enter())
@@ -108,7 +108,7 @@ public partial class CouncilLoopTests
             StateChanged?.Invoke();
             Delta?.Invoke("");
             TurnEnded?.Invoke(new AgentTurnEnded(Exit, TimeSpan.FromMilliseconds(3), turn.Text,
-                DateTimeOffset.UtcNow));
+                DateTimeOffset.UtcNow) { Usage = Usage });
         }
 
         /// <summary>A handle that closes nothing, for a conversation with no register behind it.</summary>
@@ -124,8 +124,23 @@ public partial class CouncilLoopTests
         public Task StopAsync()
         {
             Stops++;
+            lock (Sent) Timeline.Add("stop");
             return Task.CompletedTask;
         }
+
+        /// <summary>The loop's rotation, with why (<c>U-org-packets-a</c>): recorded in order with the sends, then the plain stop.</summary>
+        public Task StopAsync(string why)
+        {
+            Stops++;
+            lock (Sent) Timeline.Add($"stop:{why}");
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Every send and every stop, in order: <c>send</c>, <c>stop</c> or <c>stop:why</c>.</summary>
+        public List<string> Timeline { get; } = [];
+
+        /// <summary>What the next turn reports it used, or null for a turn that reports none (<c>U-org-packets-a</c>).</summary>
+        public TurnUsage? Usage { get; set; }
         public Task CancelAsync() => Task.CompletedTask;
         public void Queue(string message) { }
     }
@@ -220,7 +235,18 @@ public partial class CouncilLoopTests
         public Dictionary<string, TurnRefusal> Refusals { get; } = [];
 
         /// <summary>The chart's active positions, read as the app reads them (<see cref="OrgStore.Roster"/>).</summary>
-        public IReadOnlyList<ChartPosition> Positions() => new OrgStore(_db).Roster();
+        public bool ChartThrows { get; set; }
+
+        public IReadOnlyList<ChartPosition> Positions() => ChartThrows
+            ? throw new IOException("the organisation chart could not be read")
+            : new OrgStore(_db).Roster();
+
+        /// <summary>One mandate as its holder's launch sees it, from the organisation's records (<c>U-org-packets-a</c>).</summary>
+        public MandateView? MandateFor(string mandateId)
+        {
+            var org = new OrgStore(_db);
+            return org.Mandate(mandateId) is { } m ? new MandateView(m, org.MandateEvents(m.Id)) : null;
+        }
 
         /// <summary>The position's last woken turn, from the real launch ledger.</summary>
         public DateTimeOffset? LastWokenAt(string position) => new AiAttemptStore(_db).LastWoken(position)?.StartedAt;

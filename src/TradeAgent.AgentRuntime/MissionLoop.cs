@@ -106,6 +106,66 @@ public sealed record VendorHold(string Vendor, string Message, DateTimeOffset Un
 }
 
 /// <summary>
+/// ONE MANDATE AS ITS HOLDER'S LAUNCH SEES IT (<see cref="IMissionHost.MandateFor"/>, <c>U-org-packets-a</c>): the row as issued
+/// and its events, oldest first — the organisation's own records, read and never written.
+/// </summary>
+public sealed record MandateView(MandateRow Mandate, IReadOnlyList<MandateEventRow> Events)
+{
+    /// <summary>
+    /// THE EVENT THAT LAST SENT THE WORK BACK TO ITS HOLDER — code's <c>retry</c> after a clean failure or the decider's
+    /// <c>rejected</c> — or null where neither has happened. ORCHESTRATION § 2.5 calls a code-triaged retry "a fresh executor
+    /// attempt", so an executor's session is keyed by this beside the mandate.
+    /// </summary>
+    public MandateEventRow? SentBack => Events.LastOrDefault(e => e.Kind is MandateEventKind.Retry or MandateEventKind.Rejected);
+}
+
+/// <summary>
+/// WHY A TURN'S SESSION IS FRESH (<c>U-org-packets-a</c>; ORCHESTRATION § 2.6), the words its attempt records
+/// (<see cref="TurnSession"/>). A resumed session has no reason: it is the one the last turn left.
+/// </summary>
+public static class SessionWhy
+{
+    /// <summary>No session was open in this run of the app — its first turn here, an app restart included.</summary>
+    public const string First = "first";
+
+    /// <summary>An executor's launch serves a different mandate from the one its session was opened for.</summary>
+    public const string Mandate = "mandate";
+
+    /// <summary>The same mandate, sent back since the session opened — a code-triaged retry or the decider's rejection.</summary>
+    public const string Retry = "retry";
+
+    /// <summary>The session reached <see cref="MissionOptions.TurnsPerSession"/>.</summary>
+    public const string Turns = "turns";
+
+    /// <summary>The session's last reported input reached <c>MissionOptions.InputTokensPerSession</c>.</summary>
+    public const string Tokens = "tokens";
+
+    /// <summary>The seat's verified profile changed, and a rollout written under another profile is never continued.</summary>
+    public const string Profile = "profile";
+
+    /// <summary>The session was ended by a stop no rotation ordered — the owner's Stop, or a new conversation.</summary>
+    public const string Restart = "restart";
+
+    /// <summary>The app's own harness, which keeps no session between turns: every turn is fresh.</summary>
+    public const string Harness = "harness";
+}
+
+/// <summary>
+/// THE SESSION ONE TURN RAN IN (<c>U-org-packets-a</c>): fresh, with why (<see cref="SessionWhy"/>), or resumed. Carried out of the
+/// turn on <c>AgentTurnEnded.Session</c> and written into the attempt's <c>context</c> — the conversation knows whether it
+/// resumed, the loop knows why it rotated, and the record holds both.
+/// </summary>
+public sealed record TurnSession(bool Fresh, string? Why)
+{
+    public static TurnSession Resumed { get; } = new(false, null);
+
+    public static TurnSession FreshBecause(string why) => new(true, why);
+
+    /// <summary><c>fresh</c> or <c>resumed</c>, as the attempt's context writes it.</summary>
+    public string State => Fresh ? "fresh" : "resumed";
+}
+
+/// <summary>
 /// The numbers the loop runs on. Defaults are the brief's: a turn at once unless the AI asked for a
 /// delay, that delay capped at half an hour, an error backoff doubling from thirty seconds to the
 /// same half hour, and twenty turns per CLI session before a fresh one.
@@ -489,6 +549,14 @@ public interface IMissionHost
     /// (<see cref="OrgStore.LaunchRefused"/>). A default of nothing, for a host with no ledger.
     /// </summary>
     void MandateLaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now) { }
+
+    /// <summary>
+    /// ONE MANDATE AS ITS HOLDER'S LAUNCH SEES IT (<c>U-org-packets-a</c>; ORCHESTRATION § 2.6), read in one snapshot from the
+    /// organisation's records and written nowhere: the row as issued and its events. The loop keys an executor's session by it —
+    /// the mandate and its latest <c>retry</c> or <c>rejected</c> event — before anything of the turn is written. Null where this
+    /// host keeps no ledger or holds no such mandate; a host that throws is a mandate nobody could read, and the loop says so.
+    /// </summary>
+    MandateView? MandateFor(string mandateId) => null;
 
     /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
@@ -1679,6 +1747,12 @@ public sealed class MissionLoop
     public event Action<string>? Refused;
 
     /// <summary>
+    /// SOMETHING THE LOOP COULD NOT READ AND DID NOT GUESS, IN WORDS (<c>U-org-packets-a</c>): a chart or a mandate it could not read
+    /// at a session's rotation point. The app logs it; nothing reads it to decide anything.
+    /// </summary>
+    public event Action<string>? Noted;
+
+    /// <summary>
     /// TAKES THE ROLE'S TURN LEASE, or answers null because that role is already turning.
     ///
     /// <para>The lease is in memory. <c>docs/COUNCIL.md</c> is silent on where one lives, and this
@@ -1865,6 +1939,90 @@ public sealed class MissionLoop
     {
         lock (_gate) return _sessionTurns.TryGetValue(role, out var n) ? n : 0;
     }
+
+    /// <summary>
+    /// WHY <paramref name="role"/>'S NEXT TURN STARTS A FRESH SESSION, or null to resume the one it has (<c>U-org-packets-a</c>).
+    ///
+    /// <para><b>An executor</b> — a position the chart names and no unit is headed by — keys its session by the mandate its launch
+    /// serves and that mandate's latest <c>retry</c> or <c>rejected</c> event: a different mandate is fresh
+    /// (<see cref="SessionWhy.Mandate"/>), the same one sent back since is fresh (<see cref="SessionWhy.Retry"/>), and a launch
+    /// with no mandate wake — its own self-wake — keeps the session it has. <b>A head and the legacy pair</b> never rotate per
+    /// mandate. <b>Every position</b> rotates at <see cref="MissionOptions.TurnsPerSession"/>.</para>
+    ///
+    /// <para>A CHART THAT CANNOT BE READ IS NEVER GUESSED: the position keeps the turn bound only, and the loop says so.</para>
+    /// </summary>
+    string? SessionFor(string role, string? mandateId)
+    {
+        var turns = Sessions(role);
+        string? why = null;
+        if (mandateId is not null && Executor(role, mandateId))
+        {
+            MandateView? view = null;
+            var read = true;
+            try { view = _host.MandateFor(mandateId); }
+            catch (Exception ex)
+            {
+                read = false;
+                Said(role, $"mandate {mandateId} could not be read ({ex.Message}), so whether it was sent back since its session "
+                           + "opened is not known and that session is not rotated for it");
+            }
+
+            SessionKey? had;
+            var key = new SessionKey(mandateId, view?.SentBack?.Id);
+            lock (_gate)
+            {
+                had = _sessionKeys.GetValueOrDefault(role);
+                // AN UNREAD MANDATE KEEPS WHAT WAS KNOWN OF IT: never a guess that it was, or was not, sent back.
+                if (!read && had?.Mandate == mandateId) key = had;
+                _sessionKeys[role] = key;
+            }
+
+            // A SESSION THIS LOOP SAW OPEN — a key recorded, or turns taken under no mandate. With neither there is nothing to stop,
+            // and the conversation's own record says the session is its first.
+            if (had is null) why = turns > 0 ? SessionWhy.Mandate : null;
+            else if (had.Mandate != mandateId) why = SessionWhy.Mandate;
+            else if (had.SentBack != key.SentBack) why = SessionWhy.Retry;
+        }
+
+        return why ?? (turns >= _options.TurnsPerSession ? SessionWhy.Turns : null);
+    }
+
+    /// <summary>
+    /// WHETHER <paramref name="role"/> IS AN EXECUTOR on the chart as the host reads it now: false for the legacy pair and for a
+    /// unit's head, true for a member or staff position. A chart that throws, or does not name the position, is no answer — it
+    /// keeps the turn bound only, and is said.
+    /// </summary>
+    bool Executor(string role, string mandateId)
+    {
+        if (CouncilRoles.IsKnown(role)) return false;
+        IReadOnlyList<ChartPosition> chart;
+        try { chart = _host.Positions(); }
+        catch (Exception ex)
+        {
+            Said(role, $"the organisation chart could not be read ({ex.Message}), so its session is kept to the turn bound and "
+                       + $"not keyed to mandate {mandateId}");
+            return false;
+        }
+
+        if (chart.FirstOrDefault(p => p.Id == role) is not { } position)
+        {
+            Said(role, $"the organisation chart names no active position '{role}', so its session is kept to the turn bound and "
+                       + $"not keyed to mandate {mandateId}");
+            return false;
+        }
+        return position.Kind != OrgPositionKind.Head;
+    }
+
+    void Said(string role, string what)
+    {
+        try { Noted?.Invoke($"{CouncilRoles.Title(role)}: {what}."); }
+        catch (Exception) { /* a log line is never worth a turn */ }
+    }
+
+    /// <summary>The mandate an executor's session was opened for, and the event that last sent it back (<c>U-org-packets-a</c>).</summary>
+    sealed record SessionKey(string Mandate, long? SentBack);
+
+    readonly Dictionary<string, SessionKey> _sessionKeys = new(StringComparer.Ordinal);
 
     /// <summary>
     /// THE POSITION A COUNTER IS KEPT FOR: its exact id, and the chair's only where nothing is named — never a name
@@ -2470,9 +2628,14 @@ public sealed class MissionLoop
         // between them rotated whichever conversation happened to run next: twenty chair turns
         // threw away the Research Director's session, which had taken one, and the context that
         // was actually long went on growing.
-        if (Sessions(role) >= _options.TurnsPerSession)
+        //
+        // AND AN EXECUTOR'S SESSION IS ITS MANDATE'S (U-org-packets-a; ORCHESTRATION § 2.6: "an executor starts fresh per
+        // mandate; a head resumes within a rotation bound"). Decided here, before anything of the turn is written: a stop
+        // before a launch the ledger then refuses costs nothing — no process, no row.
+        var served = wake.FirstOrDefault(e => e.Kind == MissionEventKind.Mandate)?.Payload;
+        if (SessionFor(role, served) is { } rotation)
         {
-            await conversation.StopAsync();
+            await conversation.StopAsync(rotation);
             lock (_gate) _sessionTurns[role] = 0;
         }
 
