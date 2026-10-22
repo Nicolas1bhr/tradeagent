@@ -230,8 +230,8 @@ tools/linux-host.sh stop "<word>"                # systemctl stop; the data stay
 ```
 
 **`install` and `stop` run only on the owner's dated word**, passed as the last argument — a date, then his words:
-`"2026-10-22 yes, deploy it"`. Without one, with one older than three days or in the future, the script refuses before it
-reads the env file. The word is kept beside what it allowed, in the backup folder (`/var/backups/tradeagent/<UTC stamp>/WORD.txt`).
+`"2026-10-22 yes, deploy it"`. Without one, or with any date but today's — the date in the host's zone
+(`TA_LINUX_ZONE`, default Europe/Brussels), not the Mac's — the script refuses before it reaches the host. The word is kept beside what it allowed, in the backup folder (`/var/backups/tradeagent/<UTC stamp>/WORD.txt`).
 `install` writes the kit, a backup and nothing of the app's own data: it **never seeds the home** (a seeded AI_AUTHENTICATED
 would be a false record in what becomes the organisation's home). Each deploy is a gap in the tape, so deploy rarely, and
 never from a build that refuses older homes before `U-older-layout-refusal` has landed. On a first install the VNC

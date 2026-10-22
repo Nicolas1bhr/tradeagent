@@ -7,7 +7,9 @@
 #   tools/linux-host.sh stop "<word>"                  systemctl stop tradeagent.service; the data stays
 #
 # THE OWNER'S DATED WORD: `install` and `stop` run only on his word, which is an argument — a date, then his words, e.g.
-# "2026-10-22 yes, deploy it" — and the script refuses without one, or with one more than three days old or in the future.
+# "2026-10-22 yes, deploy it" — and the script refuses without one, or with any date but TODAY'S: the date in the host's own zone
+# (TA_LINUX_ZONE, the zone the kit gives the host; default Europe/Brussels), because "today" is the owner's day and the day on the
+# tape, not the day on whichever machine runs this. A word from yesterday or for tomorrow is a new question for him.
 # The word is kept in the backup folder beside what it allowed. It is the fleet's to run, never the app's and never a build
 # unit's: nothing in this repository names the host, so there is nothing for a unit to point it at, and this file never
 # reads a credential from anywhere but the env file below.
@@ -29,23 +31,25 @@ verb="${1:-}"
 
 usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-# word_ok "<word>": a date within three days of today, then at least three characters of the owner's own words.
+# word_ok "<word>" "<zone>": today's date in that zone, then at least three characters of the owner's own words.
 word_ok() {
-    python3 -I - "${1:-}" << 'PY'
-import datetime, re, sys
+    python3 -I - "${1:-}" "$2" << 'PY'
+import datetime, re, sys, zoneinfo
 m = re.match(r"^(20\d\d-\d\d-\d\d)[ :,-]+(\S.{2,})$", sys.argv[1])
 if not m:
     sys.exit(1)
 try:
     day = datetime.date.fromisoformat(m.group(1))
-except ValueError:
+    today = datetime.datetime.now(zoneinfo.ZoneInfo(sys.argv[2])).date()
+except (ValueError, zoneinfo.ZoneInfoNotFoundError):
     sys.exit(1)
-sys.exit(0 if abs((datetime.date.today() - day).days) <= 3 and day <= datetime.date.today() + datetime.timedelta(days=1) else 1)
+sys.exit(0 if day == today else 1)
 PY
 }
+# need_word "<word>": called once the env file is read, because the zone is the env file's; still before anything touches the host.
 need_word() {
-    word_ok "${1:-}" || {
-        echo "linux-host: '$verb' runs only on the owner's dated word, as an argument: \"YYYY-MM-DD <his words>\", dated within three days." >&2
+    word_ok "${1:-}" "${TA_LINUX_ZONE:-Europe/Brussels}" || {
+        echo "linux-host: '$verb' runs only on the owner's dated word, as an argument: \"YYYY-MM-DD <his words>\", dated TODAY (the date in ${TA_LINUX_ZONE:-Europe/Brussels})." >&2
         echo "Refusing without it." >&2
         exit 2
     }
@@ -53,8 +57,8 @@ need_word() {
 
 case "$verb" in
     recon | health) [ $# -eq 0 ] || usage ;;
-    install) [ $# -eq 2 ] || usage; need_word "$2" ;;
-    stop) [ $# -eq 1 ] || usage; need_word "$1" ;;
+    install) [ $# -eq 2 ] || usage ;;
+    stop) [ $# -eq 1 ] || usage ;;
     *) usage ;;
 esac
 
@@ -69,6 +73,7 @@ source "$env_file"
 : "${TA_LINUX_USER:?set TA_LINUX_USER in $env_file}"
 : "${TA_LINUX_KEY:?set TA_LINUX_KEY in $env_file: key authentication only}"
 port="${TA_LINUX_PORT:-22}"
+case "$verb" in install) need_word "$2" ;; stop) need_word "$1" ;; esac
 
 _opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o LogLevel=ERROR
        -o ServerAliveInterval=30 -o ServerAliveCountMax=4
