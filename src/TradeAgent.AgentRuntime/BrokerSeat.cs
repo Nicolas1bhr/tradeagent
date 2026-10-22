@@ -10,9 +10,12 @@ namespace TradeAgent.AgentRuntime;
 /// DECISION 2): its pinned model, the tools that model is expected to be offered, the tools no broker seat may ever be offered, and
 /// the check that a <c>runtimes.json</c> left the class's security fields as this build compiled them.
 ///
-/// <para><b>Why a pinned model.</b> The class holds only on a model with classic tools: a code-mode-only model (gpt-6-astra) keeps its
-/// code-mode <c>exec</c> even with the code-mode host disabled, so model-written code would run inside the process that holds the
-/// sign-in (Law 2, § 2.8). <b>Why a verified surface.</b> codex lists no offered tools itself, and a runtime update or the account's
+/// <para><b>Why a pinned model.</b> The class holds only on a model with classic tools. A code-mode-only model (gpt-6-astra) is still
+/// OFFERED code mode's <c>exec</c> with the code-mode host disabled; at codex 0.160.1 every such call fails closed ("code-mode host is
+/// disabled" — attempt 4's transcript, <c>fleet/tmp/M4-regression/report.md</c>), and with the host on, the model-written JavaScript
+/// runs in a <c>codex-code-mode-host</c> child of the codex that holds the sign-in (Law 2, § 2.8). So the class keeps the host disabled,
+/// pins a classic-tools model and refuses any surface offering <c>exec</c>; the CLI class runs the host (<c>U-cli-code-mode</c>).
+/// <b>Why a verified surface.</b> codex lists no offered tools itself, and a runtime update or the account's
 /// default model changes them, so before every launch the app reads them from a dry run against its own loopback mock
 /// (<see cref="CodexSurfaceProbe"/>), cached by binary, argument template and model, and refuses anything but the expected set.</para>
 ///
@@ -70,7 +73,7 @@ public static class BrokerSeat
 
     /// <summary>
     /// TOOLS NO BROKER SEAT IS EVER OFFERED, named in the refusal: what runs a command, writes a file, reads an image off the disk, starts
-    /// a sub-agent or runs model-written code — on this computer or inside the process that holds the sign-in.
+    /// a sub-agent or runs model-written code — on this computer or beside the process that holds the sign-in (code mode's host is its child).
     /// </summary>
     public static readonly string[] HostTools =
     [

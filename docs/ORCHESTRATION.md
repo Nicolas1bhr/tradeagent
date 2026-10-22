@@ -272,9 +272,12 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   features off, `agents.enabled=false` and the app's tools as a loopback HTTP MCP server, no host-reaching tool is offered and 17 calls to tools not
   offered were refused on both tool modes; flags alone are not enough (with a local environment present, `apply_patch` wrote a host file); the
   offered surface is verified at every launch, since a runtime update or the account's default model changes it. It holds only on a model with
-  classic tools: a code-mode-only model (gpt-6-astra) keeps its code-mode `exec` even with the code-mode host disabled, so model-written code
-  would run inside the process that holds the login (Law 2, § 2.8) — a thinking seat pins a classic-tools model and refuses any offered surface
-  containing `exec`; codex lists no offered tools itself, so the surface is read from a cached dry run against a loopback mock, keyed by binary,
+  classic tools: a code-mode-only model (gpt-6-astra) is still OFFERED code mode's `exec` with the code-mode host disabled — at 0.160.1 every
+  call then fails closed ("code-mode host is disabled", attempt 4's transcript, `fleet/tmp/M4-regression/report.md`) — and with the host on its
+  model-written JavaScript runs in a `codex-code-mode-host` child of the codex that holds the login, beside it (Law 2, § 2.8) — so a thinking
+  seat keeps the host disabled, pins a classic-tools model and refuses any offered surface containing `exec`. The legacy pair's CLI class runs
+  the host (`U-cli-code-mode`): its nested tools are the shell and patch tools it already has, the host program is pinned beside codex, and a
+  one-call dry run refuses a CLI seat whose command tool does not run; codex lists no offered tools itself, so the surface is read from a cached dry run against a loopback mock, keyed by binary,
   argument template and model (the thinking-seats survey, 2026-10-11). Thinking seats therefore need neither `U-harness-responses` nor an API
   key. **Seat classes live in code:** a class's pin and deny set are never read from `runtimes.json`, which replaces a manifest whole and stays
   the vendor-commands data file (`CLAUDE.md`).
