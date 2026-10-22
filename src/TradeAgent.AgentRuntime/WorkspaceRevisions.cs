@@ -90,7 +90,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     /// simply has the next turn refuse, keep and restore again: one more copy in the archive, and
     /// nothing lost.
     /// </summary>
-    public sealed record Restore(string Path, string Content);
+    public sealed record Restore(string Home, string Path, string Content);
 
     /// <summary>
     /// SNAPSHOTS ONE ROLE'S TWO MEMORY FILES. Called inside the turn's committed transition, so a
@@ -113,21 +113,21 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
         foreach (var (kind, rel, cap) in Files)
         {
             var home = homeOf(role);
-            var full = Path.Combine(home, rel.Replace('/', Path.DirectorySeparatorChar));
-
-            // A FILE THAT IS NOT THERE IS NOT A REFUSAL. A role that has not written a plan yet has
-            // nothing to version and nothing to restore; only a file that EXISTS and cannot be read
-            // is refused, because that is a file whose contents the app cannot stand behind.
-            bool there;
-            try { there = File.Exists(full); }
-            catch (Exception) { there = false; }
-            if (!there) continue;
 
             // THE BYTES, READ ONCE. What is judged, recorded and — if it is refused — kept is this one
             // read: a copy taken by a second read could be of a file that changed in between, and a
             // copy made by re-encoding the text would not be what the agent wrote.
+            //
+            // A FILE THAT IS NOT THERE IS NOT A REFUSAL. A role that has not written a plan yet has
+            // nothing to version and nothing to restore; only a file that EXISTS and cannot be read
+            // is refused, because that is a file whose contents the app cannot stand behind.
+            //
+            // NEVER THROUGH A LINK (U-execution-environment fix pass 4, the second re-review's [P1] 1): an executor's cell writes its
+            // whole home, so either file — or `trading/` — may be a link it aimed at a login or a file outside. HomeFiles opens each
+            // component without following one, so a linked file is unreadable: refused, nothing kept and nothing put back over it.
             byte[]? bytes;
-            try { bytes = File.ReadAllBytes(full); }
+            try { bytes = HomeFiles.Read(home, rel, long.MaxValue, out _); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { continue; }
             catch (Exception) { bytes = null; }      // unreadable reads as refused, below
             var content = bytes is null ? null : Text(bytes);
 
@@ -169,7 +169,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 // KEPT, SO IT MAY BE PUT BACK — and only now: the write-back lands over the file the
                 // copy was made from. The notice names the copy, because a copy the next turn cannot
                 // find is a copy in name only.
-                restores.Add(new Restore(full, last.Content));
+                restores.Add(new Restore(home, rel, last.Content));
                 putBack = true;
                 notice = $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
                          + $"the app accepted — has been put back in its place; what you wrote is kept at "
@@ -200,11 +200,9 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     public static void Apply(IEnumerable<Restore> restores)
     {
         foreach (var r in restores)
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(r.Path)!);
-                File.WriteAllText(r.Path, r.Content);
-            }
+            // NEVER THROUGH A LINK (fix pass 4): whatever is at the name is unlinked unread and the revision created fresh, its folder
+            // opened link-free — the last plan is never written where a link the cell planted after the read points.
+            try { HomeFiles.WriteAllText(r.Home, r.Path, r.Content); }
             catch (Exception) { /* the next turn refuses and restores again */ }
     }
 
@@ -225,37 +223,30 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
 
         try
         {
-            var dir = Path.Combine(home, ArchiveDir.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(dir);
+            // THE ARCHIVE AND EVERY COPY IN IT WITHOUT FOLLOWING A LINK (fix pass 4): `trading/` and `trading/archive/` are the cell's to
+            // have linked outside its home, so the folder is opened link-free — a link there refuses, so nothing is kept and nothing put
+            // back — and each copy is created exclusively, a name taken by anything at all skipped, never written through.
+            HomeFiles.CreateDirectory(home, ArchiveDir);
             var stem = $"{Path.GetFileNameWithoutExtension(rel)}-refused-{Stamp(attempt)}";
 
             for (var n = 1; n <= KeptNames; n++)
             {
                 var name = n == 1 ? $"{stem}.md" : $"{stem}-{n}.md";
-                var path = Path.Combine(dir, name);
+                var kept = $"{ArchiveDir}/{name}";
 
-                FileStream file;
-                try { file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
-                catch (Exception) when (File.Exists(path) || Directory.Exists(path)) { continue; }
-
-                try
-                {
-                    using (file)
-                    {
-                        file.Write(bytes);
-                        file.Flush(flushToDisk: true);     // on disk before the write-back is owed
-                    }
-                }
+                bool made;
+                try { made = HomeFiles.TryCreate(home, kept, bytes, flush: true); }     // on disk before the write-back is owed
                 catch (Exception)
                 {
                     // A PART-COPY IS NOT A COPY. Taken away rather than left for a later turn to read
                     // as what it wrote; the original is untouched, because nothing is put back.
-                    try { File.Delete(path); }
+                    try { HomeFiles.Remove(home, kept); }
                     catch (Exception) { /* a stray part-copy; the notice names no copy at all */ }
                     return null;
                 }
+                if (!made) continue;
 
-                return $"{ArchiveDir}/{name}";
+                return kept;
             }
         }
         catch (Exception) { /* no folder to keep it in: not kept, so not put back */ }

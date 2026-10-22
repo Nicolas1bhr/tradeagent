@@ -490,4 +490,74 @@ public class WorkspaceRevisionTests
         Assert.Empty(new PublicationStore(world.Db).By(CouncilRoles.Operations));
         Assert.Empty(WorkspaceRevisions.Notices(world.Db, CouncilRoles.Operations));
     }
+    // ---- fix pass 4: a home a cell writes (U-execution-environment; the second re-review's [P1] 1) ----------------------------
+
+    /// <summary>
+    /// A PLAN THE CELL LINKED TO A LONG FILE OUTSIDE ITS HOME IS NEVER READ, KEPT OR WRITTEN THROUGH. An executor's cell writes its whole
+    /// home and the relay versions <c>trading/PLAN.md</c> in the unconfined app after every turn: a link to a 61-line file outside — over
+    /// the plan's budget, so it would be refused — must not have its bytes copied into the cell's own archive (which the cell reads next
+    /// turn), and the last plan must not be put back over it. The outside file is unchanged and no kept copy holds a byte of it.
+    /// </summary>
+    [UnixFact]
+    public void A_plan_linked_to_a_long_file_outside_the_home_is_never_read_kept_or_written_through()
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+
+        var sentinel = Path.Combine(world.Root, "outside-journal.md");
+        var outside = Lines(WorkspaceRevisions.PlanLines + 1, "SENTINEL outside line");
+        File.WriteAllText(sentinel, outside);
+        File.Delete(world.PathOf(CouncilRoles.Research, PublicationKind.Plan));
+        File.CreateSymbolicLink(world.PathOf(CouncilRoles.Research, PublicationKind.Plan), sentinel);
+
+        new CouncilRelay(world.Db, world.Home).Run(CouncilRoles.Research, "turn-b");
+
+        Assert.True(File.ReadAllText(sentinel) == outside, "the app wrote the last plan over the file outside the home");
+        foreach (var kept in world.Kept(CouncilRoles.Research))
+            Assert.False(world.ReadKept(CouncilRoles.Research, kept).Contains("SENTINEL", StringComparison.Ordinal),
+                $"the cell's archive holds the outside file's bytes in {kept}");
+    }
+
+    /// <summary>
+    /// A PLAN THE CELL LINKED TO A LOGIN IS NEVER PUBLISHED. A short target — a fake <c>auth.json</c> well under the plan's budget — would
+    /// otherwise be read as a valid plan and recorded in a Private publication row: no publication carries its token.
+    /// </summary>
+    [UnixFact]
+    public void A_plan_linked_to_a_login_outside_the_home_is_never_recorded()
+    {
+        using var world = new World();
+        var auth = Path.Combine(world.Root, "auth.json");
+        File.WriteAllText(auth, "{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}");
+        File.CreateSymbolicLink(world.PathOf(CouncilRoles.Research, PublicationKind.Plan), auth);
+
+        new CouncilRelay(world.Db, world.Home).Run(CouncilRoles.Research, "turn-a");
+
+        Assert.True(new PublicationStore(world.Db).By(CouncilRoles.Research).All(p => !p.Content.Contains("sk-FAKE-relay-0000", StringComparison.Ordinal)),
+            "a publication carries the login the plan's link pointed at");
+        Assert.Equal("{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}", File.ReadAllText(auth));
+    }
+
+    /// <summary>
+    /// AN ARCHIVE THE CELL LINKED OUTSIDE ITS HOME IS NEVER WRITTEN INTO. A refused plan is kept in <c>trading/archive/</c> before the
+    /// last one is put back; with that folder a link to a folder outside, the copy is not made there — so, by the rule above, nothing is
+    /// put back either, and the folder outside gains nothing.
+    /// </summary>
+    [UnixFact]
+    public void An_archive_the_cell_linked_outside_the_home_is_never_written_into()
+    {
+        using var world = new World();
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, Lines(40, "plan line"));
+        world.Revisions().Snapshot(CouncilRoles.Research, "turn-a");
+        var elsewhere = Path.Combine(world.Root, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        Directory.CreateSymbolicLink(world.Archive(CouncilRoles.Research), elsewhere);
+        var overCap = Lines(WorkspaceRevisions.PlanLines + 5, "plan line");
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, overCap);
+
+        new CouncilRelay(world.Db, world.Home).Run(CouncilRoles.Research, "turn-b");
+
+        Assert.True(Directory.GetFiles(elsewhere).Length == 0, "the app kept the refused plan in a folder outside the home");
+        Assert.Equal(overCap, world.Read(CouncilRoles.Research, PublicationKind.Plan));
+    }
 }
