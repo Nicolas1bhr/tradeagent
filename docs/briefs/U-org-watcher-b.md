@@ -53,3 +53,17 @@ Re-checked 2026-10-22 against 3d2196c0:
 - Pointers moved (`BuildPages` :467-492, role gate :1300-1319); the page needs an accessor (`_oversight`, the store private); "at once" → within one sweep.
 - Cap model: the perception budget's box-bound press beside `Errors.cs:269`; (h) crash-before-stamp added (CLAUDE.md recovery).
 - Guards cited by their landed names; the mac UI loop and the Codex re-review HELD while the observed run is live.
+
+## Report
+Code tip 38c69d54 (rebased onto efd8e399; the CI run and the names check cover this sha). Gate: build Release --no-incremental "0 Warning(s) 0 Error(s)"; OversightTests+OversightPageTests "Passed: 28" ×3, OversightInvisibilityTests+PipeRefusalRecordTests "Passed: 9" ×3; CI 39740011002 success on every job (windows ×5, macos, ubuntu, package, package-linux, linux-host); names "sets: base 3077 tip 3088 / removed: 0".
+1 rung 2 (oversight_cap, oversight_ack; append-only by trigger; one transaction with its stamp; internal ladder seam) — done. RED (h): CS1739 no 'climbTo' / CS1061 no 'Cap'.
+2 page: OversightWords (pure) + OversightPage (built once, cards kept by id), Page.Oversight nav, root scope only, App-internal accessors on AppHost — done. RED (a)(g): CS0246 'OversightSources' not found.
+3 cap press: Labels.SaveOversightCap; raising takes two presses naming the figure and is disarmed by an edit; lowering or zero takes one press; read only by the page — done. RED (c): CS1061 no 'CapBox'. (d) guard: the differential re-run with a cap and an ack; only OversightStore.cs and OversightView.cs name the cap.
+MUTANT (c): the armed sentence `() => null` ⇒ "Assert.Null() Failure: Value is not null / Actual: OversightCap { Amount = 3 …}" — restored, green.
+4 refusal record (ruling b): RefusalMark (Exception.Data, in process) on OrgVerbCaller ×3, OrgStore.Refused, ledger author-rights ×3, mandate/decision show-of-another's; the role gate is recorded directly; read at Handle → engineering_log Ipc/op_refused {op|"unknown", code, role, attempt}, no payload, info; joins PipeRefusalEvents, scoped by the attempt's unit; template refusals/op; BLIND gap closed — done. RED (e): "Expected: 4 Actual: 0"; (e2): "Assert.Single() … empty"; (e3): "did not contain any matching items"; (e1) green at base.
+DEVIATION 4: the gateway's own rule refusals (mode, limits, allocation, loss budget, expired approval/decision, holdout) are recognised at Handle by a closed code list (RuleRefusals) instead of ~30 marks in TradingGateway, because no malformed frame uses those codes. APPROVAL_REQUIRED is excluded. Pinned template count 10→11 and rung-1 schema assert → Schema: both changed on purpose.
+5 banner: its own shell row after the approval banner; the newest unacknowledged severe finding's DigestComposer.Sentence; Open goes to the page; Acknowledge appends rows only for the findings it counted — done. RED (b): CS0246 'OversightBanner' not found.
+Part a's invisibility guards are unchanged and green, with no wire change; guard (f) is extended with the page, cap and banner names.
+Tests box (run 20261022-092021-6065718d, on 6065718d — one commit before the tip; the last commit only changes a catch clause and a comment): GREEN — Unit 2090/0 failed, Integration 737/0, Fault 498/0, timing 6+91+20/0; his files unchanged.
+review HELD for the observed run — prompt written (fleet/tmp/A-org/u-org-watcher-b-build/U-org-watcher-b-review-prompt.md).
+NOT done or verified: UI NOT VERIFIED visually (the observed run is live) — no mac-run/mac-shot and no Windows UI. No local full suite; no model call.
