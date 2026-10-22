@@ -15,7 +15,8 @@ using System.Text.Json.Nodes;
 // THE SCRIPT IS FOUND BY POSITION: the turn runs in the position's home, and the home's own folder name is the key —
 // <dir>/<key>.json holds {"turns": [[step, …], [step, …], …]}. The n-th turn of that position plays turns[n-1], the last one
 // again once they run out; a position with no script answers "Nothing to do." Steps, one string each:
-//   trade <args…>          runs the `trade` on PATH with these words ("…" keeps spaces); its exit code and output are logged
+//   trade <args…>          runs the `trade` on PATH with these words ("…" keeps spaces, \" is a quote kept as itself); its exit
+//                          code and output are logged
 //   write <path> <text…>   writes text to a file under the home (out/… for a publication)
 //   usage <in> <cached> <out>   reports token usage as codex does (turn.completed), so the session's own parser meters it
 //   final <text…>          the turn's answer (an agent_message item)
@@ -172,8 +173,11 @@ static List<string> Words(string s)
     var current = new StringBuilder();
     var quoted = false;
     var any = false;
-    foreach (var c in s)
+    for (var i = 0; i < s.Length; i++)
     {
+        var c = s[i];
+        // \" IS A QUOTE KEPT AS ITSELF (U-org-verbs-a): a JSON argument such as --refs carries its own double quotes.
+        if (c == '\\' && i + 1 < s.Length && s[i + 1] == '"') { current.Append('"'); any = true; i++; continue; }
         if (c == '"') { quoted = !quoted; any = true; continue; }
         if (char.IsWhiteSpace(c) && !quoted)
         {

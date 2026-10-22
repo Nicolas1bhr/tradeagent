@@ -366,6 +366,153 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         }
     }
 
+    /// <summary>A team under Research's division: its head first, then its members, each active — as only a test may write the chart.</summary>
+    static Action<Database> SeedTeam(string team, params string[] positions) => db => db.Write(_ =>
+    {
+        const string at = "2026-10-22T12:00:00.0000000Z";
+        var sql = new List<string> { $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{team}', '{OrgIds.Research}', 'team', NULL, 'active', '{at}')" };
+        sql.AddRange(positions.Select(p => $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{p}', '{team}', 'org/{p}', 'active', '{at}')"));
+        sql.Add($"UPDATE org_unit SET head_position_id='{positions[0]}' WHERE id='{team}'");
+        foreach (var line in sql)
+        {
+            using var c = db.Cmd(line);
+            c.ExecuteNonQuery();
+        }
+        return 0;
+    });
+
+    /// <summary>The <c>trade</c> steps of one turn's log, in order.</summary>
+    static List<System.Text.Json.Nodes.JsonObject> TradeSteps(PuppetLife life, string role, int turn) =>
+        [.. life.Log(role, turn).Where(s => (string?)s["step"] == "trade")];
+
+    static string Said(System.Text.Json.Nodes.JsonObject step) => $"{(string?)step["stdout"]}{(string?)step["stderr"]}";
+
+    /// <summary>
+    /// (f) O6 PART A ON THE REAL KERNEL, WITH PUPPET SEATS (<c>U-org-verbs-a</c>): a mandate whose holder failed twice — code retried
+    /// once and escalated — wakes its head, whose puppet RE-SCOPES it through <c>trade mandate rescope</c>: the old reads
+    /// <c>rescoped</c> naming the new, the new is issued naming the old, and the member is woken ONCE for the new. The member's
+    /// puppet, in the turn that wake buys, PROPOSES a finding citing two app records through <c>trade mandate propose</c>, and the
+    /// head is woken ONCE for it; each reads its own place with <c>trade org show</c> — the head's showing the successor it decides,
+    /// the member's the one it holds, each chain to the owner with the meter's envelopes. The seats are the puppet's own class,
+    /// MEDIATED (<c>SeatAssurance.cs</c>), the manifest <see cref="Puppet.Manifest"/> builds. No model.
+    /// </summary>
+    [Fact]
+    public async Task A_puppet_head_rescopes_a_failed_mandate_and_its_executor_proposes_a_finding()
+    {
+        const string head = "pos-5e55cc000001", member = "pos-5e55cc000002", team = "team-5e55cc00";
+        await using var life = await PuppetLife.Begin("org-verbs", seed: SeedTeam(team, head, member));
+        var org = new OrgStore(life.Host.Db);
+        var now = DateTimeOffset.UtcNow;
+        var old = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, now.AddDays(7), 5m, 2), now);
+        var tooLong = string.Join("\n", Enumerable.Range(1, MandateLimits.ReportLines + 1).Select(i => $"line {i}"));
+        for (var i = 0; i < 2; i++) org.Deliver(old.Id, member, null, tooLong, [], [], DateTimeOffset.UtcNow);
+        Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(old.Id));
+        var failed = org.Deliveries(old.Id)[^1].Id;
+
+        life.Script(head,
+            [$"trade mandate rescope {old.Id} \"two clean failures: the question was too wide\" \"summarise in ten lines whether the skew leads the hour\" "
+             + $"--kind task --shape report --due {now.AddDays(5):O} --allocation 5",
+             "signal rescoped", "await member-scripted", "trade org show", "usage 100 0 10", "final Re-scoped."],
+            ["trade org show", "usage 50 0 5", "final Read the proposal."]);
+        await life.RunUntil(() => life.Reached("rescoped"), "the head's puppet re-scoped the mandate");
+
+        // ONE LANE: the member cannot turn while the head's turn waits, so its script is written before its wake is taken.
+        var successor = org.SuccessorOf(old.Id);
+        Assert.True(successor is not null, $"the re-scope wrote no successor: {Said(TradeSteps(life, head, 1)[0])}");
+        var refs = JsonSerializer.Serialize(new[] { new { kind = "mandate", id = old.Id }, new { kind = "delivery", id = failed } })
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        life.Script(member, [$"trade mandate propose {successor} \"venue B leads venue A by a minute on the skew; it deserves its own mandate\" --refs {refs}",
+            "trade org show", "usage 100 0 10", "final Proposed."]);
+        life.Release("member-scripted");
+        await life.RunUntil(() => life.AttemptsOf(head).Count(a => a.State == AiAttemptState.ENDED) >= 2
+                                  && life.AttemptsOf(member).Any(a => a.State == AiAttemptState.ENDED),
+            "the member proposed and the head was woken for it");
+
+        // THE RE-SCOPE: the old closed naming the new, the new issued naming the old, the member woken once for it.
+        var rescope = TradeSteps(life, head, 1);
+        Assert.True((int?)rescope[0]["exit"] == 0, $"the re-scope was refused: {Said(rescope[0])}");
+        Assert.Equal(MandateEventKind.Rescoped, org.MandateStatus(old.Id));
+        Assert.Equal([successor!], org.MandateEvents(old.Id)[^1].Evidence);
+        var issued = org.MandateEvents(successor!)[0];
+        Assert.Equal((MandateEventKind.Issued, head), (issued.Kind, issued.Actor));
+        Assert.Equal([old.Id], issued.Evidence);
+        var events = life.Events();
+        var took = Assert.Single(events, e => e.Kind == MissionEventKind.Mandate && e.Payload == successor && e.ConsumedBy is not null);
+        Assert.Equal(MissionEventIds.Mandate(successor!, issued.Id), took.Id);
+        var memberTurn = life.AttemptsOf(member).First(a => a.State == AiAttemptState.ENDED);
+        Assert.Equal((memberTurn.Id, successor), (took.ConsumedBy, memberTurn.MandateId));
+
+        // THE PROPOSAL: the member's claim, its two refs, ONE wake its head's second turn took — and no authority.
+        var propose = TradeSteps(life, member, 1);
+        Assert.True((int?)propose[0]["exit"] == 0, $"the proposal was refused: {Said(propose[0])}");
+        var proposed = Assert.Single(org.MandateEvents(successor!), e => e.Kind == MandateEventKind.Proposed);
+        Assert.Equal(member, proposed.Actor);
+        Assert.Equal([$"mandate:{old.Id}", $"delivery:{failed}"], proposed.Evidence);
+        var proposal = Assert.Single(events, e => e.Kind == MissionEventKind.Proposal);
+        Assert.Equal((head, successor), (proposal.Role, proposal.Payload));
+        Assert.Equal(life.AttemptsOf(head).Where(a => a.State == AiAttemptState.ENDED).OrderBy(a => a.StartedAt).ElementAt(1).Id, proposal.ConsumedBy);
+        Assert.Equal(MandateEventKind.Issued, org.MandateStatus(successor!));
+        Assert.Equal(5m, org.Mandate(successor!)!.Allocation);
+
+        // EACH READS ITS OWN PLACE: the head decides the successor, the member holds it, each chain ends at the owner.
+        foreach (var (role, turn, step, mine) in new[] { (head, 1, 1, "decided"), (member, 1, 1, "held"), (head, 2, 0, "decided") })
+        {
+            var show = TradeSteps(life, role, turn)[step];
+            Assert.True((int?)show["exit"] == 0, $"{role}'s org show was refused: {Said(show)}");
+            using var view = JsonDocument.Parse((string)show["stdout"]!);
+            var data = view.RootElement.TryGetProperty("data", out var d) ? d : view.RootElement;
+            Assert.Equal(role, data.GetProperty("position").GetString());
+            Assert.Equal([team, OrgIds.Research, OrgIds.Root], data.GetProperty("chain").EnumerateArray().Select(u => u.GetProperty("id").GetString()));
+            Assert.Equal("the owner", data.GetProperty("chain")[2].GetProperty("head").GetString());
+            Assert.Contains(successor, data.GetProperty(mine).EnumerateArray().Select(m => m.GetProperty("mandate").GetString()));
+            Assert.DoesNotContain(old.Id, view.RootElement.GetRawText(), StringComparison.Ordinal);
+            Assert.True(data.GetProperty("chain")[2].TryGetProperty("ai_envelope", out _), $"the root's envelope was not shown: {data.GetRawText()}");
+            output.WriteLine($"life (org-verbs) {role} turn {turn} org show: {data.GetProperty("chain").GetRawText()}");
+        }
+        output.WriteLine($"life (org-verbs): {life.Counts()}");
+    }
+
+    /// <summary>
+    /// (f2) THE LEGACY PAIR ON UNCONFINED SEATS ARE REFUSED ALL THREE, ON THE REAL KERNEL (<c>U-org-verbs-a</c>): their puppets play the
+    /// CLI class — unconfined, the class the legacy pair's real seats record — and each asks <c>trade mandate rescope</c>,
+    /// <c>trade mandate propose</c> and <c>trade org show</c>; every one is refused in the gate's words (research heads the division
+    /// above every team, and headship grants no verb), and nothing is written. No model.
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pair_on_unconfined_puppet_seats_are_refused_rescope_propose_and_org_show()
+    {
+        await using var life = await PuppetLife.Begin("org-verbs-legacy", seatClass: SeatPlan.CliClass);
+        string[] steps =
+        [
+            "trade mandate rescope man-000000000000 \"w\" \"g\" --kind exploration --due 2099-01-01T00:00:00Z --allocation 1",
+            "trade mandate propose man-000000000000 \"c\" --refs []",
+            "trade org show",
+            "usage 10 0 5",
+            "final Refused."
+        ];
+        life.Script(Research, steps);
+        life.Script(Chair, steps);
+        life.Wake(Research);
+        life.Wake(Chair);
+        await life.RunUntil(() => life.AttemptsOf(Research).Any(a => a.State == AiAttemptState.ENDED)
+                                  && life.AttemptsOf(Chair).Any(a => a.State == AiAttemptState.ENDED), "the legacy pair turned");
+
+        foreach (var role in new[] { Research, Chair })
+        {
+            var asked = TradeSteps(life, role, 1);
+            Assert.Equal(3, asked.Count);
+            foreach (var step in asked)
+            {
+                Assert.True((int?)step["exit"] != 0, $"{role}'s {step["args"]?.ToJsonString()} was served on an unconfined seat");
+                Assert.Contains("Heading a unit grants no verb by itself", Said(step), StringComparison.Ordinal);
+            }
+            output.WriteLine($"life (org-verbs-legacy) {role}: {Said(asked[2]).Trim()}");
+        }
+        Assert.DoesNotContain(life.Events(), e => e.Kind is MissionEventKind.Proposal or MissionEventKind.Mandate);
+        Assert.Empty(new OrgStore(life.Host.Db).MandatesOf(Research));
+    }
+
     /// <summary>
     /// THE MATERIAL PASS WAITS FOR A PUPPET TURN'S QUIESCENCE (COUNCIL rule 7): while the chair's puppet is mid-turn its process is
     /// in the host's presence register and the app's own pass refuses to walk the inbox — nothing walked, the window unmoved; once
