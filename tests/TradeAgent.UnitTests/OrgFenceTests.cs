@@ -88,4 +88,91 @@ public partial class OrgAssignmentTests
         }
         Assert.Null(org.FencedSince("turn-never-recorded"));
     }
+    // ---- item 2: the broker refuses ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (2) A FENCED ATTEMPT'S NEXT OPERATION IS REFUSED — ANY OP, BEFORE ITS OWN GATES: a member's launch under a mandate reads it;
+    /// its head cancels the mandate through the pipe; every later op of that launch — a pipe read, an org read, its delivery, the
+    /// ledger — is refused <c>ATTEMPT_FENCED</c> in words naming the mandate, the transition and its reason, and nothing is written.
+    /// The member's NEXT launch is not fenced by it. A fence read that fails refuses the op rather than guessing it through. RED at
+    /// base: the cancelled mandate's launch was served.
+    /// </summary>
+    [Fact]
+    public async Task A_fenced_attempts_next_operation_is_refused()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var m = await Assigned(server, db);
+        var running = Launch(db, Member, mandate: m);
+        Assert.True((await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m)), Member, running)).Ok);
+
+        var cancel = await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", m), ("why", CancelWhy)), Head, Launch(db, Head));
+        Assert.True(cancel.Ok, Json.Write(cancel.Error));
+
+        foreach (var frame in new[]
+                 {
+                     Frame(Ops.Status), Frame(Ops.MandateShow, ("mandate", m)), DeliverFrame(m, "the skew leads the hour by a minute"),
+                     Frame(Ops.LedgerList)
+                 })
+        {
+            var refused = await server.CallAsync(frame, Member, running);
+            Assert.False(refused.Ok, $"'{frame.Op}' was served to a fenced launch");
+            Assert.Equal("ATTEMPT_FENCED", refused.Error!.Code);
+            foreach (var word in new[] { m, "cancelled", CancelWhy, running, $"'{frame.Op}'" })
+                Assert.Contains(word, refused.Error.Message, StringComparison.Ordinal);
+        }
+        Assert.Empty(gw.Org.Deliveries(m));
+
+        // THE MEMBER'S NEXT LAUNCH IS NOT THIS FENCE'S.
+        Assert.True((await server.CallAsync(Frame(Ops.Status), Member, Launch(db, Member))).Ok);
+
+        // A FENCE THAT CANNOT BE READ REFUSES THE OPERATION, never guesses it through.
+        Exec(db, "ALTER TABLE org_event RENAME TO org_event_away");
+        var unreadable = await server.CallAsync(Frame(Ops.Status), Member, Launch(db, Member));
+        Exec(db, "ALTER TABLE org_event_away RENAME TO org_event");
+        Assert.False(unreadable.Ok, "an op whose fence could not be read was served");
+        Assert.Equal("ATTEMPT_FENCED", unreadable.Error!.Code);
+        Assert.Contains("could not be read", unreadable.Error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (2g) GUARD — AN ORG FENCE NEVER REFUSES AN OPERATIONS OP (AUTH-001, ORDER-001, UNKNOWN-001): rows fencing <c>operations</c> and
+    /// <c>research</c> after their launches started — rows nothing should write — and then a fence store that cannot be read at all;
+    /// the chair's reads and its order ops, and research's read, are never answered <c>ATTEMPT_FENCED</c>. RED with the legacy
+    /// exemption in <c>OrgStore.NeverFenced</c> removed.
+    /// </summary>
+    [Fact]
+    public async Task An_org_fence_never_refuses_an_operations_op()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var t0 = DateTimeOffset.UtcNow;
+        var chair = LaunchedAt(db, CouncilRoles.Operations, t0.AddMinutes(-1));
+        var research = LaunchedAt(db, CouncilRoles.Research, t0.AddMinutes(-1));
+        FencePosition(db, CouncilRoles.Operations, OrgIds.Operations, t0, "a row nothing should write");
+        FencePosition(db, CouncilRoles.Research, OrgIds.Research, t0, "a row nothing should write");
+
+        async Task NeverFenced(string readable)
+        {
+            foreach (var (frame, role, launch) in new[]
+                     {
+                         (Frame(Ops.Status), CouncilRoles.Operations, chair), (Frame(Ops.Orders), CouncilRoles.Operations, chair),
+                         (Frame(Ops.CancelAll), CouncilRoles.Operations, chair), (Frame(Ops.CloseAll), CouncilRoles.Operations, chair),
+                         (Frame(Ops.Status), CouncilRoles.Research, research)
+                     })
+            {
+                var reply = await server.CallAsync(frame, role, launch);
+                Assert.True(reply.Error?.Code != "ATTEMPT_FENCED", $"{role}'s '{frame.Op}' was fenced ({readable}): {reply.Error?.Message}");
+            }
+        }
+
+        await NeverFenced("fence rows naming the pair");
+        Exec(db, "ALTER TABLE org_event RENAME TO org_event_away");
+        try { await NeverFenced("the fence store unreadable"); }
+        finally { Exec(db, "ALTER TABLE org_event_away RENAME TO org_event"); }
+    }
 }

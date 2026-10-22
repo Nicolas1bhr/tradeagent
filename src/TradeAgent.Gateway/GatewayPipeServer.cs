@@ -1298,6 +1298,32 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
 
         var ctx = AgentContext.ForAgent(req.Session, role, attemptId, ordersWithheld);
 
+        // THE FENCE, BEFORE EVERY GATE THE OPERATION HAS OF ITS OWN (U-org-verbs-b; ORCHESTRATION § 2.3 "Fences"): an attempt whose
+        // mandate its decider cancelled or re-scoped after it started, or whose position was fenced, does nothing more — any op, an org
+        // verb or a pipe op alike — and is told which transition took its authority. The fence is a DB fact read here on every operation
+        // (OrgStore.FencedSince), so it holds across a restart and the instant the transition commits; a read that fails refuses the op
+        // rather than guessing it through.
+        //
+        // NEVER THE LEGACY PAIR, and that is a guard on the caller's ROLE asked before anything is read (OrgStore.NeverFenced): a fence
+        // acts on the organisation's AI only, so no fence — and no failed read of one — ever stands between the Operations Director and
+        // an order op (AUTH-001, ORDER-001, UNKNOWN-001). It only takes away: nothing here grants or widens anything.
+        if (!OrgStore.NeverFenced(ctx.Role) && ctx.AttemptId is { } running)
+        {
+            string? fenced;
+            try { fenced = gateway.Org.FencedSince(running)?.Words; }
+            catch (Exception ex)
+            {
+                gateway.Log.TryEngineering("Ipc", "fence_unreadable", "warn", ex: ex);
+                fenced = $"launch {running}'s authority could not be read, and an operation whose authority cannot be read is refused";
+            }
+            if (fenced is not null)
+            {
+                gateway.Log.Activity($"AI request refused: {fenced}", "warn");
+                if (!callerRecords) RecordRefusal(req.Op, ErrorCode.ATTEMPT_FENCED, ctx);
+                return IpcResponse.Fail(req.Id, ErrorCode.ATTEMPT_FENCED, $"'{req.Op}' was refused: {fenced}. Nothing was done.");
+            }
+        }
+
         // THE ROLE DECIDES WHETHER MONEY MOVES, and this is the only line that reads it.
         //
         // Before it, every authenticated caller was the same caller: one machine token, no way to
@@ -1457,7 +1483,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         ErrorCode.ROLE_MAY_NOT_TRADE, ErrorCode.MODE_FORBIDS_EXECUTION, ErrorCode.MODE_ACCOUNT_MISMATCH, ErrorCode.RISK_LIMIT_EXCEEDED,
         ErrorCode.LOSS_BUDGET_REACHED, ErrorCode.CAMPAIGN_BUDGET_REACHED, ErrorCode.ALLOCATION_NONE, ErrorCode.ALLOCATION_EXCEEDED,
         ErrorCode.ENVELOPE_ACCOUNT_RESERVED, ErrorCode.APPROVAL_EXPIRED, ErrorCode.APPROVAL_PREDATES_LOSS_BREACH, ErrorCode.DECISION_EXPIRED,
-        ErrorCode.HOLDOUT_WITHHELD,
+        ErrorCode.HOLDOUT_WITHHELD, ErrorCode.ATTEMPT_FENCED,
     ];
 
     static bool IsRefusal(Exception ex, ErrorCode code) => RefusalMark.IsMarked(ex) || Array.IndexOf(RuleRefusals, code) >= 0;

@@ -136,7 +136,12 @@ public enum ErrorCode
     // program is not installed yet" and offers to install it, and ATAS_NOT_FOUND sends the owner to
     // atas.net — neither of which is the repair when the program is there and the file describing
     // it is not readable.
-    RUNTIME_COMMANDS_UNREADABLE, ATAS_LAYOUT_UNREADABLE
+    RUNTIME_COMMANDS_UNREADABLE, ATAS_LAYOUT_UNREADABLE,
+    // AN ATTEMPT UNDER A STALE AUTHORITY (U-org-verbs-b; ORCHESTRATION § 2.3 "Fences"): the mandate it served was cancelled or
+    // re-scoped, or its position was fenced, after it started, so every operation it asks is refused. Not ROLE_MAY_NOT_TRADE, which
+    // is about moving money, and not TOOL_NOT_GRANTED, which is a tool its launch never had: this launch HAD the authority and the
+    // organisation took it away, and the answer is never "ask again" — the next launch, under whatever replaced it, starts fresh.
+    ATTEMPT_FENCED
 }
 
 /// <summary>
@@ -1154,6 +1159,7 @@ public static class Errors
         // turn starts fresh. The two boxes named here are the ones on the Safety page.
         [ErrorCode.CONTEXT_BUDGET_EXCEEDED]        = ("One AI turn reached the most it is allowed to read and write, so TradeAgent stopped it before its next request.", $"Nothing was lost. Raise “{Labels.TurnAllowanceIn}” on the Safety page if its work needs more room.", false),
         [ErrorCode.TOOL_NOT_GRANTED]               = ("The AI asked for something TradeAgent does not let that part of it do.", "No action needed. The request was refused and recorded.", false),
+        [ErrorCode.ATTEMPT_FENCED]                 = ("A part of the AI asked to keep working on something its organisation had already cancelled or re-scoped.", "No action needed. The request was refused and recorded, and that part's turn was ended.", false),
         // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
         // what it does not share is the shape of the conversation, and telling its owner to go
         // looking for a permission problem sends them after a fault that is not there. It is the
