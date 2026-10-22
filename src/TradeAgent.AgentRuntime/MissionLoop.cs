@@ -397,6 +397,15 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// nothing. The meter charges the reservation and writes this into the attempt's <c>context</c>.
     /// </summary>
     public string? UsageUnreported { get; init; }
+
+    /// <summary>
+    /// THE SENTENCE THE HARNESS WITHHELD THIS TURN'S FIRST REQUEST IN, or null — and when it is not null, NO REQUEST OF THIS TURN WAS
+    /// SENT (<c>U-org-seats</c> fix pass 1, review P2). Set by <see cref="ApiConversation"/> on one path only: the first request's body
+    /// could take the turn past its input allowance, so it was never posted. Like <see cref="KeyNotHeld"/> it is the app's own record of
+    /// its own act, so it can carry money: <see cref="TurnMeter"/> charges the turn nothing (BUDGET-001) and writes the sentence on the
+    /// row as the reason. A later request withheld leaves this null: the earlier ones were sent and their usage is charged.
+    /// </summary>
+    public string? FirstRequestWithheld { get; init; }
 }
 
 /// <summary>

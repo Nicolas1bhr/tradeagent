@@ -492,4 +492,36 @@ public class OrgSeatsTests : IDisposable
         using var context = JsonDocument.Parse(row.Context!);
         Assert.Contains("request 2", context.RootElement.GetProperty("usage_unreported").GetString(), StringComparison.Ordinal);
     }
+
+    // ---- fix pass 1, review P2: a turn that sent nothing is charged nothing ------------------------------------------
+
+    /// <summary>
+    /// A TURN WHOSE FIRST REQUEST IS WITHHELD FOR ITS SIZE SENT NOTHING, AND IS CHARGED NOTHING (review P2; BUDGET-001): the app's own
+    /// record of its own act, set where it happened, as a refusal before any work is — not a turn whose usage never arrived, which
+    /// keeps its reservation. Its reservation still reads on the row; its cost is zero.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_whose_first_request_is_withheld_for_size_sends_nothing_and_is_charged_nothing()
+    {
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("done", input: 10, output: 5));
+        var tiny = new TurnAllowance(100, 8_000);
+        var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", tiny));
+        using var runtime = HarnessOn(provider, TurnAllowance.Default);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+
+        await conversation.SendAsync("go on then");
+
+        Assert.Empty(provider.Requests);
+        Assert.Equal(ApiConversation.EndedOverBudget, ended!.Outcome);
+        var row = OnlyRow();
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(Priced(tiny), row.ReservedCost);
+        Assert.Equal(0m, row.Cost);
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.Contains("could take it past that", context.RootElement.GetProperty("refused").GetString(), StringComparison.Ordinal);
+    }
 }

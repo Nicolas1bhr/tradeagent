@@ -295,6 +295,9 @@ public sealed class ApiConversation(
         // WHICH REQUEST NOTHING MEASURED, in words, or null: see AgentTurnEnded.UsageUnreported.
         string? unreported = null;
 
+        // THE SENTENCE THE FIRST REQUEST WAS WITHHELD IN, or null: nothing of the turn was sent. See AgentTurnEnded.FirstRequestWithheld.
+        string? unsent = null;
+
         // WHERE THIS TURN'S REQUESTS GO, READ ONCE. The key is released for this endpoint's origin
         // and every request below is posted to this same string: reading the manifest again per
         // request would let the address checked and the address used be two different things.
@@ -344,7 +347,7 @@ public sealed class ApiConversation(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, usage, outcome, cut, unreported) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
+            (exitCode, usage, outcome, cut, unreported, unsent) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -406,7 +409,10 @@ public sealed class ApiConversation(
                 GateRefused = gateRefused,
 
                 // AND THE REQUEST WHOSE RESPONSE REPORTED NO USAGE, where one did: the row says what was not measured.
-                UsageUnreported = unreported
+                UsageUnreported = unreported,
+
+                // AND, WHERE THE FIRST REQUEST WAS WITHHELD, THAT NOTHING WAS SENT: the meter charges such a turn nothing.
+                FirstRequestWithheld = unsent
             });
         }
         return gateRefused;
@@ -417,7 +423,7 @@ public sealed class ApiConversation(
     /// the one path where this app cut the turn itself — the bound that did it, in the same words the
     /// worker was shown.
     /// </summary>
-    async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut, string? Unreported)> RunRequestsAsync(
+    async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut, string? Unreported, string? Unsent)> RunRequestsAsync(
         string endpoint, string key, string message, Transcript transcript, CancellationToken ct)
     {
         // THE SEAT THIS TURN WAS ADMITTED ON (U-org-seats): its allowance is what the reservation was priced at, so it is what this
@@ -454,7 +460,7 @@ public sealed class ApiConversation(
                 var stopped = UsageNotReported(n);
                 Append(new ChatTurn(ChatRole.System, stopped, _now()));
                 transcript.Note(stopped);
-                return (BudgetExceeded, null, EndedUsageUnreported, stopped, Unmeasured(n));
+                return (BudgetExceeded, null, EndedUsageUnreported, stopped, Unmeasured(n), null);
             }
 
             // BEFORE THE REQUEST, ALWAYS. Every quantity is compared against its bound here, where
@@ -467,7 +473,7 @@ public sealed class ApiConversation(
                 // would throw away work the owner has already paid for.
                 Append(new ChatTurn(ChatRole.System, why, _now()));
                 transcript.Note(why);
-                return (BudgetExceeded, total, EndedOverBudget, why, null);
+                return (BudgetExceeded, total, EndedOverBudget, why, null, null);
             }
 
             var body = RequestBody(messages, surface, bound, total, seatModel);
@@ -481,7 +487,16 @@ public sealed class ApiConversation(
             {
                 Append(new ChatTurn(ChatRole.System, withheld, _now()));
                 transcript.Note(withheld);
-                return (BudgetExceeded, total, EndedOverBudget, withheld, null);
+
+                // THE FIRST REQUEST WITHHELD IS A TURN THAT SENT NOTHING (review P2; BUDGET-001): said so where it happened, so the meter
+                // charges it nothing as it does every refusal before any work — not its reservation, which is for usage that may exist
+                // and was never reported. No canon was sent either.
+                if (requests == 0)
+                {
+                    _canon = null;
+                    return (BudgetExceeded, null, EndedOverBudget, withheld, null, withheld);
+                }
+                return (BudgetExceeded, total, EndedOverBudget, withheld, null, null);
             }
 
             // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE EACH REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter
@@ -508,8 +523,8 @@ public sealed class ApiConversation(
 
             if (answer.Calls.Count == 0)
                 return unmeasured is { } last
-                    ? (Completed, null, EndedCompleted, null, Unmeasured(last))
-                    : (Completed, total, EndedCompleted, null, null);
+                    ? (Completed, null, EndedCompleted, null, Unmeasured(last), null)
+                    : (Completed, total, EndedCompleted, null, null, null);
 
             // THE TOOL LOOP IS THE APP'S, not the provider's. Each call is answered by this process,
             // recorded, bounded, and put back into the conversation as a tool message.
