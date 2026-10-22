@@ -2828,7 +2828,7 @@ public sealed class Database : IDisposable
         }
 
         // THE RUNG'S NUMBER, SPELLED ONCE: rungs land in landing order, and a unit overtaken renumbers here and in Versions.
-        const int seatsRung = 45;
+        const int seatsRung = 44;
         if (have < seatsRung)
         {
             // THE ALLOWANCE A LAUNCH WAS RESERVED AT, AND WHETHER ITS TURN IS HELD TO IT — `U-org-seats` (docs/ORCHESTRATION.md

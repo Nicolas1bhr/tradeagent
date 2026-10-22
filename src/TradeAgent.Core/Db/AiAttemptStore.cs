@@ -115,7 +115,7 @@ public sealed record AiAttempt
     public string? MandateId { get; init; }
 
     /// <summary>
-    /// THE ALLOWANCE THIS LAUNCH WAS RESERVED AT, AND WHETHER ITS TURN IS HELD TO IT (<c>U-org-seats</c>, rung 45): input and output tokens
+    /// THE ALLOWANCE THIS LAUNCH WAS RESERVED AT, AND WHETHER ITS TURN IS HELD TO IT (<c>U-org-seats</c>, rung 44): input and output tokens
     /// as the reservation priced them, and <c>enforced</c> (the app's harness withholds any request that could pass them) or
     /// <c>reservation</c> (a vendor's program: the reservation is the only bound, and an overrun is recorded and charged). Composed by the
     /// app from the seat it resolved before this row existed, written in the row's own insert, and never updated — refused by trigger.

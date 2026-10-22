@@ -332,7 +332,7 @@ public class OrgSeatsTests : IDisposable
     // ---- (g) each attempt records its allowance and whether its bound is enforced -----------------------------------
 
     /// <summary>The rung, spelled once: renumbered with the rung in landing order.</summary>
-    const int Rung = 45;
+    const int Rung = 44;
 
     /// <summary>
     /// (g) EACH ATTEMPT RECORDS ITS ALLOWANCE AND WHETHER ITS BOUND IS ENFORCED, AND NOTHING RE-DESCRIBES IT: written in the row's own insert;
