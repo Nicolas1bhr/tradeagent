@@ -1031,6 +1031,8 @@ public sealed class TurnMeter
                 {
                     _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass, packet, spec);
                     _live.Enter(written);
+                    // THE CEILING THIS ROLE'S READING IS ABOUT FROM NOW ON (U-billing-classes): its admitted launch's class.
+                    _lastClass[key] = attempt.BillingClass;
                 }
         }
         // WHATEVER STOPPED THE ROW FROM GOING IN REFUSES THE LAUNCH. Never an admission: the row is
@@ -1510,8 +1512,16 @@ public sealed class TurnMeter
     /// Today's bill, the cap it is measured against, and the local midnight a capped loop restarts
     /// at. Read on every card repaint, so it does its own day-rollover check rather than relying on
     /// anything having run at midnight.
+    /// <para><b>BOTH CEILINGS</b> (<c>U-billing-classes</c>): the money cap's reading, with the plan's capacity's as its
+    /// <see cref="AiSpendToday.PlanReading"/> — what the card and the Safety page show, each figure in its own words.</para>
     /// </summary>
-    public AiSpendToday Today => Reading(null);
+    public AiSpendToday Today => TodayIn(BillingClasses.Unknown);
+
+    /// <summary>
+    /// TODAY AGAINST ONE CLASS'S CEILING (<c>U-billing-classes</c>): <c>key</c> the money cap over the day's key and unknown rows,
+    /// <c>plan</c> the plan's capacity over its plan and unknown rows, <c>unknown</c> both — the money reading carrying the plan's.
+    /// </summary>
+    public AiSpendToday TodayIn(string billingClass) => Reading(null, billingClass);
 
     /// <summary>
     /// THE SAME READING, NARROWED TO ONE POSITION: what its BINDING UNIT spent and committed today, and that unit's envelope
@@ -1526,14 +1536,44 @@ public sealed class TurnMeter
     /// — a widened envelope buys the turn its gate would take, and an exhausted subtree is never chosen over a funded
     /// sibling. The legacy pair, with no envelope set, read their division's — the Safety page's split of the day, as before.
     /// A chain nobody can read admits nothing here, as the gate admits nothing.</para>
+    /// <para><b>AGAINST THE CEILING OF THE ROLE'S LAST ADMITTED LAUNCH</b> (<c>U-billing-classes</c>): its class as this meter admitted
+    /// it, and <c>unknown</c> before one — so the loop's first look asks both ceilings, exactly as the gate would for a seat nobody
+    /// has read yet.</para>
     /// </summary>
-    public AiSpendToday TodayFor(string role) => Reading(role);
+    public AiSpendToday TodayFor(string role) => Reading(role, LastClassOf(role));
 
-    AiSpendToday Reading(string? role)
+    /// <summary>
+    /// THE CLASS EACH ROLE'S LAST LAUNCH WAS ADMITTED UNDER, by role (<c>U-billing-classes</c>): what the role's own reading is about
+    /// until its next admission says otherwise. Empty at start — a role nobody has admitted reads both ceilings.
+    /// </summary>
+    readonly Dictionary<string, string> _lastClass = new(StringComparer.Ordinal);
+
+    string LastClassOf(string? role)
+    {
+        lock (_gate) return _lastClass.TryGetValue(Key(role), out var known) ? known : BillingClasses.Unknown;
+    }
+
+    /// <summary>
+    /// ONE READING FOR <paramref name="billingClass"/>, each ceiling read once: a single ceiling's for <c>plan</c> or <c>key</c>, and for
+    /// <c>unknown</c> the money cap's carrying the plan's as <see cref="AiSpendToday.PlanReading"/>.
+    /// </summary>
+    AiSpendToday Reading(string? role, string billingClass)
+    {
+        var cap = Cap();
+        var planCap = PlanCap(cap);
+        return BillingClasses.Of(billingClass) switch
+        {
+            BillingClasses.Plan => Reading(role, BillingClasses.Plan, cap, planCap),
+            BillingClasses.Key => Reading(role, BillingClasses.Key, cap, planCap),
+            _ => Reading(role, BillingClasses.Key, cap, planCap) with { PlanReading = Reading(role, BillingClasses.Plan, cap, planCap) }
+        };
+    }
+
+    AiSpendToday Reading(string? role, string ceiling, decimal moneyCap, decimal planCap)
     {
         {
             var now = _now();
-            var totals = ReadTotals(now);
+            var totals = ReadTotals(now, null, ceiling);
             var catalogue = CostCatalog.Read();
 
             // ASKED OF THE PRICE LIST, not inferred from the day's history — which on the first turn
@@ -1549,13 +1589,14 @@ public sealed class TurnMeter
             // totals rather than derived from them: the two are different queries over the same
             // ledger, and a share worked out by subtracting one role from the day would be wrong the
             // moment a third role exists.
-            var cap = Cap();
-            var (mine, share) = role is null ? (totals, cap) : Binding(role, now, cap);
+            var cap = ceiling == BillingClasses.Plan ? planCap : moneyCap;
+            var (mine, share) = role is null ? (totals, cap) : Binding(role, now, moneyCap, planCap, ceiling);
 
             return new AiSpendToday
             {
                 Metered = true,
                 Role = role,
+                Class = ceiling,
                 RoleSpent = mine.Spent,
                 RoleReserved = mine.Reserved,
                 RoleCap = share,
@@ -1588,17 +1629,19 @@ public sealed class TurnMeter
     /// nothing — its spend is inside the units above it. A chain or a total that cannot be read answers an envelope of nothing,
     /// so the reading admits no turn the gate would refuse for the same unreadable chart.
     /// </summary>
-    (AiAttemptTotals Totals, decimal Envelope) Binding(string role, DateTimeOffset now, decimal cap)
+    (AiAttemptTotals Totals, decimal Envelope) Binding(string role, DateTimeOffset now, decimal cap, decimal planCap, string ceiling)
     {
         var none = new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
         try
         {
             var (from, to) = OwnerDay.Window(now);
             (AiAttemptTotals Totals, decimal Envelope)? binding = null;
-            foreach (var unit in FundingOf(role, cap, cap).Money)
+            var (money, plan) = FundingOf(role, cap, planCap);
+            // THE ENVELOPES OF THIS CEILING, over this ceiling's rows (U-billing-classes), as the gate reads them.
+            foreach (var unit in ceiling == BillingClasses.Plan ? plan : money)
             {
                 if (unit.Envelope is not { } envelope) continue;
-                var funded = _attempts.UnitTotalsBetween(from, to, unit.UnitId);
+                var funded = _attempts.UnitTotalsBetween(from, to, unit.UnitId, ceiling);
                 var room = envelope - funded.Spent - funded.Reserved;
                 if (binding is not { } b || room < b.Envelope - b.Totals.Spent - b.Totals.Reserved) binding = (funded, envelope);
             }
@@ -1620,12 +1663,12 @@ public sealed class TurnMeter
     /// than throwing into a card repaint, and a zero here is visibly the same as a day with no turns
     /// — which is why the card keys its wording on <see cref="AiSpendToday.CanPrice"/> instead.
     /// </summary>
-    AiAttemptTotals ReadTotals(DateTimeOffset now, string? role = null)
+    AiAttemptTotals ReadTotals(DateTimeOffset now, string? role = null, string? ceiling = null)
     {
         try
         {
             var (from, to) = OwnerDay.Window(now);
-            return _attempts.TotalsBetween(from, to, role);
+            return _attempts.TotalsBetween(from, to, role, ceiling);
         }
         catch (Exception) { return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0); }
     }

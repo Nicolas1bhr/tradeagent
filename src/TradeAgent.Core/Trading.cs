@@ -961,7 +961,30 @@ public sealed record AiSpendToday
     /// the card — an owner whose turns are unpriced has a limit that is holding nothing back, and
     /// they have to be able to see that rather than infer it from an AI that never stops.
     /// </summary>
-    public bool CapReached => Metered && Spent >= Cap;
+    public bool CapReached => OwnCapReached || PlanReading is { CapReached: true };
+
+    /// <summary>This reading's own ceiling reached, without <see cref="PlanReading"/>.</summary>
+    bool OwnCapReached => Metered && Spent >= Cap;
+
+    /// <summary>
+    /// THE PLAN-CAPACITY READING A LAUNCH OF UNKNOWN CLASS MUST ALSO FIT (<c>U-billing-classes</c>), or null. Set on a reading whose own
+    /// figures are the money cap's (<see cref="Class"/> <c>key</c>) when the launch it is about bills nobody established — a seat with no
+    /// sign-in reading, or a role before its first admitted launch — so the loop's first look asks both ceilings, as the gate does.
+    /// Every admission comparison below is this reading's AND that one's.
+    /// </summary>
+    public AiSpendToday? PlanReading { get; init; }
+
+    /// <summary>
+    /// THE READING THAT STOPS THE NEXT TURN — this one where its own ceiling has no room or cannot fund a turn, else
+    /// <see cref="PlanReading"/> where that one does, else this one: what a sentence about a reached limit names.
+    /// </summary>
+    public AiSpendToday Binding =>
+        PlanReading is { } plan && OwnAdmits && !OwnCannotFund && (!plan.AdmitsAnotherTurn || plan.CapCannotFundATurn) ? plan : this;
+
+    bool OwnAdmits => !Metered || (!OwnCapReached && Spent + Reserved + NextTurnReservation <= Cap
+                                   && (Role is null || RoleSpent + RoleReserved + NextTurnReservation <= RoleCap));
+
+    bool OwnCannotFund => Metered && NextTurnReservation > Cap && Cap > 0m;
 
     /// <summary>
     /// THE ADMISSION GATE: may one more turn be launched at all?
@@ -990,7 +1013,7 @@ public sealed record AiSpendToday
     /// would send the owner to the wrong screen.
     /// </summary>
     public bool AdmitsGlobally =>
-        !Metered || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap);
+        !Metered || (!OwnCapReached && Spent + Reserved + NextTurnReservation <= Cap && (PlanReading?.AdmitsGlobally ?? true));
 
     /// <summary>
     /// WHICH COUNCIL ROLE THIS READING IS ABOUT, or null for the whole day across every role. Null
@@ -1020,7 +1043,7 @@ public sealed record AiSpendToday
     /// Always true for a reading with no role, so nothing that predates the council changes meaning.
     /// </summary>
     public bool RoleAdmitsAnotherTurn =>
-        Role is null || RoleSpent + RoleReserved + NextTurnReservation <= RoleCap;
+        (Role is null || RoleSpent + RoleReserved + NextTurnReservation <= RoleCap) && (PlanReading?.RoleAdmitsAnotherTurn ?? true);
 
     /// <summary>What is left of this role's slice after what it has spent and committed.</summary>
     public decimal RoleRemaining => Role is null ? Cap - Spent - Reserved
@@ -1039,7 +1062,16 @@ public sealed record AiSpendToday
     /// It is a consequence of reserving an ENFORCEABLE bound rather than a guess: the bound is a
     /// model's whole context window, and a small daily ceiling cannot cover one of those.
     /// </summary>
-    public bool CapCannotFundATurn => Metered && NextTurnReservation > Cap && Cap > 0m;
+    public bool CapCannotFundATurn => OwnCannotFund || PlanReading is { CapCannotFundATurn: true };
+
+    /// <summary>
+    /// THE CEILING THIS READING IS AGAINST, after "of a 10 USD": "daily limit of real money" or "daily plan-capacity limit — …, counted at
+    /// list price, not money" (<c>U-billing-classes</c>). <paramref name="whose"/> names whose plan: "your" to the owner, "your owner's"
+    /// to the AI.
+    /// </summary>
+    public string CeilingWords(string whose) => Class == Db.BillingClasses.Plan
+        ? $"daily plan-capacity limit — {whose} ChatGPT plan counted at list price, not money"
+        : "daily limit of real money";
 }
 
 /// <summary>

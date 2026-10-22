@@ -109,6 +109,8 @@ public class BillingClassesTests : IDisposable
     static IAgentConversation HarnessConversation()
     {
         var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        // NO VENDOR: this conversation is only asked its seat, and a request it never sends would go nowhere.
+        manifest.BaseUrl = "http://127.0.0.1:9/";
         var home = Path.Combine(TestEnv.Home, $"billing-harness-{Guid.NewGuid():n}");
         return new ApiAgentRuntime(manifest, new TradeAgent.Security.HarnessKey()).OpenConversation(CouncilRoles.Research, () => home,
             () => new Dictionary<string, string>(), () => null);
@@ -291,6 +293,47 @@ public class BillingClassesTests : IDisposable
         Id = id, StartedAt = _at, ReservedCost = rule.Reservation, Role = role, BillingClass = rule.BillingClass,
         Funding = [.. rule.Funding!.Select(u => u.UnitId)]
     };
+
+    // ---- (g) the readings name their ceiling ------------------------------------------------------------------------------
+
+    /// <summary>The words that name the plan ceiling to the AI, and the money one.</summary>
+    const string PlanWords = "daily plan-capacity limit — your owner's ChatGPT plan counted at list price, not money";
+    const string MoneyWords = "daily limit of real money";
+
+    /// <summary>
+    /// (g) THE SITUATION NAMES ITS SEAT'S CEILING, AND THE SAFETY PAGE SHOWS BOTH. A role before its first admitted launch is told both
+    /// ceilings — the gate would ask both of a seat nobody has read; after a plan launch only the plan's, never as money; after a key
+    /// launch only the money's. The card shows both figures, each in its own words. (The Safety page half: <c>SafetyPage</c> below.)
+    /// </summary>
+    [Fact]
+    public void The_situation_names_its_seats_ceiling_and_the_safety_page_shows_both()
+    {
+        var meter = Meter(money: 10m, plan: 40m);
+        var before = MissionSituation.SpendLine(meter.TodayFor(CouncilRoles.Operations))!;
+        Assert.Contains(PlanWords, before, StringComparison.Ordinal);
+        Assert.Contains(MoneyWords, before, StringComparison.Ordinal);
+
+        using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        var plan = MissionSituation.SpendLine(meter.TodayFor(CouncilRoles.Operations))!;
+        Assert.Contains($"of a {Labels.Money(40m, "USD")} {PlanWords}", plan, StringComparison.Ordinal);
+        Assert.DoesNotContain(MoneyWords, plan, StringComparison.Ordinal);
+
+        using (meter.Attach(new Billed(BillingClasses.Key), CouncilRoles.Research))
+            Assert.True(Launch(meter, CouncilRoles.Research).Admitted);
+        var key = MissionSituation.SpendLine(meter.TodayFor(CouncilRoles.Research))!;
+        Assert.Contains($"of a {Labels.Money(10m, "USD")} {MoneyWords}", key, StringComparison.Ordinal);
+        Assert.DoesNotContain("plan-capacity", key, StringComparison.Ordinal);
+
+        // THE CARD: both figures, the plan's never called a cost — each turn still open, so committed rather than spent.
+        var card = TradeAgent.App.DashboardPage.MissionCost(meter.Today);
+        var committed = $"including {Labels.Money(Turn, "USD")} committed";
+        Assert.Contains($"Cost today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} daily limit of real money", card,
+            StringComparison.Ordinal);
+        Assert.Contains($"Plan capacity used today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} daily plan-capacity limit — "
+                        + "your ChatGPT plan counted at list price, not money", card, StringComparison.Ordinal);
+        Assert.Equal(2, card.Split(committed).Length - 1);
+    }
 
     /// <summary>The rung's number, spelled once here as in the schema.</summary>
     const int Rung = 46;
