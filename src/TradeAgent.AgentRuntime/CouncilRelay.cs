@@ -437,13 +437,19 @@ public sealed class CouncilRelay
             // THE RECORD AND ITS HOLD ARE ONE COMMIT (U-org-wakes, the O2b review's P2): on the start-up pass and on a
             // relay run outside a turn's transition nothing else is open, and two commits let a failure between them leave
             // an output recorded with no disposition — once the file is gone, an output its writer is never told about.
-            if (p.RecipientList.Count == 0)
+            //
+            // AND A FENCED LAUNCH'S OUTPUT IS HELD WHATEVER ITS ROLE'S RECIPIENTS (U-org-verbs-b; ORCHESTRATION § 2.3 "its outputs are
+            // quarantined at completion, never published"; INBOX-001, COUNCIL rule 7): the hold's disposition names the fence. Read on
+            // the launch the file's name carries; a read that fails holds it too — refuse, never guess. The legacy pair are never
+            // read as fenced (OrgStore.NeverFenced), so their routing is untouched.
+            var fenced = FenceOn(p);
+            if (p.RecipientList.Count == 0 || fenced is not null)
             {
                 var at = _now();
                 _db.Write(_ =>
                 {
                     _store.Record(p, at);
-                    return _events.Hold(p.Id, p.Role, at, HeldWhy);
+                    return _events.Hold(p.Id, p.Role, at, fenced ?? HeldWhy);
                 });
                 Boundary?.Invoke("transaction");
                 continue;
@@ -709,6 +715,22 @@ public sealed class CouncilRelay
         CouncilRoles.Operations => [CouncilRoles.Research],
         _ => []
     };
+
+    /// <summary>
+    /// WHY <paramref name="p"/>'S LAUNCH MAY PUBLISH NOTHING (<c>U-org-verbs-b</c>): the fence on the launch its file names, in a
+    /// hold's words, or null when it has none. Never asked of the legacy pair, whose launches no fence touches.
+    /// </summary>
+    string? FenceOn(Publication p)
+    {
+        if (Core.Db.OrgStore.NeverFenced(p.Role) || p.Attempt is not { } attempt) return null;
+        try
+        {
+            return new Core.Db.OrgStore(_db).FencedSince(attempt) is { } fence
+                ? $"{fence.Words}; what it staged in out/ is held and never published"
+                : null;
+        }
+        catch (Exception) { return $"launch {attempt}'s authority could not be read, so what it staged in out/ is held and never published"; }
+    }
 
     /// <summary>What a hold's disposition says: why nobody was handed the output.</summary>
     public const string HeldWhy =

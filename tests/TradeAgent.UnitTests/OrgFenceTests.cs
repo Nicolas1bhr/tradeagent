@@ -175,4 +175,49 @@ public partial class OrgAssignmentTests
         try { await NeverFenced("the fence store unreadable"); }
         finally { Exec(db, "ALTER TABLE org_event_away RENAME TO org_event"); }
     }
+    // ---- item 4: outputs held ------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (4) A FENCED ATTEMPT'S OUTPUT IS HELD, NEVER PUBLISHED: a member's launch under a mandate stages a report in <c>out/</c>; its
+    /// head cancels the mandate; at the launch's commit the relay records the file as the app's own copy, published to nobody, with
+    /// a hold whose disposition names the fence — and no delivery reaches the mandate (item 2 refuses <c>mandate-deliver</c>). RED at
+    /// base: the hold said only that a position's work reaches its issuer through <c>mandate-deliver</c>.
+    /// </summary>
+    [Fact]
+    public void A_fenced_attempts_output_is_held_never_published()
+    {
+        var root = Path.Combine(TestEnv.Home, $"fence-relay-{Guid.NewGuid():n}");
+        string Home(string role) => TradeAgent.AgentRuntime.WorkspaceBuilder.HomeOf(root, role);
+        foreach (var role in CouncilRoles.All.Append(Member))
+        {
+            Directory.CreateDirectory(Path.Combine(Home(role), TradeAgent.AgentRuntime.WorkspaceBuilder.InDir));
+            Directory.CreateDirectory(Path.Combine(Home(role), TradeAgent.AgentRuntime.WorkspaceBuilder.OutDir));
+        }
+
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t0 = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue(), t0);
+        var launch = LaunchedAt(db, Member, t0.AddSeconds(1), m.Id);
+        File.WriteAllText(Path.Combine(Home(Member), TradeAgent.AgentRuntime.WorkspaceBuilder.OutDir,
+            TradeAgent.AgentRuntime.MissionSituation.OutputName(Member, launch)), "the skew leads the hour by a minute");
+        org.Cancel(m.Id, Head, null, CancelWhy, t0.AddSeconds(2));
+
+        new TradeAgent.AgentRuntime.CouncilRelay(db, Home).Run(Member, launch);
+
+        var store = new PublicationStore(db);
+        var held = Assert.Single(store.By(Member));
+        Assert.Empty(held.RecipientList);
+        Assert.Equal(launch, held.Attempt);
+        Assert.Empty(store.To(CouncilRoles.Research));
+        Assert.Empty(store.To(CouncilRoles.Operations));
+        var events = new MissionEventStore(db);
+        var hold = Assert.Single(events.OfKind(MissionEventKind.Output));
+        Assert.Equal((MissionEventDisposition.Held, Member), (hold.Disposition, hold.Role));
+        foreach (var word in new[] { m.Id, "cancelled", CancelWhy, launch, "never published" })
+            Assert.Contains(word, hold.DispositionDetail, StringComparison.Ordinal);
+        Assert.DoesNotContain(events.DueFor(Head, DateTimeOffset.UtcNow.AddMinutes(1)), e => e.Kind != MissionEventKind.Mandate);
+        Assert.Empty(org.Deliveries(m.Id));
+    }
 }
