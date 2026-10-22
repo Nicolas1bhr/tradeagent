@@ -75,6 +75,12 @@ public sealed record BacktestAsk(
 /// </summary>
 public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null)
 {
+    /// <summary>
+    /// THE MOST OF A PROGRAM FILE THE GATEWAY READS FROM A HOME (<c>U-execution-environment</c> fix pass 5, P1): far past any program in
+    /// the strategy language, so only a file grown past any program — a sparse file a cell made in an instant — is refused by it, unread.
+    /// </summary>
+    public const int MaxProgramBytes = 1024 * 1024;
+
     readonly StrategyStore _strategies = new(db);
     readonly CampaignStore _campaigns = new(db);
     readonly VenueStore _venues = new(db, now);
@@ -122,7 +128,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // AND READ WITHOUT FOLLOWING A LINK AT ANY COMPONENT (U-execution-environment fix pass 4, the second re-review's [P2] 3): an
             // executor's cell writes this home while the gateway reads it, so a name checked as the role's own may be a link by the time it
             // is opened. HomeFiles opens each component from the one above it with O_NOFOLLOW, so what is read is what was checked.
-            text = HomeFiles.ReadAllText(home, path).ReplaceLineEndings("\n");
+            //
+            // AND NEVER PAST MaxProgramBytes (fix pass 5, P1): a program the cell grew past it is refused by its size, unread.
+            text = HomeFiles.ReadAllText(home, path, MaxProgramBytes).ReplaceLineEndings("\n");
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {

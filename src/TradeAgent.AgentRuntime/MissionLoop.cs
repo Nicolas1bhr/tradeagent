@@ -1792,6 +1792,9 @@ public sealed class MissionLoop
     /// </summary>
     public const string WakeFile = ".tradeagent/next.json";
 
+    /// <summary>The most of <see cref="WakeFile"/> the loop reads (<c>U-execution-environment</c> fix pass 5, P1); one over it asks for nothing.</summary>
+    public const int WakeFileBytes = 64 * 1024;
+
     readonly IMissionHost _host;
     readonly MissionOptions _options;
     readonly Func<DateTimeOffset> _now;
@@ -4335,7 +4338,8 @@ public sealed class MissionLoop
             // home, `.tradeagent` included, so that folder may be a link to another position's — whose request to be left alone a delete
             // through it would consume. Read and consumed through HomeFiles: a link at any component refuses both, and it asks for nothing.
             string text;
-            try { text = HomeFiles.ReadAllText(home, WakeFile); }
+            // AND NEVER PAST WakeFileBytes (fix pass 5, P1): a request to be left alone is a few bytes; one the cell grew is refused unread.
+            try { text = HomeFiles.ReadAllText(home, WakeFile, WakeFileBytes); }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return TimeSpan.Zero; }
             HomeFiles.Remove(home, WakeFile);
 

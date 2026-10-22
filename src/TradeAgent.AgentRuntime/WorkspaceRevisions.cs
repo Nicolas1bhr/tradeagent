@@ -56,6 +56,13 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     public const int JournalLines = 200;
 
     /// <summary>
+    /// THE BYTES ONE LINE OF A PLAN OR JOURNAL MAY TAKE, ON AVERAGE (<c>U-execution-environment</c> fix pass 5, P1): each file is read
+    /// under its line budget times this, so a file far past any plan — a sparse gigabyte a cell made in an instant — is refused by its
+    /// size before a byte is read, never allocated and decoded on every turn before its lines are counted.
+    /// </summary>
+    public const int LineBytes = 1024;
+
+    /// <summary>
     /// Where the agent moves what no longer fits, and where the app keeps a refused file before it
     /// puts the last revision back. Tracked, so the record keeps it.
     /// </summary>
@@ -125,9 +132,14 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             // NEVER THROUGH A LINK (U-execution-environment fix pass 4, the second re-review's [P1] 1): an executor's cell writes its
             // whole home, so either file — or `trading/` — may be a link it aimed at a login or a file outside. HomeFiles opens each
             // component without following one, so a linked file is unreadable: refused, nothing kept and nothing put back over it.
+            //
+            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its line budget in bytes (LineBytes), a file over it refused by its size
+            // unread — so it has no bytes to keep, and nothing is put back over it.
             byte[]? bytes;
-            try { bytes = HomeFiles.Read(home, rel, long.MaxValue, out _); }
+            string? tooLarge = null;
+            try { bytes = HomeFiles.ReadAll(home, rel, (long)cap * LineBytes); }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { continue; }
+            catch (HomeFileTooLarge big) { bytes = null; tooLarge = $"is {big.Length:N0} bytes and the limit is {big.Cap:N0}"; }
             catch (Exception) { bytes = null; }      // unreadable reads as refused, below
             var content = bytes is null ? null : Text(bytes);
 
@@ -154,9 +166,9 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             }
 
             // ---- refused ----------------------------------------------------------------------
-            var why = content is null
+            var why = tooLarge ?? (content is null
                 ? "could not be read"
-                : $"is {NonEmpty(content)} lines and the limit is {cap}";
+                : $"is {NonEmpty(content)} lines and the limit is {cap}");
 
             var last = _store.Latest(role, kind);
             string notice;
@@ -183,7 +195,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 notice = $"`{rel}` {why}, so it was not recorded. What you wrote could not be kept in "
                          + $"`{ArchiveDir}/`, so revision {last.Revision} — the last one the app accepted — "
                          + "was not put back: what is on disk is what you last wrote."
-                         + (content is null ? "" : $" Bring it under {cap} lines yourself.");
+                         + (content is null && tooLarge is null ? "" : $" Bring it under {cap} lines yourself.");
 
             Note(role, kind, notice, putBack);
             try { Rejected?.Invoke($"{CouncilRoles.Title(role)}: {notice}"); }

@@ -699,7 +699,8 @@ public sealed class ApiConversation(
         {
             // NEVER THROUGH A LINK (U-execution-environment fix pass 4): a worker's write_file cannot reach this file, but an executor's
             // cell writes its whole home, so the name may be a link to a login outside — refused by HomeFiles, never sent as system text.
-            var text = HomeFiles.ReadAllText(workspace(), Canon.HarnessFile);
+            // AND NEVER PAST Canon.MaxReadBytes (fix pass 5, P1): one the cell grew past it is refused unread, and the turn falls back below.
+            var text = HomeFiles.ReadAllText(workspace(), Canon.HarnessFile, Canon.MaxReadBytes);
             return text.Length <= MaxMissionChars ? text : text[..MaxMissionChars];
         }
         // A mission file that cannot be read must not stop the turn: the Situation the app composed

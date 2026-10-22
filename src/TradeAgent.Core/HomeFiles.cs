@@ -8,6 +8,21 @@ namespace TradeAgent.Core;
 public sealed class HomeLinkRefused(string message) : IOException(message);
 
 /// <summary>
+/// A file in a home larger than the cap its reader names (<see cref="HomeFiles.ReadAll"/>; <c>U-execution-environment</c> fix pass 5, the
+/// fourth re-review's P1): refused by its size, read from the open descriptor, before a byte of it is read — never allocated, never decoded.
+/// A cell can make a sparse file of any size in an instant.
+/// </summary>
+public sealed class HomeFileTooLarge(string relative, long length, long cap)
+    : IOException($"'{relative}' is {length:N0} bytes, over the {cap:N0} TradeAgent reads of it, so it was not read.")
+{
+    /// <summary>The file's length, as the open descriptor said.</summary>
+    public long Length { get; } = length;
+
+    /// <summary>The most its reader takes.</summary>
+    public long Cap { get; } = cap;
+}
+
+/// <summary>
 /// One name in a home's folder as <see cref="HomeFiles.List"/> or <see cref="HomeFiles.Describe"/> saw it: never followed, so a link is
 /// said to be one (its length and time are the link's own, never its target's).
 /// </summary>
@@ -49,7 +64,34 @@ public static class HomeFiles
     {
         using var handle = OpenRead(root, relative);
         length = RandomAccess.GetLength(handle);
-        var buffer = new byte[Math.Min(max, length)];
+        return Fill(handle, Math.Min(max, length));
+    }
+
+    /// <summary>
+    /// THE WHOLE of the regular file at <paramref name="relative"/>, never more than <paramref name="cap"/> bytes (fix pass 5, P1): every
+    /// caller names its own cap, and a file over it is refused unread (<see cref="HomeFileTooLarge"/>) — never allocated, never decoded.
+    /// Otherwise refused as <see cref="Read"/> refuses.
+    /// </summary>
+    public static byte[] ReadAll(string root, string relative, long cap)
+    {
+        using var handle = OpenRead(root, relative);
+        var length = RandomAccess.GetLength(handle);
+        if (length > cap) throw new HomeFileTooLarge(relative, length, cap);
+        return Fill(handle, length);
+    }
+
+    /// <summary><see cref="ReadAll"/> as UTF-8 text, under the same named cap; refused as it refuses.</summary>
+    public static string ReadAllText(string root, string relative, long cap)
+    {
+        // AS File.ReadAllText READS: UTF-8 unless a byte-order mark says otherwise, the mark itself not returned.
+        using var reader = new StreamReader(new MemoryStream(ReadAll(root, relative, cap)), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>The first <paramref name="count"/> bytes of the open file, or fewer where it ends sooner.</summary>
+    static byte[] Fill(SafeFileHandle handle, long count)
+    {
+        var buffer = new byte[count];
         var read = 0;
         while (read < buffer.Length)
         {
@@ -58,14 +100,6 @@ public static class HomeFiles
             read += n;
         }
         return read == buffer.Length ? buffer : buffer[..read];
-    }
-
-    /// <summary>The whole of the regular file at <paramref name="relative"/>, as UTF-8 text; refused as <see cref="Read"/> refuses.</summary>
-    public static string ReadAllText(string root, string relative)
-    {
-        // AS File.ReadAllText READS: UTF-8 unless a byte-order mark says otherwise, the mark itself not returned.
-        using var reader = new StreamReader(new MemoryStream(Read(root, relative, long.MaxValue, out _)), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return reader.ReadToEnd();
     }
 
     /// <summary>
