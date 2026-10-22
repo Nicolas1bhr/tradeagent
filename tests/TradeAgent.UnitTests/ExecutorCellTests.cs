@@ -400,4 +400,57 @@ public class ExecutorCellTests : IDisposable
             Assert.Null(new DirectoryInfo(Path.Combine(home, dir)).LinkTarget);
         Assert.True(File.Exists(Path.Combine(home, ".tradeagent", "context.json")));
     }
+    /// <summary>
+    /// A HOME A START CANNOT REBUILD REFUSES ITS OWN POSITION, BY NAME, AND NO OTHER (fix pass 4, the second re-review's [P2] 5; the
+    /// orchestrator's ruling). An executor's cell writes its whole home, so it can leave a real folder where the app's canon belongs; the
+    /// start that rebuilds every home refuses to replace it — and that refusal used to fail EVERY start, the legacy pair's included, with
+    /// no repair the owner could make in the app. Now the start goes on: the Operations seat starts, the executor is refused in words that
+    /// name it (its home and the name in the way), lasting, and nothing of what the cell left is deleted.
+    /// </summary>
+    [Fact]
+    public async Task A_home_a_start_cannot_rebuild_refuses_only_its_own_position_by_name()
+    {
+        const string exec = "pos-e7ec0005";
+        using var db = TestEnv.NewDb();
+        ThinkingSeatsTests.Seat(db, exec);
+        var dir = Path.Combine(TestEnv.Home, "exec-homes", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(dir);
+        string exe;
+        if (OperatingSystem.IsWindows())
+        {
+            exe = Path.Combine(dir, "probe.cmd");
+            File.WriteAllText(exe, "@echo off\r\necho probe 1.2.3\r\nexit /b 0\r\n");
+        }
+        else
+        {
+            exe = Path.Combine(dir, "probe.sh");
+            File.WriteAllText(exe, "#!/bin/sh\necho probe 1.2.3\nexit 0\n");
+            File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        var manifest = new RuntimeManifest
+        {
+            Id = "probe-homes", DisplayName = "Probe runtime", Executable = exe, VersionArgs = [], ExecArgs = ["{prompt}"], ResumeArgs = ["{prompt}"]
+        };
+        var ctx = new WorkspaceContext("Simulator (built in)", ConnectorIsPaper: true, "SIM-001", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] });
+        var supervisor = new AgentSupervisor(new HealthRegistry(), positions: () => [exec], seats: Register(db), presence: new AgentPresence());
+        await supervisor.PrepareAsync(manifest, ctx);
+        var home = supervisor.Workspaces[exec];
+        var canon = Path.Combine(home, Canon.CliFile);
+        File.Delete(canon);
+        Directory.CreateDirectory(canon);
+        File.WriteAllText(Path.Combine(canon, "the-cells.md"), "what the cell put there");
+
+        await supervisor.RestartAsync(ctx);
+
+        Assert.True(supervisor.Running, "the Operations seat did not start because another position's home could not be rebuilt");
+        var bar = ((ILaunchGate)supervisor.Current!.OpenConversation(exec, () => home, () => new Dictionary<string, string>(), () => null)).Barred();
+        Assert.NotNull(bar);
+        Assert.True(bar!.Lasting);
+        Assert.Contains(exec, bar.Why, StringComparison.Ordinal);
+        Assert.Contains(Canon.CliFile, bar.Why, StringComparison.Ordinal);
+        Assert.Equal("what the cell put there", File.ReadAllText(Path.Combine(canon, "the-cells.md")));
+        var chair = ((ILaunchGate)supervisor.Current!.OpenConversation()).Barred();
+        Assert.True(chair is null || !chair.Why.Contains(exec, StringComparison.Ordinal), $"the chair was refused for the executor's home: {chair?.Why}");
+    }
 }
