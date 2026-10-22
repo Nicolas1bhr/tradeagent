@@ -103,6 +103,9 @@ static class Theme
     // ---- rhythm ---------------------------------------------------------------------------
     public const double S1 = 4, S2 = 8, S3 = 12, S4 = 16, S5 = 20, S6 = 24, S8 = 32, S10 = 40;
 
+    /// <summary>The width of a box the owner types a short value into: a figure, an id, a key.</summary>
+    public const double FieldWidth = 150;
+
     public static readonly CornerRadius RadiusSm = new(6);
     public static readonly CornerRadius Radius = new(10);
     public static readonly CornerRadius RadiusLg = new(14);

@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradeAgent.App;
 using TradeAgent.Core;
 using Xunit;
 
@@ -97,5 +98,62 @@ public class NumberEntryCultureTests
         Assert.Equal("0.05 USD", Amount.ExactMoney(0.05m, "USD"));
         Assert.Equal("0.00005", Amount.ExactMoney(0.00005m, ""));
         Assert.Equal("0.0001", Labels.Money(0.00005m, ""));   // why the armed sentences stopped using it
+    }
+
+    /// <summary>
+    /// (item 2) THE BOX KEEPS EXACTLY WHAT WAS TYPED, and says under it what that reads as. RED at 988c9487 through the stock number
+    /// box: "0.05" typed into the envelope's quantity, then the commit the box runs when the owner leaves it, redrew the text as "0".
+    /// </summary>
+    [Fact]
+    public void A_typed_amount_is_never_rewritten_or_rescaled()
+    {
+        var box = Ui.AmountField(0m, AmountKind.Decimal);
+        var changes = 0;
+        box.ValueChanged += (_, _) => changes++;
+        Assert.Equal("0", box.Box.Text);
+        Assert.Equal(0m, box.Value);
+
+        box.Box.Text = "0.05";
+        Assert.Equal("0.05", box.Box.Text);
+        Assert.Equal(0.05m, box.Value);
+        Assert.Null(box.Refusal);
+        Assert.Equal(Labels.AmountReads("0.05"), box.Reading.Text);
+        Assert.Equal(1, changes);
+
+        box.Box.Text = "0,05";                                  // the same figure, the owner's other spelling: no change raised
+        Assert.Equal("0,05", box.Box.Text);
+        Assert.Equal(0.05m, box.Value);
+        Assert.Equal(Labels.AmountReads("0.05"), box.Reading.Text);
+        Assert.Equal(1, changes);
+
+        box.Box.Text = "abc";
+        Assert.Equal("abc", box.Box.Text);
+        Assert.Null(box.Value);
+        Assert.Equal(Labels.AmountUnreadable("abc"), box.Refusal);
+        Assert.Equal(box.Refusal, box.Reading.Text);
+        Assert.Equal(Theme.Caution, box.Reading.Foreground);
+        Assert.Equal(2, changes);
+
+        box.Box.Text = "1.000";
+        Assert.Equal("1.000", box.Box.Text);
+        Assert.Null(box.Value);
+        Assert.Equal(Labels.AmountAmbiguous("1.000", "1000", "1"), box.Reading.Text);
+
+        box.Box.Text = "";
+        Assert.Null(box.Value);
+        Assert.Equal(Labels.AmountEmpty, box.Reading.Text);
+
+        var whole = Ui.AmountField(2m, AmountKind.Whole);
+        whole.Box.Text = "0,05";
+        Assert.Null(whole.Value);
+        Assert.Equal(Labels.AmountNotWhole("0,05"), whole.Reading.Text);
+
+        var lanes = Ui.AmountField(1m, AmountKind.Whole, 1m, 8m);
+        lanes.Box.Text = "0";
+        Assert.Equal(Labels.AmountBelow("0", "1"), lanes.Refusal);
+        lanes.Box.Text = "9";
+        Assert.Equal(Labels.AmountAbove("9", "8"), lanes.Refusal);
+        lanes.Box.Text = "8";
+        Assert.Equal(8m, lanes.Value);
     }
 }
