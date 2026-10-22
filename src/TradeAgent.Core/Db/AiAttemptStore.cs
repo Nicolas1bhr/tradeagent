@@ -138,6 +138,17 @@ public sealed record AiAttemptTotals(
     int Unreported = 0);
 
 /// <summary>
+/// ONE GROUP OF RESOLVED ATTEMPTS IN A WINDOW (<see cref="AiAttemptStore.SessionProfile"/>, <c>U-org-packets-a</c>): a position, the
+/// kind of launch — <c>mandate</c> where it served one, <c>own</c> where it served none — and the session it ran in, <c>fresh</c>,
+/// <c>resumed</c> or <c>unknown</c> where its record says neither. <paramref name="Unreported"/> attempts reported no usage and are
+/// counted apart: they are in no median, and are never read as a zero. Each median is the lower middle of the figures the runtime
+/// reported, so every figure here is one a turn actually reported — never an estimate, and never bytes turned into tokens.
+/// </summary>
+public sealed record SessionProfileRow(
+    string Role, string Kind, string Session, int Attempts, int Unreported,
+    long? MedianInput, long? MedianCached, long? MedianUncached, long? MedianOutput);
+
+/// <summary>
 /// THE CEILING A LAUNCH IS ADMITTED AGAINST, handed to <see cref="AiAttemptStore.Begin"/> so that
 /// the comparison is made INSIDE the transaction that writes the reservation.
 ///
@@ -737,6 +748,67 @@ public sealed class AiAttemptStore(Database db)
         using var r = c.ExecuteReader();
         return r.Read() ? Read(r) : null;
     });
+
+    /// <summary>
+    /// THE TOKEN PROFILE PER POSITION × KIND × SESSION OVER A WINDOW (<c>U-org-packets-a</c>; ORGANISATION § 17, R17 #20): what a fresh
+    /// packet costs against a resumed session, from the runtime's own figures on every RESOLVED attempt that started in the window.
+    /// One read. The kind is the row's own fact (<c>mandate_id</c>), never today's chart; the session is what the attempt's
+    /// <c>context</c> recorded. An attempt with no input figure is UNREPORTED — counted, and in no median.
+    /// </summary>
+    public IReadOnlyList<SessionProfileRow> SessionProfile(DateTimeOffset from, DateTimeOffset to)
+    {
+        var rows = db.Read(_ =>
+        {
+            using var c = db.Cmd("""
+                SELECT COALESCE(role, $chair), mandate_id IS NOT NULL, input_tokens, cached_input_tokens, output_tokens, context
+                  FROM ai_attempt
+                 WHERE started_at >= $from AND started_at < $to AND state <> 'LAUNCHED'
+                """, ("$chair", CouncilRoles.Default), ("$from", Sql.T(from)), ("$to", Sql.T(to)));
+            using var r = c.ExecuteReader();
+            var list = new List<(string Role, string Kind, string Session, long? Input, long? Cached, long? Output)>();
+            while (r.Read())
+                list.Add((r.GetString(0), r.GetInt64(1) != 0 ? "mandate" : "own", SessionOf(Sql.S(r.GetValue(5))),
+                    Long(r, 2), Long(r, 3), Long(r, 4)));
+            return list;
+        });
+
+        return [.. rows
+            .GroupBy(a => (a.Role, a.Kind, a.Session))
+            .OrderBy(g => g.Key.Role, StringComparer.Ordinal).ThenBy(g => g.Key.Kind, StringComparer.Ordinal)
+            .ThenBy(g => g.Key.Session, StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var reported = g.Where(a => a.Input is not null).ToList();
+                return new SessionProfileRow(g.Key.Role, g.Key.Kind, g.Key.Session, g.Count(), g.Count() - reported.Count,
+                    Median(reported.Select(a => a.Input)),
+                    Median(reported.Select(a => a.Cached)),
+                    Median(reported.Select(a => a.Cached is { } cached ? a.Input - cached : null)),
+                    Median(reported.Select(a => a.Output)));
+            })];
+    }
+
+    /// <summary>The session an attempt's context recorded, or <c>unknown</c> where it recorded none or cannot be read.</summary>
+    static string SessionOf(string? context)
+    {
+        if (string.IsNullOrWhiteSpace(context)) return "unknown";
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(context);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("session", out var s) && s.GetString() is { Length: > 0 } session
+                ? session
+                : "unknown";
+        }
+        catch (System.Text.Json.JsonException) { return "unknown"; }
+        catch (InvalidOperationException) { return "unknown"; }
+    }
+
+    /// <summary>The lower middle of the reported figures, or null where none was reported.</summary>
+    static long? Median(IEnumerable<long?> figures)
+    {
+        var sorted = figures.Where(f => f is not null).Select(f => f!.Value).Order().ToList();
+        return sorted.Count == 0 ? null : sorted[(sorted.Count - 1) / 2];
+    }
 
     /// <summary>Attempts that started in the window, oldest first.</summary>
     public List<AiAttempt> Between(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>

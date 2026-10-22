@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
@@ -203,7 +204,8 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     /// two mandates and the chair, each a puppet, under a bound of two turns a session. The member's first mandate opens its first
     /// session; its second is FRESH, for <c>mandate</c> — its conversation was stopped before the send. The chair, of the legacy pair,
     /// is fresh on its first turn, resumed on its second and fresh again on its third, for <c>turns</c>. Each attempt's
-    /// <c>context</c> says so, as the session decided it on the argv it started. No model.
+    /// <c>context</c> says so, as the session decided it on the argv it started, and carries its packet's bytes per block — the
+    /// member's with its mandate block, summing to the bytes its puppet received. No model.
     ///
     /// <para>RED at base e697686d: no attempt's context carried a session.</para>
     /// </summary>
@@ -256,6 +258,16 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.Mandate)], members.Select(Of));
         var chairs = life.AttemptsOf(Chair).OrderBy(a => a.StartedAt).ToList();
         Assert.Equal([("fresh", SessionWhy.First), ("resumed", null), ("fresh", SessionWhy.Turns)], chairs.Select(Of));
+
+        // AND EACH PACKET'S BYTES PER BLOCK: the member's carries its mandate block, and the blocks sum to the bytes it received.
+        for (var turn = 1; turn <= 2; turn++)
+        {
+            using var context = JsonDocument.Parse(members[turn - 1].Context!);
+            var packet = context.RootElement.GetProperty("packet").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt32());
+            Assert.True(packet.ContainsKey("mandate"), $"the member's packet has no mandate block: {context.RootElement}");
+            Assert.Equal(Encoding.UTF8.GetByteCount(life.Prompt(member, turn)!), packet.Values.Sum());
+            output.WriteLine($"life (sessions) packet bytes, member turn {turn}: {string.Join(", ", packet.Select(p => $"{p.Key}={p.Value}"))}");
+        }
 
         foreach (var a in members) output.WriteLine($"life (sessions) {a.Role} {a.Id} mandate={a.MandateId}: {a.Context}");
         foreach (var a in chairs) output.WriteLine($"life (sessions) {a.Role} {a.Id}: {a.Context}");

@@ -301,4 +301,146 @@ public partial class CouncilLoopTests
         Assert.Contains("- Trading mode: PAPER", lines);
         Assert.Contains("- execution_available: false — paper only", lines);
     }
+
+    // ---- item 5: bytes per block, and the read --------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE PACKET'S BLOCKS SUM TO ITS WHOLE, IN BYTES. A Situation with the owner's words (one of them outside ASCII), a wake, a
+    /// mandate and the state lines: each block is named in the order written, a block that wrote nothing is not named, and the
+    /// blocks' UTF-8 bytes sum to the text's — bytes, not characters.
+    /// </summary>
+    [Fact]
+    public void The_packets_blocks_sum_to_its_bytes()
+    {
+        var situation = new MissionSituation
+        {
+            Role = Executor, Mode = "PAPER", OwnerMessages = ["Prüfe die Lücke — €5 max."],
+            Wakes = ["a mandate of yours is owed work — `trade mandate show` has it"],
+            Mandate = new MandateView(new MandateRow("man-5e55aa000002", SessionTeam, TeamHead, Executor, MandateKind.Task,
+                "count the gaps", null, MandateShape.Report, [MandateCheck.ReportSize], MandateLatitude.Exact,
+                new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero), 5m, 2, null, DateTimeOffset.UtcNow), [], new MandateSpend(0m, 0m, 0, 0))
+        };
+
+        var text = situation.Text(out var blocks);
+        Assert.Equal(situation.Text(), text);
+        Assert.Equal(["heading", "owner", "why_awake", "mandate", "identity", "state", "continue"], blocks.Keys);
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(text), blocks.Values.Sum());
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(text) > text.Length, "the owner's words outside ASCII were not counted in bytes");
+    }
+
+    /// <summary>
+    /// (g) THE PROFILE SEPARATES FRESH FROM RESUMED, AND UNKNOWN FROM ZERO. One read over a window of resolved attempts: per position
+    /// × kind (served a mandate or not) × session, the count, the unreported apart, and the lower-middle input, cached, uncached and
+    /// output the runtime reported. A turn that reported no usage is counted and in no median — a group of only such turns has no
+    /// figure at all, never a zero — while a reported zero is a figure. A record with no session is <c>unknown</c>; a launch still
+    /// open, and one outside the window, are not read.
+    ///
+    /// <para>RED at base e697686d: there was no such read.</para>
+    /// </summary>
+    [Fact]
+    public void The_profile_separates_fresh_from_resumed_and_unknown_from_zero()
+    {
+        using var db = TestEnv.NewDb();
+        Unit(db, SessionTeam, OrgIds.Research, null);
+        Seat(db, TeamHead, SessionTeam, heads: true);
+        Seat(db, Executor, SessionTeam);
+        var served = Give(db, "count the gaps in last week's tape");
+        var store = new AiAttemptStore(db);
+        var start = new DateTimeOffset(2026, 10, 22, 0, 0, 0, TimeSpan.Zero);
+        var n = 0;
+        void Ended(string role, string? session, long? input, long? cached, long? output, string? mandate = null, bool open = false,
+            DateTimeOffset? at = null)
+        {
+            var id = $"turn-5e55-{++n}";
+            var admitted = store.Begin(new AiAttempt { Id = id, StartedAt = at ?? start.AddMinutes(n), Role = role, MandateId = mandate });
+            Assert.True(admitted.Admitted, admitted.Refusal);
+            if (open) return;
+            var context = session is null ? """{"prompt_chars":10}""" : $$"""{"session":"{{session}}"}""";
+            Assert.True(store.End(id, 0, start.AddMinutes(n).AddSeconds(30), input, cached, 0, output, 0, null, input is null ? null : 0.01m,
+                input is null ? "no usage was reported" : null, context));
+        }
+
+        const string research = CouncilRoles.Research;
+        Ended(research, "fresh", 3_000, 1_000, 50);
+        Ended(research, "fresh", 1_000, 200, 30);
+        Ended(research, "fresh", 9_000, 8_000, 70);
+        Ended(research, "fresh", null, null, null);                         // unreported: counted, in no median
+        Ended(research, "resumed", 5_000, 4_000, 40);
+        Ended(research, "resumed", 0, 0, 0);                                // a reported zero is a figure
+        Ended(Executor, "fresh", null, null, null, mandate: served.Id);     // only unreported: no figure, never zero
+        Ended(research, null, 700, 0, 7);                                   // no session recorded
+        Ended(research, "fresh", 1, 1, 1, at: start.AddDays(-2));           // outside the window: not read
+        Ended(research, "fresh", 1, 1, 1, open: true);                      // still open: not read
+
+        var profile = store.SessionProfile(start, start.AddDays(1));
+
+        Assert.Equal(
+            [
+                new SessionProfileRow(Executor, "mandate", "fresh", 1, 1, null, null, null, null),
+                new SessionProfileRow(research, "own", "fresh", 4, 1, 3_000, 1_000, 1_000, 50),   // uncached 2,000 · 800 · 1,000
+                new SessionProfileRow(research, "own", "resumed", 2, 0, 0, 0, 0, 0),
+                new SessionProfileRow(research, "own", "unknown", 1, 0, 700, 0, 700, 7)
+            ],
+            profile);
+    }
+
+    /// <summary>A mandate the Research Director holds from the chair, written as only a test may write the chart's records, and its wake.</summary>
+    static void Held(Database db, CouncilHost host, string id)
+    {
+        var now = DateTimeOffset.UtcNow;
+        static string T(DateTimeOffset d) => d.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        db.Write(_ =>
+        {
+            using (var c = db.Cmd("""
+                INSERT INTO org_mandate(id, unit_id, decider, holder, kind, objective, scope, output_shape, checks, latitude, deadline,
+                                        allocation_ai, retry_limit, attempt_id, created_at)
+                VALUES($id, $unit, $decider, $holder, 'task', 'keep the book of open questions', NULL, 'report', '[]', 'open', $deadline,
+                       '5', 2, NULL, $at)
+                """, ("$id", id), ("$unit", OrgIds.Research), ("$decider", CouncilRoles.Operations), ("$holder", CouncilRoles.Research),
+                ("$deadline", T(now.AddDays(7))), ("$at", T(now))))
+                c.ExecuteNonQuery();
+            using (var e = db.Cmd("INSERT INTO org_mandate_event(mandate_id, at, kind, actor) VALUES($id, $at, 'issued', $actor)",
+                       ("$id", id), ("$at", T(now)), ("$actor", CouncilRoles.Operations)))
+                e.ExecuteNonQuery();
+            return 0;
+        });
+        host.Events!.Raise(MissionEventIds.Mandate(id, 1), MissionEventKind.Mandate, now.AddSeconds(-1), payload: id,
+            role: CouncilRoles.Research);
+    }
+
+    /// <summary>
+    /// (h) GUARD: THE LEGACY PAIR'S PACKET AND ROTATION ARE UNCHANGED BUT FOR THE SESSION FIELD. Research, of the legacy pair, under a
+    /// bound of two turns and the default token bound, reporting 300,000 input tokens a turn: it rotates every two turns for
+    /// <c>turns</c> and never for tokens; a mandate wake addressed to it rotates nothing per mandate; and its packet is
+    /// the text it was before this unit — no mandate block, the same lines, the blocks measured beside it.
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pairs_packet_and_rotation_are_unchanged_but_for_the_session_field()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, NoHeartbeat with { TurnsPerSession = 2 });
+        var research = host.Conversations[CouncilRoles.Research];
+        research.Usage = Read(300_000);
+        Assert.True(new MissionOptions().InputTokensPerSession > 300_000);
+
+        for (var n = 1; n <= 5; n++)
+        {
+            // TWO MANDATES OF ITS OWN, ON ITS THIRD AND FOURTH LOOKS: the legacy pair's session is never keyed by either.
+            if (n is 3 or 4) Held(db, host, $"man-5e55aa0000{n:00}");
+            else SelfWake(host, CouncilRoles.Research, $"turn-research-{n}");
+            await TurnsUntil(loop, host, CouncilRoles.Research, n);
+        }
+
+        Assert.Equal(["send", "send", $"stop:{SessionWhy.Turns}", "send", "send", $"stop:{SessionWhy.Turns}", "send"], research.Timeline);
+        Assert.Equal([null, null, "man-5e55aa000003", "man-5e55aa000004", null], Served(db, CouncilRoles.Research));
+        Assert.All(research.Sent, p => Assert.DoesNotContain("- Your mandate ", p));
+        var situation = new MissionSituation { Role = CouncilRoles.Research, Mode = "PAPER", Wakes = ["you asked to be woken now"] };
+        Assert.Equal(string.Join(Environment.NewLine,
+            "## Situation", "", "- Why you are awake: you asked to be woken now", "- You are the Research Director.",
+            $"- Local time: {default(DateTimeOffset).LocalDateTime:yyyy-MM-dd HH:mm}", "- Trading mode: PAPER",
+            "- execution_available: false — no reason was given", "- Account: not selected", "- Open orders: 0, unconfirmed: 0",
+            "- Positions: none", "", MissionSituation.Continue, ""), situation.Text());
+    }
 }
