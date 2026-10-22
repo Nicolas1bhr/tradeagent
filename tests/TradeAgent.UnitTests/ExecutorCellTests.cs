@@ -283,6 +283,7 @@ public class ExecutorCellTests : IDisposable
     /// <para>RED before the fix: the 0400 replacement survived ("# kept by the cell"), and the planted folder's launch went on.</para>
     /// </summary>
     [UnixFact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
     public async Task A_canon_the_app_cannot_restore_refuses_the_launch()
     {
         var (_, canon, own, session, _, _) = CanonWorld("ro");
