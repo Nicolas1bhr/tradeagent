@@ -34,7 +34,7 @@ public class OrgSurfaceReadsTests
         Assert.Equal(SeatAssurance.Mediated, org.SeatAssuranceOf(Member));
         Assert.Null(org.SeatAssuranceOf(Other));
 
-        var seats = org.RecordedSeats();
+        var seats = new AiAttemptStore(db).RecordedSeats();
         Assert.Equal(SeatClasses.Harness, seats[Head].SeatClass);
         Assert.Equal(BillingClasses.Key, seats[Head].BillingClass);
         Assert.Equal(SeatAssurance.Brokered, seats[Head].Assurance);

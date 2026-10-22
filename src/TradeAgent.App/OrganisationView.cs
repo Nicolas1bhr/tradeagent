@@ -15,7 +15,8 @@ sealed record OrganisationRead(
     IReadOnlyDictionary<string, RecordedSeat> Seats,
     bool ProofHeld)
 {
-    public static OrganisationRead From(OrgStore org, bool proofHeld) => new(org.Units(), org.Positions(), org.RecordedSeats(), proofHeld);
+    public static OrganisationRead From(OrgStore org, AiAttemptStore attempts, bool proofHeld) =>
+        new(org.Units(), org.Positions(), attempts.RecordedSeats(), proofHeld);
 }
 
 /// <summary>One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on and who paid.</summary>
@@ -140,9 +141,9 @@ sealed class OrganisationPage
         var read = false;
         try
         {
-            if (_src.Org() is { } org)
+            if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = OrganisationWords.Of(OrganisationRead.From(org, _src.ProofHeld()), null);
+                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld()), null);
                 read = true;
             }
             else words = OrganisationWords.Of(null, null);

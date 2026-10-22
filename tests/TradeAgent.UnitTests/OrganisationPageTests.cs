@@ -45,7 +45,7 @@ public class OrganisationPageTests
         Launch(db, Member, t, SeatClasses.Cli, BillingClasses.Plan);
         Launch(db, CouncilRoles.Research, t, SeatClasses.Cli, BillingClasses.Unknown, unit: null);
 
-        var words = OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), proofHeld: false), null);
+        var words = OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: false), null);
 
         // DEPTH FIRST FROM THE ORGANISATION: the root, then each division with what hangs from it.
         Assert.Equal(OrgIds.Root, words.Units[0].Id);
@@ -83,7 +83,7 @@ public class OrganisationPageTests
         foreach (var raw in new[] { "Unconfined", "Brokered", "Mediated", "Confined", "HARD_", "SeatAssurance" })
             Assert.DoesNotContain(raw, everything, StringComparison.Ordinal);
         Assert.Equal(Labels.CellProofNone, words.Proof);
-        Assert.Equal(Labels.CellProofHeld, OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), proofHeld: true), null).Proof);
+        Assert.Equal(Labels.CellProofHeld, OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: true), null).Proof);
     }
 
     /// <summary>

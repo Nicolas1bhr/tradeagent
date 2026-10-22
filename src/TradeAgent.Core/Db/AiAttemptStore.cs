@@ -735,6 +735,32 @@ public sealed class AiAttemptStore(Database db)
         db.Read(_ => Totals(from, to, null, unitId, ceiling));
 
     /// <summary>
+    /// EVERY POSITION'S LATEST LAUNCH, by position id, in ONE query: its seat class, assurance and billing class as the ledger recorded
+    /// them. A position that never launched is not in it. The chart page reads this once and not once per position. The class column is named here, in the ledger's own store, and nowhere else (a guard says so).
+    /// </summary>
+    public IReadOnlyDictionary<string, RecordedSeat> RecordedSeats() => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT COALESCE(a.role, $chair), a.seat_class, a.assurance, a.billing_class, a.started_at
+              FROM ai_attempt a
+             WHERE a.rowid = (SELECT b.rowid FROM ai_attempt b WHERE COALESCE(b.role, $chair) = COALESCE(a.role, $chair)
+                               ORDER BY b.started_at DESC, b.rowid DESC LIMIT 1)
+            """, ("$chair", CouncilRoles.Default));
+        using var r = c.ExecuteReader();
+        var seats = new Dictionary<string, RecordedSeat>(StringComparer.Ordinal);
+        while (r.Read())
+        {
+            var name = Sql.S(r.GetValue(2));
+            SeatAssurance? assurance = null;
+            foreach (var a in Enum.GetValues<SeatAssurance>())
+                if (SeatClasses.Name(a) == name) assurance = a;
+            seats[r.GetString(0)] = new RecordedSeat(r.GetString(0), Sql.S(r.GetValue(1)), assurance, BillingClasses.Of(Sql.S(r.GetValue(3))),
+                Sql.Time(r.GetValue(4)));
+        }
+        return (IReadOnlyDictionary<string, RecordedSeat>)seats;
+    });
+
+    /// <summary>
     /// EVERY UNIT'S DAY SPLIT BY THE CLASS THAT PAID FOR IT (<c>U-org-surface-a</c>), in ONE query: for each unit that funded an attempt
     /// in the window and each billing class among those attempts, the same seven figures <see cref="UnitTotalsBetween"/> reads for
     /// that unit (the same aggregate list, over the rows each unit's recorded funding chain holds). <b>The class is exact:</b>
