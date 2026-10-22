@@ -77,3 +77,9 @@ MUTANT (R3 guard): Refused marked again ⇒ (e6) "Assert.Empty() Failure: Collec
 Part a's OversightInvisibilityTests green; no wire change.
 Tests box (run 20261022-102756-a15d7318 on a15d7318): GREEN. Unit 2090/0 failed, Integration 741/0, Fault 498/0, timing 6+91+20/0; his files unchanged.
 re-review HELD: prompt written (fleet/tmp/A-org/u-org-watcher-b-fix/U-org-watcher-b-rereview-prompt.md); seat A runs it.
+### Fix pass 2
+Code tip 36df3474 (rebased onto 306cf327). Gate: build Release --no-incremental "0 Warning(s) 0 Error(s)"; PipeRefusalRecordTests+OversightInvisibilityTests "Passed: 13" ×3, OversightTests+OversightPageTests+OrgAssignmentTests+OrgLedgerTests "Passed: 59" ×3; CI 39756826124 success on every job (linux-host included); names "sets: base 3094 tip 3111 / removed: 0".
+1 assign: RED (e8) "Expected: 2 Actual: 0". Fix: AssignRefusal wraps AssignVerdict (Why, Rights); Forbidden (marked) only for operations as holder (Q4), a decider heading no unit, a holder outside its subtree; content stays unmarked (allocation 0 → no row).
+2 BLIND: RED (e9) "Sub-string not found: (grant_rejected". Fix: the sentence names every counted event (grant_rejected, auth_rejected, protocol_rejected severe, operator_session_refused severe, op_refused) and the unserved tool call; the "malformed frame … not counted" claim is gone; the detector is unchanged.
+Tests box: deferred to the landing train (it runs on the stacked tip). Run 20261022-121459-36df3474 was started on 36df3474 before seat A's deferral arrived; its status call then timed out, so it has no verdict here.
+re-review HELD: prompt written (fleet/tmp/A-org/u-org-watcher-b-fix/U-org-watcher-b-rereview2-prompt.md); seat A runs it.
