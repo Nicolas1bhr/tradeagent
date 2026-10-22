@@ -332,7 +332,6 @@ sealed class LoopbackHttp(Func<LoopbackHttp.Request, LoopbackHttp, (int Status, 
         {
             "gzip" => new GZipStream(new MemoryStream(bytes), CompressionMode.Decompress),
             "deflate" => new ZLibStream(new MemoryStream(bytes), CompressionMode.Decompress),
-            "br" => new BrotliStream(new MemoryStream(bytes), CompressionMode.Decompress),
             "identity" or "" => null,
             _ => throw new InvalidOperationException($"a request body encoded as '{encoding}', which the surface probe cannot read")
         };

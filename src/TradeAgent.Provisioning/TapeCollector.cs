@@ -87,7 +87,7 @@ public sealed class TapeCollector : IAsyncDisposable
     static readonly HttpClient Http = new(new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
-        AutomaticDecompression = DecompressionMethods.All
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
     })
     { Timeout = Timeout.InfiniteTimeSpan };
 
