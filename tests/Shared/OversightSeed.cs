@@ -24,10 +24,11 @@ public static class OversightSeed
         DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 60);
 
     /// <summary>Seeds what <paramref name="detector"/> measures, in <paramref name="unit"/> (a division), relative to <paramref name="now"/>.</summary>
-    public static void Seed(string databaseFile, string detector, DateTimeOffset now, string unit = OrgIds.Research)
+    /// <param name="fixedTag">The ids' suffix; null mints one. Two homes seeded with the same tag hold the same ids.</param>
+    public static void Seed(string databaseFile, string detector, DateTimeOffset now, string unit = OrgIds.Research, string? fixedTag = null)
     {
         var role = unit == OrgIds.Operations ? CouncilRoles.Operations : CouncilRoles.Research;
-        var tag = detector.Replace("-", "", StringComparison.Ordinal) + "-" + Guid.NewGuid().ToString("n")[..8];
+        var tag = detector.Replace("-", "", StringComparison.Ordinal) + "-" + (fixedTag ?? Guid.NewGuid().ToString("n")[..8]);
         using var c = Open(databaseFile);
         switch (detector)
         {
