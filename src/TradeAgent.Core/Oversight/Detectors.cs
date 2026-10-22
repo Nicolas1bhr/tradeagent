@@ -243,7 +243,9 @@ public sealed class MaterialUnwokenDetector : OversightDetector
 /// <summary>
 /// <c>refusals</c>: refusals at the gateway (a tool call the app did not serve) or at the pipe (the engineering log's Ipc refusals). The pipe's
 /// <c>protocol_rejected</c> and <c>operator_session_refused</c> are SEVERE; an <c>op_refused</c> — a refusal of rights or authority at the
-/// pipe's one handler (<c>U-org-watcher-b</c>) — is info, in its attempt's unit. The log is pruned, so it is read by cursor and the facts copied in.
+/// pipe's one handler (<c>U-org-watcher-b</c>) — is info, in its attempt's unit. A refusal is ONE finding: a call through a worker's or the
+/// door's tools is its <c>tool_call</c> row alone, and the pipe writes <c>op_refused</c> only for a frame from its read loop (fix pass 1, R4).
+/// The log is pruned, so it is read by cursor and the facts copied in.
 /// </summary>
 public sealed class RefusalsDetector : OversightDetector
 {
@@ -253,7 +255,8 @@ public sealed class RefusalsDetector : OversightDetector
     public static readonly string[] SevereEvents = ["protocol_rejected", "operator_session_refused"];
 
     public override string Blind =>
-        "It sees only what the app refused and recorded — a malformed request is not a refusal and is not counted; " + CliBlind + ".";
+        "It sees only what the app refused and recorded: a tool call the app did not serve, whatever the reason, and a frame on the pipe "
+        + "refused on rights or authority — a malformed frame on the pipe is not a refusal and is not counted; " + CliBlind + ".";
 
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {

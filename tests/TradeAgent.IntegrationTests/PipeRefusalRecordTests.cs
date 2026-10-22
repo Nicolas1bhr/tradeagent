@@ -95,9 +95,11 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     /// <summary>
     /// (e) EVERY REFUSAL AT THE PIPE LEAVES ONE STRUCTURED ROW, BY EVERY PATH INTO <c>Handle</c>: a Research <c>buy</c> over the READ LOOP
     /// (the role gate); an unconfined Operations launch's <c>mandate-assign</c> over the read loop, in process, and through the broker DOOR
-    /// (the organisation verbs' caller check). Each answer is the one it always was; each leaves exactly one <c>op_refused</c> row naming the
-    /// op, the code, the role and the attempt. A malformed frame — an unknown op, a quote naming no symbol — is not a refusal and leaves none.
-    /// RED at base: the role gate left an activity line only, and an organisation-verb refusal no row at all.
+    /// (the organisation verbs' caller check). Each answer is the one it always was. Each frame from the read loop leaves exactly one
+    /// <c>op_refused</c> row naming the op, the code, the role and the attempt; an in-process or door call leaves none, because its caller's
+    /// <c>tool_call</c> row is that refusal's one record (fix pass 1, R4 — proved with the real tools in (e7)). A malformed frame — an unknown
+    /// op, a quote naming no symbol — is not a refusal and leaves none. RED at base: the role gate left an activity line only, and an
+    /// organisation-verb refusal no row at all.
     /// </summary>
     [Fact]
     public async Task Every_refusal_at_the_pipe_leaves_one_structured_row()
@@ -139,13 +141,14 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
             Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), malformed.Error?.Code);
         }
 
-        // IN PROCESS, AND THROUGH THE BROKER DOOR.
-        Assert.False((await server.CallAsync(Assign(), CouncilRoles.Operations, opsAttempt)).Ok);
-        Assert.False((await server.CallAsGrantAsync(Assign(), operations)).Ok);
-
         var rows = Rows(db, "op_refused");
         foreach (var r in rows) log.WriteLine($"{r.Severity} {r.Metadata}");
-        Assert.Equal(4, rows.Count);
+        Assert.Equal(2, rows.Count);
+
+        // IN PROCESS, AND THROUGH THE BROKER DOOR: refused as they always were — their callers record them, so the pipe adds no row.
+        Assert.False((await server.CallAsync(Assign(), CouncilRoles.Operations, opsAttempt)).Ok);
+        Assert.False((await server.CallAsGrantAsync(Assign(), operations)).Ok);
+        Assert.Equal(2, Rows(db, "op_refused").Count);
         Assert.Equal(("buy", nameof(ErrorCode.ROLE_MAY_NOT_TRADE), CouncilRoles.Research, "attempt-refrow-r"),
             (rows[0].M("op"), rows[0].M("code"), rows[0].M("role"), rows[0].M("attempt")));
         foreach (var r in rows.Skip(1))
@@ -286,6 +289,51 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// (e7) ONE REFUSAL IS ONE ROW AND ONE FINDING ON THE IN-PROCESS PATHS (fix pass 1, R4): a Research worker's <c>buy</c> through the
+    /// harness's tools (<see cref="GatewayPipeServer.CallAsync"/>) and through the door's tools under a grant
+    /// (<see cref="GatewayPipeServer.CallAsGrantAsync"/>) is refused as it always was; the caller's own <c>tool_call</c> row
+    /// (<c>served = 0</c>) is that refusal's one record, so the pipe writes no <c>op_refused</c> beside it, and a sweep yields one
+    /// <c>refusals</c> finding per refusal — never a tool finding and an op finding for the same fact. RED before the fix: each refusal
+    /// left both rows, and the sweep found four for two.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_a_worker_tool_already_recorded_is_one_finding()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        var home = Path.Combine(TestEnv.Home, "refrow-home-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(home);
+        const string buy = """{"op":"buy","symbol":"ES","quantity":"1"}""";
+
+        var harness = new TradeAgent.AgentRuntime.GrantedWorkerTools(CouncilRoles.Research, () => home, () => "attempt-refrow-tool", () => server,
+            ledger: new ToolCallStore(db));
+        var byHarness = await harness.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("t1", TradeAgent.AgentRuntime.GrantedWorkerTools.Trade, buy));
+        Assert.False(byHarness.Served);
+        Assert.Contains(nameof(ErrorCode.ROLE_MAY_NOT_TRADE), byHarness.Content, StringComparison.Ordinal);
+
+        using var research = new AgentGrants().IssueHere(CouncilRoles.Research, "attempt-refrow-door");
+        var door = TradeAgent.AgentRuntime.BrokerDoor.ToolsFor(research, _ => home, () => server, new ToolCallStore(db));
+        var byDoor = await door.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("t2", TradeAgent.AgentRuntime.GrantedWorkerTools.Trade, buy));
+        Assert.False(byDoor.Served);
+
+        Assert.Equal(2, db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT COUNT(*) FROM tool_call WHERE served = 0");
+            return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }));
+        var now = DateTimeOffset.UtcNow;
+        using var oversight = new Core.Oversight.OversightStore(Path.Combine(TestEnv.Home, $"oversight-{Guid.NewGuid():n}.db"), now);
+        var swept = new Core.Oversight.OversightSweep(db.FilePath, oversight).Run(now);
+        Assert.Null(swept.Failure);
+        var found = swept.Added.Where(f => f.Detector == "refusals" && f.ScopeId == Core.Oversight.OversightStore.RootScope).ToList();
+        foreach (var f in found) log.WriteLine($"{f.Subject} {string.Join(",", f.Measured.Select(m => $"{m.Key}={m.Value}"))}");
+        Assert.Equal(["attempt:attempt-refrow-door", "attempt:attempt-refrow-tool"], found.Select(f => f.Subject).Order(StringComparer.Ordinal));
+        Assert.Empty(Rows(db, "op_refused"));
+    }
+
+    /// <summary>
     /// (e1) GUARD: AN ENDED GRANT KEEPS ITS ONE <c>grant_rejected</c> ROW. A grant whose turn ended under a live connection is refused before
     /// <c>Handle</c> (<c>EndedGrantRefusal</c>), as it was: one <c>grant_rejected</c> row, and no <c>op_refused</c> beside it. Green at base.
     /// </summary>
@@ -315,21 +363,31 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     /// <summary>
     /// (e2) GUARD: THE REFUSAL ROW HOLDS NO REQUEST PAYLOAD. A refused buy whose symbol, session and request id are planted strings, and an
     /// op of a planted name: the row carries the op as a known const and nothing else of the frame — no session, no request id, no argument,
-    /// no exception text — and the planted op name is in no row of the engineering log at all.
+    /// no exception text — and the planted op name is in no row of the engineering log at all. Over the READ LOOP, the path that writes the
+    /// row (fix pass 1, R4: an in-process caller records its own answer, so it was moved here from <c>CallAsync</c>).
     /// </summary>
     [Fact]
     public async Task The_refusal_row_holds_no_request_payload()
     {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
         var (gw, _, db) = await TestEnv.Ready();
         using var _db = db;
         await using var _gw = gw;
-        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
         var planted = "planted" + Guid.NewGuid().ToString("n")[..10];
 
-        Assert.False((await server.CallAsync(Buy(null, symbol: planted + "SYM", session: planted + "-session", rid: planted + "-rid"),
-            CouncilRoles.Research, "attempt-refrow-p")).Ok);
-        Assert.False((await server.CallAsync(new IpcRequest { Op = planted + "-op", Session = planted + "-session" },
-            CouncilRoles.Research, "attempt-refrow-p")).Ok);
+        using var research = grants.IssueHere(CouncilRoles.Research, "attempt-refrow-p");
+        await using (var client = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = research.Token })).Ok);
+            Assert.False((await client.SendAsync(Buy(research.Token, symbol: planted + "SYM", session: planted + "-session", rid: planted + "-rid"))).Ok);
+            Assert.False((await client.SendAsync(new IpcRequest
+            {
+                Op = planted + "-op", Token = IpcToken.Ensure(), Grant = research.Token, Session = planted + "-session"
+            })).Ok);
+        }
 
         var row = Assert.Single(Rows(db, "op_refused"));
         log.WriteLine(row.Metadata);

@@ -1192,12 +1192,16 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     ///
     /// <para>It works whether or not <see cref="Start"/> was ever called: the pipe is one transport
     /// into this handler and an in-process worker is another.</para>
+    ///
+    /// <para><b>ITS CALLER RECORDS THE ANSWER</b> (<c>U-org-watcher-b</c> fix pass 1, R4): the worker's tools write every answer they
+    /// were not served as a <c>tool_call</c> row, so a refusal here leaves THAT row and no <c>op_refused</c> beside it — one refusal,
+    /// one row, one finding. A new in-process caller records its answers as the worker's tools do.</para>
     /// </summary>
     public Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId,
         CancellationToken ct = default) =>
         ReservedSessionRefusal(req) is { } refusal
             ? Task.FromResult(refusal)
-            : Handle(req, role, attemptId, ct);
+            : Handle(req, role, attemptId, ct, callerRecords: true);
 
     /// <summary>
     /// ONE OPERATION FROM THE BROKER DOOR, under the launch grant the door verified (<c>U-thinking-seats-b</c>): exactly
@@ -1212,6 +1216,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// drain. One drain, not a second one beside it. <paramref name="ct"/> is therefore not handed on: a caller that goes away
     /// — the door closing — never cancels an order already on its way to the broker. Once disposal has begun, a new call is
     /// refused in words and nothing is started.</para>
+    ///
+    /// <para><b>ITS CALLER RECORDS THE ANSWER</b>, as <see cref="CallAsync"/>'s does: the door's tools and its organisation verbs write
+    /// every answer they were not served as a <c>tool_call</c> row, so a refusal here leaves no <c>op_refused</c> beside it.</para>
     /// </summary>
     public Task<IpcResponse> CallAsGrantAsync(IpcRequest req, Security.AgentGrant grant, CancellationToken ct = default)
     {
@@ -1224,7 +1231,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 return Task.FromResult(IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAVAILABLE,
                     "TradeAgent's gateway is closing, so this call was not started. Ask again once TradeAgent is running."));
             var handling = _cts.Token;
-            var handler = Task.Run(() => Handle(req, grant.Role, grant.AttemptId, handling, grant.OrdersWithheld), CancellationToken.None);
+            var handler = Task.Run(() => Handle(req, grant.Role, grant.AttemptId, handling, grant.OrdersWithheld, callerRecords: true),
+                CancellationToken.None);
             _handlers[handler] = 0;
             _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
             return handler;
@@ -1239,7 +1247,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     readonly Lock _tracking = new();
 
     async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct,
-        string? ordersWithheld = null)
+        string? ordersWithheld = null, bool callerRecords = false)
     {
         // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
         // that is USED, not on the field that may be absent.
@@ -1305,7 +1313,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             if (ctx.OrdersWithheld is { } withheld)
             {
                 gateway.Log.Activity($"AI order refused: this launch of the {CouncilRoles.Title(CouncilRoles.Operations)} holds no order permission", "warn");
-                RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
+                if (!callerRecords) RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
                 return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE, $"'{req.Op}' moves money, and {withheld}.");
             }
 
@@ -1313,7 +1321,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 ? $"the {CouncilRoles.Title(named)}"
                 : "a caller that presented no launch grant";
             gateway.Log.Activity($"AI order refused: {who} may not place, change or cancel orders", "warn");
-            RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
+            if (!callerRecords) RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
             return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE,
                 $"'{req.Op}' moves money, and {who} may not. Only the " +
                 $"{CouncilRoles.Title(CouncilRoles.Operations)}'s own launch may, and it proves which launch " +
@@ -1413,12 +1421,12 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             // without reading a log file.
             if (Core.Ops.IsMutating(req.Op))
                 gateway.Log.Activity($"AI order refused: {ex.Info.UserMessage} ({ex.Message})", "warn");
-            if (IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
+            if (!callerRecords && IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
             return IpcResponse.Fail(req.Id, ex.Info);
         }
         catch (TradeAgentException ex)
         {
-            if (IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
+            if (!callerRecords && IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
             return IpcResponse.Fail(req.Id, ex.Info);
         }
         catch (ConnectorTransportException ex) { return IpcResponse.Fail(req.Id, ErrorCode.TRADING_CONNECTION_MISSING, ex.Message); }
@@ -1450,7 +1458,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
 
     /// <summary>
     /// THE ONE ROW A REFUSAL LEAVES, at <see cref="Handle"/>'s one choke point — which the read loop, <see cref="CallAsync"/> and the
-    /// broker door's <see cref="CallAsGrantAsync"/> all reach: <c>engineering_log</c> <c>Ipc</c>/<see cref="RefusalMark.Event"/>, metadata
+    /// broker door's <see cref="CallAsGrantAsync"/> all reach — for a frame from the READ LOOP, whose refusal nothing else records (the two
+    /// in-process callers record their own answers as <c>tool_call</c> rows, fix pass 1, R4): <c>engineering_log</c>
+    /// <c>Ipc</c>/<see cref="RefusalMark.Event"/>, metadata
     /// {op — a known op's name or <c>unknown</c>; code; the role and attempt the caller's grant proved}. NOTHING OF THE REQUEST: no session,
     /// no request id, no argument, no message. Best effort, so a log that cannot be written never changes the answer, which is byte-for-byte
     /// what it was before this row existed.
