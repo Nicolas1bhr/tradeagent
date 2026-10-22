@@ -199,7 +199,7 @@ public class TwoPressGrantTests
 
             Press(b);
             Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen “{named}”", b.Content);
+            Assert.Equal($"Confirm: widen “{named}” to {pending.FigureOf(named)}", b.Content);
 
             Press(b);
             Assert.Equal($"{named}: {1}", $"{named}: {saved}");
@@ -264,7 +264,7 @@ public class TwoPressGrantTests
 
             Press(b);
             Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen \u201c{named}\u201d", b.Content);
+            Assert.Equal($"Confirm: widen \u201c{named}\u201d to {pending.FigureOf(named)}", b.Content);
 
             Press(b);
             Assert.Equal($"{named}: {1}", $"{named}: {saved}");
@@ -317,7 +317,10 @@ public class TwoPressGrantTests
             RiskPolicy.Widenings(Policy(), Policy(trade: 0m, daily: 0m)));
     }
 
-    /// <summary>Five limit names on one button is a sentence nobody reads, so several are counted.</summary>
+    /// <summary>
+    /// Several widened limits are counted, and each is named with the figure the second press writes (U-number-entry-culture fix pass 1:
+    /// a confirmation that named no figure could be completed for any figure typed under it).
+    /// </summary>
     [Fact]
     public void A_save_that_widens_several_caps_counts_them()
     {
@@ -327,7 +330,8 @@ public class TwoPressGrantTests
         Press(b);
 
         Assert.Equal(0, saved);
-        Assert.Equal("Confirm: widen 2 of your safety limits", b.Content);
+        Assert.Equal($"Confirm: widen 2 of your safety limits — “{Labels.MaxOrderQuantity}” to 9, “{Labels.MaxOrdersPerMinute}” to 60",
+            b.Content);
     }
 
     /// <summary>
@@ -618,7 +622,7 @@ public class TwoPressGrantTests
 
             Press(b);
             Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen \u201c{named}\u201d", b.Content);
+            Assert.Equal($"Confirm: widen \u201c{named}\u201d to {pending.FigureOf(named)}", b.Content);
 
             Press(b);
             Assert.Equal($"{named}: {1}", $"{named}: {saved}");

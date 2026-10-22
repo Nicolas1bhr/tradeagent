@@ -205,6 +205,38 @@ public sealed class RiskPolicy
         return wider;
     }
 
+    /// <summary>Every limit the Safety page shows, by its label, in the page's order.</summary>
+    static readonly string[] Limits =
+    [
+        Labels.MaxOrderQuantity, Labels.MaxNotionalPerOrder, Labels.MaxOpenPositions, Labels.MaxOrdersPerMinute,
+        Labels.MaxLossPerTrade, Labels.MaxDailyLoss, Labels.LossMinClosure, Labels.LossStrikeWindow,
+        Labels.ValuationLossExit, Labels.InstrumentAllowlist
+    ];
+
+    /// <summary>
+    /// THE FIGURE ONE LIMIT WILL BE WRITTEN AS, by the label the page shows it under (<c>U-number-entry-culture</c>, fix pass 1): every
+    /// digit, never rounded (<see cref="Amount.Exact"/>), and the allowlist as the instruments it names. It is what the armed sentence
+    /// of a widening save says and what its note says back — a confirmation names the figure its second press writes, exactly.
+    /// </summary>
+    public string FigureOf(string limit) => limit switch
+    {
+        Labels.MaxOrderQuantity => Amount.Exact(MaxOrderQuantity),
+        Labels.MaxNotionalPerOrder => Amount.Exact(MaxNotionalPerOrder),
+        Labels.MaxOpenPositions => Amount.Exact(MaxOpenPositions),
+        Labels.MaxOrdersPerMinute => Amount.Exact(MaxOrdersPerMinute),
+        Labels.MaxLossPerTrade => Amount.Exact(MaxLossPerTrade),
+        Labels.MaxDailyLoss => Amount.Exact(MaxDailyLoss),
+        Labels.LossMinClosure => Amount.Exact(LossMinClosureHours),
+        Labels.LossStrikeWindow => Amount.Exact(LossStrikeWindowDays),
+        Labels.ValuationLossExit => Amount.Exact(ValuationLossExitMinutes),
+        Labels.InstrumentAllowlist => InstrumentAllowlist.Count == 0 ? "none" : string.Join(", ", InstrumentAllowlist),
+        _ => throw new ArgumentOutOfRangeException(nameof(limit), limit, "not a safety limit")
+    };
+
+    /// <summary>Which limits <paramref name="to"/> writes a different figure for than <paramref name="from"/> holds, in the page's order.</summary>
+    public static IReadOnlyList<string> Changes(RiskPolicy from, RiskPolicy to) =>
+        [.. Limits.Where(l => from.FigureOf(l) != to.FigureOf(l))];
+
     /// <summary>
     /// The comparison for a cap whose ZERO means "not enforced" — the notional cap and both loss
     /// budgets. Spelled once rather than three times because it is the rule that is easy to get

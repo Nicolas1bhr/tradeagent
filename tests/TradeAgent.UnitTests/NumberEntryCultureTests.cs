@@ -342,6 +342,74 @@ public class NumberEntryCultureTests
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// (fix pass 1) AN EDIT UNDER AN ARMED PRESS DISARMS IT, AND THE ARMED SENTENCE NAMES THE FIGURE IT WILL WRITE — on the limits, the
+    /// AI's price and the review interval, as the ceilings, the lanes and the envelope already did. RED at 46bfc570: "2" typed into the
+    /// largest order, Save limits armed, "2000" typed under it — the press stayed armed and its next press wrote 2000 under a sentence that
+    /// named no figure at all.
+    /// </summary>
+    [Fact]
+    public Task An_edit_under_an_armed_press_disarms_it_and_the_sentence_names_the_figure() => OnThePage((page, host) =>
+    {
+        // SAVE LIMITS: armed for 2, edited to 2000 — disarmed, nothing saved; armed again, the sentence names 2000.
+        host.Gateway.Update(s => s.Risk.MaxOrderQuantity = 1m);
+        var quantity = Field<AmountField>(page, "_maxQty");
+        var saveLimits = PressLabelled(page, Labels.SaveLimits);
+        var limitsNote = Field<TextBlock>(page, "_limitsNote");
+        quantity.Box.Text = "2";
+        Press(saveLimits);
+        Assert.True(Ui.IsArmed(saveLimits));
+        quantity.Box.Text = "2000";
+        Assert.False(Ui.IsArmed(saveLimits));
+        Press(saveLimits);
+        Assert.Equal(1m, host.Gateway.Settings.Risk.MaxOrderQuantity);
+        Assert.True(Ui.IsArmed(saveLimits));
+        Assert.Contains($"“{Labels.MaxOrderQuantity}” to 2000", (string)saveLimits.Content!, StringComparison.Ordinal);
+        Press(saveLimits);
+        Assert.Equal(2000m, host.Gateway.Settings.Risk.MaxOrderQuantity);
+        Assert.Contains($"“{Labels.MaxOrderQuantity}” is now 2000", limitsNote.Text, StringComparison.Ordinal);
+
+        // THE ALLOWLIST UNDER THE SAME PRESS: an armed widening is disarmed by an edit of the list too.
+        quantity.Box.Text = "3000";
+        Press(saveLimits);
+        Assert.True(Ui.IsArmed(saveLimits));
+        Field<TextBox>(page, "_allowlist").Text = "ES, NQ";
+        Assert.False(Ui.IsArmed(saveLimits));
+        Assert.Equal(2000m, host.Gateway.Settings.Risk.MaxOrderQuantity);
+
+        // THE AI'S PRICE: a lower price armed for one figure is disarmed by the next one typed.
+        host.Gateway.Update(s =>
+        {
+            s.AiPriceInputPerMillion = 10m;
+            s.AiPriceOutputPerMillion = 50m;
+        });
+        var priceIn = Field<AmountField>(page, "_priceIn");
+        Field<AmountField>(page, "_priceOut").Box.Text = "50";
+        var savePrice = PressLabelled(page, Labels.SaveAiPrice);
+        priceIn.Box.Text = "0.1";
+        Press(savePrice);
+        Assert.True(Ui.IsArmed(savePrice));
+        priceIn.Box.Text = "0.0001";
+        Assert.False(Ui.IsArmed(savePrice));
+        Press(savePrice);
+        Assert.Equal(10m, host.Gateway.Settings.AiPriceInputPerMillion);
+        Assert.Contains("0.0001", (string)savePrice.Content!, StringComparison.Ordinal);
+
+        // THE REVIEW INTERVAL: a shorter interval armed for one figure is disarmed by the next one typed.
+        host.Gateway.Update(s => s.MissionReviewMinutes = 30);
+        var review = Field<AmountField>(page, "_reviewEvery");
+        var saveReview = PressLabelled(page, Labels.SaveReviewEvery);
+        review.Box.Text = "20";
+        Press(saveReview);
+        Assert.True(Ui.IsArmed(saveReview));
+        review.Box.Text = "1";
+        Assert.False(Ui.IsArmed(saveReview));
+        Press(saveReview);
+        Assert.Equal(30, host.Gateway.Settings.MissionReviewMinutes);
+        Assert.Equal(Labels.LowerReviewEveryArmed(1), saveReview.Content);
+        return Task.CompletedTask;
+    });
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
