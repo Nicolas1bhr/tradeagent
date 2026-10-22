@@ -298,6 +298,8 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             From = from,
             To = to,
             Role = AppPrincipals.Perception,
+            // REAL MONEY (U-billing-classes): perception's own budget stays a slice of the money cap, and never touches the plan's.
+            BillingClass = BillingClasses.Key,
             Cap = ReadOrZero(_cap),
             RoleCap = ReadOrZero(_budget),
             Reservation = attempt.ReservedCost,

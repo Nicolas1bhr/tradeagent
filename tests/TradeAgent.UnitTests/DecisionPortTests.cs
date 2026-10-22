@@ -516,6 +516,10 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
         Assert.All(answers.Where(a => a.Status == DecisionStatus.REFUSED), a => Assert.Equal(Labels.PerceptionBudgetReached, a.Refusal));
         Assert.Single(host.Requests);
 
+        // A PERCEPTION CALL IS PAID WITH THE OWNER'S OWN KEY (U-billing-classes): its row is `key`, counted against the money cap.
+        Assert.All(Today(rig.Db).Where(r => r.Role == AppPrincipals.Perception), r => Assert.Equal(BillingClasses.Key, r.BillingClass));
+        Assert.Contains(Today(rig.Db), r => r.Role == AppPrincipals.Perception);
+
         // AND NO COUNCIL SHARE MOVED: the chair's own reading is its turn and its slice, perception's money is in the day.
         var meter = new TurnMeter(rig.Db, cap: () => 5m, live: rig.Live,
             recordPath: Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl"));
