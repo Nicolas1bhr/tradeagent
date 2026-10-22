@@ -11331,3 +11331,29 @@ ORCHESTRATION §§ 2.4, 8; ORGANISATION § 10. **Protects:** BUDGET-001 (one adm
 **Scan:** exact judged phrases only — `per million tokens`, `TurnAllowance\.Default\.InputTokens`, `ChatGPT workspace token`, and the fake CLI's own `with-api-key'\) read -r KEY` case label (a vendor flag in a test stand-in, no credential).
 **Owed:** Codex second pass after attempt 4; CARD (pre-existing, re-review 2): on a fresh home the loop's first look before the first sign-in reading can call BlockOwnerMessages / SpendCapReached once for a cap a plan seat does not bill.
 **NOT VERIFIED:** "Logged in using ChatGPT" under the pinned codex in a real home; the plan's included use vs 40; the Safety page seen in a running app (tests only); the nudge read off the loop by reflection, not a running loop.
+
+## U-org-watcher-b — the owner-only Oversight page, the in-app alert for a severe finding, the oversight cap beside the organisation's, and a structured record of every refusal of rights or authority at the pipe
+
+**Landed** at `19979487` (seat A, on main `988c9487`; builder af7ecdcf9d0e90fb4, fixer a35e5100e5a6b6101 passes 1–4; both opus/high, BUILD RUN 2026-10-22).
+A protection unit — AUTH-001 (no op, verb, pipe field or CLI verb reaches the page, the cap or an acknowledgement), BUDGET-001 (the cap is the owner's, beside the
+organisation's, read by no admission gate or agent-reachable total), invisibility (part a's guards unchanged and green, every pipe answer byte-identical), two-press
+(raising the cap), append-only (an acknowledgement is a row). **No rung in tradeagent.db:** `oversight.db` rung 2 (`oversight_cap`, `oversight_ack`), one transaction with its stamp.
+**Reviewed by an independent Claude leg during the observed run; Codex review owed** (the orchestrator's 08:4x ruling) — review a98fcc933a44629e5, re-reviews
+a018db967ba00f771, a81a9982a10d66347, a546c0e2386eb5934; pass 4 (wording + its test) read by seat A.
+**CI:** landing run **39833858672** — JUDGED (the orchestrator's ruling 21:2x): job test (macos-latest) stuck in_progress at GitHub with every step completed success (API quoted in fleet/gates/train-A3/judged-macos-steps.txt; its skips are the same platform skips as any green macOS job); run 39833858672 conclusion success; every other job green. Superseded: 39827016395 (windows-1 stuck likewise), 39839733639 (cancelled). Earlier: builder 39740011002, fix 1 39747879187, fix 2 39756826124, fix 3 39813761521, fix 4 39821075353 — each green on every job.
+**Tests box:** 20261022-195638-19979487 on the landing tip GREEN — Unit 2137/0 (22 not run), Integration 743/0 (54 not run), Fault 498/0; his files unchanged (earlier: 20261022-092021-6065718d and 20261022-102756-a15d7318 GREEN).
+
+**Build (items 1–5):** rung 2; the page (OversightWords pure + OversightPage built once, Page.Oversight, root scope only, App-internal accessors); the cap's press
+(raising takes two presses naming the figure and is disarmed by an edit; lowering one); the refusal record at Handle — seat A's RULING (b): an in-process
+RefusalMark (Exception.Data) at each rights/authority refusal site read at the one choke point, the gateway's own rule refusals by a closed code list, NO wire change,
+`engineering_log` Ipc/`op_refused` {op|"unknown", code, role, attempt}, no payload; the banner (own shell row after the approval banner; Acknowledge appends rows only).
+**RED / mutant:** RED before each item (compile reds for new types; (e) "Expected: 4 Actual: 0"); MUTANT the cap's armed sentence `() => null` ⇒ (c) red; restored.
+**Fix pass 1 (review, 4 REAL):** the kill switch and live gate (AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, AUTONOMY_REQUIRES_PROVABLE_STATE) left no row; a backtest's
+re-wrap dropped the mark (RefusalMark.Carry); input validation was marked as a rights refusal (OrgStore's Refused unmarked, a new Forbidden for rights/authority only;
+MUTANT: Refused marked again ⇒ (e6) red); one refusal gave two findings (op_refused only for read-loop frames; the in-process callers record tool_call served=0).
+**Fix pass 2:** mandate-assign's authority refusals marked (Q4 operations, heads no unit, outside the subtree); the BLIND sentence names every counted event.
+**Fix pass 3:** self-assignment marked (seat A: an authority rule); `RefusalsDetector.Recorded`/`NotRecorded` — one exact gloss per event tied to its write site,
+(e10) drives every site. **Fix pass 4:** NotRecorded is exactly the pipe's no-row refusals (a versioned frame before hello; not valid JSON or empty; a handler's
+refusal of malformed content); a post-hello frame naming another version is SERVED (pre-existing → CARD).
+**Not verified:** the page's look (no mac-run during the observed run; Theme.cs only); the timer in a live app; Windows UI.
+**Owed:** the Codex second-pass review (after attempt 4); CARDs — record the pipe's no-row refusals; the pipe serves a post-hello frame of another protocol version.
