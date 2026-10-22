@@ -44,7 +44,7 @@ public partial class CouncilLoopTests
         var loop = new MissionLoop(host, NoHeartbeat);
         var note = new OrgStore(db).SendLateral(TeamHead, null, Executor,
             "The funding skew looks venue-specific.\nCheck the second venue before you trust it.", [], DateTimeOffset.UtcNow);
-        Assert.Empty(host.Events!.Due(DateTimeOffset.UtcNow.AddMinutes(1)).Where(e => e.Role == Executor));   // it woke nobody
+        Assert.DoesNotContain(host.Events!.Due(DateTimeOffset.UtcNow.AddMinutes(1)), e => e.Role == Executor);   // it woke nobody
 
         var executor = host.Conversations[Executor];
         executor.GateRefused = new LateRefusal(new TurnRefusal(RefusalKind.HostOrLaunch, "the host's cell proof changed"), true);
