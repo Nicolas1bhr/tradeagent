@@ -157,7 +157,8 @@ public static class AgentArgs
 
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
-            ModelArgs(manifest, model), SeatArgs(manifest, seatClass, door), manifest.PromptOnStdin, manifest.StdinMarker, out promptInArgv);
+            ModelArgs(manifest, model), [.. SeatArgs(manifest, seatClass, door), .. manifest.TestHostProviderArgs], manifest.PromptOnStdin,
+            manifest.StdinMarker, out promptInArgv);
     }
 
     /// <summary>
