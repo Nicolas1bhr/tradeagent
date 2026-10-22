@@ -419,8 +419,15 @@ public static class Versions
     /// differs from its character length — a NUL inside it, which 41's CHECK reads past (SQLite's <c>length</c>, <c>GLOB</c> and
     /// <c>substr</c> stop at the first NUL), or a character beyond ASCII. No table rebuilt, no row rewritten: a row stored before
     /// the rung stands, and the resolver lists one it cannot read as refused, never guessed.</para>
+    ///
+    /// <para><b>43 — the proven cell and each cell launch's assurance</b> (<c>U-cell-linux-c</c>, rung 43, after
+    /// <c>U-forecast-nul</c>'s 42): <c>cell_proof.boot</c> (a hash of the boot a proof was measured on — it counts on that boot
+    /// alone), <c>cell_proof_revocation</c> (a launch's canary that found its proof no longer true), <c>cell_assurance</c> (one row per cell
+    /// launch: provider, policy, profile, the proof that admitted it, kernel, ABI, modules, egress, cgroup, harness, the attempt's class)
+    /// and <c>cell_assurance_row</c> (per property and side, its enforcement class and evidence) — each refusing UPDATE and DELETE by
+    /// trigger, <c>cell_proof</c> now too. No backfill: nothing ran in a cell, or wrote a proof, before the rung.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 42;
+    public const int DatabaseSchemaVersion = 43;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

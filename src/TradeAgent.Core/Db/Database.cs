@@ -2737,6 +2737,78 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','42') ON CONFLICT(key) DO UPDATE SET value='42';");
         }
 
+        if (have < 43)
+        {
+            // THE PROVEN CELL AND THE ASSURANCE EACH CELL LAUNCH RAN UNDER — `U-cell-linux-c`, rung 43, after `U-forecast-nul`'s 42. ORCHESTRATION
+            // §§ 2.5, 2.8; ORGANISATION § 15.
+            //
+            // `cell_proof.boot` — a SHA-256 over this boot's id (never the id itself): a proof counts only on the boot that measured it, so a
+            // reboot that changed the kernel's command line or its security modules holds no proof until the start bench runs again. NULL
+            // on a row no build wrote (nothing wrote one before this rung) and such a row never counts.
+            //
+            // `cell_proof_revocation` — one row per proof a launch's canary found no longer true (its profile recomputed to another hash):
+            // the proof stops counting, and is never edited or deleted.
+            //
+            // `cell_assurance` — one row per attempt that ran in a cell, written once by the app at launch: the provider, the policy and the
+            // profile it ran under, the proof that admitted it (NOT NULL — no proof, no cell launch), the kernel, ABI and security modules,
+            // its egress, its cgroup, its harness, and the attempt's class (the weaker side). `cell_assurance_row` — per property × side
+            // (cell, harness, attempt) the enforcement class: HARD_PLATFORM, HARD_APP, MEDIATED, ADVISORY or GAP (a gap asserted, never
+            // hidden), with the evidence it rests on. Lanes and presence read these (§ 2.5); no backfill: nothing ran in a cell before.
+            // Every table refuses UPDATE and DELETE by trigger; created only where missing and the stamp last, so a crash between any
+            // statement and the stamp reopens cleanly.
+            AddColumnIfMissing("cell_proof", "boot", "TEXT");
+            Exec("""
+                CREATE TABLE IF NOT EXISTS cell_proof_revocation(
+                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                  proof_id    INTEGER NOT NULL REFERENCES cell_proof(id),
+                  reason      TEXT NOT NULL,
+                  revoked_at  TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cell_assurance(
+                  attempt_id     TEXT PRIMARY KEY,
+                  provider       TEXT NOT NULL,
+                  policy_hash    TEXT NOT NULL,
+                  profile_hash   TEXT NOT NULL,
+                  proof_id       INTEGER NOT NULL REFERENCES cell_proof(id),
+                  kernel         TEXT NOT NULL,
+                  landlock_abi   INTEGER NOT NULL,
+                  lsm            TEXT NOT NULL,
+                  egress         TEXT NOT NULL,
+                  cgroup         TEXT NOT NULL,
+                  harness        TEXT NOT NULL,
+                  attempt_class  TEXT NOT NULL CHECK (attempt_class IN ('HARD_PLATFORM','HARD_APP','MEDIATED','ADVISORY','GAP')),
+                  recorded_at    TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS cell_assurance_row(
+                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                  attempt_id  TEXT NOT NULL REFERENCES cell_assurance(attempt_id),
+                  property    TEXT NOT NULL,
+                  side        TEXT NOT NULL CHECK (side IN ('cell','harness','attempt')),
+                  class       TEXT NOT NULL CHECK (class IN ('HARD_PLATFORM','HARD_APP','MEDIATED','ADVISORY','GAP')),
+                  evidence    TEXT NOT NULL,
+                  UNIQUE(attempt_id, property, side)
+                );
+                CREATE TRIGGER IF NOT EXISTS cell_proof_sealed_u BEFORE UPDATE ON cell_proof
+                BEGIN SELECT RAISE(ABORT, 'a cell proof is never updated: a revocation is a new row'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_proof_sealed_d BEFORE DELETE ON cell_proof
+                BEGIN SELECT RAISE(ABORT, 'a cell proof is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_proof_revocation_sealed_u BEFORE UPDATE ON cell_proof_revocation
+                BEGIN SELECT RAISE(ABORT, 'a revocation is never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_proof_revocation_sealed_d BEFORE DELETE ON cell_proof_revocation
+                BEGIN SELECT RAISE(ABORT, 'a revocation is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_assurance_sealed_u BEFORE UPDATE ON cell_assurance
+                BEGIN SELECT RAISE(ABORT, 'a cell launch''s assurance is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_assurance_sealed_d BEFORE DELETE ON cell_assurance
+                BEGIN SELECT RAISE(ABORT, 'a cell launch''s assurance is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_assurance_row_sealed_u BEFORE UPDATE ON cell_assurance_row
+                BEGIN SELECT RAISE(ABORT, 'an assurance row is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_assurance_row_sealed_d BEFORE DELETE ON cell_assurance_row
+                BEGIN SELECT RAISE(ABORT, 'an assurance row is never deleted'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','43') ON CONFLICT(key) DO UPDATE SET value='43';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
