@@ -48,3 +48,12 @@ How recorded: codex 0.160.1, 2026-10-21T22:22:18Z, throwaway CODEX_HOME + HOME i
 Codex review: `fleet/tmp/B-scratch/u-vendor-limit-wakes/U-vendor-limit-wakes-review.md` (relaunched by seat B; not acted on).
 tests box: NOT RUN — a run was in progress (another unit's) when `ready` was asked once.
 NOT verified: the vendor's own server's 429 body (the mock's is codex's parsed shape, not a recording of OpenAI's); U+2019 on stdout is now seen under that mock, not under the owner's real limited plan. A limit met after work: unchanged, out of scope.
+
+## Fix pass 1
+Code tip `930d821c` (rebased on main `42282003`). The review's P2 closed in the shared `Settle` path: a launch refused before any work (the vendor's limit, and the gate's last check — same code) now writes the owner's words through `MissionEventStore.BlockAgain` — `blocked` with the current refusal's sentence over NULL or an earlier `blocked` only; `answered`/`failed`/`delegated`/`superseded`/`refused` never touched; the words stay unconsumed, never `failed`, never retried. `mission_event.disposition_detail` is a mutable standing reason, not an append-only ledger: the current reason replaces the stale one; no final settlement is rewritten. `SettleWithoutTurn`'s other callers (ceiling, seam, supersede) unchanged.
+RED before: `Owners_words_blocked_for_an_earlier_reason_show_the_vendors_sentence_after_its_refusal` → `Expected: "You've hit your usage limit. Upgrade to P"··· Actual: "the day's spending ceiling is reached"`.
+Mutant (`BlockAgain` back to `SettleWithoutTurn`): same test, same `Expected/Actual`, `Failed: 1, Passed: 9`; restored.
+Build Release `--no-incremental`: `0 Warning(s)` `0 Error(s)`. VendorLimitTests 3× through suite.sh: `Passed: 10, Total: 10` ×3; ThinkingSeats + OwnerDisposition + MissionEvent once: `Passed: 38`. names.sh main → `removed: 0`, `added: 4`.
+CI 39702651231 (930d821c): `success`, all 12 jobs green.
+tests box: NOT RUN — another run was in progress when `ready` was asked once.
+Codex re-review: `fleet/tmp/B-scratch/u-vendor-limit-wakes-fix/rereview.md` — "No defects found. `930d821c` closes the stale-reason finding; no introduced regression identified."
