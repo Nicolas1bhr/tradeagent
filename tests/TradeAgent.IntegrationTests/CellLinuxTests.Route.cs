@@ -567,8 +567,9 @@ public partial class CellLinuxTests
         Assert.DoesNotContain("harness-secret", c1);
         Assert.True(File.Exists(Path.Combine(r.W.Ws, "rel-patched.txt")), "the relative patch did not land in the workspace: " + said);
         Assert.False(File.Exists(Path.Combine(harnessSide, "patched.txt")), "a patch wrote the harness's side: " + said);
-        Assert.True(turn.Outputs.TryGetValue("c4", out var c4) && !c4.Contains("unable to locate image", StringComparison.Ordinal), "the workspace image was not read: " + said);
-        Assert.True(turn.Outputs.TryGetValue("c5", out var c5) && c5.Contains("unable to locate image", StringComparison.Ordinal), "the harness's image was read: " + said);
+        Assert.True(turn.Outputs.TryGetValue("c4", out var c4) && c4.Contains("input_image", StringComparison.Ordinal), "the workspace image was not read: " + said);
+        Assert.True(turn.Outputs.TryGetValue("c5", out var c5) && !c5.Contains("input_image", StringComparison.Ordinal)
+                    && c5.Contains("Permission denied", StringComparison.Ordinal), "the harness's image was read: " + said);
     }
 
     /// <summary>
