@@ -212,6 +212,8 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     static readonly string[] PinnedTotals =
     [
         "AiAttemptStore.TotalsBetween", "AiAttemptStore.UnitTotalsBetween", "OrgStore.SpendOf", "TurnMeter.Today", "TurnMeter.TodayFor",
+        // U-billing-classes: today against one class's ceiling — the same rows read through the class filter the store's two take.
+        "TurnMeter.TodayIn",
     ];
 
     /// <summary>Every pinned total, asked of this home for today and for each unit and mandate.</summary>
@@ -223,6 +225,13 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
         yield return ("TotalsBetween", JsonSerializer.Serialize(attempts.TotalsBetween(from, to)));
         foreach (var role in CouncilRoles.All) yield return ($"TotalsBetween {role}", JsonSerializer.Serialize(attempts.TotalsBetween(from, to, role)));
         foreach (var u in org.Units()) yield return ($"UnitTotalsBetween {u.Id}", JsonSerializer.Serialize(attempts.UnitTotalsBetween(from, to, u.Id)));
+        // AND THROUGH EACH CEILING'S FILTER (U-billing-classes): a class's rows, its own and the unknown ones.
+        foreach (var ceiling in new[] { BillingClasses.Plan, BillingClasses.Key })
+        {
+            yield return ($"TotalsBetween ceiling {ceiling}", JsonSerializer.Serialize(attempts.TotalsBetween(from, to, null, ceiling)));
+            foreach (var u in org.Units())
+                yield return ($"UnitTotalsBetween {u.Id} ceiling {ceiling}", JsonSerializer.Serialize(attempts.UnitTotalsBetween(from, to, u.Id, ceiling)));
+        }
         using var c = OversightSeed.Open(db.FilePath);
         using var q = c.CreateCommand();
         q.CommandText = "SELECT id FROM org_mandate ORDER BY id";
