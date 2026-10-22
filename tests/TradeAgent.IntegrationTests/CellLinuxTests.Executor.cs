@@ -228,7 +228,11 @@ public partial class CellLinuxTests
         var session = new AgentSession(codex, () => exe, () => home, () => WorkspaceBuilder.EnvironmentFor("executor-rows", home),
             presence: presence, role: role, attempt: () => metering?.OpenAttemptIdFor(role) ?? world?.AttemptId ?? $"exec-{name}",
             grants: grants, seatProbe: new CellProbe(), seats: register, door: () => door.Url, surfaceProbe: new CellSurface(),
-            cells: new TradeAgent.AgentRuntime.CellRoute(db, rows.Cgroups, Launcher()));
+            // THE LAUNCHER, ITS STAGE AND WHAT IT STARTS WRITE THEIR STDERR TO A FILE the row prints (-c's RouteTurn did the same): codex
+            // keeps a stdio program's stderr to itself, and a cell that would not start is otherwise only "unsupported call". `exec`
+            // replaces the shell, so the process the app holds is the launcher itself.
+            cells: new TradeAgent.AgentRuntime.CellRoute(db, rows.Cgroups,
+                ["/bin/sh", "-c", $"exec \"$0\" \"$@\" 2>>'{Path.Combine(root, "launcher.err")}'", .. Launcher()]));
         world = new ExecutorWorld
         {
             Db = db, Rows = rows, Door = door, Codex = codex, Exe = exe, Home = home, Root = root, Session = session, Presence = presence,
@@ -260,6 +264,9 @@ public partial class CellLinuxTests
         var outputs = mock.Outputs();
         var requests = Directory.Exists(mock.Requests) ? Directory.GetFiles(mock.Requests, "*.json").Length : 0;
         var history = string.Join("\n", w.Session.History.TakeLast(6).Select(t => $"[{t.Role}] {t.Text[^Math.Min(t.Text.Length, 1500)..]}"));
+        var leg = Path.Combine(w.Root, "launcher.err");
+        var legText = File.Exists(leg) ? File.ReadAllText(leg) : "(no launcher stderr)";
+        history += $"\n--- the launcher's and the cell's stderr ---\n{legText[^Math.Min(legText.Length, 4000)..]}";
         var said = $"turn: exit {ended?.ExitCode}; mock requests {requests}; door tool lists {w.ToolsServed}; outputs " +
                    $"{string.Join(" | ", outputs.Select(o => o.Key + ": " + o.Value))}\n--- raw ---\n" +
                    $"{(ended?.Raw is { } raw ? raw[^Math.Min(raw.Length, 2500)..] : "(no TurnEnded)")}\n--- the session's last lines ---\n{history}";
