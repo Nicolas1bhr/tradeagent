@@ -47,8 +47,44 @@ public static class AuditChecks
     /// <summary>What one sample comes to: its checks, a finding per failed check, and a flag or none.</summary>
     public sealed record Outcome(IReadOnlyList<AuditCheck> Checks, IReadOnlyList<AuditFinding> Findings, AuditFlag? Flag);
 
-    /// <summary>Runs every check on <paramref name="sample"/>, reading through <paramref name="evidence"/> only.</summary>
+    /// <summary>
+    /// Runs every check on <paramref name="sample"/>, reading through <paramref name="evidence"/> only. FAILS CLOSED (fix pass 1): a row
+    /// rewritten past its triggers into anything this build cannot read — a value of the wrong type in a column, a missing value, a word that
+    /// is no number, a part named twice — makes every check of the sample FAIL with "unreadable:" and a closed word, each a SEVERE finding
+    /// citing the delivery and the mandate; no such exception leaves one delivery's checks, so the sweep's cursor always moves past it. The
+    /// engine's own failure (<see cref="Microsoft.Data.Sqlite.SqliteException"/> — the database unreachable, the register refusing) is NOT a
+    /// fact about the delivery: it fails the sweep, which writes nothing and runs again in a minute.
+    /// </summary>
     internal static Outcome Of(AuditEvidence evidence, AuditSample sample, DateTimeOffset now)
+    {
+        try
+        {
+            return Checked(evidence, sample, now);
+        }
+        catch (Exception ex) when (ex is not Microsoft.Data.Sqlite.SqliteException)
+        {
+            var why = "unreadable: " + Unreadable(ex);
+            var failed = AuditCheckName.All.Select(n => new AuditCheck(sample.DeliveryId, n, false, why)).ToList();
+            return new Outcome(failed, [.. failed.Select(k => Finding(sample, null, k.Name, now) with { Severity = AuditSeverity.Severe })], null);
+        }
+    }
+
+    /// <summary>
+    /// THE CLOSED WORD for what could not be read — never the exception's own message, which can carry the value an agent or a rewriter
+    /// wrote.
+    /// </summary>
+    internal static string Unreadable(Exception ex) => ex switch
+    {
+        JsonException => "not the shape TradeAgent writes",
+        InvalidCastException => "a value of the wrong type",
+        NullReferenceException => "a value missing",
+        FormatException => "a value out of its format",
+        OverflowException => "a number out of range",
+        ArgumentException => "a part named twice or invalid",
+        _ => "a row this build cannot read",
+    };
+
+    static Outcome Checked(AuditEvidence evidence, AuditSample sample, DateTimeOffset now)
     {
         var d = sample.DeliveryId;
         var rows = evidence.Rows("SELECT mandate_id, attempt_id, report, deviations, refs, manifest, at FROM org_delivery WHERE id = $id", ("$id", d));

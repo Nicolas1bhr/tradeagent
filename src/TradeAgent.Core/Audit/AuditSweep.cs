@@ -67,19 +67,24 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
         foreach (var row in accepted)
         {
             // THE APP WROTE THE EVIDENCE OF AN ACCEPTANCE: the accepted delivery's id, first (OrgStore.Accept). An event that names none
-            // TradeAgent can read is the line's own failure, written with this sweep — never a reason to stop auditing the rest.
+            // TradeAgent can read is the line's own failure, written with this sweep in a closed word — never a reason to stop auditing the
+            // rest, so the cursor moves past it (fix pass 1: no value of any type stops the sweep).
             var eventId = Convert.ToInt64(row[0], CultureInfo.InvariantCulture);
-            string[] ids;
-            try { ids = JsonSerializer.Deserialize<string[]>((string)row[2]!) ?? []; }
-            catch (JsonException) { ids = []; }
-            if (ids.Length == 0 || string.IsNullOrEmpty(ids[0]))
+            string? delivery;
+            try { delivery = row[2] is string evidenceText ? (JsonSerializer.Deserialize<string[]>(evidenceText) ?? []).FirstOrDefault() : null; }
+            catch (Exception ex) when (ex is not Microsoft.Data.Sqlite.SqliteException) { delivery = null; }
+            if (string.IsNullOrEmpty(delivery))
             {
                 unreadable.Add($"accepted event {eventId} names no delivery TradeAgent can read; it was not drawn");
                 continue;
             }
-            var delivery = ids[0];
+            if (row[1] is not string mandate || row[3] is not string unit)
+            {
+                unreadable.Add($"accepted event {eventId} names a mandate or unit TradeAgent cannot read; it was not drawn");
+                continue;
+            }
             if (!AuditSampler.Draws(salt, delivery, rate)) continue;
-            var sample = new AuditSample(delivery, (string)row[1]!, (string)row[3]!, eventId, now);
+            var sample = new AuditSample(delivery, mandate, unit, eventId, now);
             samples.Add(sample);
             var outcome = AuditChecks.Of(evidence, sample, now);
             checks.AddRange(outcome.Checks);
