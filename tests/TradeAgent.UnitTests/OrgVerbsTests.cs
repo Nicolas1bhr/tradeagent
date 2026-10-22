@@ -381,8 +381,8 @@ public partial class OrgAssignmentTests
         using var _db = db;
         await using var _server = server;
         gw.AiEnvelopes = position => position == Member
-            ? [new UnitDay(Team, BillingClasses.Key, null, 0.30m, 0.10m), new UnitDay(OrgIds.Research, BillingClasses.Key, 6m, 1.25m, 0.10m),
-               new UnitDay(OrgIds.Root, BillingClasses.Key, 12m, 2.5m, 0.2m), new UnitDay(OrgIds.Root, BillingClasses.Plan, 40m, 7m, 0m)]
+            ? [new UnitDay(Team, BillingClasses.Key, null, 0.30m, 0.10m, 0), new UnitDay(OrgIds.Research, BillingClasses.Key, 6m, 1.25m, 0.10m, 0),
+               new UnitDay(OrgIds.Root, BillingClasses.Key, 12m, 2.5m, 0.2m, 0), new UnitDay(OrgIds.Root, BillingClasses.Plan, 40m, 7m, 0m, 0)]
             : null;
 
         var view = Body(await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member)));
@@ -406,5 +406,55 @@ public partial class OrgAssignmentTests
         var head = Body(await server.CallAsync(Frame(Ops.OrgShow), Head, Launch(db, Head)));
         Assert.All(head.GetProperty("chain").EnumerateArray(), u => Assert.True(Absent(u, "ai_envelopes"), "an unmetered unit was shown an envelope"));
         Assert.Contains("not metered", head.GetProperty("envelopes_note").GetString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (3c) AN UNPRICED DAY IS NEVER READ AS ZERO (fix pass 1; AppHost's "reporting zero would tell an AI … it was free",
+    /// <c>mandate-show</c>'s <c>unknown_cost_launches</c>): one key turn ended today with its cost unknown, funded by the caller's team,
+    /// read through the real meter on a key seat. Each unit of its chain counts that turn beside the priced sum; a bare "0" is the
+    /// defect. A priced PLAN turn the same day is never folded into that money figure (<c>U-billing-classes</c>). RED before the fix:
+    /// <c>spent_today</c> "0" and nothing marking it.
+    /// </summary>
+    [Fact]
+    public async Task Org_show_never_reads_an_unpriced_day_as_zero()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var meter = new TurnMeter(db, () => 12m, runtimeId: () => "codex", live: new LiveAttempts(), declaredSeat: _ => SeatClasses.Harness);
+        gw.AiEnvelopes = meter.EnvelopesFor;
+
+        var store = new AiAttemptStore(db);
+        string Turn(string billing, decimal? cost)
+        {
+            var id = $"turn-{Guid.NewGuid():n}"[..17];
+            Assert.True(store.Begin(new AiAttempt
+            {
+                Id = id, StartedAt = DateTimeOffset.UtcNow, Role = Member, ReservedCost = 0m, SeatClass = SeatClasses.Harness,
+                BillingClass = billing, Funding = [Team, OrgIds.Research, OrgIds.Root]
+            }).Admitted);
+            Assert.True(store.End(id, 0, DateTimeOffset.UtcNow, 1000, 0, null, 100, null, cost is null ? null : "model-x", cost,
+                cost is null ? "no price for this model" : null, null));
+            return id;
+        }
+        // It reported usage, and nothing could price it: ENDED with its cost NULL.
+        Assert.Null(store.Get(Turn(BillingClasses.Key, null))!.Cost);
+        Turn(BillingClasses.Plan, 3m);
+
+        var reply = await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var chain = Body(reply).GetProperty("chain").EnumerateArray().ToList();
+        Assert.Equal(3, chain.Count);
+        Assert.All(chain, u =>
+        {
+            var day = Assert.Single(u.GetProperty("ai_envelopes").EnumerateArray());
+            Assert.Equal(BillingClasses.Key, day.GetProperty("ceiling").GetString());
+            Assert.Equal("0", day.GetProperty("spent_today").GetString());
+            Assert.True(day.TryGetProperty("unknown_cost_turns_today", out var unknown),
+                $"unit {u.GetProperty("id").GetString()} read spent_today {day.GetProperty("spent_today")} with nothing marking an unpriced turn");
+            Assert.Equal(1, unknown.GetInt32());
+        });
+        Assert.Contains("unknown_cost_turns_today", Body(reply).GetProperty("envelopes_note").GetString(), StringComparison.Ordinal);
     }
 }

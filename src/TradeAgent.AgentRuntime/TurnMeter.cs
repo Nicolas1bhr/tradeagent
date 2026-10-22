@@ -1570,7 +1570,7 @@ public sealed class TurnMeter
                 (ceiling == BillingClasses.Plan ? plan : money).Select(u =>
                 {
                     var day = _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling);
-                    return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved);
+                    return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved, day.Unpriced);
                 }))];
         }
         catch (Exception) { return null; }
