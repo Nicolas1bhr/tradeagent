@@ -34,3 +34,17 @@ the Codex review — HELD while an observed run is live (it spends the same Plus
 `AgentSession.cs:1140-1200`; `RuntimeManifest.cs:930-1000`; `TurnMeter.cs:760-790`; `VendorLimitTests.cs`, `VendorLimitQuoteTests.cs`,
 `VendorLimitReadTests.cs`; ORCHESTRATION § 2.5 (refusal kinds, give-back).
 **NOT in scope:** a limit met after work began; any vendor but codex; the VendorLimit/TurnMeter test-host sightings (`U-turn-tail-drain`'s).
+
+## Report
+Code tip `95cd9757` (on base `f7b2ab02`, no rebase needed). Build: `dotnet build -c Release --no-incremental` → `0 Warning(s)` `0 Error(s)`.
+Class runs, VendorLimitTests 3× through suite.sh: `Passed! - Failed: 0, Passed: 9, Skipped: 0, Total: 9` ×3. ThinkingSeats + OwnerDisposition + VendorLimit* once: `Passed: 51`.
+CI 39686686618 (attempt 1): every job green except test (ubuntu-latest) — PromptStdinTests ×7 `Actual: 154` (ETXTBSY, the launcher-race sighting U-launcher-race chases; my diff does not touch PromptStdin, which was green on macOS and windows ×5). Rerun of the failed job (attempt 2): `success`, all 12 jobs green.
+names.sh main → `removed: 0`, `added: 3`, sets base 2968 / tip 2971.
+Item 1 DONE (209880e1): `Settle` gives back every wake of a turn whose `Limit.BeforeAnyWork` (one helper `UnworkedRefusal`, beside the gate's refusal); owner's words `Blocked` with the vendor's sentence, never `Failed`/retried; due again once the existing hold lifts. Deviation: words TYPED into such a turn are also owed again (`OweTyped`), as for a gate refusal — the owner's words never lost.
+RED before: `A_turn_the_vendor_refused_before_any_work_gives_its_wakes_back_until_the_hold_lifts` → `brief:operations:f1fc6e… was spent on a turn the vendor refused: failed`.
+Mutant (the limit branch of `UnworkedRefusal` deleted): same test red, `brief:operations:8c741b… was spent on a turn the vendor refused: failed`; restored. Guard: a limit met after work still settles `failed` + one retry (green).
+Item 2 DONE as the fixture (95cd9757) — deviation per the brief's own clause: codex-cli 0.160.1's `codex exec --json` stdout carries NO error code; `usage_limit_exceeded` is only in the session log (`codex_error_info` on `task_complete`). Manifest keeps the sentence; no code field added; `VendorLimitTests.Recorded0160` + test (recognised, charged 0, no code on any line). Green on the base (a guard, not a red).
+How recorded: codex 0.160.1, 2026-10-21T22:22:18Z, throwaway CODEX_HOME + HOME in the B scratch, fake key, `env -i`, a local 127.0.0.1 mock (a 429 `usage_limit_reached` variant of the A-org mock); never the owner's ~/.codex.
+Codex review: `fleet/tmp/B-scratch/u-vendor-limit-wakes/U-vendor-limit-wakes-review.md` (relaunched by seat B; not acted on).
+tests box: NOT RUN — a run was in progress (another unit's) when `ready` was asked once.
+NOT verified: the vendor's own server's 429 body (the mock's is codex's parsed shape, not a recording of OpenAI's); U+2019 on stdout is now seen under that mock, not under the owner's real limited plan. A limit met after work: unchanged, out of scope.
