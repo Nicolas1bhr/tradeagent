@@ -253,6 +253,7 @@ public class OrgSurfaceReadsTests
             "src/TradeAgent.App/OrgSurface.cs",
             "src/TradeAgent.App/OrganisationView.cs",
             "src/TradeAgent.App/WorkView.cs",
+            "src/TradeAgent.App/CostsView.cs",
         ];
         foreach (var file in files)
         {
