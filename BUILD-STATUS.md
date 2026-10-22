@@ -11131,3 +11131,15 @@ fixed in pass 2; re-review of pass 2: "P1 closed; no fix-induced regression foun
 the surface-cache key, still joins with \0 and \u001e.
 **Tests box:** run 20261022-015649-0dd98423 on the train tip 0dd98423 (build-tree equal to the landed tip): GREEN — Fault 498/498, Unit 2013 passed 0 failed, Integration 728 passed 0 failed (row (f) passed on real Windows), timing 117/117; his files unchanged.
 **NOT VERIFIED:** real provider metadata (UNKNOWN until an observed run); the verifier against a real codex on Linux/Windows; no real broker turn end to end.
+
+
+## U-forecast-nul — a forecast's probability with a NUL inside it is refused by the schema, and a malformed forecast row is refused by name while every other forecast still resolves; rung 42 (landed 2026-10-22, seat B)
+
+**Landed** (`land.sh` v3, train B8) on `main` at tip `dc35c98f` (rebased: rung `64205537`, reader `a9e4af2b`, report `dc35c98f`; reported as `58c89995` on `f7b2ab02`); branch CI run **39686367905** 12/12 green; train CI run **39701140860** (the train's, carried at check); `land.sh train-check` VERDICT PASS (names 2828 → 2832, removed 0). **RUNG 42** (schema 41 → 42). No model call.
+ORCHESTRATION §§ 2.11, 8. Closes O5b's owed re-review item 4. **Protects:** evidence (a forecast is a precommitted claim the resolver scores — the schema now states its one shape against a non-app writer too), refuse-never-guess (a row the reader cannot parse is listed as refused, never guessed, and stops no other resolution).
+**Build:** 1. `64205537` rung 42 — trigger `org_forecast_probability_bytes` BEFORE INSERT aborts when the probability's byte length differs from its character length (no table rebuild; append-only triggers untouched; the `Versions` note names it). 2. `a9e4af2b` `OpenForecasts` reads the probability as text and returns `OpenForecastList(Rows, Refused)`; the resolver lists a refused row by id (never quoting its text) and resolves the rest.
+**RED at base (quoted in the brief's report):** (a) "Assert.Throws() Failure: No exception was thrown" — the app's bundled SQLite stores the NUL row (length 3, blob length 11); (c) FormatException at ReadForecast ← OpenForecasts ← ForecastResolver.Sweep; the rung test "arrives at rung 42; this build says 41"; (b) a guard, green at base by design.
+**Watched mutant:** the trigger's WHEN inverted to `=` ⇒ (a) red and (b) SqliteException 19; restored, green. Crash-before-stamp reopen: stamp 41 with and without the trigger → reopen stamps 42, trigger present and refusing, forecast kept.
+**Gate:** Release --no-incremental 0 warnings; OrgDecisionTests 3× Passed 26/Failed 0; OrgLedgerTests 33/33. Codex review (`fleet/tmp/B-scratch/u-forecast-nul/U-forecast-nul-review.md`): no defects.
+**Deviation:** `ForecastsOn` (per-decision listing) still parses strictly and throws on such a row — out of the brief's scope; owed card if a sweep of text CHECKs is wanted.
+**NOT VERIFIED:** other text columns' NUL; whether any provider returns a NUL tail; tests box NOT RUN — busy (ready exit 4 ×3).
