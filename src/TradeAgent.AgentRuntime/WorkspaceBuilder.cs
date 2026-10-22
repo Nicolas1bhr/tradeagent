@@ -17,7 +17,8 @@ namespace TradeAgent.AgentRuntime;
 /// </summary>
 public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPaper, string? AccountId,
     TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk,
-    bool ConnectorIsBuiltInSimulator = false, string Role = CouncilRoles.Operations, int? TurnsPerSession = null);
+    bool ConnectorIsBuiltInSimulator = false, string Role = CouncilRoles.Operations, int? TurnsPerSession = null,
+    string? Kind = null);
 
 /// <summary>
 /// Creates and maintains the agent's home. The agent is broadly free inside that directory — shell,
@@ -98,7 +99,7 @@ public static class WorkspaceBuilder
         // a vendor CLI reads them by name; the harness's into the role's app plumbing, where ApiConversation reads its
         // system text — so a key pasted mid-session moves the role onto a canon written for the harness, with no rewrite.
         var homeDir = CouncilRoles.HomeDir(ctx.Role);
-        foreach (var runtime in RuntimesOf(ctx.Role))
+        foreach (var runtime in RuntimesOf(ctx.Role, ctx.Kind))
         {
             var reach = AgentReach.For(ctx.Role, runtime, ctx.TurnsPerSession);
             Write(home, homeDir, Canon.FileFor(runtime), Canon.Render(ctx, reach).Text, files);
@@ -116,10 +117,12 @@ public static class WorkspaceBuilder
     /// <see cref="ApiAgentRuntime.Serves"/> — so the chair, which never leaves the CLI, is written no harness canon. A position
     /// beyond the legacy pair runs a vendor CLI only as a broker-only seat (<c>U-thinking-seats-c</c>;
     /// <see cref="RuntimeManifest.SessionSeatClassFor"/>), so its <c>AGENTS.md</c> is the broker's canon, never one that tells it
-    /// of a shell.
+    /// of a shell — unless it is an EXECUTOR (<c>U-execution-environment</c>): a Member beyond the pair runs a vendor CLI as a route
+    /// (a) cell seat, so its <c>AGENTS.md</c> is the cell's canon. The class is <see cref="SeatPlan.ClassFor"/>'s, the session's own rule.
     /// </summary>
-    public static RuntimeClass[] RuntimesOf(string role) =>
-        !CouncilRoles.IsKnown(role) ? [RuntimeClass.Broker, RuntimeClass.Harness]
+    public static RuntimeClass[] RuntimesOf(string role, string? kind = null) =>
+        !CouncilRoles.IsKnown(role)
+            ? [SeatPlan.ClassFor(role, kind, _ => true) == SeatPlan.CellClass ? RuntimeClass.Cell : RuntimeClass.Broker, RuntimeClass.Harness]
         : ApiAgentRuntime.Serves(role) ? [RuntimeClass.Cli, RuntimeClass.Harness] : [RuntimeClass.Cli];
 
     /// <summary>One app-owned text into the role's home, and onto the app's record of what it wrote, at that moment.</summary>
@@ -136,10 +139,11 @@ public static class WorkspaceBuilder
     /// <paramref name="positions"/> beside them — the chart's active positions, as the composition root reads them. A
     /// home is representable, never runnable: building one opens no conversation (<c>U-org-principals</c>).
     /// </summary>
+    /// <param name="kindOf">Each position's kind as the chart derives it (<c>U-execution-environment</c>), which picks its canon's class.</param>
     public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
-        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null) =>
+        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null) =>
         CouncilRoles.All.Concat(positions ?? []).Distinct(StringComparer.Ordinal)
-            .ToDictionary(r => r, r => Build(ctx with { Role = r }, root, appFiles), StringComparer.Ordinal);
+            .ToDictionary(r => r, r => Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles), StringComparer.Ordinal);
 
     /// <summary>Environment handed to the agent process. The trade CLI is on PATH; no secrets are present.</summary>
     public static Dictionary<string, string> EnvironmentFor(string sessionId, string workspace)

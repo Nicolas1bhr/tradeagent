@@ -320,9 +320,11 @@ public sealed class AgentSession(
 
     /// <summary>
     /// THE CLASS OF THE SEAT THIS SESSION STARTS (<see cref="RuntimeManifest.SessionSeatClassFor"/>): <c>broker</c> for a position
-    /// beyond the legacy pair on a runtime with a broker class, a test host's puppet's declared class, otherwise <c>cli</c>.
+    /// beyond the legacy pair on a runtime with a broker class, a test host's puppet's declared class, otherwise <c>cli</c> — and
+    /// <c>cell</c> for an executor, a Member beyond the pair (<c>U-execution-environment</c>): its kind read off the chart, through the
+    /// gate's own register, where asked.
     /// </summary>
-    public string SeatClass => manifest.SessionSeatClassFor(role);
+    public string SeatClass => manifest.SessionSeatClassFor(role, (seats ?? PositionActivation.Seats).KindOf(role));
 
     bool Broker => BrokerSeat.IsVerified(SeatClass);
 

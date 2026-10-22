@@ -490,7 +490,8 @@ public class BrokerSeatTests : IDisposable
     /// <summary>An active position beyond the legacy pair, a proven cell on this host, and a register declaring it broker.</summary>
     static SeatRegister Position(Database db)
     {
-        ThinkingSeatsTests.Seat(db, Pos);
+        // A HEAD: a Member beyond the pair is an executor, on the cell class (U-execution-environment); Heads and Staff stay broker.
+        ThinkingSeatsTests.Head(db, Pos);
         ThinkingSeatsTests.ProveCell(db);
         return ThinkingSeatsTests.Register(db, SeatClasses.Broker);
     }

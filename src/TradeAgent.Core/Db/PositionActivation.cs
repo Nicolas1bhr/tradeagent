@@ -87,6 +87,25 @@ public sealed class SeatRegister
     public Func<string, SeatFacts?>? Facts { get; set; }
 
     /// <summary>
+    /// THE CHART'S STANDING FOR ONE POSITION ALONE (<c>U-execution-environment</c>), read at every ask: what a session and a home read
+    /// for the position's KIND, which decides the class of seat it starts (<c>RuntimeManifest.SessionSeatClassFor</c>) — cheaper than
+    /// the whole facts and with no class in it to go round in a circle. Unset, the facts' standing is read instead.
+    /// </summary>
+    public Func<string, PositionStanding?>? Standing { get; set; }
+
+    /// <summary>
+    /// THE KIND OF <paramref name="id"/> AS THE CHART DERIVES IT (<see cref="OrgPositionKind"/>), or null where nothing could say: no
+    /// register set, no such position, a read that failed. Null is never a Member — a session that cannot read the kind starts the
+    /// class it would start for a kind nobody named, and the gate, which reads the chart itself, refuses that class where it is not the
+    /// declared one.
+    /// </summary>
+    public string? KindOf(string id)
+    {
+        try { return (Standing is { } standing ? standing(id) : Facts?.Invoke(id)?.Standing)?.Kind; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, read at every ask and on its own, so a failure to read one position's facts
     /// never skips the no-unconfined-neighbour rule; null until the app sets it.
     /// </summary>

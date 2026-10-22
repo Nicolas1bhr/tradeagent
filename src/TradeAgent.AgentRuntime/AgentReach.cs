@@ -9,9 +9,11 @@ namespace TradeAgent.AgentRuntime;
 /// started in the seat's folder as the owner's own user (codex, OpenCode, a custom one — they reach the same things); the
 /// app-owned harness, which runs inside TradeAgent's process and acts only through the tools the app grants it; and a
 /// broker-only codex seat (<c>U-thinking-seats-c</c>), a vendor program with no shell, no file tool and the app's door as its
-/// only tool server, which reaches what the door serves it and nothing else.
+/// only tool server, which reaches what the door serves it and nothing else; and route (a)'s CELL seat (<c>U-execution-environment</c>),
+/// an executor's codex whose harness holds the login and the door outside while every shell, file and patch action it directs runs in
+/// a confined Linux cell: its own folder, TCP 443 and names, and nothing else.
 /// </summary>
-public enum RuntimeClass { Cli, Harness, Broker }
+public enum RuntimeClass { Cli, Harness, Broker, Cell }
 
 /// <summary>
 /// One verb a seat may use. <see cref="Op"/> is the gateway's own operation; <see cref="Invocation"/> is how this runtime
@@ -90,6 +92,16 @@ public sealed record AgentReach
     /// </summary>
     public required bool Walled { get; init; }
 
+    /// <summary>
+    /// THE NETWORK A SEAT'S OWN PROGRAM HAS, in words, or null where the canon says nothing of one (the harness and the broker run no
+    /// program; the CLI's is the owner's whole connection, said in its own words). For a cell: <see cref="CellNetwork"/>, the egress
+    /// class the cell's policy carries (<c>CellEgress.Web</c>) — never a file or a setting.
+    /// </summary>
+    public string? Network { get; init; }
+
+    /// <summary>A cell's network as its canon says it: TCP 443 and name lookups, to any host, and nothing else (<c>CellEgress.Web</c>).</summary>
+    public const string CellNetwork = "TCP port 443 (HTTPS) and name lookups, to any host — nothing else: no other port, no UDP, no listening";
+
     /// <summary>The file inside its folder it writes to ask for its next wake, or null when it has none it can write.</summary>
     public required string? WakeFile { get; init; }
 
@@ -164,6 +176,40 @@ public sealed record AgentReach
                 HandsBack = handsBack,
                 Verbs = verbs,
                 Tools = [.. verbs.Select(v => v.Invocation.Split(' ')[0]).Distinct(StringComparer.Ordinal)],
+                TurnsPerSession = Math.Max(1, turnsPerSession ?? options.TurnsPerSession)
+            };
+        }
+
+        // AN EXECUTOR'S CELL SEAT (U-execution-environment; ORCHESTRATION § 2.8): the door's tools, exactly as a broker seat's, carried
+        // by the harness outside the cell — the cell's assurance carries the organisation's verbs as the broker's does — and a program
+        // of its own: shell, code and packages, in a Linux cell whose one folder is its own home (the wall: Landlock refuses any other
+        // path), whose network is TCP 443 and names to any host and nothing else, and on whose path `trade` is not. Its writes are its
+        // whole folder; the folders below are the canon's convention inside that wall.
+        if (runtime == RuntimeClass.Cell)
+        {
+            var served = GrantedWorkerTools.Granted.Select(t => t.Name).ToList();
+            var doorVerbs = served
+                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Allowed).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
+                .Concat(Ops.Organisation.Where(op => Allowed(op) && CarriedBy(op, SeatClasses.Cell))
+                    .Select(op => new ReachVerb(op, BrokerDoor.VerbName(op), Ops.IsMutating(op))))
+                .ToList();
+            var writes = WorkspaceBuilder.SubDirs.Append(CouncilRoles.OutDir).Append(TopFolder(MissionLoop.WakeFile)).ToList();
+            var options = new MissionOptions();
+            return new AgentReach
+            {
+                Role = role,
+                Runtime = runtime,
+                Os = "Linux",
+                RunsCode = true,
+                Reads = [OwnFolder],
+                Writes = writes,
+                Walled = true,
+                Network = CellNetwork,
+                WakeFile = MissionLoop.WakeFile,
+                WakeCap = options.MaxDelay,
+                HandsBack = handsBack,
+                Verbs = doorVerbs,
+                Tools = [.. served, .. doorVerbs.Where(v => Ops.IsOrganisation(v.Op)).Select(v => v.Invocation).Distinct(StringComparer.Ordinal)],
                 TurnsPerSession = Math.Max(1, turnsPerSession ?? options.TurnsPerSession)
             };
         }

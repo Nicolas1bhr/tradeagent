@@ -105,7 +105,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
                     : detection.Reason ?? $"{manifest.DisplayName} is not installed");
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-            var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions());
+            var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
             Workspaces = homes;
             var workspace = homes[CouncilRoles.Operations];
             Workspace = workspace;
@@ -167,7 +167,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     /// <summary>Refreshes the instruction file so a restarted agent never reads a stale world.</summary>
     public async Task RestartAsync(WorkspaceContext ctx, CancellationToken ct = default)
     {
-        Workspaces = WorkspaceBuilder.BuildAll(ctx, positions: Positions());
+        Workspaces = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
         await StopAsync(ct);
         await StartAsync(ct);
     }

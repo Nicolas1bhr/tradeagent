@@ -79,11 +79,17 @@ public static class BrokerSeat
     ];
 
     /// <summary>Whether this build has a broker class for the built-in runtime <paramref name="runtimeId"/> — code, read once.</summary>
-    public static bool Offers(string runtimeId) => WithBrokerClass.Value.Contains(runtimeId);
+    public static bool Offers(string runtimeId) => Offers(runtimeId, SeatPlan.BrokerClass);
 
-    static readonly Lazy<HashSet<string>> WithBrokerClass = new(() =>
-        RuntimeCatalog.BuiltIn().Where(m => m.Seat?.Args.ContainsKey(SeatPlan.BrokerClass) == true).Select(m => m.Id)
-            .ToHashSet(StringComparer.Ordinal));
+    /// <summary>
+    /// Whether this build has <paramref name="seatClass"/> for the built-in runtime <paramref name="runtimeId"/> — the broker class or
+    /// route (a)'s cell class (<c>U-execution-environment</c>) — code, read once.
+    /// </summary>
+    public static bool Offers(string runtimeId, string seatClass) =>
+        WithClass.Value.Contains((runtimeId, seatClass));
+
+    static readonly Lazy<HashSet<(string, string)>> WithClass = new(() =>
+        RuntimeCatalog.BuiltIn().SelectMany(m => m.Seat?.Args.Keys.Select(c => (m.Id, c)) ?? []).ToHashSet());
 
     static RuntimeManifest? BuiltIn(string runtimeId) => RuntimeCatalog.BuiltIn().FirstOrDefault(m => m.Id == runtimeId);
 
