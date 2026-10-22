@@ -164,7 +164,8 @@ public class HarnessKeyOriginTests : IDisposable
         var noon = TestEnv.LocalNoon();
         var meter = new TurnMeter(db, () => 50m, runtimeId: () => ApiAgentRuntime.RuntimeId, now: () => noon,
             recordPath: Path.Combine(_home, "turns.jsonl"), owner: () => new OwnerPrice(1m, 4m),
-            model: () => "gpt-5.6-luna", allowance: () => allowance, share: _ => 1m);
+            model: () => "gpt-5.6-luna", share: _ => 1m,
+            seat: role => SeatResolver.Of(role, ApiAgentRuntime.RuntimeId, "gpt-5.6-luna", allowance));
 
         using var pastedFor = new FakeProvider();
         using var elsewhere = new FakeProvider();
@@ -172,7 +173,7 @@ public class HarnessKeyOriginTests : IDisposable
         elsewhere.Answer(FakeProvider.Message("from an address nobody showed the owner"));
         var holder = pastedFor.Holding(_pasted);
 
-        using var runtime = new ApiAgentRuntime(PointedAt(elsewhere), holder, allowance: () => allowance,
+        using var runtime = new ApiAgentRuntime(PointedAt(elsewhere), holder, allowance: _ => allowance,
             requestTimeout: TimeSpan.FromSeconds(10));
         var conversation = Research(runtime);
         using var metering = meter.Attach(conversation, CouncilRoles.Research);

@@ -427,8 +427,14 @@ public static class Versions
     /// launch: provider, policy, profile, the proof that admitted it, kernel, ABI, modules, egress, cgroup, harness, the attempt's class)
     /// and <c>cell_assurance_row</c> (per property and side, its enforcement class and evidence) — each refusing UPDATE and DELETE by
     /// trigger, <c>cell_proof</c> now too. No backfill: nothing ran in a cell, or wrote a proof, before the rung.</para>
+    ///
+    /// <para><b>45 — the allowance a launch was reserved at, and whether its turn is held to it</b> (<c>U-org-seats</c>, rung 45 as
+    /// allotted, renumbered in landing order): <c>ai_attempt.allow_in</c>, <c>allow_out</c> and <c>turn_bound</c>
+    /// (<c>enforced</c> on the app's harness, <c>reservation</c> on a vendor's program), composed by the app from the seat it resolved,
+    /// written by <c>AiAttemptStore.Begin</c> in the row's own insert, an UPDATE that changes any of them refused by trigger. No backfill:
+    /// a launch before the rung has NULL — unknown.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 43;
+    public const int DatabaseSchemaVersion = 45;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its

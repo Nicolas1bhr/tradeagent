@@ -2827,6 +2827,30 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','43') ON CONFLICT(key) DO UPDATE SET value='43';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE: rungs land in landing order, and a unit overtaken renumbers here and in Versions.
+        const int seatsRung = 45;
+        if (have < seatsRung)
+        {
+            // THE ALLOWANCE A LAUNCH WAS RESERVED AT, AND WHETHER ITS TURN IS HELD TO IT — `U-org-seats` (docs/ORCHESTRATION.md
+            // §§ 2.1, 2.4; R15 § 3c; R18 #1). `ai_attempt.allow_in` and `allow_out`, the input and output tokens its reservation priced,
+            // and `turn_bound`, `enforced` (the app's harness withholds any request that could pass them) or `reservation` (a vendor's
+            // program: the reservation is the only bound, an overrun recorded and charged). Composed by the app from the seat it resolved
+            // before the row, written by `AiAttemptStore.Begin` in the row's own insert, and NEVER UPDATED: a trigger refuses an UPDATE
+            // that changes any of the three, so a past launch's bound cannot be re-described after its bill. NO BACKFILL: a launch before
+            // this rung has NULL — unknown, never a guess. Columns added only where missing and the trigger `IF NOT EXISTS`, the stamp
+            // last: the rungs run in autocommit, and a crash between any statement here and the stamp runs this again over what it made.
+            AddColumnIfMissing("ai_attempt", "allow_in", "INTEGER CHECK (allow_in IS NULL OR allow_in > 0)");
+            AddColumnIfMissing("ai_attempt", "allow_out", "INTEGER CHECK (allow_out IS NULL OR allow_out > 0)");
+            AddColumnIfMissing("ai_attempt", "turn_bound", "TEXT CHECK (turn_bound IS NULL OR turn_bound IN ('enforced','reservation'))");
+            Exec("""
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_bound_fixed BEFORE UPDATE OF allow_in, allow_out, turn_bound ON ai_attempt
+                WHEN OLD.allow_in IS NOT NEW.allow_in OR OLD.allow_out IS NOT NEW.allow_out OR OLD.turn_bound IS NOT NEW.turn_bound
+                BEGIN SELECT RAISE(ABORT, 'a launch''s allowance and bound are refused an update: they are what it was reserved at, written once.'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{seatsRung}') ON CONFLICT(key) DO UPDATE SET value='{seatsRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

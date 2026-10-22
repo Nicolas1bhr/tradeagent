@@ -115,6 +115,21 @@ public sealed record AiAttempt
     public string? MandateId { get; init; }
 
     /// <summary>
+    /// THE ALLOWANCE THIS LAUNCH WAS RESERVED AT, AND WHETHER ITS TURN IS HELD TO IT (<c>U-org-seats</c>, rung 45): input and output tokens
+    /// as the reservation priced them, and <c>enforced</c> (the app's harness withholds any request that could pass them) or
+    /// <c>reservation</c> (a vendor's program: the reservation is the only bound, and an overrun is recorded and charged). Composed by the
+    /// app from the seat it resolved before this row existed, written in the row's own insert, and never updated — refused by trigger.
+    /// Null on a row from before the rung and on a row no admission wrote (the owner's unmetered turn's bill).
+    /// </summary>
+    public long? AllowIn { get; init; }
+
+    /// <inheritdoc cref="AllowIn"/>
+    public long? AllowOut { get; init; }
+
+    /// <inheritdoc cref="AllowIn"/>
+    public string? TurnBound { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -363,7 +378,7 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash, role, runtime_profile, seat_class, assurance, mandate_id
+        input_hash, role, runtime_profile, seat_class, assurance, mandate_id, allow_in, allow_out, turn_bound
         """;
 
     /// <summary>
@@ -444,13 +459,14 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate,$in,$out,$bound)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile),
-            ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", mandateId));
+            ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", mandateId),
+            ("$in", a.AllowIn), ("$out", a.AllowOut), ("$bound", a.TurnBound));
         c.ExecuteNonQuery();
         // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
         if (a.Funding is { Count: > 0 } funding)
@@ -848,7 +864,10 @@ public sealed class AiAttemptStore(Database db)
         RuntimeProfile = Sql.S(r.GetValue(21)),
         SeatClass = Sql.S(r.GetValue(22)),
         Assurance = Sql.S(r.GetValue(23)),
-        MandateId = Sql.S(r.GetValue(24))
+        MandateId = Sql.S(r.GetValue(24)),
+        AllowIn = Long(r, 25),
+        AllowOut = Long(r, 26),
+        TurnBound = Sql.S(r.GetValue(27))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);

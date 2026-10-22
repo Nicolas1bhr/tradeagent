@@ -496,29 +496,20 @@ public sealed class TurnMeter
     readonly Database _db;
     readonly AiAttemptStore _attempts;
     readonly Func<string?> _session;
-    readonly Func<string?> _runtimeId;
-    readonly Func<string?> _model;
     readonly Func<OwnerPrice?> _owner;
     readonly Func<decimal> _cap;
-    readonly Func<TurnAllowance> _allowance;
 
     /// <summary>One role's slice of the daily ceiling, as a fraction. An equal share by default.</summary>
     readonly Func<string, decimal> _share;
 
-    /// <summary>The model one role runs on, for the reading that names a role.</summary>
-    readonly Func<string, string?> _roleModel;
-
     /// <summary>
-    /// THE RUNTIME ONE ROLE RUNS ON, which stopped being the same question as the app's runtime the day
-    /// a role could be put on the app-owned harness.
-    ///
-    /// A price is looked up by (runtime, model) — see <see cref="CostCatalog.Applicable"/> — so a
-    /// Research turn on <c>openai-api</c> priced against the chair's <c>codex</c> catalogue is a
-    /// reservation against a rate nobody is charged. It resolves the same way <see cref="_roleModel"/>
-    /// does, and it falls back to the app-wide runtime so a meter built with no council behind it
-    /// answers exactly as it did.
+    /// ONE SEAT PER LAUNCH (<c>U-org-seats</c>): the runtime, model, allowance and bound a role's next turn runs on — null the chair's
+    /// launch nobody named. Asked ONCE in <see cref="Begin"/>; the reservation is priced at it, the row records it, and the
+    /// conversation and the harness read the admitted one back (<see cref="OpenSeatFor"/>), so nothing resolves the same question
+    /// twice. A price is looked up by (runtime, model), so both halves are the seat's or neither is. Throws
+    /// <see cref="SeatRefusedException"/> for a seat that cannot be read, which refuses the launch.
     /// </summary>
-    readonly Func<string, string?> _roleRuntime;
+    readonly Func<string?, SeatSpec> _seat;
 
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
@@ -544,7 +535,7 @@ public sealed class TurnMeter
     /// typed turn is admitted and reserved like any other but publishes nothing and consumes no
     /// wake, so it has no transition to be part of.
     /// </summary>
-    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop, string? SeatClass, PacketBytes? Packet)> _open = [];
+    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop, string? SeatClass, PacketBytes? Packet, SeatSpec Spec)> _open = [];
 
     /// <summary>
     /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id ITS next launch will carry — that role's, and never another's.
@@ -629,9 +620,8 @@ public sealed class TurnMeter
 
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
-        Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
-        Func<string, decimal>? share = null, Func<string, string?>? roleModel = null,
-        Func<string, string?>? roleRuntime = null, LiveAttempts? live = null,
+        Func<OwnerPrice?>? owner = null, Func<string?>? model = null,
+        Func<string, decimal>? share = null, Func<string?, SeatSpec>? seat = null, LiveAttempts? live = null,
         Func<string, string?>? declaredSeat = null)
     {
         _db = db;
@@ -640,15 +630,13 @@ public sealed class TurnMeter
         _attempts = new AiAttemptStore(db);
         _cap = cap;
         _session = session ?? (() => null);
-        _runtimeId = runtimeId ?? (() => null);
-        _model = model ?? (() => null);
         _owner = owner ?? (() => null);
-        _allowance = allowance ?? (() => TurnAllowance.Default);
         // An equal share, so a meter built with no council behind it still answers a role's question
         // with something honest rather than with zero — a zero share is a role that can never work.
         _share = share ?? (_ => 1m / CouncilRoles.All.Length);
-        _roleModel = roleModel ?? (_ => (model ?? (() => null))());
-        _roleRuntime = roleRuntime ?? (_ => (runtimeId ?? (() => null))());
+        // A METER BUILT WITH NO SEATS BEHIND IT seats every role on the app's one runtime and model at the shipped allowance.
+        _seat = seat ?? (role => SeatResolver.Of(role, Safe(runtimeId ?? (() => null)), Safe(model ?? (() => null)),
+            TurnAllowance.Default));
         _now = now ?? (() => DateTimeOffset.Now);
         _path = recordPath ?? RecordPath;
 
@@ -904,6 +892,20 @@ public sealed class TurnMeter
         // A NAME THAT IS NOT AN ACTIVE POSITION IS REFUSED HERE, never keyed into the chair's slot.
         if (NotAnActivePosition(role) is { } refused) return refused;
 
+        // THE SEAT THIS LAUNCH RUNS ON, RESOLVED ONCE (U-org-seats): one that cannot be read refuses it in words — no row, no
+        // reservation, no wake — and is never half-filled from elsewhere.
+        SeatSpec spec;
+        try { spec = _seat(role); }
+        catch (SeatRefusedException ex) { return new AiAdmission { Refusal = ex.Message, Kind = RefusalKind.HostOrLaunch }; }
+        catch (Exception ex)
+        {
+            return new AiAdmission
+            {
+                Refusal = Labels.SeatUnreadable(Key(role), "seat", $"could not be read ({ex.Message})"),
+                Kind = RefusalKind.HostOrLaunch
+            };
+        }
+
         // NOR FROM A SEAT WHOSE PROFILE IS NOT THE APP'S (U-seat-home), refused the same way: no row, no reservation, no wake.
         var seat = SeatOf(role);
         if (seat.Refused) return new AiAdmission { Refusal = seat.Refusal, Kind = RefusalKind.HostOrLaunch };
@@ -912,7 +914,7 @@ public sealed class TurnMeter
         // the activation gate, fail closed, refused the same way — no row, no reservation, no wake, its kind carried as data.
         if (Gate(role, seat.SeatClass) is { } gate) return new AiAdmission { Refusal = gate.Words, Kind = gate.Kind };
 
-        var reservation = Reservation(role);
+        var reservation = ReservationOf(spec);
 
         // THE UNITS THAT FUND THIS LAUNCH, read from the chart before the transaction and recorded with the row inside it
         // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
@@ -974,8 +976,8 @@ public sealed class TurnMeter
         {
             Id = id,
             StartedAt = _now(),
-            Runtime = RuntimeOf(role),
-            RequestedModel = ModelOf(role),
+            Runtime = spec.Runtime,
+            RequestedModel = spec.Model,
             PricingBasis = reservation.Basis,
             ReservedCost = reservation.Cost ?? 0m,
             State = AiAttemptState.LAUNCHED,
@@ -987,7 +989,12 @@ public sealed class TurnMeter
             Funding = [.. funding.Select(u => u.UnitId)],
             // AND THE SEAT IT WAS VERIFIED ON (U-thinking-seats-a, rung 39), beside it and from the same verdict.
             SeatClass = seat.SeatClass,
-            Assurance = seat.Assurance is { } assurance ? SeatClasses.Name(assurance) : null
+            Assurance = seat.Assurance is { } assurance ? SeatClasses.Name(assurance) : null,
+            // THE ALLOWANCE IT WAS RESERVED AT AND WHETHER ITS TURN IS HELD TO IT (U-org-seats, the rung), from the seat resolved above:
+            // an overrun on an enforced row is then a query, not a guess.
+            AllowIn = spec.Reserved.InputTokens,
+            AllowOut = spec.Reserved.OutputTokens,
+            TurnBound = SeatSpec.Name(spec.Bound)
         };
 
         AiAdmission admission;
@@ -999,7 +1006,7 @@ public sealed class TurnMeter
             if (admission.Id is { } written)
                 lock (_gate)
                 {
-                    _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass, packet);
+                    _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass, packet, spec);
                     _live.Enter(written);
                 }
         }
@@ -1227,21 +1234,43 @@ public sealed class TurnMeter
             // The ROLE'S model, because that is the one its next turn will actually be run on. A
             // reservation priced at another role's model is a commitment against a rate nobody is
             // going to be charged, in whichever direction that rate happens to differ.
-            return CostCatalog.Reserve(_allowance(), RuntimeOf(role), owner: Owner(),
-                requestedModel: ModelOf(role));
+            return ReservationOf(_seat(role));
         }
         catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
     }
 
-    /// <summary>The model a role will be asked for, or the app's single choice where none is named.</summary>
-    string? ModelOf(string? role) => role is null ? Safe(_model) : Safe(() => _roleModel(role));
+    /// <summary>
+    /// ONE SEAT'S RESERVATION (<c>U-org-seats</c>): its allowance where its turn is held to it, never below the shipped bound where it is
+    /// not (<see cref="SeatSpec.Reserved"/>), priced at its own runtime and model.
+    /// </summary>
+    TurnPrice ReservationOf(SeatSpec spec)
+    {
+        try { return CostCatalog.Reserve(spec.Reserved, spec.Runtime, owner: Owner(), requestedModel: spec.Model); }
+        catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
+    }
 
     /// <summary>
-    /// The runtime a role's next turn will run on, or the app's own where no role is named. See
-    /// <see cref="_roleRuntime"/>: the pair (runtime, model) is what a price is looked up by, so both
-    /// halves have to be the role's or neither is.
+    /// THE SEAT A ROLE'S OPEN LAUNCH WAS ADMITTED ON (<c>U-org-seats</c>), or null where none is open: what its conversation names as its
+    /// model and its harness holds its turn to, so the launch runs on exactly what the row records and the reservation was priced at.
     /// </summary>
-    string? RuntimeOf(string? role) => role is null ? Safe(_runtimeId) : Safe(() => _roleRuntime(role));
+    public SeatSpec? OpenSeatFor(string? role)
+    {
+        lock (_gate) return _open.TryGetValue(Key(role), out var open) ? open.Spec : null;
+    }
+
+    /// <summary>The open launch's seat, else the seat as it resolves now, else null — never a throw into a reading or a bill.</summary>
+    SeatSpec? SpecOf(string? role)
+    {
+        if (OpenSeatFor(role) is { } open) return open;
+        try { return _seat(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The model a role will be asked for: its seat's.</summary>
+    string? ModelOf(string? role) => SpecOf(role)?.Model;
+
+    /// <summary>The runtime a role's turn runs on: its seat's — both halves of a price's key from one seat, or neither.</summary>
+    string? RuntimeOf(string? role) => SpecOf(role)?.Runtime;
 
     /// <summary>
     /// Completes this meter's open attempt, or writes a finished row where nothing opened one — the
@@ -1329,6 +1358,9 @@ public sealed class TurnMeter
         // THE SEAT THIS ROLE LAUNCHES FROM, verified inside every admission of it — the loop's and the owner's alike.
         if (conversation is ISeatLaunch launches) lock (_gate) _seats[Key(role)] = launches;
 
+        // THE SEAT ITS OPEN LAUNCH WAS ADMITTED ON (U-org-seats), read by a harness turn for its bound and its model.
+        if (conversation is ISeatedConversation seated) seated.AdmittedSeat = () => OpenSeatFor(role);
+
         return new Detach(() =>
         {
             conversation.TurnEnded -= OnEnded;
@@ -1340,6 +1372,7 @@ public sealed class TurnMeter
             // CLEARED, AND THEREFORE REFUSING: a detached conversation's next typed turn has no meter to
             // reserve it, and a null Admit is a refusal (U-admission-fail-closed), never a pass.
             if (conversation is IAdmittedConversation a) a.Admit = null;
+            if (conversation is ISeatedConversation sc) sc.AdmittedSeat = null;
             if (conversation is ISeatLaunch l)
                 lock (_gate)
                     if (_seats.TryGetValue(Key(role), out var held) && ReferenceEquals(held, l)) _seats.Remove(Key(role));

@@ -59,7 +59,7 @@ public sealed class ApiConversation(
     HttpMessageHandler? transport = null,
     Func<DateTimeOffset>? now = null,
     AppFileManifest? appFiles = null,
-    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, IDisposable
+    SeatRegister? seats = null) : IAgentConversation, IAdmittedConversation, ISeatedConversation, ISeatLaunch, IDisposable
 {
     /// <summary>
     /// THE SEAT A HARNESS TURN RUNS ON (<c>U-thinking-seats-a</c>): the app's own in-process harness, brokered — no process, every
@@ -197,6 +197,9 @@ public sealed class ApiConversation(
 
     /// <inheritdoc />
     public Func<string, bool>? RecordTyped { get; set; }
+
+    /// <inheritdoc />
+    public Func<SeatSpec?>? AdmittedSeat { get; set; }
 
     /// <summary>
     /// Checks the one precondition and says so in the conversation. No process is started because
@@ -404,7 +407,12 @@ public sealed class ApiConversation(
     async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut)> RunRequestsAsync(
         string endpoint, string key, string message, Transcript transcript, CancellationToken ct)
     {
-        var bound = allowance?.Invoke() ?? TurnAllowance.Default;
+        // THE SEAT THIS TURN WAS ADMITTED ON (U-org-seats): its allowance is what the reservation was priced at, so it is what this
+        // turn is held to, and its model is what the row records — read once, here. With no admission behind it (a host with no
+        // meter), the allowance this runtime was handed and the model it resolves.
+        var admitted = Admitted();
+        var bound = admitted?.Allowance ?? allowance?.Invoke() ?? TurnAllowance.Default;
+        var seatModel = admitted?.Model;
         var surface = tools();
         var mission = Mission();
         _canon = Canon.SeenByHarness(mission, role, appFiles ?? AppFileManifest.Shared);
@@ -433,7 +441,19 @@ public sealed class ApiConversation(
                 return (BudgetExceeded, total, EndedOverBudget, why);
             }
 
-            var body = RequestBody(messages, surface, bound);
+            var body = RequestBody(messages, surface, bound, total, seatModel);
+
+            // NOR A REQUEST WHOSE INPUT COULD TAKE THE TURN PAST ITS ALLOWANCE (U-org-seats): the provider's reported input so far
+            // plus this body's UTF-8 byte count, which bounds the tokens it can be billed as — INFERENCE, not a measurement: a
+            // byte-level BPE token covers at least one byte, so a body of N bytes is at most N input tokens. The vendor's own
+            // tokenizer is NOT VERIFIED against it until a real metered harness turn compares the two. Withheld, not sent: the
+            // check before the request is the only one that bounds what it costs.
+            if (WouldPass(bound, total, Encoding.UTF8.GetByteCount(body)) is { } withheld)
+            {
+                Append(new ChatTurn(ChatRole.System, withheld, _now()));
+                transcript.Note(withheld);
+                return (BudgetExceeded, total, EndedOverBudget, withheld);
+            }
 
             // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE EACH REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter
             // asked it before admitting the turn, and a host with no meter sends requests too. Nothing is sent on a refusal, and the
@@ -481,6 +501,27 @@ public sealed class ApiConversation(
     /// handed the model. Reaching a bound EXACTLY is already too late for another request: the next
     /// one would carry every token already counted plus whatever it adds.
     /// </summary>
+    /// <summary>The seat the meter admitted this turn on, or null — never a throw into the turn.</summary>
+    SeatSpec? Admitted()
+    {
+        try { return AdmittedSeat?.Invoke(); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WHETHER THE NEXT REQUEST COULD TAKE THE TURN'S INPUT PAST ITS ALLOWANCE, in the owner's words, or null: the provider's reported
+    /// cumulative input plus <paramref name="bodyBytes"/>, the most this request can be billed as (see the call site's INFERENCE).
+    /// </summary>
+    static string? WouldPass(TurnAllowance bound, TurnUsage? used, int bodyBytes)
+    {
+        var sofar = used?.InputTokens ?? 0;
+        return sofar + bodyBytes <= bound.InputTokens
+            ? null
+            : $"This turn has used {sofar:N0} input tokens of the {bound.InputTokens:N0} one turn is allowed, and its next request "
+              + $"({bodyBytes:N0} bytes) could take it past that, so no further request was sent. "
+              + "Anything already written to out/ or trading/ is kept.";
+    }
+
     static string? Exceeded(TurnAllowance bound, TurnUsage? used, int retrieved, int requests)
     {
         if (requests >= MaxRequestsPerTurn)
@@ -555,14 +596,17 @@ public sealed class ApiConversation(
     /// The request body. The model, the messages, the tools this launch was granted, and the
     /// provider's own MAX-OUTPUT parameter — whose NAME comes off the manifest, because vendors rename
     /// it (<c>max_tokens</c> became <c>max_completion_tokens</c>) and that should be a data fix.
+    /// <para><b>The output still unspent, never the whole allowance</b> (<c>U-org-seats</c>): every request asked for all of it, so the
+    /// last one could write a whole allowance past the bound. The check before each request has already stopped a turn with none
+    /// left, so what is asked for here is at least one token.</para>
     /// </summary>
-    string RequestBody(List<ProviderMessage> messages, IWorkerTools surface, TurnAllowance bound)
+    string RequestBody(List<ProviderMessage> messages, IWorkerTools surface, TurnAllowance bound, TurnUsage? used, string? seatModel)
     {
         var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["model"] = model() ?? manifest.DefaultModel ?? "",
+            ["model"] = seatModel is { Length: > 0 } seated ? seated : model() ?? manifest.DefaultModel ?? "",
             ["messages"] = messages,
-            [manifest.MaxOutputParam] = bound.OutputTokens
+            [manifest.MaxOutputParam] = Math.Max(1, bound.OutputTokens - (used?.OutputTokens ?? 0))
         };
 
         if (surface.Offered.Count > 0)
@@ -768,6 +812,16 @@ public interface ILaunchGate
 
     /// <summary>Gives back a claim no launch took — admission refused, or the turn never started. Nothing when none is held.</summary>
     void Unclaim();
+}
+
+public interface ISeatedConversation
+{
+    /// <summary>
+    /// THE SEAT THE METER ADMITTED THIS CONVERSATION'S OPEN LAUNCH ON (<c>U-org-seats</c>), or null where none is open. Set by
+    /// <c>TurnMeter.Attach</c> and cleared when it detaches: a harness turn is held to the allowance its reservation was priced at
+    /// and names the model its row records, read from the admission itself rather than resolved a second time.
+    /// </summary>
+    Func<SeatSpec?>? AdmittedSeat { get; set; }
 }
 
 public interface IAdmittedConversation

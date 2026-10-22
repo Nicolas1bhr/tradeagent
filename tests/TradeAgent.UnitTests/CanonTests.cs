@@ -90,7 +90,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
         manifest.BaseUrl = provider.BaseUrl;
         using var runtime = new ApiAgentRuntime(manifest, provider.Holding(Pretend), null,
-            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10));
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10));
         var conversation = runtime.OpenConversation(CouncilRoles.Research, () => home,
             () => new Dictionary<string, string>(), () => null);
 
@@ -409,7 +409,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
         manifest.BaseUrl = provider.BaseUrl;
         using var runtime = new ApiAgentRuntime(manifest, provider.Holding(Pretend), null,
-            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), appFiles: researchFiles);
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), appFiles: researchFiles);
         var conversation = runtime.OpenConversation(CouncilRoles.Research, () => research,
             () => new Dictionary<string, string>(), () => null);
         using var harnessDb = TestEnv.NewDb();

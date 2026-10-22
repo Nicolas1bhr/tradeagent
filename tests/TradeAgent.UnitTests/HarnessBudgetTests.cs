@@ -60,7 +60,7 @@ public class HarnessBudgetTests : IDisposable
 
     ApiAgentRuntime Runtime(FakeProvider provider, TurnAllowance allowance, string? key = Pretend,
         Func<string, IWorkerTools>? tools = null) =>
-        new(Manifest(provider), provider.Holding(key), tools, allowance: () => allowance,
+        new(Manifest(provider), provider.Holding(key), tools, allowance: _ => allowance,
             requestTimeout: TimeSpan.FromSeconds(10));
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>
@@ -73,8 +73,8 @@ public class HarnessBudgetTests : IDisposable
     /// </summary>
     TurnMeter Meter(decimal cap, TurnAllowance allowance) =>
         new(_db, () => cap, runtimeId: () => ApiAgentRuntime.RuntimeId, now: () => _at, recordPath: _records,
-            owner: () => Rate, model: () => "gpt-5.6-luna", allowance: () => allowance,
-            share: _ => 1m);
+            owner: () => Rate, model: () => "gpt-5.6-luna", share: _ => 1m,
+            seat: role => SeatResolver.Of(role, ApiAgentRuntime.RuntimeId, "gpt-5.6-luna", allowance));
 
     // ---- the bound, before each request -----------------------------------------------------------
 
@@ -90,9 +90,11 @@ public class HarnessBudgetTests : IDisposable
     public async Task A_turn_makes_no_request_once_its_input_allowance_is_used()
     {
         using var provider = new FakeProvider();
-        provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 100, output: 5));
+        // A MILLION A RESPONSE AGAINST THREE (U-org-seats): every request's body is now also counted before it is sent, at a token a
+        // byte at most, so the allowance is set far above any body here and only the provider's reported totals can reach it.
+        provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 1_000_000, output: 5));
 
-        using var runtime = Runtime(provider, TurnAllowance.From(300, 20_000));
+        using var runtime = Runtime(provider, TurnAllowance.From(3_000_000, 20_000));
         var conversation = Research(runtime);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
@@ -102,9 +104,9 @@ public class HarnessBudgetTests : IDisposable
         Assert.Equal(3, provider.Requests.Count);
         Assert.Equal(ApiConversation.BudgetExceeded, ended!.ExitCode);
         Assert.Equal(ApiConversation.EndedOverBudget, ended.Outcome);
-        Assert.Equal(300, ended.Usage!.InputTokens);
+        Assert.Equal(3_000_000, ended.Usage!.InputTokens);
         Assert.Contains(conversation.History,
-            t => t.Role == ChatRole.System && t.Text.Contains("300 input tokens of the 300"));
+            t => t.Role == ChatRole.System && t.Text.Contains("3,000,000 input tokens of the 3,000,000"));
     }
 
     /// <summary>The other half of the allowance, counted the same way and with its own sentence.</summary>
@@ -143,12 +145,12 @@ public class HarnessBudgetTests : IDisposable
         using var runtime = Runtime(provider, TurnAllowance.From(1_000_000, 4_321));
         await Research(runtime).SendMissionAsync("## Situation");
 
+        // ON EVERY REQUEST, AND WHAT IS STILL UNSPENT (U-org-seats): the first asks for the whole 4,321, the second for the 4,316 the
+        // first left — asking each for the whole allowance let the last one write a whole allowance past the bound.
         Assert.Equal(2, provider.Requests.Count);
-        foreach (var sent in provider.Requests)
-        {
-            using var body = JsonDocument.Parse(sent);
-            Assert.Equal(4_321, body.RootElement.GetProperty("max_completion_tokens").GetInt64());
-        }
+        Assert.Equal([4_321L, 4_316L], provider.Requests
+            .Select(sent => { using var body = JsonDocument.Parse(sent); return body.RootElement.GetProperty("max_completion_tokens").GetInt64(); })
+            .ToArray());
     }
 
     /// <summary>
@@ -193,10 +195,11 @@ public class HarnessBudgetTests : IDisposable
         provider
             .Answer(FakeProvider.ToolCall("write_file",
                 new { path = $"{CouncilRoles.OutDir}/report.md", content = "# as far as I got" },
-                input: 100, output: 5))
-            .Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 300, output: 5));
+                input: 1_000_000, output: 5))
+            .Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 3_000_000, output: 5));
 
-        using var runtime = Runtime(provider, TurnAllowance.From(300, 20_000),
+        // Millions, so no request's body can reach the allowance before the provider's reported totals do (U-org-seats).
+        using var runtime = Runtime(provider, TurnAllowance.From(3_000_000, 20_000),
             tools: role => new GrantedWorkerTools(role, () => _home, () => null));
         var conversation = Research(runtime);
         AgentTurnEnded? ended = null;
@@ -350,7 +353,7 @@ public class HarnessBudgetTests : IDisposable
         using var transport = new CountingTransport();
 
         using var runtime = new ApiAgentRuntime(Manifest(provider), provider.Holding(null),
-            allowance: () => allowance, requestTimeout: TimeSpan.FromSeconds(10), transport: transport);
+            allowance: _ => allowance, requestTimeout: TimeSpan.FromSeconds(10), transport: transport);
         var conversation = Research(runtime);
         using var metering = meter.Attach(conversation, CouncilRoles.Research);
         AgentTurnEnded? ended = null;

@@ -315,10 +315,10 @@ public class HarnessRoleTests : IDisposable
         var meter = new TurnMeter(db, cap: () => 50m,
             runtimeId: () => "codex", recordPath: records,
             model: () => "gpt-5.6-sol",
-            allowance: () => TurnAllowance.From(1_000_000, 10_000),
             share: _ => 1m,
-            roleModel: role => role == CouncilRoles.Research ? "gpt-5-nano" : "gpt-5.6-sol",
-            roleRuntime: role => role == CouncilRoles.Research ? Harness : "codex");
+            seat: role => role == CouncilRoles.Research
+                ? SeatResolver.Of(role, Harness, "gpt-5-nano", TurnAllowance.From(1_000_000, 10_000))
+                : SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.From(1_000_000, 10_000)));
 
         var research = meter.Reservation(CouncilRoles.Research);
         // 1 M input at the dearer of 0.05 and its (absent) cache-write rate, plus 10 k output at 0.40.
@@ -330,8 +330,9 @@ public class HarnessRoleTests : IDisposable
         Assert.Equal(Labels.PricedAtTheModelAskedFor("gpt-5-nano"), research.Estimated);
         Assert.NotEqual(Labels.PricedAtHighestListPrice, research.Estimated);
 
-        // And the chair is still priced on its own runtime and model: 4.00/5.00 cache write, 20.00 out.
+        // And the chair is still priced on its own runtime and model: 4.00/5.00 cache write, 20.00 out — at the SHIPPED bound
+        // (U-org-seats): a CLI seat's 1 M / 10 k is enforced by nothing, so it reserves never below 1.2 M / 20 k.
         var chair = meter.Reservation(CouncilRoles.Operations);
-        Assert.Equal(1_000_000m * 5.00m / 1_000_000m + 10_000m * 20.00m / 1_000_000m, chair.Cost);
+        Assert.Equal(1_200_000m * 5.00m / 1_000_000m + 20_000m * 20.00m / 1_000_000m, chair.Cost);
     }
 }

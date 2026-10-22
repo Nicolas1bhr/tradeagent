@@ -48,7 +48,7 @@ public class ApiWorkerTests : IDisposable
         Func<string, IWorkerTools>? tools = null, TurnAllowance? allowance = null,
         TimeSpan? timeout = null) =>
         new(Manifest(provider), provider.Holding(key), tools,
-            allowance: () => allowance ?? TurnAllowance.Default,
+            allowance: _ => allowance ?? TurnAllowance.Default,
             requestTimeout: timeout ?? TimeSpan.FromSeconds(10));
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>

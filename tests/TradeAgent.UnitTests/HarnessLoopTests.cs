@@ -102,13 +102,14 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
             // on the harness and the chair is not, exactly as `AppHost.RuntimeForRole` resolves it.
             Meter = new TurnMeter(db, cap: () => cap,
                 runtimeId: () => "codex", recordPath: Path.Combine(root, "turns.jsonl"),
-                model: () => null, allowance: () => allowance, share: _ => 1m,
-                roleModel: role => role == CouncilRoles.Research ? manifest.DefaultModel : null,
-                roleRuntime: role => role == CouncilRoles.Research ? ApiAgentRuntime.RuntimeId : "codex");
+                model: () => null, share: _ => 1m,
+                seat: role => role == CouncilRoles.Research
+                    ? SeatResolver.Of(role, ApiAgentRuntime.RuntimeId, manifest.DefaultModel, allowance)
+                    : SeatResolver.Of(role, "codex", null, allowance));
 
             _runtime = new ApiAgentRuntime(manifest, provider.Holding(key), tools: ToolsFor,
                 attemptId: role => Meter.OpenAttemptIdFor(role),
-                allowance: () => allowance, requestTimeout: TimeSpan.FromSeconds(10));
+                allowance: _ => allowance, requestTimeout: TimeSpan.FromSeconds(10));
 
             Research = _runtime.OpenConversation(CouncilRoles.Research,
                 workspace: () => HomeFor(CouncilRoles.Research),
@@ -425,9 +426,11 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
     public async Task A_turn_cut_by_its_own_bound_commits_like_any_other_and_the_next_one_is_told()
     {
         using var provider = new FakeProvider();
-        // 300 INPUT TOKENS, reached EXACTLY: the write lands, the read takes the turn to the bound,
+        // 3,000,000 INPUT TOKENS, reached EXACTLY: the write lands, the read takes the turn to the bound,
         // and the third request is never sent — reaching a bound exactly is already too late.
-        using var host = new Harness(_db, _root, provider, TurnAllowance.From(300, 20_000));
+        // In millions (U-org-seats): every body is counted before it is sent, a token a byte at most, so only the provider's reported
+        // totals can reach an allowance this far above any body here.
+        using var host = new Harness(_db, _root, provider, TurnAllowance.From(3_000_000, 20_000));
 
         File.WriteAllText(
             Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.InDir, "brief.md"), Brief);
@@ -436,9 +439,9 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         provider
             .Answer(FakeProvider.ToolCall("write_file",
                 new { path = $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", content = Report },
-                "c1", input: 100, output: 5))
+                "c1", input: 1_000_000, output: 5))
             .Answer(FakeProvider.ToolCall("read_file", new { path = $"{WorkspaceBuilder.InDir}/brief.md" },
-                "c2", input: 200, output: 5));
+                "c2", input: 2_000_000, output: 5));
 
         var seen = new List<string>();
         host.Handoff.Boundary = at =>
@@ -458,7 +461,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         Assert.NotNull(row);
         Assert.Equal(AiAttemptState.ENDED, row!.State);
         Assert.Equal(ApiConversation.BudgetExceeded, row.ExitCode);
-        Assert.Equal(300, row.InputTokens);
+        Assert.Equal(3_000_000, row.InputTokens);
         using (var context = JsonDocument.Parse(row.Context!))
             Assert.Equal(nameof(ErrorCode.CONTEXT_BUDGET_EXCEEDED),
                 context.RootElement.GetProperty("ended").GetString());
@@ -488,7 +491,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         var next = Assert.Single(host.Opened.Skip(1)).Prompt;
         log.WriteLine(next);
         Assert.Contains("TradeAgent stopped your last turn", next);
-        Assert.Contains("300 input tokens of the 300 one turn is allowed", next);
+        Assert.Contains("3,000,000 input tokens of the 3,000,000 one turn is allowed", next);
         Assert.Contains("is kept", next);
 
         // AND IT IS SAID ONCE. The turn that was told about it finished normally, so the turn after

@@ -54,7 +54,7 @@ public sealed class ApiAgentRuntime(
     Func<string, IWorkerTools>? tools = null,
     Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null,
-    Func<TurnAllowance>? allowance = null,
+    Func<string, TurnAllowance>? allowance = null,
     TimeSpan? requestTimeout = null,
     HttpMessageHandler? transport = null,
     AppFileManifest? appFiles = null,
@@ -190,7 +190,9 @@ public sealed class ApiAgentRuntime(
                 model: () => ModelFor(model()),
                 tools: () => tools?.Invoke(role) ?? WorkerTools.None,
                 attempt: () => attemptId?.Invoke(role),
-                allowance: allowance,
+                // THE ROLE'S OWN SEAT'S ALLOWANCE (U-org-seats), where no admission names one: never another role's, never the app's
+                // read in place of a seat's.
+                allowance: allowance is null ? null : () => allowance(role),
                 requestTimeout: requestTimeout ?? DefaultRequestTimeout,
                 transport: transport,
                 appFiles: appFiles,

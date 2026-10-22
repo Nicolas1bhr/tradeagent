@@ -224,9 +224,9 @@ public sealed class AppHost : IAsyncDisposable
                     tools: ToolsFor,
                     selectedModel: () => Gateway.Settings.SelectedModelId,
                     attemptId: role => Meter?.OpenAttemptIdFor(role),
-                    allowance: () => TurnAllowance.From(
-                        Gateway.Settings.AiTurnAllowanceInputTokens,
-                        Gateway.Settings.AiTurnAllowanceOutputTokens),
+                    // THE SEAT'S ALLOWANCE, PER ROLE (U-org-seats), where a turn has no admitted seat to read its own from
+                    // (ISeatedConversation): never the app-wide figure read in place of a position's seat.
+                    allowance: HarnessAllowanceFor,
                     seats: _seats);
             }
             catch (Exception ex)
@@ -421,7 +421,9 @@ public sealed class AppHost : IAsyncDisposable
         var conversation = runtime.OpenConversation(role,
             workspace: () => HomeFor(role),
             environment: () => WorkspaceBuilder.EnvironmentFor(Agent?.SessionId ?? "", HomeFor(role)),
-            model: () => Gateway.Settings.ModelForRole(role));
+            // THE SEAT'S MODEL, the one the meter admitted this role's launch on (U-org-seats): the argv or the request body names
+            // exactly what the row records and the reservation priced.
+            model: () => ConversationModelFor(role));
         _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation, role));
         return conversation;
     }
@@ -553,14 +555,15 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
                 return SeatedOf(role)?.Model ?? Gateway.Settings.ModelForRole(role);
-            return SeatFor(role).Model;
+            return (Meter?.OpenSeatFor(role) ?? SeatFor(role)).Model;
         }
         catch (Exception) { return null; }
     }
 
     /// <summary>
-    /// THE ALLOWANCE A ROLE'S HARNESS TURN IS HELD TO (<c>U-org-seats</c>): the admitted seat's, the one its reservation was priced at;
-    /// before any admission, the seat as it resolves now; a seat that cannot be read, the shipped bound — its launch was refused.
+    /// THE ALLOWANCE A ROLE'S HARNESS TURN IS HELD TO WHERE NO ADMISSION NAMES ONE (<c>U-org-seats</c>): an admitted turn reads its own
+    /// seat (<see cref="ISeatedConversation"/>); this is the seat as it resolves now, and the shipped bound for a seat that cannot be
+    /// read — whose launch the meter refused.
     /// </summary>
     TurnAllowance HarnessAllowanceFor(string role)
     {
@@ -1143,18 +1146,12 @@ public sealed class AppHost : IAsyncDisposable
             runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
             owner: () => OwnerPrice.From(Gateway.Settings),
             model: () => RequestedModel,
-            allowance: () => TurnAllowance.From(
-                Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens),
-            // The council's two: a role's slice of the owner's ceiling, and the model that role
-            // runs on. Both are read through a function for the same reason the model above is —
-            // the owner changes them while the AI is working.
+            // A role's slice of the owner's ceiling, read through a function because the owner changes it while the AI is working.
             share: role => Gateway.Settings.ShareForRole(role),
-            roleModel: RequestedModelFor,
-            // A PRICE IS LOOKED UP BY (RUNTIME, MODEL), so a role on the app-owned harness has to
-            // be priced against the harness's catalogue. Priced against the chair's, a model only
-            // the harness offers falls back to the dearest entry and the row reads as an estimate
-            // when the app knows exactly what it asked for.
-            roleRuntime: RuntimeForRole,
+            // ONE SEAT PER LAUNCH (U-org-seats): runtime, model, allowance and bound, resolved once at admission — a position's own
+            // seat or today's sources; the chair's own seat for a launch nobody named. A price is looked up by (runtime, model), so a
+            // role on the app-owned harness is priced against the harness's catalogue, at the model its turn will name.
+            seat: role => role is null ? AppSeat() : SeatFor(role),
             // THE SEAT EACH ROLE WAS DECLARED ON, for the meter's own check that the seat it verifies is that seat.
             declaredSeat: DeclaredSeatClass);
         Meter.Changed += () => Changed?.Invoke();

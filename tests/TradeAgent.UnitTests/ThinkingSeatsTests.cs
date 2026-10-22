@@ -391,7 +391,7 @@ public class ThinkingSeatsTests : IDisposable
         using var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
             tools: role => new GrantedWorkerTools(role, home: () => HomeFor(role), attempt: () => meter.OpenAttemptIdFor(role)),
             attemptId: role => meter.OpenAttemptIdFor(role),
-            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
         var chair = runtime.OpenConversation(CouncilRoles.Operations, () => HomeFor(CouncilRoles.Operations),
             () => new Dictionary<string, string>(), () => null);
         using var metering = meter.Attach(chair, CouncilRoles.Operations);
@@ -830,7 +830,7 @@ public class ThinkingSeatsTests : IDisposable
         var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
         manifest.BaseUrl = provider.BaseUrl;
         var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
-            allowance: () => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: seats);
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: seats);
         var home = Path.Combine(TestEnv.Home, $"thinking-seats-{Guid.NewGuid():n}");
         Directory.CreateDirectory(home);
         return runtime.OpenConversation(role, () => home, () => new Dictionary<string, string>(), () => null);
