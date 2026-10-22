@@ -94,6 +94,31 @@ public class NumberEntryCultureTests
     }
 
     /// <summary>
+    /// (fix pass 1) OVER-LONG INPUT IS REFUSED, NEVER ROUNDED: past a decimal figure's exact range — more than 28 places after the mark, or
+    /// more than 29 digits in all — the text is refused in words rather than read as a figure that is not what was typed. RED at
+    /// 46bfc570: "0.00000000000000000000000000001" read as 0, and a 29-digit figure whose digits a decimal cannot hold lost its tail.
+    /// </summary>
+    [Fact]
+    public void Over_long_input_is_refused_never_rounded()
+    {
+        const string tiny = "0.00000000000000000000000000001";                 // 29 places: read as 0 before
+        const string tail = "9234567890.1234567890123456789";                  // 29 digits a decimal cannot hold: its tail rounded
+        const string thirty = "123456789012345678901234567890";                // 30 digits
+        const string zeros = "0.100000000000000000000000000000";               // 30 places, all of them typed
+        Assert.Equal("refused: " + Labels.AmountTooPrecise(tiny), Read(tiny));
+        Assert.Equal("refused: " + Labels.AmountTooPrecise(tail), Read(tail));
+        Assert.Equal("refused: " + Labels.AmountTooPrecise(zeros), Read(zeros));
+        Assert.StartsWith("refused: ", Read(thirty), StringComparison.Ordinal);
+        Assert.StartsWith("refused: ", Read(thirty, AmountKind.Whole), StringComparison.Ordinal);
+        Assert.Contains("at most 28", Labels.AmountTooPrecise(tiny), StringComparison.Ordinal);
+
+        // AND WHAT A DECIMAL HOLDS EXACTLY STILL READS, every digit of it.
+        Assert.Equal("0.0000000000000000000000000001", Read("0.0000000000000000000000000001"));
+        Assert.Equal("1234567890.1234567890123456789", Read("1234567890.1234567890123456789"));
+        Assert.Equal("12345678901234567890123456789", Read("12345678901234567890123456789"));
+    }
+
+    /// <summary>
     /// A READ FIGURE IS PRINTED BACK EXACTLY: every digit, trailing zeros dropped, never rounded — the money formatter's four places
     /// would turn the owner's 0.00005 into 0.0001.
     /// </summary>
