@@ -51,7 +51,7 @@ public partial class OversightTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE FILE IS ITS OWN: schema 1 in its own meta table, the root scope seeded as the owner's line, every table append-only by trigger, and
+    /// THE FILE IS ITS OWN: its schema (<see cref="OversightStore.Schema"/>) in its own meta table, the root scope seeded as the owner's line, every table append-only by trigger, and
     /// the path the class's constant under <c>state/</c> — not one of <see cref="Paths"/>.
     /// </summary>
     [Fact]
@@ -81,7 +81,8 @@ public partial class OversightTests(ITestOutputHelper log)
 
         using var c = new SqliteConnection($"Data Source={file};Pooling=False");
         c.Open();
-        Assert.Equal("1", Scalar(c, "SELECT value FROM oversight_meta WHERE key='schema'"));
+        Assert.Equal(OversightStore.Schema.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Scalar(c, "SELECT value FROM oversight_meta WHERE key='schema'"));
         foreach (var (table, edit) in new[]
                  {
                      ("oversight_scope", "UPDATE oversight_scope SET unit_id='x'"), ("oversight_scope", "DELETE FROM oversight_scope"),
@@ -107,6 +108,90 @@ public partial class OversightTests(ITestOutputHelper log)
         var forged = Finding("refusals", subject: "x") with { Id = "wf-forged" };
         Assert.Throws<ArgumentException>(() => store.Commit([forged], new Dictionary<string, long>(), Now));
         Assert.Empty(store.Findings());
+    }
+
+    // ---- (h) rung 2: the owner's cap and his acknowledgements --------------------------------------------------------------
+
+    /// <summary>
+    /// (h) A CRASH BETWEEN RUNG 2'S STATEMENTS AND ITS STAMP REOPENS, AND A RUNG-1 FILE CLIMBS. A file the rung-1 ladder wrote (part a's
+    /// layout, a finding and a cursor in it) is opened by a build whose rung 2 fails after its statements and before its stamp: the open
+    /// throws, and the file is still rung 1 — no cap or acknowledgement table, its finding kept. Reopened, it climbs to rung 2 with nothing
+    /// lost. RED at base: rung 2 did not exist (no ladder seam, no cap, no acknowledgement).
+    /// </summary>
+    [Fact]
+    public void A_crash_between_rung_two_and_its_stamp_reopens()
+    {
+        var file = NewFile();
+        using (var rung1 = new OversightStore(file, Now, climbTo: 1, beforeStamp: null))
+            rung1.Commit([Finding("refusals", subject: "x")], new Dictionary<string, long> { ["tool_call"] = 3 }, Now);
+        Assert.Equal("1", Meta(file));
+
+        var crash = Assert.Throws<IOException>(() => new OversightStore(file, Now, climbTo: OversightStore.Schema,
+            beforeStamp: rung => { if (rung == 2) throw new IOException("the machine lost power between rung 2 and its stamp"); }));
+        log.WriteLine(crash.Message);
+        Assert.Equal("1", Meta(file));
+        Assert.False(HasTable(file, "oversight_cap"), "a rung that never stamped left its table behind");
+
+        using var climbed = new OversightStore(file, Now);
+        Assert.Equal("2", Meta(file));
+        Assert.Single(climbed.Findings());
+        Assert.Equal(3, climbed.Cursor("tool_call"));
+        Assert.Null(climbed.Cap());
+        Assert.Empty(climbed.Acknowledged());
+    }
+
+    /// <summary>
+    /// RUNG 2 IS APPEND-ONLY: the cap is its latest row (none is zero, said as null), an acknowledgement is a row naming a finding the file
+    /// holds, and neither table takes an UPDATE or a DELETE. A negative cap, or an acknowledgement of a finding the file never held, is refused.
+    /// </summary>
+    [Fact]
+    public void The_cap_and_the_acknowledgements_are_rows_never_edits()
+    {
+        var file = NewFile();
+        var f = Finding("refusals", subject: "y");
+        using (var store = new OversightStore(file, Now))
+        {
+            store.Commit([f], new Dictionary<string, long>(), Now);
+            Assert.Null(store.Cap());
+            store.SetCap(2.5m, "USD", Now);
+            store.SetCap(0m, "USD", Now.AddMinutes(1));
+            Assert.Equal((0m, "USD"), (store.Cap()!.Amount, store.Cap()!.Currency));
+            Assert.Throws<ArgumentException>(() => store.SetCap(-1m, "USD", Now));
+            store.Acknowledge(f.Id, Now.AddMinutes(2));
+            store.Acknowledge(f.Id, Now.AddMinutes(3));
+            Assert.Equal(Now.AddMinutes(2), store.Acknowledged()[f.Id]);
+            Assert.ThrowsAny<Exception>(() => store.Acknowledge("wf-never-written", Now));
+            Assert.Single(store.Findings());
+        }
+
+        using var c = new SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        Assert.Equal("2", Scalar(c, "SELECT value FROM oversight_meta WHERE key='schema'"));
+        Assert.Equal("2", Scalar(c, "SELECT COUNT(*) FROM oversight_cap"));
+        foreach (var edit in new[]
+                 {
+                     "UPDATE oversight_cap SET amount='99'", "DELETE FROM oversight_cap",
+                     "UPDATE oversight_ack SET at='x'", "DELETE FROM oversight_ack",
+                 })
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = edit;
+            log.WriteLine(Assert.Throws<SqliteException>(() => cmd.ExecuteNonQuery()).Message);
+        }
+    }
+
+    static string? Meta(string file)
+    {
+        using var c = new SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        return Scalar(c, "SELECT value FROM oversight_meta WHERE key='schema'");
+    }
+
+    static bool HasTable(string file, string table)
+    {
+        using var c = new SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        return Scalar(c, $"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'") == "1";
     }
 
     static OversightFinding Finding(string detector, string subject, string scope = OversightStore.RootScope, string window = "w") => new(

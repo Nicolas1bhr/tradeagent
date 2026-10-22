@@ -47,6 +47,12 @@ public sealed record OversightFinding(
 /// <summary>A digest the code composed and <see cref="DigestCheck"/> passed: its text, the findings it reports and the last finding it covers.</summary>
 public sealed record OversightDigest(string Id, string ScopeId, DateTimeOffset At, string Text, IReadOnlyList<string> Findings, long ThroughSeq);
 
+/// <summary>
+/// THE OWNER'S OVERSIGHT CAP (<c>U-org-watcher-b</c>; ORGANISATION § 9: "its own owner-set oversight cap BESIDE, never inside, the
+/// organisation's"): the latest row of <c>oversight_cap</c>. Read by nothing but the owner's page until the line has a model layer.
+/// </summary>
+public sealed record OversightCap(decimal Amount, string Currency, DateTimeOffset SetAt);
+
 /// <summary>Severity words a finding carries.</summary>
 public static class OversightSeverity
 {
@@ -78,7 +84,7 @@ public sealed class OversightStore : IDisposable
     public const string FileName = "oversight.db";
 
     /// <summary>The layout version this build writes and understands.</summary>
-    public const int Schema = 1;
+    public const int Schema = 2;
 
     /// <summary>The root scope: the owner's private line over the whole organisation, seeded by rung 1.</summary>
     public const string RootScope = "org";
@@ -98,7 +104,13 @@ public sealed class OversightStore : IDisposable
     /// </summary>
     /// <param name="file">Null is <see cref="DefaultFile"/>; a test passes its own.</param>
     /// <param name="now">When the root scope is seeded; null is the wall clock.</param>
-    public OversightStore(string? file = null, DateTimeOffset? now = null)
+    public OversightStore(string? file = null, DateTimeOffset? now = null) : this(file, now, Schema, null) { }
+
+    /// <summary>
+    /// THE LADDER'S TEST SEAM: <paramref name="climbTo"/> stops the ladder at an earlier rung (a file as that rung's build wrote it), and
+    /// <paramref name="beforeStamp"/> runs between a rung's statements and its stamp — a throw there is the crash the recovery rule is about.
+    /// </summary>
+    internal OversightStore(string? file, DateTimeOffset? now, int climbTo, Action<int>? beforeStamp)
     {
         File = Path.GetFullPath(file ?? DefaultFile);
         var dir = Path.GetDirectoryName(File);
@@ -118,7 +130,7 @@ public sealed class OversightStore : IDisposable
             Exec("PRAGMA busy_timeout=5000;");
             Refuse(FoundVersion());
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
-            Migrate(now ?? DateTimeOffset.UtcNow);
+            Migrate(now ?? DateTimeOffset.UtcNow, climbTo, beforeStamp);
         }
         catch (Exception)
         {
@@ -150,14 +162,15 @@ public sealed class OversightStore : IDisposable
     }
 
     /// <summary>
-    /// THE LADDER. One rung, in one transaction with its version row, the version read again under the write lock so two opens of one new
-    /// file do not both climb it. A later rung is an <c>if (have &lt; N)</c> below, written by the unit that needs it.
+    /// THE LADDER. Every rung, in one transaction with its version row, the version read again under the write lock so two opens of one new
+    /// file do not both climb it. A later rung is an <c>if (have &lt; N)</c> below, written by the unit that needs it. A crash between a rung's
+    /// statements and its stamp rolls the whole climb back: the file is as it was, and the next open climbs again.
     /// </summary>
-    void Migrate(DateTimeOffset now) => Write(() =>
+    void Migrate(DateTimeOffset now, int climbTo, Action<int>? beforeStamp) => Write(() =>
     {
         var have = FoundVersion();
         Refuse(have);
-        if (have < 1)
+        if (have < 1 && climbTo >= 1)
         {
             Exec("""
                 CREATE TABLE IF NOT EXISTS oversight_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -228,7 +241,37 @@ public sealed class OversightStore : IDisposable
             using (var seed = Cmd("INSERT INTO oversight_scope(id, unit_id, created_at) VALUES($id, $unit, $at) ON CONFLICT DO NOTHING",
                        ("$id", RootScope), ("$unit", OrgIds.Root), ("$at", Sql.T(now))))
                 seed.ExecuteNonQuery();
+            beforeStamp?.Invoke(1);
             Exec("INSERT INTO oversight_meta(key, value) VALUES('schema', '1') ON CONFLICT(key) DO UPDATE SET value='1';");
+        }
+        // RUNG 2 (U-org-watcher-b): the owner's oversight cap and his acknowledgements — both append-only. The cap is the latest row;
+        // an acknowledgement names a finding this file holds and lowers the in-app alert for it without touching the finding.
+        if (have < 2 && climbTo >= 2)
+        {
+            Exec("""
+                CREATE TABLE IF NOT EXISTS oversight_cap(
+                  seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+                  amount   TEXT NOT NULL,
+                  currency TEXT NOT NULL,
+                  set_at   TEXT NOT NULL);
+
+                CREATE TABLE IF NOT EXISTS oversight_ack(
+                  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+                  finding_id TEXT NOT NULL REFERENCES oversight_finding(id),
+                  at         TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS ix_oversight_ack ON oversight_ack(finding_id, seq);
+
+                CREATE TRIGGER IF NOT EXISTS oversight_cap_sealed_u BEFORE UPDATE ON oversight_cap
+                BEGIN SELECT RAISE(ABORT, 'the oversight cap moves by a new row, never by an edit'); END;
+                CREATE TRIGGER IF NOT EXISTS oversight_cap_sealed_d BEFORE DELETE ON oversight_cap
+                BEGIN SELECT RAISE(ABORT, 'an oversight cap row is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS oversight_ack_sealed_u BEFORE UPDATE ON oversight_ack
+                BEGIN SELECT RAISE(ABORT, 'an acknowledgement is never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS oversight_ack_sealed_d BEFORE DELETE ON oversight_ack
+                BEGIN SELECT RAISE(ABORT, 'an acknowledgement is never deleted'); END;
+                """);
+            beforeStamp?.Invoke(2);
+            Exec("INSERT INTO oversight_meta(key, value) VALUES('schema', '2') ON CONFLICT(key) DO UPDATE SET value='2';");
         }
         return have;
     });
@@ -375,6 +418,48 @@ public sealed class OversightStore : IDisposable
             """, ("$id", d.Id), ("$scope", d.ScopeId), ("$at", Sql.T(d.At)), ("$text", d.Text),
             ("$f", JsonSerializer.Serialize(d.Findings)), ("$through", d.ThroughSeq));
         return c.ExecuteNonQuery();
+    });
+
+    // -------------------------------------------------------------------------------- the owner's cap and acknowledgements
+
+    /// <summary>The owner's oversight cap — the latest row — or null when he has never set one, which is zero.</summary>
+    public OversightCap? Cap() => Read(() =>
+    {
+        using var c = Cmd("SELECT amount, currency, set_at FROM oversight_cap ORDER BY seq DESC LIMIT 1");
+        using var r = c.ExecuteReader();
+        return r.Read()
+            ? new OversightCap(decimal.Parse(r.GetString(0), NumberStyles.Number, CultureInfo.InvariantCulture), r.GetString(1), Sql.Time(r.GetString(2)))
+            : null;
+    });
+
+    /// <summary>Appends the owner's cap. Its press is on his page alone; nothing an agent can reach calls this.</summary>
+    public void SetCap(decimal amount, string currency, DateTimeOffset at)
+    {
+        if (amount < 0) throw new ArgumentException($"an oversight cap is zero or more, not {amount.ToString(CultureInfo.InvariantCulture)}");
+        ArgumentNullException.ThrowIfNull(currency);
+        Write(() =>
+        {
+            using var c = Cmd("INSERT INTO oversight_cap(amount, currency, set_at) VALUES($a, $c, $at)",
+                ("$a", amount.ToString(CultureInfo.InvariantCulture)), ("$c", currency), ("$at", Sql.T(at)));
+            return c.ExecuteNonQuery();
+        });
+    }
+
+    /// <summary>Appends the owner's acknowledgement of one finding this file holds. The finding itself is never touched.</summary>
+    public void Acknowledge(string findingId, DateTimeOffset at) => Write(() =>
+    {
+        using var c = Cmd("INSERT INTO oversight_ack(finding_id, at) VALUES($id, $at)", ("$id", findingId), ("$at", Sql.T(at)));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>Every acknowledged finding and when it was FIRST acknowledged.</summary>
+    public IReadOnlyDictionary<string, DateTimeOffset> Acknowledged() => Read(() =>
+    {
+        using var c = Cmd("SELECT finding_id, at FROM oversight_ack ORDER BY seq");
+        var rows = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        using var r = c.ExecuteReader();
+        while (r.Read()) rows.TryAdd(r.GetString(0), Sql.Time(r.GetString(1)));
+        return (IReadOnlyDictionary<string, DateTimeOffset>)rows;
     });
 
     // -------------------------------------------------------------------------------- its own failures
