@@ -139,6 +139,14 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
         lock (_gate) return _reading;
     }
 
+    /// <summary>
+    /// RAISED WHEN A READ CHANGES WHO THE SIGN-IN BILLS (<c>U-billing-classes</c>, fix pass 3): the reading's
+    /// <see cref="SeatSignInReading.SignedInClass"/> differs from the one it replaced — whichever read lands it, the background pass's or
+    /// the card's own after a press. The host wakes the loop on it, so a role its first look held to the other class's ceiling is looked
+    /// at again. Raised off the window's thread, after the reading is stored; it carries nothing and grants nothing.
+    /// </summary>
+    public event Action? ClassChanged;
+
     /// <summary>True while the card has something to say: the seat home is signed out, or nobody can tell.</summary>
     public bool Wanted => State().State is SeatSignInState.SignedOut or SeatSignInState.Unknown;
 
@@ -168,7 +176,13 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
                 }
                 catch (OperationCanceledException) { return State(); }
                 catch (Exception ex) { read = new SeatSignInReading(SeatSignInState.Unknown, ex.Message); }
-                lock (_gate) _reading = read;
+                string? before;
+                lock (_gate) { before = _reading.SignedInClass; _reading = read; }
+                if (before != read.SignedInClass)
+                {
+                    try { ClassChanged?.Invoke(); }
+                    catch (Exception) { /* the reading is stored and handed back; the next pass reads it again */ }
+                }
                 return read;
             }, CancellationToken.None);
         }

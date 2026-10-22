@@ -91,11 +91,23 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public SeatSignIn SeatSignIn
     {
-        get => _seatSignIn ??= new SeatSignIn(() => SeatSignIn.Chosen(Gateway?.Settings.SelectedRuntimeId));
-        internal set => _seatSignIn = value;
+        get => _seatSignIn ??= WakesOnAClassChange(new SeatSignIn(() => SeatSignIn.Chosen(Gateway?.Settings.SelectedRuntimeId)));
+        internal set => _seatSignIn = WakesOnAClassChange(value);
     }
 
     SeatSignIn? _seatSignIn;
+
+    /// <summary>
+    /// THE LOOP IS WOKEN WHERE THE SIGN-IN'S CLASS CHANGES (<c>U-billing-classes</c>, fix pass 3): the first look holds a role to the class
+    /// the reading names and may have set it waiting for midnight — on the app's first seconds, before any reading, or on the class the
+    /// seat billed before the owner signed it in another way. Wired at the reading's source, so the card's own read after a pasted key
+    /// wakes it as surely as the background pass's. A wake grants nothing: the loop looks again, and Begin's own reading still decides.
+    /// </summary>
+    SeatSignIn WakesOnAClassChange(SeatSignIn signIn)
+    {
+        signIn.ClassChanged += () => Mission?.Wake();
+        return signIn;
+    }
 
     /// <summary>
     /// Everything this machine needs before the product can work, and the code that installs it.
@@ -1499,6 +1511,17 @@ public sealed class AppHost : IAsyncDisposable
     /// and every sixth pass walk the workspace so the material ledger stays current.
     /// Sized to stay invisible on a modest laptop.
     /// </summary>
+    /// <summary>
+    /// THE SEAT HOME'S SIGN-IN, ON ONE PASS OF THE BACKGROUND LOOP (U-seat-signin): every pass while the card is showing — so a sign-in
+    /// finished on the owner's phone takes the card away within seconds — and every thirty seconds while signed in. Off the pass: a status
+    /// read is a program start, and nothing waits for it; the card is told when it lands. The task returned is that landing, for a test.
+    /// A read that changes the class the sign-in bills wakes the loop at the reading's source (<see cref="WakesOnAClassChange"/>), not here.
+    /// </summary>
+    internal Task SeatSignInPass(int pass, CancellationToken ct) =>
+        pass % 6 == 0 || SeatSignIn.Wanted || SeatSignIn.SigningIn
+            ? SeatSignIn.RefreshAsync(ct).ContinueWith(_ => Changed?.Invoke(), TaskScheduler.Default)
+            : Task.CompletedTask;
+
     async Task BackgroundAsync(CancellationToken ct)
     {
         var tick = 0;
@@ -1539,23 +1562,7 @@ public sealed class AppHost : IAsyncDisposable
                 // beside a launch, and no later than it has to be once the turn is over.
                 if (pass % 6 == 0 || _scanOwed) _scanOwed = ScanMaterials(ct) is null;
 
-                // THE SEAT HOME'S SIGN-IN (U-seat-signin): every pass while the card is showing — so a sign-in finished on the
-                // owner's phone takes the card away within seconds — and every thirty seconds while signed in. Off this pass: a status
-                // read is a program start, and nothing here waits for it; the card is told when it lands.
-                //
-                // AND THE LOOP IS WOKEN WHEN THE CLASS IT BILLS CHANGES (U-billing-classes, fix pass 2): the first look holds a role to
-                // that class's ceiling and may have set it waiting for midnight — on the app's first seconds, before any reading (a fresh
-                // home with no real money and the plan's room), or on the class the seat billed before the owner signed it in another
-                // way. A wake grants nothing: the loop looks again, and Begin's own reading of the seat still decides.
-                if (pass % 6 == 0 || SeatSignIn.Wanted || SeatSignIn.SigningIn)
-                {
-                    var billed = SeatSignIn.State().SignedInClass;
-                    _ = SeatSignIn.RefreshAsync(ct).ContinueWith(read =>
-                    {
-                        if (read.IsCompletedSuccessfully && read.Result.SignedInClass != billed) Mission?.Wake();
-                        Changed?.Invoke();
-                    }, TaskScheduler.Default);
-                }
+                _ = SeatSignInPass(pass, ct);
 
                 // Once at startup, then every five minutes. A day that ended while this machine was
                 // asleep gets its report the first time the app is awake afterwards; a day that ends
