@@ -1988,6 +1988,10 @@ public sealed class AppHost : IAsyncDisposable
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId) =>
             host.Meter?.Begin(prompt, wakes, role, attemptId: attemptId) ?? AiAdmission.NoLedgerOpen;
 
+        /// <summary>The same, with the packet's bytes per block for the launch's <c>context</c> (<c>U-org-packets-a</c>).</summary>
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId, PacketBytes packet) =>
+            host.Meter?.Begin(prompt, wakes, role, attemptId: attemptId, packet: packet) ?? AiAdmission.NoLedgerOpen;
+
         /// <summary>
         /// What the turn left in <c>out/</c>, published and delivered — and anything an earlier
         /// crash left half done, finished. It writes to the relay's two tables and to the roles'

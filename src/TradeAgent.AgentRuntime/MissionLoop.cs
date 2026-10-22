@@ -169,6 +169,15 @@ public sealed record TurnSession(bool Fresh, string? Why)
 }
 
 /// <summary>
+/// A PACKET'S UTF-8 BYTES PER BLOCK, in the order the blocks were written (<see cref="MissionSituation.Text(out PacketBytes)"/>,
+/// <c>U-org-packets-a</c>): bytes measured on the text, never tokens.
+/// </summary>
+public sealed class PacketBytes : Dictionary<string, int>
+{
+    public PacketBytes() : base(StringComparer.Ordinal) { }
+}
+
+/// <summary>
 /// The numbers the loop runs on. Defaults are the brief's: a turn at once unless the AI asked for a
 /// delay, that delay capped at half an hour, an error backoff doubling from thirty seconds to the
 /// same half hour, and twenty turns per CLI session before a fresh one.
@@ -715,6 +724,13 @@ public interface IMissionHost
         BeginTurn(prompt, wakes, role);
 
     /// <summary>
+    /// THE SAME, WITH THE PACKET'S BYTES PER BLOCK (<c>U-org-packets-a</c>): what the Situation that rendered <paramref name="prompt"/>
+    /// measured, carried to the launch's <c>context</c>. A host that records no context ignores it — the default.
+    /// </summary>
+    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId, PacketBytes packet) =>
+        BeginTurn(prompt, wakes, role, attemptId);
+
+    /// <summary>
     /// EVERYTHING THE APP OWES THE FILESYSTEM AFTER A TURN, AND ON START: an unpublished report
     /// published, a committed delivery whose file is missing re-copied. Called by the loop at both
     /// moments, and by nothing else on this interface that can change what the AI is allowed to do.
@@ -1045,12 +1061,31 @@ public sealed record MissionSituation
         "`JOURNAL.md` are your scratch: read them first and update them before you finish, and put a belief " +
         "worth keeping in the research ledger as your claim.";
 
-    public string Text()
+    public string Text() => Text(out _);
+
+    /// <summary>
+    /// THE SAME TEXT, AND ITS UTF-8 BYTES PER BLOCK (<c>U-org-packets-a</c>; ORCHESTRATION § 2.6: "measured per attempt"): each block
+    /// named as it is written, its bytes counted on the text itself, so the blocks sum to the whole and a block that wrote nothing is
+    /// not named. A figure, never an estimate — and never tokens.
+    /// </summary>
+    public string Text(out PacketBytes blocks)
     {
         var b = new StringBuilder();
+        var sizes = new PacketBytes();
+        var from = 0;
+        void Block(string name)
+        {
+            var bytes = Encoding.UTF8.GetByteCount(b.ToString(from, b.Length - from));
+            from = b.Length;
+            if (bytes > 0) sizes[name] = sizes.GetValueOrDefault(name) + bytes;
+        }
+        blocks = sizes;
+
         b.AppendLine("## Situation").AppendLine();
+        Block("heading");
 
         if (!string.IsNullOrWhiteSpace(OrdersWithheld)) b.Append(LaunchBar.Told(OrdersWithheld));
+        Block("orders_withheld");
 
         if (OwnerMessages.Count > 0)
         {
@@ -1060,6 +1095,7 @@ public sealed record MissionSituation
                     b.Append("> ").AppendLine(line);
             b.AppendLine();
         }
+        Block("owner");
 
         // THE OTHER ROLE'S WORK, BELOW THE OWNER AND ABOVE EVERYTHING ELSE. The app put the file in
         // `in/` and is charging this turn for it; quoting it here is what makes the turn able to act
@@ -1072,6 +1108,7 @@ public sealed record MissionSituation
                 b.Append("> ").AppendLine(line);
             b.AppendLine();
         }
+        Block("deliveries");
 
         // WHAT TRADEAGENT STOPPED, and what it did with the work. Above `Restored` and below the
         // other role's report: both are things the app did to this role's files between its turns,
@@ -1084,6 +1121,7 @@ public sealed record MissionSituation
                 b.Append("> ").AppendLine(line);
             b.AppendLine();
         }
+        Block("cut");
 
         // WHAT THE APP PUT BACK. Above the state and below the other role's work, because it is
         // about `PLAN.md` — the file the last line of every one of these messages tells the turn to
@@ -1117,15 +1155,18 @@ public sealed record MissionSituation
             foreach (var line in HeldOutputs) b.AppendLine($"- {line}");
             b.AppendLine();
         }
+        Block("restored");
 
         // THE CAUSE, ABOVE THE STATE AND BELOW THE OWNER. The owner's words keep their first place —
         // a person waiting for an answer outranks everything — and then the AI is told what woke it,
         // because that is the one line that tells it where to look first.
         if (Wakes.Count > 0)
             b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
+        Block("why_awake");
 
         // THE MANDATE, WHOLE, UNDER THE CAUSE IT DETAILS (U-org-packets-a): the issuer's words quoted as its claim, the app's lines not.
         if (Mandate is { } mandate) AppendMandate(b, mandate);
+        Block("mandate");
 
         // WHAT CHANGED, UNDER THE CAUSE IT DETAILS (U-reconcile-packet): one line per observation, each with its
         // entity, so the turn starts where the app's record points rather than re-reading the world.
@@ -1134,9 +1175,11 @@ public sealed record MissionSituation
             b.AppendLine("- What changed, one line per observation TradeAgent recorded for you:");
             foreach (var line in WhatChanged.Take(MissionEventStore.BatchLimit)) b.AppendLine($"  - {line}");
         }
+        Block("what_changed");
 
         // WHAT YOU BELIEVE, apart from what changed: the role's own claims, never the observed world.
         if (Believed is { } believed) AppendBeliefs(b, believed);
+        Block("believed");
 
         // WHAT IS WANTED: the work the app records as this role's, then the boundaries — the one thing in this
         // message with a DEADLINE attached and an answer TradeAgent will write on its own if nothing arrives —
@@ -1150,6 +1193,7 @@ public sealed record MissionSituation
         foreach (var line in Boundaries) b.AppendLine($"- {line}");
         if (!string.IsNullOrWhiteSpace(Guidance))
             b.AppendLine($"- The owner's guidance: {Guidance.Trim()}");
+        Block("wanted");
 
         if (Role is { Length: > 0 } role)
             b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
@@ -1161,6 +1205,7 @@ public sealed record MissionSituation
             b.AppendLine($"- This turn is attempt `{attempt}`. Anything you publish this turn must be "
                          + $"named after it — `{WorkspaceBuilder.OutDir}/{OutputName(Role, attempt)}` — "
                          + "or TradeAgent cannot tell which turn wrote it and will not publish it.");
+        Block("identity");
 
         b.AppendLine($"- Local time: {LocalTime.LocalDateTime:yyyy-MM-dd HH:mm}");
         b.AppendLine($"- Trading mode: {Mode}");
@@ -1180,8 +1225,10 @@ public sealed record MissionSituation
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `{AgentReach.InboxFrom(Role ?? CouncilRoles.Default)}` since your last turn: "
                          + string.Join(", ", NewMaterial));
+        Block("state");
 
         b.AppendLine().AppendLine(Continue);
+        Block("continue");
         return b.ToString();
     }
 
@@ -2819,7 +2866,7 @@ public sealed class MissionLoop
             Believed = BeliefsOf(role),
             Wanted = OpenObjectives(role)
         };
-        var prompt = situation.Text();
+        var prompt = situation.Text(out var packet);
 
         // ---- THE ROLE'S TURN LEASE ----------------------------------------------------------------
         // ONE TURN PER ROLE AT A TIME, and this line is the whole of it. Everything above is a LOOK —
@@ -2862,7 +2909,7 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var admission = _host.BeginTurn(prompt, wakeIds, role, attemptId);
+        var admission = _host.BeginTurn(prompt, wakeIds, role, attemptId, packet);
 
         // THE TRANSACTION'S ANSWER OUTRANKS THE LOOK TAKEN ABOVE. Between that look and this commit
         // another launch can have taken the room — the owner's own chat turn, or a second role — and

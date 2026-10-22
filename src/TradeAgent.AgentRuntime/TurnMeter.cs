@@ -280,6 +280,13 @@ public sealed record TurnContext
     /// <inheritdoc cref="Session"/>
     public string? SessionWhy { get; init; }
 
+    /// <summary>
+    /// THE PACKET'S UTF-8 BYTES PER BLOCK (<c>U-org-packets-a</c>; <see cref="MissionSituation.Text(out PacketBytes)"/>), in the order
+    /// the blocks were written, or absent where the prompt was not a Situation. Bytes, never tokens: the target of about 2 k tokens
+    /// for an executor's packet (ORGANISATION § 6) is read against the runtime's own token figures beside them, never converted.
+    /// </summary>
+    public PacketBytes? Packet { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -537,7 +544,7 @@ public sealed class TurnMeter
     /// typed turn is admitted and reserved like any other but publishes nothing and consumes no
     /// wake, so it has no transition to be part of.
     /// </summary>
-    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop, string? SeatClass)> _open = [];
+    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop, string? SeatClass, PacketBytes? Packet)> _open = [];
 
     /// <summary>
     /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id ITS next launch will carry — that role's, and never another's.
@@ -714,7 +721,7 @@ public sealed class TurnMeter
             Unpriced = price.Unpriced,
             Estimated = price.Estimated,
             PricedByOwner = price.ByOwner,
-            Context = ContextOf(ended, PromptCharsOfOpenAttempt(role))
+            Context = ContextOf(ended, PromptCharsOfOpenAttempt(role), PacketOfOpenAttempt(role))
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
@@ -727,12 +734,13 @@ public sealed class TurnMeter
         // id from here on — End writes only the row it names, and only while it is still LAUNCHED.
         string? id = null;
         int? promptChars = null;
+        PacketBytes? packet = null;
         var held = false;
         lock (_gate)
             if (_open.Remove(Key(role), out var open))
-                (id, promptChars, held) = (open.Id, open.PromptChars, open.HeldForTheLoop);
+                (id, promptChars, held, packet) = (open.Id, open.PromptChars, open.HeldForTheLoop, open.Packet);
 
-        void Write() => Close(id, promptChars, ended, price, role);
+        void Write() => Close(id, promptChars, packet, ended, price, role);
 
         // A TURN THE MISSION LOOP OPENED IS CLOSED BY THE MISSION LOOP'S COMMIT, not here. A turn
         // the loop does not own is written at once: the owner typing in the chat window is admitted
@@ -800,7 +808,7 @@ public sealed class TurnMeter
     /// key from, its own sentence naming both origins; for a turn it held no key for, its own sentence
     /// saying so.
     /// </summary>
-    static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars) =>
+    static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars, PacketBytes? packet) =>
         TurnContext.Read(ended.Raw, promptChars, ended.Usage,
             ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
         with
@@ -814,7 +822,8 @@ public sealed class TurnMeter
             ObjectivesVersion = RoleObjectives.Version,
             PromptIn = ended.PromptIn,
             Session = ended.Session?.State,
-            SessionWhy = ended.Session?.Why
+            SessionWhy = ended.Session?.Why,
+            Packet = packet
         };
 
     /// <summary>
@@ -881,8 +890,12 @@ public sealed class TurnMeter
     /// not be held in a slot the next mission turn writes to, because one of the two closes would
     /// then be lost.
     /// </param>
+    /// <param name="packet">
+    /// THE PACKET'S BYTES PER BLOCK (<c>U-org-packets-a</c>), as the Situation that rendered <paramref name="prompt"/> measured them,
+    /// or null where the prompt is not one: carried to this launch's <c>context</c>, never converted to tokens.
+    /// </param>
     public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null,
-        bool heldForTheLoop = true, string? attemptId = null)
+        bool heldForTheLoop = true, string? attemptId = null, PacketBytes? packet = null)
     {
         // NOTHING IS LAUNCHED WHILE A PROCESS OF AN ENDED TURN STILL RUNS. Before the row, before the
         // reservation, before the wakes: a refused launch writes nothing and consumes nothing.
@@ -986,7 +999,7 @@ public sealed class TurnMeter
             if (admission.Id is { } written)
                 lock (_gate)
                 {
-                    _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass);
+                    _open[key] = (written, prompt.Length, heldForTheLoop, seat.SeatClass, packet);
                     _live.Enter(written);
                 }
         }
@@ -1235,11 +1248,11 @@ public sealed class TurnMeter
     /// owner's own typed turn, which runs through no admission gate and therefore reserves nothing.
     /// A row a restart already declared LOST is left exactly as it is.
     /// </summary>
-    void Close(string? id, int? promptChars, AgentTurnEnded ended, TurnPrice price, string? role)
+    void Close(string? id, int? promptChars, PacketBytes? packet, AgentTurnEnded ended, TurnPrice price, string? role)
     {
         // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
         // TurnContext: what the stream does not show is named rather than divided up.
-        var context = Json.Write(ContextOf(ended, promptChars));
+        var context = Json.Write(ContextOf(ended, promptChars, packet));
 
         if (id is null)
         {
@@ -1548,6 +1561,12 @@ public sealed class TurnMeter
     int? PromptCharsOfOpenAttempt(string? role)
     {
         lock (_gate) return _open.TryGetValue(Key(role), out var held) ? held.PromptChars : null;
+    }
+
+    /// <summary>The open attempt's packet bytes per block, read WITHOUT closing it (<c>U-org-packets-a</c>).</summary>
+    PacketBytes? PacketOfOpenAttempt(string? role)
+    {
+        lock (_gate) return _open.TryGetValue(Key(role), out var held) ? held.Packet : null;
     }
 
     /// <summary>
