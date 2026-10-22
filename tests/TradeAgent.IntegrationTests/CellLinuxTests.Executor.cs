@@ -317,7 +317,7 @@ public partial class CellLinuxTests
         Assert.True(w.ToolsServed > 0, "the app's door never served the harness its tools");
         var (egress, attempt) = AssuranceOf(w.Db, "exec-guard0");
         Assert.Equal(CellEgress.Web.Name, egress);
-        Assert.Equal("gap", attempt.GetValueOrDefault(RouteA.WebLoopbackGap));
+        Assert.Equal(CellAssuranceStore.Word(EnforcementClass.Gap), attempt.GetValueOrDefault(RouteA.WebLoopbackGap));
         Assert.Equal(0, w.Presence.Live);
     }
 
@@ -389,7 +389,7 @@ public partial class CellLinuxTests
         Assert.Equal(SeatClasses.Cell, attempt.SeatClass);
         var (egress, rows) = AssuranceOf(w.Db, attempt.Id);
         Assert.Equal(CellEgress.Web.Name, egress);
-        Assert.Equal("gap", rows.GetValueOrDefault(RouteA.WebLanGap));
+        Assert.Equal(CellAssuranceStore.Word(EnforcementClass.Gap), rows.GetValueOrDefault(RouteA.WebLanGap));
     }
 
     /// <summary>
