@@ -2746,6 +2746,11 @@ public sealed class Database : IDisposable
             // reboot that changed the kernel's command line or its security modules holds no proof until the start bench runs again. NULL
             // on a row no build wrote (nothing wrote one before this rung) and such a row never counts.
             //
+            // `cell_proof.egress` — the egress classes the proof's rows measured (comma-separated, e.g. `none,web`): a launch whose cell names
+            // a class its proof did not measure is refused (L4). NULL on a row no build wrote, which admits no class. `cell_proof_row` — every
+            // row of the benchmark that wrote the proof, PASS or GAP, with what it saw: the reach the owner accepted with `web` (loopback and
+            // his LAN on 443) is recorded here as GAP rows, stated, never as passes (fix pass 1, R4).
+            //
             // `cell_proof_revocation` — one row per proof a launch's canary found no longer true (its profile recomputed to another hash):
             // the proof stops counting, and is never edited or deleted.
             //
@@ -2757,7 +2762,20 @@ public sealed class Database : IDisposable
             // Every table refuses UPDATE and DELETE by trigger; created only where missing and the stamp last, so a crash between any
             // statement and the stamp reopens cleanly.
             AddColumnIfMissing("cell_proof", "boot", "TEXT");
+            AddColumnIfMissing("cell_proof", "egress", "TEXT");
             Exec("""
+                CREATE TABLE IF NOT EXISTS cell_proof_row(
+                  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                  proof_id  INTEGER NOT NULL REFERENCES cell_proof(id),
+                  name      TEXT NOT NULL,
+                  kind      TEXT NOT NULL CHECK (kind IN ('PASS','GAP')),
+                  seen      TEXT NOT NULL,
+                  UNIQUE(proof_id, name)
+                );
+                CREATE TRIGGER IF NOT EXISTS cell_proof_row_sealed_u BEFORE UPDATE ON cell_proof_row
+                BEGIN SELECT RAISE(ABORT, 'a proof''s row is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS cell_proof_row_sealed_d BEFORE DELETE ON cell_proof_row
+                BEGIN SELECT RAISE(ABORT, 'a proof''s row is never deleted'); END;
                 CREATE TABLE IF NOT EXISTS cell_proof_revocation(
                   id          INTEGER PRIMARY KEY AUTOINCREMENT,
                   proof_id    INTEGER NOT NULL REFERENCES cell_proof(id),

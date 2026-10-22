@@ -644,12 +644,11 @@ public partial class CellLinuxTests
         var codex = PinnedCodex();
         using var rows = Rows();
         _ = new World("bench");
+        Deployed(true);
         using var db = TestEnv.NewDb();
-        var pin = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install.ExecutableSha256!;
-        var held = await CellBenchmark.RunAsync(db, codex, pin, rows.Cgroups, Launcher());
-        var said = string.Join("\n", held.Rows.Select(r => $"  {r.Name}: {(r.Held ? "HELD" : "FAILED")} — {r.Seen}"));
-        _output.WriteLine($"cell benchmark: {held.Sentence}\n{said}");
-        Console.WriteLine($"cell benchmark: {held.Sentence}\n{said}");
+        var pin = BenchPin;
+        var held = await Bench(db, codex, rows.Cgroups);
+        var said = Said(held);
         Assert.True(held.ProofId is not null, $"the benchmark wrote no proof:\n{said}");
         var proof = Assert.Single(new CellProofStore(db).Proven());
         Assert.Equal((held.ProofId!.Value, RouteA.Provider, held.ProfileHash), (proof.Id, proof.Provider, proof.ProfileHash));
@@ -659,4 +658,59 @@ public partial class CellLinuxTests
         Assert.Contains(without.Rows, r => r.Name == "route-a-exec-server" && !r.Held);
         Assert.Single(new CellProofStore(db).Proven());
     }
+
+    /// <summary>The pinned codex's hash, as the product passes it to the benchmark.</summary>
+    static string BenchPin => RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install.ExecutableSha256!;
+
+    /// <summary>
+    /// THE DEPLOYED <c>trade</c>'S HASH, as <c>ToolDeployer</c> records it at start (<c>state/trade.sha256</c>): a proof binds to it,
+    /// so a row that wants a proof writes the built launcher's, and the row that shows its absence removes it.
+    /// </summary>
+    static void Deployed(bool present)
+    {
+        if (!present) { File.Delete(ToolDeployer.DeployedHashFile); return; }
+        Directory.CreateDirectory(Paths.State);
+        File.WriteAllText(ToolDeployer.DeployedHashFile, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Build.TradeCliDll))).ToLowerInvariant());
+    }
+
+    /// <summary>One pass of the host benchmark through the product's path, its rows printed (the evidence beyond CI).</summary>
+    async Task<BenchResult> Bench(Database db, string? codex, AttemptCgroups cgroups)
+    {
+        var result = await CellBenchmark.RunAsync(db, codex, BenchPin, cgroups, Launcher());
+        _output.WriteLine($"cell benchmark: {result.Sentence}\n{Said(result)}");
+        Console.WriteLine($"cell benchmark: {result.Sentence}\n{Said(result)}");
+        return result;
+    }
+
+    static string Said(BenchResult r) => string.Join("\n", r.Rows.Select(x => $"  {x.Name}{(x.Gap ? " (GAP)" : "")}: {(x.Held ? "HELD" : "FAILED")} — {x.Seen}"));
+
+    /// <summary>
+    /// ROW (i), EGRESS (fix pass 1, R4; L4 and the owner's answer "Web (443) for every executor"): the benchmark proves <c>web</c> beside
+    /// <c>none</c> — in a <c>web</c> cell TCP 443 is let through while any other port, a fast-open send, a datagram, a bind and a listen
+    /// are denied — and records the reach the owner accepted with it, loopback and his LAN on 443, as GAP rows, never as passes. A
+    /// launch whose cell has egress <c>web</c> is then admitted under that proof.
+    /// </summary>
+    [LinuxFact]
+    public async Task The_benchmark_proves_web_beside_none_and_records_its_loopback_and_lan_reach_as_gaps()
+    {
+        PlatformIsACells();
+        var codex = PinnedCodex();
+        using var rows = Rows();
+        _ = new World("bench-web");
+        Deployed(true);
+        using var db = TestEnv.NewDb();
+        var held = await Bench(db, codex, rows.Cgroups);
+        foreach (var (name, gap) in new[] { ("web-443-granted", false), ("web-nothing-else", false), ("gap-web-loopback-443", true), ("gap-web-lan-443", true) })
+            Assert.True(held.Rows.Any(r => r.Name == name && r.Held && r.Gap == gap), $"the benchmark holds no {(gap ? "GAP" : "pass")} row '{name}':\n{Said(held)}");
+        var (proof, refusal) = RouteA.Admission(new CellRoute(db), BenchPin, CellPlatform.Read(), CellEgress.Web);
+        Assert.True(refusal is null, refusal);
+        Assert.Equal(held.ProofId, proof!.Id);
+        Assert.Equal([CellEgress.None.Name, CellEgress.Web.Name], proof.Egress);
+        var kept = new CellProofStore(db).RowsOf(proof.Id);
+        Assert.Equal(CellBenchmark.RowNames, kept.Select(r => r.Name));
+        Assert.Equal(["gap-web-loopback-443", "gap-web-lan-443"], kept.Where(r => r.Gap).Select(r => r.Name));
+        Assert.Contains("GAP recorded: gap-web-loopback-443, gap-web-lan-443", held.Sentence, StringComparison.Ordinal);
+        Assert.Contains("measured only none, web", RouteA.Admission(new CellRoute(db), BenchPin, CellPlatform.Read(), CellEgress.WebPlain).Refusal);
+    }
+
 }

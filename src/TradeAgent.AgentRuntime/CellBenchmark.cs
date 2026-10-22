@@ -10,7 +10,15 @@ using TradeAgent.Core.Db;
 namespace TradeAgent.AgentRuntime;
 
 /// <summary>One row of the host benchmark: its name, whether it held, and what was seen.</summary>
-public sealed record BenchRow(string Name, bool Held, string Seen);
+public sealed record BenchRow(string Name, bool Held, string Seen)
+{
+    /// <summary>
+    /// A GAP ROW (fix pass 1, R4): a reach the cell HAS, measured and recorded as such in the proof — never a pass. It holds when the
+    /// measurement shows the gap as stated; one that shows otherwise means the profile no longer says what the kernel does, and no
+    /// proof is written.
+    /// </summary>
+    public bool Gap { get; init; }
+}
 
 /// <summary>What one benchmark pass found, and the proof it wrote (null when any row failed, or none could be bound).</summary>
 public sealed record BenchResult(IReadOnlyList<BenchRow> Rows, string ProfileHash, long? ProofId, string Sentence);
@@ -31,14 +39,76 @@ public sealed record BenchResult(IReadOnlyList<BenchRow> Rows, string ProfileHas
 /// </summary>
 public static class CellBenchmark
 {
-    /// <summary>The egress classes this benchmark's rows prove: <c>none</c> only (the <c>web</c> rows are NOT in this unit — a launch naming it is refused).</summary>
-    public static readonly IReadOnlyList<string> ProvedEgress = [CellEgress.None.Name];
+    /// <summary>
+    /// THE EGRESS CLASSES THIS BENCHMARK'S ROWS PROVE (L4; the owner's answer of 2026-10-21, "Web (443) for every executor"): <c>none</c>
+    /// and <c>web</c>. The proof names them, and a launch whose cell names another class is refused (<see cref="RouteA.Admission"/>).
+    /// </summary>
+    public static readonly IReadOnlyList<string> ProvedEgress = [CellEgress.None.Name, CellEgress.Web.Name];
 
     /// <summary>The rows, by name, in the order they run: the profile names them, so a build that changes the list holds no proof.</summary>
     public static readonly IReadOnlyList<string> RowNames =
     [
-        "env-is-the-policys", "state-unreadable", "login-unreadable", "inbox-uncreatable", "no-egress", "tmp-unchanged", "route-a-exec-server"
+        "env-is-the-policys", "state-unreadable", "login-unreadable", "inbox-uncreatable", "no-egress",
+        "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
+        "tmp-unchanged", "route-a-exec-server"
     ];
+
+    /// <summary>Where the rows that need a socket, a syscall or a fork find their interpreter: absent, those rows cannot hold.</summary>
+    const string Python = "/usr/bin/python3";
+
+    /// <summary>
+    /// ONE PROBE OF THE NETWORK FROM INSIDE A CELL, by tag: <c>tag=host:port</c> connects (a tag starting <c>fast</c> sends with
+    /// <c>MSG_FASTOPEN</c> instead), <c>udp=host:port</c> sends a datagram, <c>bind=</c> and <c>listen=</c> try to serve. Each prints
+    /// <c>tag-connected|sent|open</c>, <c>tag-denied</c> (the kernel's rules), <c>tag-reached</c> (past the rules, refused by the
+    /// peer), <c>tag-absent</c> (no such address here) or <c>tag-unclear</c>, with the errno.
+    /// </summary>
+    const string NetProbe = """
+        import errno, socket, sys
+        def say(tag, e):
+            if e.errno in (errno.EACCES, errno.EPERM): print(f"{tag}-denied errno={e.errno}")
+            elif e.errno == errno.ECONNREFUSED: print(f"{tag}-reached errno={e.errno}")
+            elif e.errno in (errno.EADDRNOTAVAIL, errno.ENETUNREACH, errno.EAFNOSUPPORT): print(f"{tag}-absent errno={e.errno}")
+            else: print(f"{tag}-unclear errno={e.errno}")
+        for spec in sys.argv[1:]:
+            tag, rest = spec.split("=", 1)
+            try:
+                if tag == "bind":
+                    socket.socket(socket.AF_INET, socket.SOCK_STREAM).bind(("127.0.0.1", 0)); print("bind-open")
+                elif tag == "listen":
+                    socket.socket(socket.AF_INET, socket.SOCK_STREAM).listen(1); print("listen-open")
+                else:
+                    host, port = rest.rsplit(":", 1)
+                    host = host.strip("[]")
+                    if tag == "udp":
+                        socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", (host, int(port))); print("udp-sent")
+                        continue
+                    s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(5)
+                    if tag.startswith("fast"):
+                        s.sendto(b"x", socket.MSG_FASTOPEN, (host, int(port))); print(tag + "-sent")
+                    else:
+                        s.connect((host, int(port))); print(tag + "-connected")
+                    s.close()
+            except OSError as e:
+                say(tag, e)
+        """;
+
+    /// <summary>Whether a connect got past the kernel's rules: it connected, or the peer refused it.</summary>
+    static bool Through(string output, string tag) =>
+        output.Contains(tag + "-connected", StringComparison.Ordinal) || output.Contains(tag + "-reached", StringComparison.Ordinal);
+
+    /// <summary>This host's own IPv4 address on an interface that is up, besides loopback — a LAN address a <c>web</c> cell reaches on 443.</summary>
+    static IPAddress? OwnLanAddress()
+    {
+        try
+        {
+            return System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(u => u.Address)
+                .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
+        }
+        catch (System.Net.NetworkInformation.NetworkInformationException) { return null; }
+    }
 
     /// <summary>THE PROFILE a proof of <paramref name="provider"/> is measured under on this platform with codex <paramref name="codexPin"/>.</summary>
     public static string Profile(string provider, CellPlatform platform, string codexPin) =>
@@ -78,13 +148,12 @@ public static class CellBenchmark
                 : new CellPolicy(ws, [codexHome, home], CellPolicy.SystemRoots,
                     [new("PATH", "/usr/local/bin:/usr/bin:/bin"), new("HOME", home), new("LANG", "C.UTF-8"), .. CellPolicy.ToolEnvironment(ws)]);
 
-            async Task<(int Code, string Out)> Sh(string script, string shell = "/bin/sh")
+            async Task<(int Code, string Out)> Run(CellPolicy under, string program, params string[] args)
             {
-                var psi = new ProcessStartInfo(shell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                var psi = new ProcessStartInfo(program) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                     RedirectStandardOutput = true, RedirectStandardError = true };
-                psi.ArgumentList.Add("-c");
-                psi.ArgumentList.Add(script);
-                using var held = ProcessContainment.Start(psi, policy, launcher, cgroups: cgroups);
+                foreach (var a in args) psi.ArgumentList.Add(a);
+                using var held = ProcessContainment.Start(psi, under, launcher, cgroups: cgroups);
                 held.Process.StandardInput.Close();
                 var so = held.Process.StandardOutput.ReadToEndAsync(ct);
                 var se = held.Process.StandardError.ReadToEndAsync(ct);
@@ -92,16 +161,27 @@ public static class CellBenchmark
                 return (held.Process.ExitCode, (await so) + (await se));
             }
 
-            async Task Row(string name, Func<Task<(bool, string)>> body)
+            Task<(int Code, string Out)> Sh(string script, string shell = "/bin/sh") => Run(policy, shell, "-c", script);
+
+            // A ROW THAT NEEDS AN INTERPRETER: its script written into the cell's workspace and run there. No python3: it cannot hold.
+            Task<(int Code, string Out)> Py(CellPolicy under, string name, string script, params string[] args)
+            {
+                if (!File.Exists(Python)) throw new InvalidOperationException($"python3 is not at {Python} on this host, so the row could not be tried");
+                var file = Path.Combine(ws, name + ".py");
+                File.WriteAllText(file, script);
+                return Run(under, Python, ["-I", file, .. args]);
+            }
+
+            async Task Row(string name, Func<Task<(bool, string)>> body, bool gap = false)
             {
                 try
                 {
                     var (ok, seen) = await body();
-                    rows.Add(new BenchRow(name, ok, seen));
+                    rows.Add(new BenchRow(name, ok, seen) { Gap = gap });
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    rows.Add(new BenchRow(name, false, ex.Message));
+                    rows.Add(new BenchRow(name, false, ex.Message) { Gap = gap });
                 }
             }
 
@@ -148,6 +228,60 @@ public static class CellBenchmark
                 }
                 finally { listener.Stop(); }
             });
+
+            // EGRESS `web` (fix pass 1, R4; U-cell-linux-d's rows): the same cell under class `web` — TCP 443 let through by the kernel's
+            // rules while any other port, a fast-open send, a datagram, a bind and a listen are denied; and the reach that comes with it,
+            // loopback and the LAN on 443 (Landlock's port rules are port-only), measured and recorded as GAP rows. 443 is measured by a
+            // connect the peer answers or refuses — nothing here can listen on it — and a denied connect says EACCES, at once.
+            var web = new CellPolicy(policy.Workspace, policy.ReadOnly, policy.Executable, policy.Environment, CellEgress.Web);
+            await Row("web-443-granted", async () =>
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                try
+                {
+                    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                    var (_, o) = await Py(web, "web-granted", NetProbe, "https=127.0.0.1:443", $"other=127.0.0.1:{port}");
+                    var reached = listener.Pending();
+                    return (Through(o, "https") && o.Contains("other-denied", StringComparison.Ordinal) && !reached,
+                        $"443 {(Through(o, "https") ? "let through" : "NOT let through")}, another port {(o.Contains("other-denied", StringComparison.Ordinal) ? "denied" : "NOT denied")}" +
+                        $"{(reached ? ", and its listener was reached" : "")}: {o.Trim().Replace('\n', ' ')}");
+                }
+                finally { listener.Stop(); }
+            });
+            await Row("web-nothing-else", async () =>
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                using var receiver = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+                try
+                {
+                    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                    var udp = ((IPEndPoint)receiver.Client.LocalEndPoint!).Port;
+                    var (_, o) = await Py(web, "web-else", NetProbe, $"fastother=127.0.0.1:{port}", $"udp=127.0.0.1:{udp}", "bind=", "listen=");
+                    var denied = new[] { "fastother", "udp", "bind", "listen" }.All(t => o.Contains(t + "-denied", StringComparison.Ordinal));
+                    var arrived = listener.Pending() || receiver.Available > 0;
+                    return (denied && !arrived, $"{o.Trim().Replace('\n', ' ')}{(arrived ? "; something ARRIVED outside" : "; nothing arrived outside")}");
+                }
+                finally { listener.Stop(); }
+            });
+            await Row("gap-web-loopback-443", async () =>
+            {
+                var (_, o) = await Py(web, "web-loopback", NetProbe, "v4=127.0.0.1:443", "v6=[::1]:443");
+                var v6 = Through(o, "v6") || o.Contains("v6-absent", StringComparison.Ordinal);
+                return (Through(o, "v4") && v6,
+                    $"GAP: a web cell reaches this host's own loopback on 443 (a service listening there is reachable from the cell): {o.Trim().Replace('\n', ' ')}");
+            }, gap: true);
+            await Row("gap-web-lan-443", async () =>
+            {
+                if (OwnLanAddress() is not { } lan)
+                    return (true, "GAP: this host has no LAN address to measure from; the kernel's port rule names no address, so a web cell reaches any host of the LAN on 443");
+                var (_, o) = await Py(web, "web-lan", NetProbe, $"lan={lan}:443");
+                return (Through(o, "lan"),
+                    "GAP: a web cell reaches this host's own LAN address on 443, and so any host of the LAN on 443 (the port rule names no address): " +
+                    o.Trim().Replace(lan.ToString(), "<own address>", StringComparison.Ordinal).Replace('\n', ' '));
+            }, gap: true);
+
             await Row("tmp-unchanged", () =>
             {
                 if (cellPid is null) return Task.FromResult((false, "the first row printed no pid"));
@@ -183,18 +317,19 @@ public static class CellBenchmark
             try { Directory.Delete(root, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* swept later */ }
         }
 
-        var held = rows.Count == RowNames.Count && rows.All(r => r.Held);
+        var held = rows.Select(r => r.Name).SequenceEqual(RowNames) && rows.All(r => r.Held);
         long? proof = null;
         if (held)
         {
-            try { proof = new CellProofStore(db).Record(RouteA.Provider, profile); }
+            try { proof = new CellProofStore(db).Record(RouteA.Provider, profile, ProvedEgress, [.. rows.Select(r => new ProofRow(r.Name, r.Gap, r.Seen))]); }
             catch (Exception ex) when (ex is TradeAgentException or Microsoft.Data.Sqlite.SqliteException)
             {
                 return new BenchResult(rows, profile, null, "every row held, and no proof could be written: " + ex.Message);
             }
         }
         var sentence = held
-            ? $"cell proof {proof} written for {RouteA.Provider} ({platform.Summary}): {string.Join(", ", rows.Select(r => r.Name))} held"
+            ? $"cell proof {proof} written for {RouteA.Provider} ({platform.Summary}), egress {string.Join(" and ", ProvedEgress)}: " +
+              $"{string.Join(", ", rows.Where(r => !r.Gap).Select(r => r.Name))} held; GAP recorded: {string.Join(", ", rows.Where(r => r.Gap).Select(r => r.Name))}"
             : "no cell proof: " + string.Join("; ", rows.Where(r => !r.Held).Select(r => $"{r.Name} did not hold ({r.Seen})"));
         return new BenchResult(rows, profile, proof, sentence);
     }

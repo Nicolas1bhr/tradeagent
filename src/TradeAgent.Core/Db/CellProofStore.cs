@@ -13,7 +13,19 @@ public sealed record CellProof(string Provider, string Platform, string Machine,
 {
     /// <summary>The row's id: what a launch's assurance and a revocation name.</summary>
     public long Id { get; init; }
+
+    /// <summary>
+    /// THE EGRESS CLASSES THE PROOF'S ROWS MEASURED (fix pass 1, R4; L4): a launch whose cell names a class not here is refused. Empty
+    /// on a row that names none, which admits no class.
+    /// </summary>
+    public IReadOnlyList<string> Egress { get; init; } = [];
 }
+
+/// <summary>
+/// ONE ROW OF THE BENCHMARK THAT WROTE A PROOF, as the proof keeps it (<c>cell_proof_row</c>): its name, whether it is a GAP — a reach
+/// measured and recorded as such, never a pass — and what it saw.
+/// </summary>
+public sealed record ProofRow(string Name, bool Gap, string Seen);
 
 /// <summary>
 /// THIS HOST'S IDENTITY, as a cell proof records it and is matched on (review of <c>U-thinking-seats-a</c>, item 3): a stable machine
@@ -153,7 +165,7 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
         return db.Read(_ =>
         {
             using var c = db.Cmd("""
-                SELECT id, provider, platform, machine, os_release, build, profile_hash, proven_at FROM cell_proof
+                SELECT id, provider, platform, machine, os_release, build, profile_hash, proven_at, egress FROM cell_proof
                  WHERE platform = $platform AND machine = $machine AND os_release = $release AND build = $build AND boot = $boot
                    AND id NOT IN (SELECT proof_id FROM cell_proof_revocation)
                  ORDER BY proven_at, id
@@ -164,7 +176,11 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
             while (r.Read())
                 rows.Add(new CellProof(r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
                     DateTimeOffset.Parse(r.GetString(7), System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.RoundtripKind)) { Id = r.GetInt64(0) });
+                        System.Globalization.DateTimeStyles.RoundtripKind))
+                {
+                    Id = r.GetInt64(0),
+                    Egress = r.IsDBNull(8) ? [] : r.GetString(8).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                });
             return (IReadOnlyList<CellProof>)rows;
         });
     }
@@ -185,26 +201,47 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
 
     /// <summary>
     /// WRITES ONE PROOF — called only by the host benchmark when EVERY row held (<c>CellBenchmark</c>): bound to this host's platform,
-    /// machine, full release and boot and this build, with the profile it measured. Returns its id; refuses a host whose identity
-    /// cannot be read.
+    /// machine, full release and boot and this build, with the profile it measured, the egress classes its rows proved and every row
+    /// it ran (a GAP kept as one), in the one transaction a write is. Returns its id; refuses a host whose identity cannot be read, and a proof that
+    /// names no egress class.
     /// </summary>
-    public long Record(string provider, string profileHash)
+    public long Record(string provider, string profileHash, IReadOnlyList<string> egress, IReadOnlyList<ProofRow>? rows = null)
     {
         if (Here is not { } here)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "this host's identity could not be read, so no cell proof can be bound to it");
+        if (egress.Count == 0 || egress.Any(e => e.Length == 0 || e.Contains(',', StringComparison.Ordinal)))
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "a cell proof names the egress classes its rows measured, and this one named none");
         var built = Build;
         return db.Write(_ =>
         {
             using var c = db.Cmd("""
-                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at, boot)
-                VALUES($provider, $platform, $machine, $release, $build, $profile, $at, $boot);
+                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at, boot, egress)
+                VALUES($provider, $platform, $machine, $release, $build, $profile, $at, $boot, $egress);
                 SELECT last_insert_rowid();
                 """, ("$provider", provider), ("$platform", ThisPlatform), ("$machine", here.Machine), ("$release", here.OsRelease),
                 ("$build", built), ("$profile", profileHash), ("$at", DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
-                ("$boot", here.Boot));
-            return (long)c.ExecuteScalar()!;
+                ("$boot", here.Boot), ("$egress", string.Join(',', egress)));
+            var id = (long)c.ExecuteScalar()!;
+            foreach (var row in rows ?? [])
+            {
+                using var r = db.Cmd("INSERT INTO cell_proof_row(proof_id, name, kind, seen) VALUES($id, $name, $kind, $seen)",
+                    ("$id", id), ("$name", row.Name), ("$kind", row.Gap ? "GAP" : "PASS"), ("$seen", row.Seen));
+                r.ExecuteNonQuery();
+            }
+            return id;
         });
     }
+
+    /// <summary>The rows of proof <paramref name="proofId"/>, in the order the benchmark ran them.</summary>
+    public IReadOnlyList<ProofRow> RowsOf(long proofId) =>
+        db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT name, kind, seen FROM cell_proof_row WHERE proof_id = $id ORDER BY id", ("$id", proofId));
+            using var r = c.ExecuteReader();
+            var rows = new List<ProofRow>();
+            while (r.Read()) rows.Add(new ProofRow(r.GetString(0), r.GetString(1) == "GAP", r.GetString(2)));
+            return (IReadOnlyList<ProofRow>)rows;
+        });
 
     /// <summary>Appends a revocation of proof <paramref name="proofId"/>: a launch's canary found it no longer true. The proof stops counting.</summary>
     public void Revoke(long proofId, string reason) =>

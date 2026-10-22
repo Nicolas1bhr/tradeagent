@@ -25,7 +25,7 @@ public class CellProofTests
     public void A_proof_counts_only_on_its_boot_kernel_and_build()
     {
         using var db = TestEnv.NewDb();
-        var id = new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa").Record("p", "profile-1");
+        var id = new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa").Record("p", "profile-1", ["none"]);
         Assert.Equal(id, Assert.Single(new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa").Proven()).Id);
 
         Assert.Empty(new CellProofStore(db, () => Here with { Boot = Sha256Hex.Of("boot-2") }, () => "1.0.0+trade-sha256:aa").Proven());
@@ -58,7 +58,12 @@ public class CellProofTests
     {
         using var db = TestEnv.NewDb();
         Assert.Equal("43", db.Read(_ => { using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'"); return (string)c.ExecuteScalar()!; }));
-        var id = new CellProofStore(db, () => Here, () => "b").Record("p", "profile");
+        var id = new CellProofStore(db, () => Here, () => "b").Record("p", "profile", ["none", "web"], [new ProofRow("web-443-granted", false, "let through"), new ProofRow("gap-web-lan-443", true, "reached")]);
+        // THE PROOF NAMES ITS CLASSES AND KEEPS ITS ROWS, A GAP AS A GAP (fix pass 1, R4); one naming no class is refused.
+        Assert.Equal(["none", "web"], Assert.Single(new CellProofStore(db, () => Here, () => "b").Proven()).Egress);
+        Assert.Equal([new ProofRow("web-443-granted", false, "let through"), new ProofRow("gap-web-lan-443", true, "reached")],
+            new CellProofStore(db, () => Here, () => "b").RowsOf(id));
+        Assert.Throws<TradeAgentException>(() => new CellProofStore(db, () => Here, () => "b").Record("p", "profile", []));
         new CellProofStore(db, () => Here, () => "b").Revoke(id, "why");
         var rows = CellAssuranceStore.WithAttemptSide(
         [
@@ -70,7 +75,8 @@ public class CellProofTests
         {
             "UPDATE cell_proof SET build = 'x'", "DELETE FROM cell_proof", "UPDATE cell_proof_revocation SET reason = 'x'",
             "DELETE FROM cell_proof_revocation", "UPDATE cell_assurance SET egress = 'web'", "DELETE FROM cell_assurance",
-            "UPDATE cell_assurance_row SET class = 'HARD_PLATFORM'", "DELETE FROM cell_assurance_row"
+            "UPDATE cell_assurance_row SET class = 'HARD_PLATFORM'", "DELETE FROM cell_assurance_row",
+            "UPDATE cell_proof_row SET kind = 'PASS'", "DELETE FROM cell_proof_row"
         })
         {
             var ex = Assert.ThrowsAny<Exception>(() => db.Write(_ => { using var c = db.Cmd(sql); return c.ExecuteNonQuery(); }));
@@ -89,7 +95,7 @@ public class CellProofTests
     public void The_attempt_side_is_the_weaker_of_the_cell_and_the_harness()
     {
         using var db = TestEnv.NewDb();
-        var id = new CellProofStore(db, () => Here, () => "b").Record("p", "profile");
+        var id = new CellProofStore(db, () => Here, () => "b").Record("p", "profile", ["none", "web"], [new ProofRow("web-443-granted", false, "let through"), new ProofRow("gap-web-lan-443", true, "reached")]);
         var rows = CellAssuranceStore.WithAttemptSide(
         [
             new AssuranceRow("inbox", AssuranceSide.Cell, EnforcementClass.HardPlatform, "Landlock and Guarded"),
