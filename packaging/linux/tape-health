@@ -10,7 +10,9 @@
 #   service|<unit>|active=<state>|NRestarts=<n>|since=<when>|pid=<main pid>
 #   tape|<path>|<bytes>                        the tape's size on disk, WAL included
 #   fetch|<source>|<http status or none>|<count>|<newest received_at>       prove.sh's per-source counts
-#   delivery|<source>|age_s=<seconds>|<newest received_at>                 the newest answered (HTTP 200) fetch per source
+#   delivery|<source>|age_s=<seconds>|<newest received_at>                 the newest PARSED delivery per source: an HTTP 200 whose
+#                                              note is empty (the app records a parse failure on a 200 with a note, and that is no data)
+#   parse_failed|<source>|<count>|<newest received_at>|<newest note>       HTTP 200 answers whose parse failed, apart; no line = none
 #   ai_attempt|<rows>                          launches of the agent CLI ever recorded in this home (a recording-only home: 0)
 #   ai_process|<pid name>                      a codex, opencode or node process of the account (none: the line says none)
 #   report|<file>                              the newest daily report, and under it
@@ -45,7 +47,8 @@ echo "service|$unit|active=$(systemctl is-active "$unit" 2> /dev/null || true)|N
 if as_account test -f "$tape"; then
     echo "tape|$tape|$(as_account cat "$tape" "$tape-wal" 2> /dev/null | wc -c | tr -d ' ')"
     ask "$tape" "SELECT 'fetch', source, coalesce(http_status, 'none'), count(*), max(received_at) FROM tape_fetch GROUP BY source, coalesce(http_status, 'none') ORDER BY source, coalesce(http_status, 'none');" "tape_fetch"
-    ask "$tape" "SELECT 'delivery', source, 'age_s=' || coalesce(strftime('%s', 'now') - strftime('%s', max(received_at)), 'unreadable'), max(received_at) FROM tape_fetch WHERE http_status = 200 GROUP BY source ORDER BY source;" "tape_fetch deliveries"
+    ask "$tape" "SELECT 'delivery', source, 'age_s=' || coalesce(strftime('%s', 'now') - strftime('%s', max(received_at)), 'unreadable'), max(received_at) FROM tape_fetch WHERE http_status = 200 AND note IS NULL GROUP BY source ORDER BY source;" "tape_fetch deliveries"
+    ask "$tape" "SELECT 'parse_failed', source, count(*), max(received_at), (SELECT replace(replace(f2.note, char(10), ' '), char(13), ' ') FROM tape_fetch f2 WHERE f2.source = f.source AND f2.http_status = 200 AND f2.note IS NOT NULL ORDER BY f2.id DESC LIMIT 1) FROM tape_fetch f WHERE http_status = 200 AND note IS NOT NULL GROUP BY source ORDER BY source;" "tape_fetch parse failures"
 else
     echo "tape|$tape|absent"
 fi
