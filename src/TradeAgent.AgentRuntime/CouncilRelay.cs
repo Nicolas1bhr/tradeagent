@@ -300,6 +300,14 @@ public sealed class CouncilRelay
     }
 
     /// <summary>
+    /// Whether <paramref name="name"/> matches <paramref name="pattern"/> as <c>Directory.EnumerateFiles(dir, pattern)</c> matched it: the
+    /// Win32 expression, case-sensitive where the platform's names are (Linux) and not elsewhere.
+    /// </summary>
+    static bool Matches(string pattern, string name) =>
+        System.IO.Enumeration.FileSystemName.MatchesWin32Expression(
+            System.IO.Enumeration.FileSystemName.TranslateWin32Expression(pattern), name, ignoreCase: !OperatingSystem.IsLinux());
+
+    /// <summary>
     /// EVERYTHING THE DISK CAN SAY, READ BEFORE ANY TRANSACTION IS OPEN.
     ///
     /// <para><b>Why the reads are here and not in <see cref="Land"/>.</b> There is ONE lock over the
@@ -315,7 +323,8 @@ public sealed class CouncilRelay
     internal Pass Read(string role, string? attempt)
     {
         var pass = new Pass();
-        var outDir = Path.Combine(_homeOf(role), WorkspaceBuilder.OutDir);
+        var home = _homeOf(role);
+        var outDir = Path.Combine(home, WorkspaceBuilder.OutDir);
 
         List<(string File, string Kind)> files;
         try
@@ -327,8 +336,13 @@ public sealed class CouncilRelay
             // EVERY KIND THIS ROLE MAY PUBLISH, and the cap is over the whole pass rather than per
             // pattern: three patterns at ten files each would be thirty paid turns bought by a role
             // that filled its folder, which is exactly what PerPass exists to stop.
+            //
+            // LISTED THROUGH out/ OPENED WITHOUT FOLLOWING A LINK (fix pass 3, the re-review's P2): an executor's cell writes this folder,
+            // so out/ itself may be a link it planted — refused, never listed through — and a name in it may be one, which is listed as a
+            // name and never read through below. Each kind's pattern is matched as Directory.EnumerateFiles matched it.
+            var names = HomeFiles.List(home, WorkspaceBuilder.OutDir).Where(e => !e.Folder).Select(e => e.Name).ToList();
             files = [.. KindsFor(role)
-                .SelectMany(k => Directory.EnumerateFiles(outDir, Pattern(k)).Select(f => (File: f, Kind: k)))
+                .SelectMany(k => names.Where(n => Matches(Pattern(k), n)).Select(n => (File: Path.Combine(outDir, n), Kind: k)))
                 .OrderBy(x => x.File, StringComparer.Ordinal)
                 .Take(PerPass)];
         }
@@ -358,8 +372,10 @@ public sealed class CouncilRelay
             Boundary?.Invoke(Reading);
 
             string content;
-            try { content = File.ReadAllText(file); }
-            catch (Exception) { continue; }         // being written now; the next pass takes it
+            // NEVER THROUGH A LINK (fix pass 3, P2): a report name the cell made a link to a login or the app's state is refused by the
+            // descriptor that would be read, so no byte of what it points at reaches a held publication.
+            try { content = HomeFiles.ReadAllText(home, $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}"); }
+            catch (Exception) { continue; }         // being written now, or refused; the next pass takes it
 
             if (!Valid(content, kind))
             {
