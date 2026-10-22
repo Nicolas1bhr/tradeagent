@@ -1173,7 +1173,11 @@ public sealed class AppHost : IAsyncDisposable
             // role on the app-owned harness is priced against the harness's catalogue, at the model its turn will name.
             seat: role => role is null ? AppSeat() : SeatFor(role),
             // THE SEAT EACH ROLE WAS DECLARED ON, for the meter's own check that the seat it verifies is that seat.
-            declaredSeat: DeclaredSeatClass);
+            declaredSeat: DeclaredSeatClass,
+            // WHO THE SEAT HOME'S SIGN-IN BILLS NOW (U-billing-classes, fix pass 2): the app's own last reading of it, refreshed on the
+            // background pass below — what the loop's first look holds a CLI or broker role to, so neither a home with no launch yet
+            // nor a seat the owner signed in again another way is held to the other class's ceiling. No process here: the last reading.
+            signIn: () => SeatSignIn.State().SignedInClass);
         Meter.Changed += () => Changed?.Invoke();
 
         Wakes = new MissionEventStore(db);
@@ -1538,8 +1542,20 @@ public sealed class AppHost : IAsyncDisposable
                 // THE SEAT HOME'S SIGN-IN (U-seat-signin): every pass while the card is showing — so a sign-in finished on the
                 // owner's phone takes the card away within seconds — and every thirty seconds while signed in. Off this pass: a status
                 // read is a program start, and nothing here waits for it; the card is told when it lands.
+                //
+                // AND THE LOOP IS WOKEN WHEN THE CLASS IT BILLS CHANGES (U-billing-classes, fix pass 2): the first look holds a role to
+                // that class's ceiling and may have set it waiting for midnight — on the app's first seconds, before any reading (a fresh
+                // home with no real money and the plan's room), or on the class the seat billed before the owner signed it in another
+                // way. A wake grants nothing: the loop looks again, and Begin's own reading of the seat still decides.
                 if (pass % 6 == 0 || SeatSignIn.Wanted || SeatSignIn.SigningIn)
-                    _ = SeatSignIn.RefreshAsync(ct).ContinueWith(_ => Changed?.Invoke(), TaskScheduler.Default);
+                {
+                    var billed = SeatSignIn.State().SignedInClass;
+                    _ = SeatSignIn.RefreshAsync(ct).ContinueWith(read =>
+                    {
+                        if (read.IsCompletedSuccessfully && read.Result.SignedInClass != billed) Mission?.Wake();
+                        Changed?.Invoke();
+                    }, TaskScheduler.Default);
+                }
 
                 // Once at startup, then every five minutes. A day that ended while this machine was
                 // asleep gets its report the first time the app is awake afterwards; a day that ends

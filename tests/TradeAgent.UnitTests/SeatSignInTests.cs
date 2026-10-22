@@ -64,10 +64,14 @@ public class SeatSignInTests
             Assert.Contains(SeatSignInCard.Key, words);
 
             // SIGNED IN — here by the script's own marker, as a sign-in finished elsewhere would leave it — the card goes.
+            // NOTHING SIGNED IN, NO LAUNCH: the meter's first look has no class to hold a role to but both (U-billing-classes, fix pass 2).
+            Assert.Equal(TradeAgent.Core.Db.BillingClasses.Unknown, host.BillingClassOf(CouncilRoles.Research));
             File.WriteAllText(rig.Marker, "");
             Rig.OnThisThread(rig.Service.RefreshAsync());
             page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
             Assert.False(card.Root.IsVisible);
+            // AND THE HOST HANDS THE METER THIS READING: the class the seat home's sign-in bills now, with no launch in this home yet.
+            Assert.Equal(TradeAgent.Core.Db.BillingClasses.Key, host.BillingClassOf(CouncilRoles.Research));
             Assert.True(card.SignedIn.IsVisible);
         }
         finally { await host.Gateway.DisposeAsync(); }
@@ -458,10 +462,14 @@ public class SeatSignInTests
         using var rig = new Rig(nameof(The_sign_in_state_is_read_by_status_under_the_seat_home_and_unknown_when_status_cannot_run));
         Assert.Equal(SeatSignInState.NotApplicable, rig.Service.State().State);
 
-        Assert.Equal(SeatSignInState.SignedOut, (await rig.Service.RefreshAsync()).State);
+        var signedOut = await rig.Service.RefreshAsync();
+        Assert.Equal(SeatSignInState.SignedOut, signedOut.State);
+        Assert.Null(signedOut.SignedInClass);
         File.WriteAllText(rig.Marker, "");
         Assert.Equal(SeatSignInState.SignedIn, (await rig.Service.RefreshAsync()).State);
         Assert.Equal(SeatSignInState.SignedIn, rig.Service.State().State);
+        // AND WHO IT BILLS (U-billing-classes, fix pass 2), off the same status text: this program says "Logged in using an API key".
+        Assert.Equal(TradeAgent.Core.Db.BillingClasses.Key, rig.Service.State().SignedInClass);
         Assert.All(rig.Starts().Where(s => s.Args == "login status"),
             s => Assert.Equal(Path.Combine(rig.Codex.Seat!.Root, "codex"), s.Env.GetValueOrDefault("CODEX_HOME")));
 
