@@ -766,10 +766,28 @@ public sealed partial class OrgStore
     /// one whose judgment is owed — a sealed delivery or an escalation — whose latest wake to the decider a LOST launch took is
     /// given ONE such wake again (<see cref="LostJudgment"/>), keyed by that wake and that launch. It buys
     /// no turn and dispatches nothing. Answers how many records it wrote.
+    ///
+    /// <para><b>The holder's re-wake waits its level's floor</b> (<c>U-rewake-floor</c>, <paramref name="floors"/>): after a launch
+    /// of the mandate ENDED or was declared LOST, the re-wake is written at once but due no sooner than <see cref="RewakeDue"/>
+    /// says; one with no launch behind it is due at once. A holder the chart cannot place takes the largest floor, and
+    /// <paramref name="said"/> is told in words. Only that re-wake: every other wake here keeps its time.</para>
     /// </summary>
-    public int Sweep(DateTimeOffset now)
+    public int Sweep(DateTimeOffset now, RewakeFloors floors, Action<string>? said = null)
     {
         var written = 0;
+        // THE CHART, READ ONCE PER PASS AND ONLY WHEN A RE-WAKE NEEDS ITS HOLDER'S LEVEL. A chart that cannot be read places
+        // nobody: every holder then takes the largest floor, the saving direction, and is said so.
+        Dictionary<string, string>? levels = null;
+        string? unread = null;
+        string? LevelOf(string holder)
+        {
+            if (levels is null && unread is null)
+                try { levels = Roster().ToDictionary(p => p.Id, p => p.Level, StringComparer.Ordinal); }
+                catch (Exception ex) when (ex is TradeAgentException or SqliteException or InvalidOperationException)
+                { unread = ex.Message; }
+            return levels?.GetValueOrDefault(holder);
+        }
+
         foreach (var id in OpenMandates())
             written += db.Write(_ =>
             {
@@ -791,12 +809,26 @@ public sealed partial class OrgStore
                     return 1;
                 }
 
-                if (status is MandateEventKind.Issued or MandateEventKind.Retry or MandateEventKind.Rejected
-                    && !HasUntakenWake(m.Id) && !HasOpenLaunch(m.Id))
+                if (status is MandateEventKind.Issued or MandateEventKind.Retry or MandateEventKind.Rejected && !HasOpenLaunch(m.Id))
                 {
                     var latest = MandateEvents(m.Id)[^1];
-                    return new MissionEventStore(db).Raise(MissionEventIds.Mandate(m.Id, latest.Id, LastLaunch(m.Id) ?? "none"),
-                        MissionEventKind.Mandate, now, payload: m.Id, role: m.Holder) ? 1 : 0;
+                    var last = LastLaunch(m.Id);
+                    var key = MissionEventIds.Mandate(m.Id, latest.Id, last ?? "none");
+                    var events = new MissionEventStore(db);
+                    if (HasUntakenWake(m.Id))
+                        // THE HOLDER ASKED FOR ITS OWN WAKE AFTER A PASS WROTE THIS RE-WAKE (its turn's end and its request are two
+                        // writes, and a pass can run between them): the re-wake still pending is brought to that time, once.
+                        return last is not null && OwnWake(last) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0;
+
+                    var level = LevelOf(m.Holder);
+                    var due = last is null ? now : RewakeDue(m, latest, last, level ?? floors.Largest, floors, now);
+                    if (!events.RaiseDue(key, MissionEventKind.Mandate, now, due, payload: m.Id, role: m.Holder)) return 0;
+                    if (level is null && due > now)
+                        said?.Invoke($"The organisation's chart cannot place {m.Holder}"
+                                     + (unread is null ? "" : $" (it could not be read: {unread})")
+                                     + $", so its re-wake for mandate {m.Id} waits the largest floor there is, "
+                                     + $"{floors.Floor(floors.Largest).TotalMinutes:0} minutes, rather than a guess: due {due:u}.");
+                    return 1;
                 }
 
                 // THE DECIDER'S JUDGMENT, TOO (fix pass 1, item 2): a sealed delivery or an escalation waiting on the decider whose
@@ -849,6 +881,52 @@ public sealed partial class OrgStore
         return Convert.ToInt64(lost.ExecuteScalar(), CultureInfo.InvariantCulture) != 0
             ? new MissionEvent { Id = id, Kind = kind, ConsumedBy = by }
             : null;
+    }
+
+    /// <summary>
+    /// WHEN THE HOLDER'S RE-WAKE OF <paramref name="m"/> IS DUE after <paramref name="last"/>, a launch of it that ENDED or was
+    /// declared LOST (<c>U-rewake-floor</c>): that launch's end — a LOST launch's is the restart — plus the floor of
+    /// <paramref name="level"/> for the k-th launch since the event that owes the work (<see cref="RewakeFloors.After"/>); no
+    /// later than the holder's own requested wake that launch left, so that turn serves the mandate; no later than the deadline
+    /// less one floor, so a last chance before expiry remains; and never before <paramref name="now"/>. A zero floor, or no launch
+    /// of this owing (k = 0), is due now. A function of the records alone, so a restart computes the same instant.
+    /// </summary>
+    DateTimeOffset RewakeDue(MandateRow m, MandateEventRow latest, string last, string level, RewakeFloors floors, DateTimeOffset now)
+    {
+        var floor = floors.Floor(level);
+        var k = LaunchesOwing(m.Id, latest.Id);
+        if (floor <= TimeSpan.Zero || k == 0) return now;
+
+        DateTimeOffset? ended;
+        using (var c = db.Cmd("SELECT ended_at FROM ai_attempt WHERE id=$a", ("$a", last)))
+            ended = Sql.TimeN(c.ExecuteScalar());
+        var due = (ended ?? now) + floors.After(level, k);
+        if (OwnWake(last) is { } asked && asked < due) due = asked;
+        if (m.Deadline - floor < due) due = m.Deadline - floor;
+        return due < now ? now : due;
+    }
+
+    /// <summary>
+    /// HOW MANY LAUNCHES TOOK A WAKE OF <paramref name="mandateId"/> OWED BY EVENT <paramref name="eventId"/> — its own wake or a
+    /// re-wake keyed after it — each an undelivered launch, else the work would no longer be owed. Read from the wakes, so a launch
+    /// a refusal closed without starting is never counted and a LOST one is.
+    /// </summary>
+    int LaunchesOwing(string mandateId, long eventId)
+    {
+        var own = MissionEventIds.Mandate(mandateId, eventId);
+        using var c = db.Cmd("""
+            SELECT COUNT(DISTINCT e.consumed_by) FROM mission_event e JOIN ai_attempt a ON a.id = e.consumed_by
+             WHERE e.kind = $k AND e.payload = $m AND (e.id = $own OR substr(e.id, 1, length($after)) = $after)
+            """, ("$k", MissionEventKind.Mandate), ("$m", mandateId), ("$own", own), ("$after", own + ":after:"));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>When the wake <paramref name="attemptId"/> asked for itself is due, while it is still pending; or null.</summary>
+    DateTimeOffset? OwnWake(string attemptId)
+    {
+        using var c = db.Cmd("SELECT due_at FROM mission_event WHERE id=$id AND kind=$self AND consumed_at IS NULL",
+            ("$id", MissionEventIds.Self(attemptId)), ("$self", MissionEventKind.Self));
+        return Sql.TimeN(c.ExecuteScalar());
     }
 
     bool HasUntakenWake(string mandateId)

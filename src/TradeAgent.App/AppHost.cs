@@ -2056,7 +2056,9 @@ public sealed class AppHost : IAsyncDisposable
         public void SweepMandates(DateTimeOffset now)
         {
             if (host._db is not { } db) return;
-            new OrgStore(db).Sweep(now);
+            // THE RE-WAKE FLOORS AS THE OWNER SET THEM NOW (U-rewake-floor) — the shipped defaults where no settings are read.
+            var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Settings) : RewakeFloors.From(null, null);
+            new OrgStore(db).Sweep(now, floors, text => host.Gateway?.Log.Activity(text, "warn"));
             // AND THE FORECASTS (U-org-decisions), after the mandates, so a deadline that just passed is an event the resolver reads.
             // It wakes nobody; a forecast it will not read is said, never resolved on a guess.
             var forecasts = new ForecastResolver(db).Sweep(now);
