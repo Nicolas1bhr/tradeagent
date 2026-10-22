@@ -85,15 +85,17 @@ public static class WorkspaceBuilder
         // the first start whose chair folder had no `research/` moved that role's programs into the
         // chair's (U-friction-home). An earlier layout is owed nothing while we build (CLAUDE.md).
         Directory.CreateDirectory(home);
-        foreach (var d in SubDirs) Directory.CreateDirectory(Path.Combine(home, d));
+        // EVERYTHING BELOW THE HOME IS WRITTEN WITHOUT FOLLOWING A LINK (fix pass 3, the re-review's P1-b): an executor's cell writes its
+        // whole home, and this start runs unconfined, so a name the cell made a link — a file or a folder — is replaced by the app's own
+        // (the link itself unlinked, never what it points at) and nothing is ever written where it pointed (HomeFiles).
+        foreach (var d in SubDirs) HomeFiles.CreateDirectory(home, d, replaceLinks: true);
         // WHERE THE JOURNAL'S OLDER ENTRIES GO. The app caps `trading/JOURNAL.md` and refuses one
         // that has outgrown the cap, so the agent needs somewhere to put what no longer fits that
         // is still tracked — this folder, which nothing caps and nothing versions.
-        Directory.CreateDirectory(Path.Combine(home,
-            WorkspaceRevisions.ArchiveDir.Replace('/', Path.DirectorySeparatorChar)));
-        Directory.CreateDirectory(Path.Combine(home, InDir));
-        Directory.CreateDirectory(Path.Combine(home, OutDir));
-        Directory.CreateDirectory(Path.Combine(home, AgentReach.TopFolder(MissionLoop.WakeFile)));
+        HomeFiles.CreateDirectory(home, WorkspaceRevisions.ArchiveDir, replaceLinks: true);
+        HomeFiles.CreateDirectory(home, InDir, replaceLinks: true);
+        HomeFiles.CreateDirectory(home, OutDir, replaceLinks: true);
+        HomeFiles.CreateDirectory(home, AgentReach.TopFolder(MissionLoop.WakeFile), replaceLinks: true);
 
         // THE CANON AND THE GUIDE, FOR EVERY RUNTIME THIS ROLE CAN RUN ON, written at the same start. The CLI's go where
         // a vendor CLI reads them by name; the harness's into the role's app plumbing, where ApiConversation reads its
@@ -108,7 +110,7 @@ public static class WorkspaceBuilder
         // THE LANGUAGE AND ITS WORKED PROGRAMS, app-owned exactly as the mission file above is. A role
         // that has to write a strategy has no other source for the grammar: there is no terminal here.
         ResearchLibrary.Write(home, homeDir, files);
-        File.WriteAllText(Path.Combine(home, ".tradeagent", "context.json"), Json.Write(ctx, pretty: true));
+        HomeFiles.WriteAllText(home, ".tradeagent/context.json", Json.Write(ctx, pretty: true), replaceLinks: true);
         return home;
     }
 
@@ -128,9 +130,7 @@ public static class WorkspaceBuilder
     /// <summary>One app-owned text into the role's home, and onto the app's record of what it wrote, at that moment.</summary>
     static void Write(string home, string homeDir, string relPath, string text, AppFileManifest files)
     {
-        var full = Path.Combine(home, relPath.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, text);
+        HomeFiles.WriteAllText(home, relPath, text, replaceLinks: true);
         // THE CLI'S CANON IS KEPT AS WELL AS RECORDED (U-execution-environment item 3): an executor's cell writes its whole home, so
         // its session puts the app's canon back before every turn (AgentSession.RestoreCanon), from this text.
         if (relPath == Canon.CliFile) files.Keep(homeDir, relPath, text);
