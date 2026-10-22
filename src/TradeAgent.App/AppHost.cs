@@ -2066,6 +2066,13 @@ public sealed class AppHost : IAsyncDisposable
             return db.Read(_ => org.Mandate(mandateId) is { } m ? View(org, m) : null);
         }
 
+        /// <summary>
+        /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>), composed by <see cref="PositionPacket.Compose"/> in one snapshot
+        /// from <see cref="OrgStore"/> reads only. It writes nothing and reaches no verb.
+        /// </summary>
+        public PositionPacket? PacketFor(string role, DateTimeOffset now) =>
+            host._db is { } db ? PositionPacket.Compose(db, role, now) : null;
+
         /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
         internal static MandateView View(OrgStore org, MandateRow m)
         {

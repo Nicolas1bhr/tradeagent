@@ -614,6 +614,15 @@ public interface IMissionHost
     MandateView? MandateFor(string mandateId) => null;
 
     /// <summary>
+    /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>; ORCHESTRATION §§ 2.6, 2.10): the notes sent to it since its last
+    /// committed packet, its own forecasts due and resolved, its open escalations and — for a head — the deliveries it has to judge,
+    /// composed by <see cref="PositionPacket.Compose"/> inside its byte bound, with every record it shows by reference. Read, never
+    /// written. Null where this host keeps no ledger, or for the legacy pair; a host that throws is a block nobody could read, and the
+    /// loop says so and launches without it.
+    /// </summary>
+    PositionPacket? PacketFor(string role, DateTimeOffset now) => null;
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -996,6 +1005,12 @@ public sealed record MissionSituation
     public IReadOnlyList<PacketInput> Inputs { get; init; } = [];
 
     /// <summary>
+    /// THE POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>), composed in Core inside its byte bound, or null. Rendered below the
+    /// mandate: notes as their senders' information, quoted; checks, resolutions and ids as the app's.
+    /// </summary>
+    public PositionPacket? Org { get; init; }
+
+    /// <summary>
     /// WHAT CHANGED: one line per observation this turn is answering, each with its entity — the request and its state,
     /// the execution and what filled, the boundary and its deadline, the tape's source, series and count, the event's
     /// id (<c>U-reconcile-packet</c>). At most <see cref="MissionEventStore.BatchLimit"/>, the most one turn is handed.
@@ -1206,6 +1221,11 @@ public sealed record MissionSituation
         // THE MANDATE, WHOLE, UNDER THE CAUSE IT DETAILS (U-org-packets-a): the issuer's words quoted as its claim, the app's lines not.
         if (Mandate is { } mandate) AppendMandate(b, mandate);
         Block("mandate");
+
+        // THE ORGANISATION'S RECORDS FOR THIS POSITION, BELOW ITS MANDATE (U-org-packets-b): notes since its last packet, its own
+        // forecasts and resolutions, its escalations, a head's deliveries to judge — composed and bounded in Core, placed here.
+        if (Org is { Text.Length: > 0 } org) b.Append(org.Text);
+        Block("org");
 
         // WHAT CHANGED, UNDER THE CAUSE IT DETAILS (U-reconcile-packet): one line per observation, each with its
         // entity, so the turn starts where the app's record points rather than re-reading the world.
@@ -2898,6 +2918,7 @@ public sealed class MissionLoop
             if (wake.Count == 0 && typed.Count == 0) return Idle(events);
         }
 
+        var org = PacketOf(role);
         var situation = known with
         {
             Role = role,
@@ -2914,6 +2935,13 @@ public sealed class MissionLoop
             Wakes = Reasons(wake),
             // AN EXECUTOR'S MANDATE, WHOLE (U-org-packets-a): read once, at the rotation point that keyed its session by it.
             Mandate = mandateView,
+            // THE POSITION'S ORGANISATION BLOCK AND WHAT IT SHOWED (U-org-packets-b): recorded as the attempt's input only with the
+            // turn's committed outcome — with the rejection part a's mandate block quotes, by its event id.
+            Org = org,
+            Inputs = [.. org?.Shown ?? [],
+                      .. mandateView?.SentBack is { Kind: MandateEventKind.Rejected } sentBack
+                          ? [new PacketInput(PacketInputKind.MandateEvent, sentBack.Id.ToString(CultureInfo.InvariantCulture))]
+                          : Array.Empty<PacketInput>()],
             // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
             // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
             // the attempt keeps the prompt's hash and the wakes name their attempt.
@@ -3639,6 +3667,21 @@ public sealed class MissionLoop
             if (_launched || id is null) return;
             try { host.ForgetAttemptId(id); }
             catch (Exception) { /* see the summary */ }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="role"/>'S ORGANISATION BLOCK, or null. Never throws: a block nobody could read is said and the turn launches
+    /// without it — its records carry no lineage row, so the next packet that can read them shows them.
+    /// </summary>
+    PositionPacket? PacketOf(string role)
+    {
+        try { return _host.PacketFor(role, _now()); }
+        catch (Exception ex)
+        {
+            Said(role, $"the organisation's records for this position could not be read ({ex.Message}), so this turn's packet carries "
+                       + "no notes, forecasts, escalations or deliveries; none is marked shown");
+            return null;
         }
     }
 

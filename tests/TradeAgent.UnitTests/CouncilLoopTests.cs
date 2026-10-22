@@ -108,7 +108,7 @@ public partial class CouncilLoopTests
             StateChanged?.Invoke();
             Delta?.Invoke("");
             TurnEnded?.Invoke(new AgentTurnEnded(Exit, TimeSpan.FromMilliseconds(3), turn.Text,
-                DateTimeOffset.UtcNow) { Usage = Usage });
+                DateTimeOffset.UtcNow) { Usage = Usage, GateRefused = GateRefused });
         }
 
         /// <summary>A handle that closes nothing, for a conversation with no register behind it.</summary>
@@ -138,6 +138,12 @@ public partial class CouncilLoopTests
 
         /// <summary>Every send and every stop, in order: <c>send</c>, <c>stop</c> or <c>stop:why</c>.</summary>
         public List<string> Timeline { get; } = [];
+
+        /// <summary>
+        /// While set, each turn ends as the activation gate's refusal at its last check (<c>U-org-packets-b</c>): the ending the loop
+        /// reads, as a real conversation reports one.
+        /// </summary>
+        public LateRefusal? GateRefused { get; set; }
 
         /// <summary>What the next turn reports it used, or null for a turn that reports none (<c>U-org-packets-a</c>).</summary>
         public TurnUsage? Usage { get; set; }
@@ -248,6 +254,37 @@ public partial class CouncilLoopTests
             if (org.Mandate(mandateId) is not { } m) return null;
             var latest = org.Deliveries(m.Id).LastOrDefault();
             return new MandateView(m, org.MandateEvents(m.Id), org.SpendOf(m.Id), latest, latest is null ? null : org.Checks(latest.Id));
+        }
+
+        /// <summary>A position's organisation block, composed from the real records (<c>U-org-packets-b</c>).</summary>
+        public PositionPacket? PacketFor(string role, DateTimeOffset now) => PositionPacket.Compose(_db, role, now);
+
+        /// <summary>While set, the turn's committed transition fails before anything of it is written — a launch the next start loses.</summary>
+        public bool CommitThrows { get; set; }
+
+        /// <summary>Every lineage write this host was handed outside the turn's committed transition — none, while the loop is right.</summary>
+        public List<string> InputsOutsideCommit { get; } = [];
+
+        bool _committing;
+
+        /// <summary>The turn's committed transition, as the default runs it — and the moment it runs, so a write outside it is seen.</summary>
+        public void CommitTurn(string role, string? attempt, Action dispositions)
+        {
+            if (CommitThrows) throw new IOException("the turn's transition could not be committed");
+            _committing = true;
+            try
+            {
+                Relay(role, attempt);
+                dispositions();
+            }
+            finally { _committing = false; }
+        }
+
+        /// <summary>What the launch's packet gave it, into the real lineage table.</summary>
+        public void RecordInputs(string attempt, IReadOnlyList<PacketInput> inputs)
+        {
+            if (!_committing) InputsOutsideCommit.Add(attempt);
+            new AiAttemptStore(_db).RecordInputs(attempt, inputs);
         }
 
         /// <summary>The position's last woken turn, from the real launch ledger.</summary>
