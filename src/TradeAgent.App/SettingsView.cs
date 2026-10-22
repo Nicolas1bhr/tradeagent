@@ -60,6 +60,9 @@ sealed class SettingsPage
     readonly TextBlock _paperFrictionValue = Ui.Mono("—");
     readonly TextBox _paperFee;
     readonly TextBox _paperSlippage;
+    /// <summary>The line under each box (<c>U-number-entry-culture</c>, fix pass 1): what it reads as, or why it reads as nothing, before the save.</summary>
+    readonly TextBlock _paperFeeReading = ReadingLine();
+    readonly TextBlock _paperSlippageReading = ReadingLine();
     readonly TextBlock _paperFrictionNote = Ui.Muted("");
     readonly Button _paperFrictionSave;
     readonly Button _paperFrictionClear;
@@ -170,6 +173,9 @@ sealed class SettingsPage
         // tick, which would take a number out from under the owner's typing.
         _paperFee = Ui.TextField(PercentText(host.Gateway.Settings.PaperFeeOverride), "venue's");
         _paperSlippage = Ui.TextField(PercentText(host.Gateway.Settings.PaperSlippageOverride), "assumed");
+        ReadsLive(_paperFee, _paperFeeReading, Core.Strategy.ExecutionModel.MaxFeeRate, "fee", Labels.PaperFeeEmpty);
+        ReadsLive(_paperSlippage, _paperSlippageReading, Core.Strategy.ExecutionModel.MaxSlippageRate, "slippage",
+            Labels.PaperSlippageEmpty);
         _paperFrictionSave = Ui.Secondary("Use my numbers", SavePaperFriction);
         _paperFrictionClear = Ui.Ghost("Clear my numbers", ClearPaperFriction);
         _paperFrictionValue.TextWrapping = TextWrapping.Wrap;
@@ -444,9 +450,9 @@ sealed class SettingsPage
     /// </summary>
     Control PaperFrictionRow() => Ui.Col(Theme.S2,
         Ui.KeyValueLive("Fills pay", _paperFrictionValue),
-        Ui.FieldRow("Your fee per fill, in %", _paperFee,
+        Ui.FieldRow("Your fee per fill, in %", WithReading(_paperFee, _paperFeeReading),
             "Leave it empty to pay the venue's published standard fee — what TradeAgent's own judge charges."),
-        Ui.FieldRow("Your slippage per fill, in %", _paperSlippage,
+        Ui.FieldRow("Your slippage per fill, in %", WithReading(_paperSlippage, _paperSlippageReading),
             "Leave it empty to use TradeAgent's assumption of two basis points, which is not a measurement."),
         Ui.Wrap(Theme.S2, _paperFrictionSave, _paperFrictionClear),
         _paperFrictionNote,
@@ -535,6 +541,36 @@ sealed class SettingsPage
 
         fraction = percent / 100m;
         return true;
+    }
+
+    /// <summary>The reading line's look: the amount field's (<c>AmountField</c>), from the theme.</summary>
+    static TextBlock ReadingLine() =>
+        new() { FontSize = Theme.Small, Foreground = Theme.TextMuted, TextWrapping = TextWrapping.Wrap };
+
+    /// <summary>A box with its reading line under it, as wide as the box.</summary>
+    static Control WithReading(TextBox box, TextBlock reading) =>
+        Ui.With(Ui.Col(Theme.S1, box, reading), c => c.Width = Theme.FieldWidth);
+
+    /// <summary>
+    /// THE FIGURE IS SHOWN BEFORE THE PRESS (<c>U-number-entry-culture</c>, fix pass 1), on the two boxes whose empty has a meaning of its
+    /// own: the line under the box says what the text reads as — by <see cref="TryPercent"/>, the very reading the save uses — or why it
+    /// reads as nothing, in caution colour, or that it is empty and what empty means. It reads on the text property, as the amount field
+    /// does, so it follows every keystroke whatever the box is attached to; it never writes the box's text.
+    /// </summary>
+    static void ReadsLive(TextBox box, TextBlock reading, decimal max, string name, string empty)
+    {
+        void Read()
+        {
+            var ok = TryPercent(box.Text, max, name, out var fraction, out var why);
+            reading.Text = !ok ? why : fraction is { } f ? Labels.AmountReads(Amount.Exact(f * 100m) + "%") : empty;
+            reading.Foreground = ok ? Theme.TextMuted : Theme.Caution;
+        }
+
+        Read();
+        box.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) Read();
+        };
     }
 
     /// <summary>An override as the box shows it, in percent; empty for none.</summary>

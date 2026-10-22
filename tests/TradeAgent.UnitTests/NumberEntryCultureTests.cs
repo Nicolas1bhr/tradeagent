@@ -490,6 +490,57 @@ public class NumberEntryCultureTests
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// (fix pass 1) THE PAPER FEE AND SLIPPAGE SHOW THEIR READING BEFORE THEIR SAVE, as every money and limit box does: "reads as …" or the
+    /// refusal under each box, live, and the save refused while either is refused; empty keeps its meaning — no override — and says it in
+    /// words. RED at 46bfc570: the Settings page had no reading line under either box (the save read them correctly, but only on the press).
+    /// </summary>
+    [Fact]
+    public async Task The_paper_fee_and_slippage_show_their_reading_before_their_save()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var page = new SettingsPage(host);
+            T Of<T>(string name) =>
+                (T)(typeof(SettingsPage).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new Xunit.Sdk.XunitException($"the Settings page has no {name}")).GetValue(page)!;
+            var fee = Of<TextBox>("_paperFee");
+            var slippage = Of<TextBox>("_paperSlippage");
+            var feeReading = Of<TextBlock>("_paperFeeReading");
+            var slippageReading = Of<TextBlock>("_paperSlippageReading");
+
+            // EMPTY IS NO OVERRIDE, SAID IN WORDS.
+            fee.Text = "";
+            slippage.Text = "";
+            Assert.Equal(Labels.PaperFeeEmpty, feeReading.Text);
+            Assert.Equal(Labels.PaperSlippageEmpty, slippageReading.Text);
+            Assert.Equal(Theme.TextMuted, feeReading.Foreground);
+
+            // THE OWNER'S COMMA READS, BEFORE ANY PRESS.
+            fee.Text = "0,5";
+            Assert.StartsWith(Labels.AmountReads("0.5"), feeReading.Text, StringComparison.Ordinal);
+            Assert.Equal(Theme.TextMuted, feeReading.Foreground);
+
+            // "1.000" — a thousand or one: refused under the box, and the save writes nothing.
+            slippage.Text = "1.000";
+            Assert.Contains(Labels.AmountAmbiguous("1.000", "1000", "1"), slippageReading.Text, StringComparison.Ordinal);
+            Assert.Equal(Theme.Caution, slippageReading.Foreground);
+            Press(Of<Button>("_paperFrictionSave"));
+            Assert.Null(host.Gateway.Settings.PaperFeeOverride);
+            Assert.Null(host.Gateway.Settings.PaperSlippageOverride);
+            Assert.Equal(slippageReading.Text, Of<TextBlock>("_paperFrictionNote").Text);
+
+            // AND WITH THE SLIPPAGE LEFT EMPTY, THE FEE ALONE IS SAVED — exactly what its line said.
+            slippage.Text = "";
+            Press(Of<Button>("_paperFrictionSave"));
+            Assert.Equal(0.005m, host.Gateway.Settings.PaperFeeOverride);
+            Assert.Null(host.Gateway.Settings.PaperSlippageOverride);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

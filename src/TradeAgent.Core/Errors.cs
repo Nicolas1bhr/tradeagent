@@ -833,6 +833,12 @@ public static class Labels
     public static string AmountAbove(string typed, string max) =>
         $"\u201c{typed}\u201d is more than this box takes: at most {max}.";
 
+    /// <summary>The paper fee box, empty: no override, and what is paid instead (fix pass 1).</summary>
+    public const string PaperFeeEmpty = "empty — no override: fills pay the venue's published standard fee";
+
+    /// <summary>The paper slippage box, empty: no override, and what is assumed instead (fix pass 1).</summary>
+    public const string PaperSlippageEmpty = "empty — no override: fills use TradeAgent's assumed two basis points";
+
     /// <summary>The live line under a box: the figure its text reads as, before any press.</summary>
     public static string AmountReads(string figure) => $"reads as {figure}";
 
