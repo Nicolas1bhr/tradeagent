@@ -219,6 +219,23 @@ jobs:
           case ",$lsm," in *,landlock,*) ;; *) echo "::error title=No Landlock::kernel $(uname -r): Landlock is not among the active security modules ($lsm)"; exit 1 ;; esac
           [ "$abi" -ge 6 ] || { echo "::error title=Landlock below ABI 6::kernel $(uname -r) reports Landlock ABI $abi; a cell needs ABI 6"; exit 1; }
 
+      # ROUTE (a)'S PINNED CODEX (U-cell-linux-c): the linux-musl package of the one release every seat runs, its archive and its
+      # bin/codex each checked against the build's own pins (RuntimeManifest.cs CodexInstall) — a mismatch is a red run, never a
+      # newer codex. The Cell rows find it through TA_CELL_CODEX; no model, no login, no key but the rows' FAKE ones ever reaches it.
+      - name: Fetch the pinned linux codex for the route (a) rows
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/codex-pkg"; mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/codex.tar.gz" \
+            https://github.com/openai/codex/releases/download/rust-v0.160.1/codex-package-x86_64-unknown-linux-musl.tar.gz
+          echo "340801565906a7028f6baaa9ab6853addaef221f0016a1417a7c1ffdd96c21f0  $RUNNER_TEMP/codex.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/codex.tar.gz" -C "$dir"
+          echo "f34a4d2301892ae96c90097786bfe5dc269f187b6f69faf42a7b357b8c081e35  $dir/bin/codex" | sha256sum -c -
+          echo "codex package: $(ls "$dir" | tr '\n' ' '); $("$dir/bin/codex" --version)"
+          echo "TA_CELL_CODEX=$dir/bin/codex" >> "$GITHUB_ENV"
+
       # THE ROWS RUN AS THE HOST WILL RUN THE APP: a system service with User= and Delegate=yes (packaging/linux/tradeagent.service's
       # shape, U-cell-linux-b's cgroup), started with sudo because only root starts one — the app itself never uses sudo. Lingering
       # gives the account a user systemd manager, so the `systemd-run --user` escape row is a real attempt against a real manager.
@@ -239,7 +256,7 @@ jobs:
           [ -S "/run/user/$uid/bus" ] || { echo "::error::no user manager bus at /run/user/$uid/bus after enable-linger"; exit 1; }
           sudo systemd-run --wait --pipe --quiet -p User="$user" -p Delegate=yes -p WorkingDirectory="$GITHUB_WORKSPACE" \
             -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" \
-            -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 -E TA_CELL_CODEX="${TA_CELL_CODEX:-}" \
             bash -c 'set -uo pipefail
               svc="/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)"
               state() { echo "cell cgroup ($1): service $svc owned by $(stat -c %U "$svc"); type $(cat "$svc/cgroup.type"); offered: $(cat "$svc/cgroup.controllers"); subtree_control: $(cat "$svc/cgroup.subtree_control"); processes: $(tr "\n" " " < "$svc/cgroup.procs"); this shell $BASHPID in $(sed -n "s/^0:://p" /proc/self/cgroup)"; }

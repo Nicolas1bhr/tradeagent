@@ -682,36 +682,48 @@ public static class ProcessContainment
     }
 
     /// <summary>
-    /// STARTS ROUTE (a)'S HARNESS (<c>U-cell-linux-c</c> item 3, L3): the codex process that holds the login, in the attempt's
-    /// <c>harness/</c> leaf, with the attempt's <c>cell/</c> leaf made beside it, empty, for the exec-server's cell the harness starts.
-    /// The launch's grant binds to the HARNESS LEAF, never the attempt: a process of the cell leaf is beneath the attempt, and a
-    /// container on the attempt would count it a member — with egress <c>web</c> the cell would be one port from the door. Linux only,
-    /// under a held delegated root, or <see cref="ErrorCode.CELL_UNAVAILABLE"/> and nothing starts.
+    /// ROUTE (a)'S ATTEMPT (<c>U-cell-linux-c</c> item 3): its cgroup under the held delegated root, with its <c>harness/</c> and
+    /// <c>cell/</c> leaves made empty, before anything of it starts — the harness's <c>environments.toml</c> names the cell leaf, so it
+    /// exists first. Linux only, under a held root, or <see cref="ErrorCode.CELL_UNAVAILABLE"/>.
     /// </summary>
-    public static ContainedProcess StartHarness(ProcessStartInfo psi, PreparedHold hold, IReadOnlyList<string>? launcher = null,
-        string? attemptId = null, AttemptCgroups? cgroups = null)
+    public static AttemptCgroup RouteAAttempt(AttemptCgroups? cgroups = null, string? attemptId = null)
     {
-        ArgumentNullException.ThrowIfNull(psi);
-        ArgumentNullException.ThrowIfNull(hold);
         if (!OperatingSystem.IsLinux())
-            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"route (a) runs on Linux only; {psi.FileName} was not started");
-        var prefix = launcher ?? DefaultLauncher();
-        if (CannotHold(prefix) is { } unheld) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, unheld);
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "route (a) runs on Linux only; nothing was started");
         var root = cgroups ?? AttemptCgroups.Current;
         if (!root.Held)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 $"Route (a) runs only inside the cgroup TradeAgent's service delegates to it (Delegate=yes), and this computer gives it none: " +
-                $"{root.Refusal}. {psi.FileName} was not started");
-        AttemptCgroup attempt;
+                $"{root.Refusal}. Nothing was started");
+        AttemptCgroup? attempt = null;
         try
         {
             attempt = root.Create(attemptId);
             attempt.MakeLeaves();
+            return attempt;
         }
         catch (TradeAgentException ex)
         {
-            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{ex.Message}; {psi.FileName} was not started", ex);
+            attempt?.Remove();
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{ex.Message}; nothing was started", ex);
         }
+    }
+
+    /// <summary>
+    /// STARTS ROUTE (a)'S HARNESS (<c>U-cell-linux-c</c> item 3, L3): the codex process that holds the login, in
+    /// <paramref name="attempt"/>'s <c>harness/</c> leaf (<see cref="RouteAAttempt"/>), its <c>cell/</c> leaf beside it for the
+    /// exec-server's cell the harness starts. The launch's grant binds to the HARNESS LEAF, never the attempt: a process of the cell
+    /// leaf is beneath the attempt, and a container on the attempt would count it a member — with egress <c>web</c> the cell would be
+    /// one port from the door. A launcher that will not start removes the attempt and throws <see cref="ErrorCode.CELL_UNAVAILABLE"/>.
+    /// </summary>
+    public static ContainedProcess StartHarness(ProcessStartInfo psi, AttemptCgroup attempt, IReadOnlyList<string>? launcher = null)
+    {
+        ArgumentNullException.ThrowIfNull(psi);
+        ArgumentNullException.ThrowIfNull(attempt);
+        var prefix = launcher ?? DefaultLauncher();
+        if (CannotHold(prefix) is { } unheld) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, unheld);
+        if (!Directory.Exists(attempt.Harness) || !Directory.Exists(attempt.Cell))
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{attempt.Dir} has no harness and cell leaves; {psi.FileName} was not started");
         var exe = psi.FileName;
         var args = psi.ArgumentList.ToArray();
         Relaunch(psi, prefix!, [ContainedLaunch.CgroupFlag, attempt.Harness]);
