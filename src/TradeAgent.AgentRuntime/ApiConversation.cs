@@ -76,8 +76,9 @@ public sealed class ApiConversation(
     CanonSeen? _canon;
 
     /// <summary>
-    /// WHETHER THIS TURN SENT A REQUEST (fix pass 1 of <c>U-org-packets-a</c>): set as the first one leaves, before its answer. A turn
-    /// cancelled after that ran in a session — fresh, as every harness turn is — though its exit code says it did not start.
+    /// WHETHER THIS TURN SENT A REQUEST (fix pass 1 of <c>U-org-packets-a</c>): set once a request has been handed to the transport,
+    /// before its answer. A turn cancelled after that ran in a session — fresh, as every harness turn is — though its exit code says it
+    /// did not start. A turn cancelled before it (fix pass 2) handed nothing over, ran no session, and records none.
     /// </summary>
     bool _sent;
 
@@ -165,7 +166,7 @@ public sealed class ApiConversation(
     readonly List<string> _typedMeanwhile = [];
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
-    readonly HttpClient _http = new(transport ?? new SocketsHttpHandler(), disposeHandler: true)
+    readonly HttpClient _http = new(new Handing(transport ?? new SocketsHttpHandler()), disposeHandler: true)
     {
         // SECONDS, NOT MINUTES, AND INJECTABLE. A never-answering endpoint must fail fast: the
         // failure that costs most here is the one that looks like thinking, which this codebase has
@@ -441,7 +442,6 @@ public sealed class ApiConversation(
                 throw new GateRefusedException(gate, beforeAnyWork: requests == 0, soFar: total);
 
             requests++;
-            _sent = true;
             // THE INPUT THE APP IS ABOUT TO SEND, COUNTED BY THE APP, beside the attempt the cost is
             // committed against. Bytes, because bytes are what this end can measure — the token
             // figures above are the provider's own and are never derived from these.
@@ -582,7 +582,9 @@ public sealed class ApiConversation(
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
 
         HttpResponseMessage response;
-        try { response = await _http.SendAsync(request, ct); }
+        // THE TURN SENT A REQUEST ONLY IF ONE WAS HANDED TO THE TRANSPORT (fix pass 2 of U-org-packets-a), read however the send ended:
+        // a token already cancelled hands nothing over, so that turn records no session; one cancelled after the hand-over does.
+        try { response = await SendMarked(request, ct); }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
             // THE TIMEOUT, NAMED AS ONE. HttpClient reports its own timeout as a cancellation, which
@@ -603,6 +605,31 @@ public sealed class ApiConversation(
                 throw new TradeAgentException(ErrorCode.AI_AUTH_FAILED,
                     $"{manifest.DisplayName} answered {(int)response.StatusCode}: {Cut(text.Trim(), 400)}");
             return ProviderAnswer.Read(text);
+        }
+    }
+
+    async Task<HttpResponseMessage> SendMarked(HttpRequestMessage request, CancellationToken ct)
+    {
+        try { return await _http.SendAsync(request, ct); }
+        finally { _sent |= Handing.Handed(request); }
+    }
+
+    /// <summary>
+    /// THE POINT A REQUEST LEAVES THIS APP: the last handler before the transport. It marks the request as handed over only when its
+    /// token is still live at that moment and the transport is called with it — so an already-cancelled turn never marks one, and
+    /// a turn cancelled after the hand-over has, whatever the transport then made of it.
+    /// </summary>
+    sealed class Handing(HttpMessageHandler transport) : DelegatingHandler(transport)
+    {
+        static readonly HttpRequestOptionsKey<bool> Key = new("TradeAgent.Handed");
+
+        public static bool Handed(HttpRequestMessage request) => request.Options.TryGetValue(Key, out var handed) && handed;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            request.Options.Set(Key, true);
+            return base.SendAsync(request, ct);
         }
     }
 

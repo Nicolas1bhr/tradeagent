@@ -463,6 +463,43 @@ public class HarnessBudgetTests : IDisposable
     }
 
     /// <summary>
+    /// GUARD (fix pass 2 of <c>U-org-packets-a</c>, the re-review's point): A HARNESS TURN CANCELLED BEFORE ANY REQUEST LEFT RECORDS
+    /// NO SESSION. Its token is already cancelled, so nothing is handed to the transport and the provider receives nothing: no
+    /// session ran, and the record must not claim a fresh one. Its reservation is still kept (the test above) — cost and session
+    /// are different facts.
+    ///
+    /// <para>RED at base 50110981, the mark set before the dispatch: "Expected: Tuple (null, null) Actual: Tuple ("fresh",
+    /// "harness")".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_cancelled_before_any_request_left_records_no_session()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("never read: no request leaves"));
+
+        using var runtime = Runtime(provider, allowance);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        using var stop = new CancellationTokenSource();
+        await stop.CancelAsync();
+        await conversation.SendAsync("what is the plan?", stop.Token);
+
+        Assert.Empty(provider.Requests);
+        Assert.NotNull(ended);
+        Assert.Equal(ApiConversation.EndedCancelled, ended!.Outcome);
+        Assert.Equal(((string?)null, (string?)null), (ended.Session?.State, ended.Session?.Why));
+        var row = Assert.Single(Attempts());
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.False(context.RootElement.TryGetProperty("session", out _), row.Context);
+    }
+
+    /// <summary>
     /// THE ROW SAYS THE TURN WAS BOUNDED RATHER THAN BROKEN. It lands in <c>ai_attempt.context</c>,
     /// which is already the app's own account of what it could see of a turn — a column per fact is how
     /// a table stops being readable.
