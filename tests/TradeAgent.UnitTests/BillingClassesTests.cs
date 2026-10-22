@@ -508,16 +508,16 @@ public class BillingClassesTests : IDisposable
     {
         var saved = new List<decimal>();
         var current = 40m;
-        var box = TradeAgent.App.Ui.NumberField(current, 0m, 5m);
+        var box = TradeAgent.App.Ui.AmountField(current, AmountKind.Decimal);
         var b = TradeAgent.App.SafetyPage.BuildSavePlanCapacity(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
 
-        box.Value = 60m;
+        box.Box.Text = "60";
         Press(b);
         Assert.Empty(saved);
         Assert.Equal(Labels.RaisePlanCapacityArmed("60 USD"), b.Content);
         Assert.Contains("ChatGPT plan, counted at list price", (string)b.Content!, StringComparison.Ordinal);
 
-        box.Value = 100m;                       // an edit disarms the raise that named 60
+        box.Box.Text = "100";                       // an edit disarms the raise that named 60
         Press(b);
         Assert.Empty(saved);
         Assert.Equal(Labels.RaisePlanCapacityArmed("100 USD"), b.Content);
@@ -525,7 +525,7 @@ public class BillingClassesTests : IDisposable
         Assert.Equal([100m], saved);
 
         current = 100m;
-        box.Value = 10m;                        // lowering: one press
+        box.Box.Text = "10";                        // lowering: one press
         Press(b);
         Assert.Equal([100m, 10m], saved);
         Assert.Equal(Labels.SavePlanCapacity, b.Content);

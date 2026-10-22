@@ -1,5 +1,10 @@
 using System.Globalization;
+using System.Reflection;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using Xunit;
 
@@ -156,4 +161,56 @@ public class NumberEntryCultureTests
         lanes.Box.Text = "8";
         Assert.Equal(8m, lanes.Value);
     }
+
+    // ---- the Safety page, built the way the app builds it --------------------------------------------------------
+
+    static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+    /// <summary>The Safety page over a composed host and the fake platform, handed to <paramref name="body"/> and disposed after.</summary>
+    static async Task OnThePage(Func<SafetyPage, AppHost, Task> body)
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try { await body(new SafetyPage(host), host); }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    static T Field<T>(SafetyPage page, string name) =>
+        (T)typeof(SafetyPage).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
+
+    /// <summary>
+    /// (item 3) EVERY NUMBER BOX ON THE SAFETY PAGE IS THE ONE FIELD: the built tree holds no stock number control at all, and the
+    /// twenty-six money and limit boxes — nine limits, the two ceilings, the allowance, the review interval, three lanes, two prices,
+    /// the research share, two allocation and three envelope figures, and perception's budget — are each an <see cref="AmountField"/>.
+    /// </summary>
+    [Fact]
+    public Task Every_number_box_on_the_safety_page_is_an_amount_field() => OnThePage((page, _) =>
+    {
+        var all = page.Root.GetLogicalDescendants().ToList();
+        Assert.Empty(all.OfType<NumericUpDown>());
+        Assert.Equal(26, all.OfType<AmountField>().Count());
+        return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// (item 3) THE OWNER'S COMMA READS AS FIVE HUNDREDTHS IN THE ENVELOPE BOX — "The most any one of them may hold at once", the box of
+    /// his defect. RED at 988c9487: "0,05" typed into the stock number box and committed with Enter read as 5.
+    /// </summary>
+    [Fact]
+    public Task The_owners_comma_reads_as_five_hundredths_in_the_envelope_box() => OnThePage((page, _) =>
+    {
+        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
+        var quantity = Field<AmountField>(page, "_envelopeQuantity");
+        quantity.Box.Text = "0,05";
+
+        Assert.Equal("0,05", quantity.Box.Text);
+        Assert.Equal(0.05m, quantity.Value);
+        Assert.Equal(Labels.AmountReads("0.05"), quantity.Reading.Text);
+
+        var grant = Field<Button>(page, "_grantEnvelope");
+        Press(grant);
+        Assert.True(Ui.IsArmed(grant));
+        Assert.Contains("in ES, up to 0.05 at a time", (string)grant.Content!, StringComparison.Ordinal);
+        return Task.CompletedTask;
+    });
 }

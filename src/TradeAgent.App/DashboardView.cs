@@ -1043,15 +1043,15 @@ sealed class SafetyPage
     readonly TextBlock _liveNote = Ui.Body("");
     readonly Button _liveButton;
     readonly Button _stopButton;
-    readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
-    readonly NumericUpDown _maxLossPerTrade, _maxDailyLoss;
+    readonly AmountField _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
+    readonly AmountField _maxLossPerTrade, _maxDailyLoss;
 
     /// <summary>
     /// THE TWO DURATIONS, in the same card as the budgets they are about. They are the only boxes on
     /// this page where a SMALLER number is the grant, which is why they carry their own hint and why
     /// <c>RiskPolicy.Widenings</c> compares them the other way round.
     /// </summary>
-    readonly NumericUpDown _lossMinClosure, _lossStrikeWindow, _valuationExit;
+    readonly AmountField _lossMinClosure, _lossStrikeWindow, _valuationExit;
 
     /// <summary>
     /// The two loss hints, kept because they name the ACCOUNT'S currency and the account has not
@@ -1095,25 +1095,25 @@ sealed class SafetyPage
         Text = "", FontSize = Theme.Micro, Foreground = Theme.Caution,
         TextWrapping = Avalonia.Media.TextWrapping.Wrap, IsVisible = false
     };
-    readonly NumericUpDown _dailyCap;
+    readonly AmountField _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
 
     /// <summary>
     /// THE SECOND CEILING (<c>U-billing-classes</c>): the owner's ChatGPT plan's capacity, a list-price equivalent and never money — its
     /// box, its note, today's figure for each ceiling and every seat's class in words, all updated in place.
     /// </summary>
-    readonly NumericUpDown _planCap;
+    readonly AmountField _planCap;
     readonly TextBlock _planCapNote = Ui.Micro("");
     readonly TextBlock _moneyToday = Ui.Body("");
     readonly TextBlock _planToday = Ui.Body("");
     readonly TextBlock _seatClasses = Ui.Micro("");
-    readonly NumericUpDown _allowanceIn, _allowanceOut;
+    readonly AmountField _allowanceIn, _allowanceOut;
     readonly TextBlock _allowanceNote = Ui.Micro("");
-    readonly NumericUpDown _reviewEvery;
+    readonly AmountField _reviewEvery;
     readonly TextBlock _reviewNote = Ui.Micro("");
-    readonly NumericUpDown _lanes, _lanesPerPool, _lanesPerCellClass;
+    readonly AmountField _lanes, _lanesPerPool, _lanesPerCellClass;
     readonly TextBlock _lanesNote = Ui.Micro("");
-    readonly NumericUpDown _priceIn, _priceOut;
+    readonly AmountField _priceIn, _priceOut;
     readonly TextBlock _priceNote = Ui.Micro("");
     readonly Panel _modelRow;
     readonly TextBlock _modelNote = Ui.Micro("");
@@ -1129,7 +1129,7 @@ sealed class SafetyPage
     /// <summary>The Research Director's three settings: what it runs on, which model, and its share.</summary>
     readonly Panel _researchRuntimeRow;
     readonly Panel _researchModelRow;
-    readonly NumericUpDown _researchShare;
+    readonly AmountField _researchShare;
     readonly TextBlock _councilNote = Ui.Micro("");
 
     /// <summary>
@@ -1192,8 +1192,8 @@ sealed class SafetyPage
     readonly TextBox _allocationVersion = Ui.With(Ui.TextField(placeholder: "a promoted version id"),
         t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
 
-    readonly NumericUpDown _allocationQuantity = Ui.NumberField(0m);
-    readonly NumericUpDown _allocationNotional = Ui.NumberField(0m);
+    readonly AmountField _allocationQuantity = Ui.AmountField(0m, AmountKind.Decimal);
+    readonly AmountField _allocationNotional = Ui.AmountField(0m, AmountKind.Decimal);
     readonly TextBlock _allocationValue = Ui.Body("");
     readonly TextBlock _allocationNote = Ui.Micro("");
     readonly Button _allocate;
@@ -1207,9 +1207,9 @@ sealed class SafetyPage
     readonly TextBox _envelopeSymbol = Ui.With(Ui.TextField(placeholder: "an instrument, e.g. ES"),
         t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
 
-    readonly NumericUpDown _envelopeQuantity = Ui.NumberField(0m);
-    readonly NumericUpDown _envelopeNotional = Ui.NumberField(0m);
-    readonly NumericUpDown _envelopeDays = Ui.NumberField(30m);
+    readonly AmountField _envelopeQuantity = Ui.AmountField(0m, AmountKind.Decimal);
+    readonly AmountField _envelopeNotional = Ui.AmountField(0m, AmountKind.Decimal);
+    readonly AmountField _envelopeDays = Ui.AmountField(30m, AmountKind.Whole);
     readonly TextBlock _envelopeValue = Ui.Body("");
     readonly TextBlock _envelopeNote = Ui.Micro("");
     readonly TextBlock _deploymentValue = Ui.Body("");
@@ -1371,7 +1371,7 @@ sealed class SafetyPage
     /// raise armed against one figure is disarmed by the next one typed, and that one asks twice of its own — the
     /// unconfirmed-orders card's rule, and the allocation and envelope boxes', for the same reason.
     /// </summary>
-    internal static Button BuildSaveDailyCap(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    internal static Button BuildSaveDailyCap(AmountField box, Func<decimal> current, Func<string> currency, Action save)
     {
         var b = BuildSaveDailyCap(current, () => box.Value ?? current(), currency, save);
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
@@ -1395,7 +1395,7 @@ sealed class SafetyPage
     }
 
     /// <summary>The plan's press over its own box: an edit disarms a raise armed for another figure, as the money box's does.</summary>
-    internal static Button BuildSavePlanCapacity(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    internal static Button BuildSavePlanCapacity(AmountField box, Func<decimal> current, Func<string> currency, Action save)
     {
         var b = BuildSavePlanCapacity(current, () => box.Value ?? current(), currency, save);
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
@@ -1463,7 +1463,7 @@ sealed class SafetyPage
     /// The page's lanes press over its own boxes: editing any of them DISARMS a raise armed for other figures, so a confirmation
     /// completes only the figures it named.
     /// </summary>
-    internal static Button BuildSaveLanes(IReadOnlyList<NumericUpDown> boxes,
+    internal static Button BuildSaveLanes(IReadOnlyList<AmountField> boxes,
         Func<(int Lanes, int PerPool, int PerCellClass)> current,
         Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save)
     {
@@ -1745,29 +1745,29 @@ sealed class SafetyPage
         emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
         var r = _host.Gateway.Settings.Risk;
-        _maxQty = Ui.NumberField(r.MaxOrderQuantity, 0m, 1m);
-        _maxNotional = Ui.NumberField(r.MaxNotionalPerOrder, 0m, 1000m);
-        _maxPositions = Ui.NumberField(r.MaxOpenPositions);
-        _maxPerMinute = Ui.NumberField(r.MaxOrdersPerMinute);
-        _maxLossPerTrade = Ui.NumberField(r.MaxLossPerTrade, 0m, 50m);
-        _maxDailyLoss = Ui.NumberField(r.MaxDailyLoss, 0m, 50m);
-        _lossMinClosure = Ui.NumberField(r.LossMinClosureHours, 0m, 1m);
-        _lossStrikeWindow = Ui.NumberField(r.LossStrikeWindowDays, 0m, 1m);
-        _valuationExit = Ui.NumberField(r.ValuationLossExitMinutes, 0m, 1m);
+        _maxQty = Ui.AmountField(r.MaxOrderQuantity, AmountKind.Decimal);
+        _maxNotional = Ui.AmountField(r.MaxNotionalPerOrder, AmountKind.Decimal);
+        _maxPositions = Ui.AmountField(r.MaxOpenPositions, AmountKind.Whole);
+        _maxPerMinute = Ui.AmountField(r.MaxOrdersPerMinute, AmountKind.Whole);
+        _maxLossPerTrade = Ui.AmountField(r.MaxLossPerTrade, AmountKind.Decimal);
+        _maxDailyLoss = Ui.AmountField(r.MaxDailyLoss, AmountKind.Decimal);
+        _lossMinClosure = Ui.AmountField(r.LossMinClosureHours, AmountKind.Decimal);
+        _lossStrikeWindow = Ui.AmountField(r.LossStrikeWindowDays, AmountKind.Whole);
+        _valuationExit = Ui.AmountField(r.ValuationLossExitMinutes, AmountKind.Decimal);
         // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
         // rather than everything is. It said "any".
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
-        _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
-        _planCap = Ui.NumberField(_host.Gateway.Settings.AiPlanDailyCapacity, 0m, 5m);
+        _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
+        _planCap = Ui.AmountField(_host.Gateway.Settings.AiPlanDailyCapacity, AmountKind.Decimal);
         // THE OTHER HALF OF THE CEILING'S ARITHMETIC. The limit above is only a limit because a
         // number is set aside before each turn, and this is that number in tokens. The boxes open on
         // what is in force, so an owner correcting it can see what they are correcting.
         var allowance = TurnAllowance.From(_host.Gateway.Settings.AiTurnAllowanceInputTokens,
             _host.Gateway.Settings.AiTurnAllowanceOutputTokens);
-        _allowanceIn = Ui.NumberField(allowance.InputTokens, 0m, 100_000m);
-        _allowanceOut = Ui.NumberField(allowance.OutputTokens, 0m, 5_000m);
-        _reviewEvery = Ui.NumberField(_host.Gateway.Settings.MissionReviewMinutes, 0m, 5m);
+        _allowanceIn = Ui.AmountField(allowance.InputTokens, AmountKind.Whole);
+        _allowanceOut = Ui.AmountField(allowance.OutputTokens, AmountKind.Whole);
+        _reviewEvery = Ui.AmountField(_host.Gateway.Settings.MissionReviewMinutes, AmountKind.Whole);
         _lanes = LaneField(_host.Gateway.Settings.AiLanes);
         _lanesPerPool = LaneField(_host.Gateway.Settings.AiLanesPerPool);
         _lanesPerCellClass = LaneField(_host.Gateway.Settings.AiLanesPerCellClass);
@@ -1778,8 +1778,8 @@ sealed class SafetyPage
         // the same figure the estimate uses, from the same place, so the box and the bill agree.
         var shipped = _host.ShippedRate;
         var rate = ShownRate();
-        _priceIn = Ui.NumberField(rate.In, 0m, 0.25m);
-        _priceOut = Ui.NumberField(rate.Out, 0m, 1m);
+        _priceIn = Ui.AmountField(rate.In, AmountKind.Decimal);
+        _priceOut = Ui.AmountField(rate.Out, AmountKind.Decimal);
 
         _modelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
         _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
@@ -1791,8 +1791,8 @@ sealed class SafetyPage
             () => HarnessKeyDestination(_host.Harness?.Manifest), AfterHarnessKeyPress);
         _researchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency,
             m => ChooseRoleModel(CouncilRoles.Research, m));
-        _researchShare = Ui.NumberField(
-            Math.Round(_host.Gateway.Settings.ShareForRole(CouncilRoles.Research) * 100m), 0m, 5m);
+        _researchShare = Ui.AmountField(
+            Math.Round(_host.Gateway.Settings.ShareForRole(CouncilRoles.Research) * 100m), AmountKind.Whole, 0m, 100m);
 
         // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
         // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
@@ -2632,12 +2632,8 @@ sealed class SafetyPage
     }
 
     /// <summary>A lane count's box: whole numbers from one to <see cref="LanePolicy.MaxLanes"/>.</summary>
-    static NumericUpDown LaneField(int value)
-    {
-        var box = Ui.NumberField(LanePolicy.Clamp(value), 1m);
-        box.Maximum = LanePolicy.MaxLanes;
-        return box;
-    }
+    static AmountField LaneField(int value) =>
+        Ui.AmountField(LanePolicy.Clamp(value), AmountKind.Whole, 1m, LanePolicy.MaxLanes);
 
     (int Lanes, int PerPool, int PerCellClass) CurrentLanes()
     {

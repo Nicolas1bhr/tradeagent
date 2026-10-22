@@ -154,7 +154,7 @@ sealed class PerceptionCard
     internal TextBox KeyBox { get; }
     internal Button SaveKey { get; }
     internal Button ForgetKey { get; }
-    internal NumericUpDown BudgetBox { get; }
+    internal AmountField BudgetBox { get; }
     internal Button SaveBudget { get; }
     internal Button TestButton { get; }
 
@@ -212,7 +212,7 @@ sealed class PerceptionCard
         SaveKey = SafetyPage.BuildSaveHarnessKey(_src.Key, () => KeyBox.Text, Destination, AfterKeyPress);
         ForgetKey = Ui.Button(Labels.ForgetHarnessKey, Forget);
 
-        BudgetBox = Ui.NumberField(ReadOr(_src.Budget, 0m), 0m, 0.5m);
+        BudgetBox = Ui.AmountField(ReadOr(_src.Budget, 0m), AmountKind.Decimal);
         SaveBudget = BuildSaveBudget(() => ReadOr(_src.Budget, 0m), PendingBudget, () => ReadOr(_src.Currency, ""), Save);
         // A CONFIRMATION COMPLETES ONLY THE AMOUNT IT NAMED: editing the box changes what the press meant, so a raise armed
         // against one figure is disarmed by the next one typed — the unconfirmed-orders card's rule, for the same reason.

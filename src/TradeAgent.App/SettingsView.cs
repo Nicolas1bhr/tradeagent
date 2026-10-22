@@ -507,19 +507,20 @@ sealed class SettingsPage
     }
 
     /// <summary>
-    /// A box's percentage as the FRACTION the setting holds, or null for an empty box, or a refusal. A
-    /// comma is read as the decimal point, because that is how a Belgian keyboard writes one.
+    /// A box's percentage as the FRACTION the setting holds, or null for an empty box, or a refusal. The figure is read by
+    /// <see cref="Amount.TryRead"/>, the one reader every money and limit box uses (<c>U-number-entry-culture</c>): a point or a
+    /// comma is the decimal mark, and "1,000" — a thousand or one — is refused rather than read as 1.
     /// </summary>
     internal static bool TryPercent(string? text, decimal max, string name, out decimal? fraction, out string? why)
     {
         fraction = null;
         why = null;
-        var typed = (text ?? "").Trim().TrimEnd('%').Trim().Replace(',', '.');
+        var typed = (text ?? "").Trim().TrimEnd('%').Trim();
         if (typed.Length == 0) return true;
 
-        if (!decimal.TryParse(typed, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var percent))
+        if (!Amount.TryRead(typed, AmountKind.Decimal, out var percent, out var unread))
         {
-            why = $"\u201c{text}\u201d is not a {name} TradeAgent can use: write a percentage such as 0.1 for a "
+            why = $"That is not a {name} TradeAgent can use: {unread} Write a percentage such as 0.1 for a "
                   + "tenth of a per cent, or leave the box empty.";
             return false;
         }

@@ -230,14 +230,14 @@ public class MissionCostSurfacesTests
     {
         var saved = new List<decimal>();
         var current = 5m;
-        var box = Ui.NumberField(current, 0m, 0.5m);
+        var box = Ui.AmountField(current, AmountKind.Decimal);
         var b = SafetyPage.BuildSaveDailyCap(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
 
-        box.Value = 6m;
+        box.Box.Text = "6";
         Press(b);
         Assert.Equal(Labels.RaiseDailyCapArmed("6 USD"), b.Content);
 
-        box.Value = 100m;
+        box.Box.Text = "100";
         Press(b);
         Assert.Empty(saved);
         Assert.Equal(Labels.RaiseDailyCapArmed("100 USD"), b.Content);
@@ -246,9 +246,9 @@ public class MissionCostSurfacesTests
 
         // A LOWER FIGURE TYPED UNDER AN ARMED RAISE SAVES AT ONCE: it disarmed the raise and takes no room.
         current = 100m;
-        box.Value = 200m;
+        box.Box.Text = "200";
         Press(b);
-        box.Value = 1m;
+        box.Box.Text = "1";
         Press(b);
         Assert.Equal([100m, 1m], saved);
         Assert.Equal(Labels.SaveDailyCap, b.Content);

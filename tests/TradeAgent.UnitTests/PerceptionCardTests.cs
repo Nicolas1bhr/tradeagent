@@ -248,7 +248,7 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         // THE CARD'S OWN BOX AND PRESS.
         using var rig = new CardRig();
         var card = rig.Card;
-        card.BudgetBox.Value = 4m;
+        card.BudgetBox.Box.Text = "4";
         Press(card.SaveBudget);
         Assert.Equal(1m, rig.Budget);
         Assert.True(Ui.IsArmed(card.SaveBudget));
@@ -259,11 +259,11 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
 
         // A CONFIRMATION COMPLETES ONLY THE AMOUNT IT NAMED: armed for 5, the box changed to 100, the armed press saves
         // nothing — editing the box changed what the press meant — and 100 asks twice of its own, naming 100.
-        card.BudgetBox.Value = 5m;
+        card.BudgetBox.Box.Text = "5";
         Press(card.SaveBudget);
         Assert.True(Ui.IsArmed(card.SaveBudget));
         Assert.Equal(Labels.RaisePerceptionBudgetArmed(Labels.Money(5m, "USD")), card.SaveBudget.Content);
-        card.BudgetBox.Value = 100m;
+        card.BudgetBox.Box.Text = "100";
         Press(card.SaveBudget);
         Assert.Equal(4m, rig.Budget);
         Assert.True(Ui.IsArmed(card.SaveBudget));
@@ -271,7 +271,7 @@ public class PerceptionCardTests(ITestOutputHelper log) : IDisposable
         Press(card.SaveBudget);
         Assert.Equal(100m, rig.Budget);
 
-        card.BudgetBox.Value = 0m;
+        card.BudgetBox.Box.Text = "0";
         Press(card.SaveBudget);
         Assert.Equal(0m, rig.Budget);
         Assert.StartsWith("Perception is off: its budget is 0, so no question is sent.", card.Shown!.Spent, StringComparison.Ordinal);
