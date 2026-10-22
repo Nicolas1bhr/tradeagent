@@ -236,6 +236,27 @@ public class CellPolicyTests
     }
 
     /// <summary>
+    /// THE PINNED RUNTIME, RUN FROM TOOLS AND NEVER WRITTEN (<c>U-cell-linux-c</c> item 2): a route-(a) cell runs codex from the folder
+    /// the app installed it in, so a PROGRAM ROOT strictly inside <c>tools/</c> is granted — read and run, the only rights a program root
+    /// has. <c>tools/</c> itself, and anything inside it as the workspace or a read-only input, stays refused.
+    /// </summary>
+    [UnixFact]
+    public void A_program_root_inside_tools_is_granted_and_tools_itself_or_a_write_there_is_refused()
+    {
+        var ws = Dir("ws");
+        var codex = Path.Combine(Paths.Tools, "codex-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(codex);
+        static CellPolicy Runs(string workspace, string root, params string[] readOnly) =>
+            new(workspace, readOnly, [root, .. CellPolicy.SystemRoots], [new("PATH", root + ":/usr/bin:/bin")]);
+        Assert.Null(Runs(ws, codex).Problem());
+        Assert.Contains("tools", Runs(ws, Paths.Tools).Problem() ?? "no refusal of tools/ itself as a program root");
+        Assert.Contains("home", Runs(ws, Path.GetDirectoryName(Paths.Tools)!).Problem() ?? "no refusal of what holds tools/ (the home) as a program root");
+        Assert.Contains("tools", Runs(codex, "/usr").Problem() ?? "no refusal of a workspace inside tools/");
+        Assert.Contains("tools", Runs(ws, "/usr", codex).Problem() ?? "no refusal of a read-only input inside tools/");
+        Assert.Contains("seat home", Runs(ws, Path.Combine(Paths.SeatHome, "codex")).Problem() ?? "no refusal of the seat home as a program root");
+    }
+
+    /// <summary>
     /// THE PROTECTED SET IS JUDGED WHERE IT REALLY IS (triage #3): with the app's home reached through a symlink, a grant naming the
     /// REAL <c>state/</c>, the real home or its real cell folder is refused — not passed because its spelling differs from the home's.
     /// </summary>
