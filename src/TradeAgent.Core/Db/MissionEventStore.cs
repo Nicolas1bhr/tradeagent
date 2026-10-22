@@ -1076,6 +1076,20 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// BRINGS THE SWEEP'S PENDING RE-WAKE <paramref name="id"/> FORWARD TO <paramref name="dueAt"/> (<c>U-rewake-floor</c>), the time
+    /// its holder asked for its own wake, and answers whether it moved. The guard is the statement's: only an unconsumed
+    /// <see cref="MissionEventKind.Mandate"/> row of exactly that id, and only ever SOONER — nothing here delays a wake.
+    /// </summary>
+    public bool BringMandateWakeForward(string id, DateTimeOffset dueAt) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET due_at=$due
+             WHERE id=$id AND kind=$mandate AND consumed_at IS NULL AND due_at > $due
+            """, ("$due", Sql.T(dueAt)), ("$id", id), ("$mandate", MissionEventKind.Mandate));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
     /// SETTLES EVERY DUE WAKE OF <paramref name="position"/>, consumed by no launch and <see cref="MissionEventDisposition.Refused"/>
     /// with <paramref name="why"/>, and answers how many (<c>U-org-wakes</c>, RULING Q1). The loop calls it once the activation
     /// gate has refused the position FOR WHAT IT IS (<see cref="RefusalKind.Position"/>).

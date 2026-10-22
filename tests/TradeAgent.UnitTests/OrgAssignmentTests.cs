@@ -16,7 +16,7 @@ namespace TradeAgent.Tests.Unit;
 /// of the chart exists yet.
 /// </summary>
 [Collection(VendorOverrideFiles.Name)]
-public class OrgAssignmentTests
+public partial class OrgAssignmentTests
 {
     /// <summary>The head of a team under Research's division, and two members of that team.</summary>
     const string Head = "pos-a1c0ffee0001", Member = "pos-a1c0ffee0002", Other = "pos-a1c0ffee0003";
@@ -809,11 +809,11 @@ public class OrgAssignmentTests
         var runningWake = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == running.Id).Id;
         Assert.True(Begin(db, Member, 0.10m, [runningWake]).Admitted);
 
-        Assert.Equal(1, org.Sweep(now));
+        Assert.Equal(1, org.Sweep(now, RewakeFloors.None));
         Assert.Equal(2, events.OfKind(MissionEventKind.Mandate).Count(e => e.Payload == lost.Id));
         Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == waiting.Id);
         Assert.Single(events.OfKind(MissionEventKind.Mandate), e => e.Payload == running.Id);
-        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(0, org.Sweep(now, RewakeFloors.None));
         Assert.Equal(2, events.OfKind(MissionEventKind.Mandate).Count(e => e.Payload == lost.Id));
 
         // HALF SPENT, NOTHING ACCEPTED: escalated once, never re-raised.
@@ -822,22 +822,22 @@ public class OrgAssignmentTests
         Assert.False(Begin(db, Other, 0.60m, [costlyWake]).Admitted);
         Assert.True(Begin(db, Member, 0.60m, [costlyWake]).Admitted);
         new AiAttemptStore(db).LoseOpen(now);
-        Assert.True(org.Sweep(now) >= 1);
+        Assert.True(org.Sweep(now, RewakeFloors.None) >= 1);
         Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(costly.Id));
         Assert.StartsWith(OrgStore.HalfSpent, org.MandateEvents(costly.Id)[^1].Reason, StringComparison.Ordinal);
         Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == costly.Id);
-        org.Sweep(now);
+        org.Sweep(now, RewakeFloors.None);
         Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == costly.Id);
 
         // PAST ITS DEADLINE: expired once, the holder's untaken wake closed, the decider told; nothing more after it.
         var later = Due.AddMinutes(1);
-        org.Sweep(later);
+        org.Sweep(later, RewakeFloors.None);
         Assert.Equal(MandateEventKind.Expired, org.MandateStatus(waiting.Id));
         Assert.All(events.OfKind(MissionEventKind.Mandate).Where(e => e.Payload == waiting.Id), e => Assert.True(e.Consumed));
         Assert.Single(events.OfKind(MissionEventKind.Escalation), e => e.Payload == waiting.Id);
         Assert.Contains(new TradeAgent.AgentRuntime.RoleObjective(TradeAgent.AgentRuntime.RoleObjectives.MandateExpired, waiting.Id),
             TradeAgent.AgentRuntime.RoleObjectives.Open(db, Head, null));
-        Assert.Equal(0, org.Sweep(later));
+        Assert.Equal(0, org.Sweep(later, RewakeFloors.None));
     }
 
     /// <summary>
@@ -866,7 +866,7 @@ public class OrgAssignmentTests
         Assert.False(events.Get(retry)!.Consumed);
 
         new AiAttemptStore(db).End(work.Id!, 0, now, 1000, null, null, 100, null, "model-x", 0.60m, null, null);
-        Assert.True(org.Sweep(now) >= 1);
+        Assert.True(org.Sweep(now, RewakeFloors.None) >= 1);
         Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(m.Id));
         Assert.StartsWith(OrgStore.HalfSpent, org.MandateEvents(m.Id)[^1].Reason, StringComparison.Ordinal);
         Assert.True(events.Get(retry)!.Consumed, "the retry queued before the escalation is still runnable");
@@ -910,16 +910,16 @@ public class OrgAssignmentTests
 
         List<MissionEvent> Judging(MandateRow m) =>
             [.. events.OfKind(MissionEventKind.Delivery).Concat(events.OfKind(MissionEventKind.Escalation)).Where(e => e.Payload == m.Id)];
-        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(0, org.Sweep(now, RewakeFloors.None));
 
         // THE HEAD TAKES BOTH AND ITS TURN IS LOST.
         var head = Begin(db, Head, 0.10m, [.. Judging(delivered).Concat(Judging(escalated)).Select(e => e.Id)]);
         Assert.True(head.Admitted, head.Refusal);
-        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(0, org.Sweep(now, RewakeFloors.None));
         Assert.Equal(1, attempts.LoseOpen(now));
 
-        Assert.Equal(2, org.Sweep(now));
-        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(2, org.Sweep(now, RewakeFloors.None));
+        Assert.Equal(0, org.Sweep(now, RewakeFloors.None));
         foreach (var (m, kind) in new[] { (delivered, MissionEventKind.Delivery), (escalated, MissionEventKind.Escalation) })
         {
             var wakes = Judging(m);
@@ -931,7 +931,7 @@ public class OrgAssignmentTests
         // A JUDGMENT TAKEN BY A TURN THAT ENDED had its turn: nothing more is raised for it.
         var ended = Begin(db, Head, 0.10m, [.. Judging(delivered).Where(e => !e.Consumed).Select(e => e.Id)]);
         attempts.End(ended.Id!, 0, now, 10, null, null, 10, null, "model-x", 0.01m, null, null);
-        Assert.Equal(0, org.Sweep(now));
+        Assert.Equal(0, org.Sweep(now, RewakeFloors.None));
         Assert.Equal(2, Judging(delivered).Count);
     }
 
