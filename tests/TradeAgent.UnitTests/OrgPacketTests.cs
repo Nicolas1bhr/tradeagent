@@ -107,4 +107,84 @@ public class OrgPacketTests
             Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => Exec(rerun, "DELETE FROM ai_attempt_input"));
         }
     }
+
+    // ---- item 2: reads by position ---------------------------------------------------------------------------------------
+
+    static LateralRow Note(Database db, string from, string to, string text, DateTimeOffset? at = null) =>
+        new OrgStore(db).SendLateral(from, null, to, text, [], at ?? DateTimeOffset.UtcNow);
+
+    /// <summary>A decision of <paramref name="position"/>'s carrying one forecast on a strategy version, by the store.</summary>
+    static ForecastRow Forecast(Database db, string position, string version, DateTimeOffset by, decimal probability)
+    {
+        var decision = new OrgStore(db).Decide(position, null, OrgDecisionKind.Routine, ["a", "b"], "a", "because", [],
+            [new ForecastClaim(ForecastVocabulary.VerdictClass, version, PromotionVerdict.Promoted, by, probability)], DateTimeOffset.UtcNow);
+        return Assert.Single(new OrgStore(db).ForecastsOn(decision.Id));
+    }
+
+    /// <summary>A strategy version the ledger recorded, as only a test may write it.</summary>
+    static void Version(Database db, string id) =>
+        Exec(db, """
+            INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
+            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, NULL)
+            """, ("$id", id), ("$at", Stamp), ("$role", P1));
+
+    static void Resolve(Database db, string forecast, string outcome, string version) =>
+        Exec(db, "INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES($f,$o,'version',$v,'by its date',$at)",
+            ("$f", forecast), ("$o", outcome), ("$v", version), ("$at", Sql(DateTimeOffset.UtcNow)));
+
+    static string Sql(DateTimeOffset d) => d.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// (b) A NOTE THE POSITION SENT NEVER RIDES ITS OWN PACKET: P1 sends P2 a note and P2 sends P1 one; each position's unshown notes
+    /// are the one addressed to it, never the one it sent. RED at base: no read by position existed (<c>LateralsOf</c> mixes both directions, every note, no cursor).
+    /// </summary>
+    [Fact]
+    public void A_note_the_position_sent_never_rides_its_own_packet()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var toP2 = Note(db, P1, P2, "the funding skew looks venue-specific");
+        var toP1 = Note(db, P2, P1, "the tape has gaps on Tuesday");
+
+        var org = new OrgStore(db);
+        Assert.Equal([toP1.Id], org.LateralsUnshown(P1).Rows.Select(n => n.Id));
+        Assert.Equal([toP2.Id], org.LateralsUnshown(P2).Rows.Select(n => n.Id));
+        Assert.Empty(org.LateralsUnshown(Head).Rows);
+
+        // A MALFORMED ROW IS REFUSED IN WORDS, never thrown through the list: the readable note still comes.
+        Exec(db, "INSERT INTO org_lateral(id, sender, to_position, text, refs, at) VALUES('lat-0000000bad01',$s,$p,'x','not json',$at)",
+            ("$s", P1), ("$p", P2), ("$at", Stamp));
+        var read = org.LateralsUnshown(P2);
+        Assert.Equal([toP2.Id], read.Rows.Select(n => n.Id));
+        Assert.Contains("lat-0000000bad01", Assert.Single(read.Refused), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (c) A POSITION SEES ONLY ITS OWN FORECASTS, AND NEVER ANOTHER FORECASTER'S PROBABILITY: P1 and the head each forecast on a
+    /// version; P1's forecasts due are its own, the head's its own, P2's none; a resolution of P1's forecast is P1's alone. RED at
+    /// base: <c>OpenForecasts()</c> had no position filter, and no read of a position's resolutions existed.
+    /// </summary>
+    [Fact]
+    public void A_position_sees_only_its_own_forecasts_and_never_another_forecasters_probability()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-own");
+        var soon = DateTimeOffset.UtcNow.AddDays(2);
+        var mine = Forecast(db, P1, "ver-own", soon, 0.7m);
+        var heads = Forecast(db, Head, "ver-own", soon, 0.2m);
+        var later = Forecast(db, P1, "ver-own", DateTimeOffset.UtcNow.AddDays(90), 0.4m);
+
+        var org = new OrgStore(db);
+        var horizon = DateTimeOffset.UtcNow.AddDays(7);
+        Assert.Equal([mine.Id], org.ForecastsDue(P1, horizon).Rows.Select(f => f.Id));
+        Assert.Equal([heads.Id], org.ForecastsDue(Head, horizon).Rows.Select(f => f.Id));
+        Assert.Empty(org.ForecastsDue(P2, horizon).Rows);
+        Assert.DoesNotContain(later.Id, org.ForecastsDue(P1, horizon).Rows.Select(f => f.Id));
+
+        Resolve(db, mine.Id, ForecastOutcome.No, "ver-own");
+        Assert.Equal([mine.Id], org.ResolutionsUnshown(P1).Rows.Select(r => r.Forecast.Id));
+        Assert.Empty(org.ResolutionsUnshown(Head).Rows);
+        Assert.Empty(org.ForecastsDue(P1, horizon).Rows);
+    }
 }
