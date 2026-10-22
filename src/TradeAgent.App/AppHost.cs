@@ -67,10 +67,11 @@ public sealed class AppHost : IAsyncDisposable
     AgentPresence _presence = AgentPresence.Shared;
 
     /// <summary>
-    /// The reads every material pass makes of the disk. The machine's own, always, in the product; only
-    /// <see cref="Composed"/> — a test's host — is handed one that refuses a folder.
+    /// The reads every material pass makes of the disk, or null for the scanner's own — the machine's, ALWAYS, in the product: the owner's
+    /// inbox as the disk reads it and every position's home through HomeFiles, link-free (<see cref="WorkspaceReads.Under"/>;
+    /// <c>U-execution-environment</c> fix pass 4). Only <see cref="Composed"/> — a test's host — is handed one that refuses a folder.
     /// </summary>
-    WorkspaceReads _reads = WorkspaceReads.Disk;
+    WorkspaceReads? _reads;
 
     /// <summary>
     /// THE ACTIVATION GATE'S REGISTER (<c>U-thinking-seats-a</c>), filled in <see cref="ComposeTheAi"/>: the process-wide one in the
@@ -1288,7 +1289,7 @@ public sealed class AppHost : IAsyncDisposable
     internal static AppHost Composed(Database db, ITradingConnector connector, AgentPresence presence,
         WorkspaceReads? reads = null)
     {
-        var host = new AppHost { _db = db, _presence = presence, _reads = reads ?? WorkspaceReads.Disk, _seats = new SeatRegister() };
+        var host = new AppHost { _db = db, _presence = presence, _reads = reads, _seats = new SeatRegister() };
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);

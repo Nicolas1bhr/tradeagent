@@ -610,8 +610,11 @@ public sealed record WorkspaceReads(
     Func<string, (string[] Files, string[] Folders)> List,
     Func<string, (long Size, DateTime WrittenUtc)?> Stat)
 {
-    /// <summary>The machine's own disk.</summary>
-    public static WorkspaceReads Disk { get; } = new(
+    /// <summary>
+    /// The machine's own disk, every path read as the disk reads it — links followed. The owner's inbox only, in the product
+    /// (<see cref="Under"/>); internal so that no product code can hand a pass a home read this way (fix pass 4: the app once did).
+    /// </summary>
+    internal static WorkspaceReads Disk { get; } = new(
         FolderOnDisk,
         dir => (Directory.GetFiles(dir), Directory.GetDirectories(dir)),
         FileOnDisk);

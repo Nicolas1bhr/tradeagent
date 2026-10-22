@@ -91,6 +91,34 @@ public class MaterialPassExclusionTests : IDisposable
         finally { await Close(host); }
     }
 
+    /// <summary>
+    /// THE APP'S OWN PASS READS A HOME LINK-FREE TOO (<c>U-execution-environment</c> fix pass 4, item 4 completed). The scanner's default
+    /// reads walk a position's home through HomeFiles, but the app handed every pass the plain disk: a folder the cell linked to a seat's
+    /// codex folder was walked and its login measured as the position's own file. The app's pass records no row under the link.
+    /// </summary>
+    [UnixFact]
+    public async Task The_apps_own_pass_never_measures_a_link_the_cell_planted_in_a_home()
+    {
+        var host = await Composed();
+        try
+        {
+            await host.StartTheAiAsync();
+            var codex = Path.Combine(TestEnv.Home, $"seat-codex-{Guid.NewGuid():n}");
+            Directory.CreateDirectory(codex);
+            File.WriteAllText(Path.Combine(codex, "auth.json"), "{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}");
+            var research = Path.Combine(host.HomeFor(CouncilRoles.Research), "research");
+            Directory.CreateDirectory(research);
+            var name = $"k-{Guid.NewGuid():n}";
+            Directory.CreateSymbolicLink(Path.Combine(research, name), codex);
+
+            Assert.NotNull(host.ScanMaterials());
+
+            var leaked = new MaterialStore(host.Db).Present().Where(m => m.RelPath.Contains(name, StringComparison.Ordinal)).Select(m => m.RelPath).ToList();
+            Assert.True(leaked.Count == 0, $"the app's pass measured a file outside the home as the position's own: {string.Join(", ", leaked)}");
+        }
+        finally { await Close(host); }
+    }
+
     // ---- the host -----------------------------------------------------------------------------------
 
     /// <summary>
