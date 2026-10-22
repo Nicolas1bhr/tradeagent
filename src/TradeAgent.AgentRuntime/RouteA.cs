@@ -143,7 +143,7 @@ public static class RouteA
     /// <summary>
     /// WHETHER A ROUTE (a) LAUNCH MAY START NOW, and under which proof (<c>U-cell-linux-c</c> items 4 and 5): a platform a cell runs on;
     /// a COUNTED proof of this provider — this machine, full kernel release, boot and build; a profile that recomputes to the proof's
-    /// own (else the proof is revoked: the canary); and a policy whose egress class the proof's rows measured (L4). Anything else is a
+    /// own (else the proof is revoked: the canary); and a policy whose egress class that proof's rows measured (L4). Anything else is a
     /// refusal in words — never a degraded launch, never a cell-class row without a proof.
     /// </summary>
     public static (CellProof? Proof, string? Refusal) Admission(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress)
@@ -151,12 +151,13 @@ public static class RouteA
         const string none = "TradeAgent did not start the AI as a cell seat";
         if (route is null) return (null, $"{none}: this host was given no record of proven cells to launch one under.");
         if (platform.Refusal() is { } refusal) return (null, $"{none}: {refusal}");
-        if (!CellBenchmark.ProvedEgress.Contains(egress.Name, StringComparer.Ordinal))
-            return (null, $"{none}: its cell would have egress '{egress.Name}', and the benchmark's rows prove only " +
-                          $"{string.Join(", ", CellBenchmark.ProvedEgress)}.");
         if (route.Proofs.ProofOf(Provider) is not { } proof)
             return (null, $"{none}: no cell proof counts on this machine, kernel, boot and build. TradeAgent measures its cells itself at " +
                           "every start and records a proof only when every row holds; until then no cell seat starts.");
+        // THE CLASS THE PROOF MEASURED, read off the proof itself (fix pass 1, R4): a proof names the egress classes its rows proved.
+        if (!proof.Egress.Contains(egress.Name, StringComparer.Ordinal))
+            return (null, $"{none}: its cell would have egress '{egress.Name}', and the proof it would run under measured only " +
+                          $"{(proof.Egress.Count == 0 ? "no egress class" : string.Join(", ", proof.Egress))}.");
         var now = CellBenchmark.Profile(Provider, platform, codexPin);
         if (now != proof.ProfileHash)
         {

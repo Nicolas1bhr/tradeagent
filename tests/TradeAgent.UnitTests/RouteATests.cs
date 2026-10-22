@@ -79,11 +79,23 @@ public class RouteATests
         Assert.Contains("this host was given no record", RouteA.Admission(null, pin, Linux, CellEgress.None).Refusal);
         Assert.Contains("Linux", RouteA.Admission(route, pin, Linux with { LandlockAbi = 5 }, CellEgress.None).Refusal);
 
-        var id = route.Proofs.Record(RouteA.Provider, CellBenchmark.Profile(RouteA.Provider, Linux, pin));
+        // A PROOF WHOSE ROWS MEASURED `none` ALONE ADMITS `none` and refuses `web` (L4; fix pass 1, R4): the class is read off the proof.
+        using (var noneDb = TestEnv.NewDb())
+        {
+            var noneRoute = new CellRoute(noneDb);
+            var noneOnly = noneRoute.Proofs.Record(RouteA.Provider, CellBenchmark.Profile(RouteA.Provider, Linux, pin), [CellEgress.None.Name]);
+            Assert.Equal(noneOnly, RouteA.Admission(noneRoute, pin, Linux, CellEgress.None).Proof!.Id);
+            Assert.Contains("measured only none.", RouteA.Admission(noneRoute, pin, Linux, CellEgress.Web).Refusal);
+        }
+
+        // THE BENCHMARK'S OWN CLASSES, none AND web: both admitted under it, and web-plain still refused.
+        Assert.Equal([CellEgress.None.Name, CellEgress.Web.Name], CellBenchmark.ProvedEgress);
+        var id = route.Proofs.Record(RouteA.Provider, CellBenchmark.Profile(RouteA.Provider, Linux, pin), CellBenchmark.ProvedEgress);
         var (proof, ok) = RouteA.Admission(route, pin, Linux, CellEgress.None);
         Assert.Null(ok);
         Assert.Equal(id, proof!.Id);
-        Assert.Contains("prove only none", RouteA.Admission(route, pin, Linux, CellEgress.Web).Refusal);
+        Assert.Equal(id, RouteA.Admission(route, pin, Linux, CellEgress.Web).Proof!.Id);
+        Assert.Contains("measured only none, web", RouteA.Admission(route, pin, Linux, CellEgress.WebPlain).Refusal);
 
         var changed = RouteA.Admission(route, pin, Linux with { Lsm = "lockdown,capability,yama,apparmor,landlock" }, CellEgress.None);
         Assert.Null(changed.Proof);
