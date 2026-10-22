@@ -269,7 +269,7 @@ public static class CellBenchmark
                 File.WriteAllText(sentinel, "sentinel\n");
                 try
                 {
-                    var (_, o) = await Sh($"if echo x >> '{sentinel}' 2>/dev/null; then echo APPEND-OPEN; else echo APPEND-DENIED; fi; " +
+                    var (_, o) = await Sh($"if {{ echo x >> '{sentinel}'; }} 2>/dev/null; then echo APPEND-OPEN; else echo APPEND-DENIED; fi; " +
                                           $"if touch '{made}' 2>/dev/null; then echo CREATE-OPEN; else echo CREATE-DENIED; fi");
                     var same = File.ReadAllText(sentinel) == "sentinel\n";
                     var created = File.Exists(made);
@@ -402,10 +402,14 @@ public static class CellBenchmark
                 Directory.CreateDirectory(escape);
                 try
                 {
-                    var (_, o) = await Sh($"if echo $$ > '{escape}/cgroup.procs' 2>/dev/null; then echo MOVED; else echo MOVE-REFUSED; fi; " +
-                                          "sed -n 's/^0:://p' /proc/self/cgroup");
-                    var name = Path.GetFileName(escape);
-                    return (o.Contains("MOVE-REFUSED", StringComparison.Ordinal) && !o.Contains(name, StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
+                    var (_, o) = await Sh($"if {{ echo $$ > '{escape}/cgroup.procs'; }} 2>/dev/null; then echo MOVED; else echo MOVE-REFUSED; fi; " +
+                                          "echo CG=$(sed -n 's/^0:://p' /proc/self/cgroup)");
+                    // WHERE IT IS AFTER THE TRY, read by the cell itself: still its attempt's, never the leaf it was refused.
+                    var after = o.Split('\n').FirstOrDefault(l => l.StartsWith("CG=", StringComparison.Ordinal))?[3..] ?? "";
+                    var stayed = after.Contains("/" + AttemptCgroups.AttemptPrefix, StringComparison.Ordinal)
+                                 && !after.Contains(Path.GetFileName(escape), StringComparison.Ordinal);
+                    return (o.Contains("MOVE-REFUSED", StringComparison.Ordinal) && stayed,
+                        $"{(o.Contains("MOVE-REFUSED", StringComparison.Ordinal) ? "refused" : "MOVED")}; {(stayed ? "still in its attempt's cgroup" : "NOT in its attempt's cgroup: " + after)}");
                 }
                 finally
                 {
@@ -440,7 +444,7 @@ public static class CellBenchmark
                 if (!gone) Posix.Kill(pid);
                 return (leftSession && gone && held.Ended is { Ended: true },
                     $"a daemon that {(leftSession ? "left" : "did NOT leave")} the cell's session {(gone ? "was ended" : "OUTLIVED")} the attempt's cancel " +
-                    $"({held.Ended?.Sentence ?? "no teardown said anything"})");
+                    $"({(held.Ended is { } end ? end.Ended ? "the teardown ended everything" : end.Sentence : "no teardown said anything")})");
             });
 
             await Row("tmp-unchanged", () =>
