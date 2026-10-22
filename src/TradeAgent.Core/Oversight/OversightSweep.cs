@@ -138,6 +138,12 @@ public sealed class OversightLine : IAsyncDisposable
     /// <summary>Why the line is not running, or null when it is.</summary>
     public string? Refusal { get; }
 
+    /// <summary>
+    /// The line's own store, for the owner's page alone (<c>U-org-watcher-b</c>) — read through the app's own accessor, never an agent's;
+    /// null when the file was refused.
+    /// </summary>
+    public OversightStore? Store => _store;
+
     /// <summary>Opens the line over <paramref name="databaseFile"/>, writing to <paramref name="oversightFile"/> (null: <see cref="OversightStore.DefaultFile"/>).</summary>
     public OversightLine(string databaseFile, string? oversightFile = null)
     {

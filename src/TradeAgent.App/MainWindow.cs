@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks }
+    enum Page { Chat, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
 
     readonly AppHost _host;
 
@@ -136,6 +136,7 @@ public sealed class MainWindow : Window
     InboxPage? _inbox;
     ActivityPage? _activity;
     ChecksPage? _checks;
+    OversightPage? _oversightPage;
 
     bool _shellBuilt;
     bool _updating;
@@ -410,6 +411,8 @@ public sealed class MainWindow : Window
         AddNav(Page.Settings, "Settings");
         AddNav(Page.Activity, "Activity");
         AddNav(Page.Checks, "Checks");
+        // The owner's word for his private line, last of all: his alone, and never shown to an agent (U-org-watcher-b).
+        AddNav(Page.Oversight, "Oversight");
 
         var summary = new Button
         {
@@ -473,6 +476,7 @@ public sealed class MainWindow : Window
         _settings = new SettingsPage(_host);
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
+        _oversightPage = new OversightPage(OversightSources.For(_host));
 
         Add(Page.Chat, _chat.Root);
         Add(Page.Dashboard, _dashboard.Root);
@@ -482,6 +486,7 @@ public sealed class MainWindow : Window
         Add(Page.Settings, _settings.Root);
         Add(Page.Activity, _activity.Root);
         Add(Page.Checks, _checks.Root);
+        Add(Page.Oversight, _oversightPage.Root);
 
         void Add(Page page, Control control)
         {
@@ -548,6 +553,7 @@ public sealed class MainWindow : Window
         _settings?.Update(status);
         _activity?.Update();
         _checks?.Update();
+        _oversightPage?.Update();
     }
 
     /// <summary>

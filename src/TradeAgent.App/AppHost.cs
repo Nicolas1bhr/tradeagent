@@ -49,6 +49,14 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>The owner's private line (<c>U-org-watcher-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>
     OversightLine? _oversight;
 
+    /// <summary>The owner's line's store and refusal, for his Oversight page alone (<c>U-org-watcher-b</c>): App-internal, never on the pipe.</summary>
+    internal OversightStore? OversightStore => _oversight?.Store;
+
+    internal string? OversightRefusal => _oversight?.Refusal;
+
+    /// <summary>The app's database file, which the Oversight page reads read-only to say whether a cited record is still there.</summary>
+    internal string? DatabaseFile => _db?.FilePath;
+
     /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
     Task? _background;
 
