@@ -446,4 +446,46 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.Contains("no queue position", described);
         Assert.Contains("never a record of a trade", described);
     }
+    /// <summary>
+    /// A PROGRAM NAME THE CELL FLIPS INTO A LINK AFTER THE CHECK IS NEVER READ THROUGH (<c>U-execution-environment</c> fix pass 4, the
+    /// second re-review's [P2] 3). <c>backtest</c> is on every role's door, and an executor's cell writes its own home while the unconfined
+    /// gateway reads the program there: a loop swapping <c>strategies/flip.strategy</c> between the role's own file and a link to a file
+    /// outside — between the path check and the read — must never get the outside file parsed, whose refusal would quote it back.
+    /// </summary>
+    [UnixFact]
+    public async Task A_program_the_cell_flips_into_a_link_is_never_read_through()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var outside = Path.Combine(Paths.State, $"outside-{Guid.NewGuid():n}.strategy");
+        File.WriteAllText(outside, "sentinel-outside-the-home\n");
+        var dir = Path.Combine(Paths.RoleHome(CouncilRoles.Operations), "strategies");
+        Directory.CreateDirectory(dir);
+        var x = Path.Combine(dir, "flip.strategy");
+        var asFile = Path.Combine(dir, ".flip-file");
+        var asLink = Path.Combine(dir, ".flip-link");
+        File.WriteAllText(x, "own-inside-the-home\n");
+        using var stop = new CancellationTokenSource();
+        var flipper = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                try { if (File.Exists(asLink) || Directory.Exists(asLink)) File.Delete(asLink); File.CreateSymbolicLink(asLink, outside); File.Move(asLink, x, overwrite: true); }
+                catch (IOException) { }
+                try { File.WriteAllText(asFile, "own-inside-the-home\n"); File.Move(asFile, x, overwrite: true); }
+                catch (IOException) { }
+            }
+        });
+        var parsedOutside = 0;
+        try
+        {
+            for (var i = 0; i < 4000; i++)
+                try { gw.Backtests.Run(Caller(), new BacktestAsk("strategies/flip.strategy", 1)); }
+                catch (GatewayDeniedException ex) when (ex.Message.Contains("sentinel-outside", StringComparison.Ordinal)) { parsedOutside++; }
+                catch (GatewayDeniedException) { }
+        }
+        finally { stop.Cancel(); await flipper; }
+        log.WriteLine($"parsed the outside file {parsedOutside} times");
+        Assert.True(parsedOutside == 0, $"the gateway parsed the file outside the home {parsedOutside} times");
+    }
 }

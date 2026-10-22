@@ -100,7 +100,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         ArgumentNullException.ThrowIfNull(ask);
 
         var role = RoleOf(caller);
-        var path = Resolve(role, ask.Strategy);
+        var (home, path) = Resolve(role, ask.Strategy);
 
         // WHAT THE CALLER DECLARED IS CHECKED FIRST, AND ON ITS OWN. `Increment` can refuse — an
         // instrument nothing has recorded is not a run TradeAgent will guess its way through — and a
@@ -118,7 +118,21 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // NORMALISED AS IT IS READ. The parser is line-based and the file was written by an agent
             // on whatever platform this installation runs on; a CRLF file that parsed on one machine
             // and not on another would be the `U-crlf-strategy-win` defect with a strategy in it.
-            text = File.ReadAllText(path).ReplaceLineEndings("\n");
+            //
+            // AND READ WITHOUT FOLLOWING A LINK AT ANY COMPONENT (U-execution-environment fix pass 4, the second re-review's [P2] 3): an
+            // executor's cell writes this home while the gateway reads it, so a name checked as the role's own may be a link by the time it
+            // is opened. HomeFiles opens each component from the one above it with O_NOFOLLOW, so what is read is what was checked.
+            text = HomeFiles.ReadAllText(home, path).ReplaceLineEndings("\n");
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"there is no file at '{ask.Strategy}' in the {CouncilRoles.Title(role)}'s folder. Write the "
+                + "program there first; 'trade material list' shows what TradeAgent can see.");
+        }
+        catch (HomeLinkRefused)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Outside(role, ask.Strategy));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -327,15 +341,16 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     }
 
     /// <summary>
-    /// THE FULL PATH THIS PROGRAM IS AT, INSIDE <paramref name="role"/>'S OWN HOME.
+    /// WHERE THIS PROGRAM IS, INSIDE <paramref name="role"/>'S OWN HOME: the home, and the program's path relative to it.
     ///
     /// <para>A relative path is resolved against that home, which is where the agent typed it from and
     /// the only place it means anything. An absolute path is taken as given and then required to be
-    /// under the same home. Both are checked TWICE: lexically after normalisation, so <c>..</c> is
-    /// refused before anything is read, and against the real path with every symlink on the way down
-    /// resolved, so a link inside the folder is not a door out of it.</para>
+    /// under the same home. Checked here LEXICALLY after normalisation, so <c>..</c> is refused before
+    /// anything is read; a link at any component below the home — a door out of it — is refused by the
+    /// read itself (<see cref="HomeFiles"/>, U-execution-environment fix pass 4), which opens each name
+    /// without following one, so there is no window between a check and the use it guards.</para>
     /// </summary>
-    static string Resolve(string role, string strategy)
+    static (string Home, string Relative) Resolve(string role, string strategy)
     {
         if (string.IsNullOrWhiteSpace(strategy))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -361,55 +376,18 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 + "inside your own role folder, for example strategies/ma-crossover.strategy.");
         }
 
-        if (!Inside(home, candidate) || !Inside(Real(home), Real(candidate)))
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{strategy}' is outside the {CouncilRoles.Title(role)}'s own folder, and a backtest reads "
-                + "a program from inside it and from nowhere else — not from the other role's folder, and "
-                + "not from anywhere else on this machine. Put the program in your own folder; "
-                + "strategies/ is what it is for.");
+        if (!Inside(home, candidate))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Outside(role, strategy));
 
-        if (!File.Exists(candidate))
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"there is no file at '{strategy}' in the {CouncilRoles.Title(role)}'s folder. Write the "
-                + "program there first; 'trade material list' shows what TradeAgent can see.");
-
-        return candidate;
+        return (home, Path.GetRelativePath(home, candidate));
     }
 
-    /// <summary>
-    /// The path with every symlink ON IT resolved, segment by segment — not only the last one.
-    ///
-    /// <para>Resolving only the final component would leave a symlinked DIRECTORY inside the folder as a
-    /// door out of it, which is the same hole one level up. A link that is broken, looping or
-    /// unreadable resolves to itself, which keeps it inside the folder and therefore refusable by the
-    /// ordinary rule rather than by an exception.</para>
-    /// </summary>
-    static string Real(string path)
-    {
-        var full = Full(path);
-        var root = Path.GetPathRoot(full) ?? "";
-        var here = root;
-
-        foreach (var segment in full[root.Length..]
-                     .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            here = Path.Combine(here, segment);
-            if (Link(here) is { } target) here = Full(target);
-        }
-
-        return here;
-    }
-
-    static string? Link(string path)
-    {
-        try
-        {
-            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
-            return info.LinkTarget is null ? null : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-        }
-        catch (IOException) { return null; }                  // a broken or looping link is not a way out
-        catch (UnauthorizedAccessException) { return null; }
-    }
+    /// <summary>The refusal of a program outside the role's own folder — by its path, or through a link inside it.</summary>
+    static string Outside(string role, string strategy) =>
+        $"'{strategy}' is outside the {CouncilRoles.Title(role)}'s own folder, and a backtest reads "
+        + "a program from inside it and from nowhere else — not from the other role's folder, and "
+        + "not from anywhere else on this machine. Put the program in your own folder; "
+        + "strategies/ is what it is for.";
 
     static string Full(string path) => Path.GetFullPath(path);
 
