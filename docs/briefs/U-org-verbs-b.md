@@ -2,7 +2,7 @@
 **Arrow closed:** `docs/ORCHESTRATION.md` § 2.3 *Fences* (:173-178: "bumps the generation of every grant it touches; the broker checks the generation on every
 operation; a running attempt under a stale generation is ended with its process tree, and its outputs are quarantined at completion, never published"; fences
 "never touch trading … anything about `operations` stays his presses"), § 2.9 *Restructuring is a transaction* (:328-330), § 10 (:493 "O6: the lattice, fences");
-§ 15 O6 (:427), part b of 5. Survey: `fleet/tmp/B-scratch/org-verbs/survey.md` (main `25bae9bc`) — re-grep every pointer.
+§ 15 O6 (:427), part b of 5. Survey: `fleet/tmp/B-scratch/org-verbs/survey.md` (main `25bae9bc`) — re-grep every pointer. Pointers re-checked against 46f7bbd3 (main 4b2af1e7 + U-org-verbs-a), 2026-10-23.
 **Protections — AUTH-001 and ORDER-001 (a fence only takes away; it never touches `operations`, an order op or operator authority), UNKNOWN-001 (no order turn is
 ever cut by an org fence), BUDGET-001 (a fenced attempt keeps its reservation until it closes; a LOST one keeps it), INBOX-001/COUNCIL rule 7 (a fenced output is
 held, never published), refuse never guess (a fence read that fails refuses the op): red-first and ONE watched mutant.** Seat B; **opus/high** (the agent
@@ -11,9 +11,9 @@ boundary, the gateway's per-op path). **No rung.**
 **Applied pending ORCHESTRATOR (survey Q13):** fences are DB facts, restart-safe and atomic with the transition — a mandate-level fence is the mandate's own
 `cancelled`/`rescoped` event; a position-wide fence is an `org_event` of kind `fenced` (position, cause in app-composed detail) that parts c–d write — never an
 in-memory counter a crash could lose between the commit and the bump.
-**Today:** no generation exists (`Security/AgentGrants.cs:45-99`; grep `fenc`: none); O5a's `Cancel` fences nothing (`OrgStore.Mandates.cs:362-377`);
-`ai_attempt.mandate_id` records the mandate a launch serves (`Database.cs:2435-2436, 2513`); the one per-op caller seam is `GatewayPipeServer.cs:1288-1301` (the door reaches
-it through `CallAsGrantAsync`, `BrokerDoor.cs:178-182`); Pause ends a conversation's whole tree through `CancelAsync` (`AgentRuntime/MissionLoop.cs:1976-1991`); a
+**Today:** no generation exists (`Security/AgentGrants.cs:45-99`; no fence in `OrgStore*.cs` or `AgentGrants.cs` — elsewhere the word is only in comments); O5a's `Cancel` fences nothing (`OrgStore.Mandates.cs:427-436`);
+`ai_attempt.mandate_id` records the mandate a launch serves (`Database.cs:2589-2590, 2511-2512`); the one per-op caller seam is `GatewayPipeServer.cs:1288-1301` (the door reaches
+it through `CallAsGrantAsync`, `BrokerDoor.cs:178-182`); Pause ends a conversation's whole tree through `CancelAsync` (`AgentRuntime/MissionLoop.cs:2376-2401`); a
 non-legacy output is already held (`AgentRuntime/CouncilRelay.cs:400-416`, `HeldWhy` :680).
 **Observable result:** a puppet executor is mid-turn on mandate M; its head cancels (or re-scopes) M; the executor's next `trade` call — any op — is refused in
 words naming the fence, its turn and process tree end within one loop tick, the attempt closes recorded as fenced with its reservation settled, and nothing it
