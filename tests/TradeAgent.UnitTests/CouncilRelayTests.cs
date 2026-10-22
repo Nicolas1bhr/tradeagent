@@ -674,4 +674,28 @@ public class CouncilRelayTests
         Assert.Contains($"is longer than {CouncilRelay.ReportLines} lines",
             Assert.Single(refusals), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// A REPORT NAME THE CELL TURNED INTO A LINK IS NEVER READ THROUGH (fix pass 3, the re-review's P2). An executor's cell writes its own
+    /// <c>out/</c>, and the relay reads it in the unconfined app: a report name linked to a login outside the home is not followed, so no
+    /// held publication carries a byte of what it points at.
+    /// </summary>
+    [UnixFact]
+    public void A_report_name_the_cell_linked_outside_its_home_is_never_read_through()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        world.Launched(db, CouncilRoles.Research, "turn-link");
+        var auth = Path.Combine(world.Root, "auth.json");
+        File.WriteAllText(auth, "{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}");
+        File.CreateSymbolicLink(Path.Combine(world.Home(CouncilRoles.Research), WorkspaceBuilder.OutDir,
+            World.Named(CouncilRoles.Research, "turn-link")), auth);
+
+        world.RelayOver(db).Run(CouncilRoles.Research, "turn-link");
+
+        var published = new PublicationStore(db).By(CouncilRoles.Research);
+        Assert.True(published.All(p => !p.Content.Contains("sk-FAKE-relay-0000", StringComparison.Ordinal)),
+            "a publication carries the login the link pointed at");
+        Assert.Equal("{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}", File.ReadAllText(auth));
+    }
 }
