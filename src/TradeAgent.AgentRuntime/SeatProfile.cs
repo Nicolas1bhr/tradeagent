@@ -697,16 +697,16 @@ public static class SeatProfile
     {
         // A BROKER SEAT IS NEVER STARTED UNVERIFIED: a manifest with no seat profile has none of the class's deny set to carry.
         if (manifest.Seat is not { } seat)
-            return launch.SeatClass == SeatPlan.BrokerClass
-                ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, BrokerSeat.OverrideRefusal(manifest) ?? "TradeAgent will not start a broker-only seat with no seat profile.")
+            return BrokerSeat.IsVerified(launch.SeatClass)
+                ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, BrokerSeat.OverrideRefusal(manifest, launch.SeatClass) ?? "TradeAgent will not start a broker-only seat with no seat profile.")
                 : SeatVerdict.None;
         var seatClass = launch.SeatClass;
-        var broker = seatClass == SeatPlan.BrokerClass;
+        var broker = BrokerSeat.IsVerified(seatClass);
         string? model = null;
 
         if (broker)
         {
-            if (BrokerSeat.OverrideRefusal(manifest) is { } overridden) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, overridden);
+            if (BrokerSeat.OverrideRefusal(manifest, seatClass) is { } overridden) return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, overridden);
             if (seat.NeedsDoor(seatClass) && launch.Door is null)
                 return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                     $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: TradeAgent's own door, the one tool server it " +

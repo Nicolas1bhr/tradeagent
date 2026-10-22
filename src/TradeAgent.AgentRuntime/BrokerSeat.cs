@@ -32,7 +32,16 @@ public static class BrokerSeat
     public const string Model = "gpt-5.5";
 
     /// <summary>The model <paramref name="seatClass"/> is pinned to, or null for a class that pins none.</summary>
-    public static string? ModelOf(string seatClass) => seatClass == SeatPlan.BrokerClass ? Model : null;
+    public static string? ModelOf(string seatClass) => IsVerified(seatClass) ? Model : null;
+
+    /// <summary>
+    /// THE CLASSES WHOSE SEAT IS VERIFIED BEFORE EVERY LAUNCH (<c>U-cell-linux-c</c> item 4): the broker and route (a)'s cell — a pinned
+    /// model, the door, this build's own security fields and the offered surface held to the class's expected set.
+    /// </summary>
+    public static bool IsVerified(string seatClass) => seatClass is SeatPlan.BrokerClass or SeatPlan.CellClass;
+
+    /// <summary>The words a refusal names a verified class by.</summary>
+    public static string Kind(string seatClass) => seatClass == SeatPlan.CellClass ? "a route (a) cell seat" : "a broker-only seat";
 
     /// <summary>
     /// THE TOOLS EACH PINNED MODEL IS OFFERED UNDER THE BROKER CLASS, compiled: the app's door's tools are deferred behind
@@ -43,6 +52,21 @@ public static class BrokerSeat
     {
         [Model] = ["list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input", "tool_search"]
     };
+
+    /// <summary>
+    /// ROUTE (a)'S CELL CLASS'S EXPECTED SURFACE (<c>U-cell-linux-c</c> L2), RUN 2026-10-22 on codex-cli 0.160.1 and gpt-5.5 (the
+    /// classic-tools model: no <c>exec</c>): the shell, patch and image tools — which run in the cell — and the door's. Code mode's
+    /// <c>exec</c>, sub-agents and anything else would run in the harness beside the login and are refused before admission.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string[]> ExpectedInCell = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        [Model] = ["apply_patch", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
+                   "request_user_input", "tool_search", "view_image", "write_stdin"]
+    };
+
+    /// <summary>The expected surface of <paramref name="seatClass"/> on <paramref name="model"/>, or null for none this build knows.</summary>
+    public static string[]? ExpectedFor(string seatClass, string model) =>
+        (seatClass == SeatPlan.CellClass ? ExpectedInCell : Expected).TryGetValue(model, out var e) ? e : null;
 
     /// <summary>
     /// TOOLS NO BROKER SEAT IS EVER OFFERED, named in the refusal: what runs a command, writes a file, reads an image off the disk, starts
@@ -70,23 +94,27 @@ public static class BrokerSeat
     /// and both versions — the file's and this build's. <c>runtimes.json</c> replaces a manifest whole and stays the vendor-commands
     /// data file (<c>CLAUDE.md</c>); a seat class's pin and deny set are never read from it (ORCHESTRATION § 2.7). Refuse, never guess.
     /// </summary>
-    public static string? OverrideRefusal(RuntimeManifest manifest)
+    public static string? OverrideRefusal(RuntimeManifest manifest) => OverrideRefusal(manifest, SeatPlan.BrokerClass);
+
+    /// <summary>The same check for <paramref name="seatClass"/>, one of the verified classes: its security fields are this build's own.</summary>
+    public static string? OverrideRefusal(RuntimeManifest manifest, string seatClass)
     {
+        var kind = Kind(seatClass);
         ArgumentNullException.ThrowIfNull(manifest);
         var built = BuiltIn(manifest.Id);
-        if (built?.Seat is not { } own || !own.Args.ContainsKey(SeatPlan.BrokerClass))
-            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: this build ({Versions.App}) has no broker class " +
+        if (built?.Seat is not { } own || !own.Args.ContainsKey(seatClass))
+            return $"TradeAgent will not start {manifest.DisplayName} as {kind}: this build ({Versions.App}) has no {seatClass} class " +
                    $"for '{manifest.Id}'. Nothing was started.";
         if (manifest.Seat is not { } seat)
-            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: its entry in runtimes.json has no seat profile, " +
+            return $"TradeAgent will not start {manifest.DisplayName} as {kind}: its entry in runtimes.json has no seat profile, " +
                    $"and this build ({Versions.App}) compiles one. Remove the '{manifest.Id}' entry from runtimes.json to continue. Nothing was started.";
 
-        foreach (var (field, file, build) in Fields(manifest, seat, PinOf(manifest)).Zip(Fields(built, own, BuildPin(built, manifest)),
+        foreach (var (field, file, build) in Fields(manifest, seat, PinOf(manifest), seatClass).Zip(Fields(built, own, BuildPin(built, manifest), seatClass),
                      (a, b) => (a.Field, a.Value, b.Value)))
         {
             if (file == build) continue;
-            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: runtimes.json gives its {field} as " +
-                   $"{Fingerprint(file)}, and this build ({Versions.App}) compiles it as {Fingerprint(build)}. A broker seat's security " +
+            return $"TradeAgent will not start {manifest.DisplayName} as {kind}: runtimes.json gives its {field} as " +
+                   $"{Fingerprint(file)}, and this build ({Versions.App}) compiles it as {Fingerprint(build)}. A verified seat's security " +
                    $"fields are this build's own and never read from a file. Remove the '{manifest.Id}' entry from runtimes.json, or put " +
                    "this build's value back, to continue. Nothing was started.";
         }
@@ -103,7 +131,7 @@ public static class BrokerSeat
     /// (<c>"codex/hooks.json\u001fcodex/environments.toml"</c>) compared equal to two and dropped a check. Two values are equal exactly
     /// when the sequences are; the string form remains only for the refusal's fingerprint.</para>
     /// </summary>
-    static IEnumerable<(string Field, string Value)> Fields(RuntimeManifest m, SeatPlan seat, string pin)
+    static IEnumerable<(string Field, string Value)> Fields(RuntimeManifest m, SeatPlan seat, string pin, string seatClass)
     {
         static string Seq(IEnumerable<string>? values)
         {
@@ -122,11 +150,11 @@ public static class BrokerSeat
         yield return ("home's forbidden paths", Seq(seat.Forbidden));
         yield return ("workspace's forbidden names", Seq(seat.WorkspaceForbidden));
         yield return ("credential files", Seq(seat.PrivateFiles));
-        yield return ("deny set", Seq(seat.ArgsFor(SeatPlan.BrokerClass)));
-        yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(SeatPlan.BrokerClass)));
+        yield return ("deny set", Seq(seat.ArgsFor(seatClass)));
+        yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(seatClass)));
         yield return ("seat environment", Pairs(seat.Environment));
-        yield return ("feature allowlist", Seq(seat.FeaturesFor(SeatPlan.BrokerClass)));
-        yield return ("tool-server allowlist", Seq(seat.ServersFor(SeatPlan.BrokerClass)));
+        yield return ("feature allowlist", Seq(seat.FeaturesFor(seatClass)));
+        yield return ("tool-server allowlist", Seq(seat.ServersFor(seatClass)));
         yield return ("feature report command", Seq(seat.FeaturesArgs));
         yield return ("tool-server report command", Seq(seat.McpArgs));
         yield return ("model flag", Seq(m.ModelArgs));
@@ -219,7 +247,7 @@ public static class BrokerSeat
             }
             Surfaces[key] = offered;
         }
-        return (SurfaceRefusal(ask.Model, offered, ask.Manifest.DisplayName), offered);
+        return (SurfaceRefusal(ask.Model, offered, ask.Manifest.DisplayName, ask.SeatClass), offered);
     }
 
     /// <summary>Forgets every captured surface: a test's way to make the next ask reach its probe.</summary>
@@ -229,21 +257,32 @@ public static class BrokerSeat
     /// NULL WHEN <paramref name="offered"/> IS EXACTLY THE SET <see cref="Expected"/> HOLDS FOR <paramref name="model"/>, otherwise the
     /// refusal in words: a host tool or <c>exec</c> named first, then what is offered beyond the set and what is missing from it.
     /// </summary>
-    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who)
+    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who) =>
+        SurfaceRefusal(model, offered, who, SeatPlan.BrokerClass);
+
+    /// <summary>
+    /// The same check for <paramref name="seatClass"/>: for route (a)'s cell class the shell, patch and image tools are EXPECTED — they run
+    /// in the cell — and any other host tool (code mode's <c>exec</c> above all: model-written code in the harness, beside the login) refuses.
+    /// </summary>
+    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who, string seatClass)
     {
         var names = offered.Select(ToolName).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
-        var host = names.Where(n => HostTools.Contains(n, StringComparer.Ordinal)).ToList();
+        var inCell = seatClass == SeatPlan.CellClass ? ExpectedFor(seatClass, model) ?? [] : [];
+        var host = names.Where(n => HostTools.Contains(n, StringComparer.Ordinal) && !inCell.Contains(n, StringComparer.Ordinal)).ToList();
+        var kind = Kind(seatClass);
         if (host.Count > 0)
-            return $"TradeAgent will not start {who} as a broker-only seat: on {model} it would offer {Words(host)}, which runs on this " +
-                   "computer or runs model-written code inside the program that holds the AI's sign-in. A broker-only seat is offered " +
-                   "TradeAgent's tools and nothing that reaches the computer. Nothing was started.";
-        if (!Expected.TryGetValue(model, out var expected))
-            return $"TradeAgent will not start {who} as a broker-only seat on {model}: this build knows no offered surface for that model. " +
+            return $"TradeAgent will not start {who} as {kind}: on {model} it would offer {Words(host)}, which runs on this " +
+                   "computer outside its cell or runs model-written code inside the program that holds the AI's sign-in. " +
+                   (seatClass == SeatPlan.CellClass
+                       ? "A route (a) cell seat is offered TradeAgent's tools and the tools that run in its cell, nothing else. "
+                       : "A broker-only seat is offered TradeAgent's tools and nothing that reaches the computer. ") + "Nothing was started.";
+        if (ExpectedFor(seatClass, model) is not { } expected)
+            return $"TradeAgent will not start {who} as {kind} on {model}: this build knows no offered surface for that model. " +
                    "Nothing was started.";
         var extra = names.Except(expected, StringComparer.Ordinal).ToList();
         var missing = expected.Except(names, StringComparer.Ordinal).ToList();
         if (extra.Count == 0 && missing.Count == 0) return null;
-        return $"TradeAgent will not start {who} as a broker-only seat: on {model} it would be offered " +
+        return $"TradeAgent will not start {who} as {kind}: on {model} it would be offered " +
                (extra.Count > 0 ? $"{Words(extra)} beyond " : "") + "the tools this build expects" +
                (missing.Count > 0 ? $"{(extra.Count > 0 ? ", and not" : " less")} {Words(missing)}" : "") +
                ". A release or a model that changes what a seat is offered is refused until a build knows it. Nothing was started.";

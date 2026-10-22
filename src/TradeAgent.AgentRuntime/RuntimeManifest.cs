@@ -93,6 +93,16 @@ public sealed class SeatPlan
     public const string BrokerClass = TradeAgent.Core.Db.SeatClasses.Broker;
 
     /// <summary>
+    /// ROUTE (a)'S CELL CLASS (<c>U-cell-linux-c</c> item 4; ORCHESTRATION § 2.8): a codex harness OUTSIDE every cell holding the login,
+    /// its model-directed shell, file, patch and image tools run by <c>codex exec-server</c> INSIDE a Linux cell (<see cref="RouteA"/>);
+    /// the app's door its only tool server, carried by the harness exactly as the broker class carries it (the cell reaches no pipe
+    /// and no port); a pinned classic-tools model whose offered surface is verified before every launch, so code mode's <c>exec</c> —
+    /// model-written JS in the harness's isolate, beside the login — is refused before admission (Law 2). Started only under a
+    /// counted cell proof; no product position is assigned it yet (<c>U-execution-environment</c> does).
+    /// </summary>
+    public const string CellClass = TradeAgent.Core.Db.SeatClasses.Cell;
+
+    /// <summary>
     /// WHERE THE APP'S DOOR GOES in a class's deny set: replaced at launch by the door's own address (<c>AppHost.DoorUrl</c>), never
     /// written in a file. A class whose deny set names it cannot start while the door is not open.
     /// </summary>
@@ -436,6 +446,13 @@ public sealed class RuntimeManifest
     internal string PuppetSeatClass { get; init; } = SeatPlan.PuppetClass;
 
     /// <summary>
+    /// THE CLASS A TEST HOST'S REAL-RUNTIME MANIFEST DECLARES (<c>U-cell-linux-c</c> L6): how a test runs route (a)'s <c>cell</c> class
+    /// while no product position is assigned it (<c>U-execution-environment</c> assigns it). Code only, honoured only in a test host.
+    /// </summary>
+    [JsonIgnore]
+    internal string? DeclaredSeatClass { get; init; }
+
+    /// <summary>
     /// THE CLASS OF THE SEAT AN <see cref="AgentSession"/> OF <paramref name="role"/> OVER THIS MANIFEST STARTS — the one answer the
     /// session's own verdict, its last check before the process and the app's declared seat all read: a test host's puppet plays its
     /// declared class (<see cref="PuppetSeatClass"/>); a position beyond the legacy pair on a runtime this build gives a broker class
@@ -445,6 +462,7 @@ public sealed class RuntimeManifest
     /// </summary>
     public string SessionSeatClassFor(string role) =>
         Puppet ? PuppetSeatClass
+        : DeclaredSeatClass is { } declared && PuppetSeats.TestHost ? declared
         : !CouncilRoles.IsKnown(role) && BrokerSeat.Offers(Id) ? TradeAgent.Core.Db.SeatClasses.Broker
         : TradeAgent.Core.Db.SeatClasses.Cli;
     public string DisplayName { get; set; } = "";
@@ -721,6 +739,25 @@ public static class RuntimeCatalog
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\""
     ];
 
+    /// <summary>
+    /// ROUTE (a)'S CELL CLASS'S DENY SET (<c>U-cell-linux-c</c> item 4, L1): the CLI class's, with <c>-c mcp_servers={}</c> replaced by the
+    /// app's door exactly as the broker carries it — so the harness reaches the door and the cell never does — the sleep tool and the
+    /// sub-agents off, and the shell, patch and image tools ON: they run in the cell. RUN 2026-10-22 on codex-cli 0.160.1 against the
+    /// kit's mock and stub door over a throwaway home and a FAKE grant (fleet/tmp/A-org/u-cell-linux-c-build/run/cellclass.sh): exit 0
+    /// under --strict-config, and gpt-5.5 offered exactly exec_command, write_stdin, list_mcp_resources, list_mcp_resource_templates,
+    /// read_mcp_resource, request_user_input, apply_patch, view_image, tool_search — the same with a stdio environment and a local one.
+    /// </summary>
+    static string[] CodexCellDeny =>
+    [
+        .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}"),
+        "--disable", "sleep_tool",
+        "-c", "agents.enabled=false",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\""
+    ];
+
     /// <summary><paramref name="args"/> less every adjacent <paramref name="flag"/> <paramref name="value"/> pair.</summary>
     static IEnumerable<string> WithoutPair(string[] args, string flag, string value)
     {
@@ -875,7 +912,8 @@ public static class RuntimeCatalog
                     // a throwaway home and a FAKE grant (fleet/tmp/A-org/u-thinking-seats-c-build/run/broker.sh): exit 0 under
                     // --strict-config, the stub door initialized, listed and authenticated with the bearer, and gpt-5.5 offered exactly
                     // list_mcp_resources, list_mcp_resource_templates, read_mcp_resource, request_user_input, tool_search.
-                    [SeatPlan.BrokerClass] = CodexBrokerDeny
+                    [SeatPlan.BrokerClass] = CodexBrokerDeny,
+                    [SeatPlan.CellClass] = CodexCellDeny
                 },
                 // CODEX HAS NO ENVIRONMENT IN THE BROKER CLASS: no shell, file, patch or image tool can run anywhere (R-exec-server).
                 ClassEnvironment = new(StringComparer.Ordinal)
@@ -911,13 +949,16 @@ public static class RuntimeCatalog
                     [SeatPlan.CliClass] = CodexCliFeatures,
                     // Under the broker's keys, RUN 2026-10-17 (broker.sh, `features list`): the CLI class's list less shell_tool, sleep_tool
                     // and view_image. unified_exec still REPORTS on — with no environment it offers no tool, which the surface verifier proves.
-                    [SeatPlan.BrokerClass] = [.. CodexCliFeatures.Except(["shell_tool", "sleep_tool", "view_image"], StringComparer.Ordinal)]
+                    [SeatPlan.BrokerClass] = [.. CodexCliFeatures.Except(["shell_tool", "sleep_tool", "view_image"], StringComparer.Ordinal)],
+                    // Under the cell class's keys, RUN 2026-10-22 (cellclass.sh, `features list`): the CLI class's list less sleep_tool.
+                    [SeatPlan.CellClass] = [.. CodexCliFeatures.Except(["sleep_tool"], StringComparer.Ordinal)]
                 },
                 McpArgs = ["mcp", "list", "--json"],
                 McpAllowlist = new(StringComparer.Ordinal)
                 {
                     [SeatPlan.CliClass] = [],
-                    [SeatPlan.BrokerClass] = [BrokerSeat.DoorServer]
+                    [SeatPlan.BrokerClass] = [BrokerSeat.DoorServer],
+                    [SeatPlan.CellClass] = [BrokerSeat.DoorServer]
                 },
                 // WHAT THE DASHBOARD'S "AI sign-in" CARD SAYS ABOVE ITS THREE WAYS IN (U-seat-signin), and what a refused turn says
                 // while the seat home holds no credential.

@@ -45,6 +45,17 @@ public static class Containment
         "the same Windows user as TradeAgent and can read and write whatever that user can");
 
     /// <summary>
+    /// THE SANDBOX ONE SEAT RUNS UNDER (<c>U-cell-linux-c</c> item 6): a route (a) <c>cell</c> seat's model-directed actions run in a cell,
+    /// but the HARNESS that holds the login does not — so the seat is still NONE, said in its own words, and the armed-live refusal
+    /// still refuses it. Every other class is <see cref="Sandbox()"/>.
+    /// </summary>
+    public static SandboxState Sandbox(string seatClass) => seatClass == TradeAgent.Core.Db.SeatClasses.Cell
+        ? new(false, "NONE",
+            "the AI's shell, file and image actions run in a Linux cell, but the program that holds its sign-in — the codex harness — " +
+            "runs unconfined as the same user as TradeAgent and can read and write whatever that user can")
+        : Sandbox();
+
+    /// <summary>
     /// The sentence that refuses to start the vendor's CLI, or null when it may start.
     ///
     /// The condition is BOTH halves of the owner's real-money decision, and that is deliberate:

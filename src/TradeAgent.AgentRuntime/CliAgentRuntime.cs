@@ -977,7 +977,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // exists to keep out of the app.
             // A BROKER SEAT IS HANDED THE OWNER'S OWN CHOICE, UNRESOLVED (U-thinking-seats-c): it runs on its pinned model, and only
             // a choice that names another refuses it — the runtime's default model is not a choice anybody made.
-            var broker = manifest.SessionSeatClassFor(role) == SeatPlan.BrokerClass;
+            var broker = BrokerSeat.IsVerified(manifest.SessionSeatClassFor(role));
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
                 presence: presence, model: broker ? model : () => ModelFor(model()), role: role,
                 attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats,

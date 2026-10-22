@@ -182,8 +182,9 @@ public class BrokerSeatTests : IDisposable
             Assert.Contains($"does not name {BrokerSeat.Model}", verdict.Refusal);
         }
 
-        // NO CLASS PINS A MODEL BUT THE BROKER, AND A RUNTIME THAT CANNOT NAME ONE CANNOT RUN AS ONE.
-        Assert.Contains("pins no model", BrokerSeat.ModelRefusal(SeatClasses.Cell, null, codex));
+        // NO CLASS PINS A MODEL BUT THE VERIFIED ONES (BROKER, CELL), AND A RUNTIME THAT CANNOT NAME ONE CANNOT RUN AS ONE.
+        // The cell class pins gpt-5.5 since U-cell-linux-c (L2); the harness class still pins none.
+        Assert.Contains("pins no model", BrokerSeat.ModelRefusal(SeatClasses.Harness, null, codex));
         var mute = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
         mute.ModelArgs = [];
         Assert.Contains("cannot name the model", BrokerSeat.ModelRefusal(SeatPlan.BrokerClass, null, mute));
