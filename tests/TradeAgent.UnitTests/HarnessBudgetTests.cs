@@ -425,6 +425,44 @@ public class HarnessBudgetTests : IDisposable
     }
 
     /// <summary>
+    /// GUARD (fix pass 1 of <c>U-org-packets-a</c>, the review's fourth point): A HARNESS TURN CANCELLED AFTER ITS REQUEST WENT
+    /// RECORDS ITS SESSION FRESH. The provider receives the request and the turn is stopped before any answer: the exit code is
+    /// still the not-started one, but a request was sent, and the harness keeps no session between turns — so the attempt's
+    /// context says <c>fresh</c>, why <c>harness</c>, never <c>unknown</c>.
+    ///
+    /// <para>RED at base 385ac3b1, the session keyed on the exit code: "Expected: Tuple ("fresh", "harness") Actual: Tuple (null,
+    /// null)".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_cancelled_after_its_request_records_its_session_fresh()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider(answers: false);
+        using var stop = new CancellationTokenSource();
+        provider.Arriving = stop.Cancel;
+
+        using var runtime = Runtime(provider, allowance);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        await conversation.SendAsync("what is the plan?", stop.Token);
+
+        Assert.Single(provider.Requests);
+        Assert.NotNull(ended);
+        Assert.Equal(ApiConversation.EndedCancelled, ended!.Outcome);
+        Assert.Equal(("fresh", SessionWhy.Harness), (ended.Session?.State, ended.Session?.Why));
+        var row = Assert.Single(Attempts());
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.True(context.RootElement.TryGetProperty("session", out var session), row.Context);
+        Assert.Equal("fresh", session.GetString());
+        Assert.Equal(SessionWhy.Harness, context.RootElement.GetProperty("session_why").GetString());
+    }
+
+    /// <summary>
     /// THE ROW SAYS THE TURN WAS BOUNDED RATHER THAN BROKEN. It lands in <c>ai_attempt.context</c>,
     /// which is already the app's own account of what it could see of a turn — a column per fact is how
     /// a table stops being readable.
