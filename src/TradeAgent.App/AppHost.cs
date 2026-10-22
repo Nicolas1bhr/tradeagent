@@ -171,6 +171,12 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     decimal AiCap() => Gateway.Settings.AiDailyCostCap;
 
+    /// <summary>
+    /// THE OWNER'S PLAN-CAPACITY CEILING, AS ONE DELEGATE (<c>U-billing-classes</c>): what the meter admits plan and unknown launches
+    /// against — a list-price equivalent, never money. Read through <see cref="Gateway"/> at every admission, like the cap.
+    /// </summary>
+    decimal AiPlanCap() => Gateway.Settings.AiPlanDailyCapacity;
+
     /// <summary>The decision models built so far, one per instrument, disposed with the app.</summary>
     readonly Dictionary<string, TypeSafeWire> _decisionModels = new(StringComparer.Ordinal);
 
@@ -1148,6 +1154,8 @@ public sealed class AppHost : IAsyncDisposable
                 .Select(p => p.Id).ToList());
         Meter = new TurnMeter(db,
             cap: AiCap,
+            // THE SECOND CEILING (U-billing-classes): the owner's plan capacity, beside the money cap and never inside it.
+            planCap: AiPlanCap,
             session: () => (Conversation as AgentSession)?.ThreadId,
             runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
             owner: () => OwnerPrice.From(Gateway.Settings),

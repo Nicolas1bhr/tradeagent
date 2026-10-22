@@ -335,6 +335,31 @@ public class BillingClassesTests : IDisposable
         Assert.Equal(2, card.Split(committed).Length - 1);
     }
 
+    // ---- (f) the setting ------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (f) THE SETTING: the plan's capacity ships at the owner's 40 a day, beside the money cap's 5; the app's own meter holds plan turns to
+    /// it and key turns to the money cap — a money cap of nothing leaves the plan's room whole, and the reverse — and a settings row
+    /// nobody could read allows no plan turn at all.
+    /// </summary>
+    [Fact]
+    public void The_app_holds_plan_turns_to_the_plan_setting_and_an_unreadable_row_to_nothing()
+    {
+        Assert.Equal((5m, 40m), (new TradeAgentSettings().AiDailyCostCap, new TradeAgentSettings().AiPlanDailyCapacity));
+        Assert.Equal((0m, 0m), (TradeAgentSettings.Unreadable().AiDailyCostCap, TradeAgentSettings.Unreadable().AiPlanDailyCapacity));
+
+        using var db = TestEnv.NewDb();
+        var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
+            new AgentPresence());
+        host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 40m; });
+        var meter = host.Meter!;
+        Assert.Equal(40m, meter.TodayIn(BillingClasses.Plan).Cap);
+        Assert.Equal(0m, meter.TodayIn(BillingClasses.Key).Cap);
+        Assert.Equal(40m, meter.Today.PlanReading!.Cap);
+        host.Gateway.Update(s => { s.AiDailyCostCap = 10m; s.AiPlanDailyCapacity = 0m; });
+        Assert.Equal((0m, 10m), (meter.TodayIn(BillingClasses.Plan).Cap, meter.TodayIn(BillingClasses.Key).Cap));
+    }
+
     /// <summary>The rung's number, spelled once here as in the schema.</summary>
     const int Rung = 46;
 
