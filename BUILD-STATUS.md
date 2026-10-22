@@ -11100,3 +11100,34 @@ row (f) absent (41 before). CellLinuxTests 3× locally: "Passed 1, Skipped 40, T
 **Review:** Codex (fleet/tmp/A-org/u-cell-row-every-os-build/U-cell-row-every-os-review.md): "No defects found".
 **Tests box:** run 20261022-015649-0dd98423 on the train tip 0dd98423 (build-tree equal to the landed tip): GREEN — Fault 498/498, Unit 2013 passed 0 failed, Integration 728 passed 0 failed (row (f) passed on real Windows), timing 117/117; his files unchanged.
 **NOT VERIFIED:** the attempt-1 red's cause (a reading, not a reproduction).
+
+## U-thinking-seats-c — the broker-only codex seat: a seat class with no environment, the app's door as its only tool server, its model pinned and its offered tools verified before every launch; no rung, canon v5 (landed 2026-10-22, seat A, train A1)
+
+**Landed** at `54fd2d8b` (train A1 on main `e697686d`, after U-cell-row-every-os; fix pass 2 code `82383be4`; fix pass 1 code `df1411b0`; builder code `d58e82f3`).
+A protection unit — ORCHESTRATION § 2.7 (a broker-only codex seat, "viable and MEDIATED"; the offered surface verified at every launch), § 2.6, § 5;
+R-exec-server DECISION 2; CRED-001 (the seat home's login offered to no model tool), Law 2 (no model-directed code in the process that holds the login), ORG-001.
+Part c of 3 (a gate → b door → c). **No rung** (part a's rung 39 records the class); canon v5. Builder a018b4338d9380554 (2026-10-17); fixer 1 ac02bf3283b57334b;
+fixer 2 a162d073fa8ed0933 (BUILD RUN 2026-10-22).
+**CI:** train A1 run **39696612317** at `0dd98423`, CARRIED to `54fd2d8b`: 12/12 success, 0 Warning(s), names sets 2981 → 2991 removed 0, scan clean (bearer/token prose judged). Earlier: builder 39029970908 green (attempt 2; attempt 1 macOS TurnMeterTests NRE, the open VendorLimit/TurnMeter
+family); fix 1 39686607659 12/12; fix 2 39692232483 red ONLY on (a) macOS `VendorLimitQuoteTests.No_turn_is_launched_before_the_minute…` (the open sighting
+U-turn-tail-drain covers) and (b) ubuntu `PromptStdinTests` "Actual: 154" + `PuppetLivesTests` launcher bytes ELF-for-script — the SECOND sighting of a shared
+launcher/fake-runtime race (first 39685897934 attempt 1, a tests-only branch) → unit U-launcher-race; fix 2's diff touches BrokerSeat.cs + its tests only, 0
+added lines naming Paths.Bin, launcher or ToolDeployer. JUDGED by seat A.
+**What changed:** `SeatPlan.BrokerClass` with its own args, class environment, feature and tool-server allowlists; `BrokerSeat` pins the model (gpt-5.5) and
+compares the class's security fields compiled into the build against runtimes.json — the program pin first, the home's forbidden paths, the workspace's
+forbidden names, the credential files, deny set, environments, allowlists, report commands, model, unattended and turn commands — each value length-prefixed
+(no separator-joined compare), an override changing any refused naming the field and both SHA-256s; `ISurfaceProbe`/`CodexSurfaceProbe` (loopback mock +
+stub door, throwaway home) cached by (exe SHA, template hash, model) and compared on every `CheckSeat`; `SessionSeatClassFor(role)`: a position beyond the pair
+on codex runs the broker class; `RuntimeClass.Broker` (door tools + mandate verbs, walled), positions' AGENTS.md the broker render (canon v5);
+`PeerImage.HashOf` keyed on dev/inode/ctime/size, Windows uncached. Test seam: internal `BrokerSeat.PinForTest`, read only behind `PuppetSeats.TestHost`
+(no setter under src/; one caller, SeatHomeTests.cs:655).
+**Evidence:** builder RED at base for (a)–(f) and item 6 ("…restored was served as the pin: 200"); mutant: the surface comparison skipped ⇒ (b) red. Fix 1:
+R1 RED "the swapped program ran during the seat check"; R2 RED "…dropped the seat home's environments.toml … was admitted"; mutant: the pin dropped ⇒ R1 red.
+Fix 2: RED "…merged two entries of the broker class's home's forbidden paths into one was admitted" and "…deny set into one was admitted"; mutant: the
+joined compare back for forbidden paths ⇒ only that row red. Mac, codex 0.160.1 = pin, throwaway home, mock, FAKE grant: gpt-5.5's surface ACCEPTED, another
+model's (exec tools) refused. Release `--no-incremental` 0 warnings; seven touched classes 3× "Passed: 96, Skipped: 2".
+**Judged** (records/U-thinking-seats-c-review-triage.md): review R1, R2 REAL → fixed; re-review of fix 1: R1 closed, R2 bypassable by '\u001f' collision →
+fixed in pass 2; re-review of pass 2: "P1 closed; no fix-induced regression found". OWED (not in scope, no broker collision follows): `BrokerSeat.TemplateHash`,
+the surface-cache key, still joins with \0 and \u001e.
+**Tests box:** run 20261022-015649-0dd98423 on the train tip 0dd98423 (build-tree equal to the landed tip): GREEN — Fault 498/498, Unit 2013 passed 0 failed, Integration 728 passed 0 failed (row (f) passed on real Windows), timing 117/117; his files unchanged.
+**NOT VERIFIED:** real provider metadata (UNKNOWN until an observed run); the verifier against a real codex on Linux/Windows; no real broker turn end to end.
