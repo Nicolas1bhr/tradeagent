@@ -856,8 +856,9 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "cell" => reach.Runtime == RuntimeClass.Cell,
             // A SEAT WHOSE ONE TOOL IS THE `trade` COMMAND LINE: the CLI's, and no other.
             "command" => reach.Runtime == RuntimeClass.Cli,
-            // A SEAT WHOSE SESSION CARRIES TURNS: every vendor program, the broker's included; the harness starts each turn fresh.
-            "resumes" => reach.Runtime != RuntimeClass.Harness,
+            // A SEAT WHOSE SESSION CARRIES TURNS: every vendor program, the broker's included; the harness starts each turn fresh, and so
+            // does a cell seat, whose per-attempt codex home is swept at its turn's end (U-execution-environment).
+            "resumes" => reach.Runtime is not (RuntimeClass.Harness or RuntimeClass.Cell),
             "orders" => reach.MayPlaceOrders,
             "inbox" => reach.ReadsInbox,
             "wake" => reach.Wakes,

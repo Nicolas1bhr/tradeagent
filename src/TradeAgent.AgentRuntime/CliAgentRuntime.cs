@@ -29,7 +29,7 @@ namespace TradeAgent.AgentRuntime;
 public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
     AgentPresence? presence = null, ISeatProbe? seatProbe = null, SeatRegister? seats = null,
-    Func<Uri?>? door = null, ISurfaceProbe? surfaceProbe = null) : IAgentRuntime
+    Func<Uri?>? door = null, ISurfaceProbe? surfaceProbe = null, CellRoute? cells = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -960,7 +960,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
             presence: presence, model: () => RequestedModel, role: CouncilRoles.Operations,
             attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats,
-            door: door, surfaceProbe: surfaceProbe);
+            door: door, surfaceProbe: surfaceProbe, cells: cells);
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -986,7 +986,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
                 presence: presence, model: broker ? model : () => ModelFor(model()), role: role,
                 attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal, seatProbe: seatProbe, seats: seats,
-                door: door, surfaceProbe: surfaceProbe);
+                door: door, surfaceProbe: surfaceProbe, cells: cells);
             _roleConversations[role] = session;
             return session;
         }

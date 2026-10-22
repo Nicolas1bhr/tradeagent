@@ -39,7 +39,7 @@ namespace TradeAgent.AgentRuntime;
 public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
     Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null,
     AgentPresence? presence = null, Func<IReadOnlyList<string>>? positions = null, SeatRegister? seats = null,
-    Func<Uri?>? door = null)
+    Func<Uri?>? door = null, CellRoute? cells = null)
 {
     IReadOnlyList<string> Positions()
     {
@@ -87,7 +87,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence, seats: seats, door: door)
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal, presence, seats: seats, door: door, cells: cells)
             {
                 VersionDeadline = VersionDeadline
             };
