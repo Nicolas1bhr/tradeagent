@@ -1,0 +1,58 @@
+# U-org-seats — the meter, the conversation and the harness bound read one seat — runtime, model, allowance — resolved once per launch, so a reservation smaller than the shipped bound is admitted only where the turn is bounded to it, and every attempt records the allowance it was reserved at and whether that bound is enforced
+**Arrow closed:** `docs/ORCHESTRATION.md` § 2.1 ("Seat … runtime profile × model class × effort × playbook version × allowance × cell class"; "a seat moves only by
+an app rule or the owner"), § 2.4 ("incurred cost is bounded only where a total-turn bound … is demonstrated for that runtime; elsewhere the reservation is the
+bound, and an overrun is recorded and charged, never hidden"), § 2.7 ("Usage: what the provider reports; otherwise the reservation stands"), § 5 (the harness
+row "bounded per request; the turn bound shown, not assumed"); ORGANISATION § 10 (:302-304 "A seat is a runtime, a model class, an effort level, a per-turn
+allowance and a price basis"); R15 § 3c ("A smaller allowance is only honest where it is enforced"); R18 #1 (the cut from O4); § 15 `U-org-seats` (:422).
+**Protections — BUDGET-001 (reserve before launch; a reservation below the shipped bound only on an enforced bound; unknown never zero), measurement vs claim
+(allowance and bound class app-composed on the row), AUTH-001 (the seat writer in-process; no op, verb or door reaches it), refuse never guess (a malformed
+seat refuses the launch in words, wakes kept): red-first and ONE watched mutant.** Seat B; **opus/high** (the money path, a rung). **A rung (the next free at
+dispatch; main's is 42):** `ai_attempt.allow_in`, `allow_out`, `turn_bound`. No canon change.
+**Depends (landed):** O4 `U-org-envelopes` (rung 38), `U-admission-fail-closed`, `U-thinking-seats-c` (the broker pin). Lands BEFORE `U-billing-classes`
+(serial: same files, the class read off the same verdict). Survey: `fleet/tmp/B-scratch/s-org-seats-billing/survey.md`.
+**Today:** `org_position`'s `seat_runtime/seat_model/seat_allow_in/seat_allow_out` exist (rung 28, `Database.cs:1808-1819`) and nothing reads or writes them
+(`OrgStore.cs:289-300`; seed NULL `:2792-2797`; O6-c hires NULL). The model is resolved twice — the meter prices `AppHost.RequestedModelFor` (`AppHost.cs:457-467`),
+the conversation opens on `Settings.ModelForRole` (`:365`). ONE app-wide allowance goes separately to the meter (`:1010-1011` → `TurnMeter.cs:1194-1210`) and
+to the harness (`:223-225` → `ApiAgentRuntime.cs:57,193` → `ApiConversation.cs:396`); the CLI has none. The harness checks only before a request
+(`ApiConversation.cs:473-494`) and asks every request for the whole output allowance (`:554`), so its last request can pass the bound by a context and an
+allowance. The Safety page lowers the allowance in one press (`DashboardView.cs:2508-2522`), which on a CLI seat lowers the reservation with nothing enforcing it.
+**Observable result:** a position seated on the harness at model M with allowance 300 k / 8 k reserves 300 k × max(input, cache-write) + 8 k × output at M's
+row; its harness conversation sends M, asks each request for at most the output still unspent, and does not send a request whose body could take input past
+300 k — the turn ends `CONTEXT_BUDGET_EXCEEDED` with its work kept; its `ai_attempt` row reads `allow_in 300000, allow_out 8000, turn_bound enforced`. The same
+seat on the codex CLI reserves at max(seat, 1.2 M) / max(seat, 20 k) and its row reads `turn_bound reservation`. The model on every launch's argv or request
+body equals the row's `requested_model`, broker pin included. A seat column that does not parse refuses the launch in words naming the position and the
+column — no row, no reservation, wakes kept. The owner seats a position in-process (`OrgStore.SetSeat`, one `org_event seated`, decider `owner`); no pipe op,
+door verb or `trade` verb can.
+Read first: the survey §§ 1–3; ORCHESTRATION §§ 2.1, 2.4, 2.7, 5; `TurnMeter.cs:873-990` (Begin), `:1036-1110`, `:1185-1225`; `AppHost.cs:200-235, 280-370,
+425-467, 995-1023`; `ApiConversation.cs:40-60, 385-500, 545-560`; `ApiAgentRuntime.cs:40-110, 175-200`; `CliAgentRuntime.cs:960-990`; `OrgStore.cs:280-340`;
+`Database.cs` rung 38/39 (the `ai_attempt` column precedent); `RuntimeManifest.cs:1640-1810` (`Reserve`, `Bound`).
+Items, one commit each, one-sentence messages:
+1. **The spec.** `SeatSpec(Runtime, Model, Allowance, Bound)` in Core and ONE resolver (`AppHost.SeatFor(role)`): the position's columns when set (all four, or
+   refused as malformed — never half a seat), else today's sources (the pair: `RuntimeForRole`, `RequestedModelFor` with the broker pin; other positions: the app
+   default) and the app-wide allowance; `Bound = Enforced` only for a seat whose runtime is the app's harness, else `Reservation`. Settles: (c), (e).
+2. **The meter reads it.** `TurnMeter` takes `Func<string?, SeatSpec>` in place of `_allowance`/`_roleModel`/`_roleRuntime`; `Reservation(role)` prices
+   `Enforced` at the seat's allowance and `Reservation` at the per-component max with `TurnAllowance.Default`; `Begin` records `allow_in/allow_out/turn_bound`
+   (the rung, UPDATE of the three refused by trigger, the `Versions` note). The conversation opens on the spec's model (`AppHost.cs:365`). Settles: (a), (b), (g).
+3. **The harness bounds the turn.** `ApiAgentRuntime`/`ApiConversation` take the per-role spec: each request's `MaxOutputParam` = allowance.out − used.out;
+   a request is not sent when used.in + its body's UTF-8 byte count > allowance.in (stated INFERENCE in the code comment: a byte-level BPE token covers ≥ 1 byte;
+   the vendor's tokenizer NOT VERIFIED); the existing `Exceeded` words kept. Settles: (d).
+4. **The writer and the words.** `OrgStore.SetSeat(position, runtime, model, in, out)` in-process (validated: a runtime in the catalogue, positive tokens; an
+   `org_event seated`; no `Ops` entry); `Labels.TurnAllowanceHint` says a smaller allowance lowers what is set aside only where the turn is held to it (the
+   app's own harness), never on the vendor's program. Settles: (f), (h).
+Red-first (each red at base quoted): (a) `A_seat_allowance_prices_the_reservation_and_bounds_the_harness_turn`; (b) `A_cli_seat_never_reserves_below_the_shipped_bound`;
+(c) `The_model_launched_is_the_model_reserved_for_on_every_seat_kind` (CLI, broker pin, harness); (d) `The_harness_never_sends_a_request_that_could_pass_the_seat_allowance`
+(mock transport: remaining output asked; an oversize body withheld); (e) `A_malformed_seat_refuses_the_launch_in_words_and_keeps_its_wakes`;
+(f) GUARD `No_pipe_op_door_verb_or_trade_verb_writes_a_seat`; (g) `Each_attempt_records_its_allowance_and_whether_its_bound_is_enforced` (+ the rung's
+crash-between-statements reopen test); (h) `Lowering_the_allowance_lowers_no_cli_reservation`.
+**The watched mutant:** the harness conversation reads the app-wide allowance instead of the seat's (item 3 reverted to `AppHost.cs:223-225`'s Func) ⇒ (a) red.
+Quote it, restore, green.
+**Evidence beyond CI:** a puppet life (`PuppetLivesTests` pattern) with one harness-seated and one CLI-seated position: the two rows' `reserved_cost`,
+`allow_in/out`, `turn_bound` printed beside the day's reading. No model.
+**NOT VERIFIED until a real run:** the byte bound against the vendor's reported input tokens (the first metered harness turn compares them); a real harness turn
+at all (no API key is held; M-org1 or later).
+**NOT in scope:** billing classes (`U-billing-classes`, next); effort, playbook version and cell class on the spec; a versioned seat table or a model-CLASS
+mapping (§ 2.16, `U-org-templates`); the Org page's seat control (O7 `U-org-surface`); per-seat lanes or quota pools; a hire op naming a seat.
+Conflicts: `U-billing-classes` (serial after this); O6 (`OrgStore*.cs`, the rung order — the board orders rungs; O6-c's `Unfundable` reads `TurnMeter.Reservation`,
+which this makes seat-true); `U-org-packets-b` (`TurnMeter.cs`, the rung); seat A's 2.7 files (`ApiConversation.cs`, `ApiAgentRuntime.cs`, `CliAgentRuntime.cs`) —
+the orchestrator tells seat A. Gate and report per `fleet/BUILDER-PROMPT-v2.md` (the rung's crash-between-statements reopen test; names vs `main` 0 removed;
+three platforms; Codex review; tests box line). `## Report` ≤ 20 lines appended here.
