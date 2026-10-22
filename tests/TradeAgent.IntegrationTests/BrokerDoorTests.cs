@@ -267,6 +267,36 @@ public class BrokerDoorTests
     }
 
     /// <summary>
+    /// ON LINUX THE DOOR'S PEER IS PINNED BY A PIDFD, ITS CGROUP READ UNDER IT (<c>U-execution-environment</c> item 0): the door is TCP, so
+    /// no <c>SO_PEERPIDFD</c> — and without a pidfd an attempt's cgroup proof answered Unknown for every door connection, so no seat
+    /// launched in a delegated cgroup (route (a)'s cell seat, a broker seat under one) could ever be served (CI run 39733776557:
+    /// "the kernel named process … without a pidfd (/proc/net/tcp), so which cgroup it connected from cannot be proved"). Now the
+    /// owner is pinned with <c>pidfd_open</c>, proved to hold the connection's socket, and its cgroup read between two looks.
+    ///
+    /// <para>RED before the fix: the executor rows' door refusal quoted above (CI run 39733776557); this row itself was not run before it.</para>
+    /// </summary>
+    [Fact]
+    public async Task On_linux_the_doors_peer_is_pinned_by_a_pidfd_with_its_cgroup()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // Windows and macOS name the peer as before; no cgroup proof runs there
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+        using var accepted = await listener.AcceptTcpClientAsync();
+
+        var peer = TcpPeer.OwnerOf((IPEndPoint)accepted.Client.LocalEndPoint!, (IPEndPoint)accepted.Client.RemoteEndPoint!);
+        Assert.NotNull(peer);
+        Assert.Equal(PeerFacts.TcpPidfd, peer!.Source);
+        Assert.True(peer.PinnedByPidfd);
+        Assert.Equal(Environment.ProcessId, peer.Pid);
+        Assert.Equal(File.ReadAllText("/proc/self/cgroup"), peer.Cgroup);
+        Assert.Equal(1, peer.NsPids);
+        var mine = File.ReadAllText("/proc/self/cgroup").Trim()[3..];
+        Assert.Equal(Membership.Member, new CgroupContainer(AttemptCgroups.Mount + mine).Contains(peer).Is);
+    }
+
+    /// <summary>
     /// (e) A RESEARCH GRANT ASKING THE DOOR TO BUY IS REFUSED AS ON THE PIPE, AND RECORDED. The door's <c>trade</c> is the harness's,
     /// so the gateway's own role check refuses it with its own code; the call is a <c>tool_call</c> row under the grant's attempt;
     /// and nothing reached the broker.

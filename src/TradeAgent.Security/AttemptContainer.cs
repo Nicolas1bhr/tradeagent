@@ -11,6 +11,16 @@ public sealed record PeerFacts(int Pid, ulong Start, DateTimeOffset ReadAt)
     public string Source { get; init; } = "";
 
     /// <summary>
+    /// THE SOURCE OF A TCP PEER PINNED BY <c>pidfd_open</c> (<c>U-execution-environment</c> item 0; <see cref="TcpPeer"/>): the door's
+    /// counterpart of the pipe's <c>SO_PEERPIDFD</c> — the owner read off <c>/proc/net/tcp</c>, then proved to hold the connection's
+    /// socket while a pidfd pins it, its cgroup read between two looks at that pidfd.
+    /// </summary>
+    public const string TcpPidfd = "pidfd_open (/proc/net/tcp)";
+
+    /// <summary>Whether a pidfd pinned the peer while its cgroup was read: through <c>SO_PEERPIDFD</c> or <see cref="TcpPidfd"/>.</summary>
+    public bool PinnedByPidfd => Source is "SO_PEERPIDFD" or TcpPidfd;
+
+    /// <summary>
     /// The peer's <c>/proc/&lt;pid&gt;/cgroup</c> as it read between the two looks at the pidfd that prove the pid still names the
     /// connected process (<c>U-cell-linux-b</c>, Linux with <c>SO_PEERPIDFD</c> only) — or null when it was not read.
     /// </summary>
@@ -85,7 +95,7 @@ public sealed class CgroupContainer(string attemptDir, Func<bool>? over = null, 
     public override MembershipVerdict Contains(PeerFacts peer)
     {
         if (over?.Invoke() == true) return MembershipVerdict.Unknown("the attempt's processes have already been ended");
-        if (peer.Source != "SO_PEERPIDFD")
+        if (!peer.PinnedByPidfd)
             return MembershipVerdict.Unknown($"the kernel named process {peer.Pid} without a pidfd ({(peer.Source.Length > 0 ? peer.Source : "no source")}), " +
                                              "so which cgroup it connected from cannot be proved");
         if (peer.NsPids != 1)

@@ -43,7 +43,11 @@ public static class TcpPeer
                     ? new PeerFacts(wpid, created, DateTimeOffset.UtcNow) { Source = "GetExtendedTcpTable" }
                     : null;
 
-            var (pid, source) = OperatingSystem.IsLinux() ? (Linux.OwnerPid(local, remote), "/proc/net/tcp")
+            // LINUX, THROUGH A PIDFD (U-execution-environment item 0): the door's peer is proved the way the pipe's is — its cgroup read
+            // while a pidfd pins the process — so a grant bound to an attempt's cgroup can be served over TCP at all. Without a pidfd
+            // (an older kernel, another architecture) the facts carry no cgroup and the cgroup proof says Unknown, as before.
+            if (OperatingSystem.IsLinux() && Linux.Pinned(local, remote) is { } pinned) return pinned;
+            var (pid, source) = OperatingSystem.IsLinux() ? (Linux.OwnerPid(local, remote, out _), "/proc/net/tcp")
                 : OperatingSystem.IsMacOS() ? (Darwin.OwnerPid(local, remote), "PROC_PIDFDSOCKETINFO")
                 : (null, "");
             return pid is { } p && Core.ProcessTable.Read(p) is { Zombie: false } e
@@ -70,8 +74,77 @@ public static class TcpPeer
     [SupportedOSPlatform("linux")]
     static class Linux
     {
-        internal static int? OwnerPid(IPEndPoint door, IPEndPoint client)
+        /// <summary>
+        /// THE PEER, PINNED BY A PIDFD: the socket's owner from <c>/proc/net/tcp</c>, then <c>pidfd_open</c> on it, then — with the pidfd
+        /// held — proof that the process the pid names NOW holds that very socket, its cgroup and pid namespaces read, and the pidfd
+        /// asked once more that the pid still names it. A pid handed on between the table and the pidfd fails the socket check; one
+        /// handed on after it fails the last look. Null whenever any step cannot be made: the caller then names the peer without a
+        /// pidfd, and a cgroup proof refuses it.
+        /// </summary>
+        internal static PeerFacts? Pinned(IPEndPoint door, IPEndPoint client)
         {
+            if (RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64)) return null;
+            if (OwnerPid(door, client, out var link) is not { } pid || link is null) return null;
+            var pidfd = (int)syscall(PidfdOpen, pid, 0);
+            if (pidfd < 0) return null;
+            try
+            {
+                if (PidOf(pidfd) != pid || !Holds(pid, link) || Core.ProcessTable.Read(pid) is not { Zombie: false } e) return null;
+                string? cgroup;
+                try { cgroup = File.ReadAllText($"/proc/{pid}/cgroup"); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { cgroup = null; }
+                var nspids = NsPidsOf(pidfd);
+                return PidOf(pidfd) == pid
+                    ? new PeerFacts(pid, e.Start, DateTimeOffset.UtcNow) { Source = PeerFacts.TcpPidfd, Cgroup = cgroup, NsPids = nspids }
+                    : null;
+            }
+            catch (Exception) { return null; }
+            finally { close(pidfd); }
+        }
+
+        /// <summary>pidfd_open(2)'s number: 434 on x86-64 and arm64 alike (the unified table since Linux 5.3).</summary>
+        const long PidfdOpen = 434;
+
+        /// <summary>Whether process <paramref name="pid"/> holds a descriptor on <paramref name="link"/> (<c>socket:[inode]</c>) now.</summary>
+        static bool Holds(int pid, string link)
+        {
+            foreach (var fd in Directory.GetFiles($"/proc/{pid}/fd"))
+            {
+                string? target;
+                try { target = new FileInfo(fd).LinkTarget; }
+                catch (Exception) { continue; }
+                if (target == link) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The pid a pidfd names, or null once its process has exited (the kernel then says -1).</summary>
+        static int? PidOf(int pidfd)
+        {
+            foreach (var line in File.ReadLines($"/proc/self/fdinfo/{pidfd}"))
+                if (line.StartsWith("Pid:", StringComparison.Ordinal))
+                    return int.TryParse(line.AsSpan(4).Trim(), out var pid) && pid > 0 ? pid : null;
+            return null;
+        }
+
+        /// <summary>The number of fields on a pidfd's <c>NSpid:</c> line — one per pid namespace the process is seen in — or 0.</summary>
+        static int NsPidsOf(int pidfd)
+        {
+            foreach (var line in File.ReadLines($"/proc/self/fdinfo/{pidfd}"))
+                if (line.StartsWith("NSpid:", StringComparison.Ordinal))
+                    return line[6..].Split(['\t', ' '], StringSplitOptions.RemoveEmptyEntries).Length;
+            return 0;
+        }
+
+        [DllImport("libc", SetLastError = true)]
+        static extern long syscall(long number, int pid, uint flags);
+
+        [DllImport("libc", SetLastError = true)]
+        static extern int close(int fd);
+
+        internal static int? OwnerPid(IPEndPoint door, IPEndPoint client, out string? socketLink)
+        {
+            socketLink = null;
             ulong? inode = null;
             foreach (var table in new[] { "/proc/net/tcp", "/proc/net/tcp6" })
             {
@@ -92,6 +165,7 @@ public static class TcpPeer
             if (inode is not { } socket) return null;
 
             var link = $"socket:[{socket.ToString(CultureInfo.InvariantCulture)}]";
+            socketLink = link;
             int? owner = null;
             foreach (var dir in Directory.EnumerateDirectories("/proc"))
             {
