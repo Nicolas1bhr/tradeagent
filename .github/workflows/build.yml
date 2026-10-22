@@ -209,7 +209,7 @@ jobs:
       # THE PLATFORM FIRST, AND A RUNNER THAT CANNOT HOLD A CELL FAILS — never skips: the kernel, the Landlock ABI the kernel itself
       # reports, and the active security modules are printed, and Landlock missing from the list or an ABI below 6 is a red run.
       - name: Show the cell platform (Landlock ABI 6 or a red run)
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -223,7 +223,7 @@ jobs:
       # bin/codex each checked against the build's own pins (RuntimeManifest.cs CodexInstall) — a mismatch is a red run, never a
       # newer codex. The Cell rows find it through TA_CELL_CODEX; no model, no login, no key but the rows' FAKE ones ever reaches it.
       - name: Fetch the pinned linux codex for the route (a) rows
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -245,7 +245,7 @@ jobs:
       # $BASHPID, never $$: systemd-run reads its command line as ExecStart= does, where "$$" is an escaped "$" (run 38968581131
       # wrote "$" to cgroup.procs and was refused with EINVAL).
       - name: Test the Linux cell rows
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         timeout-minutes: 15
         shell: bash
         run: |
