@@ -168,8 +168,25 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
 
         static string JsonEncoded(string s) => JsonSerializer.Serialize(s)[1..^1];
 
-        [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?(Z|(\\u002B|[+-])\d\d:\d\d)?")]
+        [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z| UTC|(\\u002B|[+-])\d\d:\d\d)?")]
         private static partial System.Text.RegularExpressions.Regex Instant();
+    }
+
+    /// <summary>
+    /// THE MASK COVERS EVERY WALL-CLOCK FORM THE ANSWERS PRINT — ISO, the report's "snapshot taken" and the minute a home began recording fills
+    /// ("since 2026-10-22 00:27 UTC"), which two homes made either side of a minute boundary print differently. RED before the minute form was
+    /// masked: a windows-latest run whose swept home was made at 00:26 and its control at 00:27 read as the line being seen.
+    /// </summary>
+    [Fact]
+    public void The_differential_masks_every_wall_clock_form_the_answers_print()
+    {
+        var seen = new Seen();
+        seen["iso"] = "\"as_of\":\"2026-10-22T00:15:43.770191+00:00\"";
+        seen["printed"] = "snapshot taken: 2026-10-22 02:18:49\\u002B02:00";
+        seen["minute"] = "recording your fills since 2026-10-22 00:27 UTC; anything";
+        Assert.Equal("\"as_of\":\"<instant>\"", seen.All["iso"]);
+        Assert.Equal("snapshot taken: <instant>", seen.All["printed"]);
+        Assert.Equal("recording your fills since <instant>; anything", seen.All["minute"]);
     }
 
     /// <summary>A surface's name without the role it was asked as.</summary>
