@@ -57,6 +57,7 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
         var checks = new List<AuditCheck>();
         var findings = new List<AuditFinding>();
         var flags = new List<AuditFlag>();
+        var unreadable = new List<string>();
         var accepted = evidence.Rows("""
             SELECT e.id, e.mandate_id, e.evidence, m.unit_id
               FROM org_mandate_event e JOIN org_mandate m ON m.id = e.mandate_id
@@ -65,18 +66,26 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
             """, ("$kind", MandateEventKind.Accepted), ("$after", after), ("$top", last));
         foreach (var row in accepted)
         {
-            // THE APP WROTE THE EVIDENCE OF AN ACCEPTANCE: the accepted delivery's id, first (OrgStore.Accept).
-            var ids = JsonSerializer.Deserialize<string[]>((string)row[2]!) ?? [];
-            if (ids.Length == 0) continue;
+            // THE APP WROTE THE EVIDENCE OF AN ACCEPTANCE: the accepted delivery's id, first (OrgStore.Accept). An event that names none
+            // TradeAgent can read is the line's own failure, written with this sweep — never a reason to stop auditing the rest.
+            var eventId = Convert.ToInt64(row[0], CultureInfo.InvariantCulture);
+            string[] ids;
+            try { ids = JsonSerializer.Deserialize<string[]>((string)row[2]!) ?? []; }
+            catch (JsonException) { ids = []; }
+            if (ids.Length == 0 || string.IsNullOrEmpty(ids[0]))
+            {
+                unreadable.Add($"accepted event {eventId} names no delivery TradeAgent can read; it was not drawn");
+                continue;
+            }
             var delivery = ids[0];
             if (!AuditSampler.Draws(salt, delivery, rate)) continue;
-            var sample = new AuditSample(delivery, (string)row[1]!, (string)row[3]!, Convert.ToInt64(row[0], CultureInfo.InvariantCulture), now);
+            var sample = new AuditSample(delivery, (string)row[1]!, (string)row[3]!, eventId, now);
             samples.Add(sample);
             var outcome = AuditChecks.Of(evidence, sample, now);
             checks.AddRange(outcome.Checks);
             findings.AddRange(outcome.Findings);
             if (outcome.Flag is { } flag) flags.Add(flag);
         }
-        return new AuditSweepWrite(samples, checks, findings, flags, last);
+        return new AuditSweepWrite(samples, checks, findings, flags, last, unreadable);
     }
 }

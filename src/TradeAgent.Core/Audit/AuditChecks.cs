@@ -62,18 +62,34 @@ public static class AuditChecks
         var (mandate, attempt, report, deviations, refs, manifest, at) =
             ((string)row[0]!, (string?)row[1], (string)row[2]!, (string)row[3]!, (string)row[4]!, (string)row[5]!, (string)row[6]!);
 
-        var named = JsonSerializer.Deserialize<MandateRef[]>(refs) ?? [];
-        var deviationCount = JsonNode.Parse(deviations) is JsonArray a ? a.Count : 0;
+        // A COLUMN NOT IN THE SHAPE TRADEAGENT WRITES — rewritten past the triggers — fails the checks that read it, in the app's words;
+        // it never stops the sweep, which would leave every later acceptance unaudited.
+        var named = Parse(() => JsonSerializer.Deserialize<MandateRef[]>(refs) ?? []);
+        var deviationCount = Parse(() => JsonNode.Parse(deviations) is JsonArray a ? a.Count : (int?)null);
+        const string unreadable = "the delivery's {0} are not in the shape TradeAgent writes";
         var checks = new List<AuditCheck>
         {
             Seal(d, sample.MandateId, mandate, attempt, report, deviations, refs, manifest, at),
-            RefsExistNow(evidence, d, named),
-            RefsOfThisMandateNow(evidence, d, sample.MandateId, named),
-            AcceptedClean(evidence, d, deviationCount),
+            named is null
+                ? new AuditCheck(d, AuditCheckName.RefsExistNow, false, string.Format(CultureInfo.InvariantCulture, unreadable, "refs"))
+                : RefsExistNow(evidence, d, named),
+            named is null
+                ? new AuditCheck(d, AuditCheckName.RefsOfThisMandateNow, false, string.Format(CultureInfo.InvariantCulture, unreadable, "refs"))
+                : RefsOfThisMandateNow(evidence, d, sample.MandateId, named),
+            deviationCount is not { } n
+                ? new AuditCheck(d, AuditCheckName.AcceptedClean, false, string.Format(CultureInfo.InvariantCulture, unreadable, "deviations"))
+                : AcceptedClean(evidence, d, n),
         };
         var findings = checks.Where(k => !k.Passed).Select(k => Finding(sample, attempt, k.Name, now)).ToList();
         var flag = deviationCount > 0 && findings.Count == 0 ? new AuditFlag(d, sample.MandateId, attempt, DormantFlag, now) : null;
         return new Outcome(checks, findings, flag);
+    }
+
+    /// <summary>A parse of a column, or null when it is not the shape TradeAgent writes.</summary>
+    static T? Parse<T>(Func<T?> parse)
+    {
+        try { return parse(); }
+        catch (JsonException) { return default; }
     }
 
     static AuditFinding Finding(AuditSample s, string? attempt, string check, DateTimeOffset now) => new(
