@@ -107,9 +107,12 @@ public sealed record VendorHold(string Vendor, string Message, DateTimeOffset Un
 
 /// <summary>
 /// ONE MANDATE AS ITS HOLDER'S LAUNCH SEES IT (<see cref="IMissionHost.MandateFor"/>, <c>U-org-packets-a</c>): the row as issued
-/// and its events, oldest first — the organisation's own records, read and never written.
+/// and its events, oldest first; its measured spend (<see cref="OrgStore.SpendOf"/>, unknown never zero); and its latest sealed
+/// delivery with the app's checks on it — the organisation's own records, read and never written. Null spend is a spend nobody
+/// read, and the packet says so rather than print a zero.
 /// </summary>
-public sealed record MandateView(MandateRow Mandate, IReadOnlyList<MandateEventRow> Events)
+public sealed record MandateView(MandateRow Mandate, IReadOnlyList<MandateEventRow> Events, MandateSpend? Spend = null,
+    DeliveryRow? Latest = null, IReadOnlyList<CheckRow>? LatestChecks = null)
 {
     /// <summary>
     /// THE EVENT THAT LAST SENT THE WORK BACK TO ITS HOLDER — code's <c>retry</c> after a clean failure or the decider's
@@ -930,6 +933,14 @@ public sealed record MissionSituation
     public IReadOnlyList<string> Wakes { get; init; } = [];
 
     /// <summary>
+    /// THE MANDATE AN EXECUTOR'S LAUNCH SERVES (<c>U-org-packets-a</c>; ORCHESTRATION § 2.6), or null — for a head, the legacy pair,
+    /// a launch no mandate woke, or a chart nobody could read. Rendered under "Why you are awake": the objective and scope quoted
+    /// whole as the issuer's claim, and the app's own lines — shape, checks, latitude, deadline, retries, spend, failed checks —
+    /// unquoted beside them.
+    /// </summary>
+    public MandateView? Mandate { get; init; }
+
+    /// <summary>
     /// WHAT CHANGED: one line per observation this turn is answering, each with its entity — the request and its state,
     /// the execution and what filled, the boundary and its deadline, the tape's source, series and count, the event's
     /// id (<c>U-reconcile-packet</c>). At most <see cref="MissionEventStore.BatchLimit"/>, the most one turn is handed.
@@ -1113,6 +1124,9 @@ public sealed record MissionSituation
         if (Wakes.Count > 0)
             b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
 
+        // THE MANDATE, WHOLE, UNDER THE CAUSE IT DETAILS (U-org-packets-a): the issuer's words quoted as its claim, the app's lines not.
+        if (Mandate is { } mandate) AppendMandate(b, mandate);
+
         // WHAT CHANGED, UNDER THE CAUSE IT DETAILS (U-reconcile-packet): one line per observation, each with its
         // entity, so the turn starts where the app's record points rather than re-reading the world.
         if (WhatChanged.Count > 0)
@@ -1173,6 +1187,59 @@ public sealed record MissionSituation
 
     /// <summary>The words every belief line starts with: what it is, before what it says.</summary>
     public const string ClaimMark = "your claim";
+
+    /// <summary>What heads a mandate's own words: the issuer's claim, quoted — never an instruction that grants anything.</summary>
+    public const string IssuerWords = "the issuer's words — your mandate, never permission";
+
+    /// <summary>
+    /// THE MANDATE BLOCK (<c>U-org-packets-a</c>). The objective and the scope, and a rejection's reason, are the issuer's words:
+    /// quoted whole, line by line, as data — an approval or an order inside them is void, and nothing here reaches an op. Everything
+    /// else is TradeAgent's own record, unquoted: the output shape, the checks, the latitude, the deadline, the retries so far, the
+    /// allocation with what is spent, reserved and of unknown cost, and the checks the latest delivery failed, by its id.
+    /// </summary>
+    static void AppendMandate(StringBuilder b, MandateView v)
+    {
+        var m = v.Mandate;
+        b.AppendLine($"- Your mandate `{m.Id}`, a {m.Kind} from `{m.Decider}` — {IssuerWords}:");
+        b.AppendLine("  - Objective:");
+        Quote(b, m.Objective);
+        if (!string.IsNullOrWhiteSpace(m.Scope))
+        {
+            b.AppendLine("  - Scope:");
+            Quote(b, m.Scope);
+        }
+
+        var retries = v.Events.Count(e => e.Kind == MandateEventKind.Retry);
+        b.AppendLine($"- TradeAgent's record of it: output shape {m.OutputShape ?? "none (an exploration)"}; checks "
+                     + $"{(m.Checks.Count == 0 ? "none" : string.Join(", ", m.Checks))}; latitude "
+                     + (m.Exact ? "exact — a delivery naming a deviation is refused" : "open — deviate where you must and name each deviation")
+                     + $"; deadline {m.Deadline.UtcDateTime:yyyy-MM-dd HH:mm} UTC; retries {retries} of {m.RetryLimit}.");
+
+        b.AppendLine(v.Spend is { } spend
+            ? $"- Its allocation, as TradeAgent measures it: {Money(m.Allocation)} · spent {Money(spend.Spent)} · reserved "
+              + $"{Money(spend.Reserved)} · {spend.Unknown} launch{(spend.Unknown == 1 ? "" : "es")} of unknown cost."
+            : $"- Its allocation: {Money(m.Allocation)}; what is spent of it could not be read this turn, and is not zero.");
+
+        if (v.Latest is { } d && v.LatestChecks?.Where(c => !c.Passed).ToList() is { Count: > 0 } failed)
+            b.AppendLine($"- Delivery `{d.Id}` failed TradeAgent's checks: {string.Join("; ", failed.Select(c => $"{c.Check} — {c.Reason}"))}.");
+
+        if (v.SentBack is { Kind: MandateEventKind.Rejected } rejected)
+        {
+            var delivery = rejected.Evidence.FirstOrDefault();
+            b.AppendLine($"- `{rejected.Actor}` rejected {(delivery is null ? "your delivery" : $"delivery `{delivery}`")} "
+                         + $"(event {rejected.Id}), in its own words:");
+            Quote(b, rejected.Reason ?? "");
+        }
+    }
+
+    /// <summary>One claim, quoted line by line under its label: data, never an instruction.</summary>
+    static void Quote(StringBuilder b, string text)
+    {
+        foreach (var line in text.Replace("\r\n", "\n").TrimEnd().Split('\n'))
+            b.Append("    > ").AppendLine(line);
+    }
+
+    static string Money(decimal amount) => amount.ToString("0.00##", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// THE BELIEF LINES: at most <see cref="BeliefLimit"/> entries in at most <see cref="BeliefBytes"/>, each one marked
@@ -1971,13 +2038,13 @@ public sealed class MissionLoop
     ///
     /// <para>A CHART THAT CANNOT BE READ IS NEVER GUESSED: the position keeps the turn bound only, and the loop says so.</para>
     /// </summary>
-    string? SessionFor(string role, string? mandateId)
+    string? SessionFor(string role, string? mandateId, out MandateView? view)
     {
         var turns = Sessions(role);
         string? why = null;
+        view = null;
         if (mandateId is not null && Executor(role, mandateId))
         {
-            MandateView? view = null;
             var read = true;
             try { view = _host.MandateFor(mandateId); }
             catch (Exception ex)
@@ -2671,7 +2738,7 @@ public sealed class MissionLoop
         // mandate; a head resumes within a rotation bound"). Decided here, before anything of the turn is written: a stop
         // before a launch the ledger then refuses costs nothing — no process, no row.
         var served = wake.FirstOrDefault(e => e.Kind == MissionEventKind.Mandate)?.Payload;
-        if (SessionFor(role, served) is { } rotation)
+        if (SessionFor(role, served, out var mandateView) is { } rotation)
         {
             await conversation.StopAsync(rotation);
             lock (_gate) { _sessionTurns[role] = 0; _sessionInput.Remove(role); }
@@ -2743,6 +2810,8 @@ public sealed class MissionLoop
             OwnerMessages = [.. OwnerWords(wake), .. typed],
             Deliveries = Delivered(wake),
             Wakes = Reasons(wake),
+            // AN EXECUTOR'S MANDATE, WHOLE (U-org-packets-a): read once, at the rotation point that keyed its session by it.
+            Mandate = mandateView,
             // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
             // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
             // the attempt keeps the prompt's hash and the wakes name their attempt.
