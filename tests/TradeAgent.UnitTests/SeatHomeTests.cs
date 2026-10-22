@@ -436,6 +436,35 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// (c1) THE POSITION'S HOME IS LOOKED AT WITHOUT FOLLOWING A LINK, AND THE CLI'S OWN REPORTS NEVER RUN IN IT (<c>U-execution-environment</c>
+    /// fix pass 5, the fourth re-review's G2). An executor's cell writes its whole home, and the seat check runs in the UNCONFINED app: its
+    /// look for <c>.codex</c> and <c>.agents</c> followed links, so a link the cell left pointing at nothing yet passed (its target can be
+    /// made after the look), and the vendor CLI ran its feature, server and sign-in reports with that home as its working folder. Now the
+    /// look sees the link itself and refuses it, and the reports run in an empty folder of the app's own state — they read only the seat's
+    /// own codex home and sign-in, and the home's own settings are what the look above already refuses.
+    /// </summary>
+    [UnixFact]
+    public async Task The_seat_check_follows_no_link_in_the_home_and_never_runs_the_CLI_there()
+    {
+        var (codex, exe, _) = Seat(nameof(The_seat_check_follows_no_link_in_the_home_and_never_runs_the_CLI_there));
+        var home = Path.Combine(Path.GetDirectoryName(exe)!, "exec-home");
+        Directory.CreateDirectory(home);
+        var argv = AgentArgs.For(codex, "", resuming: false, "gpt-5.6-sol");
+
+        var probe = new FakeProbe();
+        var clean = await SeatProfile.VerifyAsync(codex, exe, argv, home, probe, default);
+        Assert.False(clean.Refused, clean.Refusal);
+        var ranIn = Path.GetFullPath(probe.WorkingDirectory!);
+        Assert.True(!ranIn.StartsWith(Path.GetFullPath(home), StringComparison.Ordinal),
+            $"the CLI's own reports ran with the position's home as their working folder: {ranIn}");
+
+        File.CreateSymbolicLink(Path.Combine(home, ".codex"), Path.Combine(Path.GetDirectoryName(exe)!, "not-made-yet"));
+        var linked = await SeatProfile.VerifyAsync(codex, exe, argv, home, new FakeProbe(), default);
+        Assert.True(linked.Refused, "a link the cell left at .codex passed the look because it points at nothing yet");
+        Assert.Contains(Path.Combine(home, ".codex"), linked.Refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (c2) AN <c>environments.toml</c> IN THE SEAT'S CODEX HOME REFUSES THE LAUNCH (<c>U-cell-linux-b</c> fix pass 1, item 5; CRED-001):
     /// codex reads it only from CODEX_HOME, and present it REPLACES CODEX_EXEC_SERVER_URL, which would undo the broker-only seat.
     /// </summary>
@@ -631,11 +660,15 @@ public class SeatHomeTests
         public const string Allowed = "shell_tool   stable   true\nunified_exec   stable   true\nview_image   stable   true\n";
         public int Reads;
 
+        /// <summary>The folder the last read was asked to run the CLI in.</summary>
+        public string? WorkingDirectory;
+
         public SeatReading Reading { get; } = new(features ?? Allowed + "plugins   stable   false\n", mcp, signedIn);
 
         public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
         {
             Interlocked.Increment(ref Reads);
+            WorkingDirectory = workingDirectory;
             return Task.FromResult(Reading);
         }
     }

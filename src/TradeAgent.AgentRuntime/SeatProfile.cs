@@ -758,13 +758,17 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI while {inHome} exists: the AI's own home may hold only what TradeAgent puts " +
                 "there, and the AI would read that as instructions or tools. Remove it to continue.");
 
-        if (Foreign(workingDirectory, seat.WorkspaceForbidden) is { } inWorkspace)
+        if (ForeignInHome(workingDirectory, seat.WorkspaceForbidden) is { } inWorkspace)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI while {inWorkspace} exists in its working folder: the AI would load it as its " +
                 "own settings or skills. Remove it to continue.");
 
+        // THE CLI'S OWN REPORTS RUN IN AN EMPTY FOLDER OF THE APP'S, NEVER IN THE POSITION'S HOME (U-execution-environment fix pass 5, the
+        // fourth re-review's G2): an executor's cell writes its whole home, and these run the vendor CLI unconfined. They read the seat's
+        // own codex home (CODEX_HOME) and its sign-in; the only thing a working folder adds is its own settings, which the look above has
+        // just refused — so the app's folder answers the same question, and the CLI never runs in a folder a cell writes.
         SeatReading reading;
-        try { reading = await probe.ReadAsync(manifest, exe, workingDirectory, seatClass, launch.Door, ct); }
+        try { reading = await probe.ReadAsync(manifest, exe, ProbeFolder(), seatClass, launch.Door, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
@@ -886,7 +890,30 @@ public static class SeatProfile
         return false;
     }
 
-    /// <summary>The first of <paramref name="names"/> that exists under <paramref name="root"/>, as a full path, or null.</summary>
+    /// <summary>
+    /// The empty folder of the app's own state the CLI's reports run in (<c>state/seat-probe</c>): no position's home, nothing a cell
+    /// writes, and nothing the app puts in it.
+    /// </summary>
+    static string ProbeFolder() => Directory.CreateDirectory(Path.Combine(Paths.State, "seat-probe")).FullName;
+
+    /// <summary>
+    /// The first of <paramref name="names"/> that is anything at all in the position's <paramref name="home"/> — a file, a folder, a link
+    /// to anything or nothing — examined through <see cref="HomeFiles"/> without following it (<c>U-execution-environment</c> fix pass 5,
+    /// G2: an executor's cell writes its whole home). A name that cannot be examined is named too: a look that fails refuses, never passes.
+    /// </summary>
+    static string? ForeignInHome(string home, string[] names)
+    {
+        foreach (var name in names)
+        {
+            var path = Path.GetFullPath(Path.Combine(home, name.Replace('/', Path.DirectorySeparatorChar)));
+            try { if (HomeFiles.Describe(home, name) is not null) return path; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { return $"{path} (which TradeAgent could not examine: {ex.Message})"; }
+        }
+        return null;
+    }
+
+    /// <summary>The first of <paramref name="names"/> that exists under the seat's own home <paramref name="root"/>, as a full path, or null.</summary>
     static string? Foreign(string root, string[] names)
     {
         foreach (var name in names)
