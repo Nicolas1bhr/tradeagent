@@ -280,7 +280,7 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         {
             Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = other.Token })).Ok);
             var notHers = await client.SendAsync(Decline(mandate, MandateDecline.Ambiguous, other.Token));
-            Assert.Contains("only its holder delivers or declines it", notHers.Error!.Message, StringComparison.Ordinal);
+            Assert.Contains("only its holder delivers, declines or proposes on it", notHers.Error!.Message, StringComparison.Ordinal);
         }
 
         var row = Assert.Single(Rows(db, "op_refused"));
@@ -338,6 +338,81 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         foreach (var r in rows) log.WriteLine(r.Metadata);
         Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.Equal((Ops.MandateAssign, Head, headAttempt), (r.M("op"), r.M("role"), r.M("attempt"))));
+    }
+
+    static IpcRequest OrgFrame(string op, string grant, params (string Key, object Value)[] args) => new()
+    {
+        Op = op, Token = IpcToken.Ensure(), Grant = grant, Session = "refusal-row", RequestId = "refrow-" + Guid.NewGuid().ToString("n")[..12],
+        Args = args.ToDictionary(a => a.Key, a => JsonSerializer.SerializeToElement(a.Value))
+    };
+
+    static IpcRequest Rescope(string mandate, string grant, string why = "two clean failures: the question was too wide") =>
+        OrgFrame(Ops.MandateRescope, grant, ("mandate", mandate), ("why", why), ("goal", "summarise in ten lines whether the skew leads"),
+            ("kind", MandateKind.Task), ("shape", MandateShape.Report), ("due", DateTimeOffset.UtcNow.AddDays(7).ToString("O")), ("allocation", 3m));
+
+    static IpcRequest Propose(string mandate, string grant, string refId) =>
+        OrgFrame(Ops.MandatePropose, grant, ("mandate", mandate), ("claim", "venue B leads venue A by a minute on the skew"),
+            ("refs", new[] { new { kind = "mandate", id = refId } }));
+
+    /// <summary>
+    /// (e9) THE NEW ORGANISATION VERBS' REFUSALS OF RIGHTS LEAVE ONE ROW EACH; THEIR REFUSALS OF CONTENT NONE (<c>U-org-verbs-a</c>, rebased
+    /// onto <c>U-org-watcher-b</c>): over the read loop, a <c>mandate-rescope</c> by a position that does not decide the mandate, a
+    /// <c>mandate-propose</c> by one that does not hold it, a second proposal while one is open (one per mandate, as one escalation per
+    /// mandate is), and an <c>org-show</c> from a launch recorded unconfined each leave exactly one <c>op_refused</c> row naming its op; the
+    /// decider's re-scope with no reason and the holder's proposal citing a record that is not there are refused for what they say and
+    /// leave none.
+    /// </summary>
+    [Fact]
+    public async Task The_new_org_verbs_refused_on_rights_leave_one_row_and_refused_on_content_none()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        Chart(db);
+        var mandate = gw.Org.Assign(new MandateIssue(Head, null, Member, MandateKind.Task, "find out whether the skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, MandateLimits.DefaultRetryLimit), DateTimeOffset.UtcNow).Id;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        async Task<IpcResponse> As(string position, string attempt, Func<string, IpcRequest> frame)
+        {
+            using var grant = grants.IssueHere(position, attempt);
+            await using var client = await Raw.ConnectAsync(pipe);
+            Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant.Token })).Ok);
+            return await client.SendAsync(frame(grant.Token));
+        }
+
+        // CONTENT: refused as always, and no row.
+        var noWhy = await As(Head, Eligible(db, Head), g => Rescope(mandate, g, why: " "));
+        Assert.Contains("a re-scope says why", noWhy.Error!.Message, StringComparison.Ordinal);
+        var notThere = await As(Member, Eligible(db, Member), g => Propose(mandate, g, "man-000000000000"));
+        Assert.False(notThere.Ok);
+        Assert.Empty(Rows(db, "op_refused"));
+
+        // RIGHTS: one row each, naming its op.
+        var memberAttempt = Eligible(db, Member);
+        var notDecider = await As(Member, memberAttempt, g => Rescope(mandate, g));
+        Assert.Contains("only its decider may judge, cancel, re-scope or reassign it", notDecider.Error!.Message, StringComparison.Ordinal);
+        var otherAttempt = Eligible(db, Other);
+        var notHolder = await As(Other, otherAttempt, g => Propose(mandate, g, mandate));
+        Assert.Contains("only its holder delivers, declines or proposes on it", notHolder.Error!.Message, StringComparison.Ordinal);
+        Assert.True((await As(Member, Eligible(db, Member), g => Propose(mandate, g, mandate))).Ok);
+        var secondAttempt = Eligible(db, Member);
+        var second = await As(Member, secondAttempt, g => Propose(mandate, g, mandate));
+        Assert.Contains("already has an open proposal", second.Error!.Message, StringComparison.Ordinal);
+        var unconfinedAttempt = Unconfined(db, Member);
+        var unconfined = await As(Member, unconfinedAttempt, g => OrgFrame(Ops.OrgShow, g));
+        Assert.Contains("Heading a unit grants no verb by itself", unconfined.Error!.Message, StringComparison.Ordinal);
+        Assert.All([notDecider, notHolder, second, unconfined], r => Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), r.Error!.Code));
+
+        var rows = Rows(db, "op_refused");
+        foreach (var r in rows) log.WriteLine(r.Metadata);
+        Assert.Equal(
+            [(Ops.MandateRescope, Member, memberAttempt), (Ops.MandatePropose, Other, otherAttempt), (Ops.MandatePropose, Member, secondAttempt),
+             (Ops.OrgShow, Member, unconfinedAttempt)],
+            rows.Select(r => (r.M("op"), r.M("role"), r.M("attempt"))));
     }
 
     /// <summary>
