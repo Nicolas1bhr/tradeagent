@@ -540,6 +540,10 @@ public sealed partial class OrgStore
         }
 
         var delivered = AppendMandateEvent(m.Id, now, MandateEventKind.Delivered, caller, attempt, null, [delivery.Id]);
+        // A DELIVERY ANSWERS WHAT WAS OWED (U-rewake-floor): every wake to the holder still untaken for this mandate — a re-wake
+        // waiting on its floor above all — is withdrawn in this write, BEFORE code's triage raises a retry, so no turn is bought
+        // later for work that was delivered and the retry it raises stays due.
+        new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"delivered {delivery.Id}");
         var triaged = Triage(m, delivery, checks, delivered, now);
         return new DeliveryResult(delivery, checks, MandateStatus(m.Id)!, triaged);
     });
