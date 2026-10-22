@@ -178,6 +178,42 @@ public sealed class SeatPlan
     public string SignedOut { get; set; } = "TradeAgent keeps its own AI sign-in. Sign in again.";
 
     /// <summary>
+    /// WHO PAYS FOR THIS SEAT'S TURNS, READ OFF ITS SIGN-IN (<c>U-billing-classes</c>): a pattern over the sign-in status's text (stdout
+    /// and stderr, colour stripped) that means the owner's AI PLAN is signed in — its turns are the plan's capacity, not money — and one
+    /// that means a pasted API KEY is — real money. Vendor data, so a reworded status is a one-line fix; neither is part of the runtime
+    /// profile's hash (a sign-in is not the profile). Null for a runtime that cannot tell, and then every turn of it is
+    /// <see cref="TradeAgent.Core.Db.BillingClasses.Unknown"/>, counted against both ceilings.
+    /// </summary>
+    public string? PlanSignInPattern { get; set; }
+
+    /// <inheritdoc cref="PlanSignInPattern"/>
+    public string? KeySignInPattern { get; set; }
+
+    /// <summary>
+    /// THE BILLING CLASS A SIGN-IN STATUS TEXT NAMES: <c>plan</c> where only <see cref="PlanSignInPattern"/> matches, <c>key</c> where only
+    /// <see cref="KeySignInPattern"/> does, and <c>unknown</c> for neither, both, or a pattern that cannot be read — never a guess.
+    /// </summary>
+    public string BillingClassOf(string signInText)
+    {
+        static bool Matches(string? pattern, string text)
+        {
+            if (string.IsNullOrEmpty(pattern)) return false;
+            try
+            {
+                return System.Text.RegularExpressions.Regex.IsMatch(text, pattern,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+            }
+            catch (ArgumentException) { return false; }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { return false; }
+        }
+        var plan = Matches(PlanSignInPattern, signInText);
+        var key = Matches(KeySignInPattern, signInText);
+        return plan == key ? TradeAgent.Core.Db.BillingClasses.Unknown
+            : plan ? TradeAgent.Core.Db.BillingClasses.Plan
+            : TradeAgent.Core.Db.BillingClasses.Key;
+    }
+
+    /// <summary>
     /// One class's deny set's KEYS — its <c>--disable</c>/<c>--enable</c>/<c>-c</c> pairs, the door's address in its slot — which the
     /// probe commands take; the flags without a value (<c>--ignore-user-config</c> and its kind) belong to <c>exec</c> only.
     /// </summary>
@@ -969,7 +1005,13 @@ public static class RuntimeCatalog
                 },
                 // WHAT THE DASHBOARD'S "AI sign-in" CARD SAYS ABOVE ITS THREE WAYS IN (U-seat-signin), and what a refused turn says
                 // while the seat home holds no credential.
-                SignedOut = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again."
+                SignedOut = "TradeAgent now keeps its own AI sign-in, separate from your own Codex. Sign in again.",
+                // WHO PAYS, FROM `login status` (U-billing-classes). Both texts MEASURED: "Logged in using ChatGPT" (codex-cli 0.153.4,
+                // BUILD-STATUS.md, the owner's own sign-in, 2026-09) and "Logged in using an API key - sk-FAKE-***-0000" (codex-cli
+                // 0.150.0, a fake key, recorded below). The pinned release's wording is NOT re-read: a text that matches neither is
+                // `unknown`, counted against both ceilings.
+                PlanSignInPattern = @"\bLogged in using ChatGPT\b",
+                KeySignInPattern = @"\bLogged in using an API key\b"
             },
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux

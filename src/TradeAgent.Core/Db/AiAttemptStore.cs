@@ -130,6 +130,14 @@ public sealed record AiAttempt
     public string? TurnBound { get; init; }
 
     /// <summary>
+    /// WHO PAYS FOR THIS LAUNCH (<c>U-billing-classes</c>, the rung): <see cref="BillingClasses.Plan"/>, <see cref="BillingClasses.Key"/> or
+    /// <see cref="BillingClasses.Unknown"/>, composed by the app from the seat verdict its admission read before this row existed — never
+    /// an agent's word — written in the row's own insert and never updated (refused by trigger). It decides which ceiling the row counts
+    /// against; an unknown row counts against both. A row from before the rung reads <c>unknown</c>: nobody recorded it.
+    /// </summary>
+    public string BillingClass { get; init; } = BillingClasses.Unknown;
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -378,7 +386,7 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash, role, runtime_profile, seat_class, assurance, mandate_id, allow_in, allow_out, turn_bound
+        input_hash, role, runtime_profile, seat_class, assurance, mandate_id, allow_in, allow_out, turn_bound, billing_class
         """;
 
     /// <summary>
@@ -459,14 +467,14 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate,$in,$out,$bound)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate,$in,$out,$bound,$billing)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile),
             ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", mandateId),
-            ("$in", a.AllowIn), ("$out", a.AllowOut), ("$bound", a.TurnBound));
+            ("$in", a.AllowIn), ("$out", a.AllowOut), ("$bound", a.TurnBound), ("$billing", BillingClasses.Of(a.BillingClass)));
         c.ExecuteNonQuery();
         // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
         if (a.Funding is { Count: > 0 } funding)
@@ -895,7 +903,8 @@ public sealed class AiAttemptStore(Database db)
         MandateId = Sql.S(r.GetValue(24)),
         AllowIn = Long(r, 25),
         AllowOut = Long(r, 26),
-        TurnBound = Sql.S(r.GetValue(27))
+        TurnBound = Sql.S(r.GetValue(27)),
+        BillingClass = BillingClasses.Of(Sql.S(r.GetValue(28)))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);

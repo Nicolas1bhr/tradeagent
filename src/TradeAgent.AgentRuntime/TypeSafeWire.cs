@@ -289,7 +289,9 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             ReservedCost = Instrument.Reservation,
             // WHAT ENTERED THE REQUEST, AS A HASH: the canonical body, never the body.
             InputHash = Sha256Hex.Of(body),
-            Role = AppPrincipals.Perception
+            Role = AppPrincipals.Perception,
+            // PAID WITH THE OWNER'S OWN DECISION-MODEL KEY (U-billing-classes): real money, against the money cap.
+            BillingClass = BillingClasses.Key
         };
         var rule = new AiAdmissionRule
         {

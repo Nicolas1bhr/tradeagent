@@ -2882,6 +2882,29 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{lineageRung}') ON CONFLICT(key) DO UPDATE SET value='{lineageRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-billing-classes): a unit overtaken renumbers here and in Versions, nothing else.
+        const int billingRung = 46;
+        if (have < billingRung)
+        {
+            // WHO PAYS FOR A LAUNCH — `U-billing-classes` (docs/ORCHESTRATION.md § 2.4; ORGANISATION § 10; COUNCIL rule 4).
+            // `ai_attempt.billing_class`, `plan` (the owner's AI plan, counted at list price against the plan's capacity — not money),
+            // `key` (an API key: real money, against the money cap) or `unknown` (counted against both). Composed by the app from the
+            // seat verdict its admission read, written by `AiAttemptStore.Begin` in the row's own insert, and NEVER UPDATED: a trigger
+            // refuses an UPDATE that changes it, so a past launch cannot be moved to the other ceiling after its bill. A row from before
+            // the rung is `unknown` — true: nobody recorded it — and so counts in both. The column added only where missing and the
+            // trigger `IF NOT EXISTS`, the stamp last: the rungs run in autocommit, and a crash between any statement here and the stamp
+            // runs this again over what it made.
+            AddColumnIfMissing("ai_attempt", "billing_class",
+                "TEXT NOT NULL DEFAULT 'unknown' CHECK (billing_class IN ('plan','key','unknown'))");
+            Exec("""
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_billing_fixed BEFORE UPDATE OF billing_class ON ai_attempt
+                WHEN OLD.billing_class IS NOT NEW.billing_class
+                BEGIN SELECT RAISE(ABORT, 'a launch''s billing class is refused an update: it is who paid for it, written once.'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{billingRung}') ON CONFLICT(key) DO UPDATE SET value='{billingRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

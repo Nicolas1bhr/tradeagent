@@ -787,7 +787,12 @@ public static class SeatProfile
         if (!reading.SignedIn)
             return SeatVerdict.Refuse(ErrorCode.AI_AUTH_REQUIRED, seat.SignedOut);
 
-        if (!broker) return new SeatVerdict(null, null, reading) { Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading) };
+        if (!broker)
+            return new SeatVerdict(null, null, reading)
+            {
+                Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading),
+                BillingClass = TradeAgent.Core.Db.BillingClasses.Of(reading.BillingClass)
+            };
 
         // THE TOOLS THIS BINARY, TEMPLATE AND MODEL WOULD BE OFFERED, VERIFIED BEFORE EVERY LAUNCH, fresh or resumed (§ 2.7): read from
         // the dry run's cache by (binary digest, template, model), and held to the class's expected set on every call.
@@ -803,7 +808,8 @@ public static class SeatProfile
         return new SeatVerdict(null, null, reading)
         {
             Profile = ProfileHash(manifest, exe, ConfigBytes(seat), reading, seatClass, offered ?? []),
-            Offered = offered
+            Offered = offered,
+            BillingClass = TradeAgent.Core.Db.BillingClasses.Of(reading.BillingClass)
         };
     }
 
@@ -1032,6 +1038,14 @@ public sealed record SeatVerdict(string? Refusal, ErrorCode? Code, SeatReading? 
     /// <summary>The assurance of <see cref="SeatClass"/>, or null for none or a class this build does not know.</summary>
     public SeatAssurance? Assurance => SeatClasses.AssuranceOf(SeatClass);
 
+    /// <summary>
+    /// WHO PAYS FOR A LAUNCH ON THIS SEAT (<c>U-billing-classes</c>): the app's harness <c>key</c>; a CLI seat what its sign-in read
+    /// (<see cref="SeatReading.BillingClass"/>) — a codex seat may be signed in with ChatGPT or with a pasted key, and the runtime alone
+    /// cannot tell; a seat with no seat profile, or a sign-in matching neither pattern, <c>unknown</c>. The meter writes it on the row
+    /// from this same verdict, beside <see cref="SeatClass"/>.
+    /// </summary>
+    public string BillingClass { get; init; } = TradeAgent.Core.Db.BillingClasses.Unknown;
+
     /// <summary>The tools a broker seat's surface was verified as offering (<see cref="BrokerSeat.VerifySurfaceAsync"/>), or null.</summary>
     public IReadOnlyList<string>? Offered { get; init; }
 
@@ -1054,10 +1068,13 @@ public interface ISeatLaunch
 }
 
 /// <summary>
-/// What the CLI itself said about a seat: its feature report and its MCP server list, verbatim, and whether its sign-in status
-/// under the seat home answered signed in. Only the two reports enter the profile hash; a sign-in is not part of the profile.
+/// What the CLI itself said about a seat: its feature report and its MCP server list, verbatim, whether its sign-in status
+/// under the seat home answered signed in, and — <paramref name="BillingClass"/> (<c>U-billing-classes</c>) — who that sign-in bills,
+/// read off the same status text by the seat's two patterns (<see cref="SeatPlan.BillingClassOf"/>): <c>plan</c>, <c>key</c> or
+/// <c>unknown</c>. Only the two reports enter the profile hash; a sign-in is not part of the profile.
 /// </summary>
-public sealed record SeatReading(string Features, string Mcp, bool SignedIn = true);
+public sealed record SeatReading(string Features, string Mcp, bool SignedIn = true,
+    string BillingClass = TradeAgent.Core.Db.BillingClasses.Unknown);
 
 /// <summary>
 /// THE CLI ASKED ABOUT ITS OWN SEAT, behind an interface because CI has no codex: a test hands a fake, the product the real one.
@@ -1111,15 +1128,18 @@ public sealed class CliSeatProbe : ISeatProbe
         // THE SIGN-IN, UNDER THE SEAT HOME: `login status` exits 0 signed in and 1 not (measured, the manifest's AuthStateArgs). It
         // reads the app's own config.toml, written above by the environment seam, so cli_auth_credentials_store="file" holds.
         var signedIn = true;
+        var billing = TradeAgent.Core.Db.BillingClasses.Unknown;
         if (manifest.AuthStateArgs.Length > 0)
         {
             var (exit, stdout, stderr) = await Run(manifest, exe, manifest.AuthStateArgs, workingDirectory, seatClass, ct);
+            var said = Ansi.Strip(stdout + "\n" + stderr);
             signedIn = manifest.AuthStateSuccessPattern is { } pattern
-                ? System.Text.RegularExpressions.Regex.IsMatch(Ansi.Strip(stdout + "\n" + stderr), pattern,
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                ? System.Text.RegularExpressions.Regex.IsMatch(said, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 : exit == 0;
+            // WHO THAT SIGN-IN BILLS (U-billing-classes), off the same text: the plan, a key, or unknown — never guessed.
+            if (signedIn) billing = seat.BillingClassOf(said);
         }
-        return new SeatReading(features, mcp, signedIn);
+        return new SeatReading(features, mcp, signedIn, billing);
     }
 
     static async Task<string> Read(RuntimeManifest manifest, string exe, string[] args, string cwd, string seatClass, CancellationToken ct)

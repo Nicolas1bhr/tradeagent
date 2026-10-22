@@ -1005,7 +1005,10 @@ public sealed class TurnMeter
             // an overrun on an enforced row is then a query, not a guess.
             AllowIn = spec.Reserved.InputTokens,
             AllowOut = spec.Reserved.OutputTokens,
-            TurnBound = SeatSpec.Name(spec.Bound)
+            TurnBound = SeatSpec.Name(spec.Bound),
+            // AND WHO PAYS FOR IT (U-billing-classes, the rung), from the same verdict as its seat class: the app's reading of the seat's
+            // sign-in, never an agent's word — and unknown, counted against both ceilings, where nobody established it.
+            BillingClass = BillingClasses.Of(seat.BillingClass)
         };
 
         AiAdmission admission;

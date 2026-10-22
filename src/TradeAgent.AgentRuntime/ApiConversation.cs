@@ -68,7 +68,8 @@ public sealed class ApiConversation(
     /// </summary>
     public SeatVerdict CheckSeat() => HarnessSeat;
 
-    static readonly SeatVerdict HarnessSeat = SeatVerdict.None with { SeatClass = SeatClasses.Harness };
+    /// <summary>The harness's seat: brokered, and billed to an API key — real money (<c>U-billing-classes</c>).</summary>
+    static readonly SeatVerdict HarnessSeat = SeatVerdict.None with { SeatClass = SeatClasses.Harness, BillingClass = BillingClasses.Key };
 
     /// <summary>
     /// THE CANON THE TURN IN FLIGHT SENT AS ITS SYSTEM TEXT, set when the first request is composed and carried out on
