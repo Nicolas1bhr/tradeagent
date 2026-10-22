@@ -183,19 +183,31 @@ public sealed class OwnerWordsLateDetector : OversightDetector
     public override string Name => "owner-words-late";
 
     public override string Blind =>
-        "It reads only whether the app recorded a disposition for the wake, never whether the answer was any good; " + CliBlind + ".";
+        "It reads only whether the app recorded a disposition for the wake, never whether the answer was any good; the app keeps no "
+        + "disposition time, so a dispositioned wake is timed by its consumption and a late disposition is seen only by a sweep that ran before it; "
+        + CliBlind + ".";
 
+    /// <summary>
+    /// <b>The disposition, not the consumption, settles the owner's words</b> (fix pass 1, R3): consumption is launch admission — the turn
+    /// may still fail to say anything — so a wake with no disposition, or only <see cref="MissionEventDisposition.Blocked"/>'s standing
+    /// reason, is late from its raising to now, consumed or not. A dispositioned wake is timed by its consumption, the last instant the app
+    /// records on the row (it keeps no disposition time — named in <see cref="Blind"/>); one dispositioned without ever being consumed has no
+    /// instant to time and is not measured.
+    /// </summary>
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {
         foreach (var e in s.Wakes.Where(e => e.Kind is MissionEventKind.Owner or MissionEventKind.Inbox))
         {
-            var settled = e.ConsumedAt;
-            var took = (settled ?? w.Now) - e.CreatedAt;
+            var dispositioned = e.Disposition is { } d && d != MissionEventDisposition.Blocked;
+            if (dispositioned && e.ConsumedAt is null) continue;
+            var took = (dispositioned ? e.ConsumedAt!.Value : w.Now) - e.CreatedAt;
             if (took <= OversightPolicy.OwnerWordsDeadline) continue;
             yield return new Candidate(s.UnitOfRole(e.Role), e.Id, "-", [new OversightCite("event", e.Id)],
                 new Dictionary<string, string>
                 {
-                    ["kind"] = e.Kind, ["raised"] = T(e.CreatedAt), ["dispositioned"] = settled is { } d ? T(d) : "not yet",
+                    ["kind"] = e.Kind, ["raised"] = T(e.CreatedAt),
+                    ["dispositioned"] = dispositioned ? $"{e.Disposition}, consumed at {T(e.ConsumedAt!.Value)}"
+                        : e.Disposition is { } blocked ? $"not yet, {blocked}" : "not yet",
                     ["hours"] = N((long)took.TotalHours),
                 });
         }

@@ -228,6 +228,38 @@ public partial class OversightTests
         }
     }
 
+    /// <summary>
+    /// <c>owner-words-late</c> READS THE DISPOSITION, NOT THE CONSUMPTION: the owner's words, 30 hours old, admitted to a launch after one hour
+    /// and never dispositioned, are late; the same words consumed after an hour and answered are not. RED before fix pass 1: consumption
+    /// (launch admission) was read as the disposition, so the undispositioned words were never found.
+    /// </summary>
+    [Fact]
+    public void The_owners_words_are_late_until_dispositioned_not_until_consumed()
+    {
+        var now = OversightSeed.Now();
+        foreach (var disposition in new[] { null, MissionEventDisposition.Answered })
+        {
+            var (file, store) = Home();
+            using var _ = store;
+            using (var c = OversightSeed.Open(file))
+            {
+                var raw = new List<(string, object)>
+                {
+                    ("id", "evt-owner"), ("kind", MissionEventKind.Owner), ("role", CouncilRoles.Research), ("created_at", Sql.T(now.AddHours(-30))),
+                    ("due_at", Sql.T(now.AddHours(-30))), ("consumed_at", Sql.T(now.AddHours(-29))), ("consumed_by", "att-x"),
+                };
+                if (disposition is not null) raw.Add(("disposition", disposition));
+                OversightSeed.Insert(c, "mission_event", [.. raw]);
+            }
+            var swept = new OversightSweep(file, store).Run(now);
+            Assert.Null(swept.Failure);
+            var late = swept.Added.Where(f => f.Detector == "owner-words-late" && f.ScopeId == OversightStore.RootScope).ToList();
+            foreach (var f in late) log.WriteLine($"{disposition ?? "NULL"}: {DigestComposer.Sentence(f, _ => true)}");
+            if (disposition is null) Assert.Equal("evt-owner", Assert.Single(late).Subject);
+            else Assert.Empty(late);
+        }
+    }
+
     /// <summary>THE TEMPLATE LIST IS CLOSED AND STATES FACTS: one per detector variant, and no word that recommends (§ 9's first eight weeks).</summary>
     [Fact]
     public void The_digest_templates_are_a_closed_list_of_facts()
