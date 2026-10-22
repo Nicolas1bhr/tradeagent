@@ -68,6 +68,13 @@ public interface IAgentConversation
 
     Task CancelAsync();
     Task StopAsync();
+
+    /// <summary>
+    /// THE SAME STOP, ORDERED BY THE LOOP'S ROTATION, WITH WHY (<c>U-org-packets-a</c>; <see cref="SessionWhy"/>): the session is
+    /// forgotten exactly as <see cref="StopAsync()"/> forgets it, and the next turn's record says why it is fresh. The default is
+    /// the plain stop, for a conversation that records no session.
+    /// </summary>
+    Task StopAsync(string why) => StopAsync();
 }
 
 /// <summary>

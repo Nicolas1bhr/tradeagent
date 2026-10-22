@@ -1085,6 +1085,13 @@ public sealed class AppHost : IAsyncDisposable
             catch (Exception) { /* a log line is never worth a turn */ }
         };
 
+        // WHAT THE LOOP COULD NOT READ AT A SESSION'S ROTATION POINT AND DID NOT GUESS (U-org-packets-a), written down beside it.
+        Mission.Noted += what =>
+        {
+            try { Gateway.Log.Engineering("Mission", "session_unkeyed", "warn", metadataJson: Json.Write(new { what })); }
+            catch (Exception) { /* a log line is never worth a turn */ }
+        };
+
         // THE TWO FACTS THE GATEWAY OWNS AND NOBODY ELSE CAN SEE ARRIVE. A fill and an order
         // reaching a final state are the events the AI most needs to be woken for, and both are
         // known first inside the gateway's own event handling. The sink is a delegate rather
@@ -1935,6 +1942,17 @@ public sealed class AppHost : IAsyncDisposable
         public void MandateLaunchRefused(string mandateId, IReadOnlyList<string> wakes, string why, DateTimeOffset now)
         {
             if (host._db is { } db) new OrgStore(db).LaunchRefused(mandateId, wakes, why, now);
+        }
+
+        /// <summary>
+        /// ONE MANDATE AS ITS HOLDER'S LAUNCH SEES IT (<c>U-org-packets-a</c>): the row and its events, from <see cref="OrgStore"/>
+        /// reads only, in one snapshot. It writes nothing and reaches no verb.
+        /// </summary>
+        public MandateView? MandateFor(string mandateId)
+        {
+            if (host._db is not { } db) return null;
+            var org = new OrgStore(db);
+            return db.Read(_ => org.Mandate(mandateId) is { } m ? new MandateView(m, org.MandateEvents(m.Id)) : null);
         }
 
         /// <summary>
