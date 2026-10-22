@@ -213,6 +213,17 @@ public partial class OrgAssignmentTests
     /// </summary>
     static string OwnerTurnAsking(Database db, string holder, DateTimeOffset at, DateTimeOffset asked, long message)
     {
+        var id = OwnerTurn(db, holder, at, message);
+        Assert.True(new MissionEventStore(db).RaiseDue(MissionEventIds.Self(id), MissionEventKind.Self, at, asked, role: holder));
+        return id;
+    }
+
+    /// <summary>
+    /// A LAUNCH OF <paramref name="holder"/> AT <paramref name="at"/> WOKEN BY THE OWNER'S WORDS ALONE, ended there, serving no
+    /// mandate and asking for no wake of its own (fix pass 2). Answers the launch's id.
+    /// </summary>
+    static string OwnerTurn(Database db, string holder, DateTimeOffset at, long message)
+    {
         var events = new MissionEventStore(db);
         var owner = MissionEventIds.ForRole(MissionEventIds.Owner(message), holder);
         Assert.True(events.Raise(owner, MissionEventKind.Owner, at, payload: "{}", role: holder));
@@ -224,7 +235,6 @@ public partial class OrgAssignmentTests
         }, [owner]).Admitted);
         Assert.True(new AiAttemptStore(db).End(id, 0, at, 10, null, null, 10, null, "model-x", 0.01m, null, null));
         Assert.Null(new AiAttemptStore(db).Get(id)!.MandateId);
-        Assert.True(events.RaiseDue(MissionEventIds.Self(id), MissionEventKind.Self, at, asked, role: holder));
         return id;
     }
 
@@ -289,6 +299,67 @@ public partial class OrgAssignmentTests
                     ? (t.AddMinutes(15), asked)
                     : (asked, t.AddSeconds(1).AddMinutes(15)),
                 (Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt));
+        }
+    }
+
+    /// <summary>
+    /// (d, fix pass 2) A REQUESTED WAKE ONCE SPOKEN FOR STAYS SPOKEN FOR, ACROSS PASSES. A member holds two owed mandates whose
+    /// re-raises wait their floor; a launch that served the newer asks for a wake at T + 3 min, and the pass at T + 2 brings the
+    /// newer's re-raise to it. Then the owner's words wake the member at T + 2.5 — a launch that serves no mandate and asks for
+    /// nothing — so the holder's latest launch now names no mandate. The next pass must not bring the OLDER mandate to that same
+    /// wake as well: two mandates riding one requested wake would launch the second a floor early, a turn the floor exists to save
+    /// (BUDGET-001). The same holds when the second mandate's re-raise is first WRITTEN after the first was clamped to the wake:
+    /// one launch served the newer and asked for T + 3, then the older's issued wake is taken and its launch ends undelivered.
+    /// Either way exactly one mandate's wake is due by the requested time — and a fresh store over the same records (a restart)
+    /// computes nothing else.
+    ///
+    /// <para>RED before fix pass 2: the guard was chosen again each pass against the latest launch, and both came due at T + 3.</para>
+    /// </summary>
+    [Fact]
+    public void A_requested_wake_brings_forward_one_mandate_across_passes_never_a_second_after_the_latest_launch_changes()
+    {
+        // The re-review's check: the bring-forward path.
+        {
+            using var db = TestEnv.NewDb();
+            Chart(db);
+            var org = new OrgStore(db);
+            var events = new MissionEventStore(db);
+            var t = DateTimeOffset.UtcNow;
+            var older = org.Assign(Issue(), t);
+            var newer = org.Assign(Issue(), t.AddSeconds(1));
+            var a = TurnOn(db, Member, older, t);
+            var b = TurnOn(db, Member, newer, t.AddSeconds(1));
+            Assert.Equal(2, org.Sweep(t.AddSeconds(1), Shipped));
+            var asked = t.AddMinutes(3);
+            Assert.True(events.RaiseDue(MissionEventIds.Self(b), MissionEventKind.Self, t, asked, role: Member));
+            Assert.Equal(1, org.Sweep(t.AddMinutes(2), Shipped));
+            Assert.Equal((t.AddMinutes(15), asked), (Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt));
+
+            OwnerTurn(db, Member, t.AddMinutes(2.5), 4244);
+            Assert.Equal(0, org.Sweep(t.AddMinutes(2.5), Shipped));
+            Assert.Equal(0, new OrgStore(db).Sweep(t.AddMinutes(2.75), Shipped));
+            Assert.Equal((t.AddMinutes(15), asked), (Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt));
+            Assert.Single(events.DueFor(Member, asked), e => e.Kind == MissionEventKind.Mandate);
+        }
+
+        // The first-write path: the second mandate's re-raise is written after the first already rides the requested wake.
+        {
+            using var db = TestEnv.NewDb();
+            Chart(db);
+            var org = new OrgStore(db);
+            var events = new MissionEventStore(db);
+            var t = DateTimeOffset.UtcNow;
+            var older = org.Assign(Issue(), t);
+            var newer = org.Assign(Issue(), t.AddSeconds(1));
+            var b = TurnOn(db, Member, newer, t.AddSeconds(1));
+            var asked = t.AddMinutes(3);
+            Assert.True(events.RaiseDue(MissionEventIds.Self(b), MissionEventKind.Self, t.AddSeconds(1), asked, role: Member));
+            org.Sweep(t.AddSeconds(1), Shipped);
+            var a = TurnOn(db, Member, older, t.AddSeconds(2));
+            org.Sweep(t.AddSeconds(2), Shipped);
+            new OrgStore(db).Sweep(t.AddSeconds(3), Shipped);
+            Assert.Single(events.DueFor(Member, asked), e => e.Kind == MissionEventKind.Mandate);
+            Assert.Equal(asked, new[] { Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt }.Min());
         }
     }
 
