@@ -557,15 +557,21 @@ public static class HomeFiles
 
     // ---- shared ------------------------------------------------------------------------------------------------------------------
 
-    /// <summary>The path's names, split on either separator; an empty, absolute, <c>.</c> or <c>..</c> name is refused, never resolved.</summary>
+    /// <summary>
+    /// The path's names, split on either separator. A <c>.</c> names the folder it is in and is dropped, as <see cref="Path.GetFullPath(string)"/>
+    /// drops it — fix pass 4 (the second re-review's [P3] 7): <c>./out/x</c> is <c>out/x</c>, as the file tools' path check has always read it.
+    /// An absolute path or a <c>..</c> is refused, never resolved; so is a path that names no name at all, except where the root is asked for.
+    /// </summary>
     static string[] Parts(string relative, bool allowRoot)
     {
-        if (allowRoot && relative is "." or "") return [];
-        if (string.IsNullOrEmpty(relative) || Path.IsPathRooted(relative))
+        if (string.IsNullOrEmpty(relative)) return allowRoot ? [] : throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
+        if (Path.IsPathRooted(relative))
             throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
-        var parts = relative.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0 || parts.Any(p => p is "." or ".."))
+        var parts = relative.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries).Where(p => p != ".").ToArray();
+        if (parts.Any(p => p == ".."))
             throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
+        if (parts.Length == 0)
+            return allowRoot ? [] : throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
         return parts;
     }
 
