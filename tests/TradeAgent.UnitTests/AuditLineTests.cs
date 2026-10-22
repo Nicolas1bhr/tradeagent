@@ -560,6 +560,50 @@ public partial class AuditLineTests(ITestOutputHelper log)
             Assert.DoesNotContain($"'{words}'", text, StringComparison.Ordinal);
     }
 
+    /// <summary>The id of the accepted event naming <paramref name="delivery"/>.</summary>
+    static long AcceptedEventOf(string file, string delivery)
+    {
+        using var c = OversightSeed.Open(file);
+        using var q = c.CreateCommand();
+        q.CommandText = "SELECT id FROM org_mandate_event WHERE kind = 'accepted' AND evidence LIKE '%' || $d || '%'";
+        q.Parameters.AddWithValue("$d", delivery);
+        return (long)q.ExecuteScalar()!;
+    }
+
+    /// <summary>
+    /// AN ACCEPTANCE NAMING NO MANDATE IS THE LINE'S OWN FAILURE (fix pass 2): with foreign keys off, an accepted event's mandate is rewritten
+    /// to one that does not exist — it is not drawn, a failure names the event, and the sweep goes on. RED before fix pass 2: the inner join
+    /// dropped the event, neither drawn nor recorded, and the cursor passed it in silence.
+    /// </summary>
+    [Fact]
+    public void An_acceptance_naming_no_mandate_is_the_lines_own_failure()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var orphan = Accepted(org, now, "orphan");
+        var later = Accepted(org, now, "later");
+        var orphaned = AcceptedEventOf(db.FilePath, orphan);
+        using (var c = OversightSeed.Open(db.FilePath))
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "DROP TRIGGER org_mandate_event_sealed_u; UPDATE org_mandate_event SET mandate_id = 'm-nowhere' WHERE id = $e";
+            cmd.Parameters.AddWithValue("$e", orphaned);
+            cmd.ExecuteNonQuery();
+        }
+
+        using var store = new AuditStore(NewFile(), now);
+        var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
+        Assert.Null(swept.Failure);
+        Assert.Equal([later], swept.Drawn.Select(s => s.DeliveryId));
+        var failure = Assert.Single(store.Failures()).What;
+        log.WriteLine(failure);
+        Assert.Contains($"accepted event {orphaned}", failure, StringComparison.Ordinal);
+        Assert.Contains("names no mandate", failure, StringComparison.Ordinal);
+        Assert.DoesNotContain("m-nowhere", failure, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// A DELIVERY WHOSE REFS ARE ALL LENSES IS NOT RUN, NEVER PASSED: the lens registry is not a file this line opens, so a delivery naming
     /// only a lens has nothing the line can re-resolve — both ref checks store NOT RUN, never passed, and no finding. Mixed refs count only
