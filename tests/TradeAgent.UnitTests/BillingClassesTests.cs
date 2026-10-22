@@ -30,10 +30,10 @@ public class BillingClassesTests : IDisposable
         _db.Dispose();
     }
 
-    TurnMeter Meter(decimal money, decimal plan, Database? db = null) =>
+    TurnMeter Meter(decimal money, decimal plan, Database? db = null, Func<string?>? signIn = null) =>
         new(db ?? _db, () => money, now: () => _at, recordPath: _records, owner: () => Rate, share: _ => 1m,
             seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
-            planCap: () => plan);
+            planCap: () => plan, signIn: signIn);
 
     List<AiAttempt> Rows() => new AiAttemptStore(_db).Between(_at.AddDays(-1), _at.AddDays(1));
 
@@ -289,6 +289,94 @@ public class BillingClassesTests : IDisposable
             seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
             declaredSeat: _ => SeatClasses.Broker, planCap: () => 40m);
         Assert.Equal(BillingClasses.Unknown, broker.ClassOf(CouncilRoles.Operations));
+    }
+
+    /// <summary>
+    /// (a)(b) THE FIRST LOOK READS THE SIGN-IN THE SEAT HOLDS NOW (fix pass 2, the re-review's defect): the loop picks a role
+    /// (<c>affordable</c>) and waits for midnight (<c>CappedUntilMidnight</c>) on <see cref="TurnMeter.TodayFor"/> before any launch is begun,
+    /// so a class only an admission could teach was never taught to a role that look held back. (a) A fresh home — no row — with no real
+    /// money and the plan's 40: the app's reading of a ChatGPT sign-in picks the plan role, and the launch is admitted. (b) A plan row, then
+    /// the owner signs the seat in with a pasted key, with real money left and no plan capacity: the key seat is picked, not held to the
+    /// plan's 0 by its old row — and the mirror. Each time the first look and the admission give one answer. An unmatched sign-in is
+    /// <c>unknown</c>, both ceilings, as the gate holds it; no reading yet leaves the row's class, which the first reading replaces.
+    /// </summary>
+    [Fact]
+    public void The_first_look_reads_the_sign_in_the_seat_holds_now_not_an_admission_it_never_got()
+    {
+        // (a) A FRESH HOME: no row, money 0, plan 40, the seat signed in with ChatGPT.
+        using var fresh = TestEnv.NewDb();
+        var home = Meter(money: 0m, plan: 40m, db: fresh, signIn: () => BillingClasses.Plan);
+        using (home.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+        {
+            var look = home.TodayFor(CouncilRoles.Operations);
+            Assert.Equal(BillingClasses.Plan, look.Class);
+            Assert.True(look.AdmitsAnotherTurn);
+            Assert.True(Launch(home, CouncilRoles.Operations).Admitted);
+        }
+
+        // (b) ONE PLAN LAUNCH ADMITTED, then the owner signs the seat in with a pasted key: money 40, plan 0.
+        var before = Meter(money: 100m, plan: 100m, signIn: () => BillingClasses.Plan);
+        using (before.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(before, CouncilRoles.Operations).Admitted);
+        var signIn = BillingClasses.Key;
+        var after = Meter(money: 40m, plan: 0m, signIn: () => signIn);
+        using (after.Attach(new Billed(BillingClasses.Key), CouncilRoles.Operations))
+        {
+            var look = after.TodayFor(CouncilRoles.Operations);
+            Assert.Equal(BillingClasses.Key, look.Class);
+            Assert.True(look.AdmitsAnotherTurn);
+            Assert.True(Launch(after, CouncilRoles.Operations).Admitted);
+        }
+
+        // THE MIRROR: the last row is now key; signed in with ChatGPT again, no real money left and the plan's 40 — picked and admitted.
+        var back = Meter(money: 0m, plan: 40m, signIn: () => BillingClasses.Plan);
+        using (back.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+        {
+            Assert.True(back.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+            Assert.True(Launch(back, CouncilRoles.Operations).Admitted);
+        }
+
+        // AND THE LOOK HOLDS WHAT THE GATE HOLDS: the key sign-in with no real money is held back, and refused if launched anyway.
+        signIn = BillingClasses.Key;
+        var spent = Meter(money: 0m, plan: 40m, signIn: () => signIn);
+        using (spent.Attach(new Billed(BillingClasses.Key), CouncilRoles.Operations))
+        {
+            Assert.False(spent.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+            Assert.False(Launch(spent, CouncilRoles.Operations).Admitted);
+        }
+
+        // A SIGN-IN NEITHER PATTERN NAMES is unknown — both ceilings, as the gate counts it; the harness stays key by code.
+        var unmatched = Meter(money: 0m, plan: 40m, signIn: () => BillingClasses.Unknown);
+        Assert.Equal(BillingClasses.Unknown, unmatched.ClassOf(CouncilRoles.Operations));
+        Assert.False(unmatched.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+        var harness = new TurnMeter(fresh, () => 40m, now: () => _at, recordPath: _records, owner: () => Rate, share: _ => 1m,
+            seat: role => SeatResolver.Of(role, "codex", "gpt-5.6-sol", TurnAllowance.Default), live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Harness, planCap: () => 0m, signIn: () => BillingClasses.Plan);
+        Assert.Equal(BillingClasses.Key, harness.ClassOf(CouncilRoles.Research));
+
+        // NO READING YET (signed out, or the app's first seconds): the row's class, as fix pass 1 reads it; the reading replaces it.
+        string? nothing = null;
+        var early = Meter(money: 40m, plan: 0m, signIn: () => nothing);
+        Assert.Equal(BillingClasses.Plan, early.ClassOf(CouncilRoles.Operations));
+        Assert.False(early.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+        nothing = BillingClasses.Key;
+        Assert.Equal(BillingClasses.Key, early.ClassOf(CouncilRoles.Operations));
+        Assert.True(early.TodayFor(CouncilRoles.Operations).AdmitsAnotherTurn);
+    }
+
+    /// <summary>
+    /// THE READING ITSELF (fix pass 2): what the meter is handed is the app's own reading of the seat home's sign-in — signed in, its
+    /// class; signed out, unknown or not applicable, none — never a class guessed for a sign-in nobody read.
+    /// </summary>
+    [Fact]
+    public void Only_a_signed_in_reading_settles_a_class()
+    {
+        Assert.Equal(BillingClasses.Plan, new SeatSignInReading(SeatSignInState.SignedIn, null, BillingClasses.Plan).SignedInClass);
+        Assert.Equal(BillingClasses.Key, new SeatSignInReading(SeatSignInState.SignedIn, null, BillingClasses.Key).SignedInClass);
+        Assert.Equal(BillingClasses.Unknown, new SeatSignInReading(SeatSignInState.SignedIn, null).SignedInClass);
+        Assert.Equal(BillingClasses.Unknown, new SeatSignInReading(SeatSignInState.SignedIn, null, "credits").SignedInClass);
+        foreach (var state in new[] { SeatSignInState.SignedOut, SeatSignInState.Unknown, SeatSignInState.NotApplicable })
+            Assert.Null(new SeatSignInReading(state, "why", BillingClasses.Plan).SignedInClass);
     }
 
     // ---- (e) envelopes nest in each class --------------------------------------------------------------------------------

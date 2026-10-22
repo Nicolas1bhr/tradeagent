@@ -695,10 +695,15 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { return new(SeatSignInState.Unknown, ex.Message); }
 
+        var said = Ansi.Strip(r.StdOut + "\n" + r.StdErr);
         var signedIn = manifest.AuthStateSuccessPattern is { } pattern
-            ? Regex.IsMatch(Ansi.Strip(r.StdOut + "\n" + r.StdErr), pattern, RegexOptions.IgnoreCase)
+            ? Regex.IsMatch(said, pattern, RegexOptions.IgnoreCase)
             : r.ExitCode == 0;
-        return new(signedIn ? SeatSignInState.SignedIn : SeatSignInState.SignedOut, null);
+        // AND WHO THAT SIGN-IN BILLS (U-billing-classes, fix pass 2), off the same text by the seat's two patterns — the probe's own reading
+        // at admission, here on the app's cadence, so the loop's first look reads the sign-in the seat holds NOW.
+        return signedIn
+            ? new(SeatSignInState.SignedIn, null, manifest.Seat?.BillingClassOf(said) ?? TradeAgent.Core.Db.BillingClasses.Unknown)
+            : new(SeatSignInState.SignedOut, null);
     }
 
     /// <summary>

@@ -19,8 +19,18 @@ public enum SeatSignInState
     Unknown
 }
 
-/// <summary>One reading of the seat home's sign-in, and why it is <see cref="SeatSignInState.Unknown"/> when it is.</summary>
-public sealed record SeatSignInReading(SeatSignInState State, string? Reason);
+/// <summary>
+/// One reading of the seat home's sign-in, and why it is <see cref="SeatSignInState.Unknown"/> when it is — and, signed in, WHO THAT
+/// SIGN-IN BILLS (<c>U-billing-classes</c>, fix pass 2): <c>plan</c>, <c>key</c> or <c>unknown</c>, read off the same status text by the
+/// seat's two patterns (<see cref="SeatPlan.BillingClassOf"/>), as the seat's own probe reads it at admission. The app's reading of the
+/// CURRENT sign-in, so the loop's first look follows the owner when he signs the seat in again another way.
+/// </summary>
+public sealed record SeatSignInReading(SeatSignInState State, string? Reason,
+    string BillingClass = TradeAgent.Core.Db.BillingClasses.Unknown)
+{
+    /// <summary>The class this reading settles for the meter's first look: the sign-in's own while signed in, else null — nobody read one.</summary>
+    public string? SignedInClass => State == SeatSignInState.SignedIn ? TradeAgent.Core.Db.BillingClasses.Of(BillingClass) : null;
+}
 
 /// <summary>
 /// A sign-in with a one-time code: where to type it, the code, how long it lives, and WHEN IT WAS READ from what the program printed —

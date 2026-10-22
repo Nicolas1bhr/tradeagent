@@ -513,6 +513,14 @@ public sealed class TurnMeter
     /// </summary>
     readonly Func<decimal>? _planCap;
 
+    /// <summary>
+    /// WHO THE SEAT HOME'S SIGN-IN BILLS NOW, by the app's own latest reading of it (<c>U-billing-classes</c>, fix pass 2): the class the
+    /// runtime's status command, under the seat home, said on the app's cadence (<see cref="SeatSignInReading.SignedInClass"/>) — the one
+    /// sign-in every CLI and broker seat launches on. Null where nothing has read a signed-in seat yet. Never an agent's word, never a
+    /// model call: a process the app starts and reads. What the loop's first look holds a role to (<see cref="ClassOf"/>).
+    /// </summary>
+    readonly Func<string?>? _signIn;
+
     /// <summary>One role's slice of the daily ceiling, as a fraction. An equal share by default.</summary>
     readonly Func<string, decimal> _share;
 
@@ -636,10 +644,11 @@ public sealed class TurnMeter
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null,
         Func<string, decimal>? share = null, Func<string?, SeatSpec>? seat = null, LiveAttempts? live = null,
-        Func<string, string?>? declaredSeat = null, Func<decimal>? planCap = null)
+        Func<string, string?>? declaredSeat = null, Func<decimal>? planCap = null, Func<string?>? signIn = null)
     {
         _db = db;
         _planCap = planCap;
+        _signIn = signIn;
         _declaredSeat = declaredSeat;
         _live = live ?? LiveAttempts.Shared;
         _attempts = new AiAttemptStore(db);
@@ -1534,26 +1543,40 @@ public sealed class TurnMeter
     /// — a widened envelope buys the turn its gate would take, and an exhausted subtree is never chosen over a funded
     /// sibling. The legacy pair, with no envelope set, read their division's — the Safety page's split of the day, as before.
     /// A chain nobody can read admits nothing here, as the gate admits nothing.</para>
-    /// <para><b>AGAINST THE CEILING OF THE ROLE'S OWN CLASS, READ FROM DURABLE TRUTH</b> (<c>U-billing-classes</c>, fix pass 1): never from
-    /// this process's memory, which an app start empties — a plan seat held to the money cap from the loop's first look (or a key seat to
-    /// the plan's) is never picked, so its class is never learned again. See <see cref="ClassOf"/>.</para>
+    /// <para><b>AGAINST THE CEILING OF THE CLASS THE ROLE'S SEAT BILLS NOW</b> (<c>U-billing-classes</c>, fix passes 1 and 2): never from
+    /// what only an admission can teach — a plan seat held to the money cap from the loop's first look (or a key seat to the plan's) is
+    /// never picked, so a class learned that way is never learned again. See <see cref="ClassOf"/>.</para>
     /// </summary>
     public AiSpendToday TodayFor(string role) => Reading(role, ClassOf(role));
 
     /// <summary>
-    /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix pass 1), from what outlives the process: a role
-    /// the app declares on its harness is <c>key</c> — code, the harness's own verdict; otherwise the class the ledger recorded on the
-    /// role's last admitted launch on the seat class it is declared on now (<see cref="AiAttemptStore.LastBillingClass"/>), written from
-    /// the verdict that admitted it. <c>unknown</c> — both ceilings, the gate's own answer for a seat nobody has read — where the role has
-    /// no such row, its row was <c>unknown</c>, or the ledger cannot be read. The gate in <see cref="Begin"/> still decides from the
+    /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix passes 1 and 2), never from an admission: a role
+    /// the app declares on its harness is <c>key</c> — code, the harness's own verdict; otherwise the class the app's latest reading of the
+    /// seat home's sign-in found (<see cref="_signIn"/>) — the sign-in the seat holds now, read on the app's cadence whether or not the role
+    /// was ever picked; and only before any such reading (the app's first seconds) the class the ledger recorded on the role's last
+    /// admitted launch on the seat class it is declared on now (<see cref="AiAttemptStore.LastBillingClass"/>), which the first reading
+    /// replaces. <c>unknown</c> — both ceilings, the gate's own answer for a seat nobody has read — where the sign-in text matched neither
+    /// pattern, or with no reading the role has no such row, its row was <c>unknown</c>, or the ledger cannot be read. The gate in <see cref="Begin"/> still decides from the
     /// verdict it reads at admission; this is the reading the loop and the screens look at before it.
     /// </summary>
     public string ClassOf(string role)
     {
         var declared = Declared(role);
         if (declared == SeatClasses.Harness) return BillingClasses.Key;
+        // THE SIGN-IN THE SEAT HOLDS NOW, FIRST (fix pass 2): a ledger row says who paid for a launch already taken, and the owner may
+        // have signed the seat in another way since — from ChatGPT to a pasted key or back — so a row read first held a key seat to
+        // the plan's capacity (or a plan seat to the money cap) and the role, never picked, never wrote the row that would correct it.
+        // And a home with no row at all needs no admission to learn its class: the app's reading arrives on its own cadence.
+        if (SignedInClass() is { } now) return now;
         try { return BillingClasses.Of(_attempts.LastBillingClass(Key(role), declared)); }
         catch (Exception) { return BillingClasses.Unknown; }
+    }
+
+    /// <summary>The app's latest reading of the seat home's sign-in class (<see cref="_signIn"/>), or null for none or a throw.</summary>
+    string? SignedInClass()
+    {
+        try { return _signIn?.Invoke() is { } read ? BillingClasses.Of(read) : null; }
+        catch (Exception) { return null; }
     }
 
     /// <summary>
