@@ -1267,8 +1267,18 @@ public sealed record MissionSituation
               + $"{Money(spend.Reserved)} · {spend.Unknown} launch{(spend.Unknown == 1 ? "" : "es")} of unknown cost."
             : $"- Its allocation: {Money(m.Allocation)}; what is spent of it could not be read this turn, and is not zero.");
 
+        // A CHECK'S REASON NAMES THE DELIVERY'S OWN RECORD IDS AS THE EXECUTOR WROTE THEM (fix pass 1): quoted under its check,
+        // line by line, so an id carrying a line break and words of its own stays inside the quote — never a line of the app's.
         if (v.Latest is { } d && v.LatestChecks?.Where(c => !c.Passed).ToList() is { Count: > 0 } failed)
-            b.AppendLine($"- Delivery `{d.Id}` failed TradeAgent's checks: {string.Join("; ", failed.Select(c => $"{c.Check} — {c.Reason}"))}.");
+        {
+            b.AppendLine($"- Delivery `{d.Id}` failed TradeAgent's checks — each reason is TradeAgent's, quoted because it names "
+                         + "the delivery's records as the delivery wrote them:");
+            foreach (var c in failed)
+            {
+                b.AppendLine($"  - {c.Check}:");
+                Quote(b, c.Reason);
+            }
+        }
 
         if (v.SentBack is { Kind: MandateEventKind.Rejected } rejected)
         {
@@ -1279,12 +1289,18 @@ public sealed record MissionSituation
         }
     }
 
-    /// <summary>One claim, quoted line by line under its label: data, never an instruction.</summary>
+    /// <summary>
+    /// One claim, quoted line by line under its label: data, never an instruction. Every line break a reader may honour — CR LF,
+    /// LF, a lone CR, NEL, LINE and PARAGRAPH SEPARATOR, a vertical tab or a form feed — opens a new quoted line, so no break
+    /// inside the claim starts a line the quote does not mark.
+    /// </summary>
     static void Quote(StringBuilder b, string text)
     {
-        foreach (var line in text.Replace("\r\n", "\n").TrimEnd().Split('\n'))
+        foreach (var line in text.TrimEnd().Split(LineBreaks, StringSplitOptions.None))
             b.Append("    > ").AppendLine(line);
     }
+
+    static readonly string[] LineBreaks = ["\r\n", "\n", "\r", "\u0085", "\u2028", "\u2029", "\v", "\f"];
 
     static string Money(decimal amount) => amount.ToString("0.00##", CultureInfo.InvariantCulture);
 
