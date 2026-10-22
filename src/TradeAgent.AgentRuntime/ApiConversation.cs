@@ -367,6 +367,8 @@ public sealed class ApiConversation(
 
                 // AND THE CANON IT SENT: the system text's hash, version and whether it is the app's own.
                 Canon = _canon,
+                // AND ITS SESSION: the harness keeps none between turns, so every turn it started is fresh (U-org-packets-a).
+                Session = exitCode == NotStarted ? null : TurnSession.FreshBecause(SessionWhy.Harness),
 
                 // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
                 // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
