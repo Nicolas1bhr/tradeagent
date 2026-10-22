@@ -9,8 +9,9 @@ public sealed record AuditSweepResult(IReadOnlyList<AuditSample> Drawn, string? 
 
 /// <summary>
 /// ONE SWEEP OF THE PUBLIC AUDIT LINE (<c>U-org-audit-a</c>): reads the app's <c>org_mandate_event</c> rows of kind <c>accepted</c> past
-/// its cursor, through <see cref="AuditEvidence"/> in one read; draws each accepted delivery or not (<see cref="AuditSampler"/>); and appends
-/// what it drew, with the cursor, to <c>audit.db</c> in one write. A rejected or unjudged delivery has no <c>accepted</c> event and is never
+/// its cursor, through <see cref="AuditEvidence"/> in one read; draws each accepted delivery or not (<see cref="AuditSampler"/>); runs the
+/// code checks on each sample (<see cref="AuditChecks"/>); and appends what it drew, with its checks, findings and flags and the cursor, to
+/// <c>audit.db</c> in one write. A rejected or unjudged delivery has no <c>accepted</c> event and is never
 /// drawn.
 ///
 /// <para><b>App code, never agent-runtime code:</b> run from the app's own timer (<c>AuditLine</c>), never from the mission loop; it
@@ -71,6 +72,10 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
             if (!AuditSampler.Draws(salt, delivery, rate)) continue;
             var sample = new AuditSample(delivery, (string)row[1]!, (string)row[3]!, Convert.ToInt64(row[0], CultureInfo.InvariantCulture), now);
             samples.Add(sample);
+            var outcome = AuditChecks.Of(evidence, sample, now);
+            checks.AddRange(outcome.Checks);
+            findings.AddRange(outcome.Findings);
+            if (outcome.Flag is { } flag) flags.Add(flag);
         }
         return new AuditSweepWrite(samples, checks, findings, flags, last);
     }
