@@ -850,6 +850,20 @@ public sealed class AppHost : IAsyncDisposable
     /// read. A paper deployment's fill wakes no director, and without this the chair's look would be decided from a
     /// book the fill has already moved. Never a broker call — the next Situation is what reads it again.
     /// </summary>
+    /// <summary>
+    /// A FENCING WRITE COMMITTED (<c>U-org-verbs-b</c>): the loop ends every running turn it fenced, off the verb's thread — the
+    /// event an organisation verb raises through the gateway, never a pipe op. It only takes away.
+    /// </summary>
+    void FenceWritten()
+    {
+        if (Mission is not { } mission) return;
+        _ = Task.Run(async () =>
+        {
+            try { await mission.EndFencedAsync(); }
+            catch (Exception ex) { Gateway.Log.TryEngineering("Mission", "fence_end_failed", "warn", ex: ex); }
+        });
+    }
+
     void BookMoved()
     {
         Interlocked.Increment(ref _bookMoves);
@@ -1287,6 +1301,7 @@ public sealed class AppHost : IAsyncDisposable
         // the kill switch or approve anything.
         Gateway.RaiseMissionWake = RaiseWake;
         Gateway.FillRecorded = BookMoved;
+        Gateway.FenceWritten = FenceWritten;
         ReportAiToTheGateway();
     }
 
@@ -1429,6 +1444,7 @@ public sealed class AppHost : IAsyncDisposable
         // Forgetting this line is how a fill on the new platform stops waking the AI.
         Gateway.RaiseMissionWake = RaiseWake;
         Gateway.FillRecorded = BookMoved;
+        Gateway.FenceWritten = FenceWritten;
 
         _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
         _server.Start();
@@ -2302,6 +2318,9 @@ public sealed class AppHost : IAsyncDisposable
         /// WHAT <paramref name="role"/> OWNS THAT IS OPEN, from the ledgers and from the chair's book as the last
         /// Situation read it (<see cref="AppHost._lastBook"/>) — never a broker call: the loop asks on every pass.
         /// </summary>
+        /// <summary>The fence on a running launch, in words, read off the ledger and the chart (<c>U-org-verbs-b</c>).</summary>
+        public string? FenceOf(string attempt) => host._db is { } db ? new OrgStore(db).FencedSince(attempt)?.Words : null;
+
         public IReadOnlyList<RoleObjective>? Objectives(string role) =>
             host._db is { } db ? RoleObjectives.Open(db, role, Volatile.Read(ref host._lastBook)) : null;
 

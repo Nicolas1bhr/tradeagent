@@ -476,6 +476,65 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (g) A CANCEL MID-TURN ENDS THE HOLDER'S TURN AND ITS TREE, ON THE REAL KERNEL (<c>U-org-verbs-b</c>; ORCHESTRATION § 2.3): a
+    /// member's puppet is mid-turn on mandate M and would never end on its own (<c>hang</c>); its head cancels M through the pipe; the
+    /// fencing write signals the loop (the gateway's event, which the host composes — no pipe op), which ends the member's turn and
+    /// process tree: the attempt closes ENDED with its reservation as its cost (BUDGET-001), is read as fenced, is never retried,
+    /// and the member's next turn is told so in the fence's words. No model. RED at base: the turn ran on until the life's patience.
+    /// </summary>
+    [Fact]
+    public async Task A_cancel_mid_turn_ends_the_holders_turn_and_tree()
+    {
+        const string head = "pos-fe11ce000001", member = "pos-fe11ce000002", team = "team-fe11ce00";
+        await using var life = await PuppetLife.Begin("fence", seed: SeedTeam(team, head, member));
+        var org = new OrgStore(life.Host.Db);
+        var m = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        life.Script(member, ["signal turning", "hang"], ["usage 10 0 5", "final Told."]);
+        await life.RunUntil(() => life.Reached("turning"), "the member's puppet is mid-turn on the mandate");
+        var running = Assert.Single(life.AttemptsOf(member));
+        Assert.Equal((AiAttemptState.LAUNCHED, m.Id), (running.State, running.MandateId));
+        Assert.True(life.Presence.Live > 0, "the member's turn is not in the host's presence register");
+
+        // THE HEAD CANCELS THROUGH THE PIPE, under a launch of its own the ledger recorded.
+        var headTurn = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(new AiAttemptStore(life.Host.Db).Begin(new AiAttempt
+        {
+            Id = headTurn, StartedAt = DateTimeOffset.UtcNow, Role = head, ReservedCost = 0.1m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.Name(SeatClasses.AssuranceOf(SeatClasses.Harness)!.Value)
+        }).Admitted);
+        await using var pipe = new TradeAgent.Gateway.GatewayPipeServer(life.Host.Gateway, TradeAgent.Security.IpcToken.Ensure());
+        var cancelled = System.Diagnostics.Stopwatch.StartNew();
+        var reply = await pipe.CallAsync(new IpcRequest
+        {
+            Op = Ops.MandateCancel, Session = "fence", RequestId = "fence-" + Guid.NewGuid().ToString("n")[..12],
+            Args = new Dictionary<string, JsonElement>
+            {
+                ["mandate"] = JsonSerializer.SerializeToElement(m.Id), ["why"] = JsonSerializer.SerializeToElement("the question is answered elsewhere")
+            }
+        }, head, headTurn);
+        Assert.True(reply.Ok, reply.Error?.Message);
+
+        await life.RunUntil(() => life.AttemptsOf(member).Single().State != AiAttemptState.LAUNCHED && life.Presence.Live == 0,
+            "the member's fenced turn ended with its process tree");
+        cancelled.Stop();
+        var closed = life.AttemptsOf(member).Single();
+        Assert.Equal(AiAttemptState.ENDED, closed.State);
+        Assert.Equal(closed.ReservedCost, closed.Cost);
+        var fence = org.FencedSince(closed.Id);
+        Assert.Equal((MandateEventKind.Cancelled, m.Id), (fence?.Cause, fence?.Mandate));
+        Assert.Equal(1, life.Turns(member));
+
+        // NEVER RETRIED HERE; the member's next turn — woken for something else — is told in the fence's words.
+        life.Wake(member);
+        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) == 2, "the member's next turn ended");
+        var told = life.Prompt(member, 2)!;
+        Assert.Contains(fence!.Words, told, StringComparison.Ordinal);
+        Assert.Null(life.AttemptsOf(member)[1].MandateId);
+        output.WriteLine($"life (fence): the fenced turn ended {cancelled.Elapsed.TotalSeconds:F1} s after the cancel; {life.Counts()}");
+    }
+
+    /// <summary>
     /// (f2) THE LEGACY PAIR ON UNCONFINED SEATS ARE REFUSED ALL THREE, ON THE REAL KERNEL (<c>U-org-verbs-a</c>): their puppets play the
     /// CLI class — unconfined, the class the legacy pair's real seats record — and each asks <c>trade mandate rescope</c>,
     /// <c>trade mandate propose</c> and <c>trade org show</c>; every one is refused in the gate's words (research heads the division

@@ -638,6 +638,13 @@ public interface IMissionHost
     void SweepMandates(DateTimeOffset now) { }
 
     /// <summary>
+    /// THE FENCE ON A RUNNING LAUNCH, in words, or null when it has none (<c>U-org-verbs-b</c>; ORCHESTRATION § 2.3): the
+    /// mandate it serves was cancelled or re-scoped, or its position was fenced, after it started. A DB read; one that throws is
+    /// no verdict here — the broker already refuses every operation such a launch asks — and the loop leaves the turn running.
+    /// </summary>
+    string? FenceOf(string attempt) => null;
+
+    /// <summary>
     /// A LAUNCH ITS MANDATE REFUSED (<see cref="AiAdmission.Mandate"/>): that mandate's untaken wakes in this launch are closed
     /// by no launch, so no pass offers them again, and — the mandate still open — its decider is told in one write
     /// (<see cref="OrgStore.LaunchRefused"/>). A default of nothing, for a host with no ledger.
@@ -1903,6 +1910,18 @@ public sealed class MissionLoop
     /// </summary>
     readonly Dictionary<string, IAgentConversation> _conversations = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// THE LAUNCH EACH POSITION'S TURN IS RUNNING UNDER, from its admission to its commit (<c>U-org-verbs-b</c>): what a fencing
+    /// write is checked against, so a fence ends only the attempt it names and never the position's next one.
+    /// </summary>
+    readonly Dictionary<string, string> _launchedAttempt = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE FENCE'S WORDS FOR A TURN THE LOOP ENDED BECAUSE OF ONE (<c>U-org-verbs-b</c>), taken by that turn's commit: it is not
+    /// retried, not counted as the position's failure, and the position's next turn is told in these words.
+    /// </summary>
+    readonly Dictionary<string, string> _fencedTurn = new(StringComparer.Ordinal);
+
     /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
     string? _role;
 
@@ -2446,6 +2465,48 @@ public sealed class MissionLoop
         // on: a lease nothing releases is a role that never works again.
         lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// A FENCING WRITE HAS COMMITTED: END EVERY RUNNING TURN IT FENCED (<c>U-org-verbs-b</c>; ORCHESTRATION § 2.3 "a running attempt
+    /// under a stale generation is ended with its process tree"). The host signals it — an app event, never a pipe op — after a
+    /// mandate is cancelled or re-scoped; each position turning under a launch the host reads as fenced has its conversation
+    /// cancelled through <see cref="IAgentConversation.CancelAsync"/>, which ends the turn's whole tree before it returns, as
+    /// Pause does. The turn then commits as every turn does — its launch closed, its reservation kept as its cost where it
+    /// reported nothing (BUDGET-001) — with the fence's words, and is not retried here.
+    ///
+    /// <para><b>Never the legacy pair</b>, by the same guard the broker asks (<see cref="Core.Db.OrgStore.NeverFenced"/>): a fence
+    /// acts on the organisation's AI only, and no order turn of the Operations Director is ever cut by one (UNKNOWN-001). It only
+    /// takes away: it starts nothing, grants nothing and leaves every other turn running. Returns how many turns it ended.</para>
+    /// </summary>
+    public async Task<int> EndFencedAsync()
+    {
+        List<(string Role, string Attempt, IAgentConversation Conversation)> running;
+        lock (_gate)
+            running = [.. _launchedAttempt
+                .Where(l => !Core.Db.OrgStore.NeverFenced(l.Key) && _conversations.ContainsKey(l.Key))
+                .Select(l => (l.Key, l.Value, _conversations[l.Key]))];
+
+        var ended = 0;
+        foreach (var (role, attempt, conversation) in running)
+        {
+            string? words;
+            try { words = _host.FenceOf(attempt); }
+            catch (Exception) { continue; }   // no verdict: the broker refuses every operation of a launch whose fence it cannot read
+            if (words is null) continue;
+
+            lock (_gate)
+            {
+                // STILL THAT LAUNCH: a turn that committed meanwhile is over, and the position's next one is not this fence's.
+                if (!_launchedAttempt.TryGetValue(role, out var still) || still != attempt) continue;
+                _fencedTurn[role] = words;
+            }
+            try { await conversation.CancelAsync(); }
+            catch (Exception) { /* a conversation that cannot cancel has nothing running to end */ }
+            ended++;
+        }
+        if (ended > 0) Changed?.Invoke();
+        return ended;
     }
 
     /// <summary>
@@ -3126,6 +3187,7 @@ public sealed class MissionLoop
         // fence is what refuses a file naming a launch no row carries.
         var recorded = admission.Id;
         attemptId = recorded ?? attemptId;
+        if (attemptId is not null) lock (_gate) _launchedAttempt[role] = attemptId;
 
         // WHO THE WAKES WERE CONSUMED BY — the row's id, or the no-ledger mark below — so a launch the gate refused at its last
         // check gives back exactly what it took.
@@ -3139,6 +3201,7 @@ public sealed class MissionLoop
             catch (Exception) { /* a queue this host could not write; the turn still runs, as it has no ledger */ }
 
         AgentTurnEnded? ended = null;
+        var fencedTurn = false;
         void Watch(AgentTurnEnded e) => ended = e;
         conversation.TurnEnded += Watch;
         try { await conversation.SendMissionAsync(prompt, ct); }
@@ -3147,6 +3210,15 @@ public sealed class MissionLoop
             // A turn that threw its way out — cancelled, or a runtime that will not start — must not
             // leave the card reading "working" for ever over a turn that is not happening.
             conversation.TurnEnded -= Watch;
+
+            // NO LONGER RUNNING UNDER THIS LAUNCH, and whether a fence ended it (U-org-verbs-b): taken here, beside the commit, so a
+            // fence signalled after this line finds nothing of this turn to end.
+            string? fence;
+            lock (_gate)
+            {
+                _launchedAttempt.Remove(role);
+                fence = _fencedTurn.Remove(role, out var fenceWords) ? fenceWords : null;
+            }
 
             // ---- THE TURN'S ONE COMMITTED TRANSITION ------------------------------------------
             // The launch record closed, what the turn left in `out/` published, its plan and journal
@@ -3159,7 +3231,7 @@ public sealed class MissionLoop
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
             // What the packet showed is recorded against the ROW's id only: a host with no ledger has no row to record it on.
-            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : situation.Inputs);
+            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : situation.Inputs, fence);
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
@@ -3171,6 +3243,10 @@ public sealed class MissionLoop
             // that failed is not a turn that was cut, and the notice must not outlive the turn it
             // describes.
             Remember(role, ended);
+
+            // A TURN A FENCE ENDED IS TOLD SO, in the fence's own words, on the position's next turn.
+            if (fence is not null) lock (_gate) _cutLastTurn[role] = $"{fence}: its turn was ended with its process tree, and nothing it staged is published.";
+            fencedTurn = fence is not null;
 
             // AND THE ROLE'S LEASE, BESIDE THE COMMIT. Here rather than at the end of the method
             // because the pass that follows may attest the owner's inbox, and it may only do that
@@ -3194,7 +3270,9 @@ public sealed class MissionLoop
         // the sighting on the weaker word. The role that finishes last takes it.
         await PassAsync(ct);
 
-        var failed = ended?.Failed ?? true;
+        // A TURN A FENCE ENDED IS NOT THE POSITION'S FAILURE (U-org-verbs-b): the organisation took its authority away, so it buys no
+        // backoff and no error on the card — the next look is an ordinary one, under whatever replaced the mandate.
+        var failed = (ended?.Failed ?? true) && !fencedTurn;
         int errors;
         lock (_gate)
         {
@@ -3765,7 +3843,7 @@ public sealed class MissionLoop
     /// a bookkeeping failure into an AI that stopped working.
     /// </summary>
     void Commit(string role, string? attempt, MissionEventStore? events,
-        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer, IReadOnlyList<PacketInput> shown)
+        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer, IReadOnlyList<PacketInput> shown, string? fence = null)
     {
         var failed = ended?.Failed ?? true;
         try
@@ -3782,7 +3860,7 @@ public sealed class MissionLoop
             // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too.
             _host.CommitTurn(role, attempt, () =>
             {
-                if (events is not null) Settle(events, wake, failed, ended, consumer);
+                if (events is not null) Settle(events, wake, failed, ended, consumer, fenced: fence is not null);
                 if (attempt is not null && shown.Count > 0 && ended is { Session: not null, NoRequestAccepted: false }
                     && UnworkedRefusal(ended) is null)
                     _host.RecordInputs(attempt, shown);
@@ -4198,7 +4276,8 @@ public sealed class MissionLoop
     /// until then — and the owner's words show the vendor's own sentence. A limit met AFTER work is settled as any failed turn is:
     /// the work happened.</para>
     /// </summary>
-    void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer)
+    void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer,
+        bool fenced = false)
     {
         if (wake.Count == 0) return;
         if (UnworkedRefusal(ended) is { } why)
@@ -4222,7 +4301,8 @@ public sealed class MissionLoop
             foreach (var e in wake)
             {
                 events.Settle(e.Id, disposition);
-                if (!failed || e.Kind != MissionEventKind.Owner) continue;
+                // A FENCED TURN IS NEVER RETRIED HERE (U-org-verbs-b): its wakes were kept or withdrawn by the transition that fenced it.
+                if (!failed || fenced || e.Kind != MissionEventKind.Owner) continue;
 
                 RetryOnce(events, e, ended?.Raw is { Length: > 0 } raw
                     ? raw[..Math.Min(raw.Length, 500)]

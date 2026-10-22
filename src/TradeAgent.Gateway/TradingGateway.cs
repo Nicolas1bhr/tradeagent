@@ -74,6 +74,21 @@ public sealed class TradingGateway : IAsyncDisposable
     public Action<string, string, string?, string>? RaiseMissionWake { get; set; }
 
     /// <summary>
+    /// TOLD THAT A FENCING WRITE COMMITTED (<c>U-org-verbs-b</c>; ORCHESTRATION § 2.3) — a mandate cancelled or re-scoped — or null
+    /// where no mission listens. Set by the composition root, as <see cref="RaiseMissionWake"/> is: the app ends the running turns
+    /// the write fenced. It carries no row and grants nothing; the fence itself is the committed row, which the pipe reads on every
+    /// operation whether or not anybody listened here.
+    /// </summary>
+    public Action? FenceWritten { get; set; }
+
+    /// <summary>Says a fencing write committed, never throwing into the verb that wrote it.</summary>
+    public void Fenced()
+    {
+        try { FenceWritten?.Invoke(); }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "fence_signal_failed", "warn", ex: ex); }
+    }
+
+    /// <summary>
     /// TOLD THAT THE LEDGER RECORDED A FILL, of any request or of none — or null where nobody listens
     /// (<c>U-reconcile-wakes</c>, review 1). The host's last read of the book describes the account before it, so
     /// the host stops calling that read current. It is told the fact and nothing else: no row, no answer and no

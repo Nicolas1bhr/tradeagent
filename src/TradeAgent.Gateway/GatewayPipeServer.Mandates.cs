@@ -81,6 +81,8 @@ public sealed partial class GatewayPipeServer
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var id = Require(req, "mandate");
         Gateway.Org.Cancel(id, caller, ctx.AttemptId, Require(req, "why"), DateTimeOffset.UtcNow);
+        // THE CANCELLATION IS THE FENCE (U-org-verbs-b): committed above, so the app ends the holder's running turn now.
+        Gateway.Fenced();
         return MandateReply(Gateway.Org.Mandate(id)!);
     }
 
@@ -100,6 +102,8 @@ public sealed partial class GatewayPipeServer
         var (_, successor) = Gateway.Org.Rescope(Require(req, "mandate"), decider, ctx.AttemptId, Require(req, "why"),
             new MandateTerms(Require(req, "kind"), Require(req, "goal"), req.Str("scope"), req.Str("shape"),
                 NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow);
+        // THE RE-SCOPE IS THE FENCE on the old mandate's running launch (U-org-verbs-b), committed above.
+        Gateway.Fenced();
         return MandateReply(successor);
     }
 
