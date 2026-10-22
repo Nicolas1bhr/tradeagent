@@ -118,4 +118,46 @@ public class OversightPageTests(ITestOutputHelper log)
         Assert.Equal(2, page.FindingCards.Children.Count);
         Assert.Contains(cards[0], page.FindingCards.Children);
     }
+    // ---- (c) the cap's press ----------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c) RAISING THE OVERSIGHT CAP TAKES TWO PRESSES NAMING THE FIGURE, AND LOWERING IT — OR ZERO — ONE: the perception budget's rule, pressed
+    /// on the page's own box and button over a test's file. A raise armed for one figure is disarmed when the box changes, and the next figure
+    /// asks twice of its own. Every save is a new row; nothing is edited. The unit's watched mutant — the raise armed with one press
+    /// (<c>ConfirmIf</c>'s sentence returning null) — turns this red. RED at base: no cap and no press existed.
+    /// </summary>
+    [Fact]
+    public void Raising_the_oversight_cap_takes_two_presses_and_lowering_one()
+    {
+        using var store = new OversightStore(NewFile(), Now);
+        var page = new OversightPage(Sources(store));
+        page.Update();
+
+        page.CapBox.Value = 3m;
+        Press(page.CapSave);
+        Assert.Null(store.Cap());
+        Assert.Equal(Labels.RaiseOversightCapArmed("3 USD"), page.CapSave.Content);
+        Press(page.CapSave);
+        Assert.Equal(3m, store.Cap()!.Amount);
+        Assert.Equal(Labels.SaveOversightCap, page.CapSave.Content);
+
+        // A CONFIRMATION COMPLETES ONLY THE FIGURE IT NAMED.
+        page.CapBox.Value = 5m;
+        Press(page.CapSave);
+        page.CapBox.Value = 50m;
+        Press(page.CapSave);
+        Assert.Equal(3m, store.Cap()!.Amount);
+        Assert.Equal(Labels.RaiseOversightCapArmed("50 USD"), page.CapSave.Content);
+        page.CapBox.Value = 1m;
+
+        // LOWERING, AND ZERO, ARE ONE PRESS EACH.
+        Press(page.CapSave);
+        Assert.Equal(1m, store.Cap()!.Amount);
+        page.CapBox.Value = 0m;
+        Press(page.CapSave);
+        Assert.Equal(0m, store.Cap()!.Amount);
+        Assert.Equal("USD", store.Cap()!.Currency);
+        page.Update();
+        Assert.Contains("0 USD", page.CapText.Text, StringComparison.Ordinal);
+    }
 }

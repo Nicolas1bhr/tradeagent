@@ -163,7 +163,7 @@ sealed class OversightPage
 
     readonly TextBlock _status = Ui.Muted("");
     readonly TextBlock _failures = Ui.Body("");
-    readonly TextBlock _cap = Ui.Body("");
+    bool _capRead;
     readonly Dictionary<string, (Control Card, TextBlock Ack)> _cards = new(StringComparer.Ordinal);
     string _signature = "";
 
@@ -175,12 +175,21 @@ sealed class OversightPage
     /// <summary>The latest digest, as written.</summary>
     internal TextBlock DigestText { get; } = Ui.Body("");
 
+    /// <summary>What the page says of the cap.</summary>
+    internal TextBlock CapText { get; } = Ui.Body("");
+
+    /// <summary>The figure the owner types, and the press that saves it (<see cref="BuildSaveCap"/>).</summary>
+    internal NumericUpDown CapBox { get; } = Ui.NumberField(0m, 0m, 0.5m);
+
+    internal Button CapSave { get; }
+
     public OversightPage(OversightSources sources)
     {
         _src = sources;
         DigestText.FontSize = Theme.Small;
         _failures.FontSize = Theme.Small;
-        _cap.FontSize = Theme.Small;
+        CapText.FontSize = Theme.Small;
+        CapSave = BuildSaveCap(CapBox, CurrentCap, _src.Currency, SaveCap);
 
         var empty = OversightWords.Of(null, null, "");
         var seats = Ui.Col(Theme.S2, [.. empty.SeatClasses.Select(s => Ui.KeyValue(s.Seat, $"{s.Reach} — {s.How}"))]);
@@ -194,7 +203,8 @@ sealed class OversightPage
             Ui.Section("The line's own failures", _failures),
             Ui.Section("How hidden it is, by seat", seats),
             Ui.Section("Thresholds", thresholds),
-            Ui.Section("Oversight cap", _cap));
+            Ui.Section("Oversight cap", Ui.Col(Theme.S3, CapText,
+                Ui.FieldRow("The most your private line may spend in a day", CapBox), CapSave)));
 
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
@@ -217,7 +227,12 @@ sealed class OversightPage
         Set(_status, words.Status);
         Set(DigestText, words.Digest);
         Set(_failures, words.Failures.Count == 0 ? "None." : string.Join("\n", words.Failures));
-        Set(_cap, words.Cap);
+        Set(CapText, words.Cap);
+        if (!_capRead && read is not null)
+        {
+            _capRead = true;
+            CapBox.Value = read.Cap?.Amount ?? 0m;
+        }
 
         var signature = string.Join('|', words.Findings.Select(f => f.Id + "#" + f.Acknowledged));
         if (signature == _signature) return;
@@ -231,6 +246,42 @@ sealed class OversightPage
             Set(card.Ack, f.Acknowledged ?? (f.Severity == OversightSeverity.Severe ? "not acknowledged" : ""));
             FindingCards.Children.Add(card.Card);
         }
+    }
+
+    // ---- the cap ----------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE OVERSIGHT CAP'S PRESS: RAISING IT ASKS TWICE AND NAMES THE FIGURE; LOWERING IT, OR ZERO, SAVES IN ONE PRESS — the perception
+    /// budget's rule (<see cref="PerceptionCard.BuildSaveBudget"/>). A factory, so a test presses the control the owner sees.
+    /// </summary>
+    internal static Button BuildSaveCap(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveOversightCap,
+            () => pending() > current() ? Labels.RaiseOversightCapArmed(Labels.Money(pending(), currency())) : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// THE PRESS OVER ITS OWN BOX: a confirmation completes only the figure it named, so editing the box disarms a raise armed for another
+    /// figure, and the new one asks twice of its own — the daily limit's rule (<see cref="SafetyPage.BuildSaveDailyCap(NumericUpDown, Func{decimal}, Func{string}, Action)"/>).
+    /// </summary>
+    internal static Button BuildSaveCap(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    {
+        var b = BuildSaveCap(current, () => box.Value ?? current(), currency, save);
+        box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
+        return b;
+    }
+
+    decimal CurrentCap() => _src.Store()?.Cap()?.Amount ?? 0m;
+
+    /// <summary>Appends the owner's figure to his own file — never the activity log, which the organisation's reports can carry.</summary>
+    void SaveCap()
+    {
+        if (_src.Store() is not { } store) return;
+        store.SetCap(CapBox.Value ?? 0m, _src.Currency(), _src.Now());
+        Update();
     }
 
     /// <summary>One finding's card, made once.</summary>

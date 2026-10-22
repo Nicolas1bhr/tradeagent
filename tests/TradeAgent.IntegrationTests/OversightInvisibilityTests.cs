@@ -115,7 +115,45 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     /// sweep writing a severe finding's sentence to the activity log (the unit's mutant), which the daily report serves.
     /// </summary>
     [Fact]
-    public async Task No_agent_reachable_surface_answers_differently_when_the_line_has_run()
+    public Task No_agent_reachable_surface_answers_differently_when_the_line_has_run() => Differential(null);
+
+    /// <summary>
+    /// (d) GUARD: THE OWNER'S CAP IS READ BY NO ADMISSION GATE AND NO AGENT-REACHABLE TOTAL (BUDGET-001, <c>U-org-watcher-b</c>). The
+    /// differential (b) re-run with a cap raised, then set to zero, and a finding acknowledged in the swept home's file — nothing the
+    /// organisation can reach answers differently; the totals (b2) are the pinned list still; and no source but the line's own store and
+    /// the owner's page names the cap, its reader or its table, so <c>AiAttemptStore.Begin</c> and every total read nothing of it. RED at
+    /// base: no cap existed to set.
+    /// </summary>
+    [Fact]
+    public async Task The_cap_is_read_by_no_admission_gate_and_no_agent_reachable_total()
+    {
+        await Differential(store =>
+        {
+            var now = OversightSeed.Now();
+            store.SetCap(7m, "USD", now);
+            store.SetCap(0m, "USD", now);
+            store.Acknowledge(store.Findings()[0].Id, now);
+            Assert.Equal(0m, store.Cap()!.Amount);
+        });
+        Every_total_an_agent_can_read_is_on_the_enumerated_list();
+
+        var root = RepoRoot();
+        var cap = new System.Text.RegularExpressions.Regex(@"\bOversightCap\b|oversight_cap|\bSetCap\(|\.Cap\(\)");
+        var readers = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                        && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(f => cap.IsMatch(File.ReadAllText(f)))
+            .Select(f => Path.GetRelativePath(root, f).Replace(Path.DirectorySeparatorChar, '/'))
+            .Order(StringComparer.Ordinal).ToList();
+        log.WriteLine(string.Join(", ", readers));
+        Assert.Equal(["src/TradeAgent.App/OversightView.cs", "src/TradeAgent.Core/Oversight/OversightStore.cs"], readers);
+    }
+
+    /// <summary>
+    /// THE DIFFERENTIAL: three homes seeded alike, one swept over two scopes — and, when <paramref name="owner"/> is given, the owner's own
+    /// acts on that file after the sweep — then everything each answers the organisation compared.
+    /// </summary>
+    async Task Differential(Action<OversightStore>? owner)
     {
         var now = OversightSeed.Now();
         await using var swept = await Seeded(now);
@@ -131,6 +169,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
                 result.Added.Select(f => f.Detector).Distinct().Order(StringComparer.Ordinal));
             Assert.Contains(result.Added, f => f.ScopeId == "dept-research");
             Assert.NotEmpty(result.Digests);
+            owner?.Invoke(store);
         }
 
         var c = await Pass(control, now);
@@ -287,7 +326,8 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
 
         var root = RepoRoot();
         // AND THE OWNER'S PAGE (U-org-watcher-b): its words, its controls and their sources — the App's alone.
-        string[] named = [ns, OversightStore.FileName, "oversight_", "OversightPage", "OversightWords", "OversightSources", "OversightRead"];
+        string[] named = [ns, OversightStore.FileName, "oversight_", "OversightPage", "OversightWords", "OversightSources", "OversightRead",
+            "OversightCap", "SaveOversightCap", "RaiseOversightCapArmed"];
         var sources = new[] { "TradeAgent.Gateway", "TradeAgent.AgentRuntime", "TradeAgent.TradeCli", "TradeAgent.GatewayHost" }
             .SelectMany(p => Directory.GetFiles(Path.Combine(root, "src", p), "*.cs", SearchOption.AllDirectories))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)

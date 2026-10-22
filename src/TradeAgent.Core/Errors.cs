@@ -593,6 +593,19 @@ public static class Labels
     public static string RaisePerceptionBudgetArmed(string amount) =>
         $"Confirm: let perception spend up to {amount} a day";
 
+    /// <summary>
+    /// The press that writes the owner's own oversight cap — BESIDE the organisation's daily limit, never inside it (<c>U-org-watcher-b</c>;
+    /// ORGANISATION § 9). On his Oversight page alone.
+    /// </summary>
+    public const string SaveOversightCap = "Save the oversight cap";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveOversightCap"/> will do. RAISING it lets the owner's line spend more of his money, so it asks
+    /// twice and names the figure; LOWERING it, or zero, is one press — the cap's rule (<see cref="RaiseDailyCapArmed"/>).
+    /// </summary>
+    public static string RaiseOversightCapArmed(string amount) =>
+        $"Confirm: let your private line spend up to {amount} a day";
+
     /// <summary>The one press that asks the decision model one fixed question, to see that it answers and what it costs.</summary>
     public const string PerceptionTest = "Ask a test question";
 
