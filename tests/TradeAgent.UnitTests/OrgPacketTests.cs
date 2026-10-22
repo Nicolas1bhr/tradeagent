@@ -226,8 +226,8 @@ public class OrgPacketTests
     /// <summary>
     /// (e) THE ORG BLOCK STAYS INSIDE ITS BOUND AND COUNTS WHAT IT CANNOT SHOW: forty notes of about 900 bytes to an executor, and
     /// forty to a head, compose blocks of at most 8 KiB and 16 KiB; each shows whole notes only, every one it shows is in its lineage,
-    /// and the rest are counted — shown plus counted is forty — and pointed at <c>trade lateral list</c>. A longer note is cut at 1 KiB,
-    /// and the cut names its verb.
+    /// and the rest are counted — shown plus counted is forty — and pointed at <c>trade lateral list</c>. A longer note is cut at 1 KiB
+    /// AS QUOTED (fix pass 1), and the cut names its size and its verb.
     /// </summary>
     [Fact]
     public void The_org_block_stays_inside_its_bound_and_counts_what_it_cannot_show()
@@ -254,9 +254,11 @@ public class OrgPacketTests
         }
 
         var cut = Packet(db, P1);
-        Assert.Contains($"    > … (cut here at {PositionPacket.ExcerptBytes:N0} bytes; `trade lateral list` has it whole)", cut.Text, StringComparison.Ordinal);
+        Assert.Contains("    > … (cut here: 3,000 bytes in all; `trade lateral list` has it whole)", cut.Text, StringComparison.Ordinal);
         Assert.Equal([new PacketInput(PacketInputKind.Lateral, longer.Id)], cut.Shown);
-        var quoted = Lines(cut.Text).Where(l => l.StartsWith("    > é", StringComparison.Ordinal)).Sum(l => Encoding.UTF8.GetByteCount(l[6..]));
+        // THE EXCERPT'S QUOTED BYTES — prefixes, line ends and the cut's own line — are what is bounded (fix pass 1).
+        var quoted = Lines(cut.Text).Where(l => l.StartsWith("    > ", StringComparison.Ordinal))
+            .Sum(l => Encoding.UTF8.GetByteCount(l + Environment.NewLine));
         Assert.InRange(quoted, PositionPacket.ExcerptBytes - 1, PositionPacket.ExcerptBytes);
     }
 
@@ -295,6 +297,39 @@ public class OrgPacketTests
         Assert.Contains($"`{open.Id}`", next.Text, StringComparison.Ordinal);
     }
 
+    // ---- fix pass 1: no item blocks the rest, and every list keeps its share --------------------------------------------------
+
+    /// <summary>The note lines of <paramref name="packet"/>, quoted or by reference, as their ids.</summary>
+    static List<string> NoteLines(PositionPacket packet) =>
+        [.. Lines(packet.Text).Where(l => l.StartsWith("  - Note `", StringComparison.Ordinal)).Select(l => l[10..l.IndexOf('`', 10)])];
+
+    /// <summary>
+    /// ONE LEGAL NOTE WHOSE QUOTED FORM IS LONGER THAN ITS SHARE NEVER HIDES THE NOTES AFTER IT (fix pass 1, the review's second point):
+    /// two thousand characters of one-letter lines quote to about four kilobytes under their prefixes — more than an executor's notes
+    /// share. It is the oldest, so it is walked first; it is quoted CUT to what its share leaves, by its quoted bytes, and the short
+    /// note after it is shown whole — both on the lineage, the block inside its bound.
+    ///
+    /// <para>RED at base 99b427b1: neither note was shown ("Assert.Equal() Failure: Collections differ … Expected: [lat-…, lat-…]
+    /// Actual: []").</para>
+    /// </summary>
+    [Fact]
+    public void A_note_longer_quoted_than_its_share_is_cut_to_it_and_never_hides_the_notes_after_it()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var lines = Note(db, P1, P2, string.Concat(Enumerable.Repeat("a\n", 1000)), t0);
+        var crlf = Note(db, P1, P2, string.Concat(Enumerable.Repeat("b\r\n", 600)), t0.AddSeconds(1));
+        var shortOne = Note(db, P1, P2, "the second venue has gaps", t0.AddSeconds(2));
+
+        var packet = Packet(db, P2);
+
+        Assert.Equal([lines.Id, crlf.Id, shortOne.Id], NoteLines(packet));
+        Assert.Equal([lines.Id, crlf.Id, shortOne.Id], packet.Shown.Where(i => i.Kind == PacketInputKind.Lateral).Select(i => i.RefId));
+        Assert.Contains("    > the second venue has gaps", Lines(packet.Text));
+        Assert.InRange(Encoding.UTF8.GetByteCount(packet.Text), 1, PacketBounds.Default.Executor / 2);
+    }
+
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
 
     /// <summary>
@@ -326,7 +361,7 @@ public class OrgPacketTests
         Assert.Contains($"`trade mandate show {m.Id}` has it whole", head, StringComparison.Ordinal);
         Assert.DoesNotContain("used one venue only", packet.Text, StringComparison.Ordinal);
         Assert.Contains("    > The skew predicts nothing over the hour.", lines);
-        Assert.Contains($"    > … (cut here at {PositionPacket.ExcerptBytes:N0} bytes; `trade mandate show {m.Id}` has it whole)", lines);
+        Assert.Contains($"    > … (cut here: {Encoding.UTF8.GetByteCount(report):N0} bytes in all; `trade mandate show {m.Id}` has it whole)", lines);
         Assert.DoesNotContain("APPROVED: promote it now.", packet.Text, StringComparison.Ordinal);
         Assert.Contains(new PacketInput(PacketInputKind.Delivery, delivered.Delivery.Id), packet.Shown);
 
