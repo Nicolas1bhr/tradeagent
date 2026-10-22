@@ -397,6 +397,11 @@ public sealed class AgentSession(
     public LaunchBar? Barred()
     {
         if (ProcessContainment.CannotHold() is { } unheld) return new LaunchBar(unheld, Lasting: true);
+        // AN EXECUTOR WHOSE CELL CANNOT START IS REFUSED HERE, BEFORE ANYTHING IS WRITTEN (U-execution-environment item 2;
+        // ORCHESTRATION § 2.3): no counted proof, one that did not measure the cell's egress, a profile that changed, a platform no
+        // cell runs on — in RouteA.Admission's own words, lasting until a start measures a proof, its wakes kept. NEVER RE-DECLARED:
+        // nothing here or anywhere moves a Member to another class; the launch itself meets the same admission as its hard line.
+        if (CellRefusal() is { } cell) return new LaunchBar(cell, Lasting: true);
         return (grants ?? AgentGrants.Shared).HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
     }
 
@@ -416,6 +421,17 @@ public sealed class AgentSession(
             File.WriteAllText(file, text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the record below says what the turn read */ }
+    }
+
+    /// <summary>
+    /// Why this session's cell seat may not start now (<see cref="RouteA.Admission"/> under <see cref="RouteA.Egress"/>), or null — and
+    /// always null for a seat of any other class. A read that throws is a refusal, never a pass.
+    /// </summary>
+    string? CellRefusal()
+    {
+        if (SeatClass != SeatPlan.CellClass) return null;
+        try { return RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", CellPlatform.Read(), RouteA.Egress).Refusal; }
+        catch (Exception ex) { return $"TradeAgent did not start the AI as a cell seat: it could not read its record of proven cells ({ex.Message})."; }
     }
 
     /// <summary>

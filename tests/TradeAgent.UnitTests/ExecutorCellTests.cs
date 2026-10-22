@@ -128,6 +128,55 @@ public class ExecutorCellTests : IDisposable
         Assert.Null(new SeatRegister { Standing = _ => throw new InvalidOperationException("chart unreadable") }.KindOf(Member));
     }
 
+    // ---- (c) no degraded start --------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (c) A MEMBER WITH NO PROOF MEASURING WEB IS REFUSED, AND NEVER STARTED ON ANOTHER CLASS. On a host with no proof at all, the gate's
+    /// own words; with a proof that is not route (a)'s, or route (a)'s measuring only <c>none</c>, <see cref="RouteA.Admission"/>'s words
+    /// (or, off Linux, its platform's) — as the loop's look (<c>Barred</c>, lasting: nothing written, its wakes kept) and as the launch's
+    /// hard line. In every case no program started, and the session's class is still <c>cell</c>.
+    ///
+    /// <para>RED at base: the Member was declared and started <c>broker</c> — "the program ran: exec …".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_member_with_no_proof_measuring_web_is_refused_and_never_started_on_another_class()
+    {
+        var platformOk = CellPlatform.Read().Refusal() is null;
+        foreach (var (what, prove, said) in new (string, Action<Database, RuntimeManifest>, string)[]
+                 {
+                     ("no proof at all", (_, _) => { }, "no proven executor cell recorded"),
+                     ("a proof that is not route (a)'s", (db, _) => ThinkingSeatsTests.ProveCell(db), "no cell proof counts"),
+                     ("route (a)'s proof measuring only none", (db, codex) => new CellProofStore(db).Record(RouteA.Provider,
+                         CellBenchmark.Profile(RouteA.Provider, CellPlatform.Read(), codex.Install.ExecutableSha256!), [CellEgress.None.Name]),
+                      "measured only none"),
+                 })
+        {
+            using var db = Chart();
+            var (codex, exe, dump) = SeatHomeTests.Seat($"exec-c-{what.Length}");
+            prove(db, codex);
+            var register = Register(db, codex);
+            var session = SessionOf(codex, Member, register, exe, new TradeAgent.AgentRuntime.CellRoute(db));
+            Assert.Equal(SeatClasses.Cell, session.SeatClass);
+
+            var ended = await SeatHomeTests.Turn(session);
+            var bar = session.Barred();
+            if (what == "no proof at all")
+            {
+                Assert.Contains(said, ended.Raw, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.True(bar is { Lasting: true }, $"{what}: the loop's look let a cell seat with no proof measuring web through");
+                Assert.Contains("did not start the AI as a cell seat", bar!.Why, StringComparison.Ordinal);
+                Assert.Contains("did not start the AI as a cell seat", ended.Raw, StringComparison.Ordinal);
+                if (platformOk) Assert.Contains(said, bar.Why, StringComparison.Ordinal);
+            }
+            Assert.True(!SeatHomeTests.Argv(dump).Any(l => l.StartsWith("exec", StringComparison.Ordinal)),
+                $"{what}: the program ran: {string.Join(" | ", SeatHomeTests.Argv(dump))}");
+            Assert.Equal(SeatClasses.Cell, session.SeatClass);
+        }
+    }
+
     // ---- (e) the executor cell's one egress ----------------------------------------------------------------------------
 
     /// <summary>
