@@ -207,25 +207,27 @@ public sealed class GrantedWorkerTools(
         // READS SEE THE WHOLE OF THE ROLE'S OWN HOME, `in/` included: what the app delivered to this
         // role is half of what the role was given, and a worker that could not read its own brief
         // would have to be told it in the prompt instead, where nothing bounds it.
-        var (full, refusal) = ToolPaths.Resolve(home(), path);
+        var root = home();
+        var (_, refusal) = ToolPaths.Resolve(root, path);
         if (refusal is not null) return ToolAnswer.Refused(refusal, Summary(ReadFile, path));
 
         try
         {
-            if (!File.Exists(full))
-                return ToolAnswer.Refused($"'{path}' does not exist.", Summary(ReadFile, path));
-
-            var bytes = new FileInfo(full!).Length;
-            using var stream = File.OpenRead(full!);
-            var buffer = new byte[Math.Min(MaxBytesPerCall, bytes)];
-            var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-            var text = Encoding.UTF8.GetString(buffer, 0, read);
+            // OPENED WITHOUT FOLLOWING A LINK AT ANY COMPONENT (fix pass 3, the re-review's P1-a): the check above is on a path, and an
+            // executor's cell writes this home while the app reads it — a name flipped into a link after the check is refused here, by
+            // the descriptor that is read, never followed into the seat home's login or the app's state.
+            var buffer = HomeFiles.Read(root, path!, MaxBytesPerCall, out var bytes);
+            var text = Encoding.UTF8.GetString(buffer);
 
             return ToolAnswer.Ok(
                 bytes > MaxBytesPerCall
                     ? text + $"\n[cut: '{path}' is {bytes:N0} bytes and one read returns at most {MaxBytesPerCall:N0}]"
                     : text,
                 Summary(ReadFile, path));
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return ToolAnswer.Refused($"'{path}' does not exist.", Summary(ReadFile, path));
         }
         catch (Exception ex)
         {
@@ -247,11 +249,14 @@ public sealed class GrantedWorkerTools(
             if (!Directory.Exists(at))
                 return ToolAnswer.Refused($"'{path}' is not a folder here.", Summary(ListFiles, path));
 
+            // THE FOLDER OPENED WITHOUT FOLLOWING A LINK, AND EACH NAME EXAMINED WITHOUT FOLLOWING IT (fix pass 3): a link is listed as
+            // one, never as what it points at — its target's size and kind are the app's to know, not the cell's.
+            var seen = HomeFiles.List(home(), path);
             var entries = new List<string>();
-            foreach (var dir in Directory.GetDirectories(at!).OrderBy(d => d, StringComparer.Ordinal))
-                entries.Add(Path.GetFileName(dir) + "/");
-            foreach (var file in Directory.GetFiles(at!).OrderBy(f => f, StringComparer.Ordinal))
-                entries.Add($"{Path.GetFileName(file)}  {new FileInfo(file).Length:N0} bytes");
+            foreach (var dir in seen.Where(e => e.Folder).OrderBy(e => e.Name, StringComparer.Ordinal))
+                entries.Add(dir.Name + "/");
+            foreach (var file in seen.Where(e => !e.Folder).OrderBy(e => e.Name, StringComparer.Ordinal))
+                entries.Add(file.Link ? $"{file.Name}  (a link, not followed)" : $"{file.Name}  {file.Length:N0} bytes");
 
             var shown = entries.Take(MaxListed).ToList();
             var text = string.Join("\n", shown);
@@ -270,7 +275,8 @@ public sealed class GrantedWorkerTools(
     {
         var path = Str(args, "path");
         var content = Str(args, "content") ?? "";
-        var (full, refusal) = ToolPaths.Resolve(home(), path, Writable);
+        var root = home();
+        var (_, refusal) = ToolPaths.Resolve(root, path, Writable);
         if (refusal is not null) return ToolAnswer.Refused(refusal, Summary(WriteFile, path));
 
         var bytes = Encoding.UTF8.GetByteCount(content);
@@ -281,8 +287,9 @@ public sealed class GrantedWorkerTools(
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(full!)!);
-            File.WriteAllText(full!, content);
+            // WRITTEN WITHOUT FOLLOWING A LINK (fix pass 3, the re-review's P1-a): its folders opened link-free, whatever is at the name
+            // unlinked unread and the file created exclusively — a link the cell flips in after the check is never written through.
+            HomeFiles.WriteAllText(root, path!, content);
             // STAGED, NOT PUBLISHED, and the answer says so: nothing a worker writes is delivered by
             // writing it. The relay validates what is in `out/` and commits the delivery.
             return ToolAnswer.Ok($"wrote {bytes:N0} bytes to {path}. It is staged: TradeAgent validates "
