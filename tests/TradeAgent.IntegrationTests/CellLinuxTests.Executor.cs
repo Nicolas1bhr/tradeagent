@@ -118,6 +118,10 @@ public partial class CellLinuxTests
             Task.FromResult(new SeatReading(
                 "unified_exec   stable   true\nshell_snapshot   stable   true\nshell_tool   stable   false\nview_image   stable   false\n" +
                 "sleep_tool   stable   false\nplugins   stable   false\n", $"[{{\"name\": \"{BrokerSeat.DoorServer}\"}}]"));
+
+        /// <summary>Only the CLI class has a tool dry run (<c>U-cli-code-mode</c>); a cell seat never asks it.</summary>
+        public Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct) =>
+            throw new InvalidOperationException($"a {ask.SeatClass} seat asked the CLI class's tool dry run");
     }
 
     /// <summary>The cell class's offered surface for gpt-5.5, as -c's verifier expects it.</summary>

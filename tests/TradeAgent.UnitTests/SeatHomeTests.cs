@@ -671,6 +671,20 @@ public class SeatHomeTests
             WorkingDirectory = workingDirectory;
             return Task.FromResult(Reading);
         }
+
+        /// <summary>The CLI class's tool dry run, canned (<c>U-cli-code-mode</c>): by default one exec_command call that ran.</summary>
+        public ToolRun Tools { get; set; } = new(["exec_command", "write_stdin"], "exec_command", "probe-fake\n", "probe-fake");
+
+        /// <summary>How many tool dry runs were asked of this probe, and the last ask.</summary>
+        public int ToolAsks;
+        public SurfaceAsk? LastToolAsk;
+
+        public Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct)
+        {
+            Interlocked.Increment(ref ToolAsks);
+            LastToolAsk = ask;
+            return Task.FromResult(Tools);
+        }
     }
 
     /// <summary>
