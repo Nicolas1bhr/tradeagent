@@ -79,7 +79,9 @@ public class CellProofTests
     public void The_proof_and_assurance_tables_refuse_every_edit()
     {
         using var db = TestEnv.NewDb();
-        Assert.Equal("43", db.Read(_ => { using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'"); return (string)c.ExecuteScalar()!; }));
+        // RUNG 43 REACHED, not rung 43 the last: a later rung (U-org-seats' 44) stamps the fresh home past it, and the tables stay this rung's.
+        Assert.InRange(int.Parse(db.Read(_ => { using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'"); return (string)c.ExecuteScalar()!; }), CultureInfo.InvariantCulture),
+            43, Versions.DatabaseSchemaVersion);
         var id = new CellProofStore(db, () => Here, () => "b").Record("p", "profile", ["none", "web"], [new ProofRow("web-443-granted", false, "let through"), new ProofRow("gap-web-lan-443", true, "reached")]);
         // THE PROOF NAMES ITS CLASSES AND KEEPS ITS ROWS, A GAP AS A GAP (fix pass 1, R4); one naming no class is refused.
         Assert.Equal(["none", "web"], Assert.Single(new CellProofStore(db, () => Here, () => "b").Proven()).Egress);
