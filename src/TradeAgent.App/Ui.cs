@@ -638,7 +638,7 @@ static class Ui
     /// they press Save — and a press over a box that reads as nothing refuses. <paramref name="min"/> and <paramref name="max"/> are
     /// what the box takes; outside them it reads as nothing and says so.
     /// </summary>
-    public static AmountField AmountField(decimal value, AmountKind kind, decimal min = 0m, decimal max = 1_000_000_000m) =>
+    public static AmountField AmountField(decimal? value, AmountKind kind, decimal min = 0m, decimal max = 1_000_000_000m) =>
         new(value, kind, min, max);
 
     /// <summary>
