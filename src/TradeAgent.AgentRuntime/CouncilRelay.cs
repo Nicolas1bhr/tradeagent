@@ -581,9 +581,13 @@ public sealed class CouncilRelay
         var name = Path.GetFileName(file);
         try
         {
-            var into = Path.Combine(outDir, QuarantineDir);
-            Directory.CreateDirectory(into);
-            File.Move(file, Path.Combine(into, name), overwrite: true);
+            // NEVER THROUGH A LINK (U-execution-environment fix pass 4, the second re-review's [P1] 2): an executor's cell writes its own
+            // `out/`, so `out/quarantine` may be a link it aimed at the owner's inbox or another position's `out/`. It is the app's own
+            // folder, so a link there is unlinked — never what it points at — and the folder made; the move is renameat between two
+            // descriptors opened link-free, so the file is moved only within the home.
+            var home = _homeOf(role);
+            HomeFiles.CreateDirectory(home, $"{WorkspaceBuilder.OutDir}/{QuarantineDir}", replaceLinks: true);
+            HomeFiles.Move(home, $"{WorkspaceBuilder.OutDir}/{name}", $"{WorkspaceBuilder.OutDir}/{QuarantineDir}/{name}");
         }
         catch (Exception) { return; }
 
