@@ -130,6 +130,13 @@ public static class OrgEventKind
 
     /// <summary>The owner seated a position: its runtime, model and allowance (<c>U-org-seats</c>, <see cref="OrgStore.SetSeat"/>).</summary>
     public const string Seated = "seated";
+
+    /// <summary>
+    /// A POSITION-WIDE FENCE (<c>U-org-verbs-b</c>; ORCHESTRATION § 2.3): every attempt of the position that started at or before it
+    /// does nothing more (<see cref="OrgStore.FencedSince"/>). Written, with its cause in app-composed detail, by the transitions
+    /// that restructure the chart (retire, close, merge, veto — O6 parts c–d), in their own write.
+    /// </summary>
+    public const string Fenced = "fenced";
 }
 
 /// <summary>
