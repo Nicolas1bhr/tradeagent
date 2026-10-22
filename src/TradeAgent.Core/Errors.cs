@@ -821,6 +821,10 @@ public static class Labels
     public static string AmountTooLarge(string typed) =>
         $"\u201c{typed}\u201d is too large a number for this box.";
 
+    /// <summary>More digits than a decimal figure keeps exactly (fix pass 1): refused, never rounded to a figure that was not typed.</summary>
+    public static string AmountTooPrecise(string typed) =>
+        $"\u201c{typed}\u201d has more digits than TradeAgent can keep exactly: write at most 28 after the decimal mark and 29 in all.";
+
     /// <summary>Below what the box takes.</summary>
     public static string AmountBelow(string typed, string min) =>
         $"\u201c{typed}\u201d is less than this box takes: at least {min}.";

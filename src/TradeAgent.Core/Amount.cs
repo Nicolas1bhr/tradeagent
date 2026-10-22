@@ -23,7 +23,8 @@ public enum AmountKind { Decimal, Whole }
 /// mark followed by exactly three digits after one to three leading digits that do not start with 0
 /// ("1.000", "1,000", "12,500") is how a thousands separator looks as well as a decimal one, and it is
 /// REFUSED as ambiguous rather than read either way: refuse, never guess. A whole-number box refuses any
-/// mark at all, and an empty box is refused — nothing typed is never 0 and never the saved figure.</para>
+/// mark at all, and an empty box is refused — nothing typed is never 0 and never the saved figure. Text past a decimal figure's
+/// exact range — more than 28 places, or 29 digits — is refused too, never rounded.</para>
 ///
 /// <para>The normalised digits are handed to <see cref="decimal.TryParse(string, NumberStyles, IFormatProvider, out decimal)"/>
 /// with <see cref="NumberStyles.AllowDecimalPoint"/> under the invariant culture, so no ambient
@@ -92,6 +93,19 @@ public static class Amount
         {
             value = 0m;
             why = Labels.AmountTooLarge(shown);
+            return false;
+        }
+
+        // PAST A DECIMAL'S EXACT RANGE THE PARSE ROUNDS, SILENTLY (fix pass 1): more than 28 places after the mark, more than 29 digits
+        // in all, or digits the figure cannot hold — "0.00000000000000000000000000001" read as 0. Refused, never rounded: the figure
+        // read must be every digit that was typed, and the printed-back figure is the proof.
+        var significant = (whole + fraction).TrimStart('0').Length;
+        var typedFigure = (whole.TrimStart('0') is { Length: > 0 } w ? w : "0")
+                          + (fraction.TrimEnd('0') is { Length: > 0 } f ? "." + f : "");
+        if (fraction.Length > 28 || significant > 29 || Exact(value) != typedFigure)
+        {
+            value = 0m;
+            why = Labels.AmountTooPrecise(shown);
             return false;
         }
         return true;
