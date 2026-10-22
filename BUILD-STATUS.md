@@ -11357,3 +11357,35 @@ MUTANT: Refused marked again ⇒ (e6) red); one refusal gave two findings (op_re
 refusal of malformed content); a post-hello frame naming another version is SERVED (pre-existing → CARD).
 **Not verified:** the page's look (no mac-run during the observed run; Theme.cs only); the timer in a live app; Windows UI.
 **Owed:** the Codex second-pass review (after attempt 4); CARDs — record the pipe's no-row refusals; the pipe serves a post-hello frame of another protocol version.
+
+## U-execution-environment — an executor position runs in a cell: a Member on the `cell` class, its own home as its workspace, egress `web` (TCP 443), a canon that names only what a cell reaches, refused — never degraded — where no counted proof measured it; every app-side touch of an executor home through one no-follow HomeFiles
+
+**Landed** at `0ddbbe30` (seat A, landed SINGLY on main `101e0006` — train A4's stack had dropped audit-a on a conflict; builder a05c1fd59dbd4b955, fixers a287fb5505c7082f7 (passes 2–3), a3c98f5efb43dc1aa (pass 4), a9bbf60938a1d18b9 (pass 5); all opus/high, BUILD RUN 2026-10-22).
+A protection unit — CRED-001 (an executor never on `cli`; the login stays in the harness; no codex/auth.json or state/ reachable through a link the cell planted), Law 2,
+AUTH-001 (no verb, pipe op, setting or runtimes.json field picks a class or an egress), INBOX-001 (a cell file never lands as the owner's material), refuse-never-guess,
+honesty (GAP rows: loopback-443 and LAN-443). **No rung** (cell_assurance and ai_attempt.seat_class already carry it); **Canon v6**.
+**Reviewed by independent Claude legs during the observed run; Codex review owed** (the orchestrator's 08:4x ruling) — review, re-reviews 1–4 (re-review 4 a1597889238de1892),
+re-review 5 aaac61b30cf03aadc (fleet/tmp/A-org/u-execution-environment-fix5/U-execution-environment-rereview5.md): every pass-5 item CLOSED, NO P1, no regression.
+**Landed under the orchestrator's 21:0x CAP** (after pass 5's targeted re-review, anything below P1 is CARDED and the unit lands; only a P1 goes back).
+**CI:** landing run 39854284572 on d1cb5c5b, CARRIED to 0ddbbe30 (build tree identical outside the bookkeeping list: only docs/RESUME-HERE.md differs) — success on every job (dedupe-gate, shard-plan, package, package-linux, test windows-latest 1–5, ubuntu-latest, macos-latest, linux-host), 0 Warning(s) on every test job; land.sh check PASS, SCAN CLEAN. Earlier: builder 39751026161, fix 1 39727273013 (red → fixed), fix 3 39757877921, fix 4 39826040117, fix 5 39836875206 — each green on every job.
+**Tests box:** run 20261022-225545-336ca90e GREEN on fix 5's tip 336ca90e, BEFORE the prep rebase onto 4b2af1e7 put watcher-b's code under it: build exit 0; Fault 498/498; Integration 734 passed, 0 failed, 61 not run;
+Unit 2147 passed, 0 failed, 42 not run; timing 6 + 91 + 20 passed, 0 failed; his files unchanged. The landed tree itself: NOT RUN on the tests box at landing — run 20261023-001340-23589919 on
+U-org-audit-a's stacked tip (which contains this tree) started 00:13 CEST; its verdict goes to fleet/ci-ledger.md.
+
+**Build:** item 0 StartInCell end to end on Linux (test-host-only seam, GUARD row (0)); items 1/4 one class rule (Member beyond the pair → cell, Head/Staff → broker, pair → cli),
+RuntimeClass.Cell, Canon v6; item 3 one CellEgress.Web for policy and admission, GAP rows; a Member with no counted proof measuring web refused at launch (RouteA.Admission).
+**Fix passes:** 1 — canon restore follows no link, AGENTS.override.md removed, an unrestorable canon refuses the launch. 2 — the GAP spelling (declared test change). 3 — one
+no-follow read/write helper (check-then-follow, BuildAll through planted links, the relay through linked reports). 4 — all seven further sites + two via HomeFiles; BuildAll refuses
+only the affected position by name; HomeFilesGuardTests decodes the IL of 17 types (32 reviewed) and fails on any path-based System.IO touch outside HomeFiles (MUTANT red).
+5 — backslash names (D1: the review's premise was false on Unix — Split('/', '\\', opts) binds a count — '/' alone now), WeWroteIt via HomeFiles, the harness conversation a launch
+gate (a home the last start could not rebuild is refused before its canon is read), OpenRead's descriptor closed on every error path, "./" listed as ".", SeatProfile/CliSeatProbe in
+the guard (probe cwd state/seat-probe), every whole-file HomeFiles read capped in bytes (a sparse 1 GB plan allocated 3.2 GB before).
+**RED / mutant:** RED before every item and pass (notes per pass in fleet/tmp/A-org/u-execution-environment-*/); MUTANTS: ClassFor's Member branch → cli; O_NOFOLLOW dropped; one
+guarded site reverted; D1's split with '\\' — each red, restored.
+**Accepted at landing:** names "removed 1" = item 3's declared rename (…_no_egress → …_web_egress).
+**Not verified:** a real model in the cell; real pip/npm over 443; the owner's kernel/LSMs and python3; aarch64; why HomeFiles' Windows branch let a linked folder through (CI 39820227512);
+the probe-needs-no-home claim against codex 0.160.1 (read, not run).
+**CARDS:** U-homefile-caps (DUE BEFORE THE SWITCH-ON: per-line caps CouncilRelay.cs:385 / WorkspaceRevisions.cs:140 can refuse legacy-pair work; the over-cap message says lines
+not bytes; ApiConversation.cs:488's raced hard line is not an UnworkedRefusal; MaterialScanner.cs:383/:425 hash with no time bound — pre-existing) · in-app "repair this position's
+home" DUE BEFORE M-org1 · Windows: Backtests.cs:392 backslash relative path + the link-through cause, before U-cell-windows · CouncilRelay.Deliver through a planted in/ link
+(legacy pair, pre-existing). **Owed:** the Codex second-pass review (HEADER ruling 1 of 2026-10-23 lifted Codex quiet; started after this landing).
