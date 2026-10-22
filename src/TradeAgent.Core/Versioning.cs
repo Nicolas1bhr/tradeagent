@@ -440,8 +440,13 @@ public static class Versions
     /// by reference. Written by the app only, in the turn's committed transition — never for a launch the gate refused at its last
     /// check, or one lost before its commit, so what such a launch was shown is shown again. UPDATE and DELETE refused by trigger. No
     /// backfill: no attempt before the rung was given a position packet.</para>
+    ///
+    /// <para><b>46 — who pays for a launch</b> (<c>U-billing-classes</c>, rung 46, after <c>U-org-packets-b</c>'s 45):
+    /// <c>ai_attempt.billing_class</c>, <c>plan</c>, <c>key</c> or <c>unknown</c>, composed by the app from the seat verdict its
+    /// admission read, written in the row's own insert, an UPDATE that changes it refused by trigger. A row before the rung reads
+    /// <c>unknown</c> — nobody recorded it — and counts against both ceilings.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = InputLineageRung;
+    public const int DatabaseSchemaVersion = 46;
 
     /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
     public const int InputLineageRung = 45;
