@@ -604,9 +604,18 @@ static class Ui
             FormatString = increment == 1m ? "0" : "0.####", Width = 150
         };
 
+    /// <summary>
+    /// A MONEY OR LIMIT FIGURE THE OWNER TYPES (<c>U-number-entry-culture</c>): the text kept exactly as typed, read one culture-free
+    /// way with what it reads as shown under it, never rewritten, never stepped and never changed by a scroll. Committed only when
+    /// they press Save — and a press over a box that reads as nothing refuses. <paramref name="min"/> and <paramref name="max"/> are
+    /// what the box takes; outside them it reads as nothing and says so.
+    /// </summary>
+    public static AmountField AmountField(decimal value, AmountKind kind, decimal min = 0m, decimal max = 1_000_000_000m) =>
+        new(value, kind, min, max);
+
     public static TextBox TextField(string? text = null, string? placeholder = null) => new()
     {
-        Text = text, PlaceholderText = placeholder, Width = 150
+        Text = text, PlaceholderText = placeholder, Width = Theme.FieldWidth
     };
 
     /// <summary>Indeterminate work with a sentence saying what is happening. Never a bare spinner.</summary>
