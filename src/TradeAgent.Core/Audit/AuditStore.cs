@@ -59,7 +59,7 @@ public static class AuditSeverity
 /// organisation's reports can carry.</para>
 ///
 /// <para><b>The salt</b> is 32 bytes from the operating system's generator, written once when the file is made and read by nothing but the
-/// sampler: it is what makes the draw unpredictable to anyone in the organisation (<c>AuditSampler</c>).</para>
+/// sampler: it is what makes the draw unpredictable to anyone in the organisation (<see cref="AuditSampler"/>).</para>
 /// </summary>
 public sealed class AuditStore : IDisposable
 {
@@ -245,7 +245,7 @@ public sealed class AuditStore : IDisposable
 
     // -------------------------------------------------------------------------------- the salt
 
-    /// <summary>The sampler's salt. Read by <c>AuditSampler</c> and nothing else; never shown, logged or copied out.</summary>
+    /// <summary>The sampler's salt. Read by <see cref="AuditSampler"/> and nothing else; never shown, logged or copied out.</summary>
     internal byte[] Salt() => Read(() =>
     {
         using var c = Cmd("SELECT salt FROM audit_salt WHERE id = 1");

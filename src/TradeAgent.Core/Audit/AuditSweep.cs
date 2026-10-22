@@ -14,7 +14,7 @@ public sealed record AuditSweepResult(IReadOnlyList<AuditSample> Drawn, string? 
 /// <c>audit.db</c> in one write. A rejected or unjudged delivery has no <c>accepted</c> event and is never
 /// drawn.
 ///
-/// <para><b>App code, never agent-runtime code:</b> run from the app's own timer (<c>AuditLine</c>), never from the mission loop; it
+/// <para><b>App code, never agent-runtime code:</b> run from the app's own timer (<see cref="AuditLine"/>), never from the mission loop; it
 /// raises no wake, writes nothing to the app's database or its logs, and spends nothing (no launch-ledger row — BUDGET-001). It can
 /// neither instruct nor block. Idempotent: a sample is keyed by its delivery and the cursor moves forward only, so a restart re-sweeps to
 /// the same rows.</para>
