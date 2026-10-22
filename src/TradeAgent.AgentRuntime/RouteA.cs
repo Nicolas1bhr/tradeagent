@@ -14,6 +14,11 @@ namespace TradeAgent.AgentRuntime;
 /// image action runs in the exec-server, in the cell: the workspace at the same path on both sides (the position's own home), the
 /// cell's codex home and home empty and READ-ONLY, egress <c>none</c>, its environment the policy's alone.
 ///
+/// <para><b>Item 1's probe decided the cell's codex home</b> (CI run 39700964111, kernel 7.0.0-1017-azure, Landlock ABI 8): under an EMPTY
+/// READ-ONLY codex home the pinned exec-server starts, answers <c>initialize</c>, an empty <c>environmentConfig/read</c> (0 layers) and
+/// <c>process/start</c> with workspace parity, writing nothing (only a warning that it could not make its PATH aliases, EACCES) — so the
+/// home is read-only, never writable.</para>
+///
 /// <para>Here are the pure parts — the paths, the policy, the file — so the launch and the Linux rows build the same thing.</para>
 /// </summary>
 public static class RouteA

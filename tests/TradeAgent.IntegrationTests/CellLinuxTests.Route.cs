@@ -428,7 +428,7 @@ public partial class CellLinuxTests
     /// <summary>
     /// ONE ROUTE (a) TURN AGAINST THE MOCK: the attempt and its leaves; the cell's policy written; the harness's per-attempt codex home
     /// (<see cref="RouteA.Make"/>, its <c>environments.toml</c> naming TradeAgent's launcher); <c>codex exec</c> started in the harness leaf
-    /// with the CLI class's deny set — <c>--ignore-user-config</c> among it — a FAKE bearer and a FAKE sign-in; the mock answering the
+    /// with the CELL class's deny set (less its door) — which drops <c>--ignore-user-config</c> — a FAKE bearer and a FAKE sign-in; the mock answering the
     /// case's steps. Returns what every tool call gave back to the model, read off the last request.
     /// </summary>
     static async Task<Turn> RouteTurn(RouteWorld r, RowsRoot rows, object[] steps, Action<RouteA.Layout>? plant = null)
@@ -458,7 +458,7 @@ public partial class CellLinuxTests
 
             var cli = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
             var psi = Plain(r.Codex, ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check",
-                .. cli.Seat!.ArgsFor(SeatPlan.CliClass), "-m", "gpt-5.5",
+                .. WithoutDoor(cli.Seat!.ArgsFor(SeatPlan.CellClass)), "-m", "gpt-5.5",
                 "-c", "model_provider=\"mock\"", "-c", "model_providers.mock.name=\"mock\"",
                 "-c", $"model_providers.mock.base_url=\"http://127.0.0.1:{port}/v1\"", "-c", "model_providers.mock.wire_api=\"responses\"", "go"]);
             psi.WorkingDirectory = r.W.Ws;
@@ -495,6 +495,16 @@ public partial class CellLinuxTests
         }
     }
 
+    /// <summary>The cell class's deny set less its door (no door runs in these rows; the class's <c>required=true</c> would fail the session).</summary>
+    static IEnumerable<string> WithoutDoor(string[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "-c" && i + 1 < args.Length && args[i + 1].StartsWith($"mcp_servers.{BrokerSeat.DoorServer}.", StringComparison.Ordinal)) { i++; continue; }
+            yield return args[i];
+        }
+    }
+
     static object Exec(string id, string cmd) => new { type = "function_call", call_id = id, name = "exec_command", arguments = JsonSerializer.Serialize(new { cmd }) };
 
     static object Patch(string id, string file, string line) =>
@@ -504,9 +514,9 @@ public partial class CellLinuxTests
 
     /// <summary>
     /// ROW (b): EVERY MODEL-DIRECTED ACTION OF ROUTE (a) RUNS IN THE CELL (kit b1 b3 b4; b8's sub-agents and b9's code mode are not
-    /// offered by the class — its deny set disables multi_agent and its model is classic-tools). The harness runs <c>codex exec</c>
-    /// with <c>--ignore-user-config</c> and a per-attempt <c>environments.toml</c>, so the shell's cgroup being the attempt's CELL leaf
-    /// also answers item 1's second question: the per-attempt file IS read. The shell sees the cell's empty codex home and home, no
+    /// offered by the class — its deny set disables multi_agent and its model is classic-tools). Item 1's second question was answered
+    /// here: under <c>--ignore-user-config</c> the per-attempt <c>environments.toml</c> is NOT read and every action ran in the harness
+    /// (CI run 39700964111); the class drops the flag, and the shell's cgroup is now the attempt's CELL leaf. The shell sees the cell's empty codex home and home, no
     /// bearer, and is refused the harness's file; a patch lands in the workspace and is refused outside it; an image is read from
     /// the workspace and refused from the harness's side.
     /// </summary>

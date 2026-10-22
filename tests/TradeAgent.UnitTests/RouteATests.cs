@@ -105,7 +105,10 @@ public class RouteATests
         Assert.DoesNotContain("mcp_servers={}", cell);
         foreach (var door in seat.ArgsFor(SeatPlan.BrokerClass).Where(a => a.StartsWith($"mcp_servers.{BrokerSeat.DoorServer}.", StringComparison.Ordinal)))
             Assert.Contains(door, cell);
-        Assert.Contains("--ignore-user-config", cell);
+        // codex exec reads environments.toml only WITHOUT --ignore-user-config (vendor exec/src/lib.rs:698-711; CI run 39700964111).
+        Assert.DoesNotContain("--ignore-user-config", cell);
+        Assert.Contains("--strict-config", cell);
+        Assert.Contains("--ignore-rules", cell);
         Assert.Contains("agents.enabled=false", cell);
         Assert.DoesNotContain("shell_tool", cell);
         Assert.DoesNotContain("view_image", cell);
