@@ -1413,7 +1413,9 @@ sealed class SafetyPage
             $"Today: {MissionSituation.Money(r.Spent + r.Reserved, r.Currency)} of {MissionSituation.Money(r.Cap, r.Currency)} {what}"
             + (r.AdmitsAnotherTurn ? "." : " — reached; the next turn of this kind waits for midnight.");
         var plan = today.PlanReading ?? today;
-        return (Line(today, "in real money"), Line(plan, "of plan capacity, counted at list price — not money"));
+        // EACH LINE ITS OWN CEILING (fix pass 1): the money reading without the plan's it carries — whose AdmitsAnotherTurn asks both —
+        // so the real-money line says "reached" only when the money cap is.
+        return (Line(today with { PlanReading = null }, "in real money"), Line(plan, "of plan capacity, counted at list price — not money"));
     }
 
     /// <summary>

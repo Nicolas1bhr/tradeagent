@@ -156,8 +156,8 @@ public class BillingClassesTests : IDisposable
     // ---- (a) (b) (c) admission per class ----------------------------------------------------------------------------------
 
     /// <summary>A row of <paramref name="billing"/> still open at <paramref name="reserved"/>: committed money of that class today.</summary>
-    void Spent(string billing, decimal reserved, string? role = null) =>
-        new AiAttemptStore(_db).Begin(new AiAttempt
+    void Spent(string billing, decimal reserved, string? role = null, Database? db = null) =>
+        new AiAttemptStore(db ?? _db).Begin(new AiAttempt
         {
             Id = $"spent-{Guid.NewGuid():n}", StartedAt = _at, ReservedCost = reserved, BillingClass = billing, Role = role
         });
@@ -473,6 +473,26 @@ public class BillingClassesTests : IDisposable
         Assert.Contains("may stop the AI's turns sooner", Labels.PlanVendorLimit, StringComparison.Ordinal);
         Assert.Contains("does not count it here", Labels.PlanSharedWithYou, StringComparison.Ordinal);
         Assert.Contains("real money that TradeAgent cannot see", Labels.PlanBoughtCredits, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (g) EACH SAFETY-PAGE LINE SAYS "REACHED" ONLY FOR ITS OWN CEILING (fix pass 1): the plan's capacity used up to its 40 leaves the real
+    /// money line untouched — nothing of the 10 is spent and it is not reached — and the mirror, the money cap used up, leaves the plan's.
+    /// </summary>
+    [Fact]
+    public void Each_safety_page_line_says_reached_only_for_its_own_ceiling()
+    {
+        Spent(BillingClasses.Plan, 40m);
+        var (money, plan) = TradeAgent.App.SafetyPage.TodayLines(Meter(money: 10m, plan: 40m).Today);
+        Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} in real money.", money);
+        Assert.Equal($"Today: {Labels.Money(40m, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money"
+                     + " — reached; the next turn of this kind waits for midnight.", plan);
+
+        using var other = TestEnv.NewDb();
+        Spent(BillingClasses.Key, 10m, db: other);
+        (money, plan) = TradeAgent.App.SafetyPage.TodayLines(Meter(money: 10m, plan: 40m, db: other).Today);
+        Assert.EndsWith(" in real money — reached; the next turn of this kind waits for midnight.", money, StringComparison.Ordinal);
+        Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.", plan);
     }
 
     // ---- GUARD: AUTH-001 ------------------------------------------------------------------------------------------------
