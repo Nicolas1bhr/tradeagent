@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using TradeAgent.Core.Audit;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -109,5 +111,139 @@ public partial class AuditLineTests(ITestOutputHelper log)
         var door = await server.CallAsGrantAsync(Frame(Ops.MandateList), grant);
         Assert.False(door.Ok);
         log.WriteLine($"door: {door.Error!.Message}");
+    }
+
+    // ---- (b) the line's file -----------------------------------------------------------------------------------------------
+
+    static string NewFile() => Path.Combine(TestEnv.Home, $"audit-{Guid.NewGuid():n}.db");
+
+    static readonly DateTimeOffset Now = new(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
+
+    static string? Scalar(SqliteConnection c, string sql)
+    {
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        return Convert.ToString(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    static AuditSweepWrite OneSample(string delivery, long cursor) => new(
+        [new AuditSample(delivery, "man-x", "div-research", cursor, Now)],
+        [new AuditCheck(delivery, "seal", false, "the manifest's SHA-256 is not the delivery's id")],
+        [new AuditFinding(AuditFinding.IdOf(delivery, "seal"), delivery, "man-x", "att-x", "seal", AuditSeverity.Severe, Now)],
+        [new AuditFlag(delivery, "man-x", "att-x", "dormant", Now)],
+        cursor);
+
+    /// <summary>
+    /// (b) THE LINE'S FILE IS ITS OWN APPEND-ONLY LADDER AND REFUSES A NEWER BUILD: <c>state/audit.db</c> is this class's constant, not one
+    /// of <see cref="Paths"/>; rung 1 stamps <c>schema</c> = 1 in its own meta table with a 32-byte salt written once; every table but the
+    /// version row refuses UPDATE and DELETE; reopened, nothing climbs twice and the salt is the same; a file a newer build wrote is refused
+    /// naming both versions and left byte-for-byte as found. RED at base: no <c>AuditStore</c> existed — the line had no file.
+    /// </summary>
+    [Fact]
+    public void The_line_file_is_its_own_append_only_ladder_and_refuses_a_newer_build()
+    {
+        Assert.Equal(Path.Combine(Paths.State, "audit.db"), AuditStore.DefaultFile);
+        Assert.DoesNotContain(typeof(Paths).GetProperties(), p => p.GetValue(null) is string s && s.EndsWith("audit.db", StringComparison.Ordinal));
+
+        var file = NewFile();
+        byte[] salt;
+        using (var store = new AuditStore(file, Now))
+        {
+            salt = store.Salt();
+            Assert.Equal(AuditStore.SaltBytes, salt.Length);
+            Assert.Single(store.Commit(OneSample("dlv-1", 7), Now));
+            Assert.Empty(store.Commit(OneSample("dlv-1", 9), Now));
+            Assert.Equal(9, store.Cursor());
+            store.RecordFailure(Now, "the database could not be read");
+        }
+        using (var again = new AuditStore(file, Now.AddDays(1)))
+        {
+            Assert.Equal(salt, again.Salt());
+            Assert.Single(again.Samples());
+            Assert.Single(again.Checks());
+            Assert.Single(again.Findings());
+            Assert.Single(again.Flags());
+            Assert.Equal(9, again.Cursor());
+            Assert.Single(again.Failures());
+        }
+        using (var other = new AuditStore(NewFile(), Now)) Assert.NotEqual(salt, other.Salt());
+
+        using (var c = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            c.Open();
+            Assert.Equal("1", Scalar(c, "SELECT value FROM audit_meta WHERE key='schema'"));
+            foreach (var edit in new[]
+                     {
+                         "UPDATE audit_salt SET at='x'", "DELETE FROM audit_salt",
+                         "UPDATE audit_cursor SET last_id=0", "DELETE FROM audit_cursor",
+                         "UPDATE audit_sample SET unit_id='x'", "DELETE FROM audit_sample",
+                         "UPDATE audit_check SET passed=1", "DELETE FROM audit_check",
+                         "UPDATE audit_finding SET severity='info'", "DELETE FROM audit_finding",
+                         "UPDATE audit_flag SET what='x'", "DELETE FROM audit_flag",
+                         "UPDATE audit_failure SET what='x'", "DELETE FROM audit_failure",
+                     })
+            {
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = edit;
+                var refused = Assert.Throws<SqliteException>(() => cmd.ExecuteNonQuery());
+                log.WriteLine($"{edit}: {refused.Message}");
+            }
+        }
+
+        // A NEWER BUILD'S FILE: refused, both versions named, untouched.
+        var newer = NewFile();
+        using (var c = new SqliteConnection($"Data Source={newer};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE audit_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO audit_meta VALUES('schema', '7');
+                CREATE TABLE audit_sample(x TEXT);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        var before = File.ReadAllBytes(newer);
+        var refusedNewer = Assert.Throws<InvalidOperationException>(() => new AuditStore(newer, Now));
+        log.WriteLine(refusedNewer.Message);
+        Assert.Contains("version 7", refusedNewer.Message, StringComparison.Ordinal);
+        Assert.Contains($"understands {AuditStore.Schema}", refusedNewer.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing has been read from it or written to it", refusedNewer.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(newer));
+        Assert.False(File.Exists(newer + "-wal") && new FileInfo(newer + "-wal").Length > 0, "a refused file grew a write-ahead log");
+    }
+
+    /// <summary>
+    /// A CRASH BETWEEN RUNG ONE'S STATEMENTS AND ITS STAMP REOPENS: every table, trigger, row and the salt in place, the stamp gone — the
+    /// file opens, climbs the rung again without an error, stamps 1, and keeps the salt and every row. RED at base: no <c>AuditStore</c>.
+    /// </summary>
+    [Fact]
+    public void A_crash_between_rung_one_and_its_stamp_reopens()
+    {
+        var file = NewFile();
+        byte[] salt;
+        using (var store = new AuditStore(file, Now))
+        {
+            salt = store.Salt();
+            store.Commit(OneSample("dlv-1", 3), Now);
+        }
+        // A CRASH BETWEEN THE RUNG'S STATEMENTS AND ITS STAMP: every table and row in place, the stamp one lower.
+        using (var c = new SqliteConnection($"Data Source={file};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "DELETE FROM audit_meta WHERE key='schema'";
+            cmd.ExecuteNonQuery();
+        }
+        using (var again = new AuditStore(file, Now.AddDays(1)))
+        {
+            Assert.Equal(salt, again.Salt());
+            Assert.Single(again.Samples());
+            Assert.Equal(3, again.Cursor());
+        }
+        using var check = new SqliteConnection($"Data Source={file};Pooling=False");
+        check.Open();
+        Assert.Equal("1", Scalar(check, "SELECT value FROM audit_meta WHERE key='schema'"));
+        Assert.Equal("1", Scalar(check, "SELECT COUNT(*) FROM audit_salt"));
     }
 }
