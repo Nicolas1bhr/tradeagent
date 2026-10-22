@@ -3721,8 +3721,11 @@ public sealed class MissionLoop
             try
             {
                 events.Release([.. wake.Select(e => e.Id)], consumer);
+                // THE REFUSAL'S OWN SENTENCE, over any earlier blocked reason the words carried into the launch (fix pass 1,
+                // the review's P2): the latest reason they wait is the one shown, never a stale one — for the gate's refusal and
+                // the vendor's limit alike.
                 foreach (var e in wake.Where(e => e.Kind == MissionEventKind.Owner))
-                    events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, why);
+                    events.BlockAgain(e.Id, why);
             }
             catch (Exception) { /* a record, not a gate — as below */ }
             return;

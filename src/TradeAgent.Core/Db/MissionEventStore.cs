@@ -1360,6 +1360,27 @@ public sealed class MissionEventStore(Database db)
     }
 
     /// <summary>
+    /// RECORDS THE REASON THE OWNER'S WORDS WAIT NOW, over no outcome or over an earlier
+    /// <see cref="MissionEventDisposition.Blocked"/> reason (fix pass 1 of <c>U-vendor-limit-wakes</c>, the review's P2). A launch
+    /// that was refused before any work — at the activation gate's last check, or by the vendor's limit — gives back words that may
+    /// already have been blocked for something else (the spending ceiling, an earlier refusal); that earlier sentence is no longer
+    /// why they wait, and showing it would be false. <see cref="SettleWithoutTurn"/> writes only over no outcome, so it would keep it.
+    ///
+    /// <para>Only the standing reason is replaced: <c>blocked</c> is not an outcome but the reason a message is still owed, and the
+    /// column holds the current one, never a history. Every real outcome — <c>answered</c>, <c>failed</c>, <c>delegated</c>,
+    /// <c>superseded</c>, <c>refused</c> — is never touched, and the row stays consumed or unconsumed exactly as it was.</para>
+    /// </summary>
+    public bool BlockAgain(string id, string detail) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition=$blocked, disposition_detail=$x
+             WHERE id=$id AND (disposition IS NULL OR disposition=$blocked)
+            """,
+            ("$blocked", MissionEventDisposition.Blocked), ("$x", detail), ("$id", id));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
     /// RECORDS THAT THE APP TURNED THE OWNER'S WORDS INTO WORK FOR ANOTHER ROLE, for every owner
     /// message the given launch consumed. Returns how many rows were written.
     ///

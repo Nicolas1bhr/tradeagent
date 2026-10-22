@@ -462,6 +462,38 @@ public class VendorLimitTests : IDisposable
         Assert.Equal(1, OwnerWakesWaiting(events, now));    // the one retry
     }
 
+    /// <summary>
+    /// FIX PASS 1 (the review's P2), RED FIRST: OWNER'S WORDS ALREADY SHOWN <see cref="MissionEventDisposition.Blocked"/> FOR AN
+    /// EARLIER REASON SHOW THE VENDOR'S SENTENCE once a turn the vendor refused before any work gives them back. The earlier reason
+    /// (here the spending ceiling's) was the standing reason the words waited then; the vendor's refusal is why they wait now, and
+    /// a stale reason on the owner's screen is a false one. The words stay owed — unconsumed, never <c>failed</c>, never retried.
+    /// RED on the base: the earlier reason was kept, because the give-back preserves <c>blocked</c> and the settlement writes only
+    /// over no outcome.
+    /// </summary>
+    [Fact]
+    public async Task Owners_words_blocked_for_an_earlier_reason_show_the_vendors_sentence_after_its_refusal()
+    {
+        const string Earlier = "the day's spending ceiling is reached";
+        var name = nameof(Owners_words_blocked_for_an_earlier_reason_show_the_vendors_sentence_after_its_refusal);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var host = new Host(_db, events, Refusing(name), Home(name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.True(events.RecordOwnerMessage("how is the book?", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        Assert.True(events.SettleWithoutTurn(owner, MissionEventDisposition.Blocked, Earlier));
+
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);                         // the turn the vendor refused took the blocked words
+
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed);
+        Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
+        Assert.Equal(VendorSaid, words.DispositionDetail);
+        Assert.Equal(1, OwnerWakesWaiting(events, now));    // owed once, never re-raised as a failed turn's retry
+    }
+
     // ---- (e) where the vendor's error code is, and where it is not (U-vendor-limit-wakes, item 2) -------------
 
     /// <summary>
