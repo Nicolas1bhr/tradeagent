@@ -246,4 +246,60 @@ public partial class AuditLineTests(ITestOutputHelper log)
         Assert.Equal("1", Scalar(check, "SELECT value FROM audit_meta WHERE key='schema'"));
         Assert.Equal("1", Scalar(check, "SELECT COUNT(*) FROM audit_salt"));
     }
+
+    // ---- (c) the register ------------------------------------------------------------------------------------------------
+
+    static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "tests"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
+    }
+
+    /// <summary>
+    /// (c) THE READER READS ONLY THE REGISTER AND CANNOT WRITE. Through it, a registered table answers; a table outside the register — the
+    /// tool-call ledger, the engineering log, the wakes — is refused by the engine before it runs, as is every write, schema change, pragma
+    /// and attach; nothing it read is outside the register; and the database is byte-for-byte as it was. No source of
+    /// <c>TradeAgent.Core.Audit</c> names the seat homes, the workspaces, the agent home, the tool-call ledger or the watcher's namespace or
+    /// file. RED at base: no <c>AuditEvidence</c> existed.
+    /// </summary>
+    [Fact]
+    public void The_reader_reads_only_the_register_and_cannot_write()
+    {
+        string file;
+        using (var db = TestEnv.NewDb()) file = db.FilePath;
+        var before = File.ReadAllBytes(file);
+
+        using (var evidence = new AuditEvidence(file))
+        {
+            foreach (var table in AuditEvidence.Tables)
+                Assert.NotNull(evidence.InOneRead(() => evidence.Rows($"SELECT COUNT(*) FROM {table}")));
+            Assert.Equal(AuditEvidence.Tables.Order(StringComparer.Ordinal), evidence.TablesRead.Order(StringComparer.Ordinal));
+
+            foreach (var refused in new[]
+                     {
+                         "SELECT * FROM tool_call", "SELECT COUNT(*) FROM tool_call", "SELECT argument FROM tool_call",
+                         "SELECT * FROM engineering_log", "SELECT * FROM mission_event", "SELECT * FROM meta",
+                         "SELECT d.id FROM org_delivery d JOIN tool_call t ON t.id = d.id",
+                         "INSERT INTO org_mandate_event(mandate_id, at, kind, actor) VALUES('man-x', 'x', 'accepted', 'x')",
+                         "UPDATE org_delivery SET report='x'", "DELETE FROM org_check", "CREATE TABLE audit_here(x)",
+                         "DROP TRIGGER org_delivery_sealed_u", "PRAGMA query_only=OFF", $"ATTACH DATABASE '{file}-other' AS other",
+                     })
+            {
+                var thrown = Assert.Throws<SqliteException>(() => evidence.Rows(refused));
+                log.WriteLine($"{refused}: {thrown.Message}");
+            }
+            Assert.All(evidence.TablesRead, t => Assert.Contains(t, AuditEvidence.Tables));
+            Assert.DoesNotContain("tool_call", evidence.TablesRead);
+        }
+        Assert.Equal(before, File.ReadAllBytes(file));
+
+        var root = RepoRoot();
+        var sources = Directory.GetFiles(Path.Combine(root, "src", "TradeAgent.Core", "Audit"), "*.cs", SearchOption.AllDirectories);
+        Assert.NotEmpty(sources);
+        string[] named = ["Paths.SeatHome", "Paths.Workspace", "Paths.AgentHome", "Paths.RoleHome", "Paths.Inbox", "tool_call", "Oversight", "oversight"];
+        var naming = sources.SelectMany(f => named.Where(n => File.ReadAllText(f).Contains(n, StringComparison.Ordinal))
+            .Select(n => $"{Path.GetFileName(f)} names {n}")).ToList();
+        Assert.True(naming.Count == 0, "the audit line names what it may never read: " + string.Join(", ", naming));
+    }
 }
