@@ -511,6 +511,21 @@ public sealed class TradeAgentSettings
     public int HeadCeilingHours { get; set; } = 24;
 
     /// <summary>
+    /// THE SOONEST A HOLDER WHOSE LAUNCH ENDED WITHOUT DELIVERING IS WOKEN AGAIN FOR THAT MANDATE, in minutes per level
+    /// (<c>U-rewake-floor</c>; ORCHESTRATION § 2.5: "a maximum interval per level, a floor and never a heartbeat"), keyed by
+    /// <see cref="Db.OrgLevel"/>: shipped as executor 15, team 60, department 240. Each further undelivered launch doubles it, to
+    /// eight times the floor and never past the level's ceiling (<see cref="Db.RewakeFloors"/>). Zero is the re-wake at once; below
+    /// zero reads zero; a level missing reads its default. It delays only that re-wake: the issued wake, a retry, a rejection, the
+    /// holder's own requested wake and the owner's words keep their time. A floor changed while a re-wake is pending leaves that
+    /// one where it is; the next reads the new value. The owner's, in-process: no verb, no pipe op and no agent reaches it.
+    ///
+    /// <para><b>Not an authority boundary.</b> This file lives under <c>state/</c>, which an unconfined neighbour can rewrite: lowering
+    /// it to zero restores the sweep as it was before the floor — admission, the mandate's allocation, its half-spent escalation and
+    /// its deadline still bound the spend — and never more.</para>
+    /// </summary>
+    public Dictionary<string, int> RewakeFloorMinutes { get; set; } = new(Db.RewakeFloors.DefaultMinutes, StringComparer.Ordinal);
+
+    /// <summary>
     /// HOW LONG A MESSAGE THE OWNER TYPED MAY GO WITHOUT AN OUTCOME BEFORE THE DAILY REPORT CALLS IT
     /// OVERDUE (<c>docs/COUNCIL.md</c> round 4: "Owner text enters Operations' agenda first, with
     /// receipt, disposition and deadline").
