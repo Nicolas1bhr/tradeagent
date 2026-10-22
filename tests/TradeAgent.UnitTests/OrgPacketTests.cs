@@ -330,6 +330,38 @@ public class OrgPacketTests
         Assert.InRange(Encoding.UTF8.GetByteCount(packet.Text), 1, PacketBounds.Default.Executor / 2);
     }
 
+    /// <summary>
+    /// A HEAD'S RECEIVED ESCALATION WITH A LONG OR NON-ASCII REASON NEVER HIDES THE OLDER ONES (fix pass 1, the review's third point):
+    /// the newest of two open escalations to the head carries a legal reason of 500 × "é" — a thousand bytes, more than half the
+    /// escalations' share leaves an item. It is shown with its reason quoted and cut to fit — to ITS PART of the list's room, since an
+    /// open escalation is listed on every packet and has no cursor to wait for — and the older one after it is shown whole.
+    ///
+    /// <para>RED at base 99b427b1: the head's packet carried no escalation line ("Assert.Equal() Failure: Collections differ …
+    /// Actual: []").</para>
+    /// </summary>
+    [Fact]
+    public void A_received_escalation_with_a_long_reason_is_cut_to_its_share_and_never_hides_the_older_ones()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        void Escalate(string id, string reason, DateTimeOffset at) => Exec(db, """
+            INSERT INTO org_escalation(id, sender, attempt_id, unit_id, mandate_id, to_position, reason, skipped, wake_id, day, at)
+            VALUES($id, $s, NULL, $u, NULL, $to, $reason, '[]', $wake, $day, $at)
+            """, ("$id", id), ("$s", Outsider), ("$u", Elsewhere), ("$to", Head), ("$reason", reason), ("$wake", $"wake-{id}"),
+            ("$day", at.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), ("$at", Sql(at)));
+        Escalate("esc-0000000old01", "the venue gaps are not ours to fix", DateTimeOffset.UtcNow.AddMinutes(-2));
+        Escalate("esc-0000000new01", string.Concat(Enumerable.Repeat("é", 500)), DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var packet = Packet(db, Head);
+
+        Assert.Equal(["esc-0000000new01", "esc-0000000old01"],
+            Lines(packet.Text).Where(l => l.StartsWith("  - `esc-", StringComparison.Ordinal)).Select(l => l[5..21]));
+        Assert.Equal(["esc-0000000new01", "esc-0000000old01"],
+            packet.Shown.Where(i => i.Kind == PacketInputKind.Escalation).Select(i => i.RefId));
+        Assert.Contains("    > the venue gaps are not ours to fix", Lines(packet.Text));
+        Assert.Contains(Lines(packet.Text), l => l.StartsWith("    > éé", StringComparison.Ordinal));
+    }
+
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
 
     /// <summary>
