@@ -133,7 +133,7 @@ public class OversightPageTests(ITestOutputHelper log)
         var page = new OversightPage(Sources(store));
         page.Update();
 
-        page.CapBox.Value = 3m;
+        page.CapBox.Box.Text = "3";
         Press(page.CapSave);
         Assert.Null(store.Cap());
         Assert.Equal(Labels.RaiseOversightCapArmed("3 USD"), page.CapSave.Content);
@@ -142,18 +142,18 @@ public class OversightPageTests(ITestOutputHelper log)
         Assert.Equal(Labels.SaveOversightCap, page.CapSave.Content);
 
         // A CONFIRMATION COMPLETES ONLY THE FIGURE IT NAMED.
-        page.CapBox.Value = 5m;
+        page.CapBox.Box.Text = "5";
         Press(page.CapSave);
-        page.CapBox.Value = 50m;
+        page.CapBox.Box.Text = "50";
         Press(page.CapSave);
         Assert.Equal(3m, store.Cap()!.Amount);
         Assert.Equal(Labels.RaiseOversightCapArmed("50 USD"), page.CapSave.Content);
-        page.CapBox.Value = 1m;
+        page.CapBox.Box.Text = "1";
 
         // LOWERING, AND ZERO, ARE ONE PRESS EACH.
         Press(page.CapSave);
         Assert.Equal(1m, store.Cap()!.Amount);
-        page.CapBox.Value = 0m;
+        page.CapBox.Box.Text = "0";
         Press(page.CapSave);
         Assert.Equal(0m, store.Cap()!.Amount);
         Assert.Equal("USD", store.Cap()!.Currency);

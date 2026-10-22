@@ -13,7 +13,8 @@ namespace TradeAgent.App;
 /// text it could not read, and stepped the figure on a mouse wheel. None of that is possible here, by construction:</para>
 /// <list type="bullet">
 /// <item>the text is never written after construction — not by a commit, a stepper, a format string or the five-second refresh;
-/// the only writer of <see cref="Box"/>'s text is the owner's keyboard;</item>
+/// the only writer of <see cref="Box"/>'s text is the owner's keyboard, but for <see cref="OpenOn"/>, which opens a box that opened
+/// empty on the figure in force once it is known, and only while nothing has touched it;</item>
 /// <item>the figure is read by <see cref="Amount.TryRead"/>, the one culture-free reader, and is null while the text is refused or
 /// empty — a press over it refuses rather than falling back to 0 or to the saved figure;</item>
 /// <item>there are no steppers and nothing here handles the mouse wheel, so a scroll over the box — clicked into or not — changes
@@ -24,14 +25,17 @@ public sealed class AmountField : StackPanel
 {
     readonly decimal _min, _max;
 
-    internal AmountField(decimal value, AmountKind kind, decimal min, decimal max)
+    bool _touched;
+
+    internal AmountField(decimal? value, AmountKind kind, decimal min, decimal max)
     {
         Kind = kind;
         _min = min;
         _max = max;
         Spacing = Palette.S1;
         Width = Palette.FieldWidth;
-        Box = new TextBox { Text = Amount.Exact(value), FontFamily = Palette.Mono, FontSize = Palette.Base };
+        // NULL OPENS EMPTY — a figure not known yet (fix pass 2): the box reads as nothing and its press refuses, never 0.
+        Box = new TextBox { Text = value is { } v ? Amount.Exact(v) : "", FontFamily = Palette.Mono, FontSize = Palette.Base };
         Reading = new TextBlock { FontSize = Palette.Small, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap };
         Children.Add(Box);
         Children.Add(Reading);
@@ -40,8 +44,23 @@ public sealed class AmountField : StackPanel
         // attached to, so the line under it and the press beside it never read a figure the text has already moved past.
         Box.PropertyChanged += (_, e) =>
         {
-            if (e.Property == TextBox.TextProperty) Read();
+            if (e.Property != TextBox.TextProperty) return;
+            _touched = true;
+            Read();
         };
+    }
+
+    /// <summary>
+    /// THE ONE WRITE AFTER CONSTRUCTION, AND ONLY OVER AN UNTOUCHED BOX (<c>U-number-entry-culture</c>, fix pass 2): a box opened empty
+    /// because the figure in force was not known yet (the oversight cap, before the owner's file is first read) is opened on that figure
+    /// when it is — once, and only while nothing has changed its text since construction. A box the owner has typed in is never written,
+    /// so no refresh takes a figure out from under his typing. True when it wrote.
+    /// </summary>
+    internal bool OpenOn(decimal value)
+    {
+        if (_touched) return false;
+        Box.Text = Amount.Exact(value);
+        return true;
     }
 
     /// <summary>The text box the owner types into. Nothing but the owner writes its text.</summary>

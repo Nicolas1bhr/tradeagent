@@ -8,6 +8,7 @@ using Avalonia.LogicalTree;
 using TradeAgent.App;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Oversight;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -216,8 +217,97 @@ public class NumberEntryCultureTests
         var all = page.Root.GetLogicalDescendants().ToList();
         Assert.Empty(all.OfType<NumericUpDown>());
         Assert.Equal(26, all.OfType<AmountField>().Count());
+
+        // AND THE OVERSIGHT PAGE'S CAP (fix pass 2): the one money box there, built the way the window builds the page.
+        using var store = new OversightStore(Path.Combine(TestEnv.Home, $"oversight-entry-{Guid.NewGuid():n}.db"), DateTimeOffset.UtcNow);
+        var oversight = new OversightPage(OversightOver(store)).Root.GetLogicalDescendants().ToList();
+        Assert.Empty(oversight.OfType<NumericUpDown>());
+        Assert.Single(oversight.OfType<AmountField>());
         return Task.CompletedTask;
     });
+
+    static OversightSources OversightOver(OversightStore? store) => new()
+    {
+        Store = () => store,
+        Refusal = () => null,
+        Currency = () => "USD",
+        Now = () => DateTimeOffset.UtcNow,
+    };
+
+    /// <summary>
+    /// (fix pass 2) THE OVERSIGHT CAP IS THE ONE MONEY BOX: the owner's comma reads, the raise names the exact figure, an unreadable or empty
+    /// box refuses either press and saves nothing, an edit disarms, and a wheel changes nothing. It opens EMPTY while his file is not read —
+    /// never on a 0 nobody chose — and is opened on the cap at the first read only while nothing has been typed. RED at 5fa0bf73: the page,
+    /// landed by U-org-watcher-b on the stock number box this unit removed, did not build (CS0117 'Ui' has no 'NumberField').
+    /// </summary>
+    [Fact]
+    public void The_oversight_cap_is_the_one_money_box()
+    {
+        using var store = new OversightStore(Path.Combine(TestEnv.Home, $"oversight-entry-{Guid.NewGuid():n}.db"), DateTimeOffset.UtcNow);
+        var page = new OversightPage(OversightOver(store));
+        page.Update();
+        var box = page.CapBox;
+        Assert.Equal("0", box.Box.Text);
+
+        // THE OWNER'S COMMA, PAST FOUR PLACES: read before the press, and the raise names it exactly.
+        box.Box.Text = "0,00005";
+        Assert.Equal(Labels.AmountReads("0.00005"), box.Reading.Text);
+        Press(page.CapSave);
+        Assert.Equal(Labels.RaiseOversightCapArmed("0.00005 USD"), page.CapSave.Content);
+
+        // AN EDIT DISARMS; "1,000" — a thousand or one — refuses either press and saves nothing.
+        box.Box.Text = "1,000";
+        Assert.False(Ui.IsArmed(page.CapSave));
+        Press(page.CapSave);
+        Press(page.CapSave);
+        Assert.Null(store.Cap());
+        Assert.Equal(Labels.PressRefused(OversightPage.CapLabel, Labels.AmountAmbiguous("1,000", "1000", "1")), page.CapNote.Text);
+
+        // EMPTY IS NEVER 0.
+        box.Box.Text = "";
+        Press(page.CapSave);
+        Assert.Null(store.Cap());
+        Assert.Equal(Labels.PressRefused(OversightPage.CapLabel, Labels.AmountEmpty), page.CapNote.Text);
+
+        // A READ FIGURE SAVES, AND THE NOTE NAMES IT EXACTLY.
+        box.Box.Text = "0,00005";
+        Press(page.CapSave);
+        Press(page.CapSave);
+        Assert.Equal(0.00005m, store.Cap()!.Amount);
+        Assert.Contains("up to 0.00005 USD a day", page.CapNote.Text, StringComparison.Ordinal);
+
+        // A WHEEL, CLICKED INTO OR NOT, CHANGES NOTHING.
+        foreach (var focused in new[] { false, true })
+        {
+            if (focused) { Focused(box); Focused(box.Box); }
+            var wheel = Wheel(box.Box, page.Root);
+            box.Box.RaiseEvent(wheel);
+            Assert.Equal(("0,00005", (decimal?)0.00005m), (box.Box.Text, box.Value));
+            Assert.False(wheel.Handled);
+        }
+
+        // OPENED BEFORE THE FILE IS READ: empty and refusing; the first read opens it on the cap — unless the owner typed first.
+        OversightStore? late = null;
+        var waiting = new OversightPage(new OversightSources
+        {
+            Store = () => late, Refusal = () => null, Currency = () => "USD", Now = () => DateTimeOffset.UtcNow,
+        });
+        Assert.Equal("", waiting.CapBox.Box.Text);
+        Assert.Null(waiting.CapBox.Value);
+        late = store;
+        waiting.Update();
+        Assert.Equal("0.00005", waiting.CapBox.Box.Text);
+
+        late = null;
+        var typedFirst = new OversightPage(new OversightSources
+        {
+            Store = () => late, Refusal = () => null, Currency = () => "USD", Now = () => DateTimeOffset.UtcNow,
+        });
+        typedFirst.CapBox.Box.Text = "2";
+        late = store;
+        typedFirst.Update();
+        Assert.Equal("2", typedFirst.CapBox.Box.Text);
+    }
 
     /// <summary>
     /// (item 3) THE OWNER'S COMMA READS AS FIVE HUNDREDTHS IN THE ENVELOPE BOX — "The most any one of them may hold at once", the box of

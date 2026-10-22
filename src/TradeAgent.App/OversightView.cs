@@ -178,10 +178,21 @@ sealed class OversightPage
     /// <summary>What the page says of the cap.</summary>
     internal TextBlock CapText { get; } = Ui.Body("");
 
-    /// <summary>The figure the owner types, and the press that saves it (<see cref="BuildSaveCap"/>).</summary>
-    internal NumericUpDown CapBox { get; } = Ui.NumberField(0m, 0m, 0.5m);
+    /// <summary>
+    /// The figure the owner types, and the press that saves it (<see cref="BuildSaveCap"/>): the one money box (<c>U-number-entry-culture</c>,
+    /// fix pass 2) — read culture-free with its reading line, refused or empty never pressed through, no wheel. It opens on the cap in force,
+    /// or EMPTY while the owner's file has not been read — never on a 0 nobody chose — and is opened on the cap at the first read only while
+    /// nothing has been typed in it (<see cref="AmountField.OpenOn"/>).
+    /// </summary>
+    internal AmountField CapBox { get; }
 
     internal Button CapSave { get; }
+
+    /// <summary>The press's note: a refusal, or what was saved, with the exact figure.</summary>
+    internal TextBlock CapNote { get; } = Ui.Micro("");
+
+    /// <summary>The cap box's label, as the page and a refusal say it.</summary>
+    internal const string CapLabel = "The most your private line may spend in a day";
 
     public OversightPage(OversightSources sources)
     {
@@ -189,7 +200,13 @@ sealed class OversightPage
         DigestText.FontSize = Theme.Small;
         _failures.FontSize = Theme.Small;
         CapText.FontSize = Theme.Small;
-        CapSave = BuildSaveCap(CapBox, CurrentCap, _src.Currency, SaveCap);
+        CapNote.IsVisible = false;
+        decimal? opened = null;
+        try { opened = _src.Store() is { } open ? open.Cap()?.Amount ?? 0m : null; }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
+        _capRead = opened is not null;
+        CapBox = Ui.AmountField(opened, AmountKind.Decimal);
+        CapSave = BuildSaveCap(CapBox, CurrentCap, _src.Currency, SaveCap, why => Ui.Refuse(CapNote, why));
 
         var empty = OversightWords.Of(null, null, "");
         var seats = Ui.Col(Theme.S2, [.. empty.SeatClasses.Select(s => Ui.KeyValue(s.Seat, $"{s.Reach} — {s.How}"))]);
@@ -204,7 +221,7 @@ sealed class OversightPage
             Ui.Section("How hidden it is, by seat", seats),
             Ui.Section("Thresholds", thresholds),
             Ui.Section("Oversight cap", Ui.Col(Theme.S3, CapText,
-                Ui.FieldRow("The most your private line may spend in a day", CapBox), CapSave)));
+                Ui.FieldRow(CapLabel, CapBox), CapSave, CapNote)));
 
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
@@ -231,7 +248,7 @@ sealed class OversightPage
         if (!_capRead && read is not null)
         {
             _capRead = true;
-            CapBox.Value = read.Cap?.Amount ?? 0m;
+            CapBox.OpenOn(read.Cap?.Amount ?? 0m);
         }
 
         var signature = string.Join('|', words.Findings.Select(f => f.Id + "#" + f.Acknowledged));
@@ -257,7 +274,7 @@ sealed class OversightPage
     internal static Button BuildSaveCap(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save)
     {
         var b = Ui.ConfirmIf(Labels.SaveOversightCap,
-            () => pending() > current() ? Labels.RaiseOversightCapArmed(Labels.Money(pending(), currency())) : null,
+            () => pending() > current() ? Labels.RaiseOversightCapArmed(Amount.ExactMoney(pending(), currency())) : null,
             save, "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
@@ -265,11 +282,15 @@ sealed class OversightPage
 
     /// <summary>
     /// THE PRESS OVER ITS OWN BOX: a confirmation completes only the figure it named, so editing the box disarms a raise armed for another
-    /// figure, and the new one asks twice of its own — the daily limit's rule (<see cref="SafetyPage.BuildSaveDailyCap(NumericUpDown, Func{decimal}, Func{string}, Action)"/>).
+    /// figure, and the new one asks twice of its own — the daily limit's rule (<see cref="SafetyPage.BuildSaveDailyCap(AmountField, Func{decimal}, Func{string}, Action, Action{string}?)"/>).
+    /// A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (<c>U-number-entry-culture</c>, fix pass 2): it never saves 0 or the cap in force.
     /// </summary>
-    internal static Button BuildSaveCap(NumericUpDown box, Func<decimal> current, Func<string> currency, Action save)
+    internal static Button BuildSaveCap(AmountField box, Func<decimal> current, Func<string> currency, Action save, Action<string>? refuse = null)
     {
-        var b = BuildSaveCap(current, () => box.Value ?? current(), currency, save);
+        var b = Ui.ConfirmIf(Labels.SaveOversightCap,
+            () => box.Figure > current() ? Labels.RaiseOversightCapArmed(Amount.ExactMoney(box.Figure, currency())) : null,
+            save, () => Ui.Refusal((CapLabel, box)), refuse ?? (_ => { }), "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
         return b;
     }
@@ -280,7 +301,9 @@ sealed class OversightPage
     void SaveCap()
     {
         if (_src.Store() is not { } store) return;
-        store.SetCap(CapBox.Value ?? 0m, _src.Currency(), _src.Now());
+        var cap = CapBox.Figure;
+        store.SetCap(cap, _src.Currency(), _src.Now());
+        Ui.Said(CapNote, $"Saved. Your private line may spend up to {Amount.ExactMoney(cap, _src.Currency())} a day.");
         Update();
     }
 
