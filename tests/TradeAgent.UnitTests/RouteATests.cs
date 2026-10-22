@@ -168,7 +168,8 @@ public class RouteATests
     /// R2 (fix pass 1): A CELL LAUNCH WHOSE ASSURANCE COULD NOT BE WRITTEN AND WHOSE CGROUP WOULD NOT DIE IS NEVER REPORTED ENDED. The
     /// session starts a <c>cell</c> seat for real — admitted under a counted proof, its attempt's cgroup and leaves made, its harness
     /// started in the harness leaf, where it leaves a setsid'd daemon — and then the assurance INSERT fails (a trigger) at the moment
-    /// the attempt's <c>cgroup.kill</c> stops being writable. The turn ends carrying what still runs, and its presence stays held, so
+    /// the attempt's <c>cgroup.kill</c> stops being writable and its <c>cgroup.procs</c> readable (a kill alone that fails, the
+    /// teardown's per-process pass still ends the daemon — CI run 39715903760 — and nothing is left to report). The turn ends carrying what still runs, and its presence stays held, so
     /// the meter admits no further turn while any of it runs. Linux only (CI's Cell step, under a delegated root); elsewhere the same
     /// session is refused before anything starts, which this row shows too.
     /// </summary>
@@ -212,7 +213,9 @@ public class RouteATests
             for (var i = 0; i < 300 && OperatingSystem.IsLinux() && !File.Exists(daemonFile); i++) Thread.Sleep(100);
             if (OperatingSystem.IsLinux() && root is not null)
                 foreach (var attempt in Directory.EnumerateDirectories(root, AttemptCgroups.AttemptPrefix + "*"))
-                    File.SetUnixFileMode(Path.Combine(attempt, "cgroup.kill"), UnixFileMode.None);
+                    foreach (var cg in Directory.EnumerateDirectories(attempt, "*", SearchOption.AllDirectories).Prepend(attempt))
+                        foreach (var file in new[] { "cgroup.kill", "cgroup.procs" })
+                            File.SetUnixFileMode(Path.Combine(cg, file), UnixFileMode.None);
             return 0;
         });
         db.Write(_ =>
@@ -257,7 +260,9 @@ public class RouteATests
             if (root is not null && Directory.Exists(root))
             {
                 foreach (var attempt in Directory.EnumerateDirectories(root, AttemptCgroups.AttemptPrefix + "*"))
-                    try { File.SetUnixFileMode(Path.Combine(attempt, "cgroup.kill"), UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch (IOException) { }
+                    foreach (var cg in Directory.EnumerateDirectories(attempt, "*", SearchOption.AllDirectories).Prepend(attempt))
+                        foreach (var file in new[] { "cgroup.kill", "cgroup.procs" })
+                            try { File.SetUnixFileMode(Path.Combine(cg, file), UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch (IOException) { }
                 try { File.WriteAllText(Path.Combine(root, "cgroup.kill"), "1"); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 for (var i = 0; i < 300 && !File.ReadAllText(Path.Combine(root, "cgroup.events")).Contains("populated 0", StringComparison.Ordinal); i++)
                     await Task.Delay(10);
