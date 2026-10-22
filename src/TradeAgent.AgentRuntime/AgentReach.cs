@@ -210,7 +210,8 @@ public sealed record AgentReach
                 HandsBack = handsBack,
                 Verbs = doorVerbs,
                 Tools = [.. served, .. doorVerbs.Where(v => Ops.IsOrganisation(v.Op)).Select(v => v.Invocation).Distinct(StringComparer.Ordinal)],
-                TurnsPerSession = Math.Max(1, turnsPerSession ?? options.TurnsPerSession)
+                // EVERY TURN FRESH: the harness's codex home is the attempt's own and is swept at its end, so no session resumes.
+                TurnsPerSession = 1
             };
         }
 

@@ -310,4 +310,147 @@ public partial class CellLinuxTests
         Assert.Equal("gap", attempt.GetValueOrDefault(RouteA.WebLoopbackGap));
         Assert.Equal(0, w.Presence.Live);
     }
+
+    // ---- item 5: the executor rows --------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// ROW (d): AN EXECUTOR CELL WRITES ONLY ITS OWN HOME. A Member's turn — the chart's kind, the app's register, no declaration of the
+    /// test's — writes into its own home, and is denied a sibling position's home, the owner's inbox, the app's state and the seat home.
+    /// </summary>
+    [LinuxFact]
+    public async Task An_executor_cell_writes_only_its_own_home()
+    {
+        await using var w = await Executor_("d");
+        Assert.Equal(SeatPlan.CellClass, w.Session.SeatClass);
+        var sibling = Path.Combine(Paths.Workspace, "org", "pos-e7ec0e02");
+        Directory.CreateDirectory(sibling);
+        var inbox = Path.Combine(Paths.Workspace, MaterialScanner.InboxDir);
+        // EVERY TARGET EXISTS, so a denial is the cell's and never a missing folder's.
+        foreach (var dir in new[] { inbox, Paths.State, Paths.SeatHome }) Directory.CreateDirectory(dir);
+        string Try(string label, string dir) => $"(echo x > '{dir}/w.txt' && echo {label}-WROTE) 2>/dev/null || echo {label}-denied; ";
+        var (ended, outputs) = await ExecutorTurn(w, [Exec("d1",
+            "echo own > scratch/own.txt && echo own-ok; " + Try("sibling", sibling) + Try("inbox", inbox) + Try("state", Paths.State) +
+            Try("seat", Paths.SeatHome) + Try("app-home", Paths.Home))]);
+        var d1 = Out(outputs, "d1", ended);
+        foreach (var said in new[] { "own-ok", "sibling-denied", "inbox-denied", "state-denied", "seat-denied", "app-home-denied" })
+            Assert.Contains(said, d1);
+        Assert.DoesNotContain("WROTE", d1);
+        Assert.Equal("own\n", File.ReadAllText(Path.Combine(w.Home, "scratch", "own.txt")));
+    }
+
+    /// <summary>
+    /// ROW (g): A MEMBER WRITES A TOOL IN ITS CELL AND RUNS IT WITH NO ADMISSION BEYOND ITS TURN. Through the meter, as the app runs a turn:
+    /// one admission, its attempt recorded <c>cell</c>, and inside that turn the executor writes a program into its home and runs it — no
+    /// second admission, no approval, no other row.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_member_writes_a_tool_in_its_cell_and_runs_it_with_no_admission_beyond_its_turn()
+    {
+        await using var w = await Executor_("g", meter: true);
+        var (ended, outputs) = await ExecutorTurn(w, [Exec("g1",
+            "mkdir -p scripts && printf '#!/bin/sh\\necho TOOL-RAN \"$1\" in $(pwd)\\n' > scripts/tool.sh && chmod +x scripts/tool.sh && ./scripts/tool.sh one")],
+            metered: true);
+        Assert.Contains("TOOL-RAN one in " + w.Home, Out(outputs, "g1", ended));
+        var attempt = Assert.Single(new AiAttemptStore(w.Db).Between(DateTimeOffset.MinValue, DateTimeOffset.MaxValue), a => a.Role == Executor);
+        Assert.Equal(SeatClasses.Cell, attempt.SeatClass);
+        var (egress, rows) = AssuranceOf(w.Db, attempt.Id);
+        Assert.Equal(CellEgress.Web.Name, egress);
+        Assert.Equal("gap", rows.GetValueOrDefault(RouteA.WebLanGap));
+    }
+
+    /// <summary>
+    /// ROW (h): A TOOL WRITTEN IN ONE ATTEMPT RUNS IN THE NEXT. Two turns of one executor: the first writes a program into its home and the
+    /// second — a fresh codex session, since a cell seat's per-attempt codex home is swept with its turn — runs it.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_tool_written_in_one_attempt_runs_in_the_next()
+    {
+        await using var w = await Executor_("h");
+        w.AttemptId = "exec-h-1";
+        var (first, one) = await ExecutorTurn(w, [Exec("h1",
+            "mkdir -p scripts && printf '#!/bin/sh\\necho TOOL-RAN \"$1\"\\n' > scripts/tool.sh && chmod +x scripts/tool.sh && echo written")]);
+        Assert.Contains("written", Out(one, "h1", first));
+        w.AttemptId = "exec-h-2";
+        var (second, two) = await ExecutorTurn(w, [Exec("h2", "./scripts/tool.sh two")]);
+        Assert.Contains("TOOL-RAN two", Out(two, "h2", second));
+        Assert.Equal(0, second.ExitCode);
+    }
+
+    /// <summary>
+    /// ROW (i): AN EXECUTOR'S TOOL REACHES 443 AND NO OTHER PORT, AND READS NO STATE, SEAT HOME OR INBOX. A program the executor runs in its
+    /// cell: a connection to port 443 is let through to the network (refused by nobody listening, never denied by the cell), one to a
+    /// loopback listener on another port is denied; the app's state, the seat home's sign-in and the owner's inbox cannot be read.
+    /// </summary>
+    [LinuxFact]
+    public async Task An_executor_tool_reaches_443_and_no_other_port_and_reads_no_state_seat_home_or_inbox()
+    {
+        await using var w = await Executor_("i");
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Directory.CreateDirectory(Paths.State);
+            var state = Path.Combine(Paths.State, "executor-row.db");
+            File.WriteAllText(state, "state");
+            var inbox = Path.Combine(Paths.Workspace, MaterialScanner.InboxDir, "handed.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(inbox)!);
+            File.WriteAllText(inbox, "the owner's");
+            var auth = Path.Combine(w.Codex.Seat!.Root, "codex", "auth.json");
+            File.WriteAllText(Path.Combine(w.Home, "scratch", "probe.py"), """
+                import errno, socket, sys
+                def connect(port):
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(3)
+                    try: s.connect(("127.0.0.1", port)); return "connected"
+                    except PermissionError: return "denied"
+                    except OSError as e: return "errno=%d" % e.errno
+                    finally: s.close()
+                print("443:" + connect(443))
+                print("other:" + connect(int(sys.argv[1])))
+                for label, path in (("state", sys.argv[2]), ("seat", sys.argv[3]), ("inbox", sys.argv[4])):
+                    try: open(path).read(); print(label + ":READ")
+                    except PermissionError: print(label + ":denied")
+                    except OSError as e: print(label + ":errno=%d" % e.errno)
+                """);
+            var (ended, outputs) = await ExecutorTurn(w, [Exec("i1", $"python3 -I scratch/probe.py {port} '{state}' '{auth}' '{inbox}'")]);
+            var i1 = Out(outputs, "i1", ended);
+            Assert.Contains("443:errno=111", i1);   // ECONNREFUSED: through the cell, nobody listening — never EACCES
+            Assert.Contains("other:denied", i1);
+            Assert.Contains("state:denied", i1);
+            Assert.Contains("seat:denied", i1);
+            Assert.Contains("inbox:denied", i1);
+            Assert.DoesNotContain("READ", i1);
+        }
+        finally { listener.Stop(); }
+    }
+
+    /// <summary>
+    /// ROW (j), GUARD: UNDER WEB, A ROUTE (a) CELL STILL CANNOT CONNECT TO THE DOOR. The door listens on an ephemeral loopback port (never
+    /// 443: an unprivileged listener gets none below 1024); route (a)'s own policy — an executor's, egress <c>web</c> — reaches it from
+    /// outside and is denied it from inside, and holds no bearer. -c's row (f) showed it under <c>none</c> only.
+    /// </summary>
+    [LinuxFact]
+    public async Task Under_web_a_route_a_cell_still_cannot_connect_to_the_door()
+    {
+        PlatformIsACells();
+        var w = new World("door-web");
+        await using var door = new BrokerDoor { Grants = new AgentGrants() };
+        door.Start();
+        var port = door.Url!.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(door.Url.Port > 1023, $"the door listens on {door.Url.Port}");
+        var probe = w.Script("door-web.py", """
+            import os, socket, sys
+            try:
+                socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=3).close(); print("door-connected")
+            except PermissionError:
+                print("door-denied")
+            print("bearer=" + os.environ.get(sys.argv[2], "none"))
+            """);
+        Says(await Outside("/usr/bin/python3", probe, port, AgentGrants.Variable), "door-connected");
+        var cellHome = Path.Combine(w.Root, "cell-home");
+        Directory.CreateDirectory(cellHome);
+        var policy = RouteA.Policy(w.Ws, "/usr/bin/python3", "/usr/bin", cellHome, cellHome);
+        Assert.Equal(CellEgress.Web.Name, policy.Egress.Name);
+        Says(await InCell(policy, "/usr/bin/python3", probe, port, AgentGrants.Variable), "door-denied", "bearer=none");
+    }
 }

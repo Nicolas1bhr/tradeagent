@@ -538,7 +538,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
             Assert.False(reach.ReadsInbox);
             Assert.Equal([.. WorkspaceBuilder.SubDirs, CouncilRoles.OutDir, AgentReach.TopFolder(MissionLoop.WakeFile)], reach.Writes);
             Assert.Equal(MissionLoop.WakeFile, reach.WakeFile);
-            Assert.Equal(new MissionOptions().TurnsPerSession, reach.TurnsPerSession);
+            Assert.Equal(1, reach.TurnsPerSession);   // its harness's codex home is the attempt's own: no session resumes
             Assert.Equal(Canon.CliFile, Canon.FileFor(runtime));
             Assert.Equal([RuntimeClass.Cell, RuntimeClass.Harness], WorkspaceBuilder.RuntimesOf(role, TradeAgent.Core.Db.OrgPositionKind.Member));
             Assert.DoesNotContain(RuntimeClass.Cli, WorkspaceBuilder.RuntimesOf(role, TradeAgent.Core.Db.OrgPositionKind.Member));

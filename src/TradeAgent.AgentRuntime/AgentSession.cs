@@ -369,7 +369,7 @@ public sealed class AgentSession(
                 ? SeatVerdict.Refuse(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} is not installed, so no {seatClass} seat can start.")
                 : Seated;
         var launch = Launch;
-        var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: LaunchModel, seatClass, launch.Door, out _);
+        var argv = AgentArgs.For(manifest, "", resuming: Resumes(seatClass), model: LaunchModel, seatClass, launch.Door, out _);
         var home = workspace();
         try
         {
@@ -552,6 +552,13 @@ public sealed class AgentSession(
     IDisposable? _survivorPresence;
     bool _busy;
     bool _sessionExists;
+
+    /// <summary>
+    /// WHETHER THIS LAUNCH RESUMES THE CLI SESSION A TURN BEFORE IT OPENED — never for a route (a) cell seat (<c>U-execution-environment</c>):
+    /// its harness's codex home, which holds the session's rollout, is the attempt's own and is swept when the turn ends
+    /// (<see cref="RouteA.Remove"/>), so there is nothing to resume. Every executor turn starts fresh; its files are its memory.
+    /// </summary>
+    bool Resumes(string seatClass) => _sessionExists && seatClass != SeatPlan.CellClass;
     string? _threadId;
 
     /// <summary>
@@ -911,7 +918,7 @@ public sealed class AgentSession(
         // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
         var seatClass = SeatClass;
         var launchSeat = Launch;
-        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: LaunchModel, seatClass, launchSeat.Door,
+        var args = AgentArgs.For(manifest, message, resuming: Resumes(seatClass), model: LaunchModel, seatClass, launchSeat.Door,
             out var promptInArgv);
 
         // THE SEAT'S PROFILE, VERIFIED AS IT STARTS, fresh or resumed (U-seat-home): the pin, the deny set on this very argv, the

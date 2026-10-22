@@ -1175,6 +1175,9 @@ public sealed class AppHost : IAsyncDisposable
             seats: _seats,
             // THE APP'S DOOR, read at every launch: a broker-only seat's one tool server (U-thinking-seats-c).
             door: () => DoorUrl,
+            // THE HOST'S PROVEN CELLS AND ITS ATTEMPTS' CGROUPS, for an executor's cell seat (U-execution-environment): route (a)
+            // launches only under a counted proof this host's benchmark wrote; without one every executor is refused in words.
+            cells: new CellRoute(db),
             // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
             positions: () => new OrgStore(db).Positions()
                 .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))
