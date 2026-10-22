@@ -298,7 +298,7 @@ public static class CellNative
         // led, so a workspace symlink retargeted onto an input after the check cannot hand that input the workspace's write rights.
         var guarded = CellPolicy.Guarded.Of();
         string? workspace = null;
-        bool Grant(string p, ulong rights, bool required, bool readOnly = false)
+        bool Grant(string p, ulong rights, bool required, bool readOnly = false, bool programRoot = false)
         {
             BeforeGrantOpen?.Invoke(p);
             var name = Utf8(p);
@@ -320,7 +320,10 @@ public static class CellNative
             var stat = Stat(parent, null);
             var why = target is null || !target.StartsWith('/') || target.EndsWith(" (deleted)", StringComparison.Ordinal)
                 ? "names no path the kernel can show"
-                : stat is null ? "could not be examined" : guarded.Refuses(target);
+                // A PROGRAM ROOT IS JUDGED AS ONE HERE TOO (U-execution-environment item 0): the policy's path check lets a root lie
+                // strictly inside tools/ — the codex the app installs, read and run, never written — and this descriptor check, which
+                // judged it as any grant, refused every route (a) cell over the installed codex (CI run 39741425317).
+                : stat is null ? "could not be examined" : guarded.Refuses(target, executable: programRoot);
             // ANY CGROUP FILESYSTEM, BY THE DESCRIPTOR ITSELF (U-cell-linux-b fix pass 1, R2): a second mount of the hierarchy, or one
             // reached by a bind mount, has another path; the filesystem the descriptor is on does not lie.
             if (why is null && OnCgroupFs(parent) is not false)
@@ -348,7 +351,7 @@ public static class CellNative
 
         var ok = Grant(policy.Workspace, handled, required: true);
         foreach (var p in policy.ReadOnly) ok = ok && Grant(p, FsReadFile | FsReadDir, required: false, readOnly: true);
-        foreach (var p in policy.Executable) ok = ok && Grant(p, FsExecute | FsReadFile | FsReadDir, required: false);
+        foreach (var p in policy.Executable) ok = ok && Grant(p, FsExecute | FsReadFile | FsReadDir, required: false, programRoot: true);
         foreach (var (p, rights) in Devices) ok = ok && Grant(p, rights, required: false);
         foreach (var port in policy.TcpPorts)
         {

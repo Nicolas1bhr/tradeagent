@@ -321,6 +321,30 @@ public partial class CellLinuxTests
         Assert.Equal(0, w.Presence.Live);
     }
 
+    /// <summary>
+    /// ROW (0), THE DEFECT IT EXPOSED: A PROGRAM ROOT INSIDE <c>tools/</c> IS RUN IN A CELL, AND NEVER WRITTEN. The policy's path check let a
+    /// program root lie strictly inside <see cref="Paths.Tools"/> (-c item 2) but the cell stage's descriptor check judged it as any grant
+    /// and refused it, so no route (a) cell ever started over the codex the app installs (CI run 39741425317: "the cell stage stopped at
+    /// granting …/tools/codex … it would grant the tools TradeAgent installs"). A program there now runs; writing beside it is denied, and
+    /// <c>tools/</c> itself is still refused as a root.
+    /// </summary>
+    [LinuxFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    public async Task A_program_root_inside_tools_is_run_in_a_cell_and_never_written()
+    {
+        PlatformIsACells();
+        var w = new World("tools-root");
+        var package = Path.Combine(Paths.Tools, "exec-row-" + Guid.NewGuid().ToString("n")[..6]);
+        Directory.CreateDirectory(Path.Combine(package, "bin"));
+        var program = Path.Combine(package, "bin", "run.sh");
+        File.WriteAllText(program, "#!/bin/sh\necho RAN\n(echo x > \"$0.w\" && echo WROTE) 2>/dev/null || echo write-denied\n");
+        File.SetUnixFileMode(program, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        var env = w.Policy().Environment;
+        Says(await InCell(new CellPolicy(w.Ws, [], [package, .. CellPolicy.SystemRoots], env), program), "RAN", "write-denied");
+        Assert.False(File.Exists(program + ".w"));
+        Assert.NotNull(new CellPolicy(w.Ws, [], [Paths.Tools, .. CellPolicy.SystemRoots], env).Problem());
+    }
+
     // ---- item 5: the executor rows --------------------------------------------------------------------------------------
 
     /// <summary>
