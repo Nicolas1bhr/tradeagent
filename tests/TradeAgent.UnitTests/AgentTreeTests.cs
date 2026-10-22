@@ -1075,6 +1075,30 @@ public class AgentTreeTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A SUPERVISOR STARTED AS A PROCESS-GROUP LEADER STILL HOLDS ITS COMMAND IN A SESSION OF ITS OWN (<c>U-cell-linux-c</c>): codex starts an
+    /// environments.toml stdio program as a group leader, where <c>setsid</c> is EPERM (CI run 39704244237: "could not start a new
+    /// session (errno 1)", and route (a)'s cell never started). The supervisor relays to a copy of itself, which makes the session: the
+    /// command runs, in a process group that is not the leader's own, and its exit code comes back.
+    /// </summary>
+    [UnixFact]
+    public async Task A_supervisor_started_as_a_process_group_leader_still_holds_its_command_in_a_session_of_its_own()
+    {
+        DeployLauncher();
+        var psi = new ProcessStartInfo("/usr/bin/perl") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "-e", "setpgrp(0, 0); exec @ARGV or die", LauncherPath, ContainedLaunch.Flag, "/usr/bin/perl", "-e",
+                     "print getpgrp(0), qq(\n); exit 7" })
+            psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        var so = p.StandardOutput.ReadToEndAsync();
+        var se = p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+        var output = (await so).Trim();
+        Assert.True(p.ExitCode == 7, $"exit {p.ExitCode}; stdout '{output}'; stderr {await se}");
+        Assert.True(int.TryParse(output, out var group) && group > 1 && group != p.Id,
+            $"the command's process group {output} is the group-leading supervisor's own ({p.Id}), not a session of its own");
+    }
+
     // ---- the launcher, the script, the host ---------------------------------------------------------
 
     static string LauncherPath => Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);

@@ -144,7 +144,17 @@ public static class ContainedLaunch
 
         if (Posix.setsid() < 0)
         {
-            error.WriteLine($"trade: could not start a new session (errno {Marshal.GetLastPInvokeError()})");
+            var errno = Marshal.GetLastPInvokeError();
+            // A PROCESS-GROUP LEADER CANNOT MAKE A SESSION (setsid: EPERM), and codex starts an environments.toml stdio program as one —
+            // route (a)'s cell leg, measured on CI run 39704244237. One more copy of this supervisor, started by this one, is no group's
+            // leader: it is born in the attempt's cgroup this process already joined, makes the session and does everything below.
+            if (errno == EPERM && Posix.GroupOf(Environment.ProcessId) == Environment.ProcessId)
+            {
+                exitCode = Relay([Flag, .. cellPolicy is null ? Array.Empty<string>() : [CellFlag, cellPolicy], .. run], cellPolicy, error);
+                return true;
+            }
+            error.WriteLine($"trade: could not start a new session (errno {errno})");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
             exitCode = 126;
             return true;
         }
@@ -239,6 +249,49 @@ public static class ContainedLaunch
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return $"writing to {dir}/cgroup.procs failed ({ex.Message})"; }
         var now = AttemptCgroups.OwnCgroup();
         return now == dir ? null : $"the kernel places this process in {now ?? "an unreadable cgroup"}, not {dir}";
+    }
+
+    const int EPERM = 1;
+
+    /// <summary>
+    /// THE RELAY OF A SUPERVISOR THAT WAS STARTED AS A PROCESS-GROUP LEADER (<c>U-cell-linux-c</c>): this program again with
+    /// <paramref name="argv"/> — the same launch less the cgroup flag, since this process has already joined it and the copy is born
+    /// there — its stdio inherited. The relay waits for it; if whoever started the relay goes, it kills the copy's whole group, which
+    /// is its session. The copy's exit code is the relay's, and the cell's policy file goes when the copy has gone.
+    /// </summary>
+    static int Relay(IReadOnlyList<string> argv, string? cellPolicy, TextWriter error)
+    {
+        var app = Posix.Parent();
+        var again = Self();
+        if (again is null)
+        {
+            error.WriteLine("trade: could not start a new session (errno 1), and this program cannot name its own executable to start one");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
+            return 126;
+        }
+        var psi = new ProcessStartInfo(again[0]) { UseShellExecute = false };
+        foreach (var a in again.Skip(1).Concat(argv)) psi.ArgumentList.Add(a);
+        Process copy;
+        try { copy = Process.Start(psi) ?? throw new InvalidOperationException("the supervisor's copy did not start"); }
+        catch (Exception ex)
+        {
+            error.WriteLine($"trade: could not start the supervisor's copy ({ex.Message})");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
+            return 126;
+        }
+        using (copy)
+        {
+            while (!copy.WaitForExit(Watch))
+            {
+                if (Posix.Parent() == app) continue;
+                Posix.KillGroup(copy.Id);
+                Posix.Kill(copy.Id);
+                copy.WaitForExit(3000);
+                break;
+            }
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
+            return copy.HasExited ? copy.ExitCode : 128 + 9;
+        }
     }
 
     /// <summary>
