@@ -274,6 +274,9 @@ public sealed partial class GatewayPipeServer
                     counted_in = BillingClasses.Words(d.Ceiling),
                     envelope = d.Envelope?.ToString(CultureInfo.InvariantCulture),
                     spent_today = d.Spent.ToString(CultureInfo.InvariantCulture),
+                    // A TURN WHOSE COST IS UNKNOWN IS NOT FREE: spent_today adds it as nothing, so it is counted beside the
+                    // priced sum, as mandate-show's unknown_cost_launches is — never a bare zero (AppHost's rule).
+                    unknown_cost_turns_today = d.Unpriced,
                     reserved_today = d.Reserved.ToString(CultureInfo.InvariantCulture)
                 }).ToList()
                 : null
@@ -283,7 +286,9 @@ public sealed partial class GatewayPipeServer
             : "Each envelope is TradeAgent's, resolved as admission resolves it (none: no separate cap — the units above bind); spent "
               + "and reserved are today's, charged to the unit's funding chain. Each reading is counted in ONE ceiling, named: 'key' is "
               + "real money, 'plan' is your ChatGPT plan's capacity and never money; a seat whose class is not known is shown against "
-              + "both, as admission holds it to both. The two are never added.";
+              + "both, as admission holds it to both. The two are never added. spent_today is the PRICED sum of that ceiling's "
+              + "turns: a turn whose cost is unknown adds nothing to it and is counted in unknown_cost_turns_today, so a day with "
+              + "any is unknown, never zero.";
 
         var held = new List<object>();
         var decided = new List<object>();

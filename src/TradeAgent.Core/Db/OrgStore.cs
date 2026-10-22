@@ -193,9 +193,11 @@ public sealed record FundedUnit(string UnitId, decimal? Envelope);
 /// in (<see cref="BillingClasses.Key"/>, the money cap, or <see cref="BillingClasses.Plan"/>, the plan's capacity — never money;
 /// <c>U-billing-classes</c>), its envelope in that ceiling as admission resolves it (<see cref="FundedUnit.Envelope"/>; null is no
 /// separate cap) and the day's spent and reserved charged to it in that ceiling's rows (<see cref="AiAttemptStore.UnitTotalsBetween"/>)
-/// — O4's readers, read by the host that meters launches, never recomputed.
+/// — O4's readers, read by the host that meters launches, never recomputed. <paramref name="Unpriced"/> counts that ceiling's resolved
+/// turns today whose cost is UNKNOWN (<see cref="AiAttemptTotals.Unpriced"/>): <paramref name="Spent"/> adds them as nothing, so without
+/// the count an unpriceable seat's day would read as free.
 /// </summary>
-public sealed record UnitDay(string UnitId, string Ceiling, decimal? Envelope, decimal Spent, decimal Reserved);
+public sealed record UnitDay(string UnitId, string Ceiling, decimal? Envelope, decimal Spent, decimal Reserved, int Unpriced);
 
 /// <summary>
 /// HOW A UNIT'S ENVELOPE IS RESOLVED (<c>docs/ORCHESTRATION.md</c> § 2.4): <c>envelope_share</c> is a FRACTION of the parent's
