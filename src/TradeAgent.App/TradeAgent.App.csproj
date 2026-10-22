@@ -9,9 +9,9 @@
     <!-- Avalonia over WPF/WinUI: it builds and runs on the CI/dev host as well as Windows, ships
          self-contained with no runtime prerequisite for the user, and has the lowest packaging risk
          of the three. See docs/DECISIONS.md. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
