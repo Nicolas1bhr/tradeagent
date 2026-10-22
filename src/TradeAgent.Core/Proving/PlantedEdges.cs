@@ -16,6 +16,31 @@ public enum EdgeDoctrine
     Inside
 }
 
+/// <summary>
+/// WHAT A PLANTED RELATION IS MEANT TO TEACH (<c>U-proving-ground-b</c> item 3; <c>docs/VISION.md</c> § 6.4: "traps — leaky
+/// joins, edges that exist only before fees, regimes that exist only in-sample"). An honest app finds no edge in any trap.
+/// </summary>
+public enum EdgeTrap
+{
+    /// <summary>A real planted edge.</summary>
+    None,
+
+    /// <summary>Each reading is first seen after the move it predicts: a source-time join sees it, the as-of gate never can.</summary>
+    LeakyJoin,
+
+    /// <summary>The gross move per signal is below the venue's round trip: a frictionless run passes, the venue's cost fails it.</summary>
+    PreFeeOnly,
+
+    /// <summary>On before the holdout cutoff and off from it: research passes, the verdict over the held-back months fails.</summary>
+    InSampleOnly
+}
+
+/// <summary>
+/// THE HOLDOUT A PROVING MARKET IS JUDGED ON, SET AS THE OWNER WOULD SET IT (<c>U-proving-ground-b</c> items 3 and 4): every
+/// minute from day <see cref="FromDay"/> on, and the campaign's trial and verdict budgets.
+/// </summary>
+public sealed record SyntheticHoldout(int FromDay, int TrialBudget, int VerdictBudget);
+
 /// <summary>A window a planted edge is on in: from day <see cref="FromDay"/> to day <see cref="ToDay"/> of the market, the end excluded.</summary>
 public sealed record SyntheticRegime(int FromDay, int ToDay);
 
@@ -43,10 +68,32 @@ public sealed record SyntheticEdge(long BetaTicks, int HorizonMinutes = 60)
     /// <summary>Whether a playbook can name the relation: INSIDE only on a series shaped like a real family's.</summary>
     public EdgeDoctrine Doctrine { get; init; } = EdgeDoctrine.Beside;
 
+    /// <summary>The trap the relation is, or <see cref="EdgeTrap.None"/> for a real planted edge.</summary>
+    public EdgeTrap Trap { get; init; } = EdgeTrap.None;
+
+    /// <summary>
+    /// For a <see cref="EdgeTrap.LeakyJoin"/>: how long after its source time each reading of its series is first seen — after
+    /// the end of the move it predicts. Every other series' reading is first seen <see cref="ProvingSources.Delay"/> after it.
+    /// </summary>
+    public TimeSpan FirstSeenAfter { get; init; }
+
+    /// <summary>A leaky join on <paramref name="series"/>: each reading first seen <paramref name="firstSeenAfter"/> after its source time.</summary>
+    public static SyntheticEdge LeakyJoin(long betaTicks, TimeSpan firstSeenAfter, string series = ProvingSources.Signal) =>
+        new(betaTicks) { Series = series, Trap = EdgeTrap.LeakyJoin, FirstSeenAfter = firstSeenAfter };
+
+    /// <summary>An edge that exists only before fees: its gross per signal must be below the venue's round trip.</summary>
+    public static SyntheticEdge PreFeeOnly(long betaTicks, string series = ProvingSources.Signal) =>
+        new(betaTicks) { Series = series, Trap = EdgeTrap.PreFeeOnly };
+
+    /// <summary>An edge that exists only in-sample: on before the market's holdout cutoff, off from it.</summary>
+    public static SyntheticEdge InSampleOnly(long betaTicks, string series = ProvingSources.Signal) =>
+        new(betaTicks) { Series = series, Trap = EdgeTrap.InSampleOnly };
+
     /// <summary>The edge as one canonical line: what names a market that carries it.</summary>
-    internal string Canonical => string.Create(CultureInfo.InvariantCulture,
-        $"{BetaTicks}/{HorizonMinutes}/{Series}/{HalfLifeDays?.ToString(CultureInfo.InvariantCulture) ?? "-"}/"
-        + $"{string.Join(",", Regimes.Select(r => $"{r.FromDay}-{r.ToDay}"))}/{Doctrine}");
+    internal string Canonical =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{BetaTicks}/{HorizonMinutes}/{Series}/{HalfLifeDays?.ToString(CultureInfo.InvariantCulture) ?? "-"}/{string.Join(",", Regimes.Select(r => $"{r.FromDay}-{r.ToDay}"))}/{Doctrine}")
+        + (Trap == EdgeTrap.None ? "" : string.Create(CultureInfo.InvariantCulture, $"/{Trap}/{(long)FirstSeenAfter.TotalSeconds}"));
 }
 
 /// <summary>
@@ -101,6 +148,24 @@ internal static class PlantedEdges
         return r;
     }
 
+    /// <summary>
+    /// THE EDGE AS IT IS PLANTED: an in-sample trap is on from the market's start to its holdout cutoff and off from it; every
+    /// other edge as its spec says.
+    /// </summary>
+    internal static SyntheticEdge Effective(SyntheticMarketSpec spec, SyntheticEdge edge) =>
+        edge.Trap == EdgeTrap.InSampleOnly && spec.Holdout is { } holdout
+            ? edge with { Regimes = [new SyntheticRegime(0, holdout.FromDay)] }
+            : edge;
+
+    /// <summary>
+    /// HOW LONG AFTER ITS SOURCE TIME A READING OF <paramref name="series"/> IS FIRST SEEN: a leaky join's offset for the series
+    /// it rides — after the move each reading predicts — and the declared delay for every other.
+    /// </summary>
+    internal static TimeSpan FirstSeenAfter(SyntheticMarketSpec spec, string series) =>
+        spec.Planted.FirstOrDefault(e => e.Trap == EdgeTrap.LeakyJoin && e.Series == series) is { } leak
+            ? leak.FirstSeenAfter
+            : ProvingSources.Delay;
+
     /// <summary>Whether <paramref name="edge"/> is on in the hour starting <paramref name="hour"/> hours after the market's start.</summary>
     internal static bool On(SyntheticEdge edge, long hour) =>
         edge.Regimes.Count == 0 || edge.Regimes.Any(r => hour >= r.FromDay * 24L && hour < r.ToDay * 24L);
@@ -132,8 +197,10 @@ internal static class PlantedEdges
     {
         var minutes = spec.Days * 1440;
         var drift = new long[minutes];
-        foreach (var edge in spec.Planted)
+        foreach (var edge in spec.Planted.Select(e => Effective(spec, e)))
         {
+            // A LEAKY JOIN'S MOVE starts where an honest edge's would, from the first hourly close after the reading's source
+            // time and its declared delay: what makes it a leak is only that the reading is first seen after it.
             var shape = ProvingSources.Shape(edge.Series)!;
             var z = values[edge.Series];
             for (var k = 0; k < z.Length; k++)
@@ -172,8 +239,9 @@ internal static class PlantedEdges
         VenueCostModel.FeeOf(venueId) is { } fee ? 2m * (fee.TakerRate + VenueCostModel.SlippageRate) * 10_000m : null;
 
     /// <summary>What <paramref name="edge"/> is worth in <paramref name="spec"/>'s market — see <see cref="PlantedFigures"/>.</summary>
-    internal static PlantedFigures Figures(SyntheticMarketSpec spec, SyntheticEdge edge)
+    internal static PlantedFigures Figures(SyntheticMarketSpec spec, SyntheticEdge planted)
     {
+        var edge = Effective(spec, planted);
         var shape = ProvingSources.Shape(edge.Series)!;
         var hours = spec.Days * 24L;
         var readings = 0;
@@ -221,6 +289,41 @@ internal static class PlantedEdges
         if (edge.Doctrine == EdgeDoctrine.Inside && !shape.Family)
             return $"an edge INSIDE doctrine rides a series shaped like a real family's, which a playbook can name, and '{edge.Series}' is the "
                    + "proving ground's bare signal, which no playbook names";
+        if (edge.Trap != EdgeTrap.LeakyJoin && edge.FirstSeenAfter != TimeSpan.Zero)
+            return "only a leaky join names when its readings are first seen; every other series is first seen its declared delay after its source time";
+
+        switch (edge.Trap)
+        {
+            case EdgeTrap.LeakyJoin:
+            {
+                if (spec.Planted.Count(e => e.Series == edge.Series) > 1)
+                    return $"a leaky join's series is its own: every reading of '{edge.Series}' is first seen late, and another edge rides it too";
+                // FIRST SEEN AFTER THE MOVE IT PREDICTS: the move starts at the first hourly close after the source time and its
+                // declared delay, and lasts the horizon.
+                var source = shape.SourceMinute(0);
+                var end = TimeSpan.FromMinutes(MoveHour(source, ProvingSources.Delay) * 60 + edge.HorizonMinutes - source);
+                if (edge.FirstSeenAfter < end)
+                    return $"a leaky join's readings are first seen after the move they predict, {end.TotalMinutes} minutes after their source time "
+                           + $"on '{edge.Series}' with a {edge.HorizonMinutes}-minute horizon, and these are first seen {edge.FirstSeenAfter.TotalMinutes} minutes after it";
+                break;
+            }
+            case EdgeTrap.PreFeeOnly:
+            {
+                var figures = Figures(spec, edge);
+                if (figures.RoundTripBps is not { } trip)
+                    return $"a pre-fee trap is below the venue's round trip, and this build has read no published fee for {spec.VenueId}";
+                if (figures.BpsPerSignal >= trip)
+                    return $"a pre-fee trap's gross move per signal is below the venue's round trip, and this one's {figures.BpsPerSignal} bps is not "
+                           + $"below {trip} bps — it is a real edge, not a trap";
+                break;
+            }
+            case EdgeTrap.InSampleOnly:
+                if (spec.Holdout is null)
+                    return "an in-sample trap is on before the market's holdout cutoff and off from it, and this market sets no holdout";
+                if (edge.Regimes.Count > 0)
+                    return "an in-sample trap's regime is the market's holdout cutoff and nothing else; it names no windows of its own";
+                break;
+        }
         return null;
     }
 }

@@ -45,12 +45,15 @@ public sealed record SyntheticMarketSpec(
     /// <summary>The series the market writes, each one of <see cref="ProvingSources.Shapes"/>; the bare signal by default.</summary>
     public IReadOnlyList<string> Series { get; init; } = [ProvingSources.Signal];
 
-    /// <summary>Every planted edge, <see cref="Edge"/> first.</summary>
+    /// <summary>The holdout the market is judged on, or null for a market no campaign is opened over.</summary>
+    public SyntheticHoldout? Holdout { get; init; }
+
+    /// <summary>Every planted edge and trap, <see cref="Edge"/> first.</summary>
     public IReadOnlyList<SyntheticEdge> Planted => Edge is { } one ? [one, .. Edges] : Edges;
 
     /// <summary>Whether the spec says anything part a's could not: an edge field, another series, a second edge.</summary>
     internal bool Extended =>
-        Edges.Count > 0 || Series.Count != 1 || Series[0] != ProvingSources.Signal
+        Edges.Count > 0 || Holdout is not null || Series.Count != 1 || Series[0] != ProvingSources.Signal
         || (Edge is { } e && e.Canonical != new SyntheticEdge(e.BetaTicks, e.HorizonMinutes).Canonical);
 }
 
@@ -215,6 +218,10 @@ public static class SyntheticMarket
             throw new ArgumentException($"'{spec.VenueId}' is not a venue of this build's catalogue", nameof(spec));
         if (spec.Days is < 1 or > MaxDays)
             throw new ArgumentException($"a proving market spans 1 to {MaxDays} days, and this one {spec.Days}", nameof(spec));
+        if (spec.Holdout is { } holdout && (holdout.FromDay < 1 || holdout.FromDay >= spec.Days || holdout.TrialBudget < 1 || holdout.VerdictBudget < 1))
+            throw new ArgumentException(
+                $"a proving market's holdout starts on a day after its first and before its last ({spec.Days} days), with budgets of at least one "
+                + $"trial and one verdict; this one starts on day {holdout.FromDay} with {holdout.TrialBudget} and {holdout.VerdictBudget}", nameof(spec));
         if (spec.Series.Count == 0 || spec.Series.Distinct(StringComparer.Ordinal).Count() != spec.Series.Count
             || spec.Series.Any(s => ProvingSources.Shape(s) is null))
             throw new ArgumentException(
@@ -285,10 +292,11 @@ public static class SyntheticMarket
         {
             var shape = ProvingSources.Shape(series)!;
             var texts = Texts(shape, values[series]);
+            var seen = PlantedEdges.FirstSeenAfter(spec, series);
             for (var k = 0; k < texts.Length; k++)
             {
                 var at = start.AddMinutes(shape.SourceMinute(k));
-                var received = at + ProvingSources.Delay;
+                var received = at + seen;
                 var payload = string.Create(CultureInfo.InvariantCulture,
                     $$"""{"symbol":"{{spec.Instrument}}","{{shape.TimeField}}":{{at.ToUnixTimeMilliseconds()}},"{{shape.ValueField}}":"{{texts[k]}}"}""");
                 var appended = tape.Append(new TapeFetch
@@ -326,11 +334,23 @@ public static class SyntheticMarket
                 field = shape.ValueField,
                 cadence_minutes = shape.CadenceMinutes,
                 minute = shape.MinuteOffset,
-                first_seen_after_seconds = (long)ProvingSources.Delay.TotalSeconds,
+                first_seen_after_seconds = (long)PlantedEdges.FirstSeenAfter(spec, shape.Id).TotalSeconds,
                 family = shape.Family,
                 shape = shape.Words
             }).ToList(),
-            planted = spec.Planted.Select((edge, i) => Manifest(spec, start, edge, i)).ToList()
+            planted = spec.Planted.Select((edge, i) => (edge, i)).Where(x => x.edge.Trap == EdgeTrap.None)
+                .Select(x => Manifest(spec, start, x.edge, x.i, "edge")).ToList(),
+            traps = spec.Planted.Select((edge, i) => (edge, i)).Where(x => x.edge.Trap != EdgeTrap.None)
+                .Select(x => Manifest(spec, start, x.edge, x.i, "trap")).ToList(),
+            holdout = spec.Holdout is { } h
+                ? new
+                {
+                    from_day = h.FromDay,
+                    cutoff = start.AddDays(h.FromDay).ToString("O", CultureInfo.InvariantCulture),
+                    trial_budget = h.TrialBudget,
+                    verdict_budget = h.VerdictBudget
+                }
+                : null
         }) + "\n"));
 
         return new SyntheticMarketWritten(
@@ -345,20 +365,33 @@ public static class SyntheticMarket
     /// </summary>
     static string Key(SyntheticMarketSpec spec, DateTimeOffset start) => Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
         $"{spec.Seed}|{spec.Instrument}|{spec.VenueId}|{start:O}|{spec.Days}|{spec.Edge?.BetaTicks.ToString(CultureInfo.InvariantCulture) ?? "-"}|{spec.Edge?.HorizonMinutes.ToString(CultureInfo.InvariantCulture) ?? "-"}")
-        + (spec.Extended ? "|" + string.Join("|", spec.Series) + "|" + string.Join("|", spec.Planted.Select(e => e.Canonical)) : ""))[..16];
+        + (spec.Extended
+            ? "|" + string.Join("|", spec.Series) + "|" + string.Join("|", spec.Planted.Select(e => e.Canonical))
+              + (spec.Holdout is { } h ? $"|holdout {h.FromDay}/{h.TrialBudget}/{h.VerdictBudget}" : "")
+            : ""))[..16];
 
     /// <summary>
     /// ONE PLANTED EDGE AS THE MANIFEST STATES IT: its relation, its size in basis points per signal and its expected
     /// Sharpe before and after the venue's round trip — computed from the spec by <see cref="PlantedEdges.Figures"/>,
     /// never from a run.
     /// </summary>
-    static object Manifest(SyntheticMarketSpec spec, DateTimeOffset start, SyntheticEdge edge, int index)
+    static object Manifest(SyntheticMarketSpec spec, DateTimeOffset start, SyntheticEdge planted, int index, string kind)
     {
+        var edge = PlantedEdges.Effective(spec, planted);
         var shape = ProvingSources.Shape(edge.Series)!;
         var figures = PlantedEdges.Figures(spec, edge);
         return new
         {
-            id = $"edge-{index + 1}",
+            id = $"{kind}-{index + 1}",
+            trap = planted.Trap switch
+            {
+                EdgeTrap.LeakyJoin => "leaky-join",
+                EdgeTrap.PreFeeOnly => "pre-fee-only",
+                EdgeTrap.InSampleOnly => "in-sample-only",
+                _ => null
+            },
+            honest_app_says = HonestAppSays(planted.Trap),
+            first_seen_after_seconds = planted.Trap == EdgeTrap.LeakyJoin ? (long?)planted.FirstSeenAfter.TotalSeconds : null,
             series = edge.Series,
             field = shape.ValueField,
             beta_ticks_per_unit = edge.BetaTicks,
@@ -385,6 +418,9 @@ public static class SyntheticMarket
                 round_trip_bps = figures.RoundTripBps,
                 expected_sharpe_before_cost = figures.SharpeBeforeCost,
                 expected_sharpe_after_cost = figures.SharpeAfterCost,
+                join = planted.Trap == EdgeTrap.LeakyJoin
+                    ? "by source time — the leak: through the as-of gate no reading is seen before its move, and the relation cannot be traded"
+                    : "as of first seen",
                 basis = "computed from the spec, never from a run: one position per reading in the relation's direction, from the close the move "
                         + "starts at to the end of its horizon, at the first open's price; E|z| = R(R+1)/(2R+1); the minute's noise variance "
                         + "over the horizon; the venue's published taker fee and the app's slippage on both fills; annualised over 365 days"
@@ -411,6 +447,21 @@ public static class SyntheticMarket
                     $"{path} is already in this proving home with other bytes, and a proving market never writes over a file. Nothing was replaced.");
         }
     }
+
+    /// <summary>What an honest app must say about a trap — the manifest's statement, the score's key.</summary>
+    static string? HonestAppSays(EdgeTrap trap) => trap switch
+    {
+        EdgeTrap.LeakyJoin =>
+            "no edge: every reading is first seen after the move it predicts, so a join as of first seen — the app's gate — finds "
+            + "nothing to trade, and a result that finds this relation read a reading before it existed",
+        EdgeTrap.PreFeeOnly =>
+            "no edge after costs: the gross move per signal is below the venue's round trip, so a frictionless backtest passes and a "
+            + "run at the venue's published fee and the app's slippage does not",
+        EdgeTrap.InSampleOnly =>
+            "no edge on the held-back months: the relation is on before the holdout cutoff and off from it, so research over the "
+            + "months before the cutoff passes and the verdict over the months from it refuses",
+        _ => null
+    };
 
     /// <summary>
     /// A SERIES' INTEGER VALUE FOR EACH READING, ON A STREAM OF ITS OWN: the bare signal's stream is part a's, and each other
