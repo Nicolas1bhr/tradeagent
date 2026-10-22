@@ -299,7 +299,8 @@ public sealed class AgentSession(
     ISeatProbe? seatProbe = null,
     SeatRegister? seats = null,
     Func<Uri?>? door = null,
-    ISurfaceProbe? surfaceProbe = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
+    ISurfaceProbe? surfaceProbe = null,
+    CellRoute? cells = null) : IAgentConversation, IAdmittedConversation, ISeatLaunch, ILaunchGate
 {
     /// <summary>The CLI asked about its own seat: the real one unless a test passed a fake (<c>U-seat-home</c>).</summary>
     ISeatProbe SeatProbe => seatProbe ?? CliSeatProbe.Instance;
@@ -310,7 +311,7 @@ public sealed class AgentSession(
     /// </summary>
     public string SeatClass => manifest.SessionSeatClassFor(role);
 
-    bool Broker => SeatClass == SeatPlan.BrokerClass;
+    bool Broker => BrokerSeat.IsVerified(SeatClass);
 
     /// <summary>The door's address now, or null — a read that throws is no door.</summary>
     Uri? Door
@@ -345,11 +346,11 @@ public sealed class AgentSession(
         // A BROKER SEAT IS ADMITTED ONLY VERIFIED (U-thinking-seats-c): its mediated assurance is a claim about a profile, a door and an
         // offered surface the app has checked, never one about a manifest with nothing to check.
         var seatClass = SeatClass;
-        if (manifest.Seat is null && seatClass != SeatPlan.BrokerClass) return Seated;
+        if (manifest.Seat is null && !BrokerSeat.IsVerified(seatClass)) return Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
         if (resolveExecutable() is not { } exe)
-            return seatClass == SeatPlan.BrokerClass
-                ? SeatVerdict.Refuse(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} is not installed, so no broker-only seat can start.")
+            return BrokerSeat.IsVerified(seatClass)
+                ? SeatVerdict.Refuse(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} is not installed, so no {seatClass} seat can start.")
                 : Seated;
         var launch = Launch;
         var argv = AgentArgs.For(manifest, "", resuming: _sessionExists, model: LaunchModel, seatClass, launch.Door, out _);
@@ -946,9 +947,16 @@ public sealed class AgentSession(
         // on every other — once.
         var alive = Presence.Enter();
         ContainedProcess contained;
-        try { contained = ProcessContainment.Start(psi, hold, attemptId: attemptId); }
+        RouteA.Layout? cellHomes = null;
+        try
+        {
+            contained = seatClass == SeatPlan.CellClass
+                ? StartInCell(psi, exe, attemptId, out cellHomes)
+                : ProcessContainment.Start(psi, hold, attemptId: attemptId);
+        }
         catch (Exception)
         {
+            if (cellHomes is not null) RouteA.Remove(cellHomes);
             alive.Dispose();
             throw;
         }
@@ -1060,7 +1068,52 @@ public sealed class AgentSession(
                 register.Revoke(launch.Token);
             }
             _current = null;
+            if (cellHomes is not null) RouteA.Remove(cellHomes);
             alive.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// STARTS A ROUTE (a) CELL SEAT (<c>U-cell-linux-c</c> item 4): admitted only under a counted proof whose profile still holds (else
+    /// refused, never degraded); the attempt's cgroup with its two leaves; the cell's policy written; the per-attempt codex homes made
+    /// (<see cref="RouteA.Make"/>) with the harness's <c>CODEX_HOME</c> pointed at its own; the harness started in its leaf; and the
+    /// launch's assurance written once (<see cref="RouteA.AssuranceRows"/>). Every failure throws <see cref="ErrorCode.CELL_UNAVAILABLE"/>
+    /// with nothing started.
+    /// </summary>
+    ContainedProcess StartInCell(ProcessStartInfo psi, string exe, string attemptId, out RouteA.Layout? homes)
+    {
+        homes = null;
+        var platform = CellPlatform.Read();
+        var policyEgress = CellEgress.None;
+        var (proof, refusal) = RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", platform, policyEgress);
+        if (refusal is not null || proof is null || cells is null || manifest.Seat is not { } seat)
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, refusal ?? "TradeAgent did not start the AI as a cell seat: it has no seat profile.");
+        var attempt = ProcessContainment.RouteAAttempt(cells.Cgroups, attemptId);
+        string? policyFile = null;
+        try
+        {
+            var layout = RouteA.LayoutFor(Path.GetFileName(attempt.Dir));
+            var policy = RouteA.Policy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome);
+            var launcher = cells.Launcher ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                "TradeAgent's own trade command, which starts a cell, is not installed; nothing was started");
+            policyFile = policy.Write();
+            homes = layout;
+            RouteA.Make(layout, SeatProfile.ConfigBytes(seat), RouteA.EnvironmentsToml(launcher, attempt.Cell, policyFile, exe, Paths.Home),
+                Path.Combine(seat.Root, "codex", "auth.json"));
+            psi.Environment["CODEX_HOME"] = layout.HarnessCodexHome;
+            var contained = ProcessContainment.StartHarness(psi, attempt, launcher);
+            cells.Assurance.Record(new CellAssurance(attemptId.Length > 0 ? attemptId : Path.GetFileName(attempt.Dir), RouteA.Provider,
+                policy.Hash, proof.ProfileHash, proof.Id, platform.Kernel, platform.LandlockAbi, platform.Lsm ?? "", policy.Egress.Name,
+                attempt.Dir, RouteA.Harness, RouteA.AssuranceRows(proof.Id)));
+            return contained;
+        }
+        catch (Exception ex)
+        {
+            attempt.Kill(TimeSpan.FromSeconds(3));
+            attempt.Remove();
+            if (policyFile is not null) CellStage.Discard(policyFile);
+            throw ex is TradeAgentException { Code: ErrorCode.CELL_UNAVAILABLE } ? ex
+                : new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"TradeAgent did not start the AI as a cell seat: {ex.Message}", ex);
         }
     }
 
