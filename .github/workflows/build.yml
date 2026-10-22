@@ -305,6 +305,8 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+      - name: Print the SDK this job floated to
+        run: dotnet --version
 
       # packaging/build.ps1 is run with -RequireInstaller below, so a missing Inno Setup fails the
       # job instead of quietly uploading an artifact with no installer in it. This step makes that
@@ -359,13 +361,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.400'
+          dotnet-version: '10.0.402'
 
       # THE SDK, PINNED HERE AND NOWHERE ELSE: a global.json written in the job, not committed — the
       # rest of the build floats on 10.0.x — so this publish uses exactly the SDK above or fails saying so.
       - name: Pin the SDK
         run: |
-          printf '{ "sdk": { "version": "10.0.400", "rollForward": "disable" } }\n' > global.json
+          printf '{ "sdk": { "version": "10.0.402", "rollForward": "disable" } }\n' > global.json
           dotnet --version
 
       - name: Lint the Linux scripts
@@ -376,6 +378,15 @@ jobs:
 
       - name: Build the Linux artifact
         run: packaging/build-linux.sh --runtime linux-x64
+
+      # THE RUNTIME THE KIT SHIPS: a self-contained publish carries the runtime of the pinned SDK, so print which
+      # Microsoft.NETCore.App the staged app names (10.0.13 or later carries the 10.0.12 and 10.0.13 security fixes).
+      - name: Print the runtime the staged app ships
+        run: |
+          cfg="$(find artifacts/linux -name TradeAgent.App.runtimeconfig.json | head -n 1)"
+          deps="$(find artifacts/linux -name TradeAgent.App.deps.json | head -n 1)"
+          echo "runtimeconfig: $cfg"; cat "$cfg"
+          grep -o 'Microsoft.NETCore.App[A-Za-z.0-9-]*/[0-9.]*' "$deps" | sort -u
 
       - uses: actions/upload-artifact@v7
         with:
