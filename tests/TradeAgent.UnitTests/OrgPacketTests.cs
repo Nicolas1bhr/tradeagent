@@ -395,6 +395,55 @@ public class OrgPacketTests
         }
     }
 
+    /// <summary>The schema op a pointer's command names: its words up to the first placeholder, as the op's own usage spells them.</summary>
+    static TradeAgent.Gateway.GatewaySchema.OpSpec? OpNamed(string command)
+    {
+        static string Verb(string usage) => string.Join(' ', usage.Split(' ').TakeWhile(w => !w.StartsWith('<') && !w.StartsWith('[') && !w.StartsWith("--")));
+        return TradeAgent.Gateway.GatewaySchema.Ops().SingleOrDefault(o => Verb(o.Cli) == Verb(command));
+    }
+
+    /// <summary>
+    /// THE COUNT OF CUT FORECASTS AND RESOLUTIONS POINTS AT VERBS THAT LIST THEM (fix pass 1, the review's fifth point): twelve of P1's
+    /// forecasts due and twelve resolved, more than their shares hold. Every command each count line names is an op of the gateway's
+    /// schema; and among them is one that lists a decision's forecasts each with its resolution (<c>trade decision show</c>) and one
+    /// that lists a mandate's — with <c>--part forecasts</c>, the part its schema names. Every other list's count names a real verb too.
+    ///
+    /// <para>RED at base 54b9a223: both counts named only <c>trade decision list</c>, which lists decisions with a forecast COUNT
+    /// ("no named op lists each forecast of a decision: "  - and 5 more resolutions not shown here, to keep this packet inside its
+    /// bound; `trade decision list` lists them."").</para>
+    /// </summary>
+    [Fact]
+    public void The_count_of_cut_forecasts_and_resolutions_points_at_verbs_that_list_them()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-cut");
+        for (var i = 0; i < 12; i++)
+        {
+            Forecast(db, P1, "ver-cut", DateTimeOffset.UtcNow.AddDays(2).AddMinutes(i), 0.5m);
+            Resolve(db, Forecast(db, P1, "ver-cut", DateTimeOffset.UtcNow.AddDays(1).AddMinutes(i), 0.5m).Id, ForecastOutcome.Yes, "ver-cut");
+        }
+        for (var i = 0; i < 40; i++) Note(db, P2, P1, $"note {i}: " + new string('x', 900));
+
+        var counts = Lines(Packet(db, P1).Text).Where(l => l.StartsWith("  - and ", StringComparison.Ordinal)).ToList();
+        foreach (var noun in new[] { "forecasts", "resolutions", "notes" })
+            Assert.Contains(counts, l => l.Contains($" more {noun} ", StringComparison.Ordinal));
+
+        foreach (var line in counts)
+        {
+            var commands = System.Text.RegularExpressions.Regex.Matches(line, "`(trade [^`]+)`").Select(m => m.Groups[1].Value).ToList();
+            Assert.NotEmpty(commands);
+            foreach (var command in commands) Assert.True(OpNamed(command) is not null, $"\"{command}\" in \"{line}\" is no op of the schema");
+            if (!line.Contains(" more forecasts ", StringComparison.Ordinal) && !line.Contains(" more resolutions ", StringComparison.Ordinal)) continue;
+
+            Assert.True(commands.Any(c => OpNamed(c) is { } op && op.Description.Contains("each forecast", StringComparison.Ordinal)),
+                $"no named op lists each forecast of a decision: \"{line}\"");
+            Assert.True(commands.Any(c => c.Contains("--part forecasts", StringComparison.Ordinal) && OpNamed(c) is { } op
+                    && op.Args.Any(a => a.Name == "part" && a.Description.Contains("forecasts", StringComparison.Ordinal))),
+                $"no named op lists the forecasts of a mandate: \"{line}\"");
+        }
+    }
+
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
 
     /// <summary>
