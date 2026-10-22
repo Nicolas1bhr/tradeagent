@@ -240,7 +240,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // language reference the app writes and the briefs the relay delivers.
                     Func<MaterialOrigin> origin = isInbox
                         ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
-                        : () => WeWroteIt(rel, file) ? MaterialOrigin.App : MaterialOrigin.Agent;
+                        : () => WeWroteIt(rel) ? MaterialOrigin.App : MaterialOrigin.Agent;
 
                     // THE WORD THE NEW ROW WENT IN WITH, kept as the store is answered so the pass
                     // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
@@ -368,9 +368,23 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// <para>The bytes are read here rather than taken from the row's later hash because the origin
     /// is written WITH the row. A file swapped between the walk and this read is measured as the
     /// agent's — the weaker word, which is the direction this must fail in.</para>
+    ///
+    /// <para><b>Read through <see cref="HomeFiles"/>, never by the path</b> (<c>U-execution-environment</c> fix pass 5, the fourth
+    /// re-review's D2): it is only ever asked of a position's home, which an executor's cell writes, and a name the walk described as a
+    /// file may be a link by now. Opened link-free and as a file with one name, a link — to a copy of the app's bytes outside the home,
+    /// to <c>/dev/zero</c>, to a FIFO — is refused before a byte is read, and the name is the agent's.</para>
     /// </summary>
-    bool WeWroteIt(string rel, string full) =>
-        _appFiles.Names(rel) && _appFiles.Wrote(rel, Sha256Hex.OfFile(full));
+    bool WeWroteIt(string rel)
+    {
+        if (!_appFiles.Names(rel)) return false;
+        try
+        {
+            using var fs = new FileStream(HomeFiles.OpenRead(_root, rel), FileAccess.Read);
+            return _appFiles.Wrote(rel, Sha256Hex.Of(fs));
+        }
+        catch (IOException) { return false; }               // refused, gone or being written: not measured as the app's
+        catch (UnauthorizedAccessException) { return false; }
+    }
 
     /// <summary>
     /// Fills in hashes for rows that do not have one yet. Separated from the walk so a slow disk
