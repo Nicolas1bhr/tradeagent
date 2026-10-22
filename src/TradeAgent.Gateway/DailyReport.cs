@@ -342,6 +342,12 @@ public sealed record ReportSpending
     public decimal? PlanCap { get; init; }
     public int? PlanTurns { get; init; }
 
+    /// <summary>
+    /// THE PLAN TURNS INSIDE <see cref="PlanSpent"/> CHARGED THEIR RESERVATION because their usage never arrived (<c>U-billing-followups</c>),
+    /// as <see cref="UnreportedTurns"/> is for the money's: a reservation charged is not capacity measured, and the plan's totals say so.
+    /// </summary>
+    public int? PlanUnreportedTurns { get; init; }
+
     public string Currency { get; init; } = "";
     public string? Runtime { get; init; }
 
@@ -749,6 +755,8 @@ public static class DailyReportText
             Kv(b, "plan capacity used", $"{Capacity(r.Spending.PlanSpent)} of {Capacity(r.Spending.PlanCap)} a day, "
                                         + $"{Capacity(r.Spending.PlanReserved)} committed — {PlanWords(r.Spending.Currency)}");
             Kv(b, "turns against plan capacity", Whole(r.Spending.PlanTurns)
+                                                 + (r.Spending.PlanUnreportedTurns is int planHeld and > 0
+                                                     ? $", {planHeld} charged at their reservation because no usage was ever reported" : "")
                                                  + " — a turn whose seat was not read counts against both ceilings");
         }
         Kv(b, "runtime", r.Spending.Runtime ?? Unknown);
