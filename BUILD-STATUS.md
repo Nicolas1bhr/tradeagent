@@ -11256,3 +11256,27 @@ shellcheck 0.11 + actionlint clean. Names removed 0.
 **Judged** (records/U-host-recording-review-triage.md): R1–R3 REAL → fixed; re-review: "R1–R3 close; no regressions found within the requested scope".
 **Tests box:** not applicable (Linux kit and tooling).
 **NOT VERIFIED:** the ssh path on a real host; a first install on a host with no home; arm64; a non-apt host.
+
+## U-org-watcher-a — the owner's private line, layer 1: its own file outside every `org_*` table and agent-reachable total, eight code detectors scoped per unit, a code-composed digest whose every sentence cites, and the guards that prove the organisation cannot see it; no rung (landed 2026-10-22, seat A, train A2)
+
+**Landed** at `8d398b6c` (train A2 on main `54c7857e`; fix pass 1 code `ac5137df`; builder code `b8155ce9`). A protection unit — ORCHESTRATION's watcher (layer 1),
+VISION's watcher per department, measurement vs claim (the line's file is written only by code; no agent reads or writes it), invisibility to the organisation.
+**No rung in tradeagent.db:** its own `state/oversight.db`, ladder `oversight_meta` schema 1 (the tape.db precedent); a newer layout refused naming both versions, untouched.
+Builder ae8b2932b79d8c9d3; fixer a7ac7845d21ae3eea (both opus/high, BUILD RUN 2026-10-22).
+**CI:** train A2 run **39732556969**. Earlier: builder 39711474880 all green (after 39699108133: windows shard 5 guard (b) red — the swept and control homes printed
+"…since 00:26 UTC" vs "00:27 UTC", the mask fixed red-first; ubuntu PromptStdinTests — the launcher race, U-launcher-race's); fix 1 39723212760 green.
+**What changed:** `OversightStore` (Core, `TradeAgent.Core.Oversight`) over `state/oversight.db`: scopes (root `org` seeded), findings, digests, a cursor that moves by
+appended rows, `oversight_failure` for the line's own failures (deviation: a fifth table); UPDATE/DELETE refused by trigger. The sweep reads tradeagent.db READ-ONLY on
+its own 60-second timer from one AppHost field — writes nothing to tradeagent.db or the logs, raises no wake, spends nothing. Eight detectors per unit, thresholds as named
+policy constants; agent-supplied strings never enter the digest. The digest: ten fact-only templates, `DigestCheck.Verify` before every write; a finding whose cited
+record was pruned still reaches the digest naming the missing record (never dropped, never a sentence without a citation). Legacy divisions' accepted work = the head's
+handoff only (Research → report, Operations → brief), never a plan, journal or note. owner-words-late runs from raising to now until a disposition, consumed or not.
+Guards: (b) three identically seeded homes, one swept — all 142 agent-reachable surfaces byte-identical with timestamps masked (every printed wall-clock form); (b2) the
+five agent-readable totals pinned; (c) no gateway field; (d) the organisation's table activity unchanged.
+**Evidence:** items 1–4 RED at base (compile: the types did not exist); builder mutant: the sweep also writes each severe finding through the activity log ⇒ (d) red
+"the sweep changed the organisation's table activity" and (b) red; a planted gateway field ⇒ (c) red; a planted total ⇒ (b2) red. Fix 1 REDs at `cc73977a`: R1
+`Assert.Empty() Failure` on Failures() ("a digest for scope org was refused and not written: the citat…"), R2 `Expected: ["spend-no-accept", "stall"] Actual: []`, R3
+`Assert.Single() Failure: The collection was empty`; mutant: Compose silently drops a finding with a gone cite ⇒ R1 red; restored. OversightTests 21/21 ×3, Invisibility 5/5 ×3.
+**Judged** (records/U-org-watcher-a-review-triage.md): R1 (P1), R2, R3 REAL → fixed; re-review: "R1–R3 close; no new regression found".
+**Tests box:** 20261022-081315-a044daed on the stacked tip a044daed GREEN — Unit 2083/0 (22 not run), Integration 733/0 (54 not run), Fault 498/0; his files unchanged
+**NOT VERIFIED:** the timer watched in a live app; oversight.db carries no proving home-kind mark (U-proving-ground-c's); part b (the owner's page, alert, cap) after U-execution-environment.
