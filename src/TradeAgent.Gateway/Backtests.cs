@@ -157,7 +157,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         // stopped after this point links nothing. Its refusal is this method's kind, as every other here is.
         LedgerAsk? under;
         try { under = ask.Entry is { } entry ? gateway.Ledger.Ask(entry, role) : null; }
-        catch (TradeAgentException refused) { throw new GatewayDeniedException(refused.Code, refused.Message); }
+        catch (TradeAgentException refused) { throw RefusalMark.Carry(refused, new GatewayDeniedException(refused.Code, refused.Message)); }
 
         // THE PROGRAM TRADES THE DATASET'S INSTRUMENT, OR NOTHING IS RUN AND NOTHING IS CHARGED. Before
         // the increment, the trial look and the run: the dataset's instrument is the key the step is

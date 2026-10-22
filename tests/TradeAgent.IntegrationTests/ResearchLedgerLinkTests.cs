@@ -416,4 +416,37 @@ public class ResearchLedgerLinkTests(ITestOutputHelper log)
         Assert.Equal(3, Links(w).Count);
         Assert.Equal(1, w.Gw.Campaigns.JudgementsSpent(w.Campaign.Id));
     }
+
+    /// <summary>
+    /// (e5) A RUN OR A VERDICT ASKED UNDER THE OTHER DIRECTOR'S ENTRY IS A REFUSAL OF RIGHTS AND LEAVES ONE ROW (<c>U-org-watcher-b</c> fix
+    /// pass 1, R2): over the wire, each is refused as it always was and leaves exactly one <c>engineering_log</c> <c>Ipc</c>/<c>op_refused</c>
+    /// row naming its op; an entry that is not there is no refusal of rights and leaves none. RED before the fix: the backtest path
+    /// re-wrapped the ledger's refusal and dropped its mark, so only the verdict left a row.
+    /// </summary>
+    [Fact]
+    public async Task A_request_under_the_other_directors_entry_leaves_one_refusal_row_on_either_path()
+    {
+        await using var w = await Given();
+        var theirs = Entry(w, CouncilRoles.Operations);
+        await using var wire = await w.Dial(CouncilRoles.Research, "attempt-e5");
+        var (a, versionA) = GivenProgram(w, CouncilRoles.Research, "a.strategy", Judged("2m"));
+
+        foreach (var under in new[] { 999_999L, theirs })
+        {
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), (await wire.SendAsync(Backtest(w, a, under))).Error?.Code);
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), (await wire.SendAsync(Verdict(versionA, under))).Error?.Code);
+        }
+
+        var rows = w.Db.Read(_ =>
+        {
+            using var c = w.Db.Cmd("SELECT metadata FROM engineering_log WHERE component='Ipc' AND event=$e ORDER BY id", ("$e", RefusalMark.Event));
+            using var rd = c.ExecuteReader();
+            var all = new List<string>();
+            while (rd.Read()) all.Add(rd.GetString(0));
+            return all;
+        });
+        foreach (var r in rows) log.WriteLine(r);
+        Assert.Equal([Ops.Backtest, Ops.Verdict], rows.Select(r => JsonDocument.Parse(r).RootElement.GetProperty("op").GetString()));
+        Assert.All(rows, r => Assert.Equal("attempt-e5", JsonDocument.Parse(r).RootElement.GetProperty("attempt").GetString()));
+    }
 }

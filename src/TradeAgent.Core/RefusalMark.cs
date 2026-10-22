@@ -26,6 +26,16 @@ public static class RefusalMark
         return ex;
     }
 
+    /// <summary>
+    /// <paramref name="to"/>, marked exactly when <paramref name="from"/> was — for a site that re-throws a refusal as another exception
+    /// type, so the mark its throw site set is never dropped on the way to the pipe (fix pass 1, R2).
+    /// </summary>
+    public static T Carry<T>(Exception from, T to) where T : Exception
+    {
+        ArgumentNullException.ThrowIfNull(from);
+        return IsMarked(from) ? Mark(to) : to;
+    }
+
     /// <summary>Whether a throw site marked <paramref name="ex"/> a refusal.</summary>
     public static bool IsMarked(Exception ex) => ex.Data[Key] is true;
 
