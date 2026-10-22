@@ -11389,3 +11389,26 @@ the probe-needs-no-home claim against codex 0.160.1 (read, not run).
 not bytes; ApiConversation.cs:488's raced hard line is not an UnworkedRefusal; MaterialScanner.cs:383/:425 hash with no time bound — pre-existing) · in-app "repair this position's
 home" DUE BEFORE M-org1 · Windows: Backtests.cs:392 backslash relative path + the link-through cause, before U-cell-windows · CouncilRelay.Deliver through a planted in/ link
 (legacy pair, pre-existing). **Owed:** the Codex second-pass review (HEADER ruling 1 of 2026-10-23 lifted Codex quiet; started after this landing).
+
+## U-org-audit-a — the public audit line, part a: its own app identity outside the chart, its own file, a read-only reader of approved evidence only, and salted samples of accepted deliveries checked by code
+
+**Landed** at `457e3373` (seat A, landed SINGLY right after U-execution-environment on main `05dfda7d`, its hand stack's lowest unit; builder/fixer a043c19ce11b0bd9e, opus/high, BUILD RUN 2026-10-22). No model, no money path, **no tradeagent.db rung**:
+`state/audit.db` rung 1 (salt + 7 append-only tables; a newer build's file refused, both versions named).
+Protections — AUTH-001 (the audit principal is refused wherever a position is named; no verb or pipe op reaches it), measurement vs claim (the line reads approved evidence
+only, never a note), invisibility to agents ((h), (i), (j): 142 surfaces compared, none moved), refuse-never-guess.
+**Reviewed by independent Claude legs during the observed run; Codex review owed** — review + re-review (fleet/tmp/A-org/u-org-audit-a-build/), fix pass 2 READ BY SEAT A
+(both findings closed: one draw per delivery per sweep, idempotent check rows; an acceptance naming no mandate kept by an outer join as the line's own failure).
+**CI:** landing run 39854536234 on 23589919 (hand-stacked on exec-env's d1cb5c5b), CARRIED to 457e3373 (build tree identical outside the bookkeeping list) — success on every job (dedupe-gate, shard-plan, package, package-linux, test windows-latest 1–5, ubuntu-latest, macos-latest, linux-host), 0 Warning(s) on every test job; land.sh check PASS, names removed 0 / added 17, SCAN CLEAN. Earlier: builder 39816407629, fix 1 39826864204, fix 2 39837184692 — each green on every job.
+**Tests box:** run 20261023-001340-23589919 on 23589919 (this landed tree outside bookkeeping, U-execution-environment included) was RUNNING at landing (started 00:13 CEST):
+NOT RUN to a verdict when this was recorded; its verdict goes to fleet/ci-ledger.md.
+
+**Build:** (1) AppPrincipals.Audit; (2) AuditStore; (3) AuditEvidence — an SQLite authorizer on a query_only connection enforces the register in the engine (deviation,
+accepted), strategy_version joins the register (accepted); (4) AuditSampler HMAC-SHA256, rate 0.25, a cursor over accepted events; (5) AuditChecks: seal (severe),
+refs-exist-now, refs-of-this-mandate-now, accepted-clean (info); findings cite ids only; a dormant flag; (6) AuditLine on a 60 s timer beside the oversight line.
+**Fix 1:** a ref check with nothing to re-resolve is NOT RUN, never passed; an unreadable sample fails closed (every check severe), the cursor moves past. Deviation accepted:
+an SqliteException fails the sweep (written nothing, retried) — never recorded as a fact about a delivery. **Fix 2:** above.
+**RED / mutant:** RED before each item and fix ("the id could be minted"; CS0234 at base; "Expected: not run"; "UNIQUE constraint"; "collection was empty");
+MUTANT the seal compares the stored id with itself → (d) red; restored.
+**Not verified:** the timer in a live app; audit.db's proving home-kind mark (for U-proving-ground-c).
+**CARDS:** a delivery re-named by an acceptance in a LATER sweep is dropped by ON CONFLICT with no failure row (within a sweep it is recorded) → U-org-audit-b; doc comments in
+ResearchLedger.cs:511 and Backtests.cs:303 list three principals; ORCH § 2.1 :110 gains `audit` (seat A's docs commit). **Owed:** the Codex second-pass review (HEADER ruling 1 of 2026-10-23 lifted Codex quiet; started after this landing).
