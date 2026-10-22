@@ -307,7 +307,8 @@ public sealed class AuditStore : IDisposable
         {
             if (Array.IndexOf(AuditOutcome.All, k.Outcome) < 0)
                 throw new ArgumentException($"a check's outcome is {string.Join(", ", AuditOutcome.All)}, not '{k.Outcome}'");
-            using var c = Cmd("INSERT INTO audit_check(delivery_id, check_name, outcome, reason) VALUES($d, $n, $o, $r)",
+            // IDEMPOTENT BY ITS KEY (fix pass 2): no shape of the data a sweep read can raise a constraint error and roll the sweep back.
+            using var c = Cmd("INSERT INTO audit_check(delivery_id, check_name, outcome, reason) VALUES($d, $n, $o, $r) ON CONFLICT(delivery_id, check_name) DO NOTHING",
                 ("$d", k.DeliveryId), ("$n", k.Name), ("$o", k.Outcome), ("$r", k.Reason));
             c.ExecuteNonQuery();
         }
