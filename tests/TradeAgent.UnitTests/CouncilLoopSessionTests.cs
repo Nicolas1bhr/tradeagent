@@ -199,6 +199,32 @@ public partial class CouncilLoopTests
             head.Timeline);
     }
 
+    // ---- item 3: session on the record ----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// GUARD (fix pass 1, the review's second point): A RUNTIME THAT CANNOT RESUME RECORDS EVERY TURN FRESH. Two successful turns
+    /// through a manifest that declares no resume template both launch the fresh template, and both say so: the first because it
+    /// is the first, the second because the runtime has no way to resume — never <c>resumed</c> of a command line that was not.
+    ///
+    /// <para>RED at base 385ac3b1: the second turn recorded <c>resumed</c> — the session flag alone, not the template launched.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_runtime_with_no_resume_records_every_turn_fresh()
+    {
+        var session = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, manifest: script => new RuntimeManifest
+        {
+            Id = "probe", DisplayName = "Probe runtime", Executable = script, ExecArgs = ["{prompt}"], JsonFlag = "--json"
+        });
+        var ended = new List<AgentTurnEnded>();
+        session.TurnEnded += ended.Add;
+
+        await session.SendAsync("first");
+        await session.SendAsync("second");
+
+        Assert.Equal([0, 0], ended.Select(e => e.ExitCode));
+        Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.NoResume)], ended.Select(e => (e.Session?.State, e.Session?.Why)));
+    }
+
     // ---- item 4: the mandate block --------------------------------------------------------------------------------------
 
     /// <summary>The index of the first line of <paramref name="prompt"/> that starts with <paramref name="start"/>, or fails saying so.</summary>
