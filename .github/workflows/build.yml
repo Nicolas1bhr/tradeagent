@@ -485,8 +485,13 @@ jobs:
           fi
           grep -q "dated word" "$ev/tool-refusal.txt" || { echo "the refusal does not name the dated word"; cat "$ev/tool-refusal.txt"; exit 1; }
           if tools/linux-host.sh stop "2020-01-01 an old word" > /dev/null 2>&1; then echo "stop ran on an old word"; exit 1; fi
+          # ... and only TODAY'S, in the host's zone (the env file's): yesterday's and tomorrow's words are refused too.
+          for d in yesterday tomorrow; do
+            if tools/linux-host.sh stop "$(TZ=Europe/Brussels date -d "$d" +%F) a $d word" > "$ev/tool-refusal-$d.txt" 2>&1; then echo "stop ran on $d's word"; exit 1; fi
+            grep -q "dated TODAY" "$ev/tool-refusal-$d.txt" || { echo "the $d refusal does not say why"; cat "$ev/tool-refusal-$d.txt"; exit 1; }
+          done
 
-          word="$(date -u +%F) CI throwaway host"
+          word="$(TZ=Europe/Brussels date +%F) CI throwaway host"
           tools/linux-host.sh install linux-artifact/TradeAgent-*-linux-x64.tar.gz "$word" | tee "$ev/tool-install.txt"
           grep -q '== backed up [0-9]* files to /var/backups/tradeagent/' "$ev/tool-install.txt" || { echo "install backed nothing up"; exit 1; }
           backup="$(sudo find /var/backups/tradeagent -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
