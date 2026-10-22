@@ -1443,7 +1443,8 @@ public sealed class AppHost : IAsyncDisposable
             var spend = SpendToday;
             return new AiActivity(
                 Mission is null ? AiActivity.None.State : Mission.Status.State.ToString().ToLowerInvariant(),
-                spend.Turns,
+                // EVERY TURN SINCE MIDNIGHT (U-billing-followups item 3), plan ones too: the reading above is the money cap's.
+                Meter?.TurnsToday ?? spend.Turns,
                 spend.CanPrice ? spend.Spent : null)
             {
                 // Only ever beside a figure. A label with no number to qualify would tell the agent

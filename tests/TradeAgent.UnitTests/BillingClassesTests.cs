@@ -532,6 +532,43 @@ public class BillingClassesTests : IDisposable
         Assert.Equal(2, card.Split(committed).Length - 1);
     }
 
+    // ---- U-billing-followups items 3 and 4: the status's turns and the review's funding, in the app's own composition -------------
+
+    /// <summary>One finished turn of <paramref name="role"/> billed to <paramref name="billing"/>, at noon today, on the CLI seat.</summary>
+    static void Finished(Database db, string role, string billing)
+    {
+        var store = new AiAttemptStore(db);
+        var at = TestEnv.LocalNoon();
+        var id = $"done-{Guid.NewGuid():n}";
+        store.Begin(new AiAttempt
+        {
+            Id = id, StartedAt = at, ReservedCost = 0.5m, BillingClass = billing, Role = role, SeatClass = SeatClasses.Cli,
+            State = AiAttemptState.LAUNCHED
+        });
+        Assert.True(store.End(id, 0, at, 1000, 0, 0, 100, 0, "gpt-5.6-sol", 0.25m, null, null));
+    }
+
+    /// <summary>
+    /// <c>U-billing-followups</c> item 3: <c>ai_turns_today</c> COUNTS EVERY TURN SINCE MIDNIGHT — plan, key and unknown. It read the money
+    /// cap's reading, which since the billing classes counts key and unknown rows only, so a day of plan turns read as none.
+    /// </summary>
+    [Fact]
+    public async Task The_status_counts_a_finished_plan_turn_among_the_days_turns()
+    {
+        using var db = TestEnv.NewDb();
+        var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
+            new AgentPresence());
+        try
+        {
+            Finished(db, CouncilRoles.Operations, BillingClasses.Plan);
+            Assert.Equal(1, (await host.Gateway.StatusAsync()).AiTurnsToday);
+            Finished(db, CouncilRoles.Research, BillingClasses.Key);
+            Finished(db, CouncilRoles.Research, BillingClasses.Unknown);
+            Assert.Equal(3, (await host.Gateway.StatusAsync()).AiTurnsToday);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
     // ---- (f) the setting ------------------------------------------------------------------------------------------------
 
     /// <summary>
