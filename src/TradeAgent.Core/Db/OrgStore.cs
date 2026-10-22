@@ -170,7 +170,16 @@ public static class AppPrincipals
     /// </summary>
     public const string Perception = "perception";
 
-    public static readonly string[] All = [Referee, Allocator, Perception];
+    /// <summary>
+    /// THE PUBLIC AUDIT LINE (<c>U-org-audit-a</c>; ORCHESTRATION § 2.13, ORGANISATION §§ 1–3): app-owned, outside the chief's
+    /// subtree — and the chief heads the root, so outside the whole chart: never a unit, never a position, no <c>org_*</c> row. It
+    /// samples accepted deliveries and re-checks them in code from approved evidence, in its own file (<c>TradeAgent.Core.Audit</c>);
+    /// it can neither instruct nor block. Being one of these names is what refuses it as a minted position, a mandate holder, a
+    /// decider, a note's sender or recipient and a caller of the organisation's verbs.
+    /// </summary>
+    public const string Audit = "audit";
+
+    public static readonly string[] All = [Referee, Allocator, Perception, Audit];
 }
 
 /// <summary>
