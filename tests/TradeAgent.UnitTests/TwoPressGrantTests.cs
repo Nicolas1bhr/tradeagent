@@ -406,7 +406,7 @@ public class TwoPressGrantTests
 
         Assert.Contains("_modeRow = BuildModeRow(m => _host.Gateway.SetMode(m));", text);
         Assert.Contains("_stopButton = BuildKillSwitch(", text);
-        Assert.Contains("BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits)", text);
+        Assert.Contains("BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,", text);
 
         // The one-press versions of all three, so a revert cannot pass by adding rather than editing.
         Assert.DoesNotContain("Ui.Secondary(Ui.ModeLabel(", text);

@@ -265,8 +265,8 @@ public class LossBudgetCompositionTests
         Assert.Contains("Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint)", text, StringComparison.Ordinal);
 
         // Saved by the same press as the other five, so RiskPolicy.Widenings decides the second one.
-        Assert.Contains("MaxLossPerTrade = _maxLossPerTrade.Value", text, StringComparison.Ordinal);
-        Assert.Contains("MaxDailyLoss = _maxDailyLoss.Value", text, StringComparison.Ordinal);
+        Assert.Contains("MaxLossPerTrade = _maxLossPerTrade.Figure", text, StringComparison.Ordinal);
+        Assert.Contains("MaxDailyLoss = _maxDailyLoss.Figure", text, StringComparison.Ordinal);
         Assert.Contains("s.Risk.MaxLossPerTrade = pending.MaxLossPerTrade;", text, StringComparison.Ordinal);
         Assert.Contains("s.Risk.MaxDailyLoss = pending.MaxDailyLoss;", text, StringComparison.Ordinal);
     }

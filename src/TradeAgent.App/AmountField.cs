@@ -55,6 +55,12 @@ public sealed class AmountField : StackPanel
     /// <summary>The figure the text reads as, or null while it is refused or empty.</summary>
     public decimal? Value { get; private set; }
 
+    /// <summary>
+    /// The figure, for a press that has already asked <see cref="Refusal"/>. There is no fallback: read while refused it throws, and
+    /// the two-step buttons report that and save nothing — a refused box is never read as 0 or as the figure already saved.
+    /// </summary>
+    public decimal Figure => Value ?? throw new InvalidOperationException(Refusal);
+
     /// <summary>Why the text reads as nothing, in the owner's words; null while it reads as a figure.</summary>
     public string? Refusal { get; private set; }
 

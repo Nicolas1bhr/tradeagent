@@ -213,4 +213,82 @@ public class NumberEntryCultureTests
         Assert.Contains("in ES, up to 0.05 at a time", (string)grant.Content!, StringComparison.Ordinal);
         return Task.CompletedTask;
     });
+
+    /// <summary>The page's button that says <paramref name="label"/> at rest, found in the built tree the owner sees.</summary>
+    static Button PressLabelled(SafetyPage page, string label) =>
+        page.Root.GetLogicalDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
+
+    /// <summary>
+    /// (item 4) A BOX THAT READS AS NOTHING REFUSES THE PRESS — EITHER PRESS — AND NEVER SAVES A FALLBACK. RED at 988c9487: the envelope's
+    /// "days" box left empty read as zero days, so the grant named an envelope ending the moment it was granted; an empty cap or
+    /// limit box read as the figure already in force.
+    /// </summary>
+    [Fact]
+    public Task An_unreadable_box_refuses_the_press_never_saves_a_fallback() => OnThePage((page, host) =>
+    {
+        // THE ENVELOPE, DAYS EMPTY: no arming, no grant, on either press — the note names the box and the form.
+        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
+        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "1";
+        Field<AmountField>(page, "_envelopeDays").Box.Text = "";
+        var grant = Field<Button>(page, "_grantEnvelope");
+        var envelopeNote = Field<TextBlock>(page, "_envelopeNote");
+        foreach (var _ in new[] { 1, 2 })
+        {
+            Press(grant);
+            Assert.False(Ui.IsArmed(grant));
+            Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, Labels.AmountEmpty), envelopeNote.Text);
+            Assert.True(envelopeNote.IsVisible);
+            Assert.Equal(Theme.Caution, envelopeNote.Foreground);
+        }
+        Assert.Null(host.Gateway.Envelopes.Standing(host.Gateway.Connector.Id, host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow));
+
+        // ARMED FOR A READ FIGURE, THEN EDITED INTO A REFUSAL: the edit disarms, and the next press refuses rather than granting.
+        Field<AmountField>(page, "_envelopeDays").Box.Text = "30";
+        Press(grant);
+        Assert.True(Ui.IsArmed(grant));
+        Field<AmountField>(page, "_envelopeDays").Box.Text = "30,5";
+        Assert.False(Ui.IsArmed(grant));
+        Press(grant);
+        Assert.False(Ui.IsArmed(grant));
+        Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, Labels.AmountNotWhole("30,5")), envelopeNote.Text);
+
+        // THE DAILY CAP, "1,000" — a thousand or one: nothing saved, the note names the form. And an armed raise edited into a
+        // refusal is disarmed, so its second press saves nothing either.
+        var capWas = host.Gateway.Settings.AiDailyCostCap;
+        var cap = Field<AmountField>(page, "_dailyCap");
+        var saveCap = PressLabelled(page, Labels.SaveDailyCap);
+        var capNote = Field<TextBlock>(page, "_capNote");
+        cap.Box.Text = "1,000";
+        Press(saveCap);
+        Press(saveCap);
+        Assert.Equal(capWas, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Equal(Labels.PressRefused(Labels.DailyCostCap, Labels.AmountAmbiguous("1,000", "1000", "1")), capNote.Text);
+        Assert.Contains("write 1000 or 1", capNote.Text, StringComparison.Ordinal);
+
+        cap.Box.Text = Amount.Exact(capWas + 100m);
+        Press(saveCap);
+        Assert.True(Ui.IsArmed(saveCap));
+        cap.Box.Text = "";
+        Assert.False(Ui.IsArmed(saveCap));
+        Press(saveCap);
+        Assert.Equal(capWas, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Equal(Labels.PressRefused(Labels.DailyCostCap, Labels.AmountEmpty), capNote.Text);
+
+        // A LIMIT THAT COUNTS WHOLE THINGS, given the owner's comma: refused as "a whole number", the limits in force unchanged.
+        var positionsWas = host.Gateway.Settings.Risk.MaxOpenPositions;
+        Field<AmountField>(page, "_maxPositions").Box.Text = "0,05";
+        var saveLimits = PressLabelled(page, Labels.SaveLimits);
+        Press(saveLimits);
+        Press(saveLimits);
+        Assert.Equal(positionsWas, host.Gateway.Settings.Risk.MaxOpenPositions);
+        Assert.Contains("a whole number", Field<TextBlock>(page, "_limitsNote").Text, StringComparison.Ordinal);
+        Assert.StartsWith(Labels.PressRefused(Labels.MaxOpenPositions, ""), Field<TextBlock>(page, "_limitsNote").Text, StringComparison.Ordinal);
+
+        // AND A BOX THAT READS AGAIN SAVES, back in the note's resting colour.
+        cap.Box.Text = "0,5";
+        Press(saveCap);
+        Assert.Equal(0.5m, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Equal(Theme.TextFaint, capNote.Foreground);
+        return Task.CompletedTask;
+    });
 }
