@@ -96,18 +96,19 @@ public static class ResearchLibrary
     public static void Write(string home, string homeDir, AppFileManifest appFiles)
     {
         if (Reference() is { } reference)
-            WriteFile(Path.Combine(home, "research", ReferenceFile), text: reference,
+            WriteFile(home, ReferencePath, text: reference,
                 record: () => appFiles.Record(homeDir, ReferencePath, reference));
 
-        var examples = Path.Combine(home, "strategies", "examples");
-        Directory.CreateDirectory(examples);
+        // INTO THE HOME WITHOUT FOLLOWING A LINK (fix pass 3, the re-review's P1-b): an executor's cell writes this home, and a start
+        // runs unconfined — HomeFiles replaces a planted link by the app's own folder or file and never writes where it pointed.
+        HomeFiles.CreateDirectory(home, ExamplesDir, replaceLinks: true);
 
         foreach (var name in Programs)
         {
             var from = Path.Combine(Shipped, "Strategies", name);
             if (!File.Exists(from)) continue;
             var bytes = ReadAll(from);
-            WriteFile(Path.Combine(examples, name), bytes: bytes,
+            WriteFile(home, $"{ExamplesDir}/{name}", bytes: bytes,
                 record: () => appFiles.Record(homeDir, $"{ExamplesDir}/{name}", bytes!));
         }
     }
@@ -123,14 +124,13 @@ public static class ResearchLibrary
     /// An IO failure here leaves the previous copy in place and is not fatal: a file somebody has
     /// open is left as it is. The next start writes it again.
     /// </summary>
-    static void WriteFile(string path, string? text = null, byte[]? bytes = null, Action? record = null)
+    static void WriteFile(string home, string relative, string? text = null, byte[]? bytes = null, Action? record = null)
     {
         if (text is null && bytes is null) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            if (text is not null) File.WriteAllText(path, text);
-            else File.WriteAllBytes(path, bytes!);
+            if (text is not null) HomeFiles.WriteAllText(home, relative, text, replaceLinks: true);
+            else HomeFiles.Write(home, relative, bytes!, replaceLinks: true);
         }
         catch (IOException) { return; }
         catch (UnauthorizedAccessException) { return; }

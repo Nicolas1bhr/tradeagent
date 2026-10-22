@@ -361,4 +361,43 @@ public class ExecutorCellTests : IDisposable
         Assert.DoesNotContain(none, r => r.Property.StartsWith("gap-web", StringComparison.Ordinal));
         Assert.Throws<ArgumentException>(() => RouteA.AssuranceRows(11, CellEgress.WebPlain));
     }
+
+    /// <summary>
+    /// A START NEVER WRITES THROUGH A LINK THE CELL PLANTED IN ITS HOME (fix pass 3, the re-review's P1-b). An executor's cell writes its
+    /// whole home, and every start rebuilds it in the unconfined app: <c>AGENTS.md</c> linked to a file outside, and <c>.tradeagent</c>,
+    /// <c>research</c> and <c>strategies</c> linked to folders outside, leave those targets exactly as they were — and the home is the
+    /// app's again, each name a real file or folder of its own.
+    /// </summary>
+    [UnixFact]
+    public void A_start_never_writes_through_a_link_the_cell_planted_in_its_home()
+    {
+        var root = Path.Combine(TestEnv.Home, "exec-plant-" + Guid.NewGuid().ToString("n")[..8]);
+        var ws = Path.Combine(root, "workspace");
+        var ctx = new WorkspaceContext("Simulator (built in)", true, null, TradingMode.PAPER, true, null, new RiskPolicy(),
+            ConnectorIsBuiltInSimulator: true, Role: Member, Kind: OrgPositionKind.Member);
+        var files = new AppFileManifest(Path.Combine(root, "app-files.tsv"));
+        var home = WorkspaceBuilder.Build(ctx, ws, files);
+
+        var sentinel = Path.Combine(root, "outside-the-home.txt");
+        File.WriteAllText(sentinel, "SENTINEL");
+        var outside = Path.Combine(root, "outside-folder");
+        Directory.CreateDirectory(outside);
+        File.Delete(Path.Combine(home, Canon.CliFile));
+        File.CreateSymbolicLink(Path.Combine(home, Canon.CliFile), sentinel);
+        foreach (var dir in new[] { ".tradeagent", "research", "strategies" })
+        {
+            Directory.Delete(Path.Combine(home, dir), recursive: true);
+            Directory.CreateSymbolicLink(Path.Combine(home, dir), outside);
+        }
+
+        WorkspaceBuilder.Build(ctx, ws, files);
+
+        Assert.True(File.ReadAllText(sentinel) == "SENTINEL", "the start wrote through the canon's link");
+        Assert.True(Directory.GetFileSystemEntries(outside).Length == 0,
+            $"the start wrote through a planted folder link: {string.Join(", ", Directory.GetFileSystemEntries(outside))}");
+        Assert.Null(new FileInfo(Path.Combine(home, Canon.CliFile)).LinkTarget);
+        foreach (var dir in new[] { ".tradeagent", "research", "strategies" })
+            Assert.Null(new DirectoryInfo(Path.Combine(home, dir)).LinkTarget);
+        Assert.True(File.Exists(Path.Combine(home, ".tradeagent", "context.json")));
+    }
 }
