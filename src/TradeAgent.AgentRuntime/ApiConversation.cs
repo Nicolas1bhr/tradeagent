@@ -26,10 +26,11 @@ namespace TradeAgent.AgentRuntime;
 /// walked past. A three-request turn priced as one request is a turn the owner is not being charged
 /// for.</para>
 ///
-/// <para><b>Usage nobody reported stays null.</b> If no response carried a usage object, the turn
-/// ends with <c>Usage = null</c> — not a zeroed one — so the launch ledger charges the reservation
-/// and the row says the usage never arrived (<c>U-budget-reserve</c>'s rule: the reservation
-/// stands).</para>
+/// <para><b>Usage nobody reported stays null.</b> If any response carried no usage object, the turn
+/// ends with <c>Usage = null</c> — not a zeroed one, and not the other responses' sum — so the launch
+/// ledger charges the reservation and the row says the usage never arrived (<c>U-budget-reserve</c>'s
+/// rule: the reservation stands). And no request follows such a response: the turn's spend is no
+/// longer measured, so its allowance could not be held to (<c>U-org-seats</c> fix pass 1).</para>
 /// </summary>
 /// <param name="workspace">The role's own home, read at every turn: a prepare may have rebuilt it.</param>
 /// <param name="key">
@@ -147,6 +148,12 @@ public sealed class ApiConversation(
 
     /// <inheritdoc cref="EndedCompleted"/>
     public const string EndedCancelled = "cancelled";
+
+    /// <summary>
+    /// The turn ended because a response of it reported no usage (<c>U-org-seats</c> fix pass 1): from then on the turn's spend is not
+    /// measured, so its allowance cannot be held to and no further request was sent. See <see cref="AgentTurnEnded.UsageUnreported"/>.
+    /// </summary>
+    public const string EndedUsageUnreported = "usage-unreported";
 
     /// <summary>
     /// The turn ended because the key held was pasted for another origin than the one this runtime's
@@ -285,6 +292,9 @@ public sealed class ApiConversation(
         // saying so to the next turn would be inventing a reason. See AgentTurnEnded.Cut.
         string? cut = null;
 
+        // WHICH REQUEST NOTHING MEASURED, in words, or null: see AgentTurnEnded.UsageUnreported.
+        string? unreported = null;
+
         // WHERE THIS TURN'S REQUESTS GO, READ ONCE. The key is released for this endpoint's origin
         // and every request below is posted to this same string: reading the manifest again per
         // request would let the address checked and the address used be two different things.
@@ -334,7 +344,7 @@ public sealed class ApiConversation(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, usage, outcome, cut) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
+            (exitCode, usage, outcome, cut, unreported) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -393,7 +403,10 @@ public sealed class ApiConversation(
                 Cut = cut,
 
                 // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
-                GateRefused = gateRefused
+                GateRefused = gateRefused,
+
+                // AND THE REQUEST WHOSE RESPONSE REPORTED NO USAGE, where one did: the row says what was not measured.
+                UsageUnreported = unreported
             });
         }
         return gateRefused;
@@ -404,7 +417,7 @@ public sealed class ApiConversation(
     /// the one path where this app cut the turn itself — the bound that did it, in the same words the
     /// worker was shown.
     /// </summary>
-    async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut)> RunRequestsAsync(
+    async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut, string? Unreported)> RunRequestsAsync(
         string endpoint, string key, string message, Transcript transcript, CancellationToken ct)
     {
         // THE SEAT THIS TURN WAS ADMITTED ON (U-org-seats): its allowance is what the reservation was priced at, so it is what this
@@ -426,8 +439,24 @@ public sealed class ApiConversation(
         var retrieved = 0;
         var requests = 0;
 
+        // THE FIRST REQUEST WHOSE RESPONSE REPORTED NO USAGE (U-org-seats fix pass 1, review P1), or null. Unknown is never zero: from
+        // that response on, what the turn has spent is not measured, so neither check below can hold it to its allowance — counting
+        // that request as nothing would let the next one ask for the whole output again and the turn pass its reservation. So no
+        // further request is sent, and the turn's usage is unknown rather than the other responses' sum, which would price the
+        // unmeasured request at nothing: the meter charges the reservation, which still bounds it — that request was itself sent
+        // under both checks.
+        int? unmeasured = null;
+
         while (true)
         {
+            if (unmeasured is { } n)
+            {
+                var stopped = UsageNotReported(n);
+                Append(new ChatTurn(ChatRole.System, stopped, _now()));
+                transcript.Note(stopped);
+                return (BudgetExceeded, null, EndedUsageUnreported, stopped, Unmeasured(n));
+            }
+
             // BEFORE THE REQUEST, ALWAYS. Every quantity is compared against its bound here, where
             // refusing costs nothing; after the response the provider has already done the work and
             // the only thing left to bound is the NEXT turn, which is what the daily ceiling does.
@@ -438,7 +467,7 @@ public sealed class ApiConversation(
                 // would throw away work the owner has already paid for.
                 Append(new ChatTurn(ChatRole.System, why, _now()));
                 transcript.Note(why);
-                return (BudgetExceeded, total, EndedOverBudget, why);
+                return (BudgetExceeded, total, EndedOverBudget, why, null);
             }
 
             var body = RequestBody(messages, surface, bound, total, seatModel);
@@ -452,7 +481,7 @@ public sealed class ApiConversation(
             {
                 Append(new ChatTurn(ChatRole.System, withheld, _now()));
                 transcript.Note(withheld);
-                return (BudgetExceeded, total, EndedOverBudget, withheld);
+                return (BudgetExceeded, total, EndedOverBudget, withheld, null);
             }
 
             // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE EACH REQUEST (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter
@@ -469,6 +498,7 @@ public sealed class ApiConversation(
 
             var answer = await PostAsync(endpoint, key, body, ct);
             if (answer.Usage is { } reported) total = total is null ? reported : total.Plus(reported);
+            else unmeasured ??= requests;
 
             if (answer.Text is { Length: > 0 } text)
             {
@@ -476,7 +506,10 @@ public sealed class ApiConversation(
                 transcript.Message(text);
             }
 
-            if (answer.Calls.Count == 0) return (Completed, total, EndedCompleted, null);
+            if (answer.Calls.Count == 0)
+                return unmeasured is { } last
+                    ? (Completed, null, EndedCompleted, null, Unmeasured(last))
+                    : (Completed, total, EndedCompleted, null, null);
 
             // THE TOOL LOOP IS THE APP'S, not the provider's. Each call is answered by this process,
             // recorded, bounded, and put back into the conversation as a tool message.
@@ -521,6 +554,17 @@ public sealed class ApiConversation(
               + $"({bodyBytes:N0} bytes) could take it past that, so no further request was sent. "
               + "Anything already written to out/ or trading/ is kept.";
     }
+
+    /// <summary>The turn stopped because request <paramref name="n"/>'s response reported no usage, in the owner's words.</summary>
+    static string UsageNotReported(int n) =>
+        $"The response to request {n} of this turn reported no usage, so what this turn has spent is no longer measured and its "
+        + "allowance cannot be held to; no further request was sent, and the turn is charged its reservation. "
+        + "Anything already written to out/ or trading/ is kept.";
+
+    /// <summary>What the attempt's row records of the request nothing measured: never a zero.</summary>
+    static string Unmeasured(int n) =>
+        $"request {n}'s response reported no usage: what it cost was not measured, never counted as zero, and the turn's usage is "
+        + "unknown, so the reservation stands";
 
     static string? Exceeded(TurnAllowance bound, TurnUsage? used, int retrieved, int requests)
     {

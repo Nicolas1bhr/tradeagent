@@ -283,6 +283,32 @@ public sealed class FakeProvider : IDisposable
         });
 
     /// <summary>
+    /// A response that asks for one tool call and reports NO usage — the turn's spend so far unmeasured while the model asks for
+    /// more (<c>U-org-seats</c> fix pass 1, review P1).
+    /// </summary>
+    public static string ToolCallWithoutUsage(string name, object arguments, string id = "call-1") =>
+        Json.Write(new
+        {
+            model = "gpt-5.6-luna",
+            choices = new[]
+            {
+                new
+                {
+                    finish_reason = "tool_calls",
+                    message = new
+                    {
+                        role = "assistant",
+                        content = (string?)null,
+                        tool_calls = new[]
+                        {
+                            new { id, type = "function", function = new { name, arguments = Json.Write(arguments) } }
+                        }
+                    }
+                }
+            }
+        });
+
+    /// <summary>
     /// A SYSTEM ONE ANSWER in TypeSafe's published shape (<c>docs.typesafe.ai/api</c>, read 2026-10-09):
     /// <c>{model, answers, usage{input_tokens, output_tokens}}</c> — plus, where given, what OpenRouter adds to the same
     /// shape: <c>id</c>, <c>provider</c> and <c>usage.cost</c>. <paramref name="answers"/> is raw JSON written as given, so

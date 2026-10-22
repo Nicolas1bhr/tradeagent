@@ -428,4 +428,68 @@ public class OrgSeatsTests : IDisposable
         host.Gateway.Update(s => { s.AiTurnAllowanceInputTokens = 2_400_000; s.AiTurnAllowanceOutputTokens = 40_000; });
         Assert.True(meter.Reservation(CouncilRoles.Research).Cost > role.Cost, "a raised allowance did not raise a CLI reservation");
     }
+
+    // ---- fix pass 1, review P1: usage nobody reported ends the bound's measurement, and the turn with it ----------------
+
+    /// <summary>
+    /// A RESPONSE WITHOUT USAGE IS NOT A ZERO (review P1): the harness can no longer hold the turn to its allowance, so no further
+    /// request goes — not a second one asking for the whole output again — the turn ends in words naming the missing usage, its usage
+    /// is unknown rather than what the other responses reported, and the row is charged its reservation with
+    /// <c>usage_unreported</c> naming the request nothing measured.
+    /// </summary>
+    [Fact]
+    public async Task A_response_without_usage_sends_no_further_request_and_the_row_says_it_was_not_measured()
+    {
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.ToolCallWithoutUsage("read_file", new { path = "in/x.md" }))
+            .Answer(FakeProvider.Message("done", input: 10, output: 5));
+        var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", Small));
+        using var runtime = HarnessOn(provider, TurnAllowance.Default);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+
+        await conversation.SendAsync("go on then");
+
+        Assert.Equal([8_000L], MaxOutputs(provider));
+        Assert.Equal("usage-unreported", ended!.Outcome);
+        Assert.Null(ended.Usage);
+        Assert.Contains(conversation.History, t => t.Role == ChatRole.System
+            && t.Text.Contains("reported no usage", StringComparison.Ordinal));
+        var row = OnlyRow();
+        Assert.Equal((null, null), (row.InputTokens, row.OutputTokens));
+        Assert.Equal(Priced(Small), row.Cost);
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.Contains("request 1", context.RootElement.GetProperty("usage_unreported").GetString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE LAST RESPONSE WITHOUT USAGE IS NOT A ZERO EITHER (review P1): a turn the model ended on a response that reported nothing
+    /// completes, but its usage is unknown — never the earlier responses' sum, which would price the unmeasured request at nothing —
+    /// so the row is charged its reservation and says which request was not measured.
+    /// </summary>
+    [Fact]
+    public async Task A_last_response_without_usage_leaves_the_turn_unmeasured_never_the_sum_of_the_others()
+    {
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 1_000, output: 100))
+            .Answer(FakeProvider.WithoutUsage("done"));
+        var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", Small));
+        using var runtime = HarnessOn(provider, TurnAllowance.Default);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+
+        await conversation.SendAsync("go on then");
+
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal(ApiConversation.EndedCompleted, ended!.Outcome);
+        Assert.Null(ended.Usage);
+        var row = OnlyRow();
+        Assert.Equal(Priced(Small), row.Cost);
+        using var context = JsonDocument.Parse(row.Context!);
+        Assert.Contains("request 2", context.RootElement.GetProperty("usage_unreported").GetString(), StringComparison.Ordinal);
+    }
 }

@@ -287,6 +287,13 @@ public sealed record TurnContext
     /// </summary>
     public PacketBytes? Packet { get; init; }
 
+    /// <summary>
+    /// THE REQUEST NOTHING MEASURED (<see cref="AgentTurnEnded.UsageUnreported"/>, <c>U-org-seats</c> fix pass 1): which response of
+    /// the turn reported no usage, so its cost was never counted as zero and the reservation stands. Absent where every response
+    /// reported its own. No rung.
+    /// </summary>
+    public string? UsageUnreported { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -811,7 +818,8 @@ public sealed class TurnMeter
             PromptIn = ended.PromptIn,
             Session = ended.Session?.State,
             SessionWhy = ended.Session?.Why,
-            Packet = packet
+            Packet = packet,
+            UsageUnreported = ended.UsageUnreported
         };
 
     /// <summary>

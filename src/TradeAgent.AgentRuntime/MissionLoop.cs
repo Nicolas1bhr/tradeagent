@@ -388,6 +388,15 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// <c>ai_attempt.context</c>, no rung.
     /// </summary>
     public TurnSession? Session { get; init; }
+
+    /// <summary>
+    /// WHICH REQUEST OF THIS TURN WAS ANSWERED WITH NO USAGE, as the row's sentence, or null where every response reported its own
+    /// (<c>U-org-seats</c> fix pass 1, review P1). Set by <see cref="ApiConversation"/>, which sends no further request after such a
+    /// response — the turn's spend is no longer measured, so its allowance cannot be held to — and ends the turn with
+    /// <see cref="Usage"/> null: never zero, and never the other responses' sum, which would price the unmeasured request at
+    /// nothing. The meter charges the reservation and writes this into the attempt's <c>context</c>.
+    /// </summary>
+    public string? UsageUnreported { get; init; }
 }
 
 /// <summary>
