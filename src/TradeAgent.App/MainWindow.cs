@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
+    enum Page { Chat, Organisation, Work, Costs, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
 
     readonly AppHost _host;
 
@@ -129,6 +129,9 @@ public sealed class MainWindow : Window
     readonly Grid _pageHost = new();
     readonly Dictionary<Page, Control> _pages = new();
     ChatView? _chat;
+    OrganisationPage? _organisation;
+    WorkPage? _work;
+    CostsPage? _costs;
     DashboardPage? _dashboard;
     ReportPage? _report;
     SafetyPage? _safety;
@@ -409,6 +412,11 @@ public sealed class MainWindow : Window
     Control BuildRail()
     {
         AddNav(Page.Chat, "Chat");
+        // The organisation first (U-org-surface-a; R24 § 4.7): the chart, the work and the costs are what the app is about, so they come before
+        // the older pages. They only read.
+        AddNav(Page.Organisation, Labels.NavOrganisation);
+        AddNav(Page.Work, Labels.NavWork);
+        AddNav(Page.Costs, Labels.NavCosts);
         AddNav(Page.Dashboard, "Dashboard");
         // Straight after the Dashboard, because it answers the same question over a longer window:
         // the Dashboard is what is true now, the report is what was true on a day, and an owner who
@@ -479,6 +487,10 @@ public sealed class MainWindow : Window
     void BuildPages()
     {
         _chat = new ChatView(_host, StartOrStopAgentAsync);
+        var org = OrgSurfaceSources.For(_host);
+        _organisation = new OrganisationPage(org);
+        _work = new WorkPage(org);
+        _costs = new CostsPage(org);
         _dashboard = new DashboardPage(_host, StartOrStopAgentAsync);
         _report = new ReportPage(_host);
         _inbox = new InboxPage(_host);
@@ -489,6 +501,9 @@ public sealed class MainWindow : Window
         _oversightPage = new OversightPage(OversightSources.For(_host));
 
         Add(Page.Chat, _chat.Root);
+        Add(Page.Organisation, _organisation.Root);
+        Add(Page.Work, _work.Root);
+        Add(Page.Costs, _costs.Root);
         Add(Page.Dashboard, _dashboard.Root);
         Add(Page.Report, _report.Root);
         Add(Page.Inbox, _inbox.Root);
@@ -557,6 +572,9 @@ public sealed class MainWindow : Window
         UpdateRailHealth();
 
         _chat?.Update();
+        _organisation?.Update();
+        _work?.Update();
+        _costs?.Update();
         _dashboard?.Update(status, waiting);
         _report?.Update();
         _inbox?.Update();
