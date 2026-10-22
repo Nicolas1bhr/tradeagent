@@ -264,7 +264,7 @@ public partial class OversightTests
     [Fact]
     public void The_digest_templates_are_a_closed_list_of_facts()
     {
-        Assert.Equal(10, DigestComposer.Templates.Count);
+        Assert.Equal(11, DigestComposer.Templates.Count); // + refusals/op (U-org-watcher-b item 4)
         foreach (var d in OversightDetector.All)
             Assert.Contains(DigestComposer.Templates.Keys, k => k == d.Name || k.StartsWith(d.Name + "/", StringComparison.Ordinal));
         foreach (var t in DigestComposer.Templates.Values)
@@ -313,5 +313,46 @@ public partial class OversightTests
             log.WriteLine(why);
             Assert.NotNull(why);
         }
+    }
+
+    /// <summary>
+    /// (e3) A REFUSAL THE PIPE RECORDED IS A FINDING IN ITS ATTEMPT'S UNIT (<c>U-org-watcher-b</c> item 4): an <c>op_refused</c> row — as
+    /// <c>GatewayPipeServer</c> writes it, {op, code, role, attempt} — joins the pipe's refusal events, is scoped by its attempt's funding
+    /// unit (so Research's department scope sees it, as the root does), cites the log row and the attempt, measures op, code and role, is
+    /// told by its own template, and the detector's BLIND sentence no longer names the gap it closed. RED at base: the line read four pipe
+    /// events, all at the root, and <c>op_refused</c> was none of them.
+    /// </summary>
+    [Fact]
+    public void An_op_refused_row_is_a_finding_in_its_attempts_unit_and_the_blind_gap_is_closed()
+    {
+        var now = OversightSeed.Now();
+        var (file, store) = Home();
+        using var _store = store;
+        store.AddScope("dept-research", OrgIds.Research, now);
+        using (var c = OversightSeed.Open(file))
+        {
+            var at = now.AddMinutes(-3).UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            OversightSeed.Insert(c, "ai_attempt", ("id", "att-refused"), ("started_at", at), ("state", "ENDED"), ("cost", "0"),
+                ("reserved_cost", "0"), ("role", CouncilRoles.Research));
+            OversightSeed.Insert(c, "ai_attempt_funding", ("attempt_id", "att-refused"), ("unit_id", OrgIds.Research), ("depth", 0));
+            OversightSeed.Insert(c, "engineering_log", ("at", at), ("component", "Ipc"), ("event", RefusalMark.Event), ("severity", "info"),
+                ("metadata", """{"op":"buy","code":"ROLE_MAY_NOT_TRADE","role":"research","attempt":"att-refused"}"""));
+        }
+
+        var swept = new OversightSweep(file, store).Run(now);
+        Assert.Null(swept.Failure);
+        var dept = Assert.Single(swept.Added, f => f.Detector == "refusals" && f.ScopeId == "dept-research");
+        Assert.Contains(swept.Added, f => f.Detector == "refusals" && f.ScopeId == OversightStore.RootScope);
+        Assert.Equal(OrgIds.Research, dept.UnitId);
+        Assert.Equal(OversightSeverity.Info, dept.Severity);
+        Assert.Equal(("buy", "ROLE_MAY_NOT_TRADE", CouncilRoles.Research), (dept.Measured["op"], dept.Measured["code"], dept.Measured["role"]));
+        Assert.Contains(new OversightCite("attempt", "att-refused"), dept.Cites);
+        Assert.Contains(dept.Cites, c => c.Kind == "log");
+
+        var digest = Assert.Single(swept.Digests, d => d.ScopeId == "dept-research");
+        log.WriteLine(digest.Text);
+        Assert.Contains("The pipe refused buy (ROLE_MAY_NOT_TRADE) of research at ", digest.Text, StringComparison.Ordinal);
+        Assert.Contains(RefusalMark.Event, OrgSnapshot.PipeRefusalEvents);
+        Assert.DoesNotContain("not yet a row", new RefusalsDetector().Blind, StringComparison.Ordinal);
     }
 }

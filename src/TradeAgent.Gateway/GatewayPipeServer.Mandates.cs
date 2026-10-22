@@ -19,29 +19,30 @@ public sealed partial class GatewayPipeServer
     /// written at admission from the seat the app verified) is at least <see cref="CapabilityPolicy.Minimum"/> of
     /// <paramref name="capability"/>. HEADSHIP ALONE GRANTS NOTHING: <c>research</c> heads <c>div-research</c> from an unconfined
     /// seat and is refused here, as <c>operations</c> is (§ 2.3). Refused with the <c>RefusalKind.Position</c> reading —
-    /// it is what the caller is, not a passing condition of the host.
+    /// it is what the caller is, not a passing condition of the host — and every refusal here is MARKED (<see cref="RefusalMark"/>),
+    /// so the pipe records it as one, apart from a malformed frame that shares its code.
     /// </summary>
     string OrgVerbCaller(AgentContext ctx, Capability capability)
     {
         var minimum = CapabilityPolicy.Minimum(capability);
         var position = Gateway.ActivePositionOf(ctx.Role)
-            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            ?? throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "an organisation verb is exercised by the active position whose launch asks it, and this connection proved none — "
-                + "no launch grant, an app principal, or a position that is not active. Nothing was written.");
+                + "no launch grant, an app principal, or a position that is not active. Nothing was written."));
 
         var attempt = ctx.AttemptId is { } id ? Gateway.Attempt(id) : null;
         if (attempt is null || attempt.Role != position)
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"'{ctx.AttemptId}' is no launch the ledger recorded for {position}, so there is no seat to weigh this verb against. "
-                + "Nothing was written.");
+                + "Nothing was written."));
 
         var recorded = AssuranceNamed(attempt.Assurance);
         if (recorded is not { } assurance || assurance < minimum)
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"the organisation's verbs need a seat of at least {SeatClasses.Name(minimum)} assurance, and this launch of "
                 + $"{position} was admitted on a {attempt.SeatClass ?? "unrecorded"} seat recorded "
                 + $"{attempt.Assurance ?? "with no assurance"} (ORCHESTRATION § 2.3). Heading a unit grants no verb by itself. "
-                + "Nothing was written.");
+                + "Nothing was written."));
         return position;
     }
 
@@ -214,8 +215,8 @@ public sealed partial class GatewayPipeServer
         var id = Require(req, "mandate");
         var m = Gateway.Org.Mandate(id);
         if (m is null || (m.Holder != caller && m.Decider != caller))
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{id}' is no mandate you hold or decide: a position reads its own mandates and nobody else's.");
+            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{id}' is no mandate you hold or decide: a position reads its own mandates and nobody else's."));
         var part = req.Str("part");
         if (part is not null and not ShowDeliveries and not ShowEvents and not ShowForecasts)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,

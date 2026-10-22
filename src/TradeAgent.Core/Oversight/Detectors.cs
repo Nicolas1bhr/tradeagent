@@ -242,7 +242,8 @@ public sealed class MaterialUnwokenDetector : OversightDetector
 
 /// <summary>
 /// <c>refusals</c>: refusals at the gateway (a tool call the app did not serve) or at the pipe (the engineering log's Ipc refusals). The pipe's
-/// <c>protocol_rejected</c> and <c>operator_session_refused</c> are SEVERE. The log is pruned, so it is read by cursor and the facts copied in.
+/// <c>protocol_rejected</c> and <c>operator_session_refused</c> are SEVERE; an <c>op_refused</c> — a refusal of rights or authority at the
+/// pipe's one handler (<c>U-org-watcher-b</c>) — is info, in its attempt's unit. The log is pruned, so it is read by cursor and the facts copied in.
 /// </summary>
 public sealed class RefusalsDetector : OversightDetector
 {
@@ -252,7 +253,7 @@ public sealed class RefusalsDetector : OversightDetector
     public static readonly string[] SevereEvents = ["protocol_rejected", "operator_session_refused"];
 
     public override string Blind =>
-        "It sees only what the app refused and recorded; " + CliBlind + ", and an op-level refusal the pipe writes only as an activity line is not yet a row it can read.";
+        "It sees only what the app refused and recorded — a malformed request is not a refusal and is not counted; " + CliBlind + ".";
 
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {
@@ -270,7 +271,20 @@ public sealed class RefusalsDetector : OversightDetector
                     ["role"] = first.Role ?? CouncilRoles.Default,
                 });
         }
-        foreach (var p in s.PipeRefusals)
+        foreach (var p in s.PipeRefusals.Where(p => p.Event == RefusalMark.Event))
+        {
+            // A REFUSAL OF RIGHTS OR AUTHORITY AT THE PIPE (U-org-watcher-b): in its attempt's unit, as a tool refusal is; a caller with no
+            // grant is nobody's, so the root's.
+            var unit = p.Attempt is { } a && units.TryGetValue(a, out var u) ? u : p.Role is null ? OrgIds.Root : s.UnitOfRole(p.Role);
+            IEnumerable<OversightCite> cites = [new OversightCite("log", N(p.Id))];
+            if (p.Attempt is { } attempt && s.Attempts.Any(x => x.Id == attempt)) cites = cites.Append(new OversightCite("attempt", attempt));
+            yield return new Candidate(unit, "log:" + N(p.Id), "-", [.. cites],
+                new Dictionary<string, string>
+                {
+                    ["op"] = p.Op ?? "unknown", ["code"] = p.Code ?? "unknown", ["role"] = p.Role ?? "none", ["at"] = T(p.At),
+                });
+        }
+        foreach (var p in s.PipeRefusals.Where(p => p.Event != RefusalMark.Event))
             yield return new Candidate(OrgIds.Root, "log:" + N(p.Id), "-", [new OversightCite("log", N(p.Id))],
                 new Dictionary<string, string> { ["event"] = p.Event, ["at"] = T(p.At), ["session"] = p.Session ?? "none" },
                 Array.IndexOf(SevereEvents, p.Event) >= 0 ? OversightSeverity.Severe : null);

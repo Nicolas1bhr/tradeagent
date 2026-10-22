@@ -1305,6 +1305,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             if (ctx.OrdersWithheld is { } withheld)
             {
                 gateway.Log.Activity($"AI order refused: this launch of the {CouncilRoles.Title(CouncilRoles.Operations)} holds no order permission", "warn");
+                RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
                 return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE, $"'{req.Op}' moves money, and {withheld}.");
             }
 
@@ -1312,6 +1313,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 ? $"the {CouncilRoles.Title(named)}"
                 : "a caller that presented no launch grant";
             gateway.Log.Activity($"AI order refused: {who} may not place, change or cancel orders", "warn");
+            RecordRefusal(req.Op, ErrorCode.ROLE_MAY_NOT_TRADE, ctx);
             return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE,
                 $"'{req.Op}' moves money, and {who} may not. Only the " +
                 $"{CouncilRoles.Title(CouncilRoles.Operations)}'s own launch may, and it proves which launch " +
@@ -1411,9 +1413,14 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             // without reading a log file.
             if (Core.Ops.IsMutating(req.Op))
                 gateway.Log.Activity($"AI order refused: {ex.Info.UserMessage} ({ex.Message})", "warn");
+            if (IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
             return IpcResponse.Fail(req.Id, ex.Info);
         }
-        catch (TradeAgentException ex) { return IpcResponse.Fail(req.Id, ex.Info); }
+        catch (TradeAgentException ex)
+        {
+            if (IsRefusal(ex, ex.Code)) RecordRefusal(req.Op, ex.Code, ctx);
+            return IpcResponse.Fail(req.Id, ex.Info);
+        }
         catch (ConnectorTransportException ex) { return IpcResponse.Fail(req.Id, ErrorCode.TRADING_CONNECTION_MISSING, ex.Message); }
         catch (Exception ex)
         {
@@ -1421,6 +1428,34 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             return IpcResponse.Fail(req.Id, ErrorCode.UNKNOWN_ERROR, ex.Message);
         }
     }
+
+    /// <summary>
+    /// THE GATEWAY'S OWN RULES REFUSING AN AGENT'S ORDER OR READ (<c>U-org-watcher-b</c>): mode, limits, allocation, loss budget, an
+    /// expired approval or decision, a withheld holdout. No malformed frame answers any of these codes, so the code alone says a rule
+    /// refused — unlike <see cref="ErrorCode.INVALID_REQUEST"/>, which a refusal shares with a malformed frame and so is a refusal only
+    /// where its throw site MARKED it (<see cref="RefusalMark"/>). A request waiting for the owner's approval is not refused, and a
+    /// connector that could not check is not a rule's refusal: neither is here.
+    /// </summary>
+    static readonly ErrorCode[] RuleRefusals =
+    [
+        ErrorCode.ROLE_MAY_NOT_TRADE, ErrorCode.MODE_FORBIDS_EXECUTION, ErrorCode.MODE_ACCOUNT_MISMATCH, ErrorCode.RISK_LIMIT_EXCEEDED,
+        ErrorCode.LOSS_BUDGET_REACHED, ErrorCode.CAMPAIGN_BUDGET_REACHED, ErrorCode.ALLOCATION_NONE, ErrorCode.ALLOCATION_EXCEEDED,
+        ErrorCode.ENVELOPE_ACCOUNT_RESERVED, ErrorCode.APPROVAL_EXPIRED, ErrorCode.APPROVAL_PREDATES_LOSS_BREACH, ErrorCode.DECISION_EXPIRED,
+        ErrorCode.HOLDOUT_WITHHELD,
+    ];
+
+    static bool IsRefusal(Exception ex, ErrorCode code) => RefusalMark.IsMarked(ex) || Array.IndexOf(RuleRefusals, code) >= 0;
+
+    /// <summary>
+    /// THE ONE ROW A REFUSAL LEAVES, at <see cref="Handle"/>'s one choke point — which the read loop, <see cref="CallAsync"/> and the
+    /// broker door's <see cref="CallAsGrantAsync"/> all reach: <c>engineering_log</c> <c>Ipc</c>/<see cref="RefusalMark.Event"/>, metadata
+    /// {op — a known op's name or <c>unknown</c>; code; the role and attempt the caller's grant proved}. NOTHING OF THE REQUEST: no session,
+    /// no request id, no argument, no message. Best effort, so a log that cannot be written never changes the answer, which is byte-for-byte
+    /// what it was before this row existed.
+    /// </summary>
+    void RecordRefusal(string? op, ErrorCode code, AgentContext ctx) =>
+        gateway.Log.TryEngineering("Ipc", RefusalMark.Event, "info",
+            metadataJson: System.Text.Json.JsonSerializer.Serialize(new { op = RefusalMark.OpName(op), code = code.ToString(), role = ctx.Role, attempt = ctx.AttemptId }));
 
     /// <summary>
     /// THE STATUS THIS CALLER IS SERVED IS COMPUTED WITH THIS CALLER'S AUTHORITY.

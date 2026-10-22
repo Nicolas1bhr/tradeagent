@@ -20,6 +20,7 @@ public static partial class DigestComposer
         ["material-unwoken"] = "A {kind} wake ({class}) for {role} in unit {unit}, due at {due}, has gone {hours} hours unconsumed.",
         ["refusals/tool"] = "The app refused {refused} tool calls of {role} in unit {unit}.",
         ["refusals/pipe"] = "The pipe refused a request ({event}) at {at}.",
+        ["refusals/op"] = "The pipe refused {op} ({code}) of {role} at {at}.",
         ["claim-without-evidence/delivery"] = "A delivery in unit {unit} was accepted at {accepted} by {by} naming no evidence.",
         ["claim-without-evidence/ledger"] = "Ledger claim revision {revision} by {author} at {at} in unit {unit} has no ledger link.",
         ["accepted-failed-check"] = "A delivery in unit {unit} was accepted at {accepted} by {by} although the app's checks {failed} failed on it.",
@@ -29,7 +30,7 @@ public static partial class DigestComposer
     /// <summary>The template a finding is told by.</summary>
     public static string TemplateKey(OversightFinding f) => f.Detector switch
     {
-        "refusals" => f.Measured.ContainsKey("event") ? "refusals/pipe" : "refusals/tool",
+        "refusals" => f.Measured.ContainsKey("op") ? "refusals/op" : f.Measured.ContainsKey("event") ? "refusals/pipe" : "refusals/tool",
         "claim-without-evidence" => f.Measured.ContainsKey("revision") ? "claim-without-evidence/ledger" : "claim-without-evidence/delivery",
         _ => f.Detector,
     };

@@ -32,8 +32,12 @@ public sealed record SnapWake(string Id, string Kind, string? Role, DateTimeOffs
 /// <summary>One tool call the app refused.</summary>
 public sealed record SnapToolRefusal(long Id, DateTimeOffset At, string? Attempt, string? Role, string Tool);
 
-/// <summary>One refusal the pipe wrote to the engineering log. Pruned there in time, so read by cursor and copied into the finding.</summary>
-public sealed record SnapPipeRefusal(long Id, DateTimeOffset At, string Event, string? Session);
+/// <summary>
+/// One refusal the pipe wrote to the engineering log. Pruned there in time, so read by cursor and copied into the finding. An
+/// <c>op_refused</c> row (<see cref="RefusalMark"/>) also carries the op, code, role and attempt the pipe recorded — app-written, never the request's text.
+/// </summary>
+public sealed record SnapPipeRefusal(long Id, DateTimeOffset At, string Event, string? Session,
+    string? Op = null, string? Code = null, string? Role = null, string? Attempt = null);
 
 /// <summary>A claim revision in the research ledger with no ledger link at that revision.</summary>
 public sealed record SnapBareClaim(long EntryId, int Revision, DateTimeOffset At, string Author, string? Attempt);
@@ -58,7 +62,8 @@ public sealed class OrgSnapshot
     public const string ToolCallSource = "tool_call", PipeLogSource = "engineering_log";
 
     /// <summary>The pipe's refusal events this line reads, as <c>GatewayPipeServer</c> writes them to the engineering log.</summary>
-    public static readonly string[] PipeRefusalEvents = ["grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused"];
+    /// <see cref="RefusalMark.Event"/> is every refusal of rights or authority the pipe's one handler records (<c>U-org-watcher-b</c>).
+    public static readonly string[] PipeRefusalEvents = ["grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused", RefusalMark.Event];
 
     public DateTimeOffset Now { get; private init; }
     public IReadOnlyList<SnapUnit> Units { get; private init; } = [];
@@ -166,9 +171,9 @@ public sealed class OrgSnapshot
             ToolRefusals = Rows(conn, "SELECT id, at, attempt, role, tool FROM tool_call WHERE served = 0 AND id > $c ORDER BY id",
                 [("$c", tc)], r => new SnapToolRefusal(r.GetInt64(0), Sql.Time(r.GetString(1)), S(r, 2), S(r, 3), r.GetString(4))),
             PipeRefusals = Rows(conn, $"""
-                SELECT id, at, event, session FROM engineering_log
+                SELECT id, at, event, session, metadata FROM engineering_log
                  WHERE component = 'Ipc' AND event IN ({string.Join(", ", PipeRefusalEvents.Select(e => $"'{e}'"))}) AND id > $c ORDER BY id
-                """, [("$c", pl)], r => new SnapPipeRefusal(r.GetInt64(0), Sql.Time(r.GetString(1)), r.GetString(2), S(r, 3))),
+                """, [("$c", pl)], r => PipeRefusal(r.GetInt64(0), Sql.Time(r.GetString(1)), r.GetString(2), S(r, 3), S(r, 4))),
             BareClaims = Rows(conn, """
                 SELECT r.entry_id, r.revision, r.at, e.author, r.attempt FROM ledger_revision r JOIN ledger_entry e ON e.id = r.entry_id
                  WHERE r.mark = 'claim' AND r.at >= $h
@@ -190,6 +195,24 @@ public sealed class OrgSnapshot
         };
         tx.Commit();
         return snap;
+    }
+
+    /// <summary>
+    /// One pipe refusal; an <c>op_refused</c> row's metadata read in CLOSED VOCABULARY only — the op as one of <see cref="Ops"/>' names or
+    /// <c>unknown</c>, the code as an <see cref="ErrorCode"/> name or <c>unknown</c> — so nothing but an id or a known word reaches a finding.
+    /// </summary>
+    static SnapPipeRefusal PipeRefusal(long id, DateTimeOffset at, string @event, string? session, string? metadata)
+    {
+        if (@event != RefusalMark.Event) return new SnapPipeRefusal(id, at, @event, session);
+        string? Field(JsonElement m, string key) =>
+            m.ValueKind == JsonValueKind.Object && m.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        JsonElement meta = default;
+        try { if (metadata is not null) meta = JsonDocument.Parse(metadata).RootElement.Clone(); }
+        catch (JsonException) { }
+        var code = Field(meta, "code");
+        return new SnapPipeRefusal(id, at, @event, session, RefusalMark.OpName(Field(meta, "op")),
+            code is not null && Enum.TryParse<ErrorCode>(code, ignoreCase: false, out var known) && Enum.IsDefined(known) ? known.ToString() : "unknown",
+            Field(meta, "role"), Field(meta, "attempt"));
     }
 
     static List<T> Rows<T>(SqliteConnection c, string sql, (string, object?)[] ps, Func<SqliteDataReader, T> map)

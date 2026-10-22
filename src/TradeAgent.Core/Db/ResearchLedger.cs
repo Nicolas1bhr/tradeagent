@@ -299,11 +299,11 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
             var row = Entry(entry) ?? throw NotThere(entry);
             // A DECISION'S RATIONALE IS PRECOMMITTED (ORGANISATION § 5): an edit is a new record, never a rewrite.
             if (row.Kind == LedgerKind.Decision)
-                throw Refused($"entry {Id(entry)} is the rationale of a decision record, and a decision's ledger entry is never "
+                throw Forbidden($"entry {Id(entry)} is the rationale of a decision record, and a decision's ledger entry is never "
                     + "revised: an edit is a new record. Record the decision you hold now with 'decision-record', citing the "
                     + $"old one as a ref. Nothing was written.");
             if (!string.Equals(row.Author, author, StringComparison.Ordinal))
-                throw Refused($"entry {Id(entry)} is the {CouncilRoles.Title(row.Author)}'s, and an entry is revised only "
+                throw Forbidden($"entry {Id(entry)} is the {CouncilRoles.Title(row.Author)}'s, and an entry is revised only "
                     + "by the role that wrote it: what it believed, and when, stays its own. To disagree with it, add an "
                     + $"entry of your own about it — 'ledger-add' with 'about' {Id(entry)}. Nothing was written.");
 
@@ -323,7 +323,7 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     {
         var row = Entry(entry) ?? throw NotThere(entry);
         if (!string.Equals(row.Author, role, StringComparison.Ordinal))
-            throw Refused($"entry {Id(entry)} is the {CouncilRoles.Title(row.Author)}'s, and TradeAgent links a request "
+            throw Forbidden($"entry {Id(entry)} is the {CouncilRoles.Title(row.Author)}'s, and TradeAgent links a request "
                 + "only to an entry of the role that asks it: a link says this role asked this under its own belief. Add "
                 + $"one of your own — 'ledger-add' with 'about' {Id(entry)} if it answers theirs — and ask under that. "
                 + "Nothing was run and nothing was charged.");
@@ -590,6 +590,9 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
             + "charged or written.");
 
     static TradeAgentException Refused(string why) => new(ErrorCode.INVALID_REQUEST, why);
+
+    /// <summary>A refusal on the entry's rights — another role's entry, or a decision's precommitted rationale — MARKED (<see cref="RefusalMark"/>).</summary>
+    static TradeAgentException Forbidden(string why) => RefusalMark.Mark(Refused(why));
 
     static string Id(long id) => id.ToString(CultureInfo.InvariantCulture);
 

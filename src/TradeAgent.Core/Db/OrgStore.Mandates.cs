@@ -1221,7 +1221,8 @@ public sealed partial class OrgStore
         return m;
     }
 
-    static TradeAgentException Refused(string why) => new(ErrorCode.INVALID_REQUEST, why + " Nothing was written.");
+    /// <summary>An organisation verb refused in words — MARKED a refusal (<see cref="RefusalMark"/>), so the pipe records it apart from a malformed frame.</summary>
+    static TradeAgentException Refused(string why) => RefusalMark.Mark(new TradeAgentException(ErrorCode.INVALID_REQUEST, why + " Nothing was written."));
 
     static MandateRow ReadMandate(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), Sql.S(r.GetValue(6)),

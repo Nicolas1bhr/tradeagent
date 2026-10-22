@@ -90,8 +90,8 @@ public sealed partial class GatewayPipeServer
         var id = Require(req, "id");
         var d = Gateway.Org.Decision(id);
         if (d is null || d.Position != position)
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{id}' is no decision of yours: a position reads its own decision records and nobody else's.");
+            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{id}' is no decision of yours: a position reads its own decision records and nobody else's."));
         var rationale = Gateway.Ledger.Latest(d.LedgerEntryId);
         return new
         {
