@@ -657,9 +657,9 @@ public sealed class ApiConversation(
     {
         try
         {
-            var file = Path.Combine(workspace(), Canon.HarnessFile.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(file)) return $"You are the {CouncilRoles.Title(role)}.";
-            var text = File.ReadAllText(file);
+            // NEVER THROUGH A LINK (U-execution-environment fix pass 4): a worker's write_file cannot reach this file, but an executor's
+            // cell writes its whole home, so the name may be a link to a login outside — refused by HomeFiles, never sent as system text.
+            var text = HomeFiles.ReadAllText(workspace(), Canon.HarnessFile);
             return text.Length <= MaxMissionChars ? text : text[..MaxMissionChars];
         }
         // A mission file that cannot be read must not stop the turn: the Situation the app composed
