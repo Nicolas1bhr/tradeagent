@@ -37,7 +37,7 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         typeof(WorkspaceBuilder), typeof(ResearchLibrary), typeof(GrantedWorkerTools), typeof(ToolPaths), typeof(CouncilRelay),
         typeof(WorkspaceRevisions), typeof(MissionLoop), typeof(Backtests), typeof(MaterialScanner), typeof(WorkspaceReads),
         typeof(AgentSession), typeof(AgentSupervisor), typeof(AppHost), typeof(Canon), typeof(ApiConversation), HarnessRuntime,
-        typeof(CliAgentRuntime)
+        typeof(CliAgentRuntime), typeof(SeatProfile), typeof(CliSeatProbe)
     ];
 
     /// <summary>
@@ -90,6 +90,41 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("Backtests.Link", "FileSystemInfo.get_LinkTarget", 1, "the program check's early refusal of a link out, in words; the read goes through HomeFiles"),
         ("Backtests.Link", "FileSystemInfo.ResolveLinkTarget", 1, "where a link leads, to refuse it; nothing is read through it"),
         ("Backtests.Link", "FileSystemInfo.get_FullName", 1, "a path string, no disk access"),
+
+        // ---- the seat's own home, the runtime's executable and the app's state: SeatProfile (fix pass 5, G2) ------------------------
+        ("SeatProfile.Below", "Directory.EnumerateDirectories", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.Below", "Directory.EnumerateFileSystemEntries", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.Below", "Directory.Exists", 2, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.Foreign", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home — the position's home is looked at through HomeFiles (ForeignInHome)"),
+        ("SeatProfile.Foreign", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home — the position's home is looked at through HomeFiles (ForeignInHome)"),
+        ("SeatProfile.IsLink", "FileInfo..ctor", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.IsLink", "FileSystemInfo.get_Attributes", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (a link's own attributes, not followed)"),
+        ("SeatProfile.IsLink", "FileSystemInfo.get_LinkTarget", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (a link's own target, not followed)"),
+        ("SeatProfile.Look", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.Look", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NoEntryOfItsOwn", "FileInfo..ctor", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NotALink", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NotALink", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NotALink", "FileInfo..ctor", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NotALink", "FileSystemInfo.get_Attributes", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (a link's own attributes, not followed)"),
+        ("SeatProfile.NotALink", "FileSystemInfo.get_LinkTarget", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (a link's own target, not followed)"),
+        ("SeatProfile.NotForeign", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.NotForeign", "DirectoryInfo..ctor", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.OwnedHere", "DirectoryInfo..ctor", 2, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.OwnedHere", "FileSystemInfo.set_UnixFileMode", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.OwnedOnWindows", "FileSystemInfo.Refresh", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.OwnedOnWindows", "FileSystemInfo.get_FullName", 2, "a path string, no disk access"),
+        ("SeatProfile.PrivateBelow", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.PrivateBelow", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.PrivateFile", "File.SetUnixFileMode", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.ReadNoFollow", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (its config file)"),
+        ("SeatProfile.ReadNoFollow", "File.ReadAllBytes", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home (its config file)"),
+        ("SeatProfile.RealFolder", "Directory.CreateDirectory", 2, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home and the folder above it"),
+        ("SeatProfile.RealFolder", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.RealFolder", "File.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.Sha256Of", "File.OpenRead", 1, "the runtime's executable (tools/<id>/ or the manifest's path), never a home"),
+        ("SeatProfile.ProbeFolder", "Directory.CreateDirectory", 1, "state/seat-probe, the app's own empty folder the CLI's reports run in (G2)"),
+        ("SeatProfile.ProbeFolder", "FileSystemInfo.get_FullName", 1, "a path string, no disk access"),
 
         // ---- pre-existing, not this unit's ---------------------------------------------------------------------------------------
         ("CouncilRelay.Deliver", "Directory.CreateDirectory", 1, "the legacy pair claims no containment — CARD"),
