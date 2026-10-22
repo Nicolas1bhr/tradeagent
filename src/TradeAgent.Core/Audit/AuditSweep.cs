@@ -58,6 +58,7 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
         var findings = new List<AuditFinding>();
         var flags = new List<AuditFlag>();
         var unreadable = new List<string>();
+        var named = new Dictionary<string, long>(StringComparer.Ordinal);
         var accepted = evidence.Rows("""
             SELECT e.id, e.mandate_id, e.evidence, m.unit_id, m.id
               FROM org_mandate_event e LEFT JOIN org_mandate m ON m.id = e.mandate_id
@@ -89,6 +90,14 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
                 unreadable.Add($"accepted event {eventId} names a mandate or unit TradeAgent cannot read; it was not drawn");
                 continue;
             }
+            // ONE DELIVERY, ONE ACCEPTANCE (fix pass 2): a delivery is accepted once (its acceptance closes the mandate), so a later event
+            // naming one an earlier event of this sweep already named is a rewritten record — the line's own failure, never a second sample.
+            if (named.TryGetValue(delivery, out var earlier))
+            {
+                unreadable.Add($"accepted event {eventId} names a delivery that accepted event {earlier} already named; it was not drawn again");
+                continue;
+            }
+            named[delivery] = eventId;
             if (!AuditSampler.Draws(salt, delivery, rate)) continue;
             var sample = new AuditSample(delivery, mandate, unit, eventId, now);
             samples.Add(sample);

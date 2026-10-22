@@ -571,6 +571,43 @@ public partial class AuditLineTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// AN ACCEPTANCE NAMING A DELIVERY ANOTHER ACCEPTANCE ALREADY NAMED IS THE LINE'S OWN FAILURE (fix pass 2). Past a dropped trigger, the
+    /// second of two acceptances is rewritten to name the first's delivery: the sweep draws that delivery once, records the second event as
+    /// its own failure naming both events, never fails, and its cursor passes the second event. RED before fix pass 2: two samples of one
+    /// delivery in one write broke the check table's key, the sweep rolled back — cursor included — every minute.
+    /// </summary>
+    [Fact]
+    public void An_acceptance_naming_a_delivery_already_named_is_the_lines_own_failure()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var first = Accepted(org, now, "first");
+        var second = Accepted(org, now, "second");
+        var (one, two) = (AcceptedEventOf(db.FilePath, first), AcceptedEventOf(db.FilePath, second));
+        using (var c = OversightSeed.Open(db.FilePath))
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "DROP TRIGGER org_mandate_event_sealed_u; UPDATE org_mandate_event SET evidence = json_array($first) WHERE id = $two";
+            cmd.Parameters.AddWithValue("$first", first);
+            cmd.Parameters.AddWithValue("$two", two);
+            cmd.ExecuteNonQuery();
+        }
+
+        using var store = new AuditStore(NewFile(), now);
+        var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
+        Assert.Null(swept.Failure);
+        Assert.Equal([first], swept.Drawn.Select(s => s.DeliveryId));
+        Assert.True(store.Cursor() >= two, $"the cursor stopped at {store.Cursor()}, before event {two}");
+        var failure = Assert.Single(store.Failures()).What;
+        log.WriteLine(failure);
+        Assert.Contains($"accepted event {two}", failure, StringComparison.Ordinal);
+        Assert.Contains($"event {one}", failure, StringComparison.Ordinal);
+        Assert.Equal(AuditCheckName.All.Length, store.Checks(first).Count);
+    }
+
+    /// <summary>
     /// AN ACCEPTANCE NAMING NO MANDATE IS THE LINE'S OWN FAILURE (fix pass 2): with foreign keys off, an accepted event's mandate is rewritten
     /// to one that does not exist — it is not drawn, a failure names the event, and the sweep goes on. RED before fix pass 2: the inner join
     /// dropped the event, neither drawn nor recorded, and the cursor passed it in silence.
