@@ -1,6 +1,8 @@
+using System.Reflection;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -161,5 +163,120 @@ public class RouteATests
         Assert.Equal(EnforcementClass.Gap, Attempt("cmdline"));
         Assert.Equal(EnforcementClass.Gap, Attempt("stat"));
         Assert.All(rows.Where(r => r.Side == AssuranceSide.Cell && r.Class != EnforcementClass.Gap), r => Assert.Contains("cell proof 7", r.Evidence));
+    }
+    /// <summary>
+    /// R2 (fix pass 1): A CELL LAUNCH WHOSE ASSURANCE COULD NOT BE WRITTEN AND WHOSE CGROUP WOULD NOT DIE IS NEVER REPORTED ENDED. The
+    /// session starts a <c>cell</c> seat for real — admitted under a counted proof, its attempt's cgroup and leaves made, its harness
+    /// started in the harness leaf, where it leaves a setsid'd daemon — and then the assurance INSERT fails (a trigger) at the moment
+    /// the attempt's <c>cgroup.kill</c> stops being writable. The turn ends carrying what still runs, and its presence stays held, so
+    /// the meter admits no further turn while any of it runs. Linux only (CI's Cell step, under a delegated root); elsewhere the same
+    /// session is refused before anything starts, which this row shows too.
+    /// </summary>
+    [Fact, Trait("Category", "Cell")]
+    public async Task A_cell_launch_whose_assurance_insert_and_cgroup_kill_both_fail_reports_its_survivors_and_keeps_its_presence()
+    {
+        if (OperatingSystem.IsWindows()) return;   // no cell and no shell script there; the Cell step is Linux
+        using var db = TestEnv.NewDb();
+        var dir = Path.Combine(TestEnv.Home, "r2-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(dir);
+        var daemonFile = Path.Combine(dir, "daemon.pid");
+        var exe = Path.Combine(dir, "codex");
+        File.WriteAllText(exe, "#!/bin/sh\necho 'codex-cli 0.160.1'\n[ \"$1\" = \"exec\" ] || exit 0\n" +
+                               $"setsid sleep 300 < /dev/null > /dev/null 2>&1 &\necho $! > '{daemonFile}'\nexec sleep 300\n");
+        File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var codex = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
+        codex.Executable = exe;
+        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
+        BrokerSeat.PinForTest(codex.Install.ExecutableSha256);
+        codex.Seat!.Home = Path.Combine(dir, "seat-home");
+        typeof(RuntimeManifest).GetProperty("DeclaredSeatClass", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(codex, SeatPlan.CellClass);
+
+        string? root = null;
+        var cgroups = AttemptCgroups.Unavailable("not Linux");
+        if (OperatingSystem.IsLinux())
+        {
+            var mine = AttemptCgroups.OwnCgroup();
+            Assert.True(mine is not null && Path.GetFileName(mine) == "runner",
+                $"missing prerequisite: the test run in <service>/runner (CI's Cell step moves it there under Delegate=yes); this process is in {mine}");
+            root = Path.Combine(Path.GetDirectoryName(mine!)!, "rows-" + Guid.NewGuid().ToString("n")[..12]);
+            cgroups = AttemptCgroups.Open(root);
+            Assert.True(cgroups.Held, $"missing prerequisite: a delegated root at {root}: {cgroups.Refusal}");
+        }
+        new CellProofStore(db).Record(RouteA.Provider, CellBenchmark.Profile(RouteA.Provider, CellPlatform.Read(), codex.Install.ExecutableSha256),
+            CellBenchmark.ProvedEgress);
+
+        // THE TWO FAILURES, AT ONE MOMENT: the attempt's cgroup.kill made unwritable, then the assurance INSERT aborted.
+        db.Connection.CreateFunction("r2_deny_kill", () =>
+        {
+            // THE HARNESS HAS LEFT ITS DAEMON before the failure lands: the launcher starts it a moment after StartHarness returns.
+            for (var i = 0; i < 300 && OperatingSystem.IsLinux() && !File.Exists(daemonFile); i++) Thread.Sleep(100);
+            if (OperatingSystem.IsLinux() && root is not null)
+                foreach (var attempt in Directory.EnumerateDirectories(root, AttemptCgroups.AttemptPrefix + "*"))
+                    File.SetUnixFileMode(Path.Combine(attempt, "cgroup.kill"), UnixFileMode.None);
+            return 0;
+        });
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("CREATE TEMP TRIGGER r2_fail BEFORE INSERT ON cell_assurance " +
+                                 "BEGIN SELECT r2_deny_kill(); SELECT RAISE(ABORT, 'the assurance insert failed (injected)'); END");
+            return c.ExecuteNonQuery();
+        });
+
+        var presence = new AgentPresence();
+        IReadOnlyList<string> launcher = [Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host && File.Exists(host) ? host : Environment.ProcessPath!, TradeCliDll()];
+        string[] measured = ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
+                             "request_user_input", "apply_patch", "view_image", "tool_search"];
+        var session = new AgentSession(codex, () => exe, () => dir, () => new Dictionary<string, string>(), presence: presence,
+            attempt: () => "r2", grants: new AgentGrants(), seatProbe: BrokerSeatTests.BrokerProbe(), door: () => new Uri("http://127.0.0.1:1/mcp"),
+            surfaceProbe: new BrokerSeatTests.FakeSurface(measured), cells: new CellRoute(db, cgroups, launcher));
+
+        AgentTurnEnded? ended = null;
+        try
+        {
+            ended = await SeatHomeTests.Turn(session);
+            if (!OperatingSystem.IsLinux())
+            {
+                Assert.True(ended.Raw.Contains("did not start the AI as a cell seat", StringComparison.Ordinal), ended.Raw);
+                Assert.Contains("Linux only", ended.Raw, StringComparison.Ordinal);   // admitted by everything before the cell, refused at it
+                Assert.Null(ended.Survivors);
+                Assert.Equal(0, presence.Live);
+                return;
+            }
+            Assert.Contains("injected", ended.Raw, StringComparison.Ordinal);
+            Assert.True(File.Exists(daemonFile), $"the harness never ran, so this row tests nothing: {ended.Raw}");
+            var daemon = int.Parse(File.ReadAllText(daemonFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(ProcessTable.Read(daemon) is { Zombie: false }, $"the daemon {daemon} did not outlive the failed launch, so this row tests nothing");
+            Assert.True(ended.Survivors is { Count: > 0 },
+                $"a cell launch whose cgroup could not be killed was reported ended while its daemon {daemon} ran: {ended.Raw}");
+            Assert.NotNull(ended.SurvivorPresence);
+            Assert.True(presence.Live > 0, "the launch's presence was closed while its daemon still ran");
+        }
+        finally
+        {
+            ended?.SurvivorPresence?.Dispose();
+            if (root is not null && Directory.Exists(root))
+            {
+                foreach (var attempt in Directory.EnumerateDirectories(root, AttemptCgroups.AttemptPrefix + "*"))
+                    try { File.SetUnixFileMode(Path.Combine(attempt, "cgroup.kill"), UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch (IOException) { }
+                try { File.WriteAllText(Path.Combine(root, "cgroup.kill"), "1"); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                for (var i = 0; i < 300 && !File.ReadAllText(Path.Combine(root, "cgroup.events")).Contains("populated 0", StringComparison.Ordinal); i++)
+                    await Task.Delay(10);
+                foreach (var sub in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length).ToList())
+                    try { Directory.Delete(sub); } catch (IOException) { }
+                try { Directory.Delete(root); } catch (IOException) { }
+            }
+        }
+    }
+
+    /// <summary>The built trade CLI, the launcher's second word (the first is the dotnet host).</summary>
+    static string TradeCliDll()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !File.Exists(Path.Combine(d.FullName, "TradeAgent.sln"))) d = d.Parent;
+        Assert.NotNull(d);
+        var hit = Directory.GetFiles(Path.Combine(d!.FullName, "src", "TradeAgent.TradeCli", "bin"), "trade.dll", SearchOption.AllDirectories)
+            .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        Assert.NotNull(hit);
+        return hit!;
     }
 }
