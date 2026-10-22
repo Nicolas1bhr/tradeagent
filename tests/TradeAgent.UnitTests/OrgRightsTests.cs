@@ -469,9 +469,10 @@ public class OrgRightsTests
         events.Raise(MissionEventIds.ForRole(MissionEventIds.Verdict("promotion-x"), Third),
             MissionEventKind.Verdict, DateTimeOffset.UtcNow, role: Third);
 
-        // AND, SINCE U-org-assignments-a (declared), the mandate's life — none of which is open here.
+        // AND, SINCE U-org-assignments-a (declared), the mandate's life — none of which is open here; since U-org-verbs-a (declared),
+        // the proposals its holders made that it has not yet been woken for.
         Assert.Equal([RoleObjectives.OwnerAnswered, RoleObjectives.MandateOwed, RoleObjectives.DeliveryToJudge,
-            RoleObjectives.EscalationOpen, RoleObjectives.MandateExpired], RoleObjectives.KindsOf(Third, OrgPositionKind.Head));
+            RoleObjectives.EscalationOpen, RoleObjectives.MandateExpired, RoleObjectives.ProposalUnread], RoleObjectives.KindsOf(Third, OrgPositionKind.Head));
         Assert.Empty(RoleObjectives.Open(db, Third, book: null));
 
         events.Raise(MissionEventIds.ForRole(MissionEventIds.Owner(800), Third), MissionEventKind.Owner, DateTimeOffset.UtcNow,

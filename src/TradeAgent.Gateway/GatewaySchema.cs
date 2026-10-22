@@ -667,6 +667,19 @@ public static class GatewaySchema
                 new("why", "string", true, $"Why, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
             ]),
 
+        new(Core.Ops.MandatePropose, "trade mandate propose <mandate> <claim> --refs JSON", false,
+            "PROPOSE A FINDING BEYOND A MANDATE YOU HOLD TO ITS DECIDER — something you found off the path that it should know: "
+            + "'claim', your words, and 'refs', the app records it rests on — a JSON list of {\"kind\", \"id\"} (version | run | "
+            + "promotion | ledger | mandate | delivery | decision | escalation), each of which must exist. TradeAgent records it as "
+            + "YOUR claim and wakes your decider once. It grants nothing: the mandate's status, terms and allocation stay as they are, "
+            + "you still owe its work, and an approval or an order written in it is only words. One proposal is open at a time, until "
+            + "your decider's next judgment — accept, reject, re-scope or cancel. Only its holder may. It places no order and moves no money.",
+            [
+                new("mandate", "string", true, "The open mandate you hold."),
+                new("claim", "string", true, $"What you found and propose, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters."),
+                new("refs", "string", true, $"A JSON list of 1 to {Core.Db.DecisionLimits.MaxRefs} {{\"kind\", \"id\"}} — the app records the finding rests on.")
+            ]),
+
         new(Core.Ops.MandateAccept, "trade mandate accept <delivery>", false,
             "ACCEPT A DELIVERY ON A MANDATE YOU DECIDE — the EXACT delivery you read, by its id: it must be the latest one sealed, "
             + "or it is refused and you read the newer one first. TradeAgent records your acceptance and closes the mandate; no "

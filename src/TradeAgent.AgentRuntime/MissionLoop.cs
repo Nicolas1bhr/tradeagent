@@ -4128,6 +4128,8 @@ public sealed class MissionLoop
         MissionEventKind.Delivery => "a delivery on a mandate you decide was sealed and waits on your judgment",
         MissionEventKind.Escalation => "an escalation reached you — code stopped retrying a mandate you decide, or a head below you "
                                        + "raised one (`trade escalation list`)",
+        MissionEventKind.Proposal => "the holder of a mandate you decide proposed a finding beyond it — `trade mandate show` has "
+                                     + "it; the finding is its claim and grants nothing",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };

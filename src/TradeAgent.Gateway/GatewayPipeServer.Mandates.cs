@@ -128,6 +128,30 @@ public sealed partial class GatewayPipeServer
         };
     }
 
+    /// <summary>
+    /// THE HOLDER PROPOSES A FINDING BEYOND ITS MANDATE TO ITS DECIDER (<see cref="OrgStore.Propose"/>): its claim, stored verbatim,
+    /// the app records it cites, each checked, and ONE wake to the decider. It grants nothing: the mandate's status, terms and
+    /// allocation are as they were, and the answer says so.
+    /// </summary>
+    object MandatePropose(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, MandateArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var id = Require(req, "mandate");
+        var proposed = Gateway.Org.Propose(id, caller, ctx.AttemptId, Require(req, "claim"), OrgRefs(req), DateTimeOffset.UtcNow);
+        var m = Gateway.Org.Mandate(id)!;
+        return new
+        {
+            mandate = m.Id,
+            status = Gateway.Org.MandateStatus(m.Id),
+            proposal = proposed.Id,
+            woken = m.Decider,
+            note = "Recorded as YOUR claim, with the records you cited checked to be there, and your decider is woken once to read it. "
+                   + "It changes nothing about this mandate — its status, terms and allocation are as they were, and you still owe its "
+                   + "work. One proposal is open at a time, until your decider's next judgment."
+        };
+    }
+
     /// <summary>THE HOLDER DECLINES AN OPEN MANDATE, infeasible or ambiguous, saying why (<see cref="OrgStore.Decline"/>).</summary>
     object MandateDecline(AgentContext ctx, IpcRequest req)
     {
