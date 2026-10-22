@@ -108,7 +108,7 @@ public partial class CouncilLoopTests
             StateChanged?.Invoke();
             Delta?.Invoke("");
             TurnEnded?.Invoke(new AgentTurnEnded(Exit, TimeSpan.FromMilliseconds(3), turn.Text,
-                DateTimeOffset.UtcNow) { Usage = Usage, GateRefused = GateRefused });
+                DateTimeOffset.UtcNow) { Usage = Usage, GateRefused = GateRefused, Session = Session });
         }
 
         /// <summary>A handle that closes nothing, for a conversation with no register behind it.</summary>
@@ -144,6 +144,9 @@ public partial class CouncilLoopTests
         /// reads, as a real conversation reports one.
         /// </summary>
         public LateRefusal? GateRefused { get; set; }
+
+        /// <summary>The session each turn reports it ran in (<c>U-org-packets-a</c>); null, as before, is a turn that launched none.</summary>
+        public TurnSession? Session { get; set; }
 
         /// <summary>What the next turn reports it used, or null for a turn that reports none (<c>U-org-packets-a</c>).</summary>
         public TurnUsage? Usage { get; set; }
