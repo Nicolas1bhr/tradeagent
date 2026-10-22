@@ -956,8 +956,9 @@ public sealed partial class OrgStore
     /// issued, retried or rejected — with no untaken wake and no launch open is given ONE <c>mandate</c> wake again, keyed by its
     /// latest event and the last launch charged to it, so a restart re-raises each once and a second pass raises nothing; and
     /// one whose judgment is owed — a sealed delivery or an escalation — whose latest wake to the decider a LOST launch took is
-    /// given ONE such wake again (<see cref="LostJudgment"/>), keyed by that wake and that launch. It buys
-    /// no turn and dispatches nothing. Answers how many records it wrote.
+    /// given ONE such wake again (<see cref="LostJudgment"/>), keyed by that wake and that launch; and, beside any of these, an OPEN
+    /// proposal whose latest <c>proposal</c> wake a LOST launch took is given ONE <c>proposal</c> wake again the same way
+    /// (<see cref="LostProposal"/>). It buys no turn and dispatches nothing. Answers how many records it wrote.
     ///
     /// <para><b>The holder's re-wake waits its level's floor</b> (<c>U-rewake-floor</c>, <paramref name="floors"/>): after a launch
     /// of the mandate ENDED or was declared LOST, the re-wake is written at once but due no sooner than <see cref="RewakeDue"/>
@@ -996,10 +997,18 @@ public sealed partial class OrgStore
                     return 1;
                 }
 
+                // AN OPEN PROPOSAL A LOST TURN TOOK IS OWED ITS DECIDER AGAIN (fix pass 1; ORCHESTRATION § 2.5: an off-path finding
+                // always reaches the head), whatever the mandate's status — a proposal is a claim beside it, never a status: ONE
+                // `proposal` wake, keyed by the lost wake and the launch, so a second pass raises nothing; never while one is untaken,
+                // never for a turn that ENDED (it had the finding in front of it), and never once a judgment closed the proposal.
+                var proposal = LostProposal(m) is { } taken
+                    && new MissionEventStore(db).Raise(MissionEventIds.Rejudge(taken.Id, taken.ConsumedBy!), MissionEventKind.Proposal,
+                        now, payload: m.Id, role: m.Decider) ? 1 : 0;
+
                 if (status != MandateEventKind.Escalated && !EverEscalated(m.Id, HalfSpent) && Spend(db, m.Id).Spent >= m.Allocation / 2m)
                 {
                     Escalate(m, now, HalfSpent, []);
-                    return 1;
+                    return proposal + 1;
                 }
 
                 if (status is MandateEventKind.Issued or MandateEventKind.Retry or MandateEventKind.Rejected && !HasOpenLaunch(m.Id))
@@ -1014,17 +1023,17 @@ public sealed partial class OrgStore
                     if (HasUntakenWake(m.Id))
                         // THE HOLDER ASKED FOR ITS OWN WAKE AFTER A PASS WROTE THIS RE-WAKE (its turn's end and its request are two
                         // writes, and a pass can run between them): the re-wake still pending is brought to that time, once.
-                        return last is not null && HolderAsked(m, now) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0;
+                        return proposal + (last is not null && HolderAsked(m, now) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0);
 
                     var level = LevelOf(m.Holder);
                     var due = last is null ? now : RewakeDue(m, latest, last, level ?? floors.Largest, floors, now);
-                    if (!events.RaiseDue(key, MissionEventKind.Mandate, now, due, payload: m.Id, role: m.Holder)) return 0;
+                    if (!events.RaiseDue(key, MissionEventKind.Mandate, now, due, payload: m.Id, role: m.Holder)) return proposal;
                     if (level is null && due > now)
                         said?.Invoke($"The organisation's chart cannot place {m.Holder}"
                                      + (unread is null ? "" : $" (it could not be read: {unread})")
                                      + $", so its re-wake for mandate {m.Id} waits the largest floor there is, "
                                      + $"{floors.Floor(floors.Largest).TotalMinutes:0} minutes, rather than a guess: due {due:u}.");
-                    return 1;
+                    return proposal + 1;
                 }
 
                 // THE DECIDER'S JUDGMENT, TOO (fix pass 1, item 2): a sealed delivery or an escalation waiting on the decider whose
@@ -1032,9 +1041,9 @@ public sealed partial class OrgStore
                 // wake and that launch — never while a wake is untaken or the launch still runs, and never for one that ENDED:
                 // that turn had the judgment in front of it, and waking it again every tick would spend the owner's allowance.
                 if (status is MandateEventKind.Delivered or MandateEventKind.Escalated && LostJudgment(m) is { } lost)
-                    return new MissionEventStore(db).Raise(MissionEventIds.Rejudge(lost.Id, lost.ConsumedBy!), lost.Kind, now,
-                        payload: m.Id, role: m.Decider) ? 1 : 0;
-                return 0;
+                    return proposal + (new MissionEventStore(db).Raise(MissionEventIds.Rejudge(lost.Id, lost.ConsumedBy!), lost.Kind, now,
+                        payload: m.Id, role: m.Decider) ? 1 : 0);
+                return proposal;
             });
         return written;
     }
@@ -1057,14 +1066,24 @@ public sealed partial class OrgStore
     /// The latest <c>delivery</c> or <c>escalation</c> wake of <paramref name="m"/> to its decider when the launch that took it was
     /// declared LOST, or null — none raised, the latest still untaken, or taken by a launch that runs or ended.
     /// </summary>
-    MissionEvent? LostJudgment(MandateRow m)
+    MissionEvent? LostJudgment(MandateRow m) => LostWake(m, MissionEventKind.Delivery, MissionEventKind.Escalation);
+
+    /// <summary>
+    /// The latest <c>proposal</c> wake of <paramref name="m"/> to its decider when a proposal is OPEN (<see cref="OpenProposal"/>:
+    /// no judgment since) and the launch that took that wake was declared LOST, or null. One open proposal per mandate, and a
+    /// judgment withdraws or outlives every earlier proposal's wake, so the latest proposal wake is the open proposal's.
+    /// </summary>
+    MissionEvent? LostProposal(MandateRow m) =>
+        OpenProposal(m.Id) is null ? null : LostWake(m, MissionEventKind.Proposal, MissionEventKind.Proposal);
+
+    /// <summary>The latest wake of <paramref name="m"/> to its decider of kind <paramref name="a"/> or <paramref name="b"/>, when a LOST launch took it.</summary>
+    MissionEvent? LostWake(MandateRow m, string a, string b)
     {
         using var c = db.Cmd("""
             SELECT e.id, e.kind, e.consumed_by FROM mission_event e
-             WHERE e.kind IN ($delivery, $escalation) AND e.payload = $m AND e.role = $decider
+             WHERE e.kind IN ($a, $b) AND e.payload = $m AND e.role = $decider
              ORDER BY e.rowid DESC LIMIT 1
-            """, ("$delivery", MissionEventKind.Delivery), ("$escalation", MissionEventKind.Escalation), ("$m", m.Id),
-            ("$decider", m.Decider));
+            """, ("$a", a), ("$b", b), ("$m", m.Id), ("$decider", m.Decider));
         string id, kind;
         string? by;
         using (var r = c.ExecuteReader())
