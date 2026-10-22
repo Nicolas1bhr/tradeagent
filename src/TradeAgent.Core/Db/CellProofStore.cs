@@ -131,7 +131,7 @@ public sealed record HostIdentity(string Machine, string OsRelease)
 /// never guess (<c>CLAUDE.md</c>). The benchmark runs again, here. A host whose identity cannot be read holds none.</para>
 /// </summary>
 /// <param name="host">This host's identity; null is <see cref="HostIdentity.This"/>. Only a test passes another.</param>
-public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null, Func<string>? build = null)
+public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null, Func<string?>? build = null)
 {
     public static string ThisPlatform =>
         (OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "other")
@@ -140,28 +140,49 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
     /// <summary>
     /// THE BUILD A PROOF IS BOUND TO (<c>U-cell-linux-c</c> item 5): <see cref="Versions.App"/> AND the SHA-256 of the <c>trade</c> this
     /// install deployed (<c>ToolDeployer.DeployedHashFile</c>, <c>state/trade.sha256</c>) — two builds of one version are two builds, and
-    /// the launcher the cells run through is the one the proof measured. No deployed hash: <c>none</c>, which no deployed build matches.
+    /// the launcher the cells run through is the one the proof measured. <b>No deployed hash: NULL, and no proof</b> (fix pass 1, R3) —
+    /// never a word like <c>none</c>, which every install without a hash would share, so a proof would count for builds it never
+    /// measured: refuse, never guess.
     /// </summary>
-    public static string ThisBuild()
+    public static string? ThisBuild()
     {
-        string? trade = null;
-        try { trade = File.ReadAllText(Path.Combine(Paths.State, "trade.sha256")).Trim().ToLowerInvariant(); }
+        if (TestHostBuild is { } test) return test;
+        string? recorded = null;
+        try { recorded = File.ReadAllText(Path.Combine(Paths.State, "trade.sha256")); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* none deployed */ }
-        return $"{Versions.App}+trade-sha256:{(string.IsNullOrEmpty(trade) ? "none" : trade)}";
+        return BuildOf(recorded);
     }
+
+    /// <summary>The build a deployed hash file's text names: the version and the hash, or NULL unless it is one SHA-256 in hex.</summary>
+    public static string? BuildOf(string? deployedHash)
+    {
+        var hash = deployedHash?.Trim().ToLowerInvariant();
+        return hash is { Length: 64 } && hash.All(char.IsAsciiHexDigit) ? $"{Versions.App}+trade-sha256:{hash}" : null;
+    }
+
+    /// <summary>
+    /// A TEST HOST'S BUILD, set only by the test assembly (<c>InternalsVisibleTo</c>; the <c>PuppetSeats.TestHost</c> pattern) so its
+    /// proofs do not follow the rows that rewrite <c>state/trade.sha256</c> mid-run. Nothing in the product sets it, and no file,
+    /// setting or pipe op reaches it.
+    /// </summary>
+    internal static string? TestHostBuild { get; set; }
+
+    /// <summary>Why a store with no build holds and writes no proof, in words.</summary>
+    const string NoBuild = "TradeAgent has no record of the trade command it installed (state/trade.sha256), so no cell proof can be bound to " +
+                           "this build: a proof bound to no build would count for builds it never measured. The next start records it and measures again";
 
     HostIdentity? Here => (host ?? (() => HostIdentity.This))();
 
-    string Build => (build ?? ThisBuild)();
+    string? Build => (build ?? ThisBuild)();
 
     /// <summary>
     /// THE PROOFS THAT COUNT HERE AND NOW: this platform, machine, full kernel release, BOOT and build, and not revoked. Empty when this
-    /// host's identity cannot be read.
+    /// host's identity cannot be read, or this build's deployed hash is not recorded.
     /// </summary>
     public IReadOnlyList<CellProof> Proven()
     {
         if (Here is not { } here) return [];
-        var built = Build;
+        if (Build is not { } built) return [];
         return db.Read(_ =>
         {
             using var c = db.Cmd("""
@@ -202,8 +223,8 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
     /// <summary>
     /// WRITES ONE PROOF — called only by the host benchmark when EVERY row held (<c>CellBenchmark</c>): bound to this host's platform,
     /// machine, full release and boot and this build, with the profile it measured, the egress classes its rows proved and every row
-    /// it ran (a GAP kept as one), in the one transaction a write is. Returns its id; refuses a host whose identity cannot be read, and a proof that
-    /// names no egress class.
+    /// it ran (a GAP kept as one), in the one transaction a write is. Returns its id; refuses a host whose identity cannot be read, a build
+    /// whose deployed hash is not recorded, and a proof that names no egress class.
     /// </summary>
     public long Record(string provider, string profileHash, IReadOnlyList<string> egress, IReadOnlyList<ProofRow>? rows = null)
     {
@@ -211,7 +232,7 @@ public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "this host's identity could not be read, so no cell proof can be bound to it");
         if (egress.Count == 0 || egress.Any(e => e.Length == 0 || e.Contains(',', StringComparison.Ordinal)))
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "a cell proof names the egress classes its rows measured, and this one named none");
-        var built = Build;
+        if (Build is not { } built) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, NoBuild);
         return db.Write(_ =>
         {
             using var c = db.Cmd("""

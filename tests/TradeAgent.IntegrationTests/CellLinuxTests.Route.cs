@@ -735,4 +735,26 @@ public partial class CellLinuxTests
         Assert.Contains("measured only none, web", RouteA.Admission(new CellRoute(db), BenchPin, CellPlatform.Read(), CellEgress.WebPlain).Refusal);
     }
 
+    /// <summary>
+    /// ROW (i), THE BUILD (fix pass 1, R3): with no deployed <c>trade</c> hash a benchmark whose every row holds writes NO proof and says
+    /// why — never a proof bound to a build named "none", which every install without a hash would share.
+    /// </summary>
+    [LinuxFact]
+    public async Task A_benchmark_with_no_deployed_trade_hash_writes_no_proof()
+    {
+        PlatformIsACells();
+        var codex = PinnedCodex();
+        using var rows = Rows();
+        _ = new World("bench-nohash");
+        Deployed(false);
+        try
+        {
+            using var db = TestEnv.NewDb();
+            var held = await Bench(db, codex, rows.Cgroups);
+            Assert.True(held.ProofId is null, $"a proof was written with no deployed trade hash: {held.Sentence}");
+            Assert.Empty(new CellProofStore(db).Proven());
+            Assert.Contains("trade", held.Sentence, StringComparison.Ordinal);
+        }
+        finally { Deployed(true); }
+    }
 }
