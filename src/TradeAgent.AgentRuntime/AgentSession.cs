@@ -151,7 +151,7 @@ public static class AgentArgs
         out bool promptInArgv)
     {
         var template =
-            resuming && manifest.ResumeArgs.Length > 0 ? manifest.ResumeArgs :
+            Resumes(manifest, resuming) ? manifest.ResumeArgs :
             manifest.ExecArgs.Length > 0 ? manifest.ExecArgs :
             manifest.TaskArgs;
 
@@ -159,6 +159,12 @@ public static class AgentArgs
         return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
             ModelArgs(manifest, model), SeatArgs(manifest, seatClass, door), manifest.PromptOnStdin, manifest.StdinMarker, out promptInArgv);
     }
+
+    /// <summary>
+    /// Whether a turn asked to resume launches the resume template — only where the runtime declares one; a runtime with none
+    /// launches the fresh template every turn (fix pass 1 of <c>U-org-packets-a</c>: the record says what launched).
+    /// </summary>
+    public static bool Resumes(RuntimeManifest manifest, bool resuming) => resuming && manifest.ResumeArgs.Length > 0;
 
     /// <summary>
     /// Whether this runtime's command line carries the prompt, fresh or resumed — measured on the argv this build makes for it, so
@@ -903,8 +909,10 @@ public sealed class AgentSession(
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
 
-        // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed, or fresh with why.
-        _session = _sessionExists ? TurnSession.Resumed : TurnSession.FreshBecause(_freshWhy);
+        // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed only where the resume template is
+        // what launches — a runtime that declares none starts fresh every turn, and says so (fix pass 1) — or fresh with why.
+        _session = AgentArgs.Resumes(manifest, _sessionExists) ? TurnSession.Resumed
+            : TurnSession.FreshBecause(_sessionExists ? SessionWhy.NoResume : _freshWhy);
 
         var psi = new ProcessStartInfo
         {

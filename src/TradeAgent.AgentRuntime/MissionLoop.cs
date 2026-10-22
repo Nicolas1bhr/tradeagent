@@ -151,6 +151,12 @@ public static class SessionWhy
 
     /// <summary>The app's own harness, which keeps no session between turns: every turn is fresh.</summary>
     public const string Harness = "harness";
+
+    /// <summary>
+    /// The runtime declares no way to resume (<see cref="RuntimeManifest.ResumeArgs"/> empty), so a turn after its first launches the
+    /// fresh template whatever session came before (fix pass 1): the record says what launched.
+    /// </summary>
+    public const string NoResume = "no-resume";
 }
 
 /// <summary>
