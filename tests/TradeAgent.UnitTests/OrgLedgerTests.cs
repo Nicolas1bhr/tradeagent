@@ -348,6 +348,10 @@ public class OrgLedgerTests
         // vocabulary check above is unchanged), and OrgSeatsTests.No_pipe_op_door_verb_or_trade_verb_writes_a_seat holds that nothing
         // but this method writes a seat column and nothing calls it from the pipe or the door.
         mandate = [.. mandate, "SetSeat"];
+        // REVISITED, OUT LOUD, BY U-org-packets-b (rung 45): five READS a position's packet is built from — the notes to it no
+        // committed launch of it was shown, its own forecasts due and resolutions unshown, its open escalations by direction, a
+        // decider's deliveries to judge. None writes anything; what a packet showed is written by AiAttemptStore, never OrgStore.
+        mandate = [.. mandate, "DeliveriesToJudgeOf", "EscalationsOpen", "ForecastsDue", "LateralsUnshown", "ResolutionsUnshown"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
