@@ -59,8 +59,8 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
         var flags = new List<AuditFlag>();
         var unreadable = new List<string>();
         var accepted = evidence.Rows("""
-            SELECT e.id, e.mandate_id, e.evidence, m.unit_id
-              FROM org_mandate_event e JOIN org_mandate m ON m.id = e.mandate_id
+            SELECT e.id, e.mandate_id, e.evidence, m.unit_id, m.id
+              FROM org_mandate_event e LEFT JOIN org_mandate m ON m.id = e.mandate_id
              WHERE e.kind = $kind AND e.id > $after AND e.id <= $top
              ORDER BY e.id
             """, ("$kind", MandateEventKind.Accepted), ("$after", after), ("$top", last));
@@ -76,6 +76,12 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
             if (string.IsNullOrEmpty(delivery))
             {
                 unreadable.Add($"accepted event {eventId} names no delivery TradeAgent can read; it was not drawn");
+                continue;
+            }
+            // AN ACCEPTANCE OF NO MANDATE (fix pass 2): the outer join keeps it, so it is the line's own failure — never passed in silence.
+            if (row[4] is null)
+            {
+                unreadable.Add($"accepted event {eventId} names no mandate in the app's database; it was not drawn");
                 continue;
             }
             if (row[1] is not string mandate || row[3] is not string unit)
