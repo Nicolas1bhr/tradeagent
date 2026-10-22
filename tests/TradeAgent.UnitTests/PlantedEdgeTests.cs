@@ -387,4 +387,93 @@ public class PlantedEdgeTests(ITestOutputHelper log)
         log.WriteLine(real.Message);
         Assert.Contains("it is a real edge, not a trap", real.Message, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// (f) THE MANIFEST IS WRITTEN ONLY INTO A PROVING HOME — and the holdout and campaign only into its own ledger. Beside a
+    /// stand-in real home: a market with edges, traps and a holdout written through a real home's stores is refused before
+    /// anything is written; written into the proving home, its manifest lies in that home's truth folder and states every
+    /// edge, trap and the holdout; the proving process's holdout-and-campaign press is refused on the real ledger and on
+    /// another proving home's, and on its own sets the spec's cutoff and budgets as research. The real home's files are the
+    /// same bytes after all of it.
+    /// </summary>
+    [Fact]
+    public void The_manifest_is_written_only_into_a_proving_home()
+    {
+        using var scratch = TestEnv.NewScratch("manifest-home");
+        var real = Path.Combine(scratch.Dir, "real");
+        var realDb = Path.Combine(real, "state", "tradeagent.db");
+        var realTape = Path.Combine(real, "state", "tape.db");
+        using (var db = new Database(realDb)) db.SetKv("owner-row", "kept");
+        using (var tape = new TapeStore(realTape)) TapeReadings.Reading(tape, Start.AddMinutes(10), "0.00010000");
+        var before = Hashes(real);
+
+        var spec = new SyntheticMarketSpec(61, "SYNA", VenueCatalog.BinanceSpot, Start, 14, new SyntheticEdge(16) { HalfLifeDays = 10 })
+        {
+            Series = [ProvingSources.Signal, ProvingSources.TakerRatio],
+            Edges = [SyntheticEdge.InSampleOnly(12, ProvingSources.TakerRatio)],
+            Holdout = new SyntheticHoldout(10, TrialBudget: 7, VerdictBudget: 3)
+        };
+
+        using var p = new Proving(Path.Combine(real, "proving", "run-1"));
+        using (var db = new Database(realDb))
+        using (var tape = new TapeStore(realTape))
+        {
+            var refused = Assert.Throws<InvalidOperationException>(() => SyntheticMarket.Write(p.Home, db, tape, spec));
+            Assert.Contains("only into a proving home", refused.Message, StringComparison.Ordinal);
+        }
+        Assert.False(Directory.Exists(p.Home.TruthDir));
+
+        var market = p.Write(spec);
+        Assert.StartsWith(p.Home.TruthDir + Path.DirectorySeparatorChar, market.TruthFile, StringComparison.Ordinal);
+        var truth = Truth(market);
+        log.WriteLine(truth.ToString());
+        Assert.Equal(1, truth.GetProperty("planted").GetArrayLength());
+        Assert.Equal("in-sample-only", truth.GetProperty("traps")[0].GetProperty("trap").GetString());
+        Assert.Equal(10, truth.GetProperty("traps")[0].GetProperty("regimes")[0].GetProperty("to_day").GetInt32());
+        Assert.Equal(Start.AddDays(10), truth.GetProperty("holdout").GetProperty("cutoff").GetDateTimeOffset());
+        Assert.Equal(7, truth.GetProperty("holdout").GetProperty("trial_budget").GetInt32());
+
+        // THE OWNER'S PRESS, PLAYED IN-PROCESS: never on a real ledger, never on another proving home's.
+        new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
+        var at = Start.AddDays(10);
+        using (var db = new Database(realDb))
+        {
+            var onReal = Assert.Throws<InvalidOperationException>(() => ProvingCampaign.Open(p.Home, db, market, spec, at));
+            log.WriteLine(onReal.Message);
+            Assert.Contains("this database is a real home's (SIM-001)", onReal.Message, StringComparison.Ordinal);
+        }
+        using (var other = new Proving(Path.Combine(scratch.Dir, "other")))
+        {
+            var cross = Assert.Throws<InvalidOperationException>(() => ProvingCampaign.Open(p.Home, other.Db, market, spec, at));
+            Assert.Contains("does not live in the proving home", cross.Message, StringComparison.Ordinal);
+            Assert.Empty(new CampaignStore(other.Db).All());
+        }
+
+        var opened = ProvingCampaign.Open(p.Home, p.Db, market, spec, at);
+        Assert.True(opened.Ok, opened.Why);
+        Assert.Equal(7, opened.Campaign!.TrialBudget);
+        Assert.Equal(3, opened.Campaign.VerdictBudget);
+        Assert.Equal(Start.AddDays(10), opened.Campaign.HoldoutFrom);
+        var set = new DatasetStore(p.Db).ById(market.Dataset.Id)!;
+        Assert.Equal(Start.AddDays(10), set.HoldoutFrom);
+        Assert.Equal(EvaluationClass.Research, set.EvaluationClass);
+
+        var again = ProvingCampaign.Open(p.Home, p.Db, market, spec, at);
+        Assert.False(again.Ok);
+        log.WriteLine(again.Why);
+
+        Assert.Equal(before, Hashes(real));
+    }
+
+    /// <summary>Every file under <paramref name="home"/> outside <c>proving/</c>, by relative path, with its SHA-256.</summary>
+    static SortedDictionary<string, string> Hashes(string home)
+    {
+        var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var f in Directory.GetFiles(home, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(home, f).Replace('\\', '/');
+            if (!rel.StartsWith("proving/", StringComparison.Ordinal)) files[rel] = Sha256Hex.OfFile(f)!;
+        }
+        return files;
+    }
 }
