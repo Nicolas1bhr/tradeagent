@@ -11079,3 +11079,24 @@ re-review of pass 2: "R1-incomplete CLOSED", "NEW CLOSED", "No regression found 
 **Tests box:** run 20261022-011621-2aaf5a6e on 2aaf5a6e: RED on ONE row only, `CellLinuxTests.A_cell_launch_without_a_delegated_cgroup_is_refused_naming_delegate_yes` (row (f), the known test defect of 25bae9bc that U-cell-row-every-os fixes; not in this diff) — Fault 498/498, Unit 1998 passed 0 failed, Integration 726 passed 1 failed, timing 117/117; his files unchanged.
 **NOT VERIFIED:** SIM-001 against an unconfined same-user process (advisory, ORCH § 5); no proving host sets ThisProcess yet (part c); "canonical" is
 `GetFullPath`, not symlink resolution (a symlinked path is a false refusal, never a false match); no model, no network.
+
+## U-cell-row-every-os — Cell row (f)'s "every OS" claim is true on every OS, and CI runs the every-OS Cell rows on all three platforms; tests and CI only, no rung (landed 2026-10-22, seat A)
+
+**Landed** at `72cacb2e` (code `b7a97921`, items `de667765` + `b7a97921`, train A1 on main `e697686d`). A light: no product code. Arrow: the tests box's catch-up run on
+`7e372c9b` (20261021-151027-7e372c9b) RED on `CellLinuxTests.A_cell_launch_without_a_delegated_cgroup_is_refused_naming_delegate_yes`, judged a test defect.
+Builder a36dba2889510cac0 (sonnet/high, BUILD RUN 2026-10-22).
+**CI:** landing run **39696612317** (train A1, at `0dd98423`, CARRIED to `54fd2d8b` after a docs-only main move): 12/12 success, 0 Warning(s), names sets 2981 → 2991 removed 0. Branch run 39685897934: attempt 1 RED on ubuntu only — TradeAgent.UnitTests, 7 PromptStdinTests + 3 LinuxHostRuntimeTests,
+"the turn ended 154" (128+26 = ETXTBSY on a just-written fake runtime, the builder's reading; not reproduced). The diff cannot reach it: the ubuntu normal step
+lists the identical 2004 Unit rows under the old and the new filter (same md5); no UnitTests file is touched. JUDGED by the orchestrator as a FIRST SIGHTING
+(the Linux write-then-exec race under parallel test classes; a second sighting makes it a unit: retry-on-ETXTBSY or write-close-rename in the fake-runtime
+helper), on the board. Attempt 2 (`gh run rerun --failed`): 12/12 success. Names 2828 → 2828, removed 0.
+**What changed:** (1) row (f) builds its policy from `CellPolicy.SystemRoots` where they are fully qualified on the running OS and from a scratch directory
+elsewhere, and asserts `policy.Problem()` null before the launch, so the refusal it checks is the cgroup's, naming `Delegate=yes`, on every OS; the assertion
+text and the Linux-only second half unchanged. RED: a policy rooted at {"usr"} → "the cell's program root 'usr' is not an absolute p…". (2) a trait
+`CellScope=EveryOs` (rode in item 1's commit — a declared deviation); the normal test step of all three platforms runs `Category!=Timing&(Category!=Cell|CellScope=EveryOs)`,
+the ubuntu Cell step `Category=Cell&CellScope!=EveryOs` under `systemd-run` with `Delegate=yes`.
+**Evidence:** attempt 2's trx: row (f) PASSED on ubuntu, macos and windows-latest (shard 5) — its first Windows pass on CI; ubuntu results-cell.trx 40 passed,
+row (f) absent (41 before). CellLinuxTests 3× locally: "Passed 1, Skipped 40, Total 41". Release `--no-incremental` 0 warnings.
+**Review:** Codex (fleet/tmp/A-org/u-cell-row-every-os-build/U-cell-row-every-os-review.md): "No defects found".
+**Tests box:** run 20261022-015649-0dd98423 on the train tip 0dd98423 (build-tree equal to the landed tip): GREEN — Fault 498/498, Unit 2013 passed 0 failed, Integration 728 passed 0 failed (row (f) passed on real Windows), timing 117/117; his files unchanged.
+**NOT VERIFIED:** the attempt-1 red's cause (a reading, not a reproduction).
