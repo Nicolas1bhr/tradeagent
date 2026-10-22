@@ -1181,8 +1181,7 @@ public sealed class AppHost : IAsyncDisposable
             {
                 TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
                 ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes)),
-                Ceilings = OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, Gateway.Settings.HeadCeilingHours)),
-                    StringComparer.Ordinal)
+                Ceilings = LevelCeilings(Gateway.Settings)
             });
         Mission.Changed += () => Changed?.Invoke();
 
@@ -1212,6 +1211,22 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.FillRecorded = BookMoved;
         ReportAiToTheGateway();
     }
+
+    /// <summary>
+    /// EACH LEVEL'S CEILING AS THE OWNER SET IT (<see cref="TradeAgentSettings.HeadCeilingHours"/>): one value for every level until
+    /// the levels' horizons are set apart; below zero reads zero, and zero raises none. The loop's ceilings and the re-wake floor's
+    /// cap both read it here.
+    /// </summary>
+    internal static Dictionary<string, TimeSpan> LevelCeilings(TradeAgentSettings settings) =>
+        OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, settings.HeadCeilingHours)), StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE RE-WAKE FLOORS AS THE OWNER SET THEM NOW (<c>U-rewake-floor</c>; <see cref="TradeAgentSettings.RewakeFloorMinutes"/>),
+    /// each capped by its level's ceiling. Read on every sweep, so a change applies to the next re-wake the sweep raises and never
+    /// re-dates one already pending.
+    /// </summary>
+    internal static RewakeFloors RewakeFloorsOf(TradeAgentSettings settings) =>
+        RewakeFloors.From(settings.RewakeFloorMinutes, LevelCeilings(settings));
 
     /// <summary>
     /// THE COMPOSITION <see cref="StartAsync"/> BUILDS, WITHOUT THE MACHINE IT RUNS ON — so a test can
