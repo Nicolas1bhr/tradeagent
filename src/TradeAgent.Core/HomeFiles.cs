@@ -558,16 +558,22 @@ public static class HomeFiles
     // ---- shared ------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// The path's names, split on either separator. A <c>.</c> names the folder it is in and is dropped, as <see cref="Path.GetFullPath(string)"/>
+    /// The path's names, split on <c>/</c>. A <c>.</c> names the folder it is in and is dropped, as <see cref="Path.GetFullPath(string)"/>
     /// drops it — fix pass 4 (the second re-review's [P3] 7): <c>./out/x</c> is <c>out/x</c>, as the file tools' path check has always read it.
     /// An absolute path or a <c>..</c> is refused, never resolved; so is a path that names no name at all, except where the root is asked for.
+    /// <para><b>Split on <c>/</c> alone</b> (fix pass 5, the fourth re-review's D1): on Linux and macOS a backslash is a character of a name,
+    /// and a listed name such as <c>..\x</c> or <c>a\b</c> is the one file it names — split, the first would refuse a whole material pass
+    /// (the window held open) and the second would measure the file <c>a/b</c> as <c>a\b</c>. This is what the code did before by accident:
+    /// <c>Split('/', '\\', options)</c> binds the backslash as a COUNT, not a separator. On Windows that same accident means a relative
+    /// path written with backslashes reaches <see cref="WindowsFolders"/> as fewer components than it has, so not every folder of it is
+    /// checked for a reparse point — kept as it was here and named for <c>U-cell-windows</c>' card.</para>
     /// </summary>
     static string[] Parts(string relative, bool allowRoot)
     {
         if (string.IsNullOrEmpty(relative)) return allowRoot ? [] : throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
         if (Path.IsPathRooted(relative))
             throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
-        var parts = relative.Split('/', '\\', StringSplitOptions.RemoveEmptyEntries).Where(p => p != ".").ToArray();
+        var parts = relative.Split('/', StringSplitOptions.RemoveEmptyEntries).Where(p => p != ".").ToArray();
         if (parts.Any(p => p == ".."))
             throw new HomeLinkRefused($"'{relative}' is not a path inside the folder.");
         if (parts.Length == 0)

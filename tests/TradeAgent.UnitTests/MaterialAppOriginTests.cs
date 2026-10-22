@@ -260,4 +260,47 @@ public class MaterialAppOriginTests
             $"material measured a file outside the home as the position's own: {string.Join(", ", rows.Where(r => r.Contains("/k/") || r.EndsWith("creds.json")))}");
         Assert.Contains(rows, r => r.EndsWith("research/own.md", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// A NAME WITH A BACKSLASH IN IT IS ONE NAME ON LINUX AND macOS, and the material pass reads it as that one name (<c>U-execution-environment</c>
+    /// fix pass 5, the fourth re-review's D1). A cell can name a file <c>..\x</c> or <c>a\b</c> in its home. Split as a path, the first
+    /// would name <c>..</c>: the pass could not describe it, would hold the attestation window open and mark nothing missing for as long as
+    /// the file stayed, so every file the owner handed over meanwhile would be recorded <see cref="MaterialOrigin.InboxUnattested"/>; the
+    /// second would name <c>a/b</c>, whose size and hash would go onto <c>a\b</c>'s row. Declared: such a name is neither skipped nor
+    /// refused — it is measured as the file it is, so the window moves, the group is swept, and each row carries its own file's bytes.
+    /// </summary>
+    [UnixFact]
+    public void A_name_with_a_backslash_in_a_home_is_never_read_as_a_path()
+    {
+        var (db, root, files) = World();
+        using var _ = db;
+        WorkspaceBuilder.BuildAll(Context(CouncilRoles.Operations), root, files);
+        var presence = new AgentPresence();
+        MaterialScanner Pass() => new(db, root, presence.NoneSince, files);
+        Pass().Scan();                                                       // nothing running: a whole pass closes the window
+
+        presence.Enter().Dispose();                                          // a cell turn ran, and left these behind
+        var research = Path.Combine(Home(root, CouncilRoles.Research), "research");
+        File.WriteAllText(Path.Combine(research, "..\\x"), "named to climb");
+        Directory.CreateDirectory(Path.Combine(research, "a"));
+        File.WriteAllText(Path.Combine(research, "a", "b"), "the position's real a/b, which is longer than the other");
+        File.WriteAllText(Path.Combine(research, "a\\b"), "a\\b's own");
+        var after = Pass().Scan();                                           // the pass after that turn
+
+        Directory.CreateDirectory(Path.Combine(root, MaterialScanner.InboxDir));
+        File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, "statement.pdf"), "the owner's statement");
+        Pass().Scan();                                                       // no turn since the pass above
+
+        var store = new MaterialStore(db);
+        Assert.True(after.Unreadable == 0, $"the pass could not read {string.Join(", ", after.UnreadableFolders)}, so it held the window");
+        Assert.Equal(MaterialOrigin.Inbox, store.Present().Single(m => m.Name == "statement.pdf").Origin);
+        foreach (var (name, text) in new[] { ("..\\x", "named to climb"), ("a\\b", "a\\b's own"),
+                                             ("a/b", "the position's real a/b, which is longer than the other") })
+        {
+            var row = store.Present().SingleOrDefault(m => m.RelPath.EndsWith($"research/{name}", StringComparison.Ordinal));
+            Assert.True(row is not null, $"no row for research/{name}");
+            Assert.True(row.SizeBytes == text.Length && row.Sha256 == Sha256Hex.Of(text),
+                $"research/{name} was measured as another file: {row.SizeBytes} bytes, {row.Sha256}");
+        }
+    }
 }
