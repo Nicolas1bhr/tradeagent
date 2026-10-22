@@ -32,20 +32,27 @@ public sealed class SplitMix64(ulong seed)
 }
 
 /// <summary>
-/// ONE PLANTED EDGE (<c>U-proving-ground-a</c> item 4): the instrument's return over <see cref="HorizonMinutes"/> from the
-/// first hourly close after a signal reading was FIRST SEEN gains <see cref="BetaTicks"/> ticks per unit of that reading
-/// — one fixed β, one series, one horizon. A hand-set constant, never fitted to anything.
-/// </summary>
-/// <param name="BetaTicks">Ticks of the planted move per unit of the signal's integer value (−50 to 50).</param>
-/// <param name="HorizonMinutes">How many minutes after that close the move is spread over: 1 to 60.</param>
-public sealed record SyntheticEdge(long BetaTicks, int HorizonMinutes = 60);
-
-/// <summary>
 /// WHAT ONE SYNTHETIC INSTRUMENT IS: a seed, its symbol (one of <see cref="ProvingSources.Subjects"/>), the catalogue
-/// venue whose published costs judge it, the first minute, how many days, and its planted edge — none for noise.
+/// venue whose published costs judge it, the first minute, how many days, the series it writes and its planted edges —
+/// none for noise. <see cref="Edge"/> is part a's single edge; <see cref="Edges"/> any number more.
 /// </summary>
 public sealed record SyntheticMarketSpec(
-    ulong Seed, string Instrument, string VenueId, DateTimeOffset Start, int Days, SyntheticEdge? Edge = null);
+    ulong Seed, string Instrument, string VenueId, DateTimeOffset Start, int Days, SyntheticEdge? Edge = null)
+{
+    /// <summary>Planted edges beyond <see cref="Edge"/>.</summary>
+    public IReadOnlyList<SyntheticEdge> Edges { get; init; } = [];
+
+    /// <summary>The series the market writes, each one of <see cref="ProvingSources.Shapes"/>; the bare signal by default.</summary>
+    public IReadOnlyList<string> Series { get; init; } = [ProvingSources.Signal];
+
+    /// <summary>Every planted edge, <see cref="Edge"/> first.</summary>
+    public IReadOnlyList<SyntheticEdge> Planted => Edge is { } one ? [one, .. Edges] : Edges;
+
+    /// <summary>Whether the spec says anything part a's could not: an edge field, another series, a second edge.</summary>
+    internal bool Extended =>
+        Edges.Count > 0 || Series.Count != 1 || Series[0] != ProvingSources.Signal
+        || (Edge is { } e && e.Canonical != new SyntheticEdge(e.BetaTicks, e.HorizonMinutes).Canonical);
+}
 
 /// <summary>What <see cref="SyntheticMarket.Write"/> recorded, and the hashes that say it is the same market every time.</summary>
 /// <param name="Dataset">The dataset row, as the ledger recorded it.</param>
@@ -208,8 +215,14 @@ public static class SyntheticMarket
             throw new ArgumentException($"'{spec.VenueId}' is not a venue of this build's catalogue", nameof(spec));
         if (spec.Days is < 1 or > MaxDays)
             throw new ArgumentException($"a proving market spans 1 to {MaxDays} days, and this one {spec.Days}", nameof(spec));
-        if (spec.Edge is { HorizonMinutes: < 1 or > 60 })
-            throw new ArgumentException("a planted edge's horizon is 1 to 60 minutes", nameof(spec));
+        if (spec.Series.Count == 0 || spec.Series.Distinct(StringComparer.Ordinal).Count() != spec.Series.Count
+            || spec.Series.Any(s => ProvingSources.Shape(s) is null))
+            throw new ArgumentException(
+                $"a proving market writes one or more of the proving ground's series ({string.Join(", ", ProvingSources.Shapes.Select(s => s.Id))}), "
+                + $"each once, and this one names {(spec.Series.Count == 0 ? "none" : string.Join(", ", spec.Series))}", nameof(spec));
+        foreach (var edge in spec.Planted)
+            if (PlantedEdges.Refusal(spec, edge) is { } why)
+                throw new ArgumentException(why + ". Nothing was written.", nameof(spec));
 
         var start = spec.Start.ToUniversalTime();
         if (start.Second != 0 || start.Millisecond != 0 || start.Minute != 0)
@@ -229,7 +242,8 @@ public static class SyntheticMarket
         // revisions of the first's, and the first market's backtest would read the second's signal. Refused, before
         // anything is written; a window that starts where another ends is its own.
         var end = start.AddDays(spec.Days);
-        var held = tape.SourceTimes(ProvingSources.Synthetic, ProvingSources.Signal, spec.Instrument, start).Where(t => t < end).ToList();
+        var held = ProvingSources.Shapes
+            .SelectMany(s => tape.SourceTimes(ProvingSources.Synthetic, s.Id, spec.Instrument, start)).Where(t => t < end).ToList();
         if (held.Count > 0)
             throw new InvalidOperationException(
                 $"this market ({spec.Instrument}, seed {spec.Seed}, from {start:O} to {end:O}) overlaps a market already written in "
@@ -238,11 +252,12 @@ public static class SyntheticMarket
                 + "proving home holds one market per instrument and hour.");
 
         var hours = spec.Days * 24;
-        var signals = Signals(spec.Seed, hours);
+        var values = spec.Series.ToDictionary(s => s, s => Values(spec.Seed, s, ProvingSources.Shape(s)!.Count(spec.Days)), StringComparer.Ordinal);
+        var drift = PlantedEdges.Drift(spec, values);
         var dir = Path.Combine(home.DataDir, ProvingSources.Synthetic, spec.Instrument, Interval);
         var fetchedAt = start.AddDays(spec.Days).AddHours(1);
 
-        var files = WriteRaw(spec, key, start, hours, signals, Path.Combine(dir, "raw"), fetchedAt);
+        var files = WriteRaw(spec, key, start, hours, drift, Path.Combine(dir, "raw"), fetchedAt);
         var staged = Path.Combine(dir, $".staged-{key}.csv");
         var set = KlineNormaliser.Normalise([.. files.Select(f => new RawArchiveFile(f.Month, f.Path))], fetchedAt, staged);
 
@@ -261,24 +276,34 @@ public static class SyntheticMarket
         };
         var stored = new DatasetStore(db).RecordNew(record, dir);
 
+        // THE SERIES, EACH THROUGH THE TAPE'S ONE WRITER: one fetch per reading, received its first-seen delay after its source
+        // time, so the store classes it itself. The bare signal first, as part a wrote it, then each other series in the
+        // spec's order.
         var digest = new StringBuilder();
-        for (var k = 0; k < hours; k++)
+        var readings = 0;
+        foreach (var series in spec.Series)
         {
-            var at = start.AddHours(k).AddMinutes(SignalMinute);
-            var received = at + ProvingSources.Delay;
-            var payload = string.Create(CultureInfo.InvariantCulture,
-                $$"""{"symbol":"{{spec.Instrument}}","time":{{at.ToUnixTimeMilliseconds()}},"value":"{{SignalText(signals[k])}}"}""");
-            var appended = tape.Append(new TapeFetch
+            var shape = ProvingSources.Shape(series)!;
+            var texts = Texts(shape, values[series]);
+            for (var k = 0; k < texts.Length; k++)
             {
-                Source = ProvingSources.Synthetic,
-                Series = ProvingSources.Signal,
-                Url = ProvingSources.Origin + "/signal",
-                RequestedAt = received.AddMilliseconds(-100),
-                ReceivedAt = received,
-                HttpStatus = 200,
-                BodySha256 = Sha256Hex.Of(payload)
-            }, [new TapeItem(spec.Instrument, at, payload)]);
-            foreach (var row in tape.ObservationsOf(appended.FetchId)) digest.Append(row.PayloadSha256).Append('\n');
+                var at = start.AddMinutes(shape.SourceMinute(k));
+                var received = at + ProvingSources.Delay;
+                var payload = string.Create(CultureInfo.InvariantCulture,
+                    $$"""{"symbol":"{{spec.Instrument}}","{{shape.TimeField}}":{{at.ToUnixTimeMilliseconds()}},"{{shape.ValueField}}":"{{texts[k]}}"}""");
+                var appended = tape.Append(new TapeFetch
+                {
+                    Source = ProvingSources.Synthetic,
+                    Series = series,
+                    Url = ProvingSources.Origin + "/" + series,
+                    RequestedAt = received.AddMilliseconds(-100),
+                    ReceivedAt = received,
+                    HttpStatus = 200,
+                    BodySha256 = Sha256Hex.Of(payload)
+                }, [new TapeItem(spec.Instrument, at, payload)]);
+                foreach (var row in tape.ObservationsOf(appended.FetchId)) digest.Append(row.PayloadSha256).Append('\n');
+                readings++;
+            }
         }
 
         Directory.CreateDirectory(home.TruthDir);
@@ -292,22 +317,26 @@ public static class SyntheticMarket
             days = spec.Days,
             dataset = stored.Id,
             normalised_sha256 = stored.NormalisedSha256,
-            series = new { source = ProvingSources.Synthetic, series = ProvingSources.Signal, subject = spec.Instrument, field = ProvingSources.ValueField },
-            planted = spec.Edge is { } edge
-                ? new
-                {
-                    beta_ticks_per_unit = edge.BetaTicks,
-                    horizon_minutes = edge.HorizonMinutes,
-                    sign = edge.BetaTicks >= 0 ? "+" : "-",
-                    relation = "the return from the first hourly close after a reading is first seen gains beta ticks per unit of its value over the horizon"
-                }
-                : null
+            series = spec.Series.Select(id => ProvingSources.Shape(id)!).Select(shape => new
+            {
+                source = ProvingSources.Synthetic,
+                series = shape.Id,
+                subject = spec.Instrument,
+                time_field = shape.TimeField,
+                field = shape.ValueField,
+                cadence_minutes = shape.CadenceMinutes,
+                minute = shape.MinuteOffset,
+                first_seen_after_seconds = (long)ProvingSources.Delay.TotalSeconds,
+                family = shape.Family,
+                shape = shape.Words
+            }).ToList(),
+            planted = spec.Planted.Select((edge, i) => Manifest(spec, start, edge, i)).ToList()
         }) + "\n"));
 
         return new SyntheticMarketWritten(
             stored,
             Sha256Hex.Of(string.Concat(files.Select(f => f.ComputedSha256 + "\n"))),
-            hours, Sha256Hex.Of(digest.ToString()), truth);
+            readings, Sha256Hex.Of(digest.ToString()), truth);
     }
 
     /// <summary>
@@ -315,7 +344,54 @@ public static class SyntheticMarket
     /// instrument, venue, start, days and planted edge — so two markets share a name only when they are the same market.
     /// </summary>
     static string Key(SyntheticMarketSpec spec, DateTimeOffset start) => Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
-        $"{spec.Seed}|{spec.Instrument}|{spec.VenueId}|{start:O}|{spec.Days}|{spec.Edge?.BetaTicks.ToString(CultureInfo.InvariantCulture) ?? "-"}|{spec.Edge?.HorizonMinutes.ToString(CultureInfo.InvariantCulture) ?? "-"}"))[..16];
+        $"{spec.Seed}|{spec.Instrument}|{spec.VenueId}|{start:O}|{spec.Days}|{spec.Edge?.BetaTicks.ToString(CultureInfo.InvariantCulture) ?? "-"}|{spec.Edge?.HorizonMinutes.ToString(CultureInfo.InvariantCulture) ?? "-"}")
+        + (spec.Extended ? "|" + string.Join("|", spec.Series) + "|" + string.Join("|", spec.Planted.Select(e => e.Canonical)) : ""))[..16];
+
+    /// <summary>
+    /// ONE PLANTED EDGE AS THE MANIFEST STATES IT: its relation, its size in basis points per signal and its expected
+    /// Sharpe before and after the venue's round trip — computed from the spec by <see cref="PlantedEdges.Figures"/>,
+    /// never from a run.
+    /// </summary>
+    static object Manifest(SyntheticMarketSpec spec, DateTimeOffset start, SyntheticEdge edge, int index)
+    {
+        var shape = ProvingSources.Shape(edge.Series)!;
+        var figures = PlantedEdges.Figures(spec, edge);
+        return new
+        {
+            id = $"edge-{index + 1}",
+            series = edge.Series,
+            field = shape.ValueField,
+            beta_ticks_per_unit = edge.BetaTicks,
+            horizon_minutes = edge.HorizonMinutes,
+            sign = edge.BetaTicks >= 0 ? "+" : "-",
+            half_life_days = edge.HalfLifeDays,
+            regimes = edge.Regimes.Select(r => new
+            {
+                from_day = r.FromDay,
+                to_day = r.ToDay,
+                from = start.AddDays(r.FromDay).ToString("O", CultureInfo.InvariantCulture),
+                to = start.AddDays(r.ToDay).ToString("O", CultureInfo.InvariantCulture)
+            }).ToList(),
+            doctrine = edge.Doctrine == EdgeDoctrine.Inside ? "inside" : "beside",
+            relation = "the return from the first hourly close after a reading is first seen gains beta ticks per unit of its integer value, "
+                       + "times 2^(-t/H) with t the hours since the market's start and H the half-life in hours, inside its regime windows "
+                       + "and nowhere else, over the horizon",
+            reading_unit = $"one unit of the reading's integer value is {Unit(shape)} of '{shape.ValueField}'",
+            figures = new
+            {
+                readings = figures.Readings,
+                mean_weight = figures.MeanWeight,
+                bps_per_signal = figures.BpsPerSignal,
+                round_trip_bps = figures.RoundTripBps,
+                expected_sharpe_before_cost = figures.SharpeBeforeCost,
+                expected_sharpe_after_cost = figures.SharpeAfterCost,
+                basis = "computed from the spec, never from a run: one position per reading in the relation's direction, from the close the move "
+                        + "starts at to the end of its horizon, at the first open's price; E|z| = R(R+1)/(2R+1); the minute's noise variance "
+                        + "over the horizon; the venue's published taker fee and the app's slippage on both fills; annualised over 365 days"
+            }
+        };
+    }
+
 
     /// <summary>
     /// WRITES <paramref name="bytes"/> AT <paramref name="path"/>, NEVER OVER ANOTHER FILE: a file already there with the
@@ -336,17 +412,39 @@ public static class SyntheticMarket
         }
     }
 
-    /// <summary>The signal's integer value for each hour, on a stream of its own.</summary>
-    static long[] Signals(ulong seed, int hours)
+    /// <summary>
+    /// A SERIES' INTEGER VALUE FOR EACH READING, ON A STREAM OF ITS OWN: the bare signal's stream is part a's, and each other
+    /// series' is the seed under its own constant, so adding a series to a market changes none of the others.
+    /// </summary>
+    static long[] Values(ulong seed, string series, int count)
     {
-        var rng = new SplitMix64(seed ^ 0x5349474E414C0001UL);
-        var z = new long[hours];
-        for (var k = 0; k < hours; k++) z[k] = rng.Between(-SignalRange, SignalRange);
+        var rng = new SplitMix64(seed ^ Stream(series));
+        var z = new long[count];
+        for (var k = 0; k < count; k++) z[k] = rng.Between(-SignalRange, SignalRange);
         return z;
     }
 
+    /// <summary>The constant a series' stream is the seed under: "SIGNAL" for part a's, the series' own name for the rest.</summary>
+    static ulong Stream(string series) => series switch
+    {
+        ProvingSources.Signal => 0x5349474E414C0001UL,
+        _ => System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("proving-series:" + series)))
+    };
+
+    /// <summary>The payload text of each reading of a series, from its integer values.</summary>
+    static string[] Texts(SyntheticSeriesShape shape, long[] z) => shape.Id switch
+    {
+        _ => [.. z.Select(SignalText)]
+    };
+
+    /// <summary>What one unit of a series' integer value is, in its payload's terms.</summary>
+    static string Unit(SyntheticSeriesShape shape) => shape.Id switch
+    {
+        _ => "0.0001"
+    };
+
     /// <summary>The raw files, one per calendar month, each row a vendor-shaped closed one-minute kline.</summary>
-    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, string key, DateTimeOffset start, int hours, long[] signals, string rawDir,
+    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, string key, DateTimeOffset start, int hours, long[] planted, string rawDir,
         DateTimeOffset fetchedAt)
     {
         Directory.CreateDirectory(rawDir);
@@ -359,18 +457,15 @@ public static class SyntheticMarket
         {
             if (rng.Between(1, 24) == 1) high = !high;
 
-            // THE PLANTED MOVE OF THIS HOUR: reading h − 1's, first seen at ten past the hour before, spread over the horizon
-            // from this hour's open — the first hourly close after it arrived.
-            var move = spec.Edge is { } edge && h > 0 ? edge.BetaTicks * signals[h - 1] : 0L;
-            var horizon = spec.Edge?.HorizonMinutes ?? 60;
-
             for (var m = 0; m < 60; m++)
             {
                 var noise = 0L;
                 for (var i = 0; i < 4; i++) noise += rng.Between(-StepHalfWidth, StepHalfWidth);
                 if (high) noise *= 2;
 
-                var drift = m < horizon ? move / horizon + (m == horizon - 1 ? move % horizon : 0) : 0L;
+                // THE PLANTED DRIFT OF THIS MINUTE (PlantedEdges.Drift): every edge's move from the first hourly close after its
+                // reading was first seen, spread over its horizon.
+                var drift = planted[h * 60 + m];
                 var open = price;
                 var close = Math.Max(1L, open + noise + drift);
                 var hi = Math.Max(open, close) + rng.Between(0, 3);
