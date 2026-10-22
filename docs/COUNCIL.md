@@ -32,6 +32,9 @@ the build plan; it is not evidence that containment, accounting or unattended li
 
 1. Only in-process owner controls grant authority, and every order passes the code-enforced capability, freshness,
    reconciliation, capital and loss gates regardless of any agent's opinion or of the AI budget that remains.
+   *Amended 2026-10-23 (the owner's decision, `docs/research/2026-10-23/R24-security-board.md`): limit and capital authority is granted by the
+   organisation's security board through recorded two-seat broker acts; the owner's own controls stay in-process; every gate in this rule's second half
+   is unchanged.*
 2. Agents and submitted strategies cannot reach credentials, the active controls, another role's writable state or the
    private evaluation evidence; inbox material never grants authority.
 3. Every inference launch has a durable task, attempt, input revision, execution identity and a role-and-global spending

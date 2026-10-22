@@ -262,7 +262,7 @@ Each proposal is a record shown to the owner; the owner acts on it, or no one do
 | ORG-001 | a position grants no system privilege | — | board seats are outside `org_*`; their verbs are their only reach |
 | CHANGE-001 | — | — | the board proposes changes to its own power; only the owner makes them |
 | Containment (the activation gate, the armed-live refusal) | unchanged | — | board seats wait for a recorded proven cell; live is armed only with board seats that refusal admits |
-| COUNCIL rule 1 ("Only in-process owner controls grant authority") | the gates in its second half | the grant of limit and capital authority | changed by the owner. COUNCIL.md is not amended here: `U-board-a`'s landing amends it, or the orchestrator does |
+| COUNCIL rule 1 ("Only in-process owner controls grant authority") | the gates in its second half | the grant of limit and capital authority | changed by the owner. COUNCIL.md rule 1 carries a dated note, added by the orchestrator at review |
 | Watcher invisibility (ORGANISATION § 9) | unchanged | — | extended: no board-reachable total, packet or page names it |
 | No terminal; honesty | unchanged | — | the board page and the veto are in the app; founding values are labelled the app's; each board seat's enforcement class is shown |
 | No backward compatibility | — | — | owner-set fields go without migration; an older home in live is refused, never converted |
@@ -333,6 +333,7 @@ Docs only — no product code, test or build:
 - `docs/VISION.md` — §§ 5.3, 6.3, 8, 13.1, 13.3 and 15;
 - `docs/ORGANISATION.md` § 15 — new rows, O7's and the chief's re-scope, the order and a re-sequence note;
 - `CLAUDE.md` — the operator-authority paragraph and the two-press line.
+- at the orchestrator's review: `docs/COUNCIL.md` rule 1's dated note, and open question 12.
 
 Outside the repository: the fleet's `tmp/DIRECTION-2026-10-23/inventory.md`.
 
@@ -354,6 +355,9 @@ Outside the repository: the fleet's `tmp/DIRECTION-2026-10-23/inventory.md`.
 10. **Wallet keys for on-chain ventures.** Default: decided when the first such venture is proposed — app-held keys, his funding, no on-chain venture
     before.
 11. **The raise-pace guard** (at most monthly, at most 25 % a step) on live widenings. Default: adopted as an app rule.
+12. **Who appoints the chief?** His answers reached limits and capital, not structure; § 4.1 also gives the board the chief's appointment and
+    replacement and the structural vetoes, because his seat becomes "a board, not an operator" (VISION § 8) and the chief proposes to the board. Default
+    (the orchestrator's, added at review): the board appoints by a two-seat act; his narrowing veto removes a chief, and he may take the appointment back.
 
 ---
 
