@@ -1525,6 +1525,14 @@ public sealed class TurnMeter
     public AiSpendToday Today => TodayIn(BillingClasses.Unknown);
 
     /// <summary>
+    /// EVERY TURN OF THE AI'S SINCE MIDNIGHT, WHICHEVER CLASS PAID FOR IT (<c>U-billing-followups</c> item 3): plan, key and unknown, the
+    /// finished ones, as <see cref="AiAttemptTotals.Turns"/> counts them — never the app's own principals. <see cref="Today"/> is the money
+    /// cap's reading, whose turns are the key and unknown rows only, so a day of plan turns read there as none. Zero where the ledger
+    /// cannot be read, as every reading here answers.
+    /// </summary>
+    public int TurnsToday => ReadTotals(_now()).Turns;
+
+    /// <summary>
     /// TODAY AGAINST ONE CLASS'S CEILING (<c>U-billing-classes</c>): <c>key</c> the money cap over the day's key and unknown rows,
     /// <c>plan</c> the plan's capacity over its plan and unknown rows, <c>unknown</c> both — the money reading carrying the plan's.
     /// </summary>
