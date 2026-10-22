@@ -233,4 +233,31 @@ public class MaterialAppOriginTests
         Assert.Contains($"`{ResearchLibrary.ReferencePath}`", mission);
         Assert.Contains("never counted as your work", mission);
     }
+    /// <summary>
+    /// A FOLDER OR FILE THE CELL LINKED OUTSIDE ITS HOME IS NEVER MEASURED AS ITS OWN (<c>U-execution-environment</c> fix pass 4, the second
+    /// re-review's [P2] 4). The material pass walks a position's home in the unconfined app: <c>research/k</c> linked to a seat's codex
+    /// folder, and <c>research/creds.json</c> linked to its login, would record the login's size and hash in <c>material</c> as the
+    /// position's file — the measurement table describing a file the home does not hold. Neither gains a row; the home's own file does.
+    /// </summary>
+    [UnixFact]
+    public void A_folder_or_file_the_cell_linked_outside_its_home_is_never_measured()
+    {
+        var (db, root, files) = World();
+        using var _ = db;
+        WorkspaceBuilder.BuildAll(Context(CouncilRoles.Operations), root, files);
+        var codex = Path.Combine(root, "seat-home", "codex");
+        Directory.CreateDirectory(codex);
+        File.WriteAllText(Path.Combine(codex, "auth.json"), "{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}");
+        var research = Path.Combine(Home(root, CouncilRoles.Research), "research");
+        Directory.CreateSymbolicLink(Path.Combine(research, "k"), codex);
+        File.CreateSymbolicLink(Path.Combine(research, "creds.json"), Path.Combine(codex, "auth.json"));
+        File.WriteAllText(Path.Combine(research, "own.md"), "the position's own note");
+
+        new MaterialScanner(db, root, at => true, files).Scan();
+
+        var rows = new MaterialStore(db).Present().Select(m => m.RelPath).ToList();
+        Assert.True(!rows.Any(r => r.Contains("/k/", StringComparison.Ordinal) || r.EndsWith("creds.json", StringComparison.Ordinal)),
+            $"material measured a file outside the home as the position's own: {string.Join(", ", rows.Where(r => r.Contains("/k/") || r.EndsWith("creds.json")))}");
+        Assert.Contains(rows, r => r.EndsWith("research/own.md", StringComparison.Ordinal));
+    }
 }
