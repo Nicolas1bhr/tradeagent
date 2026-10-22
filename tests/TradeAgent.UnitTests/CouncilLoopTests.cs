@@ -1248,6 +1248,35 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// A ROLE'S WAKE FOLDER LINKED TO ANOTHER'S IS NEVER CONSUMED THROUGH (<c>U-execution-environment</c> fix pass 4, the second re-review's
+    /// [P3] 6). An executor's cell writes its whole home, <c>.tradeagent</c> included, and the loop consumes <c>next.json</c> there in the
+    /// unconfined app: with that folder a link to another position's, the other position's request to be left alone was deleted and lost.
+    /// It remains, and the turning role asked for nothing.
+    /// </summary>
+    [UnixFact]
+    public async Task A_wake_folder_linked_to_another_roles_is_never_consumed_through()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var now = Noon();
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+        var theirs = Path.Combine(host.HomeFor(CouncilRoles.Operations), ".tradeagent");
+        Directory.CreateDirectory(theirs);
+        File.WriteAllText(Path.Combine(theirs, "next.json"), """{"after_seconds": 600}""");
+        var mine = Path.Combine(host.HomeFor(CouncilRoles.Research), ".tradeagent");
+        if (Directory.Exists(mine)) Directory.Delete(mine, recursive: true);
+        Directory.CreateSymbolicLink(mine, theirs);
+
+        host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Review(now), CouncilRoles.Research),
+            MissionEventKind.Review, now, role: CouncilRoles.Research);
+        await loop.TurnAsync();
+
+        Assert.True(File.Exists(Path.Combine(theirs, "next.json")), "the other position's request to be left alone was consumed through the link");
+        Assert.DoesNotContain(host.Events.OfKind(MissionEventKind.Self), e => e.For == CouncilRoles.Research);
+    }
+
+    /// <summary>
     /// M0 ATTEMPT 3's QUIET HOURS, REPLAYED — RED FIRST (<c>U-quiet-review</c>).
     ///
     /// <para><c>BUILD-STATUS.md</c>, gap (b): after the last brief and report (15:54:58Z) nothing woke

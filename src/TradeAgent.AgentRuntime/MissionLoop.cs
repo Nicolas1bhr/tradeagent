@@ -4328,12 +4328,16 @@ public sealed class MissionLoop
     /// </summary>
     TimeSpan AskedForDelay(string role)
     {
-        var path = Path.Combine(_host.HomeFor(role), WakeFile.Replace('/', Path.DirectorySeparatorChar));
+        var home = _host.HomeFor(role);
         try
         {
-            if (!File.Exists(path)) return TimeSpan.Zero;
-            var text = File.ReadAllText(path);
-            File.Delete(path);
+            // NEVER THROUGH A LINK (U-execution-environment fix pass 4, the second re-review's [P3] 6): an executor's cell writes its whole
+            // home, `.tradeagent` included, so that folder may be a link to another position's — whose request to be left alone a delete
+            // through it would consume. Read and consumed through HomeFiles: a link at any component refuses both, and it asks for nothing.
+            string text;
+            try { text = HomeFiles.ReadAllText(home, WakeFile); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return TimeSpan.Zero; }
+            HomeFiles.Remove(home, WakeFile);
 
             var seconds = Json.Read<MissionNext>(text)?.AfterSeconds;
             if (seconds is null or <= 0 || double.IsNaN(seconds.Value)) return TimeSpan.Zero;
