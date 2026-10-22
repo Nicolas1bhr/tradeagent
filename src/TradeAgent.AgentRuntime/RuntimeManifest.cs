@@ -46,6 +46,13 @@ public sealed class InstallPlan
     /// <summary>Whether this plan pins the program (<see cref="ExecutableSha256"/>).</summary>
     public bool Pinned => ExecutableSha256 is { Length: > 0 };
 
+    /// <summary>
+    /// THE VENDOR'S OTHER PROGRAMS THE PIN STARTS FROM BESIDE ITSELF, each pinned like the program (<c>U-cli-code-mode</c>): a seat
+    /// whose class lets the program start one is refused in words when it is missing or is not the pin, naming both hashes — and it
+    /// is never run to ask what it is (<see cref="SeatProfile.CompanionRefusal"/>). Empty for none.
+    /// </summary>
+    public CompanionPin[] Companions { get; set; } = [];
+
     public string? ArchiveEntry { get; set; }
 
     /// <summary>
@@ -56,6 +63,33 @@ public sealed class InstallPlan
 
     public string? WingetId { get; set; }
     public string? ManualUrl { get; set; }
+}
+
+/// <summary>
+/// ONE PROGRAM A PINNED PROGRAM STARTS FROM BESIDE ITSELF (<see cref="InstallPlan.Companions"/>): its file name on this platform, its
+/// SHA-256 measured from the same release archive as the program's own pin, the folders the program looks in — relative to the
+/// program's REAL folder, links resolved, in the vendor's order — and the feature that, disabled in a seat class's deny set, means
+/// the program never starts it there. Data, because the layout and the names are the vendor's.
+/// </summary>
+public sealed class CompanionPin
+{
+    /// <summary>The file name, e.g. <c>codex-code-mode-host</c> (<c>.exe</c> on Windows).</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>SHA-256, lower-case hex, of the program itself.</summary>
+    public string Sha256 { get; set; } = "";
+
+    /// <summary>
+    /// The folders it may be started from, relative to the pinned program's real folder. Every one that holds the file must hold
+    /// the pin — whichever the vendor picks is then the pin — and at least one must.
+    /// </summary>
+    public string[] Places { get; set; } = ["."];
+
+    /// <summary>
+    /// The vendor feature that starts it, or null for always: a class whose deny set carries <c>--disable</c> this feature never starts
+    /// it, and is not refused for it.
+    /// </summary>
+    public string? Feature { get; set; }
 }
 
 /// <summary>
@@ -1394,6 +1428,7 @@ public static class RuntimeCatalog
             Sha256 = "25c6fe4e46d5bff939312fc46de67ace37561f6f1f89b409af63fd8cc6098425",
             Version = CodexVersion,
             ExecutableSha256 = "9e7c59c05cc1ce5677b1f94e835b2ac038ca3be14504e78d558eacdb0ea3f55d",
+            Companions = [CodeModeHost(on, "b905b5169bd758dbe3c31ca22c22ad0c24df0047ba7ae32652c706d3ac3ba78d")],
             NpmPackage = "@openai/codex",
             ManualUrl = "https://developers.openai.com/codex/cli/"
         },
@@ -1408,6 +1443,8 @@ public static class RuntimeCatalog
                 "dff0954438fa455c2197ddb1f421d8d68625d98de610f76bedb6e5bc837ea35b"),
             Version = CodexVersion,
             ExecutableSha256 = LinuxCpu(on, "f34a4d2301892ae96c90097786bfe5dc269f187b6f69faf42a7b357b8c081e35", "fbbaec80443919f86dd63648a0b62759cf6f1d0e09310602fde96885e0bceb3e"),
+            Companions = [CodeModeHost(on, LinuxCpu(on, "b33e8a5283f3c65c2a0aca6d43a59cfe850f624d8fa16992e3cad4fcc27c14e1",
+                "fbccde22982e3e679678e203a9c18eee8342fb04b096063d05159f1f80df4fd8"))],
             NpmPackage = "@openai/codex",
             ManualUrl = "https://developers.openai.com/codex/cli/"
         },
@@ -1415,11 +1452,13 @@ public static class RuntimeCatalog
         // release's own build for the processor — the binary inside codex-package-{cpu}-apple-darwin.tar.gz.
         { Os: HostOs.MacOS, Arch: Architecture.Arm64 } => new InstallPlan
         {
-            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "09fa44fdc37a5fc70dc1ace31235f90468a2e193d0e85f7552eab068ea2582be"
+            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "09fa44fdc37a5fc70dc1ace31235f90468a2e193d0e85f7552eab068ea2582be",
+            Companions = [CodeModeHost(on, "6ac432b170e2c30f90de5af0da584def5201497a0d3d988d37dc58b951236b2f")]
         },
         { Os: HostOs.MacOS, Arch: Architecture.X64 } => new InstallPlan
         {
-            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "8757e2a2869f0d9aafe576757a23ecf5774c1b7054a2580833dbde930197eafc"
+            Kind = InstallKind.None, Version = CodexVersion, ExecutableSha256 = "8757e2a2869f0d9aafe576757a23ecf5774c1b7054a2580833dbde930197eafc",
+            Companions = [CodeModeHost(on, "345b92c2a331fbd2dbc8be3ed7ac5e122c778ce2384ad7fa378932094d00d2b2")]
         },
         _ => new InstallPlan { Kind = InstallKind.None }
     };
@@ -1430,6 +1469,23 @@ public static class RuntimeCatalog
     /// is of the file unpacked from that archive the same day. A new release is a data change here, proved again first.
     /// </summary>
     const string CodexVersion = "0.160.1";
+
+    /// <summary>
+    /// CODE MODE'S HOST PROGRAM BESIDE THE PINNED CODEX (<c>U-cli-code-mode</c>), started by codex for a seat whose class leaves
+    /// <c>code_mode_host</c> on — the CLI class. Its SHA-256 per platform was MEASURED on 2026-10-23 from the vendor's own
+    /// <c>codex-package-{target}.tar.gz</c> archives of this release — the archives every program pin here comes from, each archive's
+    /// digest equal to GitHub's and each <c>bin/codex</c> to its pin — unpacked in a scratch folder and hashed, never run; Windows's
+    /// also equals GitHub's digest of the standalone <c>codex-code-mode-host-x86_64-pc-windows-msvc.exe</c>. The vendor's package puts it
+    /// at <c>bin/</c> beside codex (<c>scripts/codex_package/layout.py:55-56,138</c>), and codex looks first in the package's
+    /// <c>codex-resources/</c>, then beside its own real path (<c>install-context/src/lib.rs:176-206</c>): both places, in that order.
+    /// </summary>
+    static CompanionPin CodeModeHost(HostPlatform on, string sha256) => new()
+    {
+        Name = on.IsWindows ? "codex-code-mode-host.exe" : "codex-code-mode-host",
+        Sha256 = sha256,
+        Places = ["../codex-resources", "."],
+        Feature = "code_mode_host"
+    };
     const string CodexRelease = "https://github.com/openai/codex/releases/download/rust-v" + CodexVersion;
 
     /// <summary>The vendor's own word for a Linux computer's processor.</summary>

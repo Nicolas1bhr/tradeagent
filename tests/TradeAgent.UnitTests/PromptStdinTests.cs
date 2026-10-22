@@ -356,7 +356,7 @@ public class PromptStdinTests
 
         var codex = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
         codex.Executable = exe;
-        codex.Install.ExecutableSha256 = SeatProfile.Sha256Of(exe);
+        SeatHomeTests.PinTo(codex, exe);
         codex.Seat!.Home = Path.Combine(dir, "seat-home");
         return (codex, exe, new Recording(dir));
     }

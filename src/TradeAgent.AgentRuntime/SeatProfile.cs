@@ -733,6 +733,10 @@ public static class SeatProfile
         if (PinRefusal(manifest, exe) is { } notThePin)
             return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notThePin);
 
+        // THE PROGRAMS THE PIN STARTS BESIDE ITSELF, EACH THE PIN TOO (U-cli-code-mode): for the CLI class, code mode's host.
+        if (CompanionRefusal(manifest, exe, seatClass) is { } notItsCompanion)
+            return SeatVerdict.Refuse(ErrorCode.AI_VERSION_UNSUPPORTED, notItsCompanion);
+
         var deny = seat.ArgsFor(seatClass, launch.Door);
         if (deny.Length > 0 && !Carries(argv, deny))
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
@@ -829,7 +833,8 @@ public static class SeatProfile
     /// <summary>
     /// <see cref="ProfileHash(RuntimeManifest, string, byte[], SeatReading)"/> FOR ONE SEAT CLASS: that class's deny set as written (the
     /// door's slot unfilled, so a restart's new port is the same profile), and — for any class but the CLI's — the class's name, its
-    /// environment, and the offered tools its surface was verified as. The CLI class hashes exactly as it always has.
+    /// environment, and the offered tools its surface was verified as. Every class hashes the pinned companions its program may start
+    /// (<see cref="CompanionsFor"/>; <c>U-cli-code-mode</c>), so the CLI class's profile changed with code mode's host.
     /// </summary>
     public static string ProfileHash(RuntimeManifest manifest, string exe, byte[] config, SeatReading reading, string seatClass,
         IReadOnlyList<string>? offered)
@@ -852,6 +857,9 @@ public static class SeatProfile
         Part("config", config);
         Part("features", Encoding.UTF8.GetBytes(reading.Features));
         Part("mcp", Encoding.UTF8.GetBytes(reading.Mcp));
+        // THE PINNED PROGRAMS THE CLASS'S PROGRAM STARTS BESIDE ITSELF (U-cli-code-mode), verified equal to their files before this.
+        Part("companions", Encoding.UTF8.GetBytes(string.Join('\0',
+            CompanionsFor(manifest, seatClass).Select(c => c.Name + "=" + c.Sha256.Trim().ToLowerInvariant()))));
         if (seatClass != SeatPlan.CliClass)
         {
             Part("class", Encoding.UTF8.GetBytes(seatClass));
@@ -1011,6 +1019,86 @@ public static class SeatProfile
                $"The program it found, {exe}, has SHA-256 {found}, version unknown — not run: TradeAgent never runs a program " +
                $"that is not the pin, not even to ask its version. {repair}";
     }
+
+    /// <summary>
+    /// The companions <paramref name="seatClass"/>'s program may start: every one of the plan's, less those whose feature the class's
+    /// deny set disables (<c>--disable</c> that feature, as one adjacent pair).
+    /// </summary>
+    public static IEnumerable<CompanionPin> CompanionsFor(RuntimeManifest manifest, string seatClass)
+    {
+        var deny = manifest.Seat?.ArgsFor(seatClass) ?? [];
+        bool Disabled(string feature)
+        {
+            for (var i = 0; i + 1 < deny.Length; i++)
+                if (deny[i] == "--disable" && deny[i + 1] == feature) return true;
+            return false;
+        }
+        return manifest.Install.Companions.Where(c => c.Feature is not { Length: > 0 } f || !Disabled(f));
+    }
+
+    /// <summary>
+    /// NULL WHEN EVERY PROGRAM <paramref name="exe"/> MAY START BESIDE ITSELF FOR <paramref name="seatClass"/> IS ITS PIN, or the refusal
+    /// in words (<c>U-cli-code-mode</c>): none found where the program looks, or one found that hashes otherwise — naming the file, both
+    /// hashes, the pinned version and the repair. Like the program's own pin, a companion that is not the pin is never run, not even to
+    /// ask its version. Where the program looks is relative to its REAL folder, links resolved, as the vendor resolves it.
+    /// </summary>
+    public static string? CompanionRefusal(RuntimeManifest manifest, string exe, string seatClass)
+    {
+        var companions = CompanionsFor(manifest, seatClass).ToList();
+        if (companions.Count == 0) return null;
+
+        string folder;
+        try { folder = Path.GetDirectoryName(RealPath(exe)) ?? Path.GetDirectoryName(Path.GetFullPath(exe))!; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { folder = Path.GetDirectoryName(Path.GetFullPath(exe))!; }
+
+        var repair = manifest.Install.Kind is InstallKind.Download or InstallKind.Npm or InstallKind.Winget
+            ? "Install the AI assistant again from TradeAgent and it puts that exact version, with this program, in its own folder."
+            : $"TradeAgent cannot install it on this computer, so {manifest.DisplayName} {manifest.Install.Version ?? ""} has to be installed " +
+              "as its vendor packages it, with this program beside it.";
+        foreach (var companion in companions)
+        {
+            var pin = companion.Sha256.Trim();
+            var places = companion.Places.Length == 0 ? ["."] : companion.Places;
+            var paths = places.Select(p => Path.GetFullPath(Path.Combine(folder, p.Replace('/', Path.DirectorySeparatorChar), companion.Name))).ToList();
+            var found = paths.Where(File.Exists).ToList();
+            if (found.Count == 0)
+                return $"TradeAgent will not start {manifest.DisplayName} {manifest.Install.Version ?? "(pinned)"} without its own {companion.Name}, " +
+                       $"SHA-256 {pin}: none is at {string.Join(" or ", paths)}. Without it every command the AI tries fails, and its turns " +
+                       $"would look like work while doing none. {repair}";
+            foreach (var path in found)
+            {
+                string hash;
+                try { hash = Sha256Of(path); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { hash = $"unreadable: {ex.Message}"; }
+                if (string.Equals(hash, pin, StringComparison.OrdinalIgnoreCase)) continue;
+                return $"TradeAgent starts {manifest.DisplayName} {manifest.Install.Version ?? "(pinned)"} only beside its own {companion.Name}, " +
+                       $"SHA-256 {pin}. The one at {path} has SHA-256 {hash}, version unknown — not run: TradeAgent never lets the AI start a " +
+                       $"program that is not the pin. {repair}";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> with every link resolved, as the vendor's <c>canonicalize</c> resolves it: <c>realpath</c> on Linux and
+    /// macOS, the final link target on Windows.
+    /// </summary>
+    static string RealPath(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? Path.GetFullPath(path);
+        var resolved = realpath(path, IntPtr.Zero);
+        if (resolved == IntPtr.Zero) throw new IOException($"{path} could not be resolved (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+        try { return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(resolved) ?? path; }
+        finally { free(resolved); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true, EntryPoint = "realpath")]
+    static extern IntPtr realpath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, IntPtr resolved);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "free")]
+    static extern void free(IntPtr pointer);
 
     static bool SameBytes(string path, byte[] bytes) => ReadNoFollow(path) is { } held && held.AsSpan().SequenceEqual(bytes);
 
