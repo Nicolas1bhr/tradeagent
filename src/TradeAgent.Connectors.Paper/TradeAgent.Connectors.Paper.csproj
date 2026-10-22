@@ -11,7 +11,7 @@
     <!-- The book is a SQLite file of this connector's own, beside the app's but never inside it.
          Declared here rather than taken transitively from Core, because this project opens a
          connection itself. Same versions Core pins, for the reason Core pins them. -->
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
   </ItemGroup>
 </Project>
