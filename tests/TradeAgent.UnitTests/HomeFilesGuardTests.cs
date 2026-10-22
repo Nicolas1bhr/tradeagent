@@ -36,9 +36,16 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
     [
         typeof(WorkspaceBuilder), typeof(ResearchLibrary), typeof(GrantedWorkerTools), typeof(ToolPaths), typeof(CouncilRelay),
         typeof(WorkspaceRevisions), typeof(MissionLoop), typeof(Backtests), typeof(MaterialScanner), typeof(WorkspaceReads),
-        typeof(AgentSession), typeof(AgentSupervisor), typeof(AppHost), typeof(Canon), typeof(ApiConversation), typeof(ApiAgentRuntime),
+        typeof(AgentSession), typeof(AgentSupervisor), typeof(AppHost), typeof(Canon), typeof(ApiConversation), HarnessRuntime,
         typeof(CliAgentRuntime)
     ];
+
+    /// <summary>
+    /// The harness's runtime type, reached through one of its static members: this guard reads its IL and never builds one, and
+    /// <c>SuiteReachesNoVendorTests</c> refuses a test that names the type itself unless it sets a base URL (static access is its stated
+    /// exception, since it names no instance).
+    /// </summary>
+    static Type HarnessRuntime => ((Func<string, bool>)ApiAgentRuntime.Serves).Method.DeclaringType!;
 
     /// <summary>
     /// THE REVIEWED PATH-BASED <c>System.IO</c> CALLS IN <see cref="Scanned"/>: the method, the member, how many, and why it is never a
@@ -77,6 +84,12 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("ToolPaths.LinkInside", "Directory.ResolveLinkTarget", 1, "the path check's early refusal of a link (the link's own target, not followed)"),
         ("ToolPaths.LinkInside", "File.Exists", 1, "the path check's early refusal of a link, in words; every open of the path goes through HomeFiles"),
         ("ToolPaths.LinkInside", "File.ResolveLinkTarget", 1, "the path check's early refusal of a link (the link's own target, not followed)"),
+        ("Backtests.Link", "Directory.Exists", 1, "the program check's early refusal of a link out, in words; the read goes through HomeFiles"),
+        ("Backtests.Link", "DirectoryInfo..ctor", 1, "the program check's early refusal of a link out, in words; the read goes through HomeFiles"),
+        ("Backtests.Link", "FileInfo..ctor", 1, "the program check's early refusal of a link out, in words; the read goes through HomeFiles"),
+        ("Backtests.Link", "FileSystemInfo.get_LinkTarget", 1, "the program check's early refusal of a link out, in words; the read goes through HomeFiles"),
+        ("Backtests.Link", "FileSystemInfo.ResolveLinkTarget", 1, "where a link leads, to refuse it; nothing is read through it"),
+        ("Backtests.Link", "FileSystemInfo.get_FullName", 1, "a path string, no disk access"),
 
         // ---- pre-existing, not this unit's ---------------------------------------------------------------------------------------
         ("CouncilRelay.Deliver", "Directory.CreateDirectory", 1, "the legacy pair claims no containment — CARD"),
