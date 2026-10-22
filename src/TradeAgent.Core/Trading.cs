@@ -556,7 +556,10 @@ public sealed class TradeAgentSettings
     public long AiTurnAllowanceOutputTokens { get; set; } = TurnAllowance.Default.OutputTokens;
 
     /// <summary>
-    /// THE MOST THE AI MAY SPEND ON ITSELF IN ONE LOCAL DAY, in <c>costs.json</c>'s currency.
+    /// THE MOST THE AI MAY SPEND ON ITSELF IN ONE LOCAL DAY, in <c>costs.json</c>'s currency — IN REAL MONEY (<c>U-billing-classes</c>):
+    /// the ceiling of every launch billed to an API key (the app's harness, perception's decision model, a CLI signed in with a pasted
+    /// key) and of every launch whose billing nobody established. A turn on the owner's AI plan is counted against
+    /// <see cref="AiPlanDailyCapacity"/> instead, and never here.
     ///
     /// The AI's mission is to make at least enough to pay for itself, and half of that sentence is
     /// its own bill: turns run back to back for as long as the machine is on, so without a ceiling
@@ -573,6 +576,21 @@ public sealed class TradeAgentSettings
     /// could read must not be the event that takes the ceiling off.
     /// </summary>
     public decimal AiDailyCostCap { get; set; } = 5m;
+
+    /// <summary>
+    /// THE MOST OF THE OWNER'S AI PLAN THE AI MAY USE IN ONE LOCAL DAY (<c>U-billing-classes</c>; ORGANISATION § 10), as a LIST-PRICE
+    /// EQUIVALENT in <c>costs.json</c>'s currency — what the day's turns on his ChatGPT sign-in would cost at the vendor's list price.
+    /// It is NOT money: those turns are capacity his subscription includes. It is the ceiling of every launch billed to the plan and of
+    /// every launch whose billing nobody established; <see cref="AiDailyCostCap"/> bounds none of them.
+    ///
+    /// <para>Forty is the owner's own figure (ORGANISATION § 16, 2026-10-02: "a separate plan-capacity ceiling at the equivalent of $40
+    /// a day"). The vendor's own limit may stop turns sooner — its estimates "are not fixed message limits" — and his own Codex use
+    /// shares the plan without being counted here. RAISING it asks twice, as the money cap's raise does; lowering it saves in one.</para>
+    ///
+    /// <para><b>Zero means no plan turns at all</b>, exactly as the money cap's zero means no spending, and it is what
+    /// <see cref="Unreadable"/> falls to.</para>
+    /// </summary>
+    public decimal AiPlanDailyCapacity { get; set; } = 40m;
 
     /// <summary>
     /// THE MOST PERCEPTION MAY SPEND IN ONE LOCAL DAY — the decision models' own budget (<c>U-decision-port</c>), in
@@ -737,6 +755,7 @@ public sealed class TradeAgentSettings
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
+    ///   AiPlanDailyCapacity = 0   and use none of the owner's AI plan either
     ///   PerceptionDailyBudget = 0 no decision model is called either
     ///   Campaign*Budget = 0       a campaign opened from an unreadable row allows no attempt at all
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
@@ -765,6 +784,8 @@ public sealed class TradeAgentSettings
         // Zero is the smallest this field has and it means no spending, so a row nobody could read
         // is not the event that lifts the ceiling. The loop is not running on this row anyway.
         AiDailyCostCap = 0m,
+        // And the plan's capacity: no plan turn is taken on a row nobody could read either.
+        AiPlanDailyCapacity = 0m,
         // And perception's own budget inside it: no decision model is called on a row nobody could read.
         PerceptionDailyBudget = 0m,
         // The same reading, for the same reason: a campaign opened while the settings cannot be read
@@ -877,7 +898,7 @@ public sealed record AiSpendToday
     /// <summary>
     /// THE CEILING THIS READING IS AGAINST (<c>U-billing-classes</c>): <c>key</c> — the money cap
     /// (<see cref="TradeAgentSettings.AiDailyCostCap"/>) over the day's <c>key</c> and <c>unknown</c> rows — or <c>plan</c> — the plan's
-    /// capacity (<c>AiPlanDailyCapacity</c>), a list-price equivalent and never money, over the day's
+    /// capacity (<see cref="TradeAgentSettings.AiPlanDailyCapacity"/>), a list-price equivalent and never money, over the day's
     /// <c>plan</c> and <c>unknown</c> rows. <see cref="Cap"/>, <see cref="Spent"/> and <see cref="Reserved"/> are that ceiling's.
     /// </summary>
     public string Class { get; init; } = Db.BillingClasses.Key;
