@@ -207,6 +207,92 @@ public partial class OrgAssignmentTests
     }
 
     /// <summary>
+    /// A LAUNCH OF <paramref name="holder"/> AT <paramref name="at"/> WOKEN BY THE OWNER'S WORDS ALONE — so it serves no mandate —
+    /// that ended there having asked to be woken again at <paramref name="asked"/> (its <c>self</c> wake, as the loop writes it).
+    /// Answers the launch's id.
+    /// </summary>
+    static string OwnerTurnAsking(Database db, string holder, DateTimeOffset at, DateTimeOffset asked, long message)
+    {
+        var events = new MissionEventStore(db);
+        var owner = MissionEventIds.ForRole(MissionEventIds.Owner(message), holder);
+        Assert.True(events.Raise(owner, MissionEventKind.Owner, at, payload: "{}", role: holder));
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id, StartedAt = at, Role = holder, ReservedCost = 0.01m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.Name(SeatAssurance.Brokered)
+        }, [owner]).Admitted);
+        Assert.True(new AiAttemptStore(db).End(id, 0, at, 10, null, null, 10, null, "model-x", 0.01m, null, null));
+        Assert.Null(new AiAttemptStore(db).Get(id)!.MandateId);
+        Assert.True(events.RaiseDue(MissionEventIds.Self(id), MissionEventKind.Self, at, asked, role: holder));
+        return id;
+    }
+
+    /// <summary>
+    /// (d, fix pass 1) THE HOLDER'S EARLIEST PENDING <c>self</c> WAKE BRINGS ITS OWED MANDATE'S RE-RAISE TO ITS TIME, WHICHEVER LAUNCH
+    /// ASKED FOR IT. A member's launch of the mandate ends undelivered at T, so its re-raise waits the floor, T + 15 min; the owner's
+    /// words wake it at T + 2 min (a launch that serves no mandate), and that turn asks to be woken at T + 3 min. The re-raise is due
+    /// then, so the turn the executor asked for takes the mandate's wake with it and is charged to the mandate (BUDGET-001), not
+    /// spent outside its allocation while the mandate's own re-wake still waits.
+    ///
+    /// <para>RED before fix pass 1: only the self wake of the mandate's own last launch counted, and the re-raise stayed at T + 15.</para>
+    /// </summary>
+    [Fact]
+    public void The_holders_earliest_self_wake_from_a_launch_that_served_no_mandate_brings_the_reraise_to_its_time()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue(), t);
+        var first = TurnOn(db, Member, m, t);
+
+        var asked = t.AddMinutes(3);
+        OwnerTurnAsking(db, Member, t.AddMinutes(2), asked, 4242);
+        Assert.Equal(1, org.Sweep(t.AddMinutes(2), Shipped));
+        Assert.Equal(asked, Reraise(db, org, m, first)!.DueAt);
+        Assert.Contains(new MissionEventStore(db).DueFor(Member, asked), e => e.Id == Reraise(db, org, m, first)!.Id);
+    }
+
+    /// <summary>
+    /// (d, fix pass 1) ONE REQUEST BRINGS ONE OWED MANDATE FORWARD, NEVER EVERY MANDATE THE HOLDER HAS. A member holds two owed
+    /// mandates, each re-raise waiting its floor (written before the request: the bring-forward path). A launch that served no
+    /// mandate asks for a wake: only the OLDEST owed mandate's re-raise comes to it. When the request is left instead by a launch
+    /// that served the newer one, still owed, that one comes forward and the older stays at its floor.
+    ///
+    /// <para>RED before fix pass 1: the owner-woken launch's request moved neither re-raise.</para>
+    /// </summary>
+    [Fact]
+    public void One_requested_wake_brings_forward_one_owed_mandate_the_oldest_or_the_one_its_launch_served()
+    {
+        foreach (var servedNewer in new[] { false, true })
+        {
+            using var db = TestEnv.NewDb();
+            Chart(db);
+            var org = new OrgStore(db);
+            var events = new MissionEventStore(db);
+            var t = DateTimeOffset.UtcNow;
+            var older = org.Assign(Issue(), t);
+            var newer = org.Assign(Issue(), t.AddSeconds(1));
+            var a = TurnOn(db, Member, older, t);
+            var b = TurnOn(db, Member, newer, t.AddSeconds(1));
+            Assert.Equal(2, org.Sweep(t.AddSeconds(1), Shipped));
+            Assert.Equal((t.AddMinutes(15), t.AddSeconds(1).AddMinutes(15)),
+                (Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt));
+
+            var asked = t.AddMinutes(3);
+            if (servedNewer) Assert.True(events.RaiseDue(MissionEventIds.Self(b), MissionEventKind.Self, t, asked, role: Member));
+            else OwnerTurnAsking(db, Member, t.AddMinutes(2), asked, 4243);
+            Assert.Equal(1, org.Sweep(t.AddMinutes(2), Shipped));
+            Assert.Equal(0, org.Sweep(t.AddMinutes(2), Shipped));
+            Assert.Equal(servedNewer
+                    ? (t.AddMinutes(15), asked)
+                    : (asked, t.AddSeconds(1).AddMinutes(15)),
+                (Reraise(db, org, older, a)!.DueAt, Reraise(db, org, newer, b)!.DueAt));
+        }
+    }
+
+    /// <summary>
     /// (e) A DELIVERY WITHDRAWS THE PENDING RE-RAISE BEFORE ITS RETRY. The holder's re-raise waits on its floor; it delivers (from a
     /// turn its own wake started): the delivery's write closes that re-raise — consumed by no launch, withdrawn, "delivered" and the
     /// delivery's id — before code's retry of the clean failure is raised, which stays due. A delivery that passes leaves no

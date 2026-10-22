@@ -822,7 +822,7 @@ public sealed partial class OrgStore
                     if (HasUntakenWake(m.Id))
                         // THE HOLDER ASKED FOR ITS OWN WAKE AFTER A PASS WROTE THIS RE-WAKE (its turn's end and its request are two
                         // writes, and a pass can run between them): the re-wake still pending is brought to that time, once.
-                        return last is not null && OwnWake(last) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0;
+                        return last is not null && HolderAsked(m, now) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0;
 
                     var level = LevelOf(m.Holder);
                     var due = last is null ? now : RewakeDue(m, latest, last, level ?? floors.Largest, floors, now);
@@ -891,7 +891,8 @@ public sealed partial class OrgStore
     /// WHEN THE HOLDER'S RE-WAKE OF <paramref name="m"/> IS DUE after <paramref name="last"/>, a launch of it that ENDED or was
     /// declared LOST (<c>U-rewake-floor</c>): that launch's end — a LOST launch's is the restart — plus the floor of
     /// <paramref name="level"/> for the k-th launch since the event that owes the work (<see cref="RewakeFloors.After"/>); no
-    /// later than the holder's own requested wake that launch left, so that turn serves the mandate; no later than the deadline
+    /// later than the holder's earliest requested wake when this is the mandate that wake serves (<see cref="HolderAsked"/>), so
+    /// that turn is charged to the mandate; no later than the deadline
     /// less one floor, so a last chance before expiry remains; and never before <paramref name="now"/>. A zero floor, or no launch
     /// of this owing (k = 0), is due now. A function of the records alone, so a restart computes the same instant.
     /// </summary>
@@ -905,7 +906,7 @@ public sealed partial class OrgStore
         using (var c = db.Cmd("SELECT ended_at FROM ai_attempt WHERE id=$a", ("$a", last)))
             ended = Sql.TimeN(c.ExecuteScalar());
         var due = (ended ?? now) + floors.After(level, k);
-        if (OwnWake(last) is { } asked && asked < due) due = asked;
+        if (HolderAsked(m, now) is { } asked && asked < due) due = asked;
         if (m.Deadline - floor < due) due = m.Deadline - floor;
         return due < now ? now : due;
     }
@@ -925,12 +926,38 @@ public sealed partial class OrgStore
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
-    /// <summary>When the wake <paramref name="attemptId"/> asked for itself is due, while it is still pending; or null.</summary>
-    DateTimeOffset? OwnWake(string attemptId)
+    /// <summary>
+    /// WHEN THE HOLDER OF <paramref name="m"/> ASKED TO BE WOKEN, IF THAT TURN IS THIS MANDATE'S (<c>U-rewake-floor</c> fix pass 1):
+    /// the holder's EARLIEST pending <c>self</c> wake, whichever launch left it — one the owner's words or the inbox woke serves no
+    /// mandate, and the turn it asked for must still be charged to the work it does (BUDGET-001) — but for ONE owed mandate of the
+    /// holder only, never every one it holds: the one its latest launch served while that is still owed, else its oldest owed one
+    /// (<see cref="AskedFor"/>). Null for any other mandate, or when no such wake is pending.
+    /// </summary>
+    DateTimeOffset? HolderAsked(MandateRow m, DateTimeOffset now)
     {
-        using var c = db.Cmd("SELECT due_at FROM mission_event WHERE id=$id AND kind=$self AND consumed_at IS NULL",
-            ("$id", MissionEventIds.Self(attemptId)), ("$self", MissionEventKind.Self));
+        if (AskedFor(m.Holder, now) != m.Id) return null;
+        using var c = db.Cmd("SELECT MIN(due_at) FROM mission_event WHERE kind=$self AND role=$h AND consumed_at IS NULL",
+            ("$self", MissionEventKind.Self), ("$h", m.Holder));
         return Sql.TimeN(c.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// THE ONE OWED MANDATE OF <paramref name="holder"/> ITS OWN REQUESTED WAKE SERVES: open, unexpired, owed (issued, retried or
+    /// rejected) with no launch open — the one the holder's latest launch served if it is such, else the oldest such; or null.
+    /// </summary>
+    string? AskedFor(string holder, DateTimeOffset now)
+    {
+        using var c = db.Cmd("""
+            SELECT m.id FROM org_mandate m
+             WHERE m.holder = $h AND m.deadline > $now
+               AND (SELECT kind FROM org_mandate_event e WHERE e.mandate_id = m.id ORDER BY e.id DESC LIMIT 1) IN ($issued, $retry, $rejected)
+               AND NOT EXISTS (SELECT 1 FROM ai_attempt a WHERE a.mandate_id = m.id AND a.state = 'LAUNCHED')
+             ORDER BY COALESCE(m.id = (SELECT mandate_id FROM ai_attempt WHERE role = $h ORDER BY started_at DESC, rowid DESC LIMIT 1), 0) DESC,
+                      m.created_at, m.id
+             LIMIT 1
+            """, ("$h", holder), ("$now", Sql.T(now)), ("$issued", MandateEventKind.Issued), ("$retry", MandateEventKind.Retry),
+            ("$rejected", MandateEventKind.Rejected));
+        return c.ExecuteScalar() as string;
     }
 
     bool HasUntakenWake(string mandateId)
