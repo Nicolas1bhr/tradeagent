@@ -213,7 +213,8 @@ sealed class PerceptionCard
         ForgetKey = Ui.Button(Labels.ForgetHarnessKey, Forget);
 
         BudgetBox = Ui.AmountField(ReadOr(_src.Budget, 0m), AmountKind.Decimal);
-        SaveBudget = BuildSaveBudget(() => ReadOr(_src.Budget, 0m), PendingBudget, () => ReadOr(_src.Currency, ""), Save);
+        SaveBudget = BuildSaveBudget(() => ReadOr(_src.Budget, 0m), PendingBudget, () => ReadOr(_src.Currency, ""), Save,
+            () => Ui.Refusal((Labels.PerceptionDailyBudget, BudgetBox)), why => Ui.Refuse(_budgetNote, why));
         // A CONFIRMATION COMPLETES ONLY THE AMOUNT IT NAMED: editing the box changes what the press meant, so a raise armed
         // against one figure is disarmed by the next one typed — the unconfirmed-orders card's rule, for the same reason.
         var saveBudget = SaveBudget;
@@ -490,16 +491,18 @@ sealed class PerceptionCard
     /// The cap's rule (<see cref="SafetyPage.BuildSaveDailyCap"/>): a raise gives perception more of the owner's money,
     /// and hesitating on the way down costs it. A factory, so a test presses the control the owner sees.
     /// </summary>
-    internal static Button BuildSaveBudget(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save)
+    internal static Button BuildSaveBudget(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
+        // A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): never the budget in force.
         var b = Ui.ConfirmIf(Labels.SavePerceptionBudget,
             () => pending() > current() ? Labels.RaisePerceptionBudgetArmed(Labels.Money(pending(), currency())) : null,
-            save, "primary");
+            save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
 
-    decimal PendingBudget() => BudgetBox.Value ?? ReadOr(_src.Budget, 0m);
+    decimal PendingBudget() => BudgetBox.Figure;
 
     void Save()
     {
@@ -507,7 +510,7 @@ sealed class PerceptionCard
         _src.SaveBudget(budget);
         var money = Labels.Money(budget, ReadOr(_src.Currency, ""));
         _src.Activity($"Perception may now spend up to {money} a day");
-        _budgetNote.Text = $"Saved. Perception may spend up to {money} a day.";
+        Ui.Said(_budgetNote, $"Saved. Perception may spend up to {money} a day.");
         Refresh();
     }
 

@@ -1017,12 +1017,11 @@ public class BudgetReservationTests : IDisposable
         Assert.Equal(Labels.SaveTurnAllowance, b.Content);
 
         Assert.Equal(TurnAllowance.Default,
-            SafetyPage.PendingAllowance(0m, 0m, TurnAllowance.Default));
+            SafetyPage.PendingAllowance(0m, 0m));
         Assert.Equal(new TurnAllowance(400_000, 8_000),
-            SafetyPage.PendingAllowance(400_000m, 8_000m, TurnAllowance.Default));
-        // An empty box is "leave it as it is", not "nothing".
-        Assert.Equal(new TurnAllowance(400_000, TurnAllowance.Default.OutputTokens),
-            SafetyPage.PendingAllowance(400_000m, null, TurnAllowance.Default));
+            SafetyPage.PendingAllowance(400_000m, 8_000m));
+        // An empty box is no longer "leave it as it is": since U-number-entry-culture it refuses the press in words, and
+        // NumberEntryCultureTests.An_unreadable_box_refuses_the_press_never_saves_a_fallback presses it.
     }
 
     /// <summary>

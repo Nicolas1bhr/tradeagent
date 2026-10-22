@@ -1332,13 +1332,15 @@ sealed class SafetyPage
     /// save that only narrows stays one press (Codex F12). The comparison itself is
     /// <see cref="RiskPolicy.Widenings"/>, in Core, where "wider" is not "larger" on every field.
     /// </summary>
-    internal static Button BuildSaveLimits(Func<RiskPolicy> current, Func<RiskPolicy> pending, Action save)
+    internal static Button BuildSaveLimits(Func<RiskPolicy> current, Func<RiskPolicy> pending, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
+        // A BOX THAT READS AS NOTHING REFUSES THE PRESS, either press (U-number-entry-culture): never the figure in force.
         var b = Ui.ConfirmIf(Labels.SaveLimits, () =>
         {
             var wider = RiskPolicy.Widenings(current(), pending());
             return wider.Count == 0 ? null : Labels.WidenLimitsArmed(wider);
-        }, save, "primary");
+        }, save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1371,9 +1373,16 @@ sealed class SafetyPage
     /// raise armed against one figure is disarmed by the next one typed, and that one asks twice of its own — the
     /// unconfirmed-orders card's rule, and the allocation and envelope boxes', for the same reason.
     /// </summary>
-    internal static Button BuildSaveDailyCap(AmountField box, Func<decimal> current, Func<string> currency, Action save)
+    internal static Button BuildSaveDailyCap(AmountField box, Func<decimal> current, Func<string> currency, Action save,
+        Action<string>? refuse = null)
     {
-        var b = BuildSaveDailyCap(current, () => box.Value ?? current(), currency, save);
+        // A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): it never saves 0 or the figure in force.
+        var b = Ui.ConfirmIf(Labels.SaveDailyCap,
+            () => box.Figure > current()
+                ? Labels.RaiseDailyCapArmed(MissionSituation.Money(box.Figure, currency()))
+                : null,
+            save, () => Ui.Refusal((Labels.DailyCostCap, box)), refuse ?? (_ => { }), "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
         return b;
     }
@@ -1395,9 +1404,15 @@ sealed class SafetyPage
     }
 
     /// <summary>The plan's press over its own box: an edit disarms a raise armed for another figure, as the money box's does.</summary>
-    internal static Button BuildSavePlanCapacity(AmountField box, Func<decimal> current, Func<string> currency, Action save)
+    internal static Button BuildSavePlanCapacity(AmountField box, Func<decimal> current, Func<string> currency, Action save,
+        Action<string>? refuse = null)
     {
-        var b = BuildSavePlanCapacity(current, () => box.Value ?? current(), currency, save);
+        var b = Ui.ConfirmIf(Labels.SavePlanCapacity,
+            () => box.Figure > current()
+                ? Labels.RaisePlanCapacityArmed(MissionSituation.Money(box.Figure, currency()))
+                : null,
+            save, () => Ui.Refusal((Labels.PlanDailyCapacity, box)), refuse ?? (_ => { }), "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
         box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
         return b;
     }
@@ -1447,14 +1462,15 @@ sealed class SafetyPage
     /// of the page, as the others beside it are, so a test presses the control the owner sees.
     /// </summary>
     internal static Button BuildSaveLanes(Func<(int Lanes, int PerPool, int PerCellClass)> current,
-        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save)
+        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
         var b = Ui.ConfirmIf(Labels.SaveLanes,
             () => pending() is var p && current() is var c
                   && (p.Lanes > c.Lanes || p.PerPool > c.PerPool || p.PerCellClass > c.PerCellClass)
                 ? Labels.RaiseLanesArmed(p.Lanes, p.PerPool, p.PerCellClass)
                 : null,
-            save, "primary");
+            save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1465,14 +1481,17 @@ sealed class SafetyPage
     /// </summary>
     internal static Button BuildSaveLanes(IReadOnlyList<AmountField> boxes,
         Func<(int Lanes, int PerPool, int PerCellClass)> current,
-        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save)
+        Func<(int Lanes, int PerPool, int PerCellClass)> pending, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
-        var b = BuildSaveLanes(current, pending, save);
+        var b = BuildSaveLanes(current, pending, save,
+            refusal ?? (() => boxes.FirstOrDefault(x => x.Refusal is not null)?.Refusal), refuse);
         foreach (var box in boxes) box.ValueChanged += (_, _) => Ui.DisarmConfirm(b);
         return b;
     }
 
-    internal static Button BuildSaveReviewEvery(Func<int> current, Func<int> pending, Action save)
+    internal static Button BuildSaveReviewEvery(Func<int> current, Func<int> pending, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
         var b = Ui.ConfirmIf(Labels.SaveReviewEvery,
             // ZERO IS OFF, NOT THE SMALLEST INTERVAL. Comparing the numbers alone would arm the
@@ -1482,7 +1501,7 @@ sealed class SafetyPage
             () => pending() > 0 && (current() == 0 || pending() < current())
                 ? Labels.LowerReviewEveryArmed(pending())
                 : null,
-            save, "primary");
+            save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1495,7 +1514,8 @@ sealed class SafetyPage
     /// exercised by running the app is a rule nobody is checking.
     /// </summary>
     internal static Button BuildSaveAiPrice(Func<(decimal In, decimal Out)> current,
-        Func<(decimal In, decimal Out)> pending, Func<string> currency, Action save)
+        Func<(decimal In, decimal Out)> pending, Func<string> currency, Action save,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
         var b = Ui.ConfirmIf(Labels.SaveAiPrice,
             // EITHER half going down, not both: a rate that halves only the output price buys the AI
@@ -1504,7 +1524,7 @@ sealed class SafetyPage
             () => pending() is var p && (p.In < current().In || p.Out < current().Out)
                 ? Labels.LowerAiPriceArmed(Rate(p, currency()))
                 : null,
-            save, "primary");
+            save, refusal ?? (() => null), refuse ?? (_ => { }), "primary");
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1560,13 +1580,14 @@ sealed class SafetyPage
     internal static Button BuildAllocateConfirm(
         Func<(string Version, decimal Quantity, decimal? Notional)> typed,
         Func<AllocationRow?> standing, Func<string> currency,
-        Action<string, decimal, decimal?> apply)
+        Action<string, decimal, decimal?> apply, Func<string?>? refusal = null, Action<string>? refuse = null)
     {
+        // A FIGURE THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): no arming, and never a ceiling of 0.
         var b = Ui.Confirm(Labels.Allocate, AllocateArmed(typed(), standing(), currency()), () =>
         {
             var (version, quantity, notional) = typed();
             if (!string.IsNullOrWhiteSpace(version)) apply(version.Trim(), quantity, notional);
-        });
+        }, refusal ?? (() => null), refuse ?? (_ => { }));
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1587,13 +1608,16 @@ sealed class SafetyPage
     /// </summary>
     internal static Button BuildEnvelopeConfirm(
         Func<(string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until)> typed,
-        Func<string> currency, Action<string, decimal, decimal?, DateTimeOffset> apply)
+        Func<string> currency, Action<string, decimal, decimal?, DateTimeOffset> apply,
+        Func<string?>? refusal = null, Action<string>? refuse = null)
     {
+        // A FIGURE THAT READS AS NOTHING REFUSES EITHER PRESS (U-number-entry-culture): an empty "days" box is no grant at all,
+        // where it was read as zero days — an envelope ending the moment it was granted.
         var b = Ui.Confirm(Labels.GrantEnvelope, EnvelopeArmed(typed(), currency()), () =>
         {
             var (symbol, quantity, notional, until) = typed();
             if (!string.IsNullOrWhiteSpace(symbol)) apply(symbol.Trim(), quantity, notional, until);
-        });
+        }, refusal ?? (() => null), refuse ?? (_ => { }));
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1811,7 +1835,7 @@ sealed class SafetyPage
                 "0 stops every paid turn. Raising this lets the AI spend more of your money, so it asks again first."),
             Ui.Spacer(Theme.S2),
             BuildSaveDailyCap(_dailyCap, () => _host.Gateway.Settings.AiDailyCostCap,
-                () => _host.SpendToday.Currency, SaveDailyCap),
+                () => _host.SpendToday.Currency, SaveDailyCap, why => Ui.Refuse(_capNote, why)),
             _capNote,
             Ui.Spacer(Theme.S3),
             // THE PLAN'S CAPACITY (U-billing-classes): a list-price equivalent, never money — its own box and its own two presses.
@@ -1821,7 +1845,7 @@ sealed class SafetyPage
                 "0 stops every turn on your plan. Raising this lets the AI use more of your plan, so it asks again first."),
             Ui.Spacer(Theme.S2),
             BuildSavePlanCapacity(_planCap, () => _host.Gateway.Settings.AiPlanDailyCapacity,
-                () => _host.SpendToday.Currency, SavePlanCapacity),
+                () => _host.SpendToday.Currency, SavePlanCapacity, why => Ui.Refuse(_planCapNote, why)),
             _planCapNote,
             Ui.Micro(Labels.PlanVendorLimit),
             Ui.Micro(Labels.PlanSharedWithYou),
@@ -1861,7 +1885,7 @@ sealed class SafetyPage
                 + "more of your money, so it asks again first."),
             Ui.Spacer(Theme.S2),
             BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
-                SaveReviewEvery),
+                SaveReviewEvery, () => Ui.Refusal((Labels.ReviewEvery, _reviewEvery)), why => Ui.Refuse(_reviewNote, why)),
             _reviewNote,
             Ui.Divider(),
             // THE LANES (U-org-lanes), BESIDE THE CEILING: how many positions may work at once is how fast the limit above
@@ -1878,7 +1902,9 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.LanesPerCellClass, _lanesPerCellClass,
                 "Raising any of these lets the AI spend faster, so it asks again first."),
             Ui.Spacer(Theme.S2),
-            BuildSaveLanes([_lanes, _lanesPerPool, _lanesPerCellClass], CurrentLanes, PendingLanes, SaveLanes),
+            BuildSaveLanes([_lanes, _lanesPerPool, _lanesPerCellClass], CurrentLanes, PendingLanes, SaveLanes,
+                () => Ui.Refusal((Labels.Lanes, _lanes), (Labels.LanesPerPool, _lanesPerPool), (Labels.LanesPerCellClass, _lanesPerCellClass)),
+                why => Ui.Refuse(_lanesNote, why)),
             _lanesNote,
             Ui.Divider(),
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
@@ -1936,7 +1962,8 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.AiPriceIn, _priceIn),
             Ui.FieldRow(Labels.AiPriceOut, _priceOut, ShippedRateHint(shipped)),
             Ui.Spacer(Theme.S2),
-            BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice),
+            BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice,
+                () => Ui.Refusal((Labels.AiPriceIn, _priceIn), (Labels.AiPriceOut, _priceOut)), why => Ui.Refuse(_priceNote, why)),
             _priceNote));
 
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
@@ -1965,7 +1992,8 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
-            BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits),
+            BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,
+                why => Ui.Refuse(_limitsNote, why)),
             _limitsNote));
 
         // THE CAPITAL ALLOCATION. Here rather than beside the holdout on the Settings page because it
@@ -1985,7 +2013,8 @@ sealed class SafetyPage
         _allocationVersion.TextChanged += (_, _) => RelabelAllocation();
         _allocationQuantity.ValueChanged += (_, _) => RelabelAllocation();
         _allocationNotional.ValueChanged += (_, _) => RelabelAllocation();
-        _allocate = BuildAllocateConfirm(ReadAllocation, StandingAllocation, AccountCurrency, ApplyAllocation);
+        _allocate = BuildAllocateConfirm(ReadAllocation, StandingAllocation, AccountCurrency, ApplyAllocation,
+            AllocationRefusal, why => Ui.Refuse(_allocationNote, why));
 
         var allocation = Ui.Section("Capital for a promoted strategy", Ui.Col(Theme.S2,
             Ui.Muted("Only a version TradeAgent's own referee has promoted can be given capital, and only "
@@ -2021,7 +2050,8 @@ sealed class SafetyPage
         _envelopeQuantity.ValueChanged += (_, _) => RelabelEnvelope();
         _envelopeNotional.ValueChanged += (_, _) => RelabelEnvelope();
         _envelopeDays.ValueChanged += (_, _) => RelabelEnvelope();
-        _grantEnvelope = BuildEnvelopeConfirm(ReadEnvelope, AccountCurrency, ApplyEnvelope);
+        _grantEnvelope = BuildEnvelopeConfirm(ReadEnvelope, AccountCurrency, ApplyEnvelope,
+            EnvelopeRefusal, why => Ui.Refuse(_envelopeNote, why));
         _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
         _stopDeployment = BuildDeploymentStopConfirm(RunningDeploymentId, ApplyDeploymentStop);
 
@@ -2489,13 +2519,16 @@ sealed class SafetyPage
     /// to BOTH roles, so the two always sum to the whole day: a chair left on an unrelated default
     /// while the owner moved the other one is a day that does not add up.
     /// </summary>
-    internal static int PendingResearchPercent(decimal? box, decimal current) =>
-        (int)Math.Clamp(box ?? Math.Round(current * 100m), 0m, 100m);
-
     void SaveResearchShare()
     {
-        var percent = PendingResearchPercent(_researchShare.Value,
-            _host.Gateway.Settings.ShareForRole(CouncilRoles.Research));
+        // THE BOX TAKES 0 TO 100 AND NOTHING ELSE (U-number-entry-culture): outside that, or unreadable, it refuses in words
+        // rather than being clamped or read as the split in force.
+        if (Ui.Refusal((Labels.ResearchShare, _researchShare)) is { } why)
+        {
+            Ui.Refuse(_councilNote, why);
+            return;
+        }
+        var percent = (int)_researchShare.Figure;
         _host.Gateway.Update(s =>
         {
             s.RoleShare[CouncilRoles.Research] = percent / 100m;
@@ -2504,7 +2537,7 @@ sealed class SafetyPage
         var said = Labels.SplitReads(percent, CouncilRoles.Title(CouncilRoles.Operations),
             CouncilRoles.Title(CouncilRoles.Research));
         _host.Gateway.Log.Activity(said);
-        _councilNote.Text = $"Saved. {said}";
+        Ui.Said(_councilNote, $"Saved. {said}");
     }
 
     /// <summary>
@@ -2517,7 +2550,7 @@ sealed class SafetyPage
     /// the values compared and the values written cannot be two different readings of the boxes.
     /// </summary>
     /// <summary>What the box says, as the number it would be saved as. The button compares this.</summary>
-    decimal PendingCap() => _dailyCap.Value ?? _host.Gateway.Settings.AiDailyCostCap;
+    decimal PendingCap() => _dailyCap.Figure;
 
     /// <summary>
     /// THE RATE IN FORCE: the owner's own numbers where they have set them, and otherwise the
@@ -2540,8 +2573,7 @@ sealed class SafetyPage
     /// <summary>What the two boxes say, as the rate they would be saved as. The button compares this.</summary>
     (decimal In, decimal Out) PendingRate()
     {
-        var shown = ShownRate();
-        return (_priceIn.Value ?? shown.In, _priceOut.Value ?? shown.Out);
+        return (_priceIn.Figure, _priceOut.Figure);
     }
 
     /// <summary>
@@ -2570,7 +2602,7 @@ sealed class SafetyPage
 
         var currency = _host.SpendToday.Currency;
         _host.Gateway.Log.Activity($"The AI's work is now priced at {Rate((input, output), currency)} per million tokens");
-        _priceNote.Text = $"Saved. Each turn is priced at {Rate((input, output), currency)} per million tokens.";
+        Ui.Said(_priceNote, $"Saved. Each turn is priced at {Rate((input, output), currency)} per million tokens.");
     }
 
     /// <summary>
@@ -2582,11 +2614,11 @@ sealed class SafetyPage
     /// </summary>
     void SavePlanCapacity()
     {
-        var cap = _planCap.Value ?? _host.Gateway.Settings.AiPlanDailyCapacity;
+        var cap = _planCap.Figure;
         _host.Gateway.Update(s => s.AiPlanDailyCapacity = cap);
         var figure = MissionSituation.Money(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now use up to {figure} a day of your ChatGPT plan, counted at list price");
-        _planCapNote.Text = $"Saved. The AI may use up to {figure} a day of your ChatGPT plan, counted at list price — not money.";
+        Ui.Said(_planCapNote, $"Saved. The AI may use up to {figure} a day of your ChatGPT plan, counted at list price — not money.");
     }
 
     void SaveDailyCap()
@@ -2595,7 +2627,7 @@ sealed class SafetyPage
         _host.Gateway.Update(s => s.AiDailyCostCap = cap);
         var money = MissionSituation.Money(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now spend up to {money} a day");
-        _capNote.Text = $"Saved. The AI may spend up to {money} a day.";
+        Ui.Said(_capNote, $"Saved. The AI may spend up to {money} a day.");
     }
 
     /// <summary>
@@ -2603,13 +2635,10 @@ sealed class SafetyPage
     /// reads as the shipped default rather than as an allowance of nothing, which is the same rule
     /// <see cref="TurnAllowance.From"/> keeps — a settings row of zeroes must not stop the AI.
     /// </summary>
-    internal static TurnAllowance PendingAllowance(decimal? input, decimal? output,
-        TurnAllowance current) =>
-        TurnAllowance.From((long)(input ?? current.InputTokens), (long)(output ?? current.OutputTokens));
+    internal static TurnAllowance PendingAllowance(decimal input, decimal output) =>
+        TurnAllowance.From((long)input, (long)output);
 
-    TurnAllowance PendingTurnAllowance() => PendingAllowance(_allowanceIn.Value, _allowanceOut.Value,
-        TurnAllowance.From(_host.Gateway.Settings.AiTurnAllowanceInputTokens,
-            _host.Gateway.Settings.AiTurnAllowanceOutputTokens));
+    TurnAllowance PendingTurnAllowance() => PendingAllowance(_allowanceIn.Figure, _allowanceOut.Figure);
 
     /// <summary>
     /// Writes what one turn may use, and says what that works out to in money at the model in force —
@@ -2617,6 +2646,12 @@ sealed class SafetyPage
     /// </summary>
     void SaveTurnAllowance()
     {
+        // AN EMPTY OR UNREADABLE BOX REFUSES (U-number-entry-culture): it was read as the allowance in force.
+        if (Ui.Refusal((Labels.TurnAllowanceIn, _allowanceIn), (Labels.TurnAllowanceOut, _allowanceOut)) is { } why)
+        {
+            Ui.Refuse(_allowanceNote, why);
+            return;
+        }
         var allowance = PendingTurnAllowance();
         _host.Gateway.Update(s =>
         {
@@ -2627,8 +2662,8 @@ sealed class SafetyPage
         var spend = _host.SpendToday;
         var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
         _host.Gateway.Log.Activity($"One AI turn now sets aside up to {reservation}");
-        _allowanceNote.Text = Labels.TurnAllowanceReads(
-            allowance.InputTokens, allowance.OutputTokens, reservation);
+        Ui.Said(_allowanceNote, Labels.TurnAllowanceReads(
+            allowance.InputTokens, allowance.OutputTokens, reservation));
     }
 
     /// <summary>A lane count's box: whole numbers from one to <see cref="LanePolicy.MaxLanes"/>.</summary>
@@ -2643,9 +2678,8 @@ sealed class SafetyPage
 
     (int Lanes, int PerPool, int PerCellClass) PendingLanes()
     {
-        var c = CurrentLanes();
-        return (LanePolicy.Clamp((int)(_lanes.Value ?? c.Lanes)), LanePolicy.Clamp((int)(_lanesPerPool.Value ?? c.PerPool)),
-            LanePolicy.Clamp((int)(_lanesPerCellClass.Value ?? c.PerCellClass)));
+        // NO CLAMP AND NO FALLBACK (U-number-entry-culture): each box takes 1 to the most lanes and refuses anything else in words.
+        return ((int)_lanes.Figure, (int)_lanesPerPool.Figure, (int)_lanesPerCellClass.Figure);
     }
 
     /// <summary>Writes the three lane numbers, in-process, and says what they now allow.</summary>
@@ -2661,11 +2695,10 @@ sealed class SafetyPage
         var said = $"Up to {p.Lanes} of the AI's positions may now work at once ({p.PerPool} on one AI account, "
                    + $"{p.PerCellClass} in one kind of sealed workspace); only one runs without a sealed workspace at a time";
         _host.Gateway.Log.Activity(said);
-        _lanesNote.Text = $"Saved. {said}.";
+        Ui.Said(_lanesNote, $"Saved. {said}.");
     }
 
-    int PendingReviewEvery() =>
-        (int)(_reviewEvery.Value ?? _host.Gateway.Settings.MissionReviewMinutes);
+    int PendingReviewEvery() => (int)_reviewEvery.Figure;
 
     /// <summary>
     /// Writes the heartbeat. It takes effect at the next start, because the interval is read once
@@ -2680,23 +2713,31 @@ sealed class SafetyPage
             ? "The AI is now woken only when something happens"
             : $"The AI is now woken to look around at most every {minutes} minute{(minutes == 1 ? "" : "s")}";
         _host.Gateway.Log.Activity(said);
-        _reviewNote.Text = $"Saved. {said}, from the next time TradeAgent starts.";
+        Ui.Said(_reviewNote, $"Saved. {said}, from the next time TradeAgent starts.");
     }
+
+    /// <summary>
+    /// The first limit box that reads as nothing, as the press says it — asked before <see cref="PendingLimits"/> on either press,
+    /// so an empty or unreadable box is never saved as 0 or as the limit in force (<c>U-number-entry-culture</c>).
+    /// </summary>
+    string? LimitsRefusal() => Ui.Refusal(
+        (Labels.MaxOrderQuantity, _maxQty), (Labels.MaxNotionalPerOrder, _maxNotional), (Labels.MaxOpenPositions, _maxPositions),
+        (Labels.MaxOrdersPerMinute, _maxPerMinute), (Labels.MaxLossPerTrade, _maxLossPerTrade), (Labels.MaxDailyLoss, _maxDailyLoss),
+        (Labels.LossMinClosure, _lossMinClosure), (Labels.LossStrikeWindow, _lossStrikeWindow), (Labels.ValuationLossExit, _valuationExit));
 
     RiskPolicy PendingLimits()
     {
-        var now = _host.Gateway.Settings.Risk;
         return new RiskPolicy
         {
-            MaxOrderQuantity = _maxQty.Value ?? now.MaxOrderQuantity,
-            MaxNotionalPerOrder = _maxNotional.Value ?? now.MaxNotionalPerOrder,
-            MaxOpenPositions = (int)(_maxPositions.Value ?? now.MaxOpenPositions),
-            MaxOrdersPerMinute = (int)(_maxPerMinute.Value ?? now.MaxOrdersPerMinute),
-            MaxLossPerTrade = _maxLossPerTrade.Value ?? now.MaxLossPerTrade,
-            MaxDailyLoss = _maxDailyLoss.Value ?? now.MaxDailyLoss,
-            LossMinClosureHours = _lossMinClosure.Value ?? now.LossMinClosureHours,
-            LossStrikeWindowDays = (int)(_lossStrikeWindow.Value ?? now.LossStrikeWindowDays),
-            ValuationLossExitMinutes = _valuationExit.Value ?? now.ValuationLossExitMinutes,
+            MaxOrderQuantity = _maxQty.Figure,
+            MaxNotionalPerOrder = _maxNotional.Figure,
+            MaxOpenPositions = (int)_maxPositions.Figure,
+            MaxOrdersPerMinute = (int)_maxPerMinute.Figure,
+            MaxLossPerTrade = _maxLossPerTrade.Figure,
+            MaxDailyLoss = _maxDailyLoss.Figure,
+            LossMinClosureHours = _lossMinClosure.Figure,
+            LossStrikeWindowDays = (int)_lossStrikeWindow.Figure,
+            ValuationLossExitMinutes = _valuationExit.Figure,
             InstrumentAllowlist = (_allowlist.Text ?? "")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList()
@@ -2791,8 +2832,12 @@ sealed class SafetyPage
     /// <summary>What is in the three boxes right now. A blank version is left blank, never guessed at.</summary>
     (string Version, decimal Quantity, decimal? Notional) ReadAllocation() =>
         ((_allocationVersion.Text ?? "").Trim(),
-            _allocationQuantity.Value ?? 0m,
-            _allocationNotional.Value is { } n && n > 0m ? n : null);
+            _allocationQuantity.Figure,
+            _allocationNotional.Figure is var n && n > 0m ? n : null);
+
+    /// <summary>Why the allocation press does nothing right now, or null while both figures read.</summary>
+    string? AllocationRefusal() =>
+        Ui.Refusal((Labels.AllocationQuantity, _allocationQuantity), (Labels.AllocationNotional, _allocationNotional));
 
     /// <summary>
     /// What the version in the box is allowed to hold as things stand, or null because nothing is —
@@ -2824,9 +2869,13 @@ sealed class SafetyPage
     /// armed against one version and one ceiling must not be completable against another — this one
     /// cannot be taken back afterwards.
     /// </summary>
-    void RelabelAllocation() =>
+    void RelabelAllocation()
+    {
+        // A FIGURE THAT READS AS NOTHING HAS NO SENTENCE: the press is disarmed and refuses until it reads again.
+        if (AllocationRefusal() is not null) { Ui.DisarmConfirm(_allocate); return; }
         Ui.Relabel(_allocate, Labels.Allocate,
             AllocateArmed(ReadAllocation(), StandingAllocation(), AccountCurrency()));
+    }
 
     /// <summary>
     /// WHAT STANDS ALLOCATED RIGHT NOW, in the live line rather than a rebuilt tree. An allocation
@@ -2857,9 +2906,13 @@ sealed class SafetyPage
     /// <summary>What is in the four boxes right now. A blank instrument is left blank, never guessed at.</summary>
     (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) ReadEnvelope() =>
         ((_envelopeSymbol.Text ?? "").Trim(),
-            _envelopeQuantity.Value ?? 0m,
-            _envelopeNotional.Value is { } n && n > 0m ? n : null,
-            DateTimeOffset.UtcNow.AddDays((double)(_envelopeDays.Value ?? 0m)));
+            _envelopeQuantity.Figure,
+            _envelopeNotional.Figure is var n && n > 0m ? n : null,
+            DateTimeOffset.UtcNow.AddDays((double)_envelopeDays.Figure));
+
+    /// <summary>Why the grant press does nothing right now, or null while all three figures read.</summary>
+    string? EnvelopeRefusal() => Ui.Refusal((Labels.EnvelopeQuantity, _envelopeQuantity),
+        (Labels.EnvelopeNotional, _envelopeNotional), (Labels.EnvelopeUntil, _envelopeDays));
 
     /// <summary>
     /// The envelope the withdrawal press is about: the one standing on the platform and the account
@@ -2947,8 +3000,11 @@ sealed class SafetyPage
     /// Keeps the armed sentence in step with the four boxes, and disarms as it goes. A confirmation
     /// armed against one instrument, one size and one date must not be completable against another.
     /// </summary>
-    void RelabelEnvelope() =>
+    void RelabelEnvelope()
+    {
+        if (EnvelopeRefusal() is not null) { Ui.DisarmConfirm(_grantEnvelope); return; }
         Ui.Relabel(_grantEnvelope, Labels.GrantEnvelope, EnvelopeArmed(ReadEnvelope(), AccountCurrency()));
+    }
 
     /// <summary>
     /// WHAT STANDS GRANTED RIGHT NOW, in the live line rather than a rebuilt tree, and it says on every

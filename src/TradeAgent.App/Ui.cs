@@ -223,17 +223,37 @@ static class Ui
     /// press, so a mis-click cannot liquidate a portfolio. The armed state turns the control red and
     /// says what the second press will do, in full — never just "Confirm".
     /// </summary>
-    public static Button Confirm(string label, string confirmLabel, Action onConfirmed)
+    public static Button Confirm(string label, string confirmLabel, Action onConfirmed) =>
+        Confirm(label, confirmLabel, onConfirmed, NothingRefused, _ => { });
+
+    /// <summary>
+    /// The two-step button over boxes that can read as nothing (<c>U-number-entry-culture</c>): while <paramref name="refusal"/>
+    /// answers, EITHER press does nothing but hand that sentence to <paramref name="refuse"/> — it neither arms nor completes, so a
+    /// box the owner left unreadable can never be granted as 0 or as the figure already saved.
+    /// </summary>
+    public static Button Confirm(string label, string confirmLabel, Action onConfirmed, Func<string?> refusal, Action<string> refuse)
     {
         var (b, state) = ConfirmShell(label, confirmLabel);
         b.Click += (_, _) =>
         {
-            if (Arm(b, state)) return;
-            Disarm(b);
-            try { onConfirmed(); } catch (Exception ex) { Report(ex); }
+            try
+            {
+                if (refusal() is { } why)
+                {
+                    Disarm(b);
+                    refuse(why);
+                    return;
+                }
+                if (Arm(b, state)) return;
+                Disarm(b);
+                onConfirmed();
+            }
+            catch (Exception ex) { Report(ex); }
         };
         return b;
     }
+
+    static string? NothingRefused() => null;
 
     /// <summary>
     /// Async form. The result is awaited rather than dropped: a cancel-all that fails must say so,
@@ -336,13 +356,29 @@ static class Ui
     /// hands the AI room nobody meant to give it.
     /// </summary>
     public static Button ConfirmIf(string label, Func<string?> armedSentence, Action onPressed,
-        string restingClass = "secondary")
+        string restingClass = "secondary") =>
+        ConfirmIf(label, armedSentence, onPressed, NothingRefused, _ => { }, restingClass);
+
+    /// <summary>
+    /// <see cref="ConfirmIf(string, Func{string?}, Action, string)"/> over boxes that can read as nothing
+    /// (<c>U-number-entry-culture</c>): while <paramref name="refusal"/> answers, EITHER press does nothing but hand that sentence to
+    /// <paramref name="refuse"/> — no arming, no save, and never a fallback to 0 or to the figure already in force. The refusal is
+    /// asked BEFORE the armed sentence, so the sentence is only ever composed over figures that read.
+    /// </summary>
+    public static Button ConfirmIf(string label, Func<string?> armedSentence, Action onPressed,
+        Func<string?> refusal, Action<string> refuse, string restingClass = "secondary")
     {
         var (b, state) = ConfirmShell(label, "", restingClass);
         b.Click += (_, _) =>
         {
             try
             {
+                if (refusal() is { } why)
+                {
+                    Disarm(b);
+                    refuse(why);
+                    return;
+                }
                 if (!state.Armed)
                 {
                     var sentence = armedSentence();
@@ -604,6 +640,33 @@ static class Ui
     /// </summary>
     public static AmountField AmountField(decimal value, AmountKind kind, decimal min = 0m, decimal max = 1_000_000_000m) =>
         new(value, kind, min, max);
+
+    /// <summary>
+    /// The first of <paramref name="boxes"/> that reads as nothing, as the sentence its press says instead of saving — the box's own
+    /// label and its refusal — or null while every one of them reads.
+    /// </summary>
+    public static string? Refusal(params (string Label, AmountField Box)[] boxes)
+    {
+        foreach (var (label, box) in boxes)
+            if (box.Refusal is { } why) return Labels.PressRefused(label, why);
+        return null;
+    }
+
+    /// <summary>A press's note line saying why it did nothing, in caution colour.</summary>
+    public static void Refuse(TextBlock note, string why)
+    {
+        note.Text = why;
+        note.Foreground = Theme.Caution;
+        note.IsVisible = true;
+    }
+
+    /// <summary>A press's note line saying what it did, back in the note's resting colour after any refusal.</summary>
+    public static void Said(TextBlock note, string text)
+    {
+        note.Text = text;
+        note.Foreground = Theme.TextFaint;
+        note.IsVisible = true;
+    }
 
     public static TextBox TextField(string? text = null, string? placeholder = null) => new()
     {
