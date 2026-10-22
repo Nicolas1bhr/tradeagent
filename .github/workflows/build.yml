@@ -383,8 +383,8 @@ jobs:
       # Microsoft.NETCore.App the staged app names (10.0.13 or later carries the 10.0.12 and 10.0.13 security fixes).
       - name: Print the runtime the staged app ships
         run: |
-          cfg="$(find artifacts/linux -name TradeAgent.App.runtimeconfig.json | head -n 1)"
-          deps="$(find artifacts/linux -name TradeAgent.App.deps.json | head -n 1)"
+          cfg="$(find artifacts/linux -name TradeAgent.runtimeconfig.json | head -n 1)"
+          deps="$(find artifacts/linux -name TradeAgent.deps.json | head -n 1)"
           echo "runtimeconfig: $cfg"; cat "$cfg"
           grep -o 'Microsoft.NETCore.App[A-Za-z.0-9-]*/[0-9.]*' "$deps" | sort -u
 
