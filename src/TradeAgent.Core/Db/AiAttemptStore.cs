@@ -738,6 +738,34 @@ public sealed class AiAttemptStore(Database db)
         return (IReadOnlyList<string>)units;
     });
 
+    /// <summary>
+    /// WHAT AN ATTEMPT'S PACKET GAVE IT (<c>U-org-packets-b</c>, rung <see cref="Versions.InputLineageRung"/>; ORCHESTRATION § 2.6): one
+    /// <c>ai_attempt_input</c> row per record shown, by kind and id. Called only inside the turn's committed transition — the
+    /// caller's <see cref="Database.Write"/> — so the records a launch was shown are recorded with its outcome or not at all.
+    /// INSERT … ON CONFLICT DO NOTHING: a transition committed twice writes nothing twice. A kind outside
+    /// <see cref="PacketInputKind.All"/> is refused by the table's CHECK, and the transition with it.
+    /// </summary>
+    public void RecordInputs(string attemptId, IEnumerable<PacketInput> inputs) => db.Write(_ =>
+    {
+        foreach (var input in inputs)
+        {
+            using var c = db.Cmd("INSERT INTO ai_attempt_input(attempt_id, kind, ref_id) VALUES($a,$k,$r) ON CONFLICT DO NOTHING",
+                ("$a", attemptId), ("$k", input.Kind), ("$r", input.RefId));
+            c.ExecuteNonQuery();
+        }
+        return 0;
+    });
+
+    /// <summary>What <paramref name="attemptId"/>'s packet gave it, as recorded, in kind then id order.</summary>
+    public IReadOnlyList<PacketInput> InputsOf(string attemptId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT kind, ref_id FROM ai_attempt_input WHERE attempt_id=$a ORDER BY kind, ref_id", ("$a", attemptId));
+        using var r = c.ExecuteReader();
+        var rows = new List<PacketInput>();
+        while (r.Read()) rows.Add(new PacketInput(r.GetString(0), r.GetString(1)));
+        return (IReadOnlyList<PacketInput>)rows;
+    });
+
     /// <summary>One attempt by id, or null. For the screens and for a test that has to read a row back.</summary>
     public AiAttempt? Get(string id) => db.Read(_ =>
     {

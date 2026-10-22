@@ -433,8 +433,18 @@ public static class Versions
     /// (<c>enforced</c> on the app's harness, <c>reservation</c> on a vendor's program), composed by the app from the seat it resolved,
     /// written by <c>AiAttemptStore.Begin</c> in the row's own insert, an UPDATE that changes any of them refused by trigger. No backfill:
     /// a launch before the rung has NULL — unknown.</para>
+    ///
+    /// <para><b>45 — what each attempt's packet gave it</b> (<c>U-org-packets-b</c>, rung <see cref="InputLineageRung"/>, after
+    /// <c>U-org-seats</c>'s 44): <c>ai_attempt_input</c> (attempt, kind, ref) — one row per record a position's packet showed: a
+    /// lateral note, a forecast due, a resolution, an escalation, a delivery to judge, a decision, a ledger entry or a mandate event,
+    /// by reference. Written by the app only, in the turn's committed transition — never for a launch the gate refused at its last
+    /// check, or one lost before its commit, so what such a launch was shown is shown again. UPDATE and DELETE refused by trigger. No
+    /// backfill: no attempt before the rung was given a position packet.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 44;
+    public const int DatabaseSchemaVersion = InputLineageRung;
+
+    /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
+    public const int InputLineageRung = 45;
 
     /// <summary>
     /// THE PAPER RUNNER'S REPLAY SEMANTICS (<c>U-runner-maxhold-replay</c>): what a pass that rebuilds a run from its
