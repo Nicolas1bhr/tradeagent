@@ -220,4 +220,42 @@ public partial class OrgAssignmentTests
         Assert.DoesNotContain(events.DueFor(Head, DateTimeOffset.UtcNow.AddMinutes(1)), e => e.Kind != MissionEventKind.Mandate);
         Assert.Empty(org.Deliveries(m.Id));
     }
+    // ---- item 5: cancel and rescope fence --------------------------------------------------------------------------
+
+    /// <summary>
+    /// (5) A CANCELLATION AND A RE-SCOPE ARE THE FENCE, AND <c>mandate-show</c> NAMES WHAT THEY FENCED: before the transition the
+    /// mandate fences nothing; after its decider cancels it, the launch that was running under it is named <c>fenced</c> and the one
+    /// that had ended before is not; a re-scope names the old mandate's running launch the same way, and the successor fences
+    /// nothing. RED at base: <c>mandate-show</c> had no <c>fenced</c>.
+    /// </summary>
+    [Fact]
+    public async Task Mandate_show_names_the_launches_a_cancel_or_rescope_fenced()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+
+        async Task<List<string>> Fenced(string mandate)
+        {
+            var shown = await server.CallAsync(Frame(Ops.MandateShow, ("mandate", mandate)), Head, Launch(db, Head));
+            Assert.True(shown.Ok, Json.Write(shown.Error));
+            return [.. Body(shown).GetProperty("fenced").EnumerateArray().Select(a => a.GetString()!)];
+        }
+
+        var m = await Assigned(server, db);
+        var done = Launch(db, Member, mandate: m);
+        Assert.True(new AiAttemptStore(db).End(done, 0, DateTimeOffset.UtcNow, 10, 0, 5, 5, 0, null, 0.01m, null, null));
+        var running = Launch(db, Member, mandate: m);
+        Assert.Empty(await Fenced(m));
+        Assert.True((await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", m), ("why", CancelWhy)), Head, Launch(db, Head))).Ok);
+        Assert.Equal([running], await Fenced(m));
+
+        var old = await Assigned(server, db);
+        var underOld = Launch(db, Member, mandate: old);
+        var rescoped = await server.CallAsync(RescopeFrame(old), Head, Launch(db, Head));
+        Assert.True(rescoped.Ok, Json.Write(rescoped.Error));
+        Assert.Equal([underOld], await Fenced(old));
+        Assert.Empty(await Fenced(Body(rescoped).GetProperty("mandate").GetString()!));
+    }
 }

@@ -378,6 +378,8 @@ public sealed partial class GatewayPipeServer
                     measured_spend = Measured(Gateway.Org.SpendOf(pm.Id)) }
             : null;
         var successor = Gateway.Org.SuccessorOf(m.Id);
+        // THE LAUNCHES ITS CANCELLATION OR RE-SCOPE FENCED (U-org-verbs-b): refused from that instant, their turns ended.
+        var fenced = Gateway.Org.FencedBy(m.Id);
         var deliveries = Gateway.Org.Deliveries(m.Id).Reverse().ToList();
         var events = Gateway.Org.MandateEvents(m.Id).Reverse().ToList();
         var forecasts = Gateway.Org.ForecastsOn(m.Id).Reverse().ToList();
@@ -409,7 +411,7 @@ public sealed partial class GatewayPipeServer
 
         // THE FRAME FIRST, AT THE MOST ITS OWN FIELDS CAN COST once the lists are in: every count and cursor at its widest.
         var widest = new string('f', 64);
-        long spent = ReplyBytes(Show(m, measured, predecessor, successor, [], [], [], int.MaxValue, int.MaxValue, int.MaxValue, true, widest, true, long.MaxValue,
+        long spent = ReplyBytes(Show(m, measured, predecessor, successor, fenced, [], [], [], int.MaxValue, int.MaxValue, int.MaxValue, true, widest, true, long.MaxValue,
             true, widest, LeftOut(m.Id, int.MaxValue, widest, int.MaxValue, long.MaxValue, int.MaxValue, widest)));
 
         var servedD = new List<object>();
@@ -459,12 +461,12 @@ public sealed partial class GatewayPipeServer
         var dNext = part is ShowEvents or ShowForecasts || dLeft == 0 ? null : lastD;
         var eNext = part is ShowDeliveries or ShowForecasts || eLeft == 0 ? null : lastE;
         var fNext = part is ShowDeliveries or ShowEvents || fLeft == 0 ? null : lastF;
-        return Show(m, measured, predecessor, successor, servedD, servedE, servedF, deliveries.Count, events.Count, forecasts.Count, dLeft > 0, dNext, eLeft > 0, eNext,
+        return Show(m, measured, predecessor, successor, fenced, servedD, servedE, servedF, deliveries.Count, events.Count, forecasts.Count, dLeft > 0, dNext, eLeft > 0, eNext,
             fLeft > 0, fNext, dLeft == 0 && eLeft == 0 && fLeft == 0 ? null : LeftOut(m.Id, dLeft, dNext, eLeft, eNext, fLeft, fNext));
     }
 
     /// <summary>The answer of <c>mandate-show</c>, in one place, so the frame measured is the frame sent.</summary>
-    object Show(MandateRow m, object measured, object? predecessor, string? successor, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
+    object Show(MandateRow m, object measured, object? predecessor, string? successor, IReadOnlyList<string> fenced, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
         int eventsTotal, int forecastsTotal, bool deliveriesMore, string? deliveriesNext, bool eventsMore, long? eventsNext,
         bool forecastsMore, string? forecastsNext, string? leftOut) => new
     {
@@ -474,6 +476,7 @@ public sealed partial class GatewayPipeServer
         measured_spend = measured,
         predecessor,
         successor,
+        fenced,
         deliveries,
         deliveries_total = deliveriesTotal,
         deliveries_more = deliveriesMore,
@@ -491,7 +494,8 @@ public sealed partial class GatewayPipeServer
                + "'stated_cost' is the holder's word, and 'measured_spend' beside it is TradeAgent's, from the launches charged "
                + "to this mandate. The checks, the events and the seal are TradeAgent's records. A forecast's probability is its "
                + "forecaster's claim; whether it is scored, and its resolution beside it, are TradeAgent's. A 'predecessor' is the "
-               + "mandate this one was re-scoped from, with its own measured spend, which stays its own."
+               + "mandate this one was re-scoped from, with its own measured spend, which stays its own. 'fenced' names the launches its "
+               + "cancellation or re-scope took authority from mid-turn: each was refused from then on and its turn ended."
     };
 
     /// <summary>What a bounded answer left out, in words naming each list's rest and the call that reads it.</summary>
