@@ -155,6 +155,39 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// (e4) THE OWNER'S OWN AUTHORITY REFUSING AN AGENT'S ORDER LEAVES ONE ROW (fix pass 1, R1): an Operations launch's <c>buy</c> over the
+    /// read loop while the owner has stopped AI trading, and again in a live mode he has not switched on, is refused with the code it always
+    /// was, and each leaves exactly one <c>op_refused</c> row naming it. RED before the fix: the kill switch's and the live gate's codes were
+    /// on no list and unmarked, so neither left a row.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_own_authority_refusing_an_order_leaves_one_row()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        using var operations = grants.IssueHere(CouncilRoles.Operations, "attempt-refrow-owner");
+        await using var client = await Raw.ConnectAsync(pipe);
+        Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = operations.Token })).Ok);
+
+        gw.StopAiTrading("test: the owner pressed stop");
+        Assert.Equal(nameof(ErrorCode.AI_TRADING_STOPPED), (await client.SendAsync(Buy(operations.Token))).Error?.Code);
+        gw.EnableAiTrading();
+        gw.Update(s => { s.Mode = TradingMode.LIVE_CONFIRM; s.LiveActivated = false; });
+        Assert.Equal(nameof(ErrorCode.LIVE_NOT_ACTIVATED), (await client.SendAsync(Buy(operations.Token))).Error?.Code);
+
+        var rows = Rows(db, "op_refused");
+        foreach (var r in rows) log.WriteLine($"{r.Severity} {r.Metadata}");
+        Assert.Equal([nameof(ErrorCode.AI_TRADING_STOPPED), nameof(ErrorCode.LIVE_NOT_ACTIVATED)], rows.Select(r => r.M("code")));
+        Assert.All(rows, r => Assert.Equal((Ops.Buy, CouncilRoles.Operations, "attempt-refrow-owner"), (r.M("op"), r.M("role"), r.M("attempt"))));
+    }
+
+    /// <summary>
     /// (e1) GUARD: AN ENDED GRANT KEEPS ITS ONE <c>grant_rejected</c> ROW. A grant whose turn ended under a live connection is refused before
     /// <c>Handle</c> (<c>EndedGrantRefusal</c>), as it was: one <c>grant_rejected</c> row, and no <c>op_refused</c> beside it. Green at base.
     /// </summary>

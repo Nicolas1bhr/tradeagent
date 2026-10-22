@@ -1430,7 +1430,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     }
 
     /// <summary>
-    /// THE GATEWAY'S OWN RULES REFUSING AN AGENT'S ORDER OR READ: mode, limits, allocation, loss budget, an
+    /// THE GATEWAY'S OWN RULES REFUSING AN AGENT'S ORDER OR READ: the owner's own authority — AI trading stopped, real money not switched
+    /// on, autonomy refused where the platform cannot prove order state (fix pass 1, R1) — mode, limits, allocation, loss budget, an
     /// expired approval or decision, a withheld holdout. No malformed frame answers any of these codes, so the code alone says a rule
     /// refused — unlike <see cref="ErrorCode.INVALID_REQUEST"/>, which a refusal shares with a malformed frame and so is a refusal only
     /// where its throw site MARKED it (<see cref="RefusalMark"/>). A request waiting for the owner's approval is not refused, and a
@@ -1438,6 +1439,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// </summary>
     static readonly ErrorCode[] RuleRefusals =
     [
+        ErrorCode.AI_TRADING_STOPPED, ErrorCode.LIVE_NOT_ACTIVATED, ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE,
         ErrorCode.ROLE_MAY_NOT_TRADE, ErrorCode.MODE_FORBIDS_EXECUTION, ErrorCode.MODE_ACCOUNT_MISMATCH, ErrorCode.RISK_LIMIT_EXCEEDED,
         ErrorCode.LOSS_BUDGET_REACHED, ErrorCode.CAMPAIGN_BUDGET_REACHED, ErrorCode.ALLOCATION_NONE, ErrorCode.ALLOCATION_EXCEEDED,
         ErrorCode.ENVELOPE_ACCOUNT_RESERVED, ErrorCode.APPROVAL_EXPIRED, ErrorCode.APPROVAL_PREDATES_LOSS_BREACH, ErrorCode.DECISION_EXPIRED,
