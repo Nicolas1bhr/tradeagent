@@ -631,6 +631,32 @@ public class BillingClassesTests : IDisposable
     }
 
     /// <summary>
+    /// <c>U-billing-followups</c> item 2: THE PLAN'S TOTALS NAME THEIR UNREPORTED TURNS, as the money's do. A plan turn that never reported
+    /// what it used — LOST at a restart, its reservation standing as its cost — is inside the plan capacity used; the report says how many
+    /// of the day's plan turns are such reservations, so a worst case is never read as capacity measured.
+    /// </summary>
+    [Fact]
+    public async Task The_daily_reports_plan_totals_name_a_lost_plan_turn_as_a_reservation_charged_without_reported_usage()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var meter = Meter(money: 10m, plan: 40m, db: db);
+        using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
+            Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
+        Assert.Equal(1, new AiAttemptStore(db).LoseOpen(_at));
+
+        var report = gw.Reports.Compose(_at, new TradeAgent.Gateway.DailyReportInputs
+        {
+            Spending = [meter.Today, .. CouncilRoles.All.Select(meter.TodayFor)]
+        });
+        Assert.Equal(1, report.Spending.PlanTurns);
+        Assert.Equal(Turn, report.Spending.PlanSpent);
+
+        var text = TradeAgent.Gateway.DailyReportText.Render(report);
+        Assert.Contains("turns against plan capacity: 1, 1 charged at their reservation because no usage was ever reported", text,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (g) THE DAILY REPORT COUNTS PLAN TURNS AND NEVER PRINTS PLAN FIGURES AS MONEY (fix pass 1): the real-money lines are the money cap's
     /// own (key and unknown rows), the plan's capacity has its own lines — its figures as capacity, never in the money's format — and the
     /// turns of each are counted; a role whose launches bill the plan is reported against the plan's ceiling, in its words.

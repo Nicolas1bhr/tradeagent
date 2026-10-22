@@ -638,6 +638,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             PlanReserved = plan?.Reserved,
             PlanCap = plan?.Cap,
             PlanTurns = plan?.Turns,
+            // AND THOSE OF THEM CHARGED THEIR RESERVATION FOR WANT OF REPORTED USAGE (U-billing-followups), as the money's keep theirs.
+            PlanUnreportedTurns = plan?.UnreportedTurns,
             Spent = whole is { Metered: true, CanPrice: true } ? whole.Spent : null,
             Reserved = whole is { Metered: true } ? whole.Reserved : null,
             Cap = whole is { Metered: true } ? whole.Cap : null,
