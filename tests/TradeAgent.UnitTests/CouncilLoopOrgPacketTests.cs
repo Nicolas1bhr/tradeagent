@@ -148,6 +148,84 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// A HARNESS TURN WHOSE REQUEST NO PROVIDER ACCEPTED RECORDS NO INPUT, AND ITS NOTE RIDES THE NEXT PACKET (fix pass 2, the
+    /// re-review's point; ORCHESTRATION § 2.6: input lineage is what the attempt was GIVEN, and a packet no model received was given
+    /// to nobody). The executor runs on a REAL harness conversation twice, and each time its first request IS handed to the
+    /// transport — so each names part a's session — but no model reads it: the transport cannot connect (an
+    /// <see cref="HttpRequestException"/>), then the provider answers 401, as it does to a wrong pasted key. Neither records the note;
+    /// the third turn, which the provider accepts, is still shown it and records it.
+    ///
+    /// <para>RED at base b82882fa (before <see cref="AgentTurnEnded.NoRequestAccepted"/> existed to assert): "Assert.Empty() Failure:
+    /// Collection was not empty Collection: ["lateral:lat-cee8b9b615c1"]" — the unconnected turn's packet was marked shown; with the
+    /// 401 turn first, the same failure on it. MUTANT, <c>NoRequestAccepted: false</c> taken out of the commit: the same failure.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_whose_request_no_provider_accepted_records_no_input_and_its_note_rides_the_next_packet()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = SessionChart(db, root);
+        var loop = new MissionLoop(host, NoHeartbeat);
+        var note = new OrgStore(db).SendLateral(TeamHead, null, Executor, "The second venue has gaps.", [], DateTimeOffset.UtcNow);
+
+        using var provider = new FakeProvider { AlwaysAnswer = System.Net.HttpStatusCode.Unauthorized };
+        // A MANIFEST BUILT HERE, never the catalogue's: nothing here reads the override file another test may be writing.
+        var manifest = new RuntimeManifest
+        {
+            Id = ApiAgentRuntime.RuntimeId, DisplayName = "Loopback harness", BaseUrl = provider.BaseUrl,
+            CompletionsPath = "chat/completions", DefaultModel = "loopback-model"
+        };
+        // THE GATE PASSES: the executor's seat is the harness on a host holding a proven cell, so each turn reaches its first request.
+        ThinkingSeatsTests.ProveCell(db);
+        var seats = ThinkingSeatsTests.Register(db, SeatClasses.Harness);
+        using var unreachable = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            requestTimeout: TimeSpan.FromSeconds(10), transport: new Unconnectable(), seats: seats);
+        using var refused = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            requestTimeout: TimeSpan.FromSeconds(10), seats: seats);
+        using var accepted = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            requestTimeout: TimeSpan.FromSeconds(10), seats: seats);
+
+        var endings = new List<AgentTurnEnded>();
+        foreach (var (runtime, tag) in new[] { (unreachable, "harness-unreachable"), (refused, "harness-401"), (accepted, "harness-200") })
+        {
+            // THE THIRD TURN THE PROVIDER ACCEPTS: an answer in 2xx, so a model received its packet.
+            if (tag == "harness-200")
+            {
+                provider.AlwaysAnswer = null;
+                provider.Answer(FakeProvider.Message("Noted: the second venue has gaps."));
+            }
+            var conversation = runtime.OpenConversation(Executor, () => host.HomeFor(Executor),
+                () => new Dictionary<string, string>(), () => null);
+            conversation.TurnEnded += endings.Add;
+            host.Harnessed[Executor] = conversation;
+            var before = endings.Count;
+            SelfWake(host, Executor, tag);
+            for (var i = 0; i < 12 && endings.Count == before; i++) await loop.TurnAsync();
+            Assert.Equal(before + 1, endings.Count);
+        }
+        // EACH HANDED A REQUEST OVER — part a's session, unchanged: the requests left this app — AND THE FIRST TWO FAILED: one never
+        // connected, one the provider answered 401. Only the third was accepted.
+        Assert.All(endings, e => Assert.NotNull(e.Session));
+        Assert.Equal([true, true, false], endings.Select(e => e.NoRequestAccepted));
+        Assert.All(endings.Take(2), e => Assert.Equal(ApiConversation.EndedProviderFailed, e.Outcome));
+        Assert.Equal(2, provider.Requests.Count);
+
+        var launches = LaunchesOf(db, Executor);
+        Assert.Equal(3, launches.Count);
+        Assert.Empty(InputsOf(db, launches[0]));   // its request never connected
+        Assert.Empty(InputsOf(db, launches[1]));   // the provider answered 401
+        Assert.Contains(note.Id, provider.Requests[1], StringComparison.Ordinal);
+        Assert.Equal([$"lateral:{note.Id}"], InputsOf(db, launches[2]));
+    }
+
+    /// <summary>A transport that takes the request and cannot connect, as a host that is down or a network that is off.</summary>
+    sealed class Unconnectable : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            throw new HttpRequestException("Connection refused (on purpose)");
+    }
+
+    /// <summary>
     /// (h) INPUT LINEAGE IS APPEND-ONLY AND WRITTEN ONLY WITH THE COMMITTED OUTCOME: the loop hands the host what a packet showed only
     /// from inside the turn's committed transition; the rows refuse UPDATE and DELETE and a kind outside the closed list; and a
     /// second commit of the same attempt writes nothing twice. RED at base: no <c>ai_attempt_input</c> table existed.

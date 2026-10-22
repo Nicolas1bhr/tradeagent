@@ -81,9 +81,18 @@ public sealed class ApiConversation(
     /// before its answer. A turn cancelled after that ran in a session — fresh, as every harness turn is — though its exit code says it
     /// did not start. A turn cancelled before it (fix pass 2) handed nothing over, ran no session, and records none — nor does one whose
     /// first request was withheld for its size, or that threw before any request was handed over (<c>U-org-packets-b</c> fix pass 1):
-    /// THIS mark alone says a session ran, never the exit code, and the loop records what the packet showed only for a turn that ran one.
+    /// THIS mark alone says a session ran, never the exit code; what the packet showed is recorded only for a turn that ran one AND had a
+    /// request accepted (<see cref="_accepted"/>, fix pass 2).
     /// </summary>
     bool _sent;
+
+    /// <summary>
+    /// WHETHER A PROVIDER ACCEPTED A REQUEST OF THIS TURN (<c>U-org-packets-b</c> fix pass 2): set once an answer in 2xx began, before
+    /// its body is read. <see cref="_sent"/> says a request left this app — part a's session, what this app did; this says one reached a
+    /// model. A request that never connected, timed out, or was answered 401, 429 or 5xx reached none, so a turn with no accepted
+    /// request ends <see cref="AgentTurnEnded.NoRequestAccepted"/> and the loop records nothing its packet showed.
+    /// </summary>
+    bool _accepted;
 
     /// <summary>
     /// THE MOST REQUESTS ONE TURN MAY MAKE, however cheap they are.
@@ -346,6 +355,7 @@ public sealed class ApiConversation(
         SetBusy(true);
         _canon = null;
         _sent = false;
+        _accepted = false;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -415,7 +425,11 @@ public sealed class ApiConversation(
                 UsageUnreported = unreported,
 
                 // AND, WHERE THE FIRST REQUEST WAS WITHHELD, THAT NOTHING WAS SENT: the meter charges such a turn nothing.
-                FirstRequestWithheld = unsent
+                FirstRequestWithheld = unsent,
+
+                // AND WHETHER ANY REQUEST IT HANDED OVER WAS ACCEPTED (fix pass 2): one that never connected or was answered outside
+                // 2xx put the packet in front of no model, so the loop records none of it.
+                NoRequestAccepted = _sent && !_accepted
             });
         }
         return gateRefused;
@@ -706,6 +720,8 @@ public sealed class ApiConversation(
 
         using (response)
         {
+            // A PROVIDER ACCEPTED IT: an answer in 2xx began, so a model received this request's packet (fix pass 2).
+            if (response.IsSuccessStatusCode) _accepted = true;
             var text = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
                 throw new TradeAgentException(ErrorCode.AI_AUTH_FAILED,
