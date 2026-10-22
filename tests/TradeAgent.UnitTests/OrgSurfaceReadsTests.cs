@@ -85,6 +85,39 @@ public class OrgSurfaceReadsTests
         Assert.Equal(new OrgStore(db).SpendOf("man-000000000001"), one.Spend);
     }
 
+    // ---- DeliveriesAwaiting --------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// EVERY DELIVERY WAITING TO BE JUDGED, ACROSS DECIDERS, IN ONE READ: an open mandate whose latest status is a delivery, with the delivery and
+    /// the app's checks; a mandate already accepted or sent back is not in it, and it agrees with the per-decider read.
+    /// RED at base: no <c>DeliveriesAwaiting</c> existed.
+    /// </summary>
+    [Fact]
+    public void DeliveriesAwaiting_reads_every_deciders_waiting_delivery_with_the_apps_checks()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Mandate(db, "man-0000000000a1", Head, Member, "issued", "delivered");
+        Mandate(db, "man-0000000000a2", Other, Head, "issued", "delivered");
+        Mandate(db, "man-0000000000a3", Head, Member, "issued", "delivered", "accepted");
+        Mandate(db, "man-0000000000a4", Head, Member, "issued", "delivered", "rejected");
+        var t = DateTimeOffset.UtcNow.AddHours(-1);
+        var first = Deliver(db, "man-0000000000a1", "all done", t, "[]", ("sources-cited", true, "every source is cited"), ("output-shape", false, "no table"));
+        Deliver(db, "man-0000000000a2", "also done", t);
+        Deliver(db, "man-0000000000a3", "accepted already", t);
+        Deliver(db, "man-0000000000a4", "sent back", t);
+
+        var org = new OrgStore(db);
+        var waiting = org.DeliveriesAwaiting();
+
+        Assert.Empty(waiting.Refused);
+        Assert.Equal(["man-0000000000a1", "man-0000000000a2"], waiting.Rows.Select(w => w.Mandate.Id));
+        Assert.Equal(first, waiting.Rows[0].Delivery.Id);
+        Assert.Equal(["sources-cited", "output-shape"], waiting.Rows[0].Checks.Select(c => c.Check));
+        Assert.False(waiting.Rows[0].Checks[1].Passed);
+        Assert.Equal(org.DeliveriesToJudgeOf(Head).Rows.Select(w => w.Delivery.Id), waiting.Rows.Where(w => w.Mandate.Decider == Head).Select(w => w.Delivery.Id));
+    }
+
     // ---- DecisionsSince -------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -219,6 +252,7 @@ public class OrgSurfaceReadsTests
             "src/TradeAgent.Core/LabelsOrganisation.cs",
             "src/TradeAgent.App/OrgSurface.cs",
             "src/TradeAgent.App/OrganisationView.cs",
+            "src/TradeAgent.App/WorkView.cs",
         ];
         foreach (var file in files)
         {

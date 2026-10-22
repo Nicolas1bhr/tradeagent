@@ -104,6 +104,23 @@ public sealed partial class OrgStore
     });
 
     /// <summary>
+    /// EVERY DELIVERY WAITING TO BE JUDGED ON THE CHART, oldest mandate first: each open mandate whose latest status is a delivery, with that
+    /// delivery and the app's checks on it — whoever its decider is (<see cref="DeliveriesToJudgeOf"/> reads one decider's). A delivery whose
+    /// stored claims cannot be read is refused by its mandate's id.
+    /// </summary>
+    public OrgList<DeliveryToJudge> DeliveriesAwaiting() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT m.id FROM org_mandate m WHERE {LatestStatus} = $delivered ORDER BY m.created_at, m.id
+            """, ("$delivered", MandateEventKind.Delivered));
+        using var r = c.ExecuteReader();
+        var ids = new List<string>();
+        while (r.Read()) ids.Add(r.GetString(0));
+        r.Close();
+        return DeliveriesOf(ids);
+    });
+
+    /// <summary>
     /// THE DECISIONS RECORDED AT OR AFTER <paramref name="at"/>, ACROSS EVERY POSITION, newest first and at most
     /// <paramref name="limit"/>, each with its rationale (the position's claim) and the forecasts on it with the app's resolutions —
     /// one snapshot. A decision whose stored claims cannot be read is refused by its id, never thrown through the list.

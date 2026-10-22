@@ -163,11 +163,14 @@ public sealed partial class OrgStore
     /// a delivery, with that delivery and the app's checks on it. A delivery whose stored claims cannot be read is refused by its
     /// mandate's id.
     /// </summary>
-    public OrgList<DeliveryToJudge> DeliveriesToJudgeOf(string decider) => db.Read(_ =>
+    public OrgList<DeliveryToJudge> DeliveriesToJudgeOf(string decider) => db.Read(_ => DeliveriesOf(DeliveriesToJudge(decider)));
+
+    /// <summary>The latest delivery and the app's checks on each of the mandates named, a delivery that cannot be read refused by its mandate's id.</summary>
+    OrgList<DeliveryToJudge> DeliveriesOf(IEnumerable<string> mandateIds)
     {
         var rows = new List<DeliveryToJudge>();
         var refused = new List<string>();
-        foreach (var id in DeliveriesToJudge(decider))
+        foreach (var id in mandateIds)
         {
             try
             {
@@ -181,5 +184,5 @@ public sealed partial class OrgStore
             }
         }
         return new OrgList<DeliveryToJudge>(rows, refused);
-    });
+    }
 }

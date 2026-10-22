@@ -61,14 +61,36 @@ internal static class OrgSurfaceSeed
     internal static void Unreported(Database db, string id) =>
         Assert.True(new AiAttemptStore(db).End(id, 0, DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null));
 
-    internal static void Mandate(Database db, string id, string decider, string holder, params string[] events)
+    internal static void Mandate(Database db, string id, string decider, string holder, params string[] events) =>
+        MandateDue(db, id, "2026-12-01T00:00:00.0000000Z", decider, holder, events);
+
+    /// <summary>A mandate with a deadline of the test's choosing (a mandate row is never updated once written).</summary>
+    internal static void MandateDue(Database db, string id, string deadline, string decider, string holder, params string[] events) =>
+        MandateSaying(db, id, deadline, "find something", null, decider, holder, events);
+
+    /// <summary>A mandate with the decider's own words in it: the objective and the scope are claims.</summary>
+    internal static void MandateSaying(Database db, string id, string deadline, string objective, string? scope, string decider, string holder,
+        params string[] events)
     {
         Exec(db, """
-            INSERT INTO org_mandate(id, unit_id, decider, holder, kind, objective, checks, latitude, deadline, allocation_ai, retry_limit, created_at)
-            VALUES($id,$u,$d,$h,'research','find something','[]','exact',$by,'1.00',3,$at)
-            """, ("$id", id), ("$u", Team), ("$d", decider), ("$h", holder), ("$by", "2026-12-01T00:00:00.0000000Z"), ("$at", Stamp));
+            INSERT INTO org_mandate(id, unit_id, decider, holder, kind, objective, scope, checks, latitude, deadline, allocation_ai, retry_limit, created_at)
+            VALUES($id,$u,$d,$h,'research',$o,$s,'[]','exact',$by,'1.00',3,$at)
+            """, ("$id", id), ("$u", Team), ("$d", decider), ("$h", holder), ("$o", objective), ("$s", scope), ("$by", deadline), ("$at", Stamp));
         foreach (var kind in events)
             Exec(db, "INSERT INTO org_mandate_event(mandate_id, at, kind, actor, reason) VALUES($m,$at,$k,$a,$r)",
                 ("$m", id), ("$at", Stamp), ("$k", kind), ("$a", decider), ("$r", kind == "proposed" ? "I found a thing" : null));
+    }
+
+    /// <summary>A sealed delivery on a mandate, written the way the ledger would: the report and deviations are the holder's claims, the checks the app's.</summary>
+    internal static string Deliver(Database db, string mandate, string report, DateTimeOffset at,
+        string deviations = "[]", params (string Check, bool Passed, string Reason)[] checks)
+    {
+        var id = "dlv-" + Guid.NewGuid().ToString("n")[..12];
+        Exec(db, "INSERT INTO org_delivery(id, mandate_id, report, deviations, refs, manifest, at) VALUES($id,$m,$r,$d,'[]','{}',$at)",
+            ("$id", id), ("$m", mandate), ("$r", report), ("$d", deviations), ("$at", TradeAgent.Core.Db.Sql.T(at)));
+        foreach (var (check, passed, reason) in checks)
+            Exec(db, "INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($d,$c,$p,$r)",
+                ("$d", id), ("$c", check), ("$p", passed ? 1 : 0), ("$r", reason));
+        return id;
     }
 }
