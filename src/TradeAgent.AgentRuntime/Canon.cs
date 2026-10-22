@@ -78,10 +78,12 @@ public static class Canon
     {
         try
         {
-            var file = Path.Combine(home, CliFile);
-            if (!File.Exists(file) || Sha256Hex.OfFile(file) is not { } sha) return null;
+            // NEVER THROUGH A LINK (U-execution-environment fix pass 4): an executor's cell writes its whole home, so the canon's name may
+            // be a link to a login outside — refused by HomeFiles, so the record says the canon is unknown and hashes nothing outside.
+            // ANYTHING at the override's name lies beside it, a link included: the vendor in the cell follows one.
+            var sha = Sha256Hex.Of(HomeFiles.Read(home, CliFile, long.MaxValue, out _));
             var own = files.Wrote(AppFileManifest.Key(CouncilRoles.HomeDir(role), CliFile), sha);
-            var beside = File.Exists(Path.Combine(home, OverrideFile));
+            var beside = HomeFiles.Describe(home, OverrideFile) is not null;
             return new CanonSeen(own && !beside ? Version : null, sha, own, beside);
         }
         // A canon that could not be read is a turn whose canon is unknown, which the record says by saying nothing.

@@ -3,6 +3,7 @@ using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -452,5 +453,30 @@ public class ExecutorCellTests : IDisposable
         Assert.Equal("what the cell put there", File.ReadAllText(Path.Combine(canon, "the-cells.md")));
         var chair = ((ILaunchGate)supervisor.Current!.OpenConversation()).Barred();
         Assert.True(chair is null || !chair.Why.Contains(exec, StringComparison.Ordinal), $"the chair was refused for the executor's home: {chair?.Why}");
+    }
+    /// <summary>
+    /// THE CANON IS NEVER READ THROUGH A LINK THE CELL PLANTED (fix pass 4, found by the structural guard's survey beyond the second
+    /// re-review's seven). An executor's home holds both canons: the CLI's <c>AGENTS.md</c>, which the app hashes at every cell launch to say
+    /// what the turn read, and the harness's <c>.tradeagent/harness/CANON.md</c>, which the harness sends as its system text if the position
+    /// is ever moved onto it. Linked to a login outside, neither is hashed nor sent: the launch's record says the canon is unknown, and the
+    /// harness falls back to its one-line mission.
+    /// </summary>
+    [UnixFact]
+    public void A_canon_the_cell_linked_outside_is_never_hashed_or_sent()
+    {
+        var home = Path.Combine(TestEnv.Home, "linked-canon", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(Path.Combine(home, ".tradeagent", "harness"));
+        var auth = Path.Combine(TestEnv.Home, "linked-canon", $"auth-{Guid.NewGuid():n}.json");
+        File.WriteAllText(auth, "{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}");
+        File.CreateSymbolicLink(Path.Combine(home, Canon.CliFile), auth);
+        File.CreateSymbolicLink(Path.Combine(home, ".tradeagent", "harness", "CANON.md"), auth);
+
+        var seen = Canon.SeenByCli(home, Member, new AppFileManifest(Path.Combine(home, "..", $"files-{Guid.NewGuid():n}.tsv")));
+        var harness = new ApiConversation(Codex, Member, () => home, new HarnessKey(), () => null, () => null!, () => null);
+        var mission = (string)typeof(ApiConversation).GetMethod("Mission", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(harness, null)!;
+
+        var sent = mission.Contains("sk-FAKE-relay-0000", StringComparison.Ordinal);
+        Assert.True(seen is null && !sent,
+            $"hashed through the link: {seen is not null} ({seen?.Sha256}); the harness's system text carries the login: {sent}");
     }
 }
