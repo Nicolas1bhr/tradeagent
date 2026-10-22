@@ -501,7 +501,7 @@ public sealed partial class OrgStore
                 throw Refused($"a ref names an app record — {string.Join(" | ", MandateRefKind.All)} — and its id; '{r.Kind}' is not one.");
         // RULING Q7 — THE CODE HALF OF "EXACT": a deviation is refused, never sealed and judged later.
         if (m.Exact && deviations.Count > 0)
-            throw Refused($"mandate {m.Id} is exact: a delivery that names a deviation is refused. Deliver what was asked, or decline it.");
+            throw Forbidden($"mandate {m.Id} is exact: a delivery that names a deviation is refused. Deliver what was asked, or decline it.");
 
         long ordinal;
         using (var n = db.Cmd("SELECT COUNT(*) FROM org_delivery WHERE mandate_id=$m", ("$m", m.Id)))
@@ -997,7 +997,7 @@ public sealed partial class OrgStore
     {
         var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
         if (m.Holder != caller)
-            throw Refused($"'{mandateId}' is held by '{m.Holder}', not by you: only its holder delivers or declines it.");
+            throw Forbidden($"'{mandateId}' is held by '{m.Holder}', not by you: only its holder delivers or declines it.");
         if (!IsOpen(m.Id))
             throw Refused($"'{mandateId}' is {MandateStatus(m.Id)}: nothing more is owed on a closed mandate.");
         return m;
@@ -1215,14 +1215,25 @@ public sealed partial class OrgStore
     {
         var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
         if (m.Decider != caller)
-            throw Refused($"'{mandateId}' is decided by '{m.Decider}', not by you: only its decider may judge, cancel or reassign it.");
+            throw Forbidden($"'{mandateId}' is decided by '{m.Decider}', not by you: only its decider may judge, cancel or reassign it.");
         if (!IsOpen(m.Id))
             throw Refused($"'{mandateId}' is {MandateStatus(m.Id)}: a closed mandate is decided already.");
         return m;
     }
 
-    /// <summary>An organisation verb refused in words — MARKED a refusal (<see cref="RefusalMark"/>), so the pipe records it apart from a malformed frame.</summary>
-    static TradeAgentException Refused(string why) => RefusalMark.Mark(new TradeAgentException(ErrorCode.INVALID_REQUEST, why + " Nothing was written."));
+    /// <summary>
+    /// An organisation verb refused in words for WHAT IT WAS SENT — an unknown reason, kind or ref, a length or count bound, a record that
+    /// is not there or is closed. NOT marked (<see cref="RefusalMark"/>): malformed content is not a refusal of rights, and the pipe records
+    /// none for it (fix pass 1, R3). A refusal of WHO ASKS goes through <see cref="Forbidden"/>.
+    /// </summary>
+    static TradeAgentException Refused(string why) => new(ErrorCode.INVALID_REQUEST, why + " Nothing was written.");
+
+    /// <summary>
+    /// An organisation verb refused on RIGHTS OR AUTHORITY — the caller is no active position, holds or decides no such mandate or decision,
+    /// heads no unit, has spent its escalations, asks past an exact mandate, or addresses an order-placing seat (ORDER-001). MARKED a
+    /// refusal (<see cref="RefusalMark"/>), so the pipe records it apart from a malformed frame that shares its code.
+    /// </summary>
+    static TradeAgentException Forbidden(string why) => RefusalMark.Mark(Refused(why));
 
     static MandateRow ReadMandate(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), Sql.S(r.GetValue(6)),

@@ -235,7 +235,7 @@ public sealed partial class OrgStore
         string rationale, IReadOnlyList<OrgRef> refs, IReadOnlyList<ForecastClaim> forecasts, DateTimeOffset now) => db.Write(_ =>
     {
         if (IsAppPrincipal(position) || Position(position) is not { Status: OrgPositionStatus.Active })
-            throw Refused($"'{position}' is no active position: a decision is recorded under the position whose launch made it.");
+            throw Forbidden($"'{position}' is no active position: a decision is recorded under the position whose launch made it.");
         if (OrgDecisionKind.IsMandatory(kind))
             throw Refused($"a '{kind}' decision is written by the verb that performs it, in that act's own write — never by "
                           + $"'decision-record', which writes '{OrgDecisionKind.Routine}' decisions only.");
@@ -281,7 +281,7 @@ public sealed partial class OrgStore
         {
             var d = Decision(on) ?? throw Refused($"'{on}' is no decision.");
             if (d.Position != position)
-                throw Refused($"'{on}' is {d.Position}'s decision, not yours: a forecast is attached to your own decision, or to a mandate you decide.");
+                throw Forbidden($"'{on}' is {d.Position}'s decision, not yours: a forecast is attached to your own decision, or to a mandate you decide.");
             return AddForecast(position, attempt, d.Id, null, claim, now);
         }
         if (on.StartsWith(MandatePrefix, StringComparison.Ordinal))
@@ -484,7 +484,7 @@ public sealed partial class OrgStore
     public EscalationRow RaiseEscalation(string sender, string? attempt, string reason, string? mandateId, DateTimeOffset now) => db.Write(_ =>
     {
         if (Standing(sender) is not { Status: OrgPositionStatus.Active, Kind: OrgPositionKind.Head })
-            throw Refused($"'{sender}' heads no unit: a head escalates up its chain. A member tells its head through its mandate "
+            throw Forbidden($"'{sender}' heads no unit: a head escalates up its chain. A member tells its head through its mandate "
                           + "(mandate-decline) or a lateral note.");
         if (string.IsNullOrWhiteSpace(reason) || reason.Length > DecisionLimits.MaxClaimChars)
             throw Refused($"an escalation says why, in your words: at most {DecisionLimits.MaxClaimChars} characters.");
@@ -493,17 +493,17 @@ public sealed partial class OrgStore
         {
             var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
             if (m.Decider != sender && m.Holder != sender)
-                throw Refused($"'{mandateId}' is neither decided nor held by you: an escalation names a mandate of your own.");
+                throw Forbidden($"'{mandateId}' is neither decided nor held by you: an escalation names a mandate of your own.");
             using var once = db.Cmd("SELECT id FROM org_escalation WHERE sender=$s AND mandate_id=$m", ("$s", sender), ("$m", m.Id));
             if (once.ExecuteScalar() is string earlier)
-                throw Refused($"you escalated {m.Id} already ({earlier}): one escalation per mandate wakes the chain once.");
+                throw Forbidden($"you escalated {m.Id} already ({earlier}): one escalation per mandate wakes the chain once.");
         }
         else
         {
             using var today = db.Cmd("SELECT COUNT(*) FROM org_escalation WHERE sender=$s AND mandate_id IS NULL AND day=$d",
                 ("$s", sender), ("$d", day));
             if (Convert.ToInt32(today.ExecuteScalar(), CultureInfo.InvariantCulture) >= DecisionLimits.MandatelessPerDay)
-                throw Refused($"you have raised {DecisionLimits.MandatelessPerDay} escalations without a mandate today (UTC), the most "
+                throw Forbidden($"you have raised {DecisionLimits.MandatelessPerDay} escalations without a mandate today (UTC), the most "
                               + "one head may: name the mandate it is about, or wait for tomorrow.");
         }
 
@@ -626,13 +626,13 @@ public sealed partial class OrgStore
         db.Write(_ =>
         {
             if (IsAppPrincipal(sender) || Position(sender) is not { Status: OrgPositionStatus.Active })
-                throw Refused($"'{sender}' is no active position: a note is sent by the position whose launch wrote it.");
+                throw Forbidden($"'{sender}' is no active position: a note is sent by the position whose launch wrote it.");
             if (to == sender)
                 throw Refused("a note goes to another position, never to yourself — your own beliefs go in the research ledger.");
             if (IsAppPrincipal(to))
                 throw Refused($"'{to}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it reads no note.");
             if (CouncilRoles.MayPlaceOrders(to))
-                throw Refused($"'{to}' may place orders, and what it trades is never shaped by a note (ORDER-001). Escalate through your chain instead.");
+                throw Forbidden($"'{to}' may place orders, and what it trades is never shaped by a note (ORDER-001). Escalate through your chain instead.");
             if (Position(to) is not { } recipient)
                 throw Refused($"'{to}' is no position on the chart.");
             if (recipient.Status != OrgPositionStatus.Active)

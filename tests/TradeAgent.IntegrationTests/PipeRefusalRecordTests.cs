@@ -187,6 +187,104 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         Assert.All(rows, r => Assert.Equal((Ops.Buy, CouncilRoles.Operations, "attempt-refrow-owner"), (r.M("op"), r.M("role"), r.M("attempt"))));
     }
 
+    // ---- a chart, as only a test may write it (OrgAssignmentTests' shape) ------------------------------------------------
+
+    const string Head = "pos-r3c0ffee0001", Member = "pos-r3c0ffee0002", Other = "pos-r3c0ffee0003", Team = "team-r3c0ffee";
+
+    static void Exec(Database db, string sql, params (string, object?)[] ps) => db.Write(_ =>
+    {
+        using var c = db.Cmd(sql, ps);
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary><see cref="Head"/> heads <see cref="Team"/> under Research, with <see cref="Member"/> and <see cref="Other"/> in it.</summary>
+    static void Chart(Database db)
+    {
+        const string at = "2026-10-11T12:00:00.0000000Z";
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,'team',NULL,'active',$at)",
+            ("$t", Team), ("$p", OrgIds.Research), ("$at", at));
+        foreach (var id in new[] { Head, Member, Other })
+            Exec(db, "INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'active',$at)",
+                ("$id", id), ("$u", Team), ("$h", $"org/{id}"), ("$at", at));
+        Exec(db, "UPDATE org_unit SET head_position_id=$id WHERE id=$t", ("$id", Head), ("$t", Team));
+    }
+
+    /// <summary>A launch the ledger recorded for <paramref name="position"/> on the app's own HARNESS seat — eligible for the verbs; never a real model.</summary>
+    static string Eligible(Database db, string position)
+    {
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        var admission = new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id, StartedAt = DateTimeOffset.UtcNow, Role = position, ReservedCost = 0.10m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.AssuranceOf(SeatClasses.Harness) is { } a ? SeatClasses.Name(a) : null
+        });
+        Assert.True(admission.Admitted, admission.Refusal);
+        return id;
+    }
+
+    static IpcRequest Decline(string mandate, string reason, string grant) => new()
+    {
+        Op = Ops.MandateDecline, Token = IpcToken.Ensure(), Grant = grant, Session = "refusal-row", RequestId = "refrow-" + Guid.NewGuid().ToString("n")[..12],
+        Args = new()
+        {
+            ["mandate"] = JsonSerializer.SerializeToElement(mandate), ["reason"] = JsonSerializer.SerializeToElement(reason),
+            ["why"] = JsonSerializer.SerializeToElement("'the next hour' could mean the funding hour or the clock hour"),
+        }
+    };
+
+    /// <summary>
+    /// (e6) MALFORMED CONTENT IS NOT A REFUSAL OF RIGHTS (fix pass 1, R3): over the read loop, the mandate's own holder on an eligible seat
+    /// declines it with a reason that is no reason — refused as it always was, and it leaves NO <c>op_refused</c> row and no
+    /// <c>refusals</c> finding; a position that does not hold the mandate declining it with a real reason is a refusal of rights and leaves
+    /// exactly one row, and the sweep one finding. RED before the fix: every <c>OrgStore</c> refusal was marked, so the bad reason left a
+    /// row and a finding too — and the BLIND sentence "a malformed request is not a refusal" was false.
+    /// </summary>
+    [Fact]
+    public async Task Malformed_content_is_not_a_refusal_and_a_refusal_of_rights_still_is()
+    {
+        var pipe = NewPipe();
+        var grants = new AgentGrants();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _db = db;
+        await using var _gw = gw;
+        Chart(db);
+        var mandate = gw.Org.Assign(new MandateIssue(Head, null, Member, MandateKind.Task, "find out whether the skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, MandateLimits.DefaultRetryLimit), DateTimeOffset.UtcNow).Id;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
+        server.Start();
+
+        var holderAttempt = Eligible(db, Member);
+        using (var holder = grants.IssueHere(Member, holderAttempt))
+        await using (var client = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = holder.Token })).Ok);
+            var bogus = await client.SendAsync(Decline(mandate, "bogus", holder.Token));
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), bogus.Error?.Code);
+            Assert.Contains("is no reason to decline", bogus.Error!.Message, StringComparison.Ordinal);
+        }
+        Assert.Empty(Rows(db, "op_refused"));
+
+        var otherAttempt = Eligible(db, Other);
+        using (var other = grants.IssueHere(Other, otherAttempt))
+        await using (var client = await Raw.ConnectAsync(pipe))
+        {
+            Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = other.Token })).Ok);
+            var notHers = await client.SendAsync(Decline(mandate, MandateDecline.Ambiguous, other.Token));
+            Assert.Contains("only its holder delivers or declines it", notHers.Error!.Message, StringComparison.Ordinal);
+        }
+
+        var row = Assert.Single(Rows(db, "op_refused"));
+        log.WriteLine(row.Metadata);
+        Assert.Equal((Ops.MandateDecline, Other, otherAttempt), (row.M("op"), row.M("role"), row.M("attempt")));
+
+        var now = DateTimeOffset.UtcNow;
+        using var oversight = new Core.Oversight.OversightStore(Path.Combine(TestEnv.Home, $"oversight-{Guid.NewGuid():n}.db"), now);
+        var swept = new Core.Oversight.OversightSweep(db.FilePath, oversight).Run(now);
+        Assert.Null(swept.Failure);
+        var found = Assert.Single(swept.Added, f => f.Detector == "refusals" && f.ScopeId == Core.Oversight.OversightStore.RootScope);
+        Assert.Equal(Ops.MandateDecline, found.Measured["op"]);
+    }
+
     /// <summary>
     /// (e1) GUARD: AN ENDED GRANT KEEPS ITS ONE <c>grant_rejected</c> ROW. A grant whose turn ended under a live connection is refused before
     /// <c>Handle</c> (<c>EndedGrantRefusal</c>), as it was: one <c>grant_rejected</c> row, and no <c>op_refused</c> beside it. Green at base.
