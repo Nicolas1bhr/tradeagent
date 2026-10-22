@@ -747,9 +747,16 @@ public static class RuntimeCatalog
     /// under --strict-config, and gpt-5.5 offered exactly exec_command, write_stdin, list_mcp_resources, list_mcp_resource_templates,
     /// read_mcp_resource, request_user_input, apply_patch, view_image, tool_search — the same with a stdio environment and a local one.
     /// </summary>
+    ///
+    /// <para><b>WITHOUT <c>--ignore-user-config</c></b>, the one flag of the CLI class it drops: under it <c>codex exec</c> builds its
+    /// environments from <c>CODEX_EXEC_SERVER_URL</c> alone and never reads <c>environments.toml</c> (vendor <c>exec/src/lib.rs:698-711</c>
+    /// at rust-v0.160.1), so every tool ran in the HARNESS — RUN on CI 2026-10-22 (run 39700964111, the route (b) row: its shell's cgroup
+    /// was the harness leaf and it read the harness's file). The flag kept a SEAT-written <c>config.toml</c> out of the shared seat
+    /// home; this class's <c>CODEX_HOME</c> is per attempt, written fresh by the app with the class's verified bytes
+    /// (<see cref="RouteA.Make"/>), under the seat home no cell is ever granted, and its model's tools run in the cell.</para>
     static string[] CodexCellDeny =>
     [
-        .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}"),
+        .. WithoutPair(CodexCliDeny, "-c", "mcp_servers={}").Where(a => a != "--ignore-user-config"),
         "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
