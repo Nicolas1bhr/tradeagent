@@ -50,6 +50,14 @@ Items, one commit each, one-sentence messages:
    sentence contains "0.05"; cap "0.00005" → the raise sentence names 0.00005, not 0.0001).
 6. **No refresh writes a box:** a guard that the page's refresh paths never assign an `AmountField`'s text or value after construction. Check:
    `A_refresh_never_rewrites_a_box_being_edited` (type into the cap box, run `Refresh` and the five-second tick's page refresh, the text is unchanged).
+7. **No scroll changes a number (the owner, 2026-10-22 19:1x, verbatim: "it's also important that values cannot be changed by scrolling over them if
+   they weren't clicked in the first place").** A mouse wheel or trackpad scroll over a money or limit box the owner has NOT clicked into (not focused) never
+   changes its value or its text — the event is left unhandled so the page scrolls; the shared factory carries it (`Ui.NumberField` today, `Ui.AmountField` once
+   item 2 replaces it), so every money and limit box inherits it. **Decided: a FOCUSED box takes no wheel change either** — on money and limit fields a wheel
+   step is a silent change the owner did not type, made by a gesture that also means "scroll the page"; typing is the one way a figure changes, and it is
+   refused or shown before any press (items 1–5). Check, red-first through the CURRENT `NumericUpDown` (a `PointerWheelChanged` raised over the box, unfocused,
+   then focused): `A_scroll_over_a_money_box_never_changes_its_value_and_scrolls_the_page` — Value and Text unchanged, the event not marked handled; a case
+   green at base is named a guard in the report, the red one quoted.
 Red-first (quote each red at base, typing through the CURRENT `NumericUpDown`'s own commit — `Text` then a `KeyDown` Enter, as the owner does): item 3's
 "0,05" → 5 and item 2's "0.05" redrawn as "0", item 4's empty envelope days → a grant until now, plus item 1's checks under de-BE, fr-BE and nl-BE.
 **The watched mutant:** in `Amount.TryRead` the comma branch is deleted so `,` falls through to `NumberStyles.Number` under the invariant culture (a group
