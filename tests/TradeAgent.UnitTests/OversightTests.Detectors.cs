@@ -197,6 +197,37 @@ public partial class OversightTests
         Assert.NotNull(DigestCheck.Verify($"A fact. [{orphan.Id}] [{pruned}]", c => c.Kind == "wf" ? reopened.HasFinding(c.Id) : records.Resolves(c)));
     }
 
+    /// <summary>
+    /// ONLY ACCEPTED WORK QUIETS <c>stall</c> AND <c>spend-no-accept</c>: a legacy division that spent and handed nothing off, whose head wrote
+    /// only its own private journal and plan, is still found by both; its head's report (Research) does quiet them. RED before fix pass 1:
+    /// every publication by the head counted as accepted work, the private journal included.
+    /// </summary>
+    [Fact]
+    public void A_private_journal_or_plan_is_not_accepted_work()
+    {
+        var now = OversightSeed.Now().AddDays(OversightPolicy.StallAfter.TotalDays + 1); // the division is past the stall threshold
+        foreach (var report in new[] { false, true })
+        {
+            var (file, store) = Home();
+            using var _ = store;
+            OversightSeed.Seed(file, "spend-no-accept", now);
+            using (var c = OversightSeed.Open(file))
+            {
+                foreach (var kind in new[] { PublicationKind.Journal, PublicationKind.Plan })
+                    OversightSeed.Insert(c, "publication", ("id", $"pub-{kind}"), ("role", CouncilRoles.Research), ("kind", kind),
+                        ("recipients", "[]"), ("classification", PublicationClass.Private), ("created_at", Sql.T(now.AddDays(-2))), ("content", "x"));
+                if (report)
+                    OversightSeed.Insert(c, "publication", ("id", "pub-report"), ("role", CouncilRoles.Research), ("kind", PublicationKind.Report),
+                        ("recipients", "[]"), ("classification", PublicationClass.Council), ("created_at", Sql.T(now.AddDays(-1))), ("content", "x"));
+            }
+            var swept = new OversightSweep(file, store).Run(now);
+            Assert.Null(swept.Failure);
+            var research = swept.Added.Where(f => f.ScopeId == OversightStore.RootScope && f.UnitId == OrgIds.Research).Select(f => f.Detector).Order().ToList();
+            log.WriteLine($"report={report}: {string.Join(", ", research)}");
+            Assert.Equal(report ? [] : ["spend-no-accept", "stall"], research);
+        }
+    }
+
     /// <summary>THE TEMPLATE LIST IS CLOSED AND STATES FACTS: one per detector variant, and no word that recommends (§ 9's first eight weeks).</summary>
     [Fact]
     public void The_digest_templates_are_a_closed_list_of_facts()
