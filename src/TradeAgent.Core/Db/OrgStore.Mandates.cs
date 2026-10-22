@@ -119,10 +119,24 @@ public static class MandateEventKind
     /// <summary>The sweep found it past its deadline. Closes the mandate and stops its spend.</summary>
     public const string Expired = "expired";
 
-    public static readonly string[] All = [Issued, Delivered, Retry, Escalated, Declined, Accepted, Rejected, Cancelled, Expired];
+    /// <summary>
+    /// The decider re-scoped it (<c>mandate-rescope</c>, <c>U-org-verbs-a</c>): a SUCCESSOR was issued in the same write, named in
+    /// this event's evidence and naming this mandate in its own <c>issued</c> event. Closes the mandate and stops its spend; its
+    /// spend and its failures stay its own.
+    /// </summary>
+    public const string Rescoped = "rescoped";
+
+    /// <summary>
+    /// The holder proposed a finding beyond its mandate to its decider (<c>mandate-propose</c>, <c>U-org-verbs-a</c>): its claim
+    /// in the reason, the app records it cites in the evidence. A CLAIM, never a status: it changes nothing the mandate owes or
+    /// admits.
+    /// </summary>
+    public const string Proposed = "proposed";
+
+    public static readonly string[] All = [Issued, Delivered, Retry, Escalated, Declined, Accepted, Rejected, Cancelled, Expired, Rescoped];
 
     /// <summary>The events after which nothing more is owed or spent.</summary>
-    public static readonly string[] Closing = [Accepted, Cancelled, Expired];
+    public static readonly string[] Closing = [Accepted, Cancelled, Expired, Rescoped];
 
     public static bool IsKnown(string? kind) => kind is not null && Array.IndexOf(All, kind) >= 0;
 
@@ -183,6 +197,14 @@ public sealed record MandateRow(
 public sealed record MandateEventRow(
     long Id, string MandateId, DateTimeOffset At, string Kind, string Actor, string? Attempt, string? Reason,
     IReadOnlyList<string> Evidence);
+
+/// <summary>
+/// THE NEW TERMS OF A RE-SCOPED MANDATE (<c>mandate-rescope</c>, <c>U-org-verbs-a</c>): everything an issue names but who decides it
+/// and who holds it, which the old mandate's row says — a different holder is a cancellation and a new assignment.
+/// </summary>
+public sealed record MandateTerms(
+    string Kind, string Objective, string? Scope, string? OutputShape, bool Exact, DateTimeOffset Deadline, decimal Allocation,
+    int RetryLimit);
 
 /// <summary>What a decider asks for, before the app has validated it or minted an id.</summary>
 public sealed record MandateIssue(
@@ -336,6 +358,21 @@ public sealed partial class OrgStore
         if (AssignVerdict(issue, now) is { Why: { } refused, Rights: var rights })
             throw rights ? Forbidden(refused) : Refused(refused);
 
+        var row = InsertMandate(issue, now);
+        var issued = AppendMandateEvent(row.Id, now, MandateEventKind.Issued, row.Decider, issue.Attempt, null, []);
+        if (forecasts?.Count > DecisionLimits.MaxForecasts)
+            throw Refused($"a mandate carries at most {DecisionLimits.MaxForecasts} forecasts.");
+        foreach (var f in forecasts ?? []) AddForecast(row.Decider, issue.Attempt, null, row.Id, f, now);
+        RaiseMandateWake(row, issued, now);
+        return row;
+    });
+
+    /// <summary>
+    /// THE ROW OF A VALIDATED ISSUE, minted and inserted — called only inside a writer's own write, after
+    /// <see cref="AssignRefusal"/> passed it. Its unit is the nearest unit the decider heads above (or at) the holder's.
+    /// </summary>
+    MandateRow InsertMandate(MandateIssue issue, DateTimeOffset now)
+    {
         var holderUnit = Position(issue.Holder)!.UnitId;
         // THE UNIT IT IS ISSUED FROM: the nearest unit the decider heads above (or at) the holder's.
         var heads = Units().Where(u => u.HeadPositionId == issue.Decider).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
@@ -357,14 +394,8 @@ public sealed partial class OrgStore
             ("$allocation", Sql.D(row.Allocation)), ("$retries", row.RetryLimit), ("$attempt", row.Attempt),
             ("$at", Sql.T(now))))
             c.ExecuteNonQuery();
-
-        var issued = AppendMandateEvent(row.Id, now, MandateEventKind.Issued, row.Decider, issue.Attempt, null, []);
-        if (forecasts?.Count > DecisionLimits.MaxForecasts)
-            throw Refused($"a mandate carries at most {DecisionLimits.MaxForecasts} forecasts.");
-        foreach (var f in forecasts ?? []) AddForecast(row.Decider, issue.Attempt, null, row.Id, f, now);
-        RaiseMandateWake(row, issued, now);
         return row;
-    });
+    }
 
     /// <summary>
     /// CANCELS AN OPEN MANDATE — its decider only, with a reason: the <c>cancelled</c> event, and every untaken wake of it to the
@@ -381,6 +412,47 @@ public sealed partial class OrgStore
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"the mandate was cancelled: {why}");
         return cancelled;
     });
+
+    /// <summary>
+    /// RE-SCOPES AN OPEN MANDATE INTO A LINKED SUCCESSOR (<c>U-org-verbs-a</c>; ORGANISATION § 4: "retry, then re-scope";
+    /// ORCHESTRATION § 2.2: rows are never updated, failures are remembered) — its decider only, saying why — in ONE write: the
+    /// successor's row under the same decider and holder with <paramref name="terms"/>, held to every rule an assignment is
+    /// (<see cref="AssignRefusal"/>); the old mandate's <c>rescoped</c> event naming the successor, which closes it and stops its
+    /// spend; every untaken wake of the old mandate to its holder withdrawn — a floored re-raise waiting on its time included
+    /// (<c>U-rewake-floor</c>), as every other closing path does; the successor's <c>issued</c> event naming the old mandate; and
+    /// ONE <c>mandate</c> wake to the holder for the successor. The old mandate's launches, spend, deliveries and failures stay its
+    /// own (BUDGET-001): nothing is moved, and the successor's retries start fresh.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Not the decider, not open, no reason, or terms an assignment refuses; nothing was written.</exception>
+    public (MandateEventRow Rescoped, MandateRow Successor) Rescope(string mandateId, string caller, string? attempt, string why,
+        MandateTerms terms, DateTimeOffset now) => db.Write(_ =>
+    {
+        var m = DecidedBy(mandateId, caller);
+        if (string.IsNullOrWhiteSpace(why) || why.Length > MandateLimits.MaxClaimChars)
+            throw Refused($"a re-scope says why, in at most {MandateLimits.MaxClaimChars} characters.");
+        // THE ROW DECIDES WHO DECIDES AND WHO HOLDS THE SUCCESSOR, never the frame.
+        var issue = new MandateIssue(m.Decider, attempt, m.Holder, terms.Kind, terms.Objective, terms.Scope, terms.OutputShape,
+            terms.Exact, terms.Deadline, terms.Allocation, terms.RetryLimit);
+        // THE DECIDER'S AUTHORITY OVER THE SUCCESSOR IS MARKED AS ASSIGN MARKS IT (U-org-watcher-b): a holder that left the subtree it
+        // heads, or a decider that heads no unit now, is a refusal of rights; a bad term is what was sent, and is not.
+        if (AssignVerdict(issue, now) is { Why: { } refused, Rights: var rights }) throw rights ? Forbidden(refused) : Refused(refused);
+
+        var successor = InsertMandate(issue, now);
+        var rescoped = AppendMandateEvent(m.Id, now, MandateEventKind.Rescoped, caller, attempt, why, [successor.Id]);
+        new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn,
+            $"the mandate was re-scoped into {successor.Id}: {why}");
+        var issued = AppendMandateEvent(successor.Id, now, MandateEventKind.Issued, caller, attempt, null, [m.Id]);
+        RaiseMandateWake(successor, issued, now);
+        return (rescoped, successor);
+    });
+
+    /// <summary>The mandate <paramref name="mandateId"/> was re-scoped FROM — the one its <c>issued</c> event names — or null.</summary>
+    public string? PredecessorOf(string mandateId) =>
+        MandateEvents(mandateId).FirstOrDefault(e => e.Kind == MandateEventKind.Issued)?.Evidence.FirstOrDefault();
+
+    /// <summary>The mandate <paramref name="mandateId"/> was re-scoped INTO — the one its <c>rescoped</c> event names — or null.</summary>
+    public string? SuccessorOf(string mandateId) =>
+        MandateEvents(mandateId).LastOrDefault(e => e.Kind == MandateEventKind.Rescoped)?.Evidence.FirstOrDefault();
 
     /// <summary>
     /// A LAUNCH ITS MANDATE REFUSED (<see cref="AiAdmission.Mandate"/>), recorded in one write: the mandate's untaken
@@ -1223,7 +1295,7 @@ public sealed partial class OrgStore
     {
         var m = Mandate(mandateId) ?? throw Refused($"'{mandateId}' is no mandate.");
         if (m.Decider != caller)
-            throw Forbidden($"'{mandateId}' is decided by '{m.Decider}', not by you: only its decider may judge, cancel or reassign it.");
+            throw Forbidden($"'{mandateId}' is decided by '{m.Decider}', not by you: only its decider may judge, cancel, re-scope or reassign it.");
         if (!IsOpen(m.Id))
             throw Refused($"'{mandateId}' is {MandateStatus(m.Id)}: a closed mandate is decided already.");
         return m;

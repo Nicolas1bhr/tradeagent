@@ -189,6 +189,13 @@ public static class AppPrincipals
 public sealed record FundedUnit(string UnitId, decimal? Envelope);
 
 /// <summary>
+/// ONE UNIT OF A POSITION'S FUNDING CHAIN AS <c>org-show</c> SHOWS IT (<c>U-org-verbs-a</c>): its envelope as admission resolves it
+/// (<see cref="FundedUnit.Envelope"/>; null is no separate cap) and the day's spent and reserved charged to it
+/// (<see cref="AiAttemptStore.UnitTotalsBetween"/>) — O4's readers, read by the host that meters launches, never recomputed.
+/// </summary>
+public sealed record UnitDay(string UnitId, decimal? Envelope, decimal Spent, decimal Reserved);
+
+/// <summary>
 /// HOW A UNIT'S ENVELOPE IS RESOLVED (<c>docs/ORCHESTRATION.md</c> § 2.4): <c>envelope_share</c> is a FRACTION of the parent's
 /// envelope in the same currency and period, never an amount; the root's envelope is the owner's daily cap.
 ///
