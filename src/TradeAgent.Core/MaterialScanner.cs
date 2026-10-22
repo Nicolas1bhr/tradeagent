@@ -34,7 +34,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 {
     readonly string _root = workspaceRoot ?? Paths.Workspace;
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
-    readonly WorkspaceReads _reads = reads ?? WorkspaceReads.Disk;
+    readonly WorkspaceReads _reads = reads ?? WorkspaceReads.Under(workspaceRoot ?? Paths.Workspace);
     readonly MaterialStore _store = new(db);
     readonly Func<PresenceMark, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
 
@@ -249,7 +249,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     MaterialOrigin? written = null;
                     var (isNew, id) = _store.Observe(rel, () => (written = origin()).Value, size,
                         new DateTimeOffset(modifiedUtc, TimeSpan.Zero),
-                        RunnableExts.Contains(new FileInfo(file).Extension), now);
+                        RunnableExts.Contains(Path.GetExtension(file)), now);
 
                     present.Add(id);
                     seen++;
@@ -401,7 +401,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             var full = Path.Combine(_root, m.RelPath.Replace('/', Path.DirectorySeparatorChar));
             try
             {
-                using var fs = File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                // A POSITION'S HOME IS OPENED WITHOUT FOLLOWING A LINK AT ANY COMPONENT (U-execution-environment fix pass 4, the second
+                // re-review's [P2] 4): an executor's cell writes its whole home, so a name the walk measured may be a link by now, and the
+                // bytes hashed onto its row would be another file's. The owner's inbox, which no cell writes, is opened as it always was.
+                using var fs = IsInInbox(m.RelPath)
+                    ? File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)
+                    : new FileStream(HomeFiles.OpenRead(_root, m.RelPath, oneName: false), FileAccess.Read);
                 if (!IsStill(fs, m)) continue;
 
                 var digest = Sha256Hex.Of(fs);
@@ -610,6 +615,35 @@ public sealed record WorkspaceReads(
         FolderOnDisk,
         dir => (Directory.GetFiles(dir), Directory.GetDirectories(dir)),
         FileOnDisk);
+
+    /// <summary>
+    /// THE MACHINE'S OWN DISK UNDER ONE WORKSPACE, as a pass reads it (<c>U-execution-environment</c> fix pass 4, the second re-review's
+    /// [P2] 4): the owner's inbox as <see cref="Disk"/> reads it, and every position's home through <see cref="HomeFiles"/> — each
+    /// component opened from the one above it without following a link, and each name examined where it is. A link in a home is neither
+    /// walked into nor measured: an executor's cell writes its whole home, and a link it aimed at a seat's login would otherwise be
+    /// recorded in <c>material</c> as the position's own file.
+    /// </summary>
+    public static WorkspaceReads Under(string root) => new(
+        dir => InHome(root, dir) is { } rel ? HomeFiles.Describe(root, rel) is { Folder: true, Link: false } : FolderOnDisk(dir),
+        dir => InHome(root, dir) is { } rel ? ListHome(root, rel, dir) : Disk.List(dir),
+        file => InHome(root, file) is { } rel
+            ? HomeFiles.Describe(root, rel) is { Folder: false, Link: false } e ? (e.Length, e.WrittenUtc) : null
+            : FileOnDisk(file));
+
+    /// <summary>One folder in a home, listed link-free: a link is neither a file nor a folder of the pass's.</summary>
+    static (string[] Files, string[] Folders) ListHome(string root, string rel, string dir)
+    {
+        var seen = HomeFiles.List(root, rel);
+        return ([.. seen.Where(e => !e.Folder && !e.Link).Select(e => Path.Combine(dir, e.Name))],
+                [.. seen.Where(e => e.Folder && !e.Link).Select(e => Path.Combine(dir, e.Name))]);
+    }
+
+    /// <summary>The path relative to <paramref name="root"/> when it is in a position's home, or null for the owner's inbox.</summary>
+    static string? InHome(string root, string path)
+    {
+        var rel = Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
+        return MaterialScanner.IsInInbox(rel) ? null : rel;
+    }
 
     static bool FolderOnDisk(string path)
     {
