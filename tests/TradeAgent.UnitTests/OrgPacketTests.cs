@@ -362,6 +362,39 @@ public class OrgPacketTests
         Assert.Contains(Lines(packet.Text), l => l.StartsWith("    > éé", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// EVERY LIST STAYS INSIDE ITS SHARE, WITH ITS COUNT AND ITS REFUSALS, AT EVERY BOUND (fix pass 1, the review's fourth point): an
+    /// executor's packet carrying only notes — a dozen short ones and three whose refs cannot be read — composed at every executor
+    /// bound from 1,200 to 4,000 bytes. The notes' share is half the bound; the block never passes it, and every readable note is
+    /// either shown or counted.
+    ///
+    /// <para>RED at base 99b427b1: the count line was written without its bytes, refusal lines admitted against a stale figure and
+    /// the closing line appended unchecked — "at an executor bound of 1200 the notes took 628 bytes of a 600-byte share"; from 2,000
+    /// up, with notes shown, "at an executor bound of 2138 the notes took 1136 bytes of a 1069-byte share".</para>
+    /// </summary>
+    [Fact]
+    public void Every_list_stays_inside_its_share_with_its_count_and_refusals_at_every_bound()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var t0 = DateTimeOffset.UtcNow.AddHours(-1);
+        for (var i = 0; i < 12; i++) Note(db, P1, P2, $"note {i}: the funding skew is venue-specific", t0.AddSeconds(i));
+        for (var i = 0; i < 3; i++)
+            Exec(db, "INSERT INTO org_lateral(id, sender, to_position, text, refs, at) VALUES($id,$s,$p,'x','not json',$at)",
+                ("$id", $"lat-0000000bad0{i}"), ("$s", P1), ("$p", P2), ("$at", Sql(t0.AddSeconds(30 + i))));
+
+        for (var bound = 1_200; bound <= 4_000; bound += 3)
+        {
+            var packet = PositionPacket.Compose(db, P2, DateTimeOffset.UtcNow, new PacketBounds(bound, 16 * 1024))!;
+            var bytes = Encoding.UTF8.GetByteCount(packet.Text);
+            Assert.True(bytes <= bound / 2, $"at an executor bound of {bound} the notes took {bytes} bytes of a {bound / 2}-byte share");
+            var shown = NoteLines(packet).Count;
+            Assert.Equal(shown, packet.Shown.Count);
+            var counted = Lines(packet.Text).SingleOrDefault(l => l.StartsWith("  - and ", StringComparison.Ordinal) && l.Contains(" note", StringComparison.Ordinal));
+            Assert.Equal(12 - shown, counted is null ? 0 : int.Parse(counted.Split(' ')[4], CultureInfo.InvariantCulture));
+        }
+    }
+
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
 
     /// <summary>
