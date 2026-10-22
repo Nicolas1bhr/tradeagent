@@ -327,7 +327,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
         var root = RepoRoot();
         // AND THE OWNER'S PAGE (U-org-watcher-b): its words, its controls and their sources — the App's alone.
         string[] named = [ns, OversightStore.FileName, "oversight_", "OversightPage", "OversightWords", "OversightSources", "OversightRead",
-            "OversightCap", "SaveOversightCap", "RaiseOversightCapArmed"];
+            "OversightCap", "SaveOversightCap", "RaiseOversightCapArmed", "OversightBanner"];
         var sources = new[] { "TradeAgent.Gateway", "TradeAgent.AgentRuntime", "TradeAgent.TradeCli", "TradeAgent.GatewayHost" }
             .SelectMany(p => Directory.GetFiles(Path.Combine(root, "src", p), "*.cs", SearchOption.AllDirectories))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)

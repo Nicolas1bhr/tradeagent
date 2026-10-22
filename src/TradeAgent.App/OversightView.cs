@@ -308,3 +308,106 @@ sealed class OversightPage
         if (t.Text != text) t.Text = text;
     }
 }
+
+/// <summary>
+/// THE IMMEDIATE IN-APP ALERT FOR A SEVERE FINDING (ORGANISATION § 9 "an immediate in-app alert for a severe detector"): a strip in the
+/// window's chrome, in its own row AFTER the approval banner — money first — shown while an unacknowledged severe finding is in the owner's
+/// file. Its sentence is the digest's own (<see cref="DigestComposer.Sentence"/>), cited. "Open" jumps to the Oversight page; "Acknowledge"
+/// appends a row for each finding the banner COUNTED when it was drawn — one that arrived since is not acknowledged unseen — and removes
+/// nothing. Never a toast, a sound or a system notification. Within one sweep (60 s) plus the window's 5 s refresh, as the page says.
+/// </summary>
+sealed class OversightBanner
+{
+    readonly OversightSources _src;
+    IReadOnlyList<string> _counted = [];
+    string _shown = "";
+
+    public Border Root { get; } = new()
+    {
+        Background = Theme.DangerSoft,
+        BorderBrush = Theme.Danger,
+        BorderThickness = new Thickness(0, 0, 0, 1),
+        Padding = new Thickness(Theme.S5, Theme.S3),
+        IsVisible = false
+    };
+
+    internal TextBlock Text { get; } = new()
+    {
+        FontSize = Theme.Small, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
+    };
+
+    internal Button Open { get; }
+
+    internal Button Acknowledge { get; }
+
+    public OversightBanner(OversightSources sources, Action open)
+    {
+        _src = sources;
+        Open = Ui.Secondary("Open", open);
+        Acknowledge = Ui.Ghost("Acknowledge", AcknowledgeCounted);
+        var actions = Ui.Row(Theme.S2, Open, Acknowledge);
+        actions.VerticalAlignment = VerticalAlignment.Center;
+        actions[Grid.ColumnProperty] = 2;
+
+        var dot = Ui.With(Ui.Dot(Theme.Danger), d => d.Margin = new Thickness(0, 0, Theme.S3, 0));
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        grid.Children.Add(dot);
+        grid.Children.Add(Ui.With(Text, t => t[Grid.ColumnProperty] = 1));
+        grid.Children.Add(actions);
+        Root.Child = grid;
+    }
+
+    /// <summary>In place on every tick: the newest unacknowledged severe finding, or nothing.</summary>
+    public void Update()
+    {
+        List<OversightFinding> waiting;
+        try
+        {
+            if (_src.Store() is not { } store) { Hide(); return; }
+            var acknowledged = store.Acknowledged();
+            waiting = [.. store.Findings(OversightStore.RootScope)
+                .Where(f => f.Severity == OversightSeverity.Severe && !acknowledged.ContainsKey(f.Id))
+                .OrderByDescending(f => f.Seq)];
+        }
+        catch (ObjectDisposedException) { return; } // the quit closed the file under this tick
+
+        if (waiting.Count == 0) { Hide(); return; }
+        _counted = [.. waiting.Select(f => f.Id)];
+        var newest = waiting[0];
+        var shown = newest.Id + "#" + waiting.Count;
+        if (shown != _shown)
+        {
+            _shown = shown;
+            Text.Text = $"Severe finding{(waiting.Count == 1 ? "" : $" ({waiting.Count} unacknowledged, newest first)")}: {Sentence(newest)}";
+        }
+        Root.IsVisible = true;
+    }
+
+    /// <summary>The digest's sentence for <paramref name="f"/>, its cites checked against the app's database where there is one.</summary>
+    string Sentence(OversightFinding f)
+    {
+        if (_src.DatabaseFile() is not { } file || !File.Exists(file)) return DigestComposer.Sentence(f, _ => true);
+        try
+        {
+            using var records = new OrgRecords(file);
+            return DigestComposer.Sentence(f, records.Resolves);
+        }
+        catch (Exception) { return DigestComposer.Sentence(f, _ => true); }
+    }
+
+    void AcknowledgeCounted()
+    {
+        if (_src.Store() is not { } store) return;
+        var at = _src.Now();
+        var acknowledged = store.Acknowledged();
+        foreach (var id in _counted.Where(id => !acknowledged.ContainsKey(id))) store.Acknowledge(id, at);
+        Hide();
+    }
+
+    void Hide()
+    {
+        _counted = [];
+        _shown = "";
+        Root.IsVisible = false;
+    }
+}

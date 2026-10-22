@@ -54,7 +54,7 @@ public sealed class MainWindow : Window
     // ---- shell -----------------------------------------------------------------------------
     readonly Grid _shellSurface = new()
     {
-        RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*"), IsVisible = false
+        RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,*"), IsVisible = false
     };
 
     // header
@@ -137,6 +137,7 @@ public sealed class MainWindow : Window
     ActivityPage? _activity;
     ChecksPage? _checks;
     OversightPage? _oversightPage;
+    OversightBanner? _oversightBanner;
 
     bool _shellBuilt;
     bool _updating;
@@ -244,14 +245,16 @@ public sealed class MainWindow : Window
 
         _shellSurface.Children.Add(Ui.With(BuildHeader(), c => c[Grid.RowProperty] = 0));
         _shellSurface.Children.Add(Ui.With(BuildApprovalBanner(), c => c[Grid.RowProperty] = 1));
-        _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 2));
-        // Last of the three strips on purpose. A waiting approval is money; a failed press is a
+        // The owner's severe finding straight after the approval banner: money first, then his private line (U-org-watcher-b).
+        _shellSurface.Children.Add(Ui.With(BuildOversightBanner(), c => c[Grid.RowProperty] = 2));
+        _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 3));
+        // Last of the strips on purpose. A waiting approval is money; a failed press is a
         // broken button; a new version is neither, and must never sit above either of them.
-        _shellSurface.Children.Add(Ui.With(BuildUpdateBanner(), c => c[Grid.RowProperty] = 3));
+        _shellSurface.Children.Add(Ui.With(BuildUpdateBanner(), c => c[Grid.RowProperty] = 4));
 
         BuildPages();
 
-        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("210,*"), [Grid.RowProperty] = 4 };
+        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("210,*"), [Grid.RowProperty] = 5 };
         body.Children.Add(BuildRail());
         body.Children.Add(new Border
         {
@@ -334,6 +337,13 @@ public sealed class MainWindow : Window
 
         _approvalBanner.Child = grid;
         return _approvalBanner;
+    }
+
+    /// <summary>The owner's in-app alert for a severe finding (<see cref="OversightBanner"/>): built once, updated in place.</summary>
+    Control BuildOversightBanner()
+    {
+        _oversightBanner = new OversightBanner(OversightSources.For(_host), () => Select(Page.Oversight));
+        return _oversightBanner.Root;
     }
 
     Control BuildErrorBar()
@@ -542,6 +552,7 @@ public sealed class MainWindow : Window
                 ? "The AI is asking permission — 1 order waiting"
                 : $"The AI is asking permission — {waiting.Count} orders waiting";
 
+        _oversightBanner?.Update();
         RefreshUpdateBanner(status);
         UpdateRailHealth();
 

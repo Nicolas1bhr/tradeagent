@@ -160,4 +160,53 @@ public class OversightPageTests(ITestOutputHelper log)
         page.Update();
         Assert.Contains("0 USD", page.CapText.Text, StringComparison.Ordinal);
     }
+
+    // ---- (b) the in-app alert ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (b) A SEVERE FINDING RAISES THE BANNER, AND AN ACKNOWLEDGEMENT LOWERS IT WITHOUT DELETING ANYTHING. An info finding raises nothing; a
+    /// severe one raises the chrome's banner with its digest sentence (<see cref="DigestComposer.Sentence"/>, cited); "Open" jumps to the page;
+    /// "Acknowledge" appends one row per finding the banner counted and lowers it, every finding still in the file. A severe finding that
+    /// arrives after the banner was drawn is not acknowledged unseen: it raises the banner again on the next refresh. RED at base: no banner existed.
+    /// </summary>
+    [Fact]
+    public void A_severe_finding_raises_the_banner_and_an_acknowledgement_lowers_it_without_deleting()
+    {
+        using var store = new OversightStore(NewFile(), Now);
+        var opened = 0;
+        var banner = new OversightBanner(Sources(store), () => opened++);
+        banner.Update();
+        Assert.False(banner.Root.IsVisible);
+
+        store.Commit([Finding("stall", "unit:div-research", OrgIds.Research, "org/div-research")], new Dictionary<string, long>(), Now);
+        banner.Update();
+        Assert.False(banner.Root.IsVisible, "an info finding raised the banner");
+
+        var severe = Finding("refusals", "log:7", OrgIds.Root, "org", OversightSeverity.Severe, new OversightCite("log", "7"));
+        store.Commit([severe], new Dictionary<string, long>(), Now);
+        banner.Update();
+        Assert.True(banner.Root.IsVisible);
+        log.WriteLine(banner.Text.Text);
+        Assert.Contains(DigestComposer.Sentence(severe, _ => true), banner.Text.Text, StringComparison.Ordinal);
+
+        Press(banner.Open);
+        Assert.Equal(1, opened);
+
+        // DRAWN, THEN ANOTHER ARRIVES BEFORE THE PRESS: only what the banner counted is acknowledged.
+        var later = Finding("refusals", "log:8", OrgIds.Root, "org", OversightSeverity.Severe, new OversightCite("log", "8"));
+        store.Commit([later], new Dictionary<string, long>(), Now);
+        Press(banner.Acknowledge);
+        Assert.False(banner.Root.IsVisible);
+        Assert.Equal([severe.Id], store.Acknowledged().Keys);
+        Assert.Equal(3, store.Findings().Count);
+
+        banner.Update();
+        Assert.True(banner.Root.IsVisible);
+        Assert.Contains(DigestComposer.Sentence(later, _ => true), banner.Text.Text, StringComparison.Ordinal);
+        Press(banner.Acknowledge);
+        banner.Update();
+        Assert.False(banner.Root.IsVisible);
+        Assert.Equal(3, store.Findings().Count);
+        Assert.Equal(2, store.Acknowledged().Count);
+    }
 }
