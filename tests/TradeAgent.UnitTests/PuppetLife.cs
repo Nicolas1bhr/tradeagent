@@ -142,7 +142,8 @@ sealed class PuppetLife : IAsyncDisposable
     /// every turn a priced one), <paramref name="seed"/> applied to the database before anything reads it, and the puppet started
     /// through the supervisor's own prepare and start.
     /// </summary>
-    public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null)
+    public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null,
+        Action<TradeAgentSettings>? settings = null)
     {
         // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
         var found = ProcessWide.Note();
@@ -165,6 +166,7 @@ sealed class PuppetLife : IAsyncDisposable
                 s.AiPriceInputPerMillion = 2m;
                 s.AiPriceOutputPerMillion = 8m;
                 s.AiDailyCostCap = 1000m;
+                settings?.Invoke(s);
             });
         new OnboardingStore(db).Complete(OnboardingStep.SETUP_COMPLETE);
         await life.Compose(db, connector);

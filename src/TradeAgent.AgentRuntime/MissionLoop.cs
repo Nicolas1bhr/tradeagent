@@ -152,7 +152,7 @@ public static class SessionWhy
 
 /// <summary>
 /// THE SESSION ONE TURN RAN IN (<c>U-org-packets-a</c>): fresh, with why (<see cref="SessionWhy"/>), or resumed. Carried out of the
-/// turn on <c>AgentTurnEnded.Session</c> and written into the attempt's <c>context</c> — the conversation knows whether it
+/// turn on <see cref="AgentTurnEnded.Session"/> and written into the attempt's <c>context</c> — the conversation knows whether it
 /// resumed, the loop knows why it rotated, and the record holds both.
 /// </summary>
 public sealed record TurnSession(bool Fresh, string? Why)
@@ -363,6 +363,13 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// with the kind on it — charged nothing when <see cref="LateRefusal.BeforeAnyWork"/>, since nothing started.
     /// </summary>
     public LateRefusal? GateRefused { get; init; }
+
+    /// <summary>
+    /// THE SESSION THE TURN RAN IN (<c>U-org-packets-a</c>): fresh with why, or resumed — as the conversation decided it on the argv
+    /// it started, with the reason the loop's rotation gave it. Null for a turn that launched nothing. Written into
+    /// <c>ai_attempt.context</c>, no rung.
+    /// </summary>
+    public TurnSession? Session { get; init; }
 }
 
 /// <summary>

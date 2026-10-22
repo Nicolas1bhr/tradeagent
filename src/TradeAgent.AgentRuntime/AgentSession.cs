@@ -511,6 +511,16 @@ public sealed class AgentSession(
     bool _sessionExists;
     string? _threadId;
 
+    /// <summary>
+    /// WHY THE NEXT SESSION THIS CONVERSATION OPENS IS FRESH (<c>U-org-packets-a</c>; <see cref="SessionWhy"/>): its first in this run
+    /// of the app until a stop says otherwise — the loop's rotation with its reason, any other stop as a restart. Kept until a
+    /// session is open, so a turn that opened none leaves the reason standing for the next.
+    /// </summary>
+    string _freshWhy = SessionWhy.First;
+
+    /// <summary>The session the turn in flight runs in (<see cref="AgentTurnEnded.Session"/>); null until it launches.</summary>
+    TurnSession? _session;
+
     public bool Busy => _busy;
 
     /// <summary>
@@ -566,6 +576,7 @@ public sealed class AgentSession(
 
         _sessionExists = false;
         _threadId = null;
+        _freshWhy = SessionWhy.First;
         Directory.CreateDirectory(workspace());
         Append(new ChatTurn(ChatRole.System, $"{manifest.DisplayName} is ready.", DateTimeOffset.UtcNow));
         return Task.CompletedTask;
@@ -755,6 +766,7 @@ public sealed class AgentSession(
         _survivorPresence = null;
         _canon = null;
         _promptIn = null;
+        _session = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -811,7 +823,9 @@ public sealed class AgentSession(
                 // AND HOW ITS PROMPT TRAVELLED: on stdin, or on the command line of a runtime that cannot read stdin, said.
                 PromptIn = _promptIn,
                 // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
-                GateRefused = gateRefused
+                GateRefused = gateRefused,
+                // AND THE SESSION IT RAN IN: fresh, with why, or resumed — null for a turn that launched nothing (U-org-packets-a).
+                Session = _session
             });
         }
         return gateRefused;
@@ -884,9 +898,13 @@ public sealed class AgentSession(
         {
             _sessionExists = false;
             _threadId = null;
+            _freshWhy = SessionWhy.Profile;
             args = AgentArgs.For(manifest, message, resuming: false, model: LaunchModel, seatClass, launchSeat.Door, out promptInArgv);
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
+
+        // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed, or fresh with why.
+        _session = _sessionExists ? TurnSession.Resumed : TurnSession.FreshBecause(_freshWhy);
 
         var psi = new ProcessStartInfo
         {
@@ -1519,12 +1537,19 @@ public sealed class AgentSession(
         catch (Exception) { }
     }
 
-    /// <summary>Cancels anything running and forgets the session, so the next message starts fresh.</summary>
-    public async Task StopAsync()
+    /// <summary>
+    /// Cancels anything running and forgets the session, so the next message starts fresh — a stop no rotation ordered, which the
+    /// next turn's record calls a <see cref="SessionWhy.Restart"/>.
+    /// </summary>
+    public Task StopAsync() => StopAsync(SessionWhy.Restart);
+
+    /// <summary>The same stop, with why the next session is fresh (<c>U-org-packets-a</c>): the loop's rotation names its reason.</summary>
+    public async Task StopAsync(string why)
     {
         await CancelAsync();
         _sessionExists = false;
         _threadId = null;
+        _freshWhy = why;
         SetBusy(false);
     }
 

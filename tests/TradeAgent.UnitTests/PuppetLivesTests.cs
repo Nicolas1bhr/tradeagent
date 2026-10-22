@@ -199,6 +199,69 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (d) EVERY ATTEMPT RECORDS FRESH OR RESUMED, AND WHY (<c>U-org-packets-a</c>), through the real kernel: a team member holding
+    /// two mandates and the chair, each a puppet, under a bound of two turns a session. The member's first mandate opens its first
+    /// session; its second is FRESH, for <c>mandate</c> — its conversation was stopped before the send. The chair, of the legacy pair,
+    /// is fresh on its first turn, resumed on its second and fresh again on its third, for <c>turns</c>. Each attempt's
+    /// <c>context</c> says so, as the session decided it on the argv it started. No model.
+    ///
+    /// <para>RED at base e697686d: no attempt's context carried a session.</para>
+    /// </summary>
+    [Fact]
+    public async Task Every_attempt_records_fresh_or_resumed_and_why()
+    {
+        const string head = "pos-5e55aa000001", member = "pos-5e55aa000002", team = "team-5e55aa00";
+        await using var life = await PuppetLife.Begin("sessions", settings: s => s.MissionTurnsPerSession = 2, seed: db => db.Write(_ =>
+        {
+            foreach (var sql in new[]
+                     {
+                         $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{team}', '{OrgIds.Research}', 'team', NULL, 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{head}', '{team}', 'org/{head}', 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{member}', '{team}', 'org/{member}', 'active', '2026-10-16T12:00:00.0000000Z')",
+                         $"UPDATE org_unit SET head_position_id='{head}' WHERE id='{team}'"
+                     })
+            {
+                using var c = db.Cmd(sql);
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        }));
+        life.Script(member, ["usage 100 0 10", "final First mandate."], ["usage 120 0 10", "final Second mandate."]);
+        life.Script(Chair, ["usage 10 0 5", "final One."], ["usage 10 0 5", "final Two."], ["usage 10 0 5", "final Three."]);
+
+        var org = new OrgStore(life.Host.Db);
+        MandateRow Give(string objective) => org.Assign(new MandateIssue(head, null, member, MandateKind.Task, objective, null,
+            MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        var m1 = Give("find out whether the funding skew predicts the next hour");
+        var m2 = Give("count the gaps in last week's tape");
+
+        for (var n = 1; n <= 3; n++)
+        {
+            life.Wake(Chair);
+            var turned = n;
+            await life.RunUntil(() => life.AttemptsOf(Chair).Count(a => a.State == AiAttemptState.ENDED) == turned, $"the chair's turn {n} ended");
+        }
+        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) == 2, "the member answered both mandates");
+
+        static (string? Session, string? Why) Of(AiAttempt a)
+        {
+            using var context = JsonDocument.Parse(a.Context!);
+            var root = context.RootElement;
+            return (root.TryGetProperty("session", out var s) ? s.GetString() : null,
+                root.TryGetProperty("session_why", out var w) ? w.GetString() : null);
+        }
+
+        var members = life.AttemptsOf(member).OrderBy(a => a.StartedAt).ToList();
+        Assert.Equal([m1.Id, m2.Id], members.Select(a => a.MandateId));
+        Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.Mandate)], members.Select(Of));
+        var chairs = life.AttemptsOf(Chair).OrderBy(a => a.StartedAt).ToList();
+        Assert.Equal([("fresh", SessionWhy.First), ("resumed", null), ("fresh", SessionWhy.Turns)], chairs.Select(Of));
+
+        foreach (var a in members) output.WriteLine($"life (sessions) {a.Role} {a.Id} mandate={a.MandateId}: {a.Context}");
+        foreach (var a in chairs) output.WriteLine($"life (sessions) {a.Role} {a.Id}: {a.Context}");
+    }
+
+    /// <summary>
     /// THE MATERIAL PASS WAITS FOR A PUPPET TURN'S QUIESCENCE (COUNCIL rule 7): while the chair's puppet is mid-turn its process is
     /// in the host's presence register and the app's own pass refuses to walk the inbox — nothing walked, the window unmoved; once
     /// the turn is over the same call walks it.
