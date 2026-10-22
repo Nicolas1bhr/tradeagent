@@ -157,6 +157,12 @@ public static class SessionWhy
     /// fresh template whatever session came before (fix pass 1): the record says what launched.
     /// </summary>
     public const string NoResume = "no-resume";
+
+    /// <summary>
+    /// A route (a) cell seat (<c>U-execution-environment</c>): its harness's codex home, which holds the session's rollout, is the
+    /// attempt's own and is swept when the turn ends, so nothing is left to resume — every executor turn on <c>cell</c> starts fresh.
+    /// </summary>
+    public const string Cell = "cell";
 }
 
 /// <summary>

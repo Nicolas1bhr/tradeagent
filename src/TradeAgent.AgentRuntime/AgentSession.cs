@@ -985,8 +985,9 @@ public sealed class AgentSession(
         // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed only where the resume template is
         // what launches — a runtime that declares none starts fresh every turn, and says so (fix pass 1) — or fresh with why.
         // RECORDED ONLY ONCE THE PROCESS EXISTS (fix pass 1): a start that throws launched nothing, and its turn names no session.
-        var session = AgentArgs.Resumes(manifest, _sessionExists) ? TurnSession.Resumed
-            : TurnSession.FreshBecause(_sessionExists ? SessionWhy.NoResume : _freshWhy);
+        // AND A CELL SEAT NEVER RESUMES (U-execution-environment): its record says fresh, why cell — never resumed for a launch that was not.
+        var session = AgentArgs.Resumes(manifest, Resumes(seatClass)) ? TurnSession.Resumed
+            : TurnSession.FreshBecause(!_sessionExists ? _freshWhy : seatClass == SeatPlan.CellClass ? SessionWhy.Cell : SessionWhy.NoResume);
 
         var psi = new ProcessStartInfo
         {
