@@ -407,21 +407,50 @@ public sealed class AgentSession(
     }
 
     /// <summary>
-    /// PUTS THE APP'S CANON BACK in <paramref name="home"/> when what lies there is not the text the app last wrote
-    /// (<see cref="AppFileManifest.Kept"/>). With nothing kept — no start has written this home in this process — nothing is written,
-    /// and the attempt's record says what the turn read (<see cref="Canon.SeenByCli"/>). A write that fails is the same: said, not hidden.
+    /// PUTS THE APP'S CANON BACK in <paramref name="home"/>, an executor's — a folder its cell writes whole, so every name in it is the
+    /// executor's to have planted (<c>U-execution-environment</c> item 3; review fix pass R1–R3). This runs in the UNCONFINED app, so:
+    /// <list type="bullet">
+    /// <item>NEVER THROUGH A LINK (R1): whatever lies at the canon's name — a file, a symbolic link, anything but a folder — is unlinked
+    /// without being followed or read, and the canon is created fresh with exclusive-create semantics (<c>O_CREAT|O_EXCL</c>, which follows
+    /// no link), so a link the cell aimed outside its home can never have the app write there.</item>
+    /// <item>NOTHING THAT OUTRANKS IT (R2): codex 0.160.1 reads <see cref="Canon.OverrideFile"/> IN PLACE OF <see cref="Canon.CliFile"/>
+    /// in the same folder (the class's config names no fallback file, and the cell cannot write the harness's codex home), so it is
+    /// unlinked the same way before the turn.</item>
+    /// <item>RESTORED OR REFUSED (R3): a name that cannot be unlinked or created — a folder planted there, a write that fails — refuses the
+    /// launch in words (<see cref="ErrorCode.CELL_UNAVAILABLE"/>), its wakes kept; the turn never runs under a canon the app did not
+    /// write.</item>
+    /// </list>
+    /// With nothing kept (<see cref="AppFileManifest.Kept"/>) — no start wrote this home's canon in this process — the override is still
+    /// removed, the canon's name is left as it lies, and the attempt's record says what the turn read (<see cref="Canon.SeenByCli"/>).
     /// </summary>
     void RestoreCanon(string home)
     {
         var files = appFiles ?? AppFileManifest.Shared;
-        if (files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile)) is not { } text) return;
-        var file = Path.Combine(home, Canon.CliFile);
+        var text = files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile));
         try
         {
-            if (File.Exists(file) && File.ReadAllText(file) == text) return;
-            File.WriteAllText(file, text);
+            Unlink(Path.Combine(home, Canon.OverrideFile));
+            if (text is null) return;
+            var file = Path.Combine(home, Canon.CliFile);
+            Unlink(file);
+            using var fresh = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            fresh.Write(Encoding.UTF8.GetBytes(text));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the record below says what the turn read */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent did not start the AI as a cell seat: it could not put its own canon back in the position's folder ({ex.Message}). " +
+                "Nothing was started; the next turn tries again.", ex);
+        }
+
+        // THE NAME ITSELF, NEVER WHAT IT POINTS AT: File.Delete is unlink(2) — a symbolic link is removed, its target untouched. A folder
+        // at the name is not removed (that would walk into what the cell planted): it refuses, above.
+        static void Unlink(string path)
+        {
+            if (Directory.Exists(path) && new DirectoryInfo(path).LinkTarget is null)
+                throw new IOException($"'{Path.GetFileName(path)}' in the position's folder is a folder, not the canon");
+            File.Delete(path);
+        }
     }
 
     /// <summary>
