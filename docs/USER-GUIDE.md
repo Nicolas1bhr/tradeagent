@@ -599,8 +599,10 @@ at the output rate, with reasoning counted inside output. Assuming the cheaper o
 turn be billed above its own reservation, and the limit would be passed by the difference. The two
 allowances are on the **Safety** page under *What the AI costs*, right below the limit. They save in
 one press — they take no permission and give none — and the direction is the trade: a bigger
-allowance is a safer limit and fewer turns a day, a smaller one buys more turns and holds less back.
-A zero in either box means the shipped default.
+allowance is a safer limit and fewer turns a day. A smaller one sets less aside only where the turn
+is held to it — TradeAgent's own harness, which stops a turn before a request that could pass it; on
+the AI company's own program nothing can stop a turn midway, so there no less than the shipped
+default is ever set aside. A zero in either box means the shipped default.
 
 **Your own typed questions are counted too.** A message you send on the Chat page is a run of the AI
 tool like any other, so it is reserved before it is sent and charged when it comes back. If the

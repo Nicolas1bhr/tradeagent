@@ -531,16 +531,19 @@ public sealed class AppHost : IAsyncDisposable
     /// THE MODEL <paramref name="chosen"/> RESOLVES TO for this role on <paramref name="runtime"/>: a broker-only seat's pin, whatever was
     /// chosen (U-thinking-seats-c); otherwise the role's own runtime's answer.
     /// </summary>
-    string? ModelOn(string role, string? runtime, string? chosen)
-    {
-        // A BROKER-ONLY SEAT RUNS ON ITS PIN, so its reservation is priced at the pin (U-thinking-seats-c).
-        if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is { } pinned) return pinned;
+    string? ModelOn(string role, string? runtime, string? chosen) =>
         // THE ROLE'S OWN RUNTIME RESOLVES IT. Asking the app's runtime for a role that is on the
         // harness answers with the CLI's rules — which is how a reservation gets priced at a model the
         // turn will not run on, in whichever direction the two happen to differ.
-        return RuntimeObjectFor(role)?.ModelFor(chosen)
-               ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
-    }
+        SeatModelOn(DeclaredSeatClass(role), chosen, RuntimeObjectFor(role)?.ModelFor(chosen)
+            ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null));
+
+    /// <summary>
+    /// THE RULE <see cref="ModelOn"/> APPLIES, given the declared seat class: a broker-only seat runs on its pin whatever was chosen, so its
+    /// reservation is priced at the pin (U-thinking-seats-c); any other seat, on the model its runtime resolved the choice to.
+    /// </summary>
+    internal static string? SeatModelOn(string? declaredClass, string? chosen, string? resolved) =>
+        declaredClass is { } declared && BrokerSeat.ModelOf(declared) is { } pinned ? pinned : resolved;
 
     /// <summary>
     /// WHAT A ROLE'S CONVERSATION IS OPENED ON (<c>U-org-seats</c>): the model of the seat the meter admitted its launch on, so the argv or
@@ -549,7 +552,7 @@ public sealed class AppHost : IAsyncDisposable
     /// pin, refusing one that names another model (U-thinking-seats-c). Never throws: a seat that cannot be read opens nothing that runs
     /// — the meter refused its launch before this is asked.
     /// </summary>
-    string? ConversationModelFor(string role)
+    internal string? ConversationModelFor(string role)
     {
         try
         {

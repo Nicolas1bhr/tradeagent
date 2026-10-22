@@ -606,8 +606,10 @@ public static class Labels
     public const string TurnAllowanceHint =
         "TradeAgent sets this much aside before each turn: the input tokens at the dearer of the "
         + "plain and cache-write rates, plus the output tokens at the output rate. A bigger "
-        + "allowance is a safer limit and fewer turns a day; a smaller one buys more turns and holds "
-        + "less back. 0 in either box means the shipped default.";
+        + "allowance is a safer limit and fewer turns a day. A smaller one sets less aside only where "
+        + "the turn is held to it — TradeAgent's own harness, which stops a turn before it could pass it; "
+        + "on the AI company's own program nothing can stop a turn midway, so there it never sets aside "
+        + "less than the shipped default. 0 in either box means the shipped default.";
 
     /// <summary>
     /// A POSITION'S SEAT THAT CANNOT BE READ OR SERVED AS WRITTEN (<c>U-org-seats</c>): refused before anything is written, its wakes

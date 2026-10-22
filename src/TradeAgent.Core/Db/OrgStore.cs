@@ -127,6 +127,9 @@ public static class OrgEventKind
 {
     /// <summary>A row the schema-28 rung wrote: nobody decided it, the upgrade did.</summary>
     public const string Seeded = "seeded";
+
+    /// <summary>The owner seated a position: its runtime, model and allowance (<c>U-org-seats</c>, <see cref="OrgStore.SetSeat"/>).</summary>
+    public const string Seated = "seated";
 }
 
 /// <summary>
@@ -135,6 +138,9 @@ public static class OrgEventKind
 public static class OrgDecider
 {
     public const string App = "app";
+
+    /// <summary>The owner, in-process — never a pipe op, a door verb or a <c>trade</c> verb (<see cref="OrgStore.SetSeat"/>).</summary>
+    public const string Owner = "owner";
 }
 
 /// <summary>
