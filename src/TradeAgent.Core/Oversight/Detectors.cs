@@ -82,6 +82,13 @@ public abstract class OversightDetector
     protected static string N(decimal d) => d.ToString(CultureInfo.InvariantCulture);
     protected static string N(long n) => n.ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>The one publication kind each legacy head hands off — the only publication that counts as its division's accepted work.</summary>
+    protected static readonly IReadOnlyDictionary<string, string> LegacyHandoff = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [CouncilRoles.Research] = PublicationKind.Report,
+        [CouncilRoles.Operations] = PublicationKind.Brief,
+    };
+
     /// <summary>The accepted events of mandates, each with its mandate and the delivery its evidence names first.</summary>
     protected static IEnumerable<(SnapMandateEvent Event, SnapMandate Mandate, SnapDelivery? Delivery)> Accepted(OrgSnapshot s)
     {
@@ -94,14 +101,17 @@ public abstract class OversightDetector
 
     /// <summary>
     /// When <paramref name="unit"/>'s subtree last had work accepted at or before <paramref name="until"/>: an accepted mandate in it, or —
-    /// for a legacy division, which runs on publications rather than mandates — a publication by its head (Research's reports, Operations'
-    /// briefs). Null when never.
+    /// for a legacy division, which runs on publications rather than mandates — its head's HANDOFF, the one kind it delivers up or down
+    /// (<see cref="LegacyHandoff"/>: Research's report to the chair, Operations' brief to Research). Null when never.
+    ///
+    /// <para><b>Never a private plan, journal or note:</b> a head's own memory is not work anyone accepted, and counting it let a division
+    /// that spent and handed nothing off quiet <c>stall</c> and <c>spend-no-accept</c> by writing to itself (fix pass 1, R2).</para>
     /// </summary>
     protected static DateTimeOffset? LastAccepted(OrgSnapshot s, string unit, DateTimeOffset until)
     {
         var accepted = Accepted(s).Where(a => a.Event.At <= until && s.InSubtree(a.Mandate.UnitId, unit)).Select(a => (DateTimeOffset?)a.Event.At);
-        var legacy = OrgEnvelopes.LegacyRoleOf(unit) is { } role
-            ? s.Publications.Where(p => p.Role == role && p.At <= until).Select(p => (DateTimeOffset?)p.At)
+        var legacy = OrgEnvelopes.LegacyRoleOf(unit) is { } role && LegacyHandoff.TryGetValue(role, out var kind)
+            ? s.Publications.Where(p => p.Role == role && p.Kind == kind && p.At <= until).Select(p => (DateTimeOffset?)p.At)
             : [];
         return accepted.Concat(legacy).Max();
     }
@@ -140,13 +150,13 @@ public sealed class SpendNoAcceptDetector : OversightDetector
     }
 }
 
-/// <summary><c>stall</c>: an active unit with no accepted delivery for <see cref="OversightPolicy.StallAfter"/> (legacy divisions: no publication by their head).</summary>
+/// <summary><c>stall</c>: an active unit with no accepted delivery for <see cref="OversightPolicy.StallAfter"/> (legacy divisions: no handoff by their head — a report or brief, never a private plan or journal).</summary>
 public sealed class StallDetector : OversightDetector
 {
     public override string Name => "stall";
 
     public override string Blind =>
-        "It sees only deliveries the app sealed and accepted and the legacy heads' publications; " + CliBlind + ", so work in progress is invisible to it.";
+        "It sees only deliveries the app sealed and accepted and the legacy heads' handoffs (reports, briefs); " + CliBlind + ", so work in progress is invisible to it.";
 
     protected override IEnumerable<Candidate> Find(OrgSnapshot s, OversightWindow w)
     {
