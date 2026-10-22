@@ -79,7 +79,9 @@ public sealed class ApiConversation(
     /// <summary>
     /// WHETHER THIS TURN SENT A REQUEST (fix pass 1 of <c>U-org-packets-a</c>): set once a request has been handed to the transport,
     /// before its answer. A turn cancelled after that ran in a session — fresh, as every harness turn is — though its exit code says it
-    /// did not start. A turn cancelled before it (fix pass 2) handed nothing over, ran no session, and records none.
+    /// did not start. A turn cancelled before it (fix pass 2) handed nothing over, ran no session, and records none — nor does one whose
+    /// first request was withheld for its size, or that threw before any request was handed over (<c>U-org-packets-b</c> fix pass 1):
+    /// THIS mark alone says a session ran, never the exit code, and the loop records what the packet showed only for a turn that ran one.
     /// </summary>
     bool _sent;
 
@@ -392,8 +394,9 @@ public sealed class ApiConversation(
                 // AND THE CANON IT SENT: the system text's hash, version and whether it is the app's own.
                 Canon = _canon,
                 // AND ITS SESSION: the harness keeps none between turns, so every turn that sent a request is fresh (U-org-packets-a) —
-                // a cancelled one included, whose exit code still says not started (fix pass 1).
-                Session = _sent || exitCode != NotStarted ? TurnSession.FreshBecause(SessionWhy.Harness) : null,
+                // a cancelled one included, whose exit code still says not started (fix pass 1) — and one that handed no request over ran
+                // none, whatever its exit code says: a first request withheld, a throw before the hand-over (U-org-packets-b fix pass 1).
+                Session = _sent ? TurnSession.FreshBecause(SessionWhy.Harness) : null,
 
                 // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
                 // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
