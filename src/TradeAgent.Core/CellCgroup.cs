@@ -38,6 +38,16 @@ public sealed class AttemptCgroups
     /// <summary>The leaf the app moves itself into, so its root may enable controllers for the attempts.</summary>
     public const string SupervisorLeaf = "supervisor";
 
+    /// <summary>
+    /// ROUTE (a)'S TWO LEAVES OF ONE ATTEMPT (<c>U-cell-linux-c</c> item 3): <c>harness/</c>, where the codex harness that holds the login
+    /// runs and the only cgroup its launch grant answers to, and <c>cell/</c>, where its exec-server's cell runs. Both beneath the attempt,
+    /// so the attempt's ceilings, its <c>cgroup.kill</c> and its sweep hold them both; neither is the other's.
+    /// </summary>
+    public const string HarnessLeaf = "harness", CellLeaf = "cell";
+
+    /// <summary>The leaves <see cref="ContainedLaunch.CgroupFlag"/> takes beneath an <c>attempt-*</c> directory: <see cref="HarnessLeaf"/> and <see cref="CellLeaf"/>.</summary>
+    public static readonly IReadOnlyList<string> Leaves = [HarnessLeaf, CellLeaf];
+
     /// <summary>The most tasks — processes and threads — one attempt may hold at once (<c>pids.max</c>).</summary>
     public const int PidsMax = 2048;
 
@@ -414,6 +424,31 @@ public sealed class AttemptCgroup
 
     /// <summary>The attempt's directory under the delegated root.</summary>
     public string Dir { get; }
+
+    /// <summary>Route (a)'s harness leaf, <c>&lt;attempt&gt;/harness</c> (made by <see cref="MakeLeaves"/>).</summary>
+    public string Harness => Path.Combine(Dir, AttemptCgroups.HarnessLeaf);
+
+    /// <summary>Route (a)'s cell leaf, <c>&lt;attempt&gt;/cell</c> (made by <see cref="MakeLeaves"/>).</summary>
+    public string Cell => Path.Combine(Dir, AttemptCgroups.CellLeaf);
+
+    /// <summary>
+    /// MAKES ROUTE (a)'S TWO LEAVES, empty, before anything of the attempt starts (<c>U-cell-linux-c</c> item 3). No controller is
+    /// enabled beneath the attempt, so the attempt's own ceilings hold both leaves together and neither is a cgroup with processes and
+    /// controllers. Throws <see cref="TradeAgentException"/> (<see cref="ErrorCode.CONTAINMENT_UNAVAILABLE"/>) when either cannot be made.
+    /// </summary>
+    public void MakeLeaves()
+    {
+        try
+        {
+            Directory.CreateDirectory(Harness);
+            Directory.CreateDirectory(Cell);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_UNAVAILABLE,
+                $"TradeAgent could not make route (a)'s harness and cell leaves under {Dir} ({ex.Message})", ex);
+        }
+    }
 
     /// <summary>
     /// Writes <c>1</c> to <c>cgroup.kill</c> — SIGKILL to every process in the attempt and below it, whatever session or parent it
