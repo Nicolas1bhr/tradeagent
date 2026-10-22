@@ -125,5 +125,5 @@ public static class OversightSeed
         cmd.ExecuteNonQuery();
     }
 
-    static string T(DateTimeOffset t) => Sql.T(t);
+    static string T(DateTimeOffset t) => t.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 }
