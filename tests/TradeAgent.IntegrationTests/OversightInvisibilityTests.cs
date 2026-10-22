@@ -29,14 +29,14 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     /// differential cannot hold. Discovered by the test (control against control) and pinned here, so a new unstable surface fails until it is
     /// named.
     /// </summary>
-    static readonly IReadOnlyDictionary<string, string> Unstable = new Dictionary<string, string>(StringComparer.Ordinal)
+    internal static readonly IReadOnlyDictionary<string, string> Unstable = new Dictionary<string, string>(StringComparer.Ordinal)
     {
     };
 
     // ---- (b) the differential -----------------------------------------------------------------------------------------
 
     /// <summary>One home the organisation can reach: its gateway, database, pipe, broker door per role, and meter.</summary>
-    sealed record Reach(TradingGateway Gw, Database Db, GatewayPipeServer Server, string Folder,
+    internal sealed record Reach(TradingGateway Gw, Database Db, GatewayPipeServer Server, string Folder,
         IReadOnlyList<(string Role, IWorkerTools Tools)> Doors, TurnMeter Meter) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
@@ -48,7 +48,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     }
 
     /// <summary>A home seeded with every detector's records under fixed ids, so two of them hold the same rows.</summary>
-    static async Task<Reach> Seeded(DateTimeOffset now)
+    internal static async Task<Reach> Seeded(DateTimeOffset now)
     {
         var (gw, _, db) = await TestEnv.Ready();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), "ta-oversight-" + Guid.NewGuid().ToString("n")[..12]);
@@ -71,7 +71,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     /// attempt; every door verb the broker offers each; the Situation as the app's own readers compose it from the database, and its spend
     /// and share lines; every pinned total. This home's own folder and file are masked, as is every ISO instant (the wall clock it was asked at).
     /// </summary>
-    static async Task<SortedDictionary<string, string>> Pass(Reach h, DateTimeOffset now)
+    internal static async Task<SortedDictionary<string, string>> Pass(Reach h, DateTimeOffset now)
     {
         var seen = new Seen(h.Folder, h.Db.FilePath);
         foreach (var op in AllOps())
@@ -229,10 +229,10 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     }
 
     /// <summary>A surface's name without the role it was asked as.</summary>
-    static string Surface(string key) => key.Split(" as ")[0];
+    internal static string Surface(string key) => key.Split(" as ")[0];
 
     /// <summary>The stretch of <paramref name="s"/> around its first difference from <paramref name="other"/>.</summary>
-    static string Around(string s, string other)
+    internal static string Around(string s, string other)
     {
         var i = 0;
         while (i < s.Length && i < other.Length && s[i] == other[i]) i++;
@@ -242,7 +242,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
 
     static string Cut(string s) => s.Length > 400 ? s[..400] + "…" : s;
 
-    static IReadOnlyList<string> AllOps() => [.. typeof(Ops).GetFields(BindingFlags.Public | BindingFlags.Static)
+    internal static IReadOnlyList<string> AllOps() => [.. typeof(Ops).GetFields(BindingFlags.Public | BindingFlags.Static)
         .Where(f => f.IsLiteral && f.FieldType == typeof(string)).Select(f => (string)f.GetRawConstantValue()!).Distinct().Order(StringComparer.Ordinal)];
 
     // ---- (b2) the totals ----------------------------------------------------------------------------------------------
@@ -378,7 +378,7 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
     }
 
     /// <summary>Every table's rows, in a fixed order, as text.</summary>
-    static SortedDictionary<string, string> Dump(string file)
+    internal static SortedDictionary<string, string> Dump(string file)
     {
         using var c = new SqliteConnection($"Data Source={file};Mode=ReadOnly;Pooling=False");
         c.Open();
@@ -405,11 +405,11 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
         return dump;
     }
 
-    static IReadOnlyList<string> LogFiles() =>
+    internal static IReadOnlyList<string> LogFiles() =>
         [.. Directory.GetFiles(Paths.Logs, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)
             .Select(f => $"{Path.GetRelativePath(Paths.Logs, f)} {Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}")];
 
-    static string RepoRoot()
+    internal static string RepoRoot()
     {
         var d = new DirectoryInfo(AppContext.BaseDirectory);
         while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "tests"))) d = d.Parent;
