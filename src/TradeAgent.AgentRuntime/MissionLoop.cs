@@ -406,6 +406,15 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// row as the reason. A later request withheld leaves this null: the earlier ones were sent and their usage is charged.
     /// </summary>
     public string? FirstRequestWithheld { get; init; }
+
+    /// <summary>
+    /// TRUE WHEN THE TURN HANDED REQUESTS OVER AND NO PROVIDER ACCEPTED ANY (<c>U-org-packets-b</c> fix pass 2): each one failed to
+    /// connect, timed out, or was answered with a status outside 2xx — a wrong pasted key's 401, a 429, a 5xx — or the turn was
+    /// cancelled before an answer began. Set by <see cref="ApiConversation"/>, the one runtime that sees each request's answer; false
+    /// for a vendor CLI, whose started process is the record. <see cref="Session"/> still says the requests went out in a fresh
+    /// session — what this app did — but no model received the packet, so the loop records none of what it showed and shows it again.
+    /// </summary>
+    public bool NoRequestAccepted { get; init; }
 }
 
 /// <summary>
@@ -3723,13 +3732,15 @@ public sealed class MissionLoop
             //
             // AND WHAT THE PACKET GAVE THE LAUNCH (U-org-packets-b), in the same transition: the position's cursor advances with the
             // committed outcome and with nothing else. A launch with no ending the loop saw (its send threw), one that launched no
-            // session (its process never started, or a harness turn handed no request over — part a's record), one the gate refused at its last check and one its vendor
-            // refused before any work never put the packet in front of a model, so nothing is recorded and what it was shown is
-            // shown again (at-least-once, stated). A crash before this commit records nothing too.
+            // session (its process never started, or a harness turn handed no request over — part a's record), a harness turn whose
+            // requests no provider accepted (none connected, or each was answered outside 2xx — fix pass 2), one the gate refused at
+            // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
+            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too.
             _host.CommitTurn(role, attempt, () =>
             {
                 if (events is not null) Settle(events, wake, failed, ended, consumer);
-                if (attempt is not null && shown.Count > 0 && ended is { Session: not null } && UnworkedRefusal(ended) is null)
+                if (attempt is not null && shown.Count > 0 && ended is { Session: not null, NoRequestAccepted: false }
+                    && UnworkedRefusal(ended) is null)
                     _host.RecordInputs(attempt, shown);
             });
         }
