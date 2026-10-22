@@ -948,16 +948,25 @@ public sealed class AgentSession(
         var alive = Presence.Enter();
         ContainedProcess contained;
         RouteA.Layout? cellHomes = null;
+        IReadOnlyList<ProcessEntry>? cellSurvivors = null;
         try
         {
             contained = seatClass == SeatPlan.CellClass
-                ? StartInCell(psi, exe, attemptId, out cellHomes)
+                ? StartInCell(psi, exe, attemptId, out cellHomes, out cellSurvivors)
                 : ProcessContainment.Start(psi, hold, attemptId: attemptId);
         }
         catch (Exception)
         {
             if (cellHomes is not null) RouteA.Remove(cellHomes);
-            alive.Dispose();
+            // A CELL LAUNCH THAT FAILED AFTER SOMETHING OF IT STARTED, AND WHOSE TEARDOWN COULD NOT END ALL OF IT (fix pass 1, R2): what
+            // still runs is carried out on TurnEnded and its presence stays open with it, exactly as for a launch the app could not
+            // hold — the meter admits no launch while any of it runs, and unknown is never "ended".
+            if (cellSurvivors is not null)
+            {
+                _survivors = cellSurvivors;
+                _survivorPresence = alive;
+            }
+            else alive.Dispose();
             throw;
         }
         var process = contained.Process;
@@ -1078,11 +1087,13 @@ public sealed class AgentSession(
     /// refused, never degraded); the attempt's cgroup with its two leaves; the cell's policy written; the per-attempt codex homes made
     /// (<see cref="RouteA.Make"/>) with the harness's <c>CODEX_HOME</c> pointed at its own; the harness started in its leaf; and the
     /// launch's assurance written once (<see cref="RouteA.AssuranceRows"/>). Every failure throws <see cref="ErrorCode.CELL_UNAVAILABLE"/>
-    /// with nothing started.
+    /// after ending what it started — and what that teardown could not end is handed back in <paramref name="survivors"/> (fix pass 1,
+    /// R2): the attempt's cgroup is then kept, never removed under a process, and the caller carries them out with the launch's presence.
     /// </summary>
-    ContainedProcess StartInCell(ProcessStartInfo psi, string exe, string attemptId, out RouteA.Layout? homes)
+    ContainedProcess StartInCell(ProcessStartInfo psi, string exe, string attemptId, out RouteA.Layout? homes, out IReadOnlyList<ProcessEntry>? survivors)
     {
         homes = null;
+        survivors = null;
         var platform = CellPlatform.Read();
         var policyEgress = CellEgress.None;
         var (proof, refusal) = RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", platform, policyEgress);
@@ -1090,6 +1101,7 @@ public sealed class AgentSession(
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, refusal ?? "TradeAgent did not start the AI as a cell seat: it has no seat profile.");
         var attempt = ProcessContainment.RouteAAttempt(cells.Cgroups, attemptId);
         string? policyFile = null;
+        ContainedProcess? started = null;
         try
         {
             var layout = RouteA.LayoutFor(Path.GetFileName(attempt.Dir));
@@ -1101,16 +1113,23 @@ public sealed class AgentSession(
             RouteA.Make(layout, SeatProfile.ConfigBytes(seat), RouteA.EnvironmentsToml(launcher, attempt.Cell, policyFile, exe, Paths.Home),
                 Path.Combine(seat.Root, "codex", "auth.json"));
             psi.Environment["CODEX_HOME"] = layout.HarnessCodexHome;
-            var contained = ProcessContainment.StartHarness(psi, attempt, launcher);
+            started = ProcessContainment.StartHarness(psi, attempt, launcher);
             cells.Assurance.Record(new CellAssurance(attemptId.Length > 0 ? attemptId : Path.GetFileName(attempt.Dir), RouteA.Provider,
                 policy.Hash, proof.ProfileHash, proof.Id, platform.Kernel, platform.LandlockAbi, platform.Lsm ?? "", policy.Egress.Name,
                 attempt.Dir, RouteA.Harness, RouteA.AssuranceRows(proof.Id)));
-            return contained;
+            return started;
         }
         catch (Exception ex)
         {
-            attempt.Kill(TimeSpan.FromSeconds(3));
-            attempt.Remove();
+            // WHAT STARTED IS ENDED — the harness by its own teardown (its attempt's cgroup, then its session), anything else by the
+            // attempt's cgroup.kill — AND WHAT COULD NOT BE ENDED IS SAID (fix pass 1, R2): a kill that failed leaves the cgroup and its
+            // processes to the caller, never reported ended and never removed from under them.
+            if (started is not null)
+            {
+                if (EndTree(started) is { Ended: false } end) survivors = end.Survivors;
+            }
+            else if (!attempt.Kill(TimeSpan.FromSeconds(3))) survivors = attempt.Left();
+            if (survivors is null) attempt.Remove();
             if (policyFile is not null) CellStage.Discard(policyFile);
             throw ex is TradeAgentException { Code: ErrorCode.CELL_UNAVAILABLE } ? ex
                 : new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"TradeAgent did not start the AI as a cell seat: {ex.Message}", ex);
