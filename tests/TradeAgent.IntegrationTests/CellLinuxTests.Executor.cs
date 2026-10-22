@@ -258,8 +258,11 @@ public partial class CellLinuxTests
         }
         finally { w.Session.TurnEnded -= On; }
         var outputs = mock.Outputs();
-        var said = $"turn: exit {ended?.ExitCode}; outputs {string.Join(" | ", outputs.Select(o => o.Key + ": " + o.Value))}\n--- raw ---\n" +
-                   $"{(ended?.Raw is { } raw ? raw[^Math.Min(raw.Length, 2500)..] : "(no TurnEnded)")}";
+        var requests = Directory.Exists(mock.Requests) ? Directory.GetFiles(mock.Requests, "*.json").Length : 0;
+        var history = string.Join("\n", w.Session.History.TakeLast(6).Select(t => $"[{t.Role}] {t.Text[^Math.Min(t.Text.Length, 1500)..]}"));
+        var said = $"turn: exit {ended?.ExitCode}; mock requests {requests}; door tool lists {w.ToolsServed}; outputs " +
+                   $"{string.Join(" | ", outputs.Select(o => o.Key + ": " + o.Value))}\n--- raw ---\n" +
+                   $"{(ended?.Raw is { } raw ? raw[^Math.Min(raw.Length, 2500)..] : "(no TurnEnded)")}\n--- the session's last lines ---\n{history}";
         _output.WriteLine(said);
         Console.WriteLine(said);
         Assert.True(ended is not null, "the turn never reported its end");
