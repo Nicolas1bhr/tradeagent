@@ -243,9 +243,11 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             var turned = n;
             await life.RunUntil(() => life.AttemptsOf(Chair).Count(a => a.State == AiAttemptState.ENDED) == turned, $"the chair's turn {n} ended");
         }
-        // AT LEAST TWO: neither mandate is delivered, so the organisation's sweep owes each one a wake again once its launch has
-        // ended (U-org-assignments-a) and the member goes on turning — the first two of its turns are the ones read here.
-        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) >= 2, "the member answered both mandates");
+        // MORE THAN TWO, AND WHY: neither mandate is delivered, so the organisation's sweep owes each one ONE wake again once a launch
+        // of it has ended (OrgStore.Sweep; ORCHESTRATION § 2.5, "an executor owns its open mandate") and the member goes on turning.
+        // The first two of its turns are the ones read for sessions; every turn after them is asserted below to be that re-raise.
+        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) >= 3,
+            "the member answered both mandates and the sweep woke it again");
 
         static (string? Session, string? Why) Of(AiAttempt a)
         {
@@ -255,7 +257,22 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
                 root.TryGetProperty("session_why", out var w) ? w.GetString() : null);
         }
 
-        var members = life.AttemptsOf(member).Where(a => a.State == AiAttemptState.ENDED).OrderBy(a => a.StartedAt).Take(2).ToList();
+        var all = life.AttemptsOf(member).OrderBy(a => a.StartedAt).ToList();
+        var members = all.Where(a => a.State == AiAttemptState.ENDED).Take(2).ToList();
+        Assert.Equal(members, all.Take(2));
+
+        // EVERY MEMBER TURN AFTER THE TWO WAS WOKEN BY THE SWEEP'S RE-RAISE AND NOTHING ELSE: one `mandate` wake, keyed by its
+        // mandate, that mandate's latest event and the launch of it before — never a timer, a ceiling floor or a self-wake.
+        var wakes = life.Events();
+        foreach (var later in all.Skip(2).Where(a => a.State == AiAttemptState.ENDED))
+        {
+            var took = Assert.Single(wakes, e => e.ConsumedBy == later.Id);
+            var before = all.Last(a => a.MandateId == later.MandateId && a.StartedAt < later.StartedAt);
+            Assert.Equal(MissionEventKind.Mandate, took.Kind);
+            Assert.Equal(later.MandateId, took.Payload);
+            Assert.Equal(MissionEventIds.Mandate(later.MandateId!, org.MandateEvents(later.MandateId!)[^1].Id, before.Id), took.Id);
+            output.WriteLine($"life (sessions) member turn after the two: {later.Id} took {took.Kind} wake {took.Id}");
+        }
         Assert.Equal([m1.Id, m2.Id], members.Select(a => a.MandateId));
         Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.Mandate)], members.Select(Of));
         var chairs = life.AttemptsOf(Chair).OrderBy(a => a.StartedAt).ToList();
