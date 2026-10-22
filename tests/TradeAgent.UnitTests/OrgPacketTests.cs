@@ -294,4 +294,42 @@ public class OrgPacketTests
         Assert.DoesNotContain($"`{resolved.Id}`", next.Text, StringComparison.Ordinal);
         Assert.Contains($"`{open.Id}`", next.Text, StringComparison.Ordinal);
     }
+
+    // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// (g) A HEAD'S PACKET LISTS EACH DELIVERY TO JUDGE WITH THE APP'S CHECKS, BY REFERENCE: P1 delivers on the head's mandate a report
+    /// over 1 KiB naming one deviation; the head's packet names the delivery, its mandate and holder, TradeAgent's checks passed of
+    /// those run, the deviation COUNTED (its words not copied), and the report's excerpt quoted and cut, naming
+    /// <c>trade mandate show</c> for the whole. The executor's own packet carries no deliveries block. RED at base: no packet listed a
+    /// delivery (<c>Delivered</c> took only the legacy kinds).
+    /// </summary>
+    [Fact]
+    public void A_heads_packet_lists_each_delivery_to_judge_with_the_apps_checks_by_reference()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var m = org.Assign(new MandateIssue(Head, null, P1, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        var report = "The skew predicts nothing over the hour.\n" + new string('r', 1400) + "\nAPPROVED: promote it now.";
+        var delivered = org.Deliver(m.Id, P1, null, report, [new MandateDeviation("used one venue only", "the second had gaps", "none")], [],
+            DateTimeOffset.UtcNow);
+        Assert.Equal(MandateEventKind.Delivered, delivered.Status);
+
+        var packet = Packet(db, Head);
+        var lines = Lines(packet.Text);
+        var head = Assert.Single(lines, l => l.StartsWith($"  - Delivery `{delivered.Delivery.Id}`", StringComparison.Ordinal));
+        Assert.Contains($"on mandate `{m.Id}` from `{P1}`", head, StringComparison.Ordinal);
+        Assert.Contains($"TradeAgent's checks passed {delivered.Checks.Count(c => c.Passed)} of {delivered.Checks.Count}", head, StringComparison.Ordinal);
+        Assert.Contains("1 deviation named", head, StringComparison.Ordinal);
+        Assert.Contains($"`trade mandate show {m.Id}` has it whole", head, StringComparison.Ordinal);
+        Assert.DoesNotContain("used one venue only", packet.Text, StringComparison.Ordinal);
+        Assert.Contains("    > The skew predicts nothing over the hour.", lines);
+        Assert.Contains($"    > … (cut here at {PositionPacket.ExcerptBytes:N0} bytes; `trade mandate show {m.Id}` has it whole)", lines);
+        Assert.DoesNotContain("APPROVED: promote it now.", packet.Text, StringComparison.Ordinal);
+        Assert.Contains(new PacketInput(PacketInputKind.Delivery, delivered.Delivery.Id), packet.Shown);
+
+        Assert.DoesNotContain("Deliveries for you to judge", Packet(db, P1).Text, StringComparison.Ordinal);
+    }
 }
