@@ -401,6 +401,24 @@ public sealed class AgentSession(
     }
 
     /// <summary>
+    /// PUTS THE APP'S CANON BACK in <paramref name="home"/> when what lies there is not the text the app last wrote
+    /// (<see cref="AppFileManifest.Kept"/>). With nothing kept — no start has written this home in this process — nothing is written,
+    /// and the attempt's record says what the turn read (<see cref="Canon.SeenByCli"/>). A write that fails is the same: said, not hidden.
+    /// </summary>
+    void RestoreCanon(string home)
+    {
+        var files = appFiles ?? AppFileManifest.Shared;
+        if (files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile)) is not { } text) return;
+        var file = Path.Combine(home, Canon.CliFile);
+        try
+        {
+            if (File.Exists(file) && File.ReadAllText(file) == text) return;
+            File.WriteAllText(file, text);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the record below says what the turn read */ }
+    }
+
+    /// <summary>
     /// THE NEXT LAUNCH'S GRANT, ISSUED BEFORE ITS ADMISSION and held until <see cref="RunTurnAsync"/> takes it or
     /// <see cref="Unclaim"/> gives it back (<c>U-grant-tree</c> fix pass 1). One at a time: a second claim while one is held
     /// is a launch of this role already being prepared.
@@ -962,6 +980,10 @@ public sealed class AgentSession(
         var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
         AgentEnvironment.Apply(psi, env, manifest, seatClass);
 
+        // AN EXECUTOR'S CANON IS THE APP'S AGAIN BEFORE ITS TURN (U-execution-environment item 3): its cell writes its whole home,
+        // AGENTS.md included, so the text the app last wrote there is put back — the record below then reads the app's own.
+        if (seatClass == SeatPlan.CellClass) RestoreCanon(psi.WorkingDirectory);
+
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it
         // starts, so this is the last moment the app can say what it read — and whether it is still the app's own.
         _canon = Canon.SeenByCli(psi.WorkingDirectory, role, appFiles ?? AppFileManifest.Shared);
@@ -1132,8 +1154,8 @@ public sealed class AgentSession(
         homes = null;
         survivors = null;
         var platform = CellPlatform.Read();
-        var policyEgress = CellEgress.None;
-        var (proof, refusal) = RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", platform, policyEgress);
+        // THE EXECUTOR CELL'S ONE EGRESS (item 3): the constant the policy below is written with, admitted under a proof that measured it.
+        var (proof, refusal) = RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", platform, RouteA.Egress);
         if (refusal is not null || proof is null || cells is null || manifest.Seat is not { } seat)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, refusal ?? "TradeAgent did not start the AI as a cell seat: it has no seat profile.");
         var attempt = ProcessContainment.RouteAAttempt(cells.Cgroups, attemptId);
@@ -1153,7 +1175,7 @@ public sealed class AgentSession(
             started = ProcessContainment.StartHarness(psi, attempt, launcher);
             cells.Assurance.Record(new CellAssurance(attemptId.Length > 0 ? attemptId : Path.GetFileName(attempt.Dir), RouteA.Provider,
                 policy.Hash, proof.ProfileHash, proof.Id, platform.Kernel, platform.LandlockAbi, platform.Lsm ?? "", policy.Egress.Name,
-                attempt.Dir, RouteA.Harness, RouteA.AssuranceRows(proof.Id)));
+                attempt.Dir, RouteA.Harness, RouteA.AssuranceRows(proof.Id, policy.Egress)));
             return started;
         }
         catch (Exception ex)

@@ -22,7 +22,7 @@ public class RouteATests
     }
 
     [UnixFact]
-    public void The_cells_policy_is_the_workspace_two_empty_read_only_homes_codex_and_no_egress()
+    public void The_cells_policy_is_the_workspace_two_empty_read_only_homes_codex_and_web_egress()
     {
         var root = Path.Combine(TestEnv.Home, "route-a-" + Guid.NewGuid().ToString("n")[..8]);
         var ws = Path.Combine(root, "ws");
@@ -33,9 +33,11 @@ public class RouteATests
         var exe = Path.Combine(package, "bin", "codex");
         var policy = RouteA.Policy(ws, exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome);
         Assert.Null(policy.Problem());
-        Assert.Equal(CellEgress.None.Name, policy.Egress.Name);
+        // WEB, the owner's answer for every executor (U-execution-environment item 3; -c wrote none here).
+        Assert.Equal(CellEgress.Web.Name, policy.Egress.Name);
         Assert.Equal(ws, policy.Workspace);
-        Assert.Equal([layout.CellCodexHome, layout.CellHome], policy.ReadOnly);
+        Assert.Equal([layout.CellCodexHome, layout.CellHome], policy.ReadOnly.Take(2));
+        Assert.Equal(CellEgress.Web.ReadOnly, policy.ReadOnly.Skip(2));   // web's resolver configuration, read-only
         Assert.Equal(package, policy.Executable[0]);
         var env = policy.Environment.ToDictionary(e => e.Key, e => e.Value);
         Assert.Equal(layout.CellCodexHome, env["CODEX_HOME"]);
@@ -155,7 +157,7 @@ public class RouteATests
     [Fact]
     public void Route_a_attempts_state_and_inbox_are_mediated_and_its_gaps_are_asserted()
     {
-        var rows = RouteA.AssuranceRows(7);
+        var rows = RouteA.AssuranceRows(7, CellEgress.None);
         EnforcementClass Attempt(string p) => rows.Single(r => r.Property == p && r.Side == AssuranceSide.Attempt).Class;
         Assert.Equal(EnforcementClass.Mediated, Attempt("state"));
         Assert.Equal(EnforcementClass.Mediated, Attempt("inbox"));

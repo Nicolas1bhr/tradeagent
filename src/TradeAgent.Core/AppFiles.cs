@@ -63,6 +63,23 @@ public sealed class AppFileManifest
     public void Record(string home, string relPath, string text) =>
         Put(Key(home, relPath), Sha256Hex.Of(text));
 
+    /// <summary>
+    /// RECORDS IT AND KEEPS THE TEXT, in this process (<c>U-execution-environment</c> item 3): a file the app must put back before a
+    /// turn — an executor's canon, which its cell can rewrite in its own home — is written from what the app last wrote, never from
+    /// what the cell left there. Kept in memory only: every start writes the canon again, and nothing is read back from a file a seat
+    /// could reach.
+    /// </summary>
+    public void Keep(string home, string relPath, string text)
+    {
+        Record(home, relPath, text);
+        _kept[Key(home, relPath)] = text;
+    }
+
+    /// <summary>The text the app last kept at <paramref name="key"/> (<see cref="Key"/>) in this process, or null.</summary>
+    public string? Kept(string key) => _kept.TryGetValue(key, out var text) ? text : null;
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _kept = new(StringComparer.Ordinal);
+
     /// <summary>Records that the app wrote these bytes at this path inside this home.</summary>
     public void Record(string home, string relPath, ReadOnlySpan<byte> bytes) =>
         Put(Key(home, relPath), Sha256Hex.Of(bytes));

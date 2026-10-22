@@ -131,7 +131,10 @@ public static class WorkspaceBuilder
         var full = Path.Combine(home, relPath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         File.WriteAllText(full, text);
-        files.Record(homeDir, relPath, text);
+        // THE CLI'S CANON IS KEPT AS WELL AS RECORDED (U-execution-environment item 3): an executor's cell writes its whole home, so
+        // its session puts the app's canon back before every turn (AgentSession.RestoreCanon), from this text.
+        if (relPath == Canon.CliFile) files.Keep(homeDir, relPath, text);
+        else files.Record(homeDir, relPath, text);
     }
 
     /// <summary>
