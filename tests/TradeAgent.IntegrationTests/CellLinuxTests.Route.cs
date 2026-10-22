@@ -609,4 +609,32 @@ public partial class CellLinuxTests
         }
         finally { listener.Stop(); }
     }
+
+    /// <summary>
+    /// ROW (i), first half: A PROOF IS WRITTEN ONLY WHEN EVERY ROW HOLDS. The host benchmark, run through the product's path with the
+    /// pinned codex, holds every row and writes one proof that then counts here; run again with no codex, its route (a) leg cannot hold
+    /// and nothing more is written. The rows are printed (the evidence beyond CI).
+    /// </summary>
+    [LinuxFact]
+    public async Task A_proof_is_written_only_when_every_row_holds()
+    {
+        PlatformIsACells();
+        var codex = PinnedCodex();
+        using var rows = Rows();
+        _ = new World("bench");
+        using var db = TestEnv.NewDb();
+        var pin = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install.ExecutableSha256!;
+        var held = await CellBenchmark.RunAsync(db, codex, pin, rows.Cgroups, Launcher());
+        var said = string.Join("\n", held.Rows.Select(r => $"  {r.Name}: {(r.Held ? "HELD" : "FAILED")} — {r.Seen}"));
+        _output.WriteLine($"cell benchmark: {held.Sentence}\n{said}");
+        Console.WriteLine($"cell benchmark: {held.Sentence}\n{said}");
+        Assert.True(held.ProofId is not null, $"the benchmark wrote no proof:\n{said}");
+        var proof = Assert.Single(new CellProofStore(db).Proven());
+        Assert.Equal((held.ProofId!.Value, RouteA.Provider, held.ProfileHash), (proof.Id, proof.Provider, proof.ProfileHash));
+
+        var without = await CellBenchmark.RunAsync(db, null, pin, rows.Cgroups, Launcher());
+        Assert.Null(without.ProofId);
+        Assert.Contains(without.Rows, r => r.Name == "route-a-exec-server" && !r.Held);
+        Assert.Single(new CellProofStore(db).Proven());
+    }
 }
