@@ -48,10 +48,68 @@ public static class CellBenchmark
     /// <summary>The rows, by name, in the order they run: the profile names them, so a build that changes the list holds no proof.</summary>
     public static readonly IReadOnlyList<string> RowNames =
     [
-        "env-is-the-policys", "state-unreadable", "login-unreadable", "inbox-uncreatable", "no-egress",
+        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
         "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
+        "ipc-denied", "signals-environ-denied", "io-uring-denied", "cgroup-escape-denied", "descendants-cancelled",
         "tmp-unchanged", "route-a-exec-server"
     ];
+
+    /// <summary>AF_UNIX from inside a cell: a socket made at all, then a connect to a pathname socket and to an abstract one.</summary>
+    const string IpcProbe = """
+        import socket, sys
+        try:
+            socket.socket(socket.AF_UNIX, socket.SOCK_STREAM).close(); print("socket-open")
+        except OSError as e:
+            print(f"socket-denied errno={e.errno}")
+        for name, addr in (("path", sys.argv[1]), ("abstract", "\0" + sys.argv[2])):
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.connect(addr); print(name + "-connected"); s.close()
+            except OSError as e:
+                print(f"{name}-denied errno={e.errno}")
+        """;
+
+    /// <summary>Another process from inside a cell: its environment read, a signal (0: none delivered) and a trace attach, each tried.</summary>
+    const string ProcsProbe = """
+        import ctypes, os, sys
+        libc = ctypes.CDLL(None, use_errno=True)
+        pid = int(sys.argv[1])
+        try:
+            open(f"/proc/{pid}/environ", "rb").read(); print("environ-open")
+        except OSError as e:
+            print(f"environ-denied errno={e.errno}")
+        try:
+            os.kill(pid, 0); print("signal-sent")
+        except OSError as e:
+            print(f"signal-denied errno={e.errno}")
+        if libc.ptrace(16, pid, 0, 0) == 0:
+            print("ptrace-attached"); libc.ptrace(17, pid, 0, 0)
+        else:
+            print(f"ptrace-denied errno={ctypes.get_errno()}")
+        """;
+
+    /// <summary><c>io_uring_setup</c> (syscall 425 on x86-64 and arm64 alike) from inside a cell.</summary>
+    const string UringProbe = """
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        params = ctypes.create_string_buffer(120)
+        fd = libc.syscall(425, 4, params)
+        print("io_uring-open" if fd >= 0 else f"io_uring-denied errno={ctypes.get_errno()}")
+        """;
+
+    /// <summary>A double fork with <c>setsid</c> between: the grandchild leaves the session, writes its pid, and waits to be ended.</summary>
+    const string DaemonProbe = """
+        import os, sys, time
+        out = sys.argv[1]
+        if os.fork() == 0:
+            os.setsid()
+            if os.fork() == 0:
+                open(out + ".tmp", "w").write(str(os.getpid())); os.rename(out + ".tmp", out)
+                time.sleep(300)
+                os._exit(0)
+            os._exit(0)
+        os.wait()
+        time.sleep(300)
+        """;
 
     /// <summary>Where the rows that need a socket, a syscall or a fork find their interpreter: absent, those rows cannot hold.</summary>
     const string Python = "/usr/bin/python3";
@@ -202,6 +260,28 @@ public static class CellBenchmark
                 var (_, o) = await Sh(Denied(Paths.State) + $"; if cat '{Paths.DatabaseFile}' >/dev/null 2>&1; then echo OPEN; else echo DENIED; fi");
                 return (o.Split('\n').Count(l => l == "DENIED") == 2 && !o.Contains("OPEN", StringComparison.Ordinal), o.Trim());
             });
+            await Row("state-unwritable", async () =>
+            {
+                // A FILE OF state/ THE APP PUTS THERE, appended to from the cell, and a new one created beside it: both denied, the
+                // file's bytes unchanged and nothing new — the ledger itself is never the target, so a failing cell harms nothing.
+                var sentinel = Path.Combine(Paths.State, ".cell-bench-" + Guid.NewGuid().ToString("n")[..8]);
+                var made = sentinel + "-new";
+                File.WriteAllText(sentinel, "sentinel\n");
+                try
+                {
+                    var (_, o) = await Sh($"if echo x >> '{sentinel}' 2>/dev/null; then echo APPEND-OPEN; else echo APPEND-DENIED; fi; " +
+                                          $"if touch '{made}' 2>/dev/null; then echo CREATE-OPEN; else echo CREATE-DENIED; fi");
+                    var same = File.ReadAllText(sentinel) == "sentinel\n";
+                    var created = File.Exists(made);
+                    return (o.Contains("APPEND-DENIED", StringComparison.Ordinal) && o.Contains("CREATE-DENIED", StringComparison.Ordinal) && same && !created,
+                        $"{o.Trim().Replace('\n', ' ')}; the file {(same ? "unchanged" : "CHANGED")}, {(created ? "a new file WAS made" : "nothing made")}");
+                }
+                finally
+                {
+                    File.Delete(sentinel);
+                    File.Delete(made);
+                }
+            });
             await Row("login-unreadable", async () =>
             {
                 var (_, o) = await Sh(Denied(Paths.SeatHome));
@@ -281,6 +361,87 @@ public static class CellBenchmark
                     "GAP: a web cell reaches this host's own LAN address on 443, and so any host of the LAN on 443 (the port rule names no address): " +
                     o.Trim().Replace(lan.ToString(), "<own address>", StringComparison.Ordinal).Replace('\n', ' '));
             }, gap: true);
+
+            // THE REST OF THE SURVEY'S Q-a (fix pass 1, R1): IPC, other processes, io_uring, the cgroup tree and descendants.
+            await Row("ipc-denied", async () =>
+            {
+                var tag = Guid.NewGuid().ToString("n")[..12];
+                var path = Path.Combine(Path.GetTempPath(), "ta-cell-bench-" + tag + ".sock");
+                using var named = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                using var hidden = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                try
+                {
+                    named.Bind(new UnixDomainSocketEndPoint(path));
+                    named.Listen(4);
+                    hidden.Bind(new UnixDomainSocketEndPoint("\0ta-cell-bench-" + tag));
+                    hidden.Listen(4);
+                    var (_, o) = await Py(policy, "ipc", IpcProbe, path, "ta-cell-bench-" + tag);
+                    var denied = new[] { "socket", "path", "abstract" }.All(t => o.Contains(t + "-denied", StringComparison.Ordinal));
+                    var arrived = named.Poll(0, SelectMode.SelectRead) || hidden.Poll(0, SelectMode.SelectRead);
+                    return (denied && !arrived, $"{o.Trim().Replace('\n', ' ')}{(arrived ? "; a listener WAS reached" : "")}");
+                }
+                finally { File.Delete(path); }
+            });
+            await Row("signals-environ-denied", async () =>
+            {
+                var app = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var (_, o) = await Py(policy, "procs", ProcsProbe, app);
+                return (new[] { "environ", "signal", "ptrace" }.All(t => o.Contains(t + "-denied", StringComparison.Ordinal)),
+                    $"the app's own process: {o.Trim().Replace('\n', ' ')}");
+            });
+            await Row("io-uring-denied", async () =>
+            {
+                var (_, o) = await Py(policy, "uring", UringProbe);
+                return (o.Contains("io_uring-denied", StringComparison.Ordinal), o.Trim());
+            });
+            await Row("cgroup-escape-denied", async () =>
+            {
+                // A LEAF BESIDE THE ATTEMPTS, made for this row: a cell that could write its cgroup.procs would have left its attempt,
+                // and cgroup.kill with it.
+                var escape = Path.Combine(cgroups.Root!, "bench-escape-" + Guid.NewGuid().ToString("n")[..8]);
+                Directory.CreateDirectory(escape);
+                try
+                {
+                    var (_, o) = await Sh($"if echo $$ > '{escape}/cgroup.procs' 2>/dev/null; then echo MOVED; else echo MOVE-REFUSED; fi; " +
+                                          "sed -n 's/^0:://p' /proc/self/cgroup");
+                    var name = Path.GetFileName(escape);
+                    return (o.Contains("MOVE-REFUSED", StringComparison.Ordinal) && !o.Contains(name, StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
+                }
+                finally
+                {
+                    for (var i = 0; i < 100; i++)
+                        try { Directory.Delete(escape); break; }
+                        catch (IOException) { await Task.Delay(20, CancellationToken.None); }
+                }
+            });
+            await Row("descendants-cancelled", async () =>
+            {
+                if (!File.Exists(Python)) return (false, $"python3 is not at {Python} on this host, so the row could not be tried");
+                var probe = Path.Combine(ws, "daemon.py");
+                var pidFile = Path.Combine(ws, "daemon.pid");
+                File.WriteAllText(probe, DaemonProbe);
+                var psi = new ProcessStartInfo(Python) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var a in new[] { "-I", probe, pidFile }) psi.ArgumentList.Add(a);
+                using var held = ProcessContainment.Start(psi, policy, launcher, cgroups: cgroups);
+                held.Process.StandardInput.Close();
+                for (var i = 0; i < 300 && !File.Exists(pidFile); i++) await Task.Delay(100, ct);
+                if (!File.Exists(pidFile)) { held.Kill(); return (false, "the setsid'd daemon never wrote its pid"); }
+                var pid = int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+                if (ProcessTable.Read(pid) is not { Zombie: false } daemon) { held.Kill(); return (false, $"the daemon {pid} was not running"); }
+                var leftSession = daemon.Session != held.Process.Id;
+                held.Kill();
+                var gone = ProcessTable.Read(pid) is not { Zombie: false } after || after.Start != daemon.Start;
+                for (var i = 0; i < 100 && !gone; i++)
+                {
+                    await Task.Delay(20, ct);
+                    gone = ProcessTable.Read(pid) is not { Zombie: false } later || later.Start != daemon.Start;
+                }
+                if (!gone) Posix.Kill(pid);
+                return (leftSession && gone && held.Ended is { Ended: true },
+                    $"a daemon that {(leftSession ? "left" : "did NOT leave")} the cell's session {(gone ? "was ended" : "OUTLIVED")} the attempt's cancel " +
+                    $"({held.Ended?.Sentence ?? "no teardown said anything"})");
+            });
 
             await Row("tmp-unchanged", () =>
             {

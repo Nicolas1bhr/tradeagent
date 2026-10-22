@@ -685,6 +685,28 @@ public partial class CellLinuxTests
     static string Said(BenchResult r) => string.Join("\n", r.Rows.Select(x => $"  {x.Name}{(x.Gap ? " (GAP)" : "")}: {(x.Held ? "HELD" : "FAILED")} — {x.Seen}"));
 
     /// <summary>
+    /// ROW (i), THE SURVEY'S Q-a IN FULL (fix pass 1, R1): the start benchmark runs every row a host can run without fixtures — beside
+    /// the environment, state, login, inbox, egress, /tmp and route (a) rows: a real write and append to <c>state/</c> denied, AF_UNIX
+    /// (a pathname socket and an abstract one) denied, a signal to the app and its <c>/proc/&lt;pid&gt;/environ</c> denied,
+    /// <c>io_uring_setup</c> denied, a write into another cgroup's <c>cgroup.procs</c> denied, and a setsid'd double fork ended by the
+    /// attempt's <c>cgroup.kill</c> — each held, and only then a proof.
+    /// </summary>
+    [LinuxFact]
+    public async Task The_start_benchmark_runs_every_row_the_survey_names()
+    {
+        PlatformIsACells();
+        var codex = PinnedCodex();
+        using var rows = Rows();
+        _ = new World("bench-qa");
+        Deployed(true);
+        using var db = TestEnv.NewDb();
+        var held = await Bench(db, codex, rows.Cgroups);
+        foreach (var name in new[] { "state-unwritable", "ipc-denied", "signals-environ-denied", "io-uring-denied", "cgroup-escape-denied", "descendants-cancelled" })
+            Assert.True(held.Rows.Any(r => r.Name == name && r.Held), $"the start benchmark holds no row '{name}':\n{Said(held)}");
+        Assert.True(held.ProofId is not null, $"the benchmark wrote no proof:\n{Said(held)}");
+    }
+
+    /// <summary>
     /// ROW (i), EGRESS (fix pass 1, R4; L4 and the owner's answer "Web (443) for every executor"): the benchmark proves <c>web</c> beside
     /// <c>none</c> — in a <c>web</c> cell TCP 443 is let through while any other port, a fast-open send, a datagram, a bind and a listen
     /// are denied — and records the reach the owner accepted with it, loopback and his LAN on 443, as GAP rows, never as passes. A
