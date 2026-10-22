@@ -58,6 +58,16 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>The app's database file, which the Oversight page reads read-only to say whether a cited record is still there.</summary>
     internal string? DatabaseFile => _db?.FilePath;
 
+    /// <summary>
+    /// THE ORGANISATION-FIRST PAGES' READS (<c>U-org-surface-a</c>): the chart's ledger, the launch ledger and whether a cell proof is
+    /// recorded, over the app's database — reads only, App-internal, never on the pipe. Null while the database is not open.
+    /// </summary>
+    internal OrgStore? OrgLedger => _db is { } d ? new OrgStore(d) : null;
+
+    internal AiAttemptStore? AttemptLedger => _db is { } d ? new AiAttemptStore(d) : null;
+
+    internal bool CellProofHeld => _db is { } d && new CellProofStore(d).HoldsProof();
+
     /// <summary>The public audit line (<c>U-org-audit-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>
     AuditLine? _audit;
 

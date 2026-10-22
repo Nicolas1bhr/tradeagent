@@ -149,7 +149,7 @@ public enum ErrorCode
 /// a control that had ceased to exist. Spelling the label once is what stops the sentence and the
 /// button drifting apart again.
 /// </summary>
-public static class Labels
+public static partial class Labels
 {
     /// <summary>On the Checks page when the bridge needs it, and on Settings always.</summary>
     public const string ReinstallBridge = "Reinstall the bridge";
