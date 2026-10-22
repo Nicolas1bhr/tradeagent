@@ -11,9 +11,22 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-22, the BUILD RUN — in progress at its last checkpoint), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
+heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-22 23:1x, HALTED on the owner's word for security updates), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
+
+**2026-10-22 23:1x — HALTED ON THE OWNER'S WORD (security updates) — resume from `fleet/handoff/ORCHESTRATOR.md`'s HALTED block, then the seats'
+handoffs (`fleet/handoff/A.md`, `B.md`).** The owner, verbatim: "we have to run many security updates due to yesterdays worldwide php exploit, can you halt
+everything, i'll update claude code compact your context and ask you to resume / update all the other tools and software we use." Halted cleanly: no leg running,
+no lock, nothing merged mid-landing; all session crons deleted and the external wake paused; main `4b2af1e7`, schema 46.
+- **Landed this run (16):** the 13 of the checkpoint below, plus U-rewake-floor `4f29ab64`, U-billing-classes `92f3d25f` (rung 46) and U-org-watcher-b `4b2af1e7`.
+  Ready at the halt, each with its CI on GitHub: U-execution-environment (its fifth re-review clean), U-org-audit-a, U-org-verbs-a, U-number-entry-culture (fix 2).
+- **Attempt 4 ≡ M-org0 ran 17:30:02Z → 21:15:56Z and was ended early by the halt:** five turns, all exit 0, 0.0147 USD of an 11-USD cap, nothing authored. The
+  research role's own words on the Dashboard: "Workspace access remains unavailable: the command tool returned "code-mode host is disabled." I couldn't read or update
+  'PLAN.md' and 'JOURNAL.md'" — on gpt-6-luna the legacy pair's command tool was refused. A probable regression against attempt 3 (three versions, three runs): the
+  first work at resume is a read-only survey of its cause, then the run's record from the evidence on disk. NOT VERIFIED: the cause.
+- **Also at resume (his words):** "update all the other tools and software we use" — a dated security sweep of every tool the fleet and the app use, from official
+  advisories; lift the Codex quiet (the run is over) and drain the owed Codex second reviews; the tape still waits on his key step.
 
 **2026-10-22 — THE BUILD RUN (opened 00:15 CEST on the owner's word; checkpointed 13:0x, in progress) — resume from `fleet/handoff/ORCHESTRATOR.md`'s
 BUILD RUN block (the state) and `fleet/BOARD.md` (decisions and log).** The owner, verbatim: "yes. i trust you to enter the orchestrator's position and run this
