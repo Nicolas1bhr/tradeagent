@@ -698,4 +698,26 @@ public class CouncilRelayTests
             "a publication carries the login the link pointed at");
         Assert.Equal("{\"OPENAI_API_KEY\":\"sk-FAKE-relay-0000\"}", File.ReadAllText(auth));
     }
+    /// <summary>
+    /// A QUARANTINE FOLDER THE CELL LINKED OUTSIDE ITS HOME IS NEVER MOVED INTO (fix pass 4, the second re-review's [P1] 2). The fence moves a
+    /// file naming no launch to <c>out/quarantine/</c> in the unconfined app; with that name a link to the owner's inbox, a cell-written
+    /// report would land there and be measured as material the owner handed over. The inbox gains nothing, and the file is quarantined in
+    /// the home.
+    /// </summary>
+    [UnixFact]
+    public void A_quarantine_folder_the_cell_linked_outside_its_home_is_never_moved_into()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var inbox = Path.Combine(world.Root, MaterialScanner.InboxDir);
+        Directory.CreateDirectory(inbox);
+        var outDir = Path.Combine(world.Home(CouncilRoles.Research), WorkspaceBuilder.OutDir);
+        Directory.CreateSymbolicLink(Path.Combine(outDir, CouncilRelay.QuarantineDir), inbox);
+        var stray = World.Named(CouncilRoles.Research, "x");
+        world.Write(CouncilRoles.Research, stray, "a report naming no launch");
+
+        world.RelayOver(db).Run(CouncilRoles.Research, "turn-q");
+
+        Assert.True(Directory.GetFileSystemEntries(inbox).Length == 0, "the relay moved a cell-written report into the owner's inbox");
+    }
 }
