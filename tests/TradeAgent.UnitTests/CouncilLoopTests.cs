@@ -266,6 +266,23 @@ public partial class CouncilLoopTests
             return new MandateView(m, org.MandateEvents(m.Id), org.SpendOf(m.Id), latest, latest is null ? null : org.Checks(latest.Id));
         }
 
+        /// <summary>
+        /// THE ORGANISATION'S SWEEP, WITH THESE FLOORS (<c>U-rewake-floor</c>): the real <see cref="OrgStore.Sweep"/> on this host's
+        /// clock, as the app's host runs it. Null — the default — sweeps nothing, so every test written before it keeps its host.
+        /// </summary>
+        public RewakeFloors? Floors { get; set; }
+
+        public void SweepMandates(DateTimeOffset now)
+        {
+            if (Floors is { } floors) new OrgStore(_db).Sweep(now, floors);
+        }
+
+        /// <summary>
+        /// WHETHER A TURN THIS HOST LAUNCHED IS ENDED IN THE LEDGER WHEN IT COMMITS, at this host's clock, as the meter ends one that
+        /// reported its usage (<c>U-rewake-floor</c>). Off by default: the tests written before it read their rows LAUNCHED.
+        /// </summary>
+        public bool EndsTurns { get; set; }
+
         /// <summary>A position's organisation block, composed from the real records (<c>U-org-packets-b</c>).</summary>
         public PositionPacket? PacketFor(string role, DateTimeOffset now) => PositionPacket.Compose(_db, role, now);
 
@@ -286,6 +303,8 @@ public partial class CouncilLoopTests
             {
                 Relay(role, attempt);
                 dispositions();
+                if (EndsTurns && attempt is not null)
+                    new AiAttemptStore(_db).End(attempt, 0, Clock(), 10, null, null, 10, null, "model-x", 0.01m, null, null);
             }
             finally { _committing = false; }
         }
