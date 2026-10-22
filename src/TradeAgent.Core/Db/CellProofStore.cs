@@ -9,7 +9,11 @@ namespace TradeAgent.Core.Db;
 /// operating-system release — on which build, under which profile, and when.
 /// </summary>
 public sealed record CellProof(string Provider, string Platform, string Machine, string OsRelease, string Build, string ProfileHash,
-    DateTimeOffset ProvenAt);
+    DateTimeOffset ProvenAt)
+{
+    /// <summary>The row's id: what a launch's assurance and a revocation name.</summary>
+    public long Id { get; init; }
+}
 
 /// <summary>
 /// THIS HOST'S IDENTITY, as a cell proof records it and is matched on (review of <c>U-thinking-seats-a</c>, item 3): a stable machine
@@ -23,6 +27,16 @@ public sealed record CellProof(string Provider, string Platform, string Machine,
 /// </summary>
 public sealed record HostIdentity(string Machine, string OsRelease)
 {
+    /// <summary>
+    /// A SHA-256 over this boot's id (<c>U-cell-linux-c</c> item 5) — <c>/proc/sys/kernel/random/boot_id</c> on Linux, never the id
+    /// itself — so a proof counts on the boot that measured it alone. Off Linux no cell runs and there is no binding: a fixed
+    /// word, said as such.
+    /// </summary>
+    public string Boot { get; init; } = NoBoot;
+
+    /// <summary>The boot word off Linux, where no cell runs and a proof binds no boot.</summary>
+    public const string NoBoot = "no-boot-binding-off-linux";
+
     static readonly Lazy<HostIdentity?> Here = new(Read);
 
     /// <summary>This host's identity, read once per process; null where the machine id could not be read.</summary>
@@ -34,7 +48,18 @@ public sealed record HostIdentity(string Machine, string OsRelease)
         {
             var id = MachineId()?.Trim();
             if (string.IsNullOrEmpty(id)) return null;
-            return new HostIdentity(Sha256Hex.Of("tradeagent-cell-proof-machine:" + id), Environment.OSVersion.Version.ToString());
+            // THE FULL KERNEL RELEASE (item 5): /proc/sys/kernel/osrelease as the kernel says it, flavour suffix and all — two kernels
+            // of one numeric version are two kernels. Off Linux, the operating system's own full description.
+            var release = OperatingSystem.IsLinux() ? File.ReadAllText("/proc/sys/kernel/osrelease").Trim() : RuntimeInformation.OSDescription;
+            if (release.Length == 0) return null;
+            var boot = NoBoot;
+            if (OperatingSystem.IsLinux())
+            {
+                var bootId = File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim();
+                if (bootId.Length == 0) return null;
+                boot = Sha256Hex.Of("tradeagent-cell-proof-boot:" + bootId);
+            }
+            return new HostIdentity(Sha256Hex.Of("tradeagent-cell-proof-machine:" + id), release) { Boot = boot };
         }
         catch (Exception) { return null; }
     }
@@ -94,38 +119,99 @@ public sealed record HostIdentity(string Machine, string OsRelease)
 /// never guess (<c>CLAUDE.md</c>). The benchmark runs again, here. A host whose identity cannot be read holds none.</para>
 /// </summary>
 /// <param name="host">This host's identity; null is <see cref="HostIdentity.This"/>. Only a test passes another.</param>
-public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null)
+public sealed class CellProofStore(Database db, Func<HostIdentity?>? host = null, Func<string>? build = null)
 {
-    /// <summary>This process's platform, as a proof records it: the operating system and the architecture.</summary>
     public static string ThisPlatform =>
         (OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "other")
         + "-" + RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant();
 
-    /// <summary>The proofs that count here: this host's, on this platform and kernel release, under this build, oldest first.</summary>
+    /// <summary>
+    /// THE BUILD A PROOF IS BOUND TO (<c>U-cell-linux-c</c> item 5): <see cref="Versions.App"/> AND the SHA-256 of the <c>trade</c> this
+    /// install deployed (<c>ToolDeployer.DeployedHashFile</c>, <c>state/trade.sha256</c>) — two builds of one version are two builds, and
+    /// the launcher the cells run through is the one the proof measured. No deployed hash: <c>none</c>, which no deployed build matches.
+    /// </summary>
+    public static string ThisBuild()
+    {
+        string? trade = null;
+        try { trade = File.ReadAllText(Path.Combine(Paths.State, "trade.sha256")).Trim().ToLowerInvariant(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* none deployed */ }
+        return $"{Versions.App}+trade-sha256:{(string.IsNullOrEmpty(trade) ? "none" : trade)}";
+    }
+
+    HostIdentity? Here => (host ?? (() => HostIdentity.This))();
+
+    string Build => (build ?? ThisBuild)();
+
+    /// <summary>
+    /// THE PROOFS THAT COUNT HERE AND NOW: this platform, machine, full kernel release, BOOT and build, and not revoked. Empty when this
+    /// host's identity cannot be read.
+    /// </summary>
     public IReadOnlyList<CellProof> Proven()
     {
-        if ((host ?? (() => HostIdentity.This))() is not { } here) return [];
+        if (Here is not { } here) return [];
+        var built = Build;
         return db.Read(_ =>
         {
             using var c = db.Cmd("""
-                SELECT provider, platform, machine, os_release, build, profile_hash, proven_at FROM cell_proof
-                 WHERE platform = $platform AND machine = $machine AND os_release = $release AND build = $build
+                SELECT id, provider, platform, machine, os_release, build, profile_hash, proven_at FROM cell_proof
+                 WHERE platform = $platform AND machine = $machine AND os_release = $release AND build = $build AND boot = $boot
+                   AND id NOT IN (SELECT proof_id FROM cell_proof_revocation)
                  ORDER BY proven_at, id
-                """, ("$platform", ThisPlatform), ("$machine", here.Machine), ("$release", here.OsRelease), ("$build", Versions.App));
+                """, ("$platform", ThisPlatform), ("$machine", here.Machine), ("$release", here.OsRelease), ("$build", built),
+                ("$boot", here.Boot));
             using var r = c.ExecuteReader();
             var rows = new List<CellProof>();
             while (r.Read())
-                rows.Add(new CellProof(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5),
-                    DateTimeOffset.Parse(r.GetString(6), System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.RoundtripKind)));
+                rows.Add(new CellProof(r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
+                    DateTimeOffset.Parse(r.GetString(7), System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind)) { Id = r.GetInt64(0) });
             return (IReadOnlyList<CellProof>)rows;
         });
     }
 
-    /// <summary>Whether this host holds a proof that counts here. A table that cannot be read, or an unreadable identity, holds none.</summary>
+    /// <summary>Whether ANY provider holds a counted proof here (the activation gate's one host-wide fact). Unreadable is no.</summary>
     public bool HoldsProof()
     {
         try { return Proven().Count > 0; }
         catch (Exception) { return false; }
     }
+
+    /// <summary>The newest counted proof of <paramref name="provider"/>, or null — the one a cell launch of that provider runs under.</summary>
+    public CellProof? ProofOf(string provider)
+    {
+        try { return Proven().LastOrDefault(p => p.Provider == provider); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WRITES ONE PROOF — called only by the host benchmark when EVERY row held (<c>CellBenchmark</c>): bound to this host's platform,
+    /// machine, full release and boot and this build, with the profile it measured. Returns its id; refuses a host whose identity
+    /// cannot be read.
+    /// </summary>
+    public long Record(string provider, string profileHash)
+    {
+        if (Here is not { } here)
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "this host's identity could not be read, so no cell proof can be bound to it");
+        var built = Build;
+        return db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at, boot)
+                VALUES($provider, $platform, $machine, $release, $build, $profile, $at, $boot);
+                SELECT last_insert_rowid();
+                """, ("$provider", provider), ("$platform", ThisPlatform), ("$machine", here.Machine), ("$release", here.OsRelease),
+                ("$build", built), ("$profile", profileHash), ("$at", DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
+                ("$boot", here.Boot));
+            return (long)c.ExecuteScalar()!;
+        });
+    }
+
+    /// <summary>Appends a revocation of proof <paramref name="proofId"/>: a launch's canary found it no longer true. The proof stops counting.</summary>
+    public void Revoke(long proofId, string reason) =>
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("INSERT INTO cell_proof_revocation(proof_id, reason, revoked_at) VALUES($id, $reason, $at)",
+                ("$id", proofId), ("$reason", reason), ("$at", DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+            return c.ExecuteNonQuery();
+        });
 }

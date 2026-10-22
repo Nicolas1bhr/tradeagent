@@ -885,10 +885,10 @@ public class ThinkingSeatsTests : IDisposable
         db.Write(_ =>
         {
             using var c = db.Cmd("""
-                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at)
-                VALUES('test-cell', $platform, $machine, $release, $build, 'sha256-test', $at)
+                INSERT INTO cell_proof(provider, platform, machine, os_release, build, profile_hash, proven_at, boot)
+                VALUES('test-cell', $platform, $machine, $release, $build, 'sha256-test', $at, $boot)
                 """, ("$platform", platform ?? CellProofStore.ThisPlatform), ("$machine", machine ?? here.Machine),
-                ("$release", release ?? here.OsRelease), ("$build", build ?? Versions.App),
+                ("$release", release ?? here.OsRelease), ("$build", build ?? CellProofStore.ThisBuild()), ("$boot", here.Boot),
                 ("$at", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)));
             return c.ExecuteNonQuery();
         });

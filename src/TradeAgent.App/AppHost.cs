@@ -584,6 +584,28 @@ public sealed class AppHost : IAsyncDisposable
         preparedAgentId is { Length: > 0 } ? preparedAgentId : chosenRuntimeId;
 
     /// <summary>The same question, asked of this host. One place, so the screens cannot disagree.</summary>
+    /// <summary>
+    /// RUNS THE HOST BENCHMARK ONCE (<see cref="CellBenchmark"/>) and says what it found in the activity log. The pinned codex is the one
+    /// this install would start — a binary that is not the pin measures nothing route (a) would run. Never throws.
+    /// </summary>
+    async Task ProveCellsAsync(AttemptCgroups cgroups, CancellationToken ct)
+    {
+        try
+        {
+            var manifest = RuntimeCatalog.Load().FirstOrDefault(m => m.Id == "codex");
+            var exe = manifest is null ? null : new CliAgentRuntime(manifest).ResolveExecutable();
+            if (manifest is not null && exe is not null && !SeatProfile.IsPin(manifest, exe)) exe = null;
+            BenchResult result;
+            using (_presence.Enter())
+                result = await CellBenchmark.RunAsync(_db!, exe, manifest?.Install.ExecutableSha256 ?? "", cgroups, ct: ct);
+            Gateway.Log.Activity("Cell benchmark: " + result.Sentence, result.ProofId is null ? "warn" : "info");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
+        }
+    }
+
     string? PricingRuntime => PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId);
 
     /// <summary>Every model this build ships a price for on the runtime in force. The Safety page's row.</summary>
@@ -947,6 +969,12 @@ public sealed class AppHost : IAsyncDisposable
                     ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
                     : $"The AI's launches are held by their session only, and no cell can start: {cgroups.Refusal}.",
                     cgroups.Held && swept.Left.Count == 0 ? "info" : "warn");
+
+            // THE HOST BENCHMARK, AT EVERY START ON LINUX (U-cell-linux-c item 5): no press, no flag, no setting. It launches real
+            // cells through the product's own path and, when every row holds, writes the ONE cell proof that lets a position beyond
+            // the legacy pair activate (ORCHESTRATION § 2.3) — bound to this machine, kernel, boot and build. In the background, and
+            // inside the presence register: a cell's processes are agent processes.
+            if (OperatingSystem.IsLinux() && cgroups.Held) _ = Task.Run(() => ProveCellsAsync(cgroups, _loop.Token));
 
             // ON START, BEFORE THE LOOP TAKES A TURN. A crash between a role's publication and the
             // copy into the recipient's folder leaves a task pointing at a file that is not there;

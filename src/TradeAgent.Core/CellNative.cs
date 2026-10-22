@@ -382,6 +382,14 @@ public static class CellNative
     /// EACCES; and a send with <c>MSG_FASTOPEN</c> (<c>sendto</c>, <c>sendmsg</c>, <c>sendmmsg</c>), which opens a TCP connection
     /// without the <c>connect</c> call Landlock checks — EACCES. Everything else: allowed, and Landlock's.</para>
     /// </summary>
+    /// <summary>
+    /// WHAT THE KERNEL IS TOLD, AS ONE STRING (<c>U-cell-linux-c</c> item 5): the seccomp program's bytes for this processor and the
+    /// Landlock rights handled at <paramref name="abi"/> — part of a proof's profile, so a build that changes either holds no proof.
+    /// </summary>
+    public static string KernelSurface(Architecture architecture, int abi) =>
+        $"seccomp {Convert.ToHexString(TableFor(architecture) is null ? [] : SeccompProgram(architecture)).ToLowerInvariant()}; " +
+        $"landlock-fs {HandledFs(abi):x}";
+
     internal static byte[] SeccompProgram(Architecture architecture, bool datagrams = false)
     {
         var t = TableFor(architecture) ?? throw new PlatformNotSupportedException($"no seccomp filter for {architecture}");
