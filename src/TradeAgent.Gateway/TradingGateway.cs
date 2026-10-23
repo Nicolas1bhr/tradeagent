@@ -2440,7 +2440,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _health = health ?? new HealthRegistry();
         _board = new BoardStore(db);
         Settings = LoadSettings();
-        _policy = _board.InForce().Policy;
+        _policy = PolicyInForce();
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock. AFTER the
         // settings, because the judge capital is read off them — at the moment a campaign opened before
@@ -3185,6 +3185,27 @@ public sealed class TradingGateway : IAsyncDisposable
 
         _health.Set(Components.ExecutionCapability, HealthState.PAUSED, Labels.SettingsCouldNotBeRead);
         return TradeAgentSettings.Unreadable();
+    }
+
+    /// <summary>
+    /// THE POLICY IN FORCE, READ ONCE WHEN THIS GATEWAY IS BUILT (<c>U-board-a1</c> items 4 and 6): the highest version, strictly. One
+    /// that does not verify is <see cref="BoardPolicy.Unreadable"/> — OBSERVE, nothing admitted on the plan — with execution paused and
+    /// the owner told; its row is kept as it is, and the founding defaults are never re-derived in its place.
+    /// </summary>
+    BoardPolicy PolicyInForce()
+    {
+        var inForce = _board.InForce();
+        if (!inForce.CouldNotBeRead) return inForce.Policy;
+        try
+        {
+            _log.Activity("TradeAgent could not read the security board's policy, so it is in Watch only and the AI's plan admits "
+                          + "nothing. The policy's record is kept as it is.", "warn");
+            _log.Engineering("Gateway", "board_policy_unreadable", "error",
+                metadataJson: Json.Write(new { version = inForce.Version, why = inForce.Why }));
+        }
+        catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
+        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, Labels.BoardPolicyCouldNotBeRead);
+        return inForce.Policy;
     }
 
     void SaveSettings()

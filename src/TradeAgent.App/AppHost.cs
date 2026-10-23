@@ -234,7 +234,10 @@ public sealed class AppHost : IAsyncDisposable
     /// THE OWNER'S PLAN-CAPACITY CEILING, AS ONE DELEGATE (<c>U-billing-classes</c>): what the meter admits plan and unknown launches
     /// against — a list-price equivalent, never money. Read through <see cref="Gateway"/> at every admission, like the cap.
     /// </summary>
-    decimal AiPlanCap() => Gateway.Settings.AiPlanDailyCapacity;
+    decimal AiPlanCap() => Gateway.Policy.CouldNotBeRead
+        // A POLICY THAT DID NOT VERIFY ADMITS NOTHING ON THE PLAN (U-board-a1 item 6): its unreadable shape's day-total, zero.
+        ? Gateway.Policy.PlanDayTotal
+        : Gateway.Settings.AiPlanDailyCapacity;
 
     /// <summary>The decision models built so far, one per instrument, disposed with the app.</summary>
     readonly Dictionary<string, TypeSafeWire> _decisionModels = new(StringComparer.Ordinal);
