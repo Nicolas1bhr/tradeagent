@@ -70,19 +70,6 @@ public sealed class MainWindow : Window
     string _modeSignature = "";
 
     // banners
-    readonly Border _approvalBanner = new()
-    {
-        Background = Tokens.CautionSoft,
-        BorderBrush = Tokens.Caution,
-        BorderThickness = new Thickness(0, 0, 0, 1),
-        Padding = new Thickness(Tokens.S5, Tokens.S3),
-        IsVisible = false
-    };
-    readonly TextBlock _approvalBannerText = new()
-    {
-        FontSize = Tokens.Small, FontWeight = FontWeight.SemiBold, Foreground = Tokens.Caution,
-        VerticalAlignment = VerticalAlignment.Center
-    };
     readonly Border _errorBar = new()
     {
         Background = Tokens.DangerSoft,
@@ -248,7 +235,8 @@ public sealed class MainWindow : Window
         _wizard = null;
 
         _shellSurface.Children.Add(Ui.With(BuildHeader(), c => c[Grid.RowProperty] = 0));
-        _shellSurface.Children.Add(Ui.With(BuildApprovalBanner(), c => c[Grid.RowProperty] = 1));
+        // Row 1 held the "the AI is asking permission" banner until U-settings-shed shed the per-order approval (R24 § 4.2); it stays
+        // empty so the rows below keep their places.
         // The owner's severe finding straight after the approval banner: money first, then his private line (U-org-watcher-b).
         _shellSurface.Children.Add(Ui.With(BuildOversightBanner(), c => c[Grid.RowProperty] = 2));
         _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 3));
@@ -320,27 +308,6 @@ public sealed class MainWindow : Window
             Padding = new Thickness(Tokens.S5, 0),
             Child = grid
         };
-    }
-
-    Control BuildApprovalBanner()
-    {
-        var jump = Ui.Secondary("Review the request", () => Select(Page.Dashboard));
-        jump.VerticalAlignment = VerticalAlignment.Center;
-        jump[Grid.ColumnProperty] = 2;
-
-        var dot = new Ellipse
-        {
-            Width = 7, Height = 7, Fill = Tokens.Caution,
-            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, Tokens.S3, 0)
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-        grid.Children.Add(dot);
-        grid.Children.Add(Ui.With(_approvalBannerText, t => t[Grid.ColumnProperty] = 1));
-        grid.Children.Add(jump);
-
-        _approvalBanner.Child = grid;
-        return _approvalBanner;
     }
 
     /// <summary>The owner's in-app alert for a severe finding (<see cref="OversightBanner"/>): built once, updated in place.</summary>
@@ -566,14 +533,6 @@ public sealed class MainWindow : Window
                 status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading,
                 status.AiTradingStopped ? "primary" : "danger");
 
-        var waiting = _host.Gateway.Requests
-            .Query("execution_state=$s", ("$s", ExecutionState.AWAITING_APPROVAL.ToString()));
-        _approvalBanner.IsVisible = waiting.Count > 0;
-        if (waiting.Count > 0)
-            _approvalBannerText.Text = waiting.Count == 1
-                ? "The AI is asking permission — 1 order waiting"
-                : $"The AI is asking permission — {waiting.Count} orders waiting";
-
         _oversightBanner?.Update();
         RefreshUpdateBanner(status);
         UpdateRailHealth();
@@ -582,7 +541,7 @@ public sealed class MainWindow : Window
         _organisation?.Update();
         _work?.Update();
         _costs?.Update();
-        _dashboard?.Update(status, waiting);
+        _dashboard?.Update(status);
         _boardPage?.Update();
         _report?.Update();
         _inbox?.Update();

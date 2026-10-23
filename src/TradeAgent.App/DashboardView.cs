@@ -102,8 +102,6 @@ sealed class DashboardPage
 
     readonly Dictionary<string, TextBlock> _values = new();
     readonly StackPanel _healthRows = new() { Spacing = 2 };
-    readonly StackPanel _approvals = new() { Spacing = Theme.S3 };
-    readonly Border _approvalsCard;
     readonly Button _agentButton;
 
     readonly PerformanceCard _performance = new();
@@ -123,7 +121,6 @@ sealed class DashboardPage
     readonly TextBox _guidance;
 
     string _healthSignature = "";
-    string _approvalSignature = "";
     string _unconfirmedSignature = "";
 
     /// <summary>
@@ -187,21 +184,9 @@ sealed class DashboardPage
             Ui.Ghost("Open the AI's folder", () => MainWindow.OpenPath(Paths.Workspace, m => Ui.ReportError?.Invoke(m))));
         actions.Margin = new Thickness(0, Theme.S4, 0, 0);
 
-        // Orders waiting on the user. In "Real, ask me first" the AI proposes and stops; without a
-        // way to say yes here, that mode had no exit and the only usable real-money setting was the
-        // fully automatic one. The card hides itself when there is nothing to answer.
-        _approvalsCard = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S4,
-                Ui.With(Ui.Eyebrow("The AI is asking permission"), t => t.Foreground = Theme.Caution),
-                _approvals)
-        };
+        // NO CARD OF ORDERS WAITING ON THE OWNER (U-settings-shed item 4; R24 § 4.2, Q9): "Real, ask me first" was a press per live
+        // order, and a press per order cannot become a board act — a board seat approving each order would be model judgement timing
+        // it (SIGNAL-001). The live modes are the security board's, closed until it is active.
 
         // Orders TradeAgent could not confirm. This is the ONLY route into
         // TradingGateway.AnswerFromTheCardAsync, and through it into ForceResolve, anywhere in the
@@ -211,8 +196,8 @@ sealed class DashboardPage
         // order history — which is ATAS, permanently — the first ambiguous order pauses trading and
         // nothing in the app can ever start it again.
         //
-        // It sits above the approvals card because it outranks it: while anything is unconfirmed,
-        // TryAuthorizeExecution refuses, so approving an order below would fail anyway.
+        // It is the first card on the page because it outranks everything below it: while anything is unconfirmed,
+        // TryAuthorizeExecution refuses.
         _unconfirmedCard = new Border
         {
             Background = Theme.DangerSoft,
@@ -282,7 +267,6 @@ sealed class DashboardPage
 
         var left = Ui.Col(Theme.S6,
             _unconfirmedCard,
-            _approvalsCard,
             _signIn.Root,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
             Ui.Section("The AI's own work", aiCard),
@@ -300,7 +284,7 @@ sealed class DashboardPage
             grid));
     }
 
-    public void Update(GatewayStatus status, IReadOnlyList<ExecutionRequest> waiting)
+    public void Update(GatewayStatus status)
     {
         _values["Trading mode"].Text = Ui.ModeLabel(status.Mode);
         _values["Platform"].Text = Ui.PlatformLabel(status);
@@ -318,7 +302,6 @@ sealed class DashboardPage
 
         RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
         _signIn.Update();
-        RefreshApprovals(waiting);
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
         // request left stranded in DISPATCHING — so the card shows exactly the records that are
@@ -549,63 +532,6 @@ sealed class DashboardPage
         _host.Gateway.Log.Activity(text.Length == 0
             ? "Your guidance for the AI was cleared"
             : "Your guidance for the AI was saved");
-    }
-
-    void RefreshApprovals(IReadOnlyList<ExecutionRequest> waiting)
-    {
-        var signature = string.Join('|', waiting.Select(w => w.RequestId));
-        if (signature == _approvalSignature) return;
-        _approvalSignature = signature;
-
-        _approvals.Children.Clear();
-        _approvalsCard.IsVisible = waiting.Count > 0;
-
-        var first = true;
-        foreach (var w in waiting)
-        {
-            var id = w.RequestId;
-            var row = Ui.Col(Theme.S2,
-                new TextBlock
-                {
-                    Text = TryDescribe(w), FontFamily = Theme.Mono, FontSize = Theme.Base,
-                    FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap
-                },
-                // The limit is inclusive and nothing sweeps: at the deadline the order is already too
-                // old to approve, and pressing Approve from then on declines it rather than sending it.
-                // "approve by HH:mm, after that it is declined" got both halves slightly wrong.
-                Ui.Micro($"asked at {w.CreatedAt.ToLocalTime():HH:mm} — approve before "
-                         + $"{(w.CreatedAt + _host.Gateway.ApprovalTtl).ToLocalTime():HH:mm}; from then, approving declines it instead"),
-                Ui.With(Ui.Row(Theme.S2,
-                        Ui.Confirm("Approve", "Confirm: place this order",
-                            () => ApproveAsync(id)),
-                        Ui.Secondary("Decline", () => _host.Gateway.Decline(id))),
-                    r => r.Margin = new Thickness(0, Theme.S2, 0, 0)));
-
-            if (!first)
-            {
-                row.Margin = new Thickness(0, Theme.S3, 0, 0);
-                _approvals.Children.Add(new Border { Height = 1, Background = Theme.Caution, Opacity = 0.35 });
-            }
-            first = false;
-            _approvals.Children.Add(row);
-        }
-    }
-
-    /// <summary>
-    /// The gateway authorizes an approval at the moment it is given, so this press can be refused
-    /// for a reason that did not exist when the AI asked — the kill switch, a mode change, a dead
-    /// connection, a stale price, a limit used up, or the request simply being too old. The
-    /// two-step button's own catch shows only <c>ex.Message</c>, because GatewayDeniedException is
-    /// not a TradeAgentException; the plain-language explanation and the repair are what a
-    /// nontechnical owner actually needs, so they are reported here, with the detail after them.
-    /// </summary>
-    async Task ApproveAsync(string requestId)
-    {
-        try { await _host.Gateway.ApproveAsync(requestId); }
-        catch (GatewayDeniedException ex)
-        {
-            Ui.ReportError?.Invoke($"{ex.Info.UserMessage} {ex.Info.Repair} ({ex.Message})");
-        }
     }
 
     // ---- orders TradeAgent could not confirm ---------------------------------------------------

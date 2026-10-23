@@ -52,7 +52,7 @@ public class SeatSignInTests
             // ONE THREAD FOR THE PAGE, which owns its controls: every wait below is made on it.
             var page = new DashboardPage(host, () => Task.CompletedTask);
             Rig.OnThisThread(rig.Service.RefreshAsync());
-            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
+            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()));
 
             var card = page.SignIn;
             Assert.Contains(card.Root, page.Root.GetLogicalDescendants());
@@ -68,7 +68,7 @@ public class SeatSignInTests
             Assert.Equal(TradeAgent.Core.Db.BillingClasses.Unknown, host.BillingClassOf(CouncilRoles.Research));
             File.WriteAllText(rig.Marker, "");
             Rig.OnThisThread(rig.Service.RefreshAsync());
-            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
+            page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()));
             Assert.False(card.Root.IsVisible);
             // AND THE HOST HANDS THE METER THIS READING: the class the seat home's sign-in bills now, with no launch in this home yet.
             Assert.Equal(TradeAgent.Core.Db.BillingClasses.Key, host.BillingClassOf(CouncilRoles.Research));
@@ -325,7 +325,7 @@ public class SeatSignInTests
             SeatSignInReading Read()
             {
                 var reading = Rig.OnThisThread(host.SeatSignIn.RefreshAsync());
-                page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()), []);
+                page.Update(Rig.OnThisThread(host.Gateway.StatusAsync()));
                 return reading;
             }
 
