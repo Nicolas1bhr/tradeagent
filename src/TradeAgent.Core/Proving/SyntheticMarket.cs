@@ -264,7 +264,10 @@ public static class SyntheticMarket
         var dir = Path.Combine(home.DataDir, ProvingSources.Synthetic, spec.Instrument, Interval);
         var fetchedAt = start.AddDays(spec.Days).AddHours(1);
 
-        var files = WriteRaw(spec, key, start, hours, drift, Path.Combine(dir, "raw"), fetchedAt);
+        var (months, lowest) = Bars(spec, start, hours, drift);
+        if (PlantedEdges.RefusalAtLowest(spec, lowest) is { } dear)
+            throw new ArgumentException(dear + ". Nothing was written.", nameof(spec));
+        var files = WriteRaw(spec, key, months, Path.Combine(dir, "raw"), fetchedAt);
         var staged = Path.Combine(dir, $".staged-{key}.csv");
         var set = KlineNormaliser.Normalise([.. files.Select(f => new RawArchiveFile(f.Month, f.Path))], fetchedAt, staged);
 
@@ -455,8 +458,9 @@ public static class SyntheticMarket
             "no edge: every reading is first seen after the move it predicts, so a join as of first seen — the app's gate — finds "
             + "nothing to trade, and a result that finds this relation read a reading before it existed",
         EdgeTrap.PreFeeOnly =>
-            "no edge after costs: the gross move per signal is below the venue's round trip, so a frictionless backtest passes and a "
-            + "run at the venue's published fee and the app's slippage does not",
+            "no edge after costs: twice the largest move any one signal plants is below the venue's round trip at every price the market "
+            + "reaches, so no choice of which signals to trade — the most selective threshold, or holding from the largest reading to the "
+            + "smallest — clears it; a frictionless backtest passes and a run at the venue's published fee and the app's slippage does not",
         EdgeTrap.InSampleOnly =>
             "no edge on the held-back months: the relation is on before the holdout cutoff and off from it, so research over the "
             + "months before the cutoff passes and the verdict over the months from it refuses",
@@ -525,12 +529,14 @@ public static class SyntheticMarket
         _ => "0.0001"
     };
 
-    /// <summary>The raw files, one per calendar month, each row a vendor-shaped closed one-minute kline.</summary>
-    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, string key, DateTimeOffset start, int hours, long[] planted, string rawDir,
-        DateTimeOffset fetchedAt)
+    /// <summary>
+    /// THE MARKET'S BARS, IN MEMORY: one text per calendar month, each row a vendor-shaped closed one-minute kline, and the
+    /// lowest price any bar touches, in ticks — nothing is written here.
+    /// </summary>
+    static (SortedDictionary<string, StringBuilder> Months, long Lowest) Bars(SyntheticMarketSpec spec, DateTimeOffset start, int hours, long[] planted)
     {
-        Directory.CreateDirectory(rawDir);
         var rng = new SplitMix64(spec.Seed);
+        var lowest = StartTicks;
         var price = StartTicks;
         var high = false;
         var months = new SortedDictionary<string, StringBuilder>(StringComparer.Ordinal);
@@ -552,6 +558,7 @@ public static class SyntheticMarket
                 var close = Math.Max(1L, open + noise + drift);
                 var hi = Math.Max(open, close) + rng.Between(0, 3);
                 var lo = Math.Max(1L, Math.Min(open, close) - rng.Between(0, 3));
+                lowest = Math.Min(lowest, lo);
                 var volume = rng.Between(1, 500) / 1000m;
                 var trades = rng.Between(1, 99);
                 price = close;
@@ -565,6 +572,14 @@ public static class SyntheticMarket
             }
         }
 
+        return (months, lowest);
+    }
+
+    /// <summary>The raw files, one per calendar month, written once each.</summary>
+    static List<DatasetFile> WriteRaw(SyntheticMarketSpec spec, string key, SortedDictionary<string, StringBuilder> months, string rawDir,
+        DateTimeOffset fetchedAt)
+    {
+        Directory.CreateDirectory(rawDir);
         var files = new List<DatasetFile>();
         foreach (var (month, text) in months)
         {
