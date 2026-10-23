@@ -13,17 +13,19 @@ namespace TradeAgent.App;
 /// <summary>
 /// THE OWNER'S PAGE (<c>U-settings-shed</c>; R24 §§ 4.3, 4.7): what stays his and nothing else — the emergency family, his connections and
 /// keys, the real money a paid key may spend with perception's share of it, the evidence settings and the narrowing presses over what is
-/// running. Every limit, allowance, lane, model, allocation and envelope grant is the security board's: the Board page shows each one in
-/// force, and no press here sets one.
+/// running. Every limit, allowance, lane, allocation and envelope grant is the security board's: the Board page shows each one in force
+/// as the app's founding value until the board decides, and no press here sets one.
 ///
 /// <para><b>The rule that sorts every press</b> (seat B's ruling on R24 § 4.3): the owner keeps each press that only TAKES AWAY — stop,
 /// cancel all, close all, withdraw an envelope, stop a deployment — and loses each press that grants or widens. Every press that stays
 /// keeps its count: stop in one, resume in two; cancel all and close all in two; the real-money cap, perception's budget and a lower AI
 /// price in two on the loosening side. Each one is in-process: no pipe op and no CLI verb reaches any of them (AUTH-001).</para>
 ///
-/// <para><b>One exception, until the board is active</b> (the orchestrator's ruling of 2026-10-23, his to overrule): "Reopen after review"
-/// on a paper scope is a widening, and it stays his only while no board seat is ACTIVE — a held paper scope must not stall paper runs
-/// while the board waits for a proven cell. From the first active seat it is the board's, and this page stops offering it.</para>
+/// <para><b>Two exceptions, until the board is active</b> (the orchestrator's rulings of 2026-10-23, his to overrule): "Reopen after
+/// review" on a PAPER scope — never any other — is a widening, and it stays his only while no board seat is ACTIVE, so a held paper scope
+/// does not stall paper runs while the board waits for a proven cell; and the seat choices — which model and runtime each seat runs on —
+/// stay his settings for the same span. Both are labelled "yours until the security board is active"; from the first active seat they
+/// are the board's, and this page stops offering them.</para>
 ///
 /// <para>The tree is built once and updated in place (CLAUDE.md): <see cref="Update"/> writes text and visibility, and rebuilds nothing.</para>
 /// </summary>
@@ -167,6 +169,183 @@ sealed class OwnerPage
         }
     }
 
+    /// <summary>
+    /// WHAT EACH SEAT RUNS ON — HIS UNTIL A BOARD SEAT IS ACTIVE (the orchestrator's ruling for the board pair, 2026-10-23: seat choices
+    /// "stay settings until a board seat is ACTIVE"; the settings page labels them like Reopen). The model the AI runs on, what the Research
+    /// Director runs on and its model: one press each, as they always were — choosing a model grants nothing, a dearer one reaches the
+    /// day's limit sooner, and moving a role onto TradeAgent's own worker only narrows what it may do. While any board seat is active — or
+    /// the board cannot be read — the card is hidden and a press that arrives anyway writes nothing and says so.
+    ///
+    /// <para>Built once; <see cref="Update"/> writes visibility and emphasis, and rebuilds the model row ONLY when the runtime it was
+    /// built for changed (rebuilding a tree is not a refresh).</para>
+    /// </summary>
+    internal sealed class SeatChoices
+    {
+        readonly AppHost _host;
+        readonly Func<bool> _boardActive;
+        readonly Action _changed;
+        string? _modelRowRuntime;
+
+        public Control Root { get; }
+        public Panel ModelRow { get; }
+        public Panel ResearchRuntimeRow { get; }
+        public Panel ResearchModelRow { get; }
+        public TextBlock ModelNote { get; } = Ui.Micro("");
+        public TextBlock Note { get; } = Ui.Micro("");
+
+        public SeatChoices(AppHost host, Func<bool> boardActive, Action changed)
+        {
+            _host = host;
+            _boardActive = boardActive;
+            _changed = changed;
+            ModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
+            _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
+            ResearchRuntimeRow = BuildRuntimeRow(id => ChooseRoleRuntime(CouncilRoles.Research, id));
+            ResearchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, m => ChooseRoleModel(CouncilRoles.Research, m));
+            Note.IsVisible = false;
+            Root = Ui.Section(Labels.SeatChoicesTitle, Ui.Col(Theme.S2,
+                Ui.Muted(Labels.SeatChoicesAreYours),
+                Ui.Spacer(Theme.S2),
+                Ui.FieldRow(Labels.AiModel, ModelRow),
+                ModelNote,
+                Ui.Spacer(Theme.S2),
+                Ui.FieldRow(Labels.ResearchRuntime, ResearchRuntimeRow),
+                Ui.FieldRow(Labels.ResearchModel, ResearchModelRow),
+                Note));
+        }
+
+        bool Refused()
+        {
+            if (!_boardActive()) return false;
+            Note.Text = Labels.SeatChoicesAreTheBoards;
+            Note.Foreground = Theme.Caution;
+            Note.IsVisible = true;
+            Update();
+            return true;
+        }
+
+        /// <summary>The app-wide model. Null is the button that means "TradeAgent's choice".</summary>
+        void ChooseModel(string? model)
+        {
+            if (Refused()) return;
+            _host.Gateway.Update(s => s.SelectedModelId = model);
+            _host.Gateway.Log.Activity(_host.RequestedModel is { Length: > 0 } m
+                ? $"The AI now runs on {m}"
+                : "The AI now runs on whatever its AI tool is configured for");
+            Update();
+            _changed();
+        }
+
+        /// <summary>What a role runs on. Clearing it falls back to the runtime chosen during setup.</summary>
+        void ChooseRoleRuntime(string role, string? runtime)
+        {
+            if (Refused()) return;
+            _host.Gateway.Update(s =>
+            {
+                if (runtime is { Length: > 0 }) s.RoleRuntime[role] = runtime;
+                else s.RoleRuntime.Remove(role);
+            });
+            _host.Gateway.Log.Activity($"The {CouncilRoles.Title(role)} now runs on {_host.RuntimeForRole(role) ?? "its AI tool"}");
+            Update();
+            _changed();
+        }
+
+        /// <summary>One role's model. Clearing it falls back to the app-wide row above rather than to nothing.</summary>
+        void ChooseRoleModel(string role, string? model)
+        {
+            if (Refused()) return;
+            _host.Gateway.Update(s =>
+            {
+                if (model is { Length: > 0 }) s.RoleModel[role] = model;
+                else s.RoleModel.Remove(role);
+            });
+            _host.Gateway.Log.Activity(_host.RequestedModelFor(role) is { Length: > 0 } m
+                ? $"The {CouncilRoles.Title(role)} now runs on {m}"
+                : $"The {CouncilRoles.Title(role)} now runs on whatever its AI tool is configured for");
+            Update();
+            _changed();
+        }
+
+        /// <summary>The five-second pass: whether the card is offered, and which choice is in force. It never presses.</summary>
+        public void Update()
+        {
+            Root.IsVisible = !_boardActive();
+            if (!Root.IsVisible) return;
+
+            var runtime = _host.Gateway.Settings.SelectedRuntimeId;
+            if (!string.Equals(runtime, _modelRowRuntime, StringComparison.Ordinal))
+            {
+                _modelRowRuntime = runtime;
+                ModelRow.Children.Clear();
+                foreach (var c in BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel).Children.ToArray())
+                {
+                    // Detached first: a control cannot be in two trees, and the row it came from is thrown away.
+                    ((Panel)c.Parent!).Children.Remove(c);
+                    ModelRow.Children.Add(c);
+                }
+            }
+
+            Emphasise(ModelRow, _host.Gateway.Settings.SelectedModelId);
+            Emphasise(ResearchModelRow, _host.Gateway.Settings.RoleModel.TryGetValue(CouncilRoles.Research, out var r) ? r : null);
+            var harness = RuntimeCatalog.IsHarness(_host.RuntimeForRole(CouncilRoles.Research));
+            if (ResearchRuntimeRow.Children.Count == 2)
+            {
+                if (ResearchRuntimeRow.Children[0] is Button cli) Ui.Emphasise(cli, !harness);
+                if (ResearchRuntimeRow.Children[1] is Button own) Ui.Emphasise(own, harness);
+            }
+
+            ModelNote.Text = _host.RequestedModel is { Length: > 0 } model
+                ? $"Every turn runs on {model}."
+                : "This AI tool has no model TradeAgent can choose, so it runs on whatever it is configured for.";
+        }
+
+        void Emphasise(Panel row, string? chosen)
+        {
+            var i = 0;
+            if (row.Children.Count > 0 && row.Children[i++] is Button d) Ui.Emphasise(d, chosen is null);
+            foreach (var m in _host.ModelChoices)
+            {
+                if (i >= row.Children.Count) break;
+                if (row.Children[i++] is Button b) Ui.Emphasise(b, string.Equals(m.Model, chosen, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE ROW THAT CHOOSES WHICH MODEL A SEAT RUNS ON, one button per model this build ships a price for on the runtime in force, plus the
+    /// one that means "whatever TradeAgent ships". The price is on the button because the choice IS the price. Static and handed what it
+    /// does, so the row a test presses is the row the owner sees.
+    /// </summary>
+    internal static Panel BuildModelRow(IReadOnlyList<ModelPrice> models, string currency, Action<string?> choose)
+    {
+        // A WrapPanel: nine models at two prices each is far wider than the card.
+        var row = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = Theme.S2, LineSpacing = Theme.S2 };
+        row.Children.Add(Ui.Button(Labels.AiModelDefault, () => choose(null)));
+        foreach (var m in models)
+        {
+            var id = m.Model;
+            row.Children.Add(Ui.Button(ModelLabel(m, currency), () => choose(id)));
+        }
+        return row;
+    }
+
+    /// <summary>One model button's words: the model, then what it costs per million in and out.</summary>
+    internal static string ModelLabel(ModelPrice m, string currency) =>
+        $"{m.Model} — {MissionSituation.Money(m.InputPerMillion, currency)} in / "
+        + $"{MissionSituation.Money(m.OutputPerMillion, currency)} out per million";
+
+    /// <summary>
+    /// THE ROW THAT CHOOSES WHAT A ROLE RUNS ON: the AI tool on this computer, or TradeAgent's own worker — the two KINDS of thing. One
+    /// press: moving a role onto the harness only narrows what it may do, and moving it back changes no limit the gateway applies.
+    /// </summary>
+    internal static Panel BuildRuntimeRow(Action<string?> choose)
+    {
+        var row = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = Theme.S2, LineSpacing = Theme.S2 };
+        row.Children.Add(Ui.Button(Labels.RuntimeIsTheCli, () => choose(null)));
+        row.Children.Add(Ui.Button(Labels.RuntimeIsTheHarness, () => choose(ApiAgentRuntime.RuntimeId)));
+        return row;
+    }
+
     /// <summary>THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.</summary>
     readonly Border _unreadableCard;
 
@@ -199,6 +378,9 @@ sealed class OwnerPage
 
     /// <summary>THE OWNER'S PERCEPTION CARD (<c>U-decision-card</c>): the decision model's key, budget inside the cap, price, limits and Test press.</summary>
     readonly PerceptionCard _perception;
+
+    /// <summary>What each seat runs on — his until a board seat is active (the orchestrator's ruling).</summary>
+    readonly SeatChoices _seatChoices;
 
     public Control Root { get; }
 
@@ -563,10 +745,13 @@ sealed class OwnerPage
         // AFTER THE REAL MONEY, because perception's budget is a slice of that cap.
         _perception = PerceptionCard.For(_host);
 
+        // WHAT EACH SEAT RUNS ON, beside the key its worker needs: his while no board seat is active, then gone.
+        _seatChoices = new SeatChoices(_host, BoardActive, Refresh);
+
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
             _unreadableCard, _releaseCard, running,
-            Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, settings.Bridge,
+            Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, _seatChoices.Root, settings.Bridge,
             Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
             Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns,
             Ui.H2(Labels.OwnerGroupUpdates), settings.Updates)));
@@ -612,6 +797,7 @@ sealed class OwnerPage
         ShowEnvelopes();
         ShowCampaignBudgets();
         _perception.Update();
+        _seatChoices.Update();
 
         Refresh();
     }

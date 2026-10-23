@@ -172,6 +172,18 @@ public static partial class Labels
     /// </summary>
     public const string YoursUntilTheBoardIsActive = "yours until the security board is active";
 
+    /// <summary>The seat choices' card title on the owner's page (the orchestrator's ruling: his while no board seat is active).</summary>
+    public const string SeatChoicesTitle = "What each seat runs on";
+
+    /// <summary>Under the title: whose the choices are, and until when — the same words as the review release.</summary>
+    public const string SeatChoicesAreYours =
+        "Which model the AI runs on, and what the Research Director runs on, are " + YoursUntilTheBoardIsActive + ", then the board's: "
+        + "from the first active board seat this card goes. Choosing a model grants nothing — a dearer one reaches the day's limit sooner.";
+
+    /// <summary>A seat choice refused because a board seat is active (or the board cannot be read): it writes nothing.</summary>
+    public const string SeatChoicesAreTheBoards =
+        "Nothing was changed. A security board seat is active, so what each seat runs on is the board's decision now, never this page's.";
+
     /// <summary>
     /// THE RELEASE REFUSED BECAUSE A HELD SCOPE IS NOT PAPER (Codex P1 on <c>U-settings-shed</c>): the owner's release is for paper scopes
     /// only, and the release lifts every hold on the account at once, so while one of them is not paper nothing is released.

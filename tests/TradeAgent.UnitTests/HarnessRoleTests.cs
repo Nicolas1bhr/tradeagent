@@ -216,6 +216,28 @@ public class HarnessRoleTests : IDisposable
         Assert.True(string.IsNullOrEmpty(field.Text));
     }
 
+    /// <summary>
+    /// THE ROW OFFERS THE TWO KINDS OF THING AND NOTHING ELSE, and each button hands back exactly what
+    /// the settings row stores — null for "the AI tool the owner chose", the harness id for the other.
+    /// (On the owner's page since U-settings-shed, while no board seat is active — the orchestrator's ruling.)
+    /// </summary>
+    [Fact]
+    public void The_owners_page_offers_the_ai_tool_and_the_apps_own_worker()
+    {
+        var chosen = new List<string?>();
+        var row = OwnerPage.BuildRuntimeRow(chosen.Add);
+
+        Assert.Equal(2, row.Children.Count);
+        var cli = Assert.IsType<Button>(row.Children[0]);
+        var own = Assert.IsType<Button>(row.Children[1]);
+        Assert.Equal(Labels.RuntimeIsTheCli, cli.Content);
+        Assert.Equal(Labels.RuntimeIsTheHarness, own.Content);
+
+        Press(cli);
+        Press(own);
+        Assert.Equal([null, Harness], chosen);
+    }
+
     static void Press(Button b) =>
         b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
 
