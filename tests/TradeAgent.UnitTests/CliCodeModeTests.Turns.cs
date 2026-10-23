@@ -72,6 +72,76 @@ public partial class CliCodeModeTests
     }
 
     /// <summary>
+    /// A SESSION OVER <see cref="DeadTurn"/> WHOSE PROCESS IS STILL RUNNING AFTER IT PRINTED THE WARNING: the child prints the stream,
+    /// then waits until the returned file exists, then exits. A test may cancel the turn while it waits, or change the model.
+    /// </summary>
+    static (AgentSession Session, string Release) HeldTurn(string name, Func<string?>? model = null)
+    {
+        var session = AgentRuntimeProbe.SessionOverStream(DeadTurn, manifest: VendorLimitTests.Codex, model: model, name: name);
+        var dir = Path.Combine(TestEnv.Home, "meter", name);
+        var payload = Path.Combine(dir, "stream.txt");
+        var release = Path.Combine(dir, "release");
+        if (OperatingSystem.IsWindows())
+            File.WriteAllText(Path.Combine(dir, "runtime.cmd"),
+                $"@echo off\r\ntype \"{payload}\"\r\n:wait\r\nif exist \"{release}\" goto done\r\nping -n 2 127.0.0.1 > nul\r\ngoto wait\r\n:done\r\n");
+        else
+            File.WriteAllText(Path.Combine(dir, "runtime.sh"),
+                $"#!/bin/sh\ncat \"{payload}\"\nwhile [ ! -f \"{release}\" ]; do sleep 0.1; done\n");
+        return (session, release);
+    }
+
+    /// <summary>Waits until the turn in flight has read the model's words that follow the warning in <see cref="DeadTurn"/>.</summary>
+    static async Task WarningRead(AgentSession session, Task turn)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (!session.History.Any(t => t.Text.Contains("couldn't access the workspace", StringComparison.Ordinal)))
+        {
+            Assert.False(turn.IsCompleted, "the turn ended before its stream was read");
+            Assert.True(DateTime.UtcNow < deadline, "the turn's stream was not read within a minute");
+            await Task.Delay(20);
+        }
+    }
+
+    /// <summary>
+    /// (C) A WARNING ALREADY READ SURVIVES THE TURN'S CANCELLATION (fix pass 1, review finding 2): a turn cancelled after its stream
+    /// said the seat's tools cannot run, before its process exited, still ends carrying the sentence and the warning, gives back the
+    /// wakes it took, and the same seat's next admission is refused. At the unit's code the mark was saved only after a normal end of
+    /// the stream, so a cancelled turn lost all three.
+    /// </summary>
+    [Fact]
+    public async Task A_warning_already_read_survives_the_turns_cancellation()
+    {
+        var name = nameof(A_warning_already_read_survives_the_turns_cancellation);
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        var (session, _) = HeldTurn(name);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+        var now = TestEnv.LocalNoon();
+        var home = Path.Combine(TestEnv.Home, "cli-code-mode", name);
+        Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
+        var host = new VendorLimitTests.Host(db, events, session, home) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+        Assert.True(events.RecordOwnerMessage("how is the book?", now));
+
+        using var cancel = new CancellationTokenSource();
+        var turn = loop.TurnAsync(cancel.Token);
+        await WarningRead(session, turn);
+        cancel.Cancel();
+        try { await turn; }
+        catch (OperationCanceledException) { /* the loop's own way out of a cancelled pass */ }
+
+        Assert.NotNull(ended);
+        Assert.Equal([Warning], ended!.VendorWarnings);
+        Assert.Contains(Warning, ended.ToolsUnavailable, StringComparison.Ordinal);
+        var owed = Assert.Single(events.Due(now.AddHours(1)), e => e.Kind == MissionEventKind.Owner);
+        Assert.Contains("how is the book?", owed.Payload, StringComparison.Ordinal);
+        var next = session.CheckSeat();
+        Assert.True(next.Refused, "the seat whose tools could not run was admitted again after its turn was cancelled");
+        Assert.Equal(ended.ToolsUnavailable, next.Refusal);
+    }
+
+    /// <summary>
     /// (C) THE VENDOR'S WARNING GOES TO THE ENGINEERING LOG AND AN ACTIVITY LINE, through the meter every conversation is metered by.
     /// </summary>
     [Fact]
