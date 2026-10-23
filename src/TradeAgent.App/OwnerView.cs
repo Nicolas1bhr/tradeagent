@@ -193,6 +193,20 @@ sealed class OwnerPage
         public TextBlock ModelNote { get; } = Ui.Micro("");
         public TextBlock Note { get; } = Ui.Micro("");
 
+        /// <summary>
+        /// THE SETUP'S CLI, SWITCHED — and every role choice that is not the harness follows it (Codex re-review 2 of
+        /// <c>U-settings-shed</c>, P2). A role's choice other than the harness means "the CLI the setup prepared": only one CLI is prepared
+        /// at a time and its turns run on it (<c>AppHost.RuntimeObjectFor</c>), so a choice left naming the previous CLI would price, pool
+        /// and seat the role on a vendor it no longer runs on. The one writer of <see cref="TradeAgentSettings.SelectedRuntimeId"/>: the
+        /// setup's CLI card calls it, and a test holds that no other code in the app writes the field.
+        /// </summary>
+        internal static void SwitchSetupCli(TradeAgentSettings s, string runtimeId)
+        {
+            s.SelectedRuntimeId = runtimeId;
+            foreach (var role in s.RoleRuntime.Keys.ToList())
+                if (!RuntimeCatalog.IsHarness(s.RoleRuntime[role])) s.RoleRuntime[role] = runtimeId;
+        }
+
         public SeatChoices(AppHost host, Func<bool> boardActive, Action changed)
         {
             _host = host;

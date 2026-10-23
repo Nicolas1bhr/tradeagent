@@ -570,7 +570,7 @@ public sealed class OnboardingView
                 manifest.Recommended ? Ui.Pill("RECOMMENDED", Theme.Positive) : null,
                 Act(() =>
                 {
-                    _host.Gateway.Update(s => s.SelectedRuntimeId = manifest.Id);
+                    _host.Gateway.Update(s => OwnerPage.SeatChoices.SwitchSetupCli(s, manifest.Id));
                     ResetStepState();
                     Done(OnboardingStep.AI_RUNTIME_SELECTED);
                 })));
