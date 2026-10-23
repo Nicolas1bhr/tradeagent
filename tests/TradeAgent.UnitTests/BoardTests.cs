@@ -161,6 +161,50 @@ public class BoardTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// NO BOARD ROW IS REWRITTEN BY A REPLACE (fix pass 1 of <c>U-board-a1</c>, the review's finding on rung 47): <c>INSERT OR REPLACE</c>
+    /// deletes the row it collides with without firing a DELETE trigger while recursive triggers are off — every connection's default —
+    /// so the update and delete seals alone let a seat's model class, a policy version or an event be rewritten. Each table refuses an
+    /// insert over a key it already holds, whatever the statement's conflict clause, and the rows are unchanged. RED before the fix:
+    /// the replace of <c>board-1</c> succeeded.
+    /// </summary>
+    [Fact]
+    public void No_board_row_is_rewritten_by_a_replace()
+    {
+        using var db = TestEnv.NewDb();
+        string Rows() => Scalar(db, "SELECT (SELECT group_concat(id || ':' || seat_class || ':' || model_class || ':' || vendor_family || ':' || status, ',') FROM board_seat)"
+                                     + " || '#' || (SELECT group_concat(version || ':' || body_sha256 || ':' || written_at, ',') FROM board_policy)"
+                                     + " || '#' || (SELECT group_concat(id || ':' || kind || ':' || detail, ',') FROM board_event)")!;
+        var before = Rows();
+        var seat1 = Scalar(db, "SELECT model_class FROM board_seat WHERE id='board-1'");
+        var other = seat1 == "strong" ? "standard" : "strong";
+        var eventId = Scalar(db, "SELECT MIN(id) FROM board_event");
+        var body = Scalar(db, "SELECT body FROM board_policy WHERE version=1")!;
+
+        foreach (var verb in new[] { "INSERT OR REPLACE", "REPLACE", "INSERT OR IGNORE" })
+            foreach (var sql in new[]
+                     {
+                         $"{verb} INTO board_seat(id, seat_class, model_class, vendor_family, status, founded_at) "
+                         + $"VALUES('board-1', 'harness', '{other}', 'another', 'dormant', '2026-10-23T00:00:00.0000000Z')",
+                         $"{verb} INTO board_policy(version, decider, basis, written_at, mode, live_activated, body, body_sha256, supersedes) "
+                         + "VALUES(1, 'app', 'founding', '2026-10-23T00:00:00.0000000Z', 'OBSERVE', 0, $body, $sha, NULL)",
+                         $"{verb} INTO board_event(id, at, kind, policy_version, home_schema, budget_share, detail) "
+                         + $"VALUES({eventId}, '2026-10-23T00:00:00.0000000Z', 'earlier-live-set-aside', NULL, NULL, NULL, 'rewritten')"
+                     })
+            {
+                var refused = Assert.Throws<SqliteException>(() => Exec(db, sql, ("$body", body + " "), ("$sha", Sha256Hex.Of(body + " "))));
+                log.WriteLine($"{sql[..Math.Min(60, sql.Length)]}…: {refused.Message}");
+            }
+
+        // AN UPSERT IS AN UPDATE, AND THE UPDATE SEAL ALREADY REFUSES IT; asked here so the two seals are read as one promise.
+        Assert.Throws<SqliteException>(() => Exec(db,
+            "INSERT INTO board_seat(id, seat_class, model_class, vendor_family, status, founded_at) VALUES('board-1', 'harness', 'strong', 'x', 'dormant', 'x') "
+            + "ON CONFLICT(id) DO UPDATE SET model_class=excluded.model_class"));
+
+        Assert.Equal(before, Rows());
+        Assert.Equal(seat1, Scalar(db, "SELECT model_class FROM board_seat WHERE id='board-1'"));
+    }
+
+    /// <summary>
     /// THE FOUNDING COMPOSITION: three seats, <c>board-1..3</c>, on at least two model classes, each broker, cell or harness and none a
     /// <c>cli</c>, each with its vendor family, all dormant — and the schema refuses a <c>cli</c> seat and an active one. Nothing
     /// launches one: no board seat is a position the supervisor builds a home for. RED before rung 47: no <c>board_seat</c> table.

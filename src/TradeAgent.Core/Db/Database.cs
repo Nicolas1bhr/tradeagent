@@ -2936,7 +2936,9 @@ public sealed class Database : IDisposable
             // mode OBSERVE or PAPER and real money off — a live mode or an activation is UNSTORABLE (`U-board-live` relaxes it in its
             // own rung) — its body canonical JSON with its SHA-256. `board_event` — what happened to the board: its founding, an earlier
             // live setting set aside. EVERY TABLE REFUSES UPDATE AND DELETE BY TRIGGER: a version is superseded by a new one, never
-            // rewritten. One writer, `BoardStore`. NO BACKFILL FROM THE SETTINGS ROW: an owner-set value of a field the board now holds
+            // rewritten — AND AN INSERT OVER A KEY IT ALREADY HOLDS (fix pass 1): `INSERT OR REPLACE` deletes the row it collides with
+            // without firing a DELETE trigger while recursive triggers are off, every connection's default, so the update and delete
+            // seals alone let a replace rewrite a seat, a version or an event. One writer, `BoardStore`. NO BACKFILL FROM THE SETTINGS ROW: an owner-set value of a field the board now holds
             // simply goes (CLAUDE.md, no backward compatibility). `IF NOT EXISTS` throughout and the stamp last, because the rungs run in
             // autocommit and a crash before the stamp runs this again over what it made.
             Exec("""
@@ -2982,6 +2984,15 @@ public sealed class Database : IDisposable
                 BEGIN SELECT RAISE(ABORT, 'a board event is written once and never updated'); END;
                 CREATE TRIGGER IF NOT EXISTS board_event_sealed_d BEFORE DELETE ON board_event
                 BEGIN SELECT RAISE(ABORT, 'a board event is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS board_seat_sealed_i BEFORE INSERT ON board_seat
+                WHEN EXISTS (SELECT 1 FROM board_seat WHERE id = NEW.id)
+                BEGIN SELECT RAISE(ABORT, 'a board seat''s row is written once: an insert over it, a replace included, is refused'); END;
+                CREATE TRIGGER IF NOT EXISTS board_policy_sealed_i BEFORE INSERT ON board_policy
+                WHEN EXISTS (SELECT 1 FROM board_policy WHERE version = NEW.version)
+                BEGIN SELECT RAISE(ABORT, 'a policy version is written once: an insert over it, a replace included, is refused'); END;
+                CREATE TRIGGER IF NOT EXISTS board_event_sealed_i BEFORE INSERT ON board_event
+                WHEN NEW.id IS NOT NULL AND EXISTS (SELECT 1 FROM board_event WHERE id = NEW.id)
+                BEGIN SELECT RAISE(ABORT, 'a board event is written once: an insert over it, a replace included, is refused'); END;
                 """);
 
             // THE FOUNDING RECORD, ONCE, in one transaction of its own and only while no policy row exists — so a re-run after a
