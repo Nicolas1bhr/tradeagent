@@ -204,16 +204,11 @@ public class LossBudgetCompositionTests
     {
         var text = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "DashboardView.cs"));
 
-        Assert.Contains("_maxLossPerTrade = Ui.AmountField(r.MaxLossPerTrade", text, StringComparison.Ordinal);
-        Assert.Contains("_maxDailyLoss = Ui.AmountField(r.MaxDailyLoss", text, StringComparison.Ordinal);
-        Assert.Contains("Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint)", text, StringComparison.Ordinal);
-        Assert.Contains("Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint)", text, StringComparison.Ordinal);
-
-        // Saved by the same press as the other five, so RiskPolicy.Widenings decides the second one.
-        Assert.Contains("MaxLossPerTrade = _maxLossPerTrade.Figure", text, StringComparison.Ordinal);
-        Assert.Contains("MaxDailyLoss = _maxDailyLoss.Figure", text, StringComparison.Ordinal);
-        Assert.Contains("s.Risk.MaxLossPerTrade = pending.MaxLossPerTrade;", text, StringComparison.Ordinal);
-        Assert.Contains("s.Risk.MaxDailyLoss = pending.MaxDailyLoss;", text, StringComparison.Ordinal);
+        // U-board-a2 (item 11): both budgets are the security board's policy now, so the page holds neither box and writes neither —
+        // they are read from the policy in force and shown read-only on the Board page (U-settings-shed).
+        Assert.DoesNotContain("_maxLossPerTrade", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("_maxDailyLoss", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("s.Risk.", text, StringComparison.Ordinal);
     }
 
     /// <summary>The hint names the account's currency once the platform has said what it is.</summary>

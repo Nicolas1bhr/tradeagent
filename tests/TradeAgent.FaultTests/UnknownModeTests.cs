@@ -36,6 +36,9 @@ public class UnknownModeTests(ITestOutputHelper log)
         // only thing standing between the agent and it.
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker { AccountId = "REAL-001", IsSimulated = false }));
         var gw = new TradingGateway(db, conn, new HealthRegistry());
+        // THE ROW'S `risk` GOVERNS NOTHING (U-board-a2 item 8): the founding policy's allowlist is BTCUSDT alone, so the fixture lets ES
+        // through on this gateway's own copy, to reach the refusal each test is about.
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["ES"]);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);
@@ -111,6 +114,9 @@ public class UnknownModeTests(ITestOutputHelper log)
             .Replace("REAL-001", "SIM-001"));
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
         var gw = new TradingGateway(db, conn, new HealthRegistry());
+        // THE ROW'S `risk` GOVERNS NOTHING (U-board-a2 item 8): the founding policy's allowlist is BTCUSDT alone, so the fixture lets ES
+        // through on this gateway's own copy, to reach the refusal each test is about.
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["ES"]);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 

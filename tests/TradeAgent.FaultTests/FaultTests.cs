@@ -1,6 +1,7 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
@@ -277,6 +278,7 @@ public class RestartTests
             gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
             gw.ActivateLiveUnderTest(true);
             gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 4m);
+            gw.Update(s => s.AiDailyCostCap = 4m);
         }
         using (var db = new Database(file))
         {
@@ -285,8 +287,9 @@ public class RestartTests
             // force, read from a store that cannot hold a live one — what the test host's seam set lived in that gateway's memory only.
             Assert.Equal((TradingMode.PAPER, false), (gw.Policy.Mode, gw.Policy.LiveActivated));
             Assert.DoesNotContain("live_activated", db.GetKv("settings")!, StringComparison.Ordinal);
-            Assert.Equal(4m, gw.Policy.Risk.MaxOrderQuantity);
-            Assert.Equal(750m, gw.Policy.Risk.MaxDailyLoss);
+            Assert.Equal(4m, gw.Settings.AiDailyCostCap);
+            // NOR DO THE LIMITS (U-board-a2 item 8): they are the policy's too, and the founding ones are back after the restart.
+            Assert.Empty(RiskPolicy.Changes(BoardFounding.V1.Risk, gw.Policy.Risk));
         }
     }
 }
