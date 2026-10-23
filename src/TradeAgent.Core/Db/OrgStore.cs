@@ -303,7 +303,10 @@ public sealed record ChartPosition(string Id, string Kind, int Depth, string Lev
         [.. CouncilRoles.All.Select(r => new ChartPosition(r, OrgPositionKind.Head, 1, OrgLevel.Department))];
 }
 
-/// <summary>One unit of the chart, as <c>org_unit</c> holds it.</summary>
+/// <summary>
+/// One unit of the chart, as <c>org_unit</c> holds it. <see cref="CharterDecisionId"/> is the <c>charter</c> decision the verb that
+/// chartered it wrote (rung 48), null on a unit the rung seeded.
+/// </summary>
 public sealed record OrgUnitRow(
     string Id,
     string? ParentId,
@@ -311,7 +314,7 @@ public sealed record OrgUnitRow(
     string? HeadPositionId,
     string Status,
     string? EnvelopeShare,
-    string? CharterPublicationId,
+    string? CharterDecisionId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? ClosedAt)
 {
@@ -354,7 +357,7 @@ public sealed record OrgPositionRow(
 public sealed partial class OrgStore(Database db)
 {
     const string UnitCols =
-        "id, parent_id, kind, head_position_id, status, envelope_share, charter_publication_id, created_at, closed_at";
+        "id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id, created_at, closed_at";
 
     const string PositionCols =
         "id, unit_id, home_dir, status, seat_runtime, seat_model, seat_allow_in, seat_allow_out, created_at, ended_at";
@@ -464,7 +467,7 @@ public sealed partial class OrgStore(Database db)
     {
         using var c = db.Cmd("""
             SELECT u.id, u.parent_id, u.kind, u.head_position_id, u.status, u.envelope_share,
-                   u.charter_publication_id, u.created_at, u.closed_at
+                   u.charter_decision_id, u.created_at, u.closed_at
               FROM org_position p JOIN org_unit u ON u.id = p.unit_id
              WHERE p.id = $id
             """, ("$id", positionId));

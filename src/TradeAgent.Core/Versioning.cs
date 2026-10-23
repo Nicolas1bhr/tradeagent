@@ -445,8 +445,11 @@ public static class Versions
     /// <c>ai_attempt.billing_class</c>, <c>plan</c>, <c>key</c> or <c>unknown</c>, composed by the app from the seat verdict its
     /// admission read, written in the row's own insert, an UPDATE that changes it refused by trigger. A row before the rung reads
     /// <c>unknown</c> — nobody recorded it — and counts against both ceilings.</para>
+    /// <para><b>48 — a unit's charter is its decision record</b> (<c>U-org-verbs-c</c>, rung 48 — the board's assignment; 47 is
+    /// <c>U-board-a1</c>'s): <c>org_unit.charter_decision_id</c> (REFERENCES <c>org_decision</c>) replaces the never-written
+    /// <c>charter_publication_id</c>, dropped. NULL on every seeded unit; written by <c>OrgStore.Charter</c> in the charter's own write.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 46;
+    public const int DatabaseSchemaVersion = 48;
 
     /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
     public const int InputLineageRung = 45;

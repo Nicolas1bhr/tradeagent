@@ -2905,6 +2905,25 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{billingRung}') ON CONFLICT(key) DO UPDATE SET value='{billingRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-org-verbs-c): 48 is the board's assignment (47 is U-board-a1's); a unit overtaken
+        // renumbers here and in Versions, nothing else.
+        const int charterRung = 48;
+        if (have < charterRung)
+        {
+            // A UNIT'S CHARTER IS ITS DECISION RECORD — `U-org-verbs-c` (docs/ORCHESTRATION.md § 2.9; ORGANISATION §§ 3, 5).
+            // `org_unit.charter_decision_id` names the `charter` decision (`org_decision`, rung 41) the verb that chartered the unit
+            // wrote in the same write: the rationale is that decision's ledger entry, a CLAIM, and the forecasts hang from it.
+            // It REPLACES `charter_publication_id`, which nothing ever wrote (no backward compatibility is owed, CLAUDE.md): the old
+            // column is dropped where present and the new one added where missing — NULL on every unit the rung seeded, which no
+            // verb chartered. The stamp last: the rungs run in autocommit, and a crash between either statement and the stamp runs
+            // this again over what it made, each statement a no-op the second time.
+            if (ReadInt("SELECT COUNT(*) FROM pragma_table_info('org_unit') WHERE name='charter_publication_id'") is > 0)
+                Exec("ALTER TABLE org_unit DROP COLUMN charter_publication_id;");
+            AddColumnIfMissing("org_unit", "charter_decision_id", "TEXT REFERENCES org_decision(id)");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{charterRung}') ON CONFLICT(key) DO UPDATE SET value='{charterRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
@@ -2937,9 +2956,8 @@ public sealed class Database : IDisposable
         void Unit(string id, string? parent, string kind, string? head)
         {
             using (var u = Cmd("""
-                INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share,
-                                     charter_publication_id, created_at, closed_at)
-                VALUES($id, $parent, $kind, $head, $status, NULL, NULL, $at, NULL)
+                INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at, closed_at)
+                VALUES($id, $parent, $kind, $head, $status, NULL, $at, NULL)
                 ON CONFLICT DO NOTHING
                 """, ("$id", id), ("$parent", parent), ("$kind", kind), ("$head", head),
                 ("$status", OrgUnitStatus.Active), ("$at", at)))

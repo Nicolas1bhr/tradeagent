@@ -72,7 +72,7 @@ public class OrgLedgerTests
                 "org|NULL|root|NULL|active|NULL|NULL|NULL",
             ],
             Rows(db, """
-                SELECT id, parent_id, kind, head_position_id, status, envelope_share, charter_publication_id,
+                SELECT id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id,
                        closed_at
                   FROM org_unit ORDER BY id
                 """));
@@ -416,6 +416,68 @@ public class OrgLedgerTests
                 ("$n", table)));
     }
 
+    /// <summary>The charter rung's number (<c>U-org-verbs-c</c>), spelled once here as in the schema.</summary>
+    const int CharterRung = 48;
+
+    /// <summary>
+    /// THE CHARTER RUNG (<c>U-org-verbs-c</c>): a fresh home's <c>org_unit</c> carries <c>charter_decision_id</c>, a foreign key to
+    /// <c>org_decision</c>, and no <c>charter_publication_id</c> — and the rung re-runs cleanly after a crash before its stamp: with the
+    /// old column dropped and the new one not yet added, and with everything made but the stamp, the next open arrives at the same
+    /// columns, a unit's charter as it was. A home stamped before the rung, the old column still there, loses it and gains the new one.
+    /// </summary>
+    [Fact]
+    public void The_charter_rung_replaces_the_publication_column_and_reruns_after_a_crash_before_its_stamp()
+    {
+        Assert.True(Versions.DatabaseSchemaVersion >= CharterRung, $"the column arrives at rung {CharterRung}; this build says {Versions.DatabaseSchemaVersion}");
+        var file = NewFile("charter-rung");
+        using (var db = new Database(file)) Assert.Equal(["charter_decision_id"], CharterColumns(db));
+
+        // A UNIT WHOSE CHARTER IS A DECISION, AS ONLY A TEST WRITES IT HERE: the foreign key holds, an id that is no decision is refused.
+        using (var raw = Raw(file))
+        {
+            Run(raw, "PRAGMA foreign_keys=ON");
+            Run(raw, """
+                INSERT INTO ledger_entry(id, kind, author, created_at) VALUES(990001, 'decision', 'research', '2026-10-23T00:00:00Z');
+                INSERT INTO org_decision(id, position, kind, options, choice, refs, ledger_entry_id, at)
+                VALUES('dec-000000000048', 'research', 'charter', '["a"]', 'a', '[]', 990001, '2026-10-23T00:00:00Z');
+                INSERT INTO org_unit(id, parent_id, kind, status, charter_decision_id, created_at)
+                VALUES('team-rung48', 'div-research', 'team', 'active', 'dec-000000000048', '2026-10-23T00:00:00Z');
+                """);
+            Assert.Throws<SqliteException>(() => Run(raw, """
+                INSERT INTO org_unit(id, parent_id, kind, status, charter_decision_id, created_at)
+                VALUES('team-nothing', 'div-research', 'team', 'active', 'dec-nothere00000', '2026-10-23T00:00:00Z')
+                """));
+        }
+
+        foreach (var crash in new[]
+                 {
+                     "ALTER TABLE org_unit DROP COLUMN charter_decision_id; ",                              // dropped the old, not yet added the new
+                     "",                                                                                   // everything but the stamp
+                     "ALTER TABLE org_unit ADD COLUMN charter_publication_id TEXT; "                       // a home from before the rung
+                 })
+        {
+            using (var raw = Raw(file))
+                Run(raw, crash + $"UPDATE meta SET value='{CharterRung - 1}' WHERE key='schema_version';");
+            using var rerun = new Database(file);
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), Stamp(rerun));
+            Assert.Equal(["charter_decision_id"], CharterColumns(rerun));
+            Assert.Equal(crash.Contains("DROP", StringComparison.Ordinal) ? ["NULL"] : ["dec-000000000048"],
+                Rows(rerun, "SELECT charter_decision_id FROM org_unit WHERE id='team-rung48'"));
+            // A crash that dropped the column lost what it held; put it back for the next case, as the verb would have written it.
+            Exec(rerun, "UPDATE org_unit SET charter_decision_id='dec-000000000048' WHERE id='team-rung48'");
+        }
+
+        static List<string> CharterColumns(Database db) =>
+            Rows(db, "SELECT name FROM pragma_table_info('org_unit') WHERE name LIKE 'charter%' ORDER BY name");
+
+        static void Run(SqliteConnection raw, string sql)
+        {
+            using var c = raw.CreateCommand();
+            c.CommandText = sql;
+            c.ExecuteNonQuery();
+        }
+    }
+
     // ---- the shape is SQL's, the vocabulary the store's ----------------------------------------------
 
     /// <summary>
@@ -498,7 +560,7 @@ public class OrgLedgerTests
             Assert.Equal(OrgUnitKind.Division, u.Kind);
             Assert.Equal(OrgUnitStatus.Active, u.Status);
             Assert.Null(u.EnvelopeShare);
-            Assert.Null(u.CharterPublicationId);
+            Assert.Null(u.CharterDecisionId);
             Assert.Null(u.ClosedAt);
         });
         Assert.Equal(new string?[] { CouncilRoles.Operations, CouncilRoles.Research },
