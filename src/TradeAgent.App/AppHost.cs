@@ -1490,23 +1490,41 @@ public sealed class AppHost : IAsyncDisposable
             // is not the same fact as a review that has not come round yet, and an owner reading
             // "waiting" needs to know which of the two they are looking at.
             ReviewNotFunded = ReviewUnfunded(spend)
-                ? "the day's spending ceiling is reached, so no turn can be taken until it resets"
-                : null
         };
     }
 
     /// <summary>
-    /// WHETHER THE NEXT REVIEW CANNOT BE FUNDED (<c>U-billing-followups</c> item 4): only when the ceiling of the class each role would bill
-    /// it to cannot fund one turn — a plan seat against the plan's capacity, a key seat against the money cap, an unknown one against both,
-    /// each role's reading as the loop's own pick reads it (<see cref="TurnMeter.TodayFor"/>, its class's ceiling: <c>AdmitsGlobally</c>).
-    /// Reading both ceilings together called a review on a funded plan unfunded whenever the money cap was spent, and the reverse. A
-    /// position's own envelope is not the day's ceiling and is left out: the sentence names the ceiling. Unmetered, nothing is claimed.
+    /// WHY A PENDING REVIEW CANNOT BE FUNDED, or null (<c>U-billing-followups</c> item 4, fix pass 1): JUDGED PER PENDING REVIEW — a role
+    /// with a wake due now — against the ceiling of the class that role's own seat bills (<see cref="TurnMeter.TodayFor"/>: a plan seat the
+    /// plan's capacity, a key seat the money cap, an unknown one both; <c>AdmitsGlobally</c>), whatever another role's class could fund: an
+    /// idle seat's room takes no turn that is waiting on another. Each unfunded review is named with its role and the ceiling that stops it.
+    /// With no review pending — or the wakes unreadable — the next one's role is not known, so it is called unfunded only when no role's
+    /// class could fund it. A position's own envelope is not the day's ceiling and is left out: the sentence names the ceiling. Unmetered,
+    /// nothing is claimed.
     /// </summary>
-    static bool ReviewUnfunded(IReadOnlyList<AiSpendToday> spend)
+    string? ReviewUnfunded(IReadOnlyList<AiSpendToday> spend)
     {
+        const string NoneCanTurn = "the day's spending ceiling is reached, so no turn can be taken until it resets";
         var roles = spend.Where(s => s.Role is not null).ToList();
-        if (roles.Count == 0) return spend is [{ Metered: true } whole] && !whole.AdmitsGlobally;
-        return roles.All(s => s.Metered && !s.AdmitsGlobally);
+        if (roles.Count == 0) return spend is [{ Metered: true } whole] && !whole.AdmitsGlobally ? NoneCanTurn : null;
+
+        List<string>? pending;
+        try { pending = Wakes?.RolesDue(DateTimeOffset.UtcNow); }
+        catch (Exception) { pending = null; }
+        if (pending is not { Count: > 0 })
+            return roles.All(s => s.Metered && !s.AdmitsGlobally) ? NoneCanTurn : null;
+
+        var unfunded = new List<string>();
+        foreach (var role in pending.Distinct())
+        {
+            AiSpendToday? reading;
+            try { reading = roles.FirstOrDefault(s => s.Role == role) ?? Meter?.TodayFor(role); }
+            catch (Exception) { reading = null; }
+            if (reading is { Metered: true, AdmitsGlobally: false })
+                unfunded.Add($"{role}'s review cannot be funded: the {reading.Binding.CeilingWords("your")} is reached, so it is not "
+                             + "taken until that limit resets");
+        }
+        return unfunded.Count == 0 ? null : string.Join("; ", unfunded);
     }
 
     /// <summary>
