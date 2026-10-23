@@ -158,10 +158,14 @@ public class OwnerPageTests
         // OFFERED, AND EACH PRESS WRITES THE SETTINGS ROW IT ALWAYS WROTE — one press, never armed first.
         var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
         Assert.True(card.Root.IsVisible);
+        host.Gateway.Update(s => s.SelectedRuntimeId = "codex");          // the AI tool chosen during setup
+        card.Update();                                                    // its models: both rows follow the runtime
+        Assert.Equal(host.ModelChoices.Count + 1, card.ModelRow.Children.Count);
+        Assert.Equal(host.ModelChoices.Count + 1, card.ResearchModelRow.Children.Count);
         Press((Button)card.ResearchRuntimeRow.Children[1]);
         Assert.Equal(TradeAgent.AgentRuntime.ApiAgentRuntime.RuntimeId, host.Gateway.Settings.RoleRuntime[CouncilRoles.Research]);
         Press((Button)card.ResearchRuntimeRow.Children[0]);
-        Assert.False(host.Gateway.Settings.RoleRuntime.ContainsKey(CouncilRoles.Research));
+        Assert.Equal("codex", host.RuntimeForRole(CouncilRoles.Research));
         if (host.ModelChoices.Count > 0)
         {
             Press((Button)card.ModelRow.Children[1]);
@@ -308,6 +312,58 @@ public class OwnerPageTests
         }
         finally { await host2.Gateway.DisposeAsync(); }
     }
+
+    /// <summary>
+    /// A LIVE HOLD WHOSE ROW CANNOT BE READ IS NOT PAPER (Codex re-review of fix pass 1, P1): the gateway answers an unreadable hold as
+    /// HELD and stamps it with the mode in force now — Practice — so the hold's own mode cannot be trusted alone. Paper is judged by the
+    /// BREACH it holds as well, and a live breach under a malformed hold is refused in words and writes no release row.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_hold_over_a_live_breach_is_never_released_by_the_owner()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host.Gateway;
+            gw.Update(s => s.SelectedAccountId = "ACC-1");
+            var live = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.LIVE_AUTONOMOUS);
+            db.SetKv(TradeAgent.Gateway.LossHold.HoldKey(gw.Connector.Id, live), "{ this is not a hold");
+            Assert.False(host.Board.AnyActive);
+            var held = Assert.Single(gw.HoldsForReview());
+            Assert.Equal(TradingMode.PAPER, held.Mode);            // the gateway's stamp: the mode in force, not the breach's
+
+            var page = Build(host);
+            page.Update(await gw.StatusAsync());
+            Assert.False(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible);
+            Field<TextBox>(page, "_releaseNote").Text = "looked at it";
+            var release = Field<Button>(page, "_release");
+            Press(release);
+            Press(release);
+
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, live)));
+            Assert.Equal(Labels.ReleaseRefusedNotPaper(["your account"]), Field<TextBlock>(page, "_releaseNoteResult").Text);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
+    /// THE RESEARCH DIRECTOR'S CLI PRESS SELECTS THE CLI EVEN WITH A WORKER KEY HELD (Codex re-review of fix pass 1, P2): clearing the
+    /// override would fall back to the harness the moment a key is held, so the press writes the app-wide runtime as the role's own.
+    /// </summary>
+    [Fact]
+    public Task The_research_cli_press_selects_the_cli_while_a_worker_key_is_held() => OnThePage((page, host) =>
+    {
+        host.Gateway.Update(s => s.SelectedRuntimeId = "codex");
+        host.HarnessKey.Set("fake-key-for-this-test", "https://api.openai.com");
+        Assert.True(host.HarnessKey.Held);
+        var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
+        Press((Button)card.ResearchRuntimeRow.Children[1]);
+        Assert.True(TradeAgent.AgentRuntime.RuntimeCatalog.IsHarness(host.RuntimeForRole(CouncilRoles.Research)));
+        Press((Button)card.ResearchRuntimeRow.Children[0]);
+        Assert.Equal("codex", host.RuntimeForRole(CouncilRoles.Research));
+        return Task.CompletedTask;
+    });
 
     /// <summary>
     /// TODAY'S LINE PROMISES MIDNIGHT ONLY WHEN A FRESH DAY CAN FUND ONE TURN (<c>U-billing-classes</c>' review, P2): a reached day whose

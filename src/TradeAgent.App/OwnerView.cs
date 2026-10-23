@@ -236,13 +236,16 @@ sealed class OwnerPage
             _changed();
         }
 
-        /// <summary>What a role runs on. Clearing it falls back to the runtime chosen during setup.</summary>
+        /// <summary>What a role runs on: the harness, or the AI tool chosen during setup, written as this role's own choice.</summary>
         void ChooseRoleRuntime(string role, string? runtime)
         {
             if (Refused()) return;
             _host.Gateway.Update(s =>
             {
-                if (runtime is { Length: > 0 }) s.RoleRuntime[role] = runtime;
+                // THE CLI PRESS NAMES THE CLI (Codex re-review of fix pass 1, P2): clearing the override would fall back to the harness
+                // the moment a worker key is held, so the press writes the app-wide runtime as this role's own choice.
+                var chosen = runtime is { Length: > 0 } ? runtime : s.SelectedRuntimeId;
+                if (chosen is { Length: > 0 }) s.RoleRuntime[role] = chosen;
                 else s.RoleRuntime.Remove(role);
             });
             _host.Gateway.Log.Activity($"The {CouncilRoles.Title(role)} now runs on {_host.RuntimeForRole(role) ?? "its AI tool"}");
@@ -275,14 +278,10 @@ sealed class OwnerPage
             var runtime = _host.Gateway.Settings.SelectedRuntimeId;
             if (!string.Equals(runtime, _modelRowRuntime, StringComparison.Ordinal))
             {
+                // BOTH MODEL ROWS, because which models exist is a fact about the runtime, and the Research Director's row names the same list.
                 _modelRowRuntime = runtime;
-                ModelRow.Children.Clear();
-                foreach (var c in BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel).Children.ToArray())
-                {
-                    // Detached first: a control cannot be in two trees, and the row it came from is thrown away.
-                    ((Panel)c.Parent!).Children.Remove(c);
-                    ModelRow.Children.Add(c);
-                }
+                Rebuild(ModelRow, ChooseModel);
+                Rebuild(ResearchModelRow, m => ChooseRoleModel(CouncilRoles.Research, m));
             }
 
             Emphasise(ModelRow, _host.Gateway.Settings.SelectedModelId);
@@ -297,6 +296,17 @@ sealed class OwnerPage
             ModelNote.Text = _host.RequestedModel is { Length: > 0 } model
                 ? $"Every turn runs on {model}."
                 : "This AI tool has no model TradeAgent can choose, so it runs on whatever it is configured for.";
+        }
+
+        void Rebuild(Panel row, Action<string?> choose)
+        {
+            row.Children.Clear();
+            foreach (var c in BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, choose).Children.ToArray())
+            {
+                // Detached first: a control cannot be in two trees, and the row it came from is thrown away.
+                ((Panel)c.Parent!).Children.Remove(c);
+                row.Children.Add(c);
+            }
         }
 
         void Emphasise(Panel row, string? chosen)
@@ -982,17 +992,37 @@ sealed class OwnerPage
     }
 
     /// <summary>WHAT IS BEING HELD FOR REVIEW ON PAPER RIGHT NOW, in the owner's words — "your account" and the instruments.</summary>
-    IReadOnlyList<string> HeldScopes() =>
-        [.. _host.Gateway.HoldsForReview().Where(IsPaperHold).Select(ScopeWords)];
+    IReadOnlyList<string> HeldScopes() => [.. HoldsByPaper().Paper.Select(ScopeWords)];
 
     static string ScopeWords(LossHoldRecord h) => h.Symbol ?? "your account";
 
     /// <summary>
-    /// WHETHER A HOLD IS ON A PAPER SCOPE (Codex P1 on <c>U-settings-shed</c>): the mode the gateway recorded on the hold, and only
-    /// <see cref="TradingMode.PAPER"/> — a hold with no mode, or one this build cannot name as paper, is not his to release (refuse,
-    /// never guess). Before an active board only paper can be held; a retained live hold is the board's, never this page's.
+    /// WHETHER A HOLD IS ON A PAPER SCOPE (Codex P1 on <c>U-settings-shed</c>, and its re-review): the hold's own mode AND the mode of
+    /// the breach it holds, both <see cref="TradingMode.PAPER"/>. Both, because the gateway answers a hold row it cannot read as HELD and
+    /// stamps it with the mode in force NOW — so a live breach under a malformed hold would read as paper on the hold alone. A missing
+    /// mode, a breach this page cannot find or read, or one it cannot name as paper is not his to release (refuse, never guess). Before
+    /// an active board only paper can be held; a retained live hold is the board's, never this page's.
     /// </summary>
-    internal static bool IsPaperHold(LossHoldRecord h) => h.Mode == TradingMode.PAPER;
+    internal static bool IsPaperHold(LossHoldRecord h, TradingMode? breachMode) =>
+        h.Mode == TradingMode.PAPER && breachMode == TradingMode.PAPER;
+
+    /// <summary>The holds on the selected account, split by <see cref="IsPaperHold"/> against the breaches they hold.</summary>
+    (List<LossHoldRecord> Paper, List<LossHoldRecord> NotPaper) HoldsByPaper()
+    {
+        var holds = _host.Gateway.HoldsForReview();
+        var breachModes = new Dictionary<string, TradingMode?>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var b in _host.Gateway.OpenClosures(_host.Gateway.ClosureAccountId))
+                breachModes.TryAdd(LossBreach.KeyFor(b), b.Mode);
+        }
+        catch (Exception) { breachModes.Clear(); }          // breaches it cannot read: no hold is judged paper
+        var paper = new List<LossHoldRecord>();
+        var notPaper = new List<LossHoldRecord>();
+        foreach (var h in holds)
+            (IsPaperHold(h, breachModes.TryGetValue(h.BreachKey, out var m) ? m : null) ? paper : notPaper).Add(h);
+        return (paper, notPaper);
+    }
 
     /// <summary>
     /// The card, on the five-second pass and in place: whether it is offered at all, what it says is held, and what the second press
@@ -1000,7 +1030,7 @@ sealed class OwnerPage
     /// </summary>
     void ShowHeldForReview()
     {
-        var holds = _host.Gateway.HoldsForReview().Where(IsPaperHold).ToList();
+        var holds = HoldsByPaper().Paper;
         _releaseCard.IsVisible = ReleaseOffered(holds.Count, BoardActive());
         if (!_releaseCard.IsVisible) return;
 
@@ -1018,8 +1048,7 @@ sealed class OwnerPage
         // PAPER ONLY, READ AGAIN AT THE PRESS: the gateway's release lifts every hold on the account at once, so while any of them is not
         // paper it is never called — refused in words, nothing written. And never once a board seat is active (a board that cannot be
         // read counts as active), whatever the card showed a tick ago.
-        var held = _host.Gateway.HoldsForReview();
-        var notPaper = held.Where(h => !IsPaperHold(h)).Select(ScopeWords).ToList();
+        var notPaper = HoldsByPaper().NotPaper.Select(ScopeWords).ToList();
         if (notPaper.Count > 0 || BoardActive())
         {
             _releaseNoteResult.Text = notPaper.Count > 0
