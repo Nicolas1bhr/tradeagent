@@ -605,6 +605,49 @@ public class BillingClassesTests : IDisposable
         finally { await host.Gateway.DisposeAsync(); }
     }
 
+    /// <summary>
+    /// Fix pass 1 (Codex point b): A REVIEW IS JUDGED BY THE CLASS OF THE ROLE THAT WOULD RUN IT, whatever another role's class could fund.
+    /// Research's review is due on a paid key with no real money today, and Operations sits idle on a plan with room: the pending review
+    /// cannot be taken, and the report says so, naming whose review and which ceiling — an idle seat's room funds nothing that is waiting.
+    /// </summary>
+    [Fact]
+    public async Task A_key_billed_review_due_with_no_real_money_is_unfunded_whatever_an_idle_plan_seat_could_fund() =>
+        await OneReviewDue(money: 0m, plan: 40m, unfunded: true);
+
+    /// <summary>The twin: THE PENDING REVIEW'S OWN CLASS FUNDS IT — real money for Research's key — and the idle Operations seat's plan
+    /// being spent makes it no less fundable: no review is called unfunded.</summary>
+    [Fact]
+    public async Task A_key_billed_review_due_with_real_money_is_funded_whatever_an_idle_plan_seat_cannot_fund() =>
+        await OneReviewDue(money: 100m, plan: 0m, unfunded: false);
+
+    static async Task OneReviewDue(decimal money, decimal plan, bool unfunded)
+    {
+        using var db = TestEnv.NewDb();
+        var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
+            new AgentPresence());
+        try
+        {
+            Finished(db, CouncilRoles.Research, BillingClasses.Key);
+            Finished(db, CouncilRoles.Operations, BillingClasses.Plan);
+            host.Gateway.Update(s => { s.AiDailyCostCap = money; s.AiPlanDailyCapacity = plan; });
+            Assert.Equal(BillingClasses.Key, host.BillingClassOf(CouncilRoles.Research));
+            Assert.Equal(BillingClasses.Plan, host.BillingClassOf(CouncilRoles.Operations));
+
+            // ONLY RESEARCH'S REVIEW IS PENDING; Operations has nothing due.
+            var due = DateTimeOffset.UtcNow.AddMinutes(-1);
+            Assert.True(host.Wakes!.Raise(MissionEventIds.Review(due), MissionEventKind.Review, due, role: CouncilRoles.Research));
+            Assert.Equal([CouncilRoles.Research], host.Wakes.RolesDue(DateTimeOffset.UtcNow));
+
+            var why = host.ReportInputs().ReviewNotFunded;
+            if (!unfunded) { Assert.Null(why); return; }
+            Assert.NotNull(why);
+            Assert.Contains(CouncilRoles.Research, why, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("real money", why, StringComparison.Ordinal);
+            Assert.DoesNotContain(CouncilRoles.Operations, why, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
     // ---- (f) the setting ------------------------------------------------------------------------------------------------
 
     /// <summary>
