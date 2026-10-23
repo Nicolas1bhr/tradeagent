@@ -425,8 +425,8 @@ public static class SyntheticMarket
                     ? "by source time — the leak: through the as-of gate no reading is seen before its move, and the relation cannot be traded"
                     : "as of first seen",
                 basis = "computed from the spec, never from a run: one position per reading in the relation's direction, from the close the move "
-                        + "starts at to the end of its horizon, at the first open's price; E|z| = R(R+1)/(2R+1); the minute's noise variance "
-                        + "over the horizon; the venue's published taker fee and the app's slippage on both fills; annualised over 365 days"
+                        + "starts at to the end of its horizon, at the first open's price; E|z| = R(R+1)/(2R+1); the variance of the planted "
+                        + "move, beta^2 (E[z^2] E[w^2] - (E|z| mean w)^2) with E[z^2] = R(R+1)/3, and the minute's noise variance over the horizon; the venue's published taker fee and the app's slippage on both fills; annualised over 365 days"
             }
         };
     }
