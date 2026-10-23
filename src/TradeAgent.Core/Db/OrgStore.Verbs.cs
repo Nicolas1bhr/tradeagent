@@ -47,8 +47,12 @@ public sealed record CharterRequest(
 /// WHAT THE HOST THAT METERS LAUNCHES READS FOR A CHARTER'S SHARE: the seat whose one turn the new unit must be able to fund (the
 /// caller's own, as recorded), what one turn of it reserves, and the parent unit's envelope in each ceiling the seat is held to — as
 /// admission resolves it, nearest envelope at or above the parent. Null is a host that meters nothing: the charter is refused.
+/// <para><paramref name="LegacyShares"/>: each legacy division's share of ITS parent, by unit id, as admission reads its NULL
+/// <c>envelope_share</c> — the split on the Safety page (<see cref="OrgEnvelopes"/>). A legacy sibling the host did not read here
+/// cannot be sized, and the charter is refused rather than counting it as nothing.</para>
 /// </summary>
-public sealed record CharterFunding(string Seat, decimal Reservation, IReadOnlyList<CeilingEnvelope> Parent);
+public sealed record CharterFunding(string Seat, decimal Reservation, IReadOnlyList<CeilingEnvelope> Parent,
+    IReadOnlyDictionary<string, decimal>? LegacyShares = null);
 
 /// <summary>An envelope in one ceiling (<see cref="BillingClasses.Key"/> or <see cref="BillingClasses.Plan"/>).</summary>
 public sealed record CeilingEnvelope(string Ceiling, decimal Envelope);
@@ -126,15 +130,33 @@ public sealed partial class OrgStore
         // THE SHARE: a fraction, the siblings' with it at most the whole, and enough to fund one turn of the seat (R17 #1).
         if (r.AiShare is <= 0m or > 1m)
             throw Refused($"{r.AiShare.ToString(CultureInfo.InvariantCulture)} is no AI share: a fraction of the parent's envelope, above 0 and at most 1.");
-        var siblings = Units().Where(u => u.ParentId == parent.Id && u.Status != OrgUnitStatus.Closed && u.EnvelopeShare is not null)
-            .Sum(u => ShareOf(u));
-        if (siblings + r.AiShare > 1m)
-            throw Refused($"the units under {OrgEnvelopes.NameOf(parent.Id)} already hold {siblings.ToString(CultureInfo.InvariantCulture)} of its "
-                          + $"envelope, and {r.AiShare.ToString(CultureInfo.InvariantCulture)} more would split more than the whole.");
         var id = MintUnit();
         if (funding is null)
             throw Refused("this host meters no AI envelope, so whether the share can fund one turn of a seat cannot be checked: a charter "
                           + "whose envelope nobody could size is refused, never guessed.");
+
+        // EVERY SIBLING COUNTS (the Codex review of U-org-verbs-c, P2). A NULL share on a legacy division is "that division's position's
+        // share of the day — the split on the Safety page" (OrgStore.cs, OrgEnvelopes; resolved in OrgEnvelopes.Resolve), a fraction of
+        // this parent as real as a written one, read as admission reads it — and one the host did not read is refused, never taken as 0.
+        // NULL on any other unit "is no separate cap": it holds no fraction of the parent to split, and spends inside the parent's room.
+        var siblings = 0m;
+        var legacy = false;
+        foreach (var u in Units().Where(u => u.ParentId == parent.Id && u.Status != OrgUnitStatus.Closed))
+        {
+            if (u.EnvelopeShare is not null) siblings += ShareOf(u);
+            else if (OrgEnvelopes.LegacyRoleOf(u.Id) is not null)
+            {
+                if (funding.LegacyShares?.TryGetValue(u.Id, out var split) != true || split is < 0m or > 1m)
+                    throw Refused($"{OrgEnvelopes.NameOf(u.Id)}'s share of {OrgEnvelopes.NameOf(parent.Id)} is the split on the Safety page, "
+                                  + "and this host did not read it: the siblings' shares cannot be summed, so the charter is refused, never guessed.");
+                siblings += split;
+                legacy = true;
+            }
+        }
+        if (siblings + r.AiShare > 1m)
+            throw Refused($"the units under {OrgEnvelopes.NameOf(parent.Id)} already hold {siblings.ToString(CultureInfo.InvariantCulture)} of its "
+                          + (legacy ? "envelope (the legacy divisions' at the split on the Safety page)" : "envelope")
+                          + $", and {r.AiShare.ToString(CultureInfo.InvariantCulture)} more would split more than the whole.");
         foreach (var parentEnvelope in funding.Parent)
             if (Unfundable(funding.Seat, id, r.AiShare * parentEnvelope.Envelope, funding.Reservation) is { } never)
                 throw Refused($"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)})");

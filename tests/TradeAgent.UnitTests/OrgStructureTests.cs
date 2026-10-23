@@ -245,6 +245,38 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
+    /// (3d) THE SIBLINGS' SUM COUNTS EVERY SIBLING (the Codex review of <c>U-org-verbs-c</c>, P2). A NULL share on a legacy division
+    /// is that division's share of the day — the split on the Safety page, as admission reads it (<see cref="OrgEnvelopes"/>) — so a
+    /// chief under the default 0.5/0.5 split is refused a 0.1 experiment division, in words naming the split, with nothing written; a
+    /// legacy share the host did not read is refused, never taken as 0. NULL on any other unit (the chart's <c>Div</c>) is no cap of its
+    /// own and holds no fraction of the parent: under a 0.3/0.6 split the same 0.1 division fits exactly and is chartered. RED at base:
+    /// the 0.5/0.5 division was chartered — the NULL legacy shares were skipped.
+    /// </summary>
+    [Fact]
+    public void A_charter_counts_the_legacy_divisions_split_among_its_siblings()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Seat(db, Chief, OrgIds.Root);
+        Exec(db, "UPDATE org_unit SET head_position_id=$c WHERE id='org'", ("$c", Chief));
+        var ask = Ask(caller: Chief, kind: OrgUnitKind.Division, share: 0.1m, collapse: Now.AddDays(60));
+        Dictionary<string, decimal> Split(decimal ops, decimal research) => new() { [OrgIds.Operations] = ops, [OrgIds.Research] = research };
+
+        var before = Written(db);
+        var full = Assert.Throws<TradeAgentException>(() => org.Charter(ask, Metered with { LegacyShares = Split(0.5m, 0.5m) }, Now));
+        Assert.Contains("already hold 1.0 of its envelope", full.Message, StringComparison.Ordinal);
+        Assert.Contains("the split on the Safety page", full.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", full.Message, StringComparison.Ordinal);
+        var unread = Assert.Throws<TradeAgentException>(() => org.Charter(ask, Metered, Now));
+        Assert.Contains("the Operations division", unread.Message, StringComparison.Ordinal);
+        Assert.Contains("never guessed", unread.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+
+        var made = org.Charter(ask, Metered with { LegacyShares = Split(0.3m, 0.6m) }, Now);
+        Assert.Equal("0.1", org.Units().Single(u => u.Id == made.Unit.Id).EnvelopeShare);
+    }
+
+    /// <summary>
     /// (3c) A FUNDED, BOUNDED EXPERIMENT PASSES THE EARNING TEST WITHOUT CITED WORK, and the weekly throttle counts only positions'
     /// structural changes: two charters by the head in one week pass (the app's and the owner's events not counted), a third is refused.
     /// </summary>
