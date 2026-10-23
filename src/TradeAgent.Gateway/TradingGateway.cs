@@ -90,6 +90,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                     "an earlier settings row is already kept under its own name, and this one differs from it; nothing was changed");
             _db.SetKv("settings", Json.Write(Settings));
+            // THE PRESSES KEPT BESIDE THE ARMED ROW ARE IN THE ROW JUST WRITTEN (Settings holds them), so their key goes.
+            using (var gone = _db.Cmd("DELETE FROM kv WHERE key=$k", ("$k", SettingsWhileArmedKey))) gone.ExecuteNonQuery();
             _board.RecordEarlierLiveSetAside(at,
                 $"the owner set aside the settings an earlier build saved (mode {earlier.Mode ?? "absent"}, live_activated "
                 + $"{earlier.LiveActivated ?? "absent"}, home schema {earlier.HomeSchema}); the row is kept under {SettingsBeforeBoardKey}; "
@@ -110,6 +112,12 @@ public sealed class TradingGateway : IAsyncDisposable
 
     /// <summary>Where the owner's press keeps an earlier armed home's settings row, as it was found.</summary>
     public const string SettingsBeforeBoardKey = "settings_before_board";
+
+    /// <summary>
+    /// Where the owner's presses made while an earlier armed row stands are kept, beside that row and never over it
+    /// (<c>U-board-a2</c> extra item B); emptied by his set-aside press, which writes them into the row.
+    /// </summary>
+    public const string SettingsWhileArmedKey = "settings_while_armed";
 
     public HealthRegistry Health => _health;
     public ExecutionRequestStore Requests => _requests;
@@ -3177,6 +3185,18 @@ public sealed class TradingGateway : IAsyncDisposable
             }
             catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
             _health.Set(Components.ExecutionCapability, HealthState.PAUSED, earlier.Sentence);
+
+            // THE OWNER'S PRESSES MADE WHILE IT STOOD (U-board-a2 extra item B): kept beside the armed row, never over it, by
+            // SaveSettings — so a Stop pressed in a refused home is still pressed after a restart. This build's own write, read
+            // like any row it wrote; one it cannot read is passed over and the armed row's own reading stands.
+            if (_db.GetKv(SettingsWhileArmedKey) is { } kept)
+            {
+                try
+                {
+                    if (Json.Read<TradeAgentSettings>(kept) is { } pressed) return pressed;
+                }
+                catch (Exception ex) { _log.TryEngineering("Gateway", "settings_while_armed_unreadable", "error", ex: ex); }
+            }
         }
 
         // A ROW THIS BUILD CANNOT READ IS NOT AN EMPTY ROW (REVIEW 2026-09-05, finding 5).
@@ -3317,6 +3337,11 @@ public sealed class TradingGateway : IAsyncDisposable
         // restart can make the earlier real-money setting disappear without his choice.
         if (EarlierLiveSetting is not null)
         {
+            // BUT THE PRESS IS KEPT, BESIDE THE ROW (U-board-a2 extra item B): under its own key, which only this build writes and
+            // reads only while the armed row stands — so the kill switch pressed here survives a restart, and the owner's set-aside
+            // press carries it into the row it writes. Settings nobody could read are not kept: their reading is already the most
+            // restrictive one, and a restart reads it again.
+            if (!Settings.CouldNotBeRead) _db.SetKv(SettingsWhileArmedKey, Json.Write(Settings));
             try { _log.TryEngineering("Gateway", "settings_kept_as_found", "info"); } catch (Exception) { }
             StateChanged?.Invoke();
             return;

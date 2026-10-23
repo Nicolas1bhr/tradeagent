@@ -405,6 +405,43 @@ public class BoardTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A PRESS SURVIVES A RESTART IN A REFUSED ARMED HOME (<c>U-board-a2</c> extra item B): the owner presses Stop while an earlier
+    /// build's armed row stands — the row is kept byte for byte, as before — and the press is kept beside it, so a restart still
+    /// finds the AI stopped, and his set-aside press carries it into the row it writes. RED before the fix: the press was held in
+    /// memory only, and the restart found the AI trading again.
+    /// </summary>
+    [Fact]
+    public async Task A_stop_pressed_in_a_refused_armed_home_survives_a_restart_and_the_set_aside()
+    {
+        using var db = TestEnv.NewDb();
+        var raw = "{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true,\"ai_trading_stopped\":false}";
+        db.SetKv("settings", raw);
+
+        await using (var first = new TradingGateway(db, new FakeConnector(new FakeBroker { IsSimulated = false }), new HealthRegistry()))
+        {
+            Assert.NotNull(first.EarlierLiveSetting);
+            first.StopAiTrading("the owner's press in a refused home");
+            Assert.True(first.Settings.AiTradingStopped);
+            Assert.Equal(raw, db.GetKv("settings"));
+        }
+
+        await using var again = new TradingGateway(db, new FakeConnector(new FakeBroker { IsSimulated = false }), new HealthRegistry());
+        log.WriteLine($"after the restart: armed {again.EarlierLiveSetting is not null}, stopped {again.Settings.AiTradingStopped}");
+        Assert.NotNull(again.EarlierLiveSetting);
+        Assert.Equal(raw, db.GetKv("settings"));
+        Assert.True(again.Settings.AiTradingStopped);
+
+        again.SetAsideEarlierLiveSetting();
+        Assert.Equal(raw, db.GetKv(TradingGateway.SettingsBeforeBoardKey));
+        Assert.True(again.Settings.AiTradingStopped);
+        Assert.Contains("\"ai_trading_stopped\":true", db.GetKv("settings")!, StringComparison.Ordinal);
+
+        await using var third = new TradingGateway(db, new FakeConnector(new FakeBroker()), new HealthRegistry());
+        Assert.Null(third.EarlierLiveSetting);
+        Assert.True(third.Settings.AiTradingStopped);
+    }
+
+    /// <summary>
     /// AN EARLIER ARMED ROW THIS BUILD CANNOT OTHERWISE READ IS STILL REFUSED AND STILL KEPT (fix pass 1 of <c>U-board-a1</c>, the
     /// review's finding on <c>LoadSettings</c>): the raw <c>mode</c>/<c>live_activated</c> check runs on the raw row before anything
     /// else can fail, so a live row with an unrelated field this build cannot read — or a row cut off mid-way — refuses every order
