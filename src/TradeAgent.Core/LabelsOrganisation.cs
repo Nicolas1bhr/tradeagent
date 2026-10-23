@@ -26,6 +26,9 @@ public static partial class Labels
     /// <summary>What a page says when the records could not be read: the reason, in the app's words, and that nothing below is current.</summary>
     public static string SurfaceUnreadable(string why) => $"The organisation's records could not be read, so nothing below is current: {why}";
 
+    /// <summary>What a page says instead of drawing a chart that is not one tree: it names the damage and draws nothing, never a hierarchy it is not.</summary>
+    public static string ChartDamaged(string what) => $"Nothing is drawn, because the chart is damaged: {what}.";
+
     /// <summary>How a claim is introduced: who wrote it, then their words in quotation marks. A claim is never printed as the app's.</summary>
     public static string ClaimBy(string who) => $"{who} wrote:";
 

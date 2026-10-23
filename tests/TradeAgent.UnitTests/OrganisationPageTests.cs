@@ -100,6 +100,41 @@ public class OrganisationPageTests
     }
 
     /// <summary>
+    /// (b2) A DAMAGED CHART IS REFUSED IN WORDS, NEVER DRAWN AS A HIERARCHY IT IS NOT: two units that hang from each other, with the real root
+    /// beside them, say so by name and draw no unit — not the pair as two more roots; and the Costs page, which walks the same chart, says the
+    /// same and lists none.
+    /// RED at base: the pair was drawn as two extra roots.
+    /// </summary>
+    [Fact]
+    public void A_damaged_chart_is_refused_in_words_and_no_false_root_is_drawn()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Exec(db, "UPDATE org_unit SET parent_id=$b WHERE id=$a", ("$a", Team), ("$b", Elsewhere));
+        Exec(db, "UPDATE org_unit SET parent_id=$a WHERE id=$b", ("$a", Team), ("$b", Elsewhere));
+
+        var words = OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: false), null);
+
+        Assert.Contains("the chart is damaged", words.Status, StringComparison.Ordinal);
+        Assert.Contains(Team, words.Status, StringComparison.Ordinal);
+        Assert.Contains(Elsewhere, words.Status, StringComparison.Ordinal);
+        Assert.Empty(words.Units);
+
+        var costs = CostsWords.Of(CostsRead.Of(new OrgStore(db), new AiAttemptStore(db), DateTimeOffset.UtcNow, "USD"), null);
+        Assert.Contains("the chart is damaged", costs.Status, StringComparison.Ordinal);
+        Assert.Empty(costs.Units);
+
+        // AND A UNIT THAT HANGS FROM NOTHING THE CHART HOLDS IS NAMED TOO (a foreign key forbids writing one, so the read is handed it).
+        var at = DateTimeOffset.UtcNow;
+        OrgUnitRow Unit(string id, string? parent) => new(id, parent, parent is null ? "root" : "team", null, "active", null, null, at, null);
+        var lost = new OrganisationRead([Unit("org", null), Unit("team-lost", "no-such-unit")], [], new Dictionary<string, RecordedSeat>(), false);
+        var stray = OrganisationWords.Of(lost, null);
+        Assert.Contains("the chart is damaged", stray.Status, StringComparison.Ordinal);
+        Assert.Contains("unit team-lost hangs from no-such-unit", stray.Status, StringComparison.Ordinal);
+        Assert.Empty(stray.Units);
+    }
+
+    /// <summary>
     /// (c) THE PAGE IS BUILT ONCE AND UPDATED IN PLACE: after a refresh that changed a position's status, its seat and its billing class, and one
     /// that hired a position, the same unit card and the same text blocks are on the page, now saying the new words; a refresh that changed
     /// nothing writes nothing.

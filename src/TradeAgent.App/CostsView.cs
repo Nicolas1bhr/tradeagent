@@ -36,8 +36,11 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
         if (read is null)
             return new CostsWords(unreadable is { Length: > 0 } ? Labels.SurfaceUnreadable(unreadable) : Labels.SurfaceNotRead, "", []);
 
+        var (tree, damage) = OrgText.Tree(read.Units);
+        if (damage is not null) return new CostsWords(Labels.ChartDamaged(damage), "", []);
+
         var byUnit = read.Day.ToLookup(d => d.UnitId, StringComparer.Ordinal);
-        var units = OrgText.Tree(read.Units)
+        var units = tree
             .Where(t => t.Unit.Status != OrgUnitStatus.Closed || byUnit[t.Unit.Id].Any())   // a closed unit with no turns today has nothing to say
             .Select(t => new CostUnitWords(t.Unit.Id, t.Depth, OrgText.UnitTitle(t.Unit),
                 Line(BillingClasses.Plan, byUnit[t.Unit.Id], read.Currency),

@@ -72,9 +72,15 @@ static class OrgText
 
     static string Capital(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
-    /// <summary>The chart depth-first from the root, each unit with its depth — a loop is never followed twice.</summary>
-    public static IReadOnlyList<(OrgUnitRow Unit, int Depth)> Tree(IReadOnlyList<OrgUnitRow> units)
+    /// <summary>
+    /// The chart depth-first from the root, each unit with its depth — or, for a chart that is not one tree, the damage in words and NO order:
+    /// a unit is never drawn as a root it is not. Damage is a count of roots other than one, a unit hanging from a unit the chart does not
+    /// hold, and units the root cannot reach (parents that loop). Each names the units, so the owner can say which.
+    /// </summary>
+    public static (IReadOnlyList<(OrgUnitRow Unit, int Depth)> Order, string? Damage) Tree(IReadOnlyList<OrgUnitRow> units)
     {
+        var ids = units.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        var roots = units.Where(u => u.ParentId is null).ToList();
         var children = units.Where(u => u.ParentId is not null).ToLookup(u => u.ParentId!, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var order = new List<(OrgUnitRow, int)>();
@@ -84,9 +90,18 @@ static class OrgText
             order.Add((u, depth));
             foreach (var child in children[u.Id]) Walk(child, depth + 1);
         }
-        foreach (var root in units.Where(u => u.ParentId is null)) Walk(root, 0);
-        foreach (var stray in units) Walk(stray, 0);   // a unit the root does not reach is still shown, never hidden
-        return order;
+        foreach (var root in roots) Walk(root, 0);
+
+        var damage = new List<string>();
+        if (units.Count > 0 && roots.Count != 1)
+            damage.Add(roots.Count == 0 ? "no unit is the root" : $"{roots.Count} units claim to be the root ({string.Join(", ", roots.Select(r => r.Id))})");
+        foreach (var lost in units.Where(u => u.ParentId is { } parent && !ids.Contains(parent)))
+            damage.Add($"unit {lost.Id} hangs from {lost.ParentId}, which is not a unit");
+        var unreached = units.Where(u => !seen.Contains(u.Id) && (u.ParentId is null || ids.Contains(u.ParentId))).Select(u => u.Id).ToList();
+        if (unreached.Count > 0)
+            damage.Add($"{(unreached.Count == 1 ? "unit" : "units")} {string.Join(", ", unreached)} cannot be reached from the root (their parents loop)");
+
+        return damage.Count == 0 ? (order, null) : ([], string.Join("; ", damage));
     }
 
     /// <summary>Sets a text block's text only when it changed, so a refresh that moved nothing touches nothing.</summary>

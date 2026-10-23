@@ -39,8 +39,11 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         if (read is null)
             return new OrganisationWords(unreadable is { Length: > 0 } ? Labels.SurfaceUnreadable(unreadable) : Labels.SurfaceNotRead, "", []);
 
+        var (tree, damage) = OrgText.Tree(read.Units);
+        if (damage is not null) return new OrganisationWords(Labels.ChartDamaged(damage), "", []);
+
         var byUnit = read.Positions.ToLookup(p => p.UnitId, StringComparer.Ordinal);
-        var units = OrgText.Tree(read.Units).Select(t =>
+        var units = tree.Select(t =>
         {
             var (unit, depth) = t;
             var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats)).ToList();
