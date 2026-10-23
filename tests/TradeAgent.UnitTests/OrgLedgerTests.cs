@@ -403,6 +403,9 @@ public class OrgLedgerTests
         // decision, forecasts and ledger entry, in one write, behind OrgVerbCaller and the same checks as Charter. It activates
         // nothing (dormant), seats nothing, and reaches neither `operations` nor its division (a board act).
         mandate = [.. mandate, "Hire"];
+        // REVISITED, OUT LOUD, BY U-board-a1: IsOffChart — a pure check, an app principal or a seat of the security board, which the
+        // chart's refusal sites ask (R24 § 4.1: the board is outside the chart). It reads nothing and writes nothing.
+        mandate = [.. mandate, "IsOffChart"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
