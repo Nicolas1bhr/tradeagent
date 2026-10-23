@@ -1911,16 +1911,33 @@ public sealed class MissionLoop
     readonly Dictionary<string, IAgentConversation> _conversations = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// THE LAUNCH EACH POSITION'S TURN IS RUNNING UNDER, from its admission to its commit (<c>U-org-verbs-b</c>): what a fencing
-    /// write is checked against, so a fence ends only the attempt it names and never the position's next one.
+    /// ONE LAUNCH'S TURN AS THE LOOP RUNS IT (<c>U-org-verbs-b</c>): its attempt, the conversation it runs on, and ITS OWN token —
+    /// linked to the loop's, handed to its send and to nothing else — so a fence ends this launch and never the position's next.
+    /// <see cref="Fence"/> is the fence's words once a fence ended it, taken by its commit: not retried, not counted as the
+    /// position's failure, and its next turn is told in them. Written under <see cref="_gate"/>.
     /// </summary>
-    readonly Dictionary<string, string> _launchedAttempt = new(StringComparer.Ordinal);
+    sealed class RunningTurn(string role, string attempt, IAgentConversation conversation, CancellationTokenSource own)
+    {
+        public string Role { get; } = role;
+        public string Attempt { get; } = attempt;
+        public IAgentConversation Conversation { get; } = conversation;
+        public CancellationTokenSource Own { get; } = own;
+        public string? Fence { get; set; }
+    }
 
     /// <summary>
-    /// THE FENCE'S WORDS FOR A TURN THE LOOP ENDED BECAUSE OF ONE (<c>U-org-verbs-b</c>), taken by that turn's commit: it is not
-    /// retried, not counted as the position's failure, and the position's next turn is told in these words.
+    /// THE LAUNCH EACH POSITION'S TURN IS RUNNING UNDER, from the moment the loop tracks its committed admission to its commit
+    /// (<c>U-org-verbs-b</c>): what a fencing write is checked against, by the object's own identity, so a fence ends only the attempt
+    /// it names and never the position's next one.
     /// </summary>
-    readonly Dictionary<string, string> _fencedTurn = new(StringComparer.Ordinal);
+    readonly Dictionary<string, RunningTurn> _launched = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-org-verbs-b</c> fix pass 1), set only by the test assembly (<c>InternalsVisibleTo</c>): awaited with the
+    /// position's id once its admission has committed and before the loop tracks the launch — the window a fence committed in must
+    /// not be missed. Nothing in the product sets it.
+    /// </summary>
+    internal Func<string, Task>? AfterAdmission { get; set; }
 
     /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
     string? _role;
@@ -2481,32 +2498,40 @@ public sealed class MissionLoop
     /// </summary>
     public async Task<int> EndFencedAsync()
     {
-        List<(string Role, string Attempt, IAgentConversation Conversation)> running;
-        lock (_gate)
-            running = [.. _launchedAttempt
-                .Where(l => !Core.Db.OrgStore.NeverFenced(l.Key) && _conversations.ContainsKey(l.Key))
-                .Select(l => (l.Key, l.Value, _conversations[l.Key]))];
+        List<RunningTurn> running;
+        lock (_gate) running = [.. _launched.Values.Where(t => !Core.Db.OrgStore.NeverFenced(t.Role))];
 
         var ended = 0;
-        foreach (var (role, attempt, conversation) in running)
+        foreach (var turn in running)
         {
             string? words;
-            try { words = _host.FenceOf(attempt); }
+            try { words = _host.FenceOf(turn.Attempt); }
             catch (Exception) { continue; }   // no verdict: the broker refuses every operation of a launch whose fence it cannot read
             if (words is null) continue;
 
             lock (_gate)
             {
                 // STILL THAT LAUNCH: a turn that committed meanwhile is over, and the position's next one is not this fence's.
-                if (!_launchedAttempt.TryGetValue(role, out var still) || still != attempt) continue;
-                _fencedTurn[role] = words;
+                if (!_launched.TryGetValue(turn.Role, out var still) || !ReferenceEquals(still, turn)) continue;
+                turn.Fence = words;
             }
-            try { await conversation.CancelAsync(); }
-            catch (Exception) { /* a conversation that cannot cancel has nothing running to end */ }
+            await End(turn);
             ended++;
         }
         if (ended > 0) Changed?.Invoke();
         return ended;
+    }
+
+    /// <summary>
+    /// ENDS ONE FENCED LAUNCH'S TURN: its own token first — a send not yet begun then never starts a process, and one begun is told —
+    /// and then its conversation's teardown, which ends the running tree before it returns, as Pause does.
+    /// </summary>
+    static async Task End(RunningTurn turn)
+    {
+        try { turn.Own.Cancel(); }
+        catch (ObjectDisposedException) { /* its turn is over; nothing of it runs */ }
+        try { await turn.Conversation.CancelAsync(); }
+        catch (Exception) { /* a conversation that cannot cancel has nothing running to end */ }
     }
 
     /// <summary>
@@ -3187,7 +3212,27 @@ public sealed class MissionLoop
         // fence is what refuses a file naming a launch no row carries.
         var recorded = admission.Id;
         attemptId = recorded ?? attemptId;
-        if (attemptId is not null) lock (_gate) _launchedAttempt[role] = attemptId;
+        if (AfterAdmission is { } paused) await paused(role);
+
+        // TRACKED, THEN READ (U-org-verbs-b fix pass 1): the launch is tracked first and its fence read after, so a fence committed
+        // at any instant is never missed by both — one committed before the tracking is read here, and the signal of one committed
+        // after it finds the launch tracked. A fenced launch's own token is cancelled before its send, which then starts nothing.
+        // Never asked for the legacy pair: no fence read stands between the Operations Director and its turn (UNKNOWN-001).
+        using var own = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        RunningTurn? running = null;
+        if (attemptId is not null && !Core.Db.OrgStore.NeverFenced(role))
+        {
+            running = new RunningTurn(role, attemptId, conversation, own);
+            lock (_gate) _launched[role] = running;
+            string? fencedAlready = null;
+            try { fencedAlready = _host.FenceOf(attemptId); }
+            catch (Exception) { /* no verdict: the broker refuses every operation of a launch whose fence it cannot read */ }
+            if (fencedAlready is not null)
+            {
+                lock (_gate) running.Fence = fencedAlready;
+                own.Cancel();
+            }
+        }
 
         // WHO THE WAKES WERE CONSUMED BY — the row's id, or the no-ledger mark below — so a launch the gate refused at its last
         // check gives back exactly what it took.
@@ -3204,7 +3249,7 @@ public sealed class MissionLoop
         var fencedTurn = false;
         void Watch(AgentTurnEnded e) => ended = e;
         conversation.TurnEnded += Watch;
-        try { await conversation.SendMissionAsync(prompt, ct); }
+        try { await conversation.SendMissionAsync(prompt, own.Token); }
         finally
         {
             // A turn that threw its way out — cancelled, or a runtime that will not start — must not
@@ -3213,12 +3258,13 @@ public sealed class MissionLoop
 
             // NO LONGER RUNNING UNDER THIS LAUNCH, and whether a fence ended it (U-org-verbs-b): taken here, beside the commit, so a
             // fence signalled after this line finds nothing of this turn to end.
-            string? fence;
-            lock (_gate)
-            {
-                _launchedAttempt.Remove(role);
-                fence = _fencedTurn.Remove(role, out var fenceWords) ? fenceWords : null;
-            }
+            string? fence = null;
+            if (running is not null)
+                lock (_gate)
+                {
+                    if (_launched.TryGetValue(role, out var still) && ReferenceEquals(still, running)) _launched.Remove(role);
+                    fence = running.Fence;
+                }
 
             // ---- THE TURN'S ONE COMMITTED TRANSITION ------------------------------------------
             // The launch record closed, what the turn left in `out/` published, its plan and journal

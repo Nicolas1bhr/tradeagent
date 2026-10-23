@@ -535,6 +535,56 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (g2) A FENCE COMMITTED BETWEEN A LAUNCH'S ADMISSION AND THE LOOP'S TRACKING OF IT IS NEVER MISSED (<c>U-org-verbs-b</c> fix
+    /// pass 1, Codex P1-1): the member's admission has committed and the loop has not yet tracked the launch when its head cancels M;
+    /// the fence's signal is run to its end in that window (it finds nothing to end); the turn then goes on with a puppet that would
+    /// never end on its own. It must end anyway, within one tick — closed ENDED with its reservation as its cost (BUDGET-001), read
+    /// as fenced. RED at base: the turn ran on until the life's patience.
+    /// </summary>
+    [Fact]
+    public async Task A_fence_committed_before_the_loop_tracks_the_launch_still_ends_it()
+    {
+        const string head = "pos-fe11ce000003", member = "pos-fe11ce000004", team = "team-fe11ce01";
+        await using var life = await PuppetLife.Begin("fence-window", seed: SeedTeam(team, head, member));
+        var org = new OrgStore(life.Host.Db);
+        var m = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        life.Script(member, ["signal turning", "hang"], ["usage 10 0 5", "final Told."]);
+
+        // THE WINDOW: admitted, not yet tracked. The cancellation commits here and the fence's signal — the test's to run, so nothing
+        // fires it later behind the test's back — is drained to its end before the turn goes on.
+        var mission = life.Host.Mission;
+        var drained = -1;
+        AiAttemptState? admitted = null;
+        mission.AfterAdmission = async role =>
+        {
+            if (role != member) return;
+            mission.AfterAdmission = null;
+            var signal = life.Host.Gateway.FenceWritten;
+            life.Host.Gateway.FenceWritten = null;
+            try
+            {
+                admitted = life.AttemptsOf(member).Single().State;
+                org.Cancel(m.Id, head, null, "the question is answered elsewhere", DateTimeOffset.UtcNow);
+                drained = await mission.EndFencedAsync();
+            }
+            finally { life.Host.Gateway.FenceWritten = signal; }
+        };
+        var since = System.Diagnostics.Stopwatch.StartNew();
+        await life.RunUntil(() => life.AttemptsOf(member).SingleOrDefault() is { State: not AiAttemptState.LAUNCHED } && life.Presence.Live == 0,
+            "the member's turn, fenced before the loop tracked its launch, ended with its process tree");
+        since.Stop();
+        Assert.Equal((AiAttemptState?)AiAttemptState.LAUNCHED, admitted);
+        Assert.Equal(0, drained);
+        var closed = life.AttemptsOf(member).Single();
+        Assert.Equal(AiAttemptState.ENDED, closed.State);
+        Assert.Equal(closed.ReservedCost, closed.Cost);
+        Assert.Equal((MandateEventKind.Cancelled, m.Id), (org.FencedSince(closed.Id)?.Cause, org.FencedSince(closed.Id)?.Mandate));
+        output.WriteLine($"life (fence window): the turn fenced before it was tracked ended {since.Elapsed.TotalSeconds:F1} s after the loop started; " +
+                         $"puppet turns started {life.Turns(member)}; {life.Counts()}");
+    }
+
+    /// <summary>
     /// (f2) THE LEGACY PAIR ON UNCONFINED SEATS ARE REFUSED ALL THREE, ON THE REAL KERNEL (<c>U-org-verbs-a</c>): their puppets play the
     /// CLI class — unconfined, the class the legacy pair's real seats record — and each asks <c>trade mandate rescope</c>,
     /// <c>trade mandate propose</c> and <c>trade org show</c>; every one is refused in the gate's words (research heads the division
