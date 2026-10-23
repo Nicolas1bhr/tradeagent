@@ -408,26 +408,6 @@ static class Ui
             () => { if (stopped()) resume(); else stop(); },
             restingClass);
 
-    /// <summary>Whether choosing this mode gives the AI room it did not have. Both real-money modes do.</summary>
-    public static bool ModeGrants(TradingMode m) => m is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
-
-    /// <summary>What the second press on a real-money mode does, in the owner's words.</summary>
-    public static string ModeArmedLabel(TradingMode m) => m switch
-    {
-        TradingMode.LIVE_AUTONOMOUS => Labels.ModeAutonomousArmed,
-        TradingMode.LIVE_CONFIRM => Labels.ModeAskFirstArmed,
-        _ => ModeLabel(m)
-    };
-
-    /// <summary>
-    /// One button of the trading-mode row. The two real-money modes GRANT, so they are two-press
-    /// with the sentence spelled out; Watch only and Practice only ever reduce, so they are one.
-    /// </summary>
-    public static Button ModeButton(TradingMode m, Action apply) =>
-        ModeGrants(m)
-            ? Confirm(ModeLabel(m), ModeArmedLabel(m), apply)
-            : Secondary(ModeLabel(m), apply);
-
     /// <summary>
     /// Takes a two-step button back to its resting state from outside. Needed where the thing being
     /// confirmed can change under a button that is already armed — the unconfirmed-orders card ties

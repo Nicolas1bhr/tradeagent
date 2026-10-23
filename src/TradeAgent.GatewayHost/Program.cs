@@ -76,25 +76,13 @@ while ((line = Console.ReadLine()) is not null)
         {
             case "quit" or "exit": goto done;
             case "status": Console.WriteLine(Json.Write(await gateway.StatusAsync())); break;
-            case "mode": gateway.SetMode(Enum.Parse<TradingMode>(parts[1], true)); Console.WriteLine("OK"); break;
             case "stop": gateway.StopAiTrading(parts.Length > 1 ? string.Join(' ', parts[1..]) : "operator"); Console.WriteLine("OK"); break;
             case "enable": gateway.EnableAiTrading(); Console.WriteLine("OK"); break;
-            case "live": gateway.ActivateLive(parts.ElementAtOrDefault(1) is "on"); Console.WriteLine("OK"); break;
             case "reconcile": Console.WriteLine(Json.Write(await gateway.ReconcileAsync())); break;
             case "health": await gateway.RefreshHealthAsync(); Console.WriteLine(Json.Write(health.Snapshot())); break;
             case "approve": Console.WriteLine(Json.Write(await gateway.ApproveAsync(parts[1]))); break;
             case "cancel-all": Console.WriteLine(Json.Write(await gateway.OperatorCancelAllAsync())); break;
             case "close-all": Console.WriteLine(Json.Write(await gateway.OperatorCloseAllAsync())); break;
-            case "risk":
-                gateway.Update(s =>
-                {
-                    if (parts[1] == "max-qty") s.Risk.MaxOrderQuantity = decimal.Parse(parts[2]);
-                    if (parts[1] == "max-notional") s.Risk.MaxNotionalPerOrder = decimal.Parse(parts[2]);
-                    if (parts[1] == "max-positions") s.Risk.MaxOpenPositions = int.Parse(parts[2]);
-                    if (parts[1] == "max-per-minute") s.Risk.MaxOrdersPerMinute = int.Parse(parts[2]);
-                });
-                Console.WriteLine("OK");
-                break;
             case "fault": Console.WriteLine(Fault(connector, parts) ? "OK" : "ERR not a fake connector"); break;
             default: Console.WriteLine("ERR unknown command"); break;
         }

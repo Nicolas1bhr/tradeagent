@@ -1038,10 +1038,6 @@ sealed class SafetyPage
 {
     readonly AppHost _host;
 
-    readonly Panel _modeRow;
-    readonly TextBlock _modeNote = Ui.Muted("");
-    readonly TextBlock _liveNote = Ui.Body("");
-    readonly Button _liveButton;
     readonly Button _stopButton;
     readonly AmountField _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
     readonly AmountField _maxLossPerTrade, _maxDailyLoss;
@@ -1274,36 +1270,6 @@ sealed class SafetyPage
             // find out what was.
             Ui.ReportError?.Invoke($"{what} did not finish: {ex.Message}. Check the Dashboard for what it did send.");
         }
-    }
-
-    /// <summary>
-    /// THE MODE ROW, AND WHICH OF ITS BUTTONS ASK TWICE.
-    ///
-    /// Static and handed the one thing it does, so the row a test presses is the row the page
-    /// builds. One press here used to move a live-activated installation from "Real, ask me first"
-    /// to "Real, fully automatic" — the AI's next order reached the broker with nobody approving
-    /// it, from a button sitting beside two that already asked twice (REVIEW 2026-09-05b finding 3,
-    /// probe P1). Watch only and Practice stay one press: they only ever reduce.
-    /// </summary>
-    internal static Panel BuildModeRow(Action<TradingMode> setMode)
-    {
-        // A ROW THAT WRAPS, NOT A HORIZONTAL STACK. An armed real-money button carries a whole
-        // sentence — "Confirm: let the AI place real orders without asking" — three times the width
-        // of the label it replaces. In a StackPanel the row ran past its card and the sentence was
-        // clipped mid-word on the running app ("Confirm: let the AI place real or"), so the one
-        // control whose entire purpose is to say what the second press does could not be read.
-        var row = new WrapPanel
-        {
-            Orientation = Orientation.Horizontal,
-            ItemSpacing = Theme.S2,
-            LineSpacing = Theme.S2
-        };
-        foreach (var mode in Enum.GetValues<TradingMode>())
-        {
-            var m = mode;
-            row.Children.Add(Ui.ModeButton(m, () => setMode(m)));
-        }
-        return row;
     }
 
     /// <summary>
@@ -1749,18 +1715,8 @@ sealed class SafetyPage
     {
         _host = host;
 
-        _modeRow = BuildModeRow(m => _host.Gateway.SetMode(m));
-
-        _liveButton = Ui.Confirm("Switch real-money trading ON", "Confirm: allow real money",
-            () => _host.Gateway.ActivateLive(!_host.Gateway.Settings.LiveActivated));
-        _liveButton.HorizontalAlignment = HorizontalAlignment.Left;
-
-        var modeCard = Ui.Section("Trading mode", Ui.Col(Theme.S4,
-            _modeRow,
-            _modeNote,
-            Ui.Divider(),
-            _liveNote,
-            _liveButton));
+        // NO MODE ROW AND NO REAL-MONEY SWITCH (U-board-a1, R24 § 4.5): the mode and real money come from the security board's
+        // policy in force, never from a press here — the founding policy holds Practice, and nothing selects a real-money mode.
 
         // The emergency block. STOP is one press because a mis-press that removes the AI's
         // permission costs nothing and hesitation here costs money; RESUME is two, because that
@@ -2166,7 +2122,7 @@ sealed class SafetyPage
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, modeCard, limits, _releaseCard, allocation, envelope, spending, _perception.Root)));
+            _unreadableCard, limits, _releaseCard, allocation, envelope, spending, _perception.Root)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -2185,28 +2141,6 @@ sealed class SafetyPage
         _moneyToday.Text = moneyToday;
         _planToday.Text = planToday;
         _seatClasses.Text = SeatClassesLine(CouncilRoles.All.Select(r => (CouncilRoles.Title(r), _host.BillingClassOf(r))));
-
-        var i = 0;
-        foreach (var mode in Enum.GetValues<TradingMode>())
-            if (_modeRow.Children[i++] is Button b) Ui.Emphasise(b, status.Mode == mode);
-
-        _modeNote.Text = status.Mode switch
-        {
-            TradingMode.OBSERVE => "The AI can read prices, positions and your account. It cannot place anything.",
-            TradingMode.PAPER => "The AI trades against the practice simulator. No real money is involved.",
-            TradingMode.LIVE_CONFIRM => "The AI proposes real orders and stops. Nothing reaches your broker until you approve it on the Dashboard.",
-            TradingMode.LIVE_AUTONOMOUS => "The AI places real orders by itself, inside the safety limits below.",
-            _ => ""
-        };
-
-        _liveNote.Text = status.LiveActivated
-            ? "Real-money trading is switched ON."
-            : "Real-money trading is switched OFF. The two real-money modes cannot reach your broker until you switch it on.";
-        _liveNote.Foreground = status.LiveActivated ? Theme.Caution : Theme.TextMuted;
-
-        Ui.Relabel(_liveButton,
-            status.LiveActivated ? "Switch real-money trading OFF" : "Switch real-money trading ON",
-            status.LiveActivated ? "Confirm: switch real money off" : "Confirm: allow real money");
 
         // The unit of the two loss budgets, once the platform has said what it is. Read from the
         // gateway rather than from `status`, which carries the limits but not the account's currency.

@@ -27,74 +27,8 @@ public class TwoPressGrantTests
 {
     static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-    static Button ModeButton(Panel row, TradingMode m) =>
-        (Button)row.Children[Array.IndexOf(Enum.GetValues<TradingMode>(), m)];
-
-    // ---- 1. the mode row -------------------------------------------------------------------------
-
-    /// <summary>
-    /// The finding itself. One press must arm and change nothing; the second must apply it, and the
-    /// armed control must say what that second press does in full — never the bare word "Confirm".
-    /// </summary>
-    [Theory]
-    [InlineData(TradingMode.LIVE_AUTONOMOUS, "Confirm: let the AI place real orders without asking")]
-    [InlineData(TradingMode.LIVE_CONFIRM, "Confirm: let the AI propose real orders")]
-    public void A_real_money_mode_takes_two_presses_and_says_what_the_second_one_does(TradingMode mode, string armed)
-    {
-        TradingMode? applied = null;
-        var row = SafetyPage.BuildModeRow(m => applied = m);
-        var b = ModeButton(row, mode);
-
-        Press(b);
-        Assert.Null(applied);
-        Assert.Equal(armed, b.Content);
-
-        Press(b);
-        Assert.Equal(mode, applied);
-        Assert.Equal(Ui.ModeLabel(mode), b.Content);
-    }
-
-    /// <summary>
-    /// The other direction, which is the whole reason this is not "make the row two-press". Watch
-    /// only and Practice can only ever take authority away, and a mode row where leaving a live
-    /// mode costs two presses is a mode row that argues with someone trying to stop.
-    /// </summary>
-    [Theory]
-    [InlineData(TradingMode.OBSERVE)]
-    [InlineData(TradingMode.PAPER)]
-    public void A_mode_that_only_reduces_stays_one_press(TradingMode mode)
-    {
-        TradingMode? applied = null;
-        var row = SafetyPage.BuildModeRow(m => applied = m);
-
-        Press(ModeButton(row, mode));
-
-        Assert.Equal(mode, applied);
-    }
-
-    /// <summary>
-    /// The refresh tick marks the selected mode by painting the buttons, and it runs every five
-    /// seconds. A half-pressed real-money mode has to survive it — both the arming and the sentence
-    /// on the face of the control, which is what the owner is reading when the tick lands.
-    /// </summary>
-    [Fact]
-    public void The_five_second_refresh_does_not_undo_a_half_pressed_real_money_mode()
-    {
-        TradingMode? applied = null;
-        var row = SafetyPage.BuildModeRow(m => applied = m);
-        var b = ModeButton(row, TradingMode.LIVE_AUTONOMOUS);
-
-        Press(b);
-        foreach (var mode in Enum.GetValues<TradingMode>())
-            Ui.Emphasise(ModeButton(row, mode), mode == TradingMode.PAPER);
-
-        Assert.True(Ui.IsArmed(b));
-        Assert.Equal(Labels.ModeAutonomousArmed, b.Content);
-        Assert.Null(applied);
-
-        Press(b);
-        Assert.Equal(TradingMode.LIVE_AUTONOMOUS, applied);
-    }
+    // ---- 1. the mode row: DELETED with the row itself (U-board-a1, R24 § 4.5) — the mode is the security board's policy, never
+    // a press on the Safety page, and no path selects a real-money mode (BoardTests.No_app_path_selects_a_live_mode).
 
     // ---- 2. the emergency toggle -----------------------------------------------------------------
 
@@ -354,25 +288,6 @@ public class TwoPressGrantTests
     // ---- 4. what the armed control looks like, which the running app settled ----------------------
 
     /// <summary>
-    /// THE ARMED SENTENCE HAS TO FIT ON THE SCREEN. A horizontal <c>StackPanel</c> gave the row a
-    /// width it could not have: an armed real-money button carries a whole sentence, three times
-    /// the width of the label it replaces, and on the running app the row ran past its card and the
-    /// sentence was cut off mid-word — "Confirm: let the AI place real or". A control whose only
-    /// job is to say what the second press does had become unreadable at exactly the moment it
-    /// mattered. A wrapping row gives it its own line instead; the resting row still fits on one.
-    /// This asserts the panel, because measuring text needs a running app — the screenshot is in
-    /// the unit's report.
-    /// </summary>
-    [Fact]
-    public void The_mode_row_wraps_so_an_armed_sentence_is_not_clipped()
-    {
-        var row = SafetyPage.BuildModeRow(_ => { });
-
-        Assert.IsType<WrapPanel>(row);
-        Assert.Equal(Enum.GetValues<TradingMode>().Length, row.Children.Count);
-    }
-
-    /// <summary>
     /// THE EMERGENCY CONTROL PAINTS ITS OWN TEXT WHILE ARMED. Arming swaps a two-step button to the
     /// "danger" class, whose foreground is red — and this button's fill is red, so the armed
     /// sentence was painted red on red and the half-pressed RESUME was a blank red block on the
@@ -408,7 +323,6 @@ public class TwoPressGrantTests
     {
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "DashboardView.cs"));
 
-        Assert.Contains("_modeRow = BuildModeRow(m => _host.Gateway.SetMode(m));", text);
         Assert.Contains("_stopButton = BuildKillSwitch(", text);
         Assert.Contains("BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,", text);
 
