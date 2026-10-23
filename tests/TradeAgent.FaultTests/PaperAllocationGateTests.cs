@@ -62,7 +62,6 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
             new GatewayOptions { Clock = new TestClock(At) });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             // The program this suite judges trades BTCUSDT, so the installation this stands in for
             // allows it. Added here rather than to the shared list, which is every other suite's.
@@ -355,12 +354,12 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         var version = Judged(db, PromotionVerdict.PaperEligible);
         Assert.True(gw.Allocations.RecordPaper(PaperRowFor(gw, version, envelope), At).Ok);
 
-        gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
-        gw.ActivateLive(true);
+        gw.SetModeUnderTest(TradingMode.LIVE_AUTONOMOUS);
+        gw.ActivateLiveUnderTest(true);
 
         var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "paper-live", By(version)));
 
-        log.WriteLine($"mode                 : {gw.Settings.Mode}, live activated {gw.Settings.LiveActivated}");
+        log.WriteLine($"mode                 : {gw.Policy.Mode}, live activated {gw.Policy.LiveActivated}");
         log.WriteLine($"outcome              : {outcome}");
         log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
 
@@ -385,14 +384,14 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         var version = Judged(db, PromotionVerdict.Refused, 150, PromotionReason.NoTrade);
         Assert.Equal(1, gw.AllocatePaperDue(At));
 
-        gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
-        gw.ActivateLive(true);
+        gw.SetModeUnderTest(TradingMode.LIVE_AUTONOMOUS);
+        gw.ActivateLiveUnderTest(true);
         var inLive = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "inconclusive-live", By(version)));
         var press = gw.Allocate(version, 1m, null, "by the account owner");
 
         // THE POSITIVE CONTROL, back in practice mode: the same slot does authorise there.
-        gw.ActivateLive(false);
-        gw.SetMode(TradingMode.PAPER);
+        gw.ActivateLiveUnderTest(false);
+        gw.SetModeUnderTest(TradingMode.PAPER);
         var inPaper = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "inconclusive-paper", By(version)));
 
         log.WriteLine($"in paper             : {inPaper}");

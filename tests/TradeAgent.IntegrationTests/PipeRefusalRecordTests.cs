@@ -181,7 +181,8 @@ public class PipeRefusalRecordTests(ITestOutputHelper log)
         gw.StopAiTrading("test: the owner pressed stop");
         Assert.Equal(nameof(ErrorCode.AI_TRADING_STOPPED), (await client.SendAsync(Buy(operations.Token))).Error?.Code);
         gw.EnableAiTrading();
-        gw.Update(s => { s.Mode = TradingMode.LIVE_CONFIRM; s.LiveActivated = false; });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(false);
         Assert.Equal(nameof(ErrorCode.LIVE_NOT_ACTIVATED), (await client.SendAsync(Buy(operations.Token))).Error?.Code);
 
         var rows = Rows(db, "op_refused");

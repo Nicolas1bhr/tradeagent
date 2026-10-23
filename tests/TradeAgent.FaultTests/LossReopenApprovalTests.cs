@@ -65,7 +65,6 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
         });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -74,7 +73,8 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
             s.Risk.MaxOrdersPerMinute = 100;
             s.Risk.MaxDailyLoss = 1_000m;
         });
-        gw.ActivateLive(true);
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);

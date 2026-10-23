@@ -64,9 +64,9 @@ public class UnknownModeTests(ITestOutputHelper log)
         var (gw, conn, db) = await RestartOver(SeedWithMode999);
         using var _1 = db;
 
-        log.WriteLine($"mode read back        : {(int)gw.Settings.Mode} ({gw.Settings.Mode})");
-        log.WriteLine($"ModeAllowsExecution   : {gw.Settings.ModeAllowsExecution}");
-        log.WriteLine($"ModeIsLive            : {gw.Settings.ModeIsLive}   (live_activated is false)");
+        log.WriteLine($"mode read back        : {(int)gw.Policy.Mode} ({gw.Policy.Mode})");
+        log.WriteLine($"ModeAllowsExecution   : {gw.Policy.ModeAllowsExecution}");
+        log.WriteLine($"ModeIsLive            : {gw.Policy.ModeIsLive}   (live_activated is false)");
         log.WriteLine($"account               : {gw.Settings.SelectedAccountId} simulated={conn.Broker.IsSimulated}");
 
         var authorized = gw.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code);
@@ -126,8 +126,8 @@ public class UnknownModeTests(ITestOutputHelper log)
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
-        Assert.Equal(mode, gw.Settings.Mode.ToString());
-        Assert.True(gw.Settings.ModeAllowsExecution);
+        Assert.Equal(mode, gw.Policy.Mode.ToString());
+        Assert.True(gw.Policy.ModeAllowsExecution);
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out var why), why);
 
         // LIVE_CONFIRM parks and says so by refusing; the other two send. Both are "the mode was
@@ -161,7 +161,7 @@ public class UnknownModeTests(ITestOutputHelper log)
         var (gw, conn, db) = await RestartOver(SeedWithMode999.Replace("999", "\"OBSERVE\""));
         using var _1 = db;
 
-        Assert.Equal(TradingMode.OBSERVE, gw.Settings.Mode);
+        Assert.Equal(TradingMode.OBSERVE, gw.Policy.Mode);
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code));
         log.WriteLine($"OBSERVE : {code} — {why}");
         Assert.Equal(ErrorCode.MODE_FORBIDS_EXECUTION, code);

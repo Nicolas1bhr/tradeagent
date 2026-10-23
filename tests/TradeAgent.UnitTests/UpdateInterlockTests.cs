@@ -65,7 +65,6 @@ public class UpdateInterlockTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = accountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;

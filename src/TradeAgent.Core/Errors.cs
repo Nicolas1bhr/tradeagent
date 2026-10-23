@@ -866,6 +866,13 @@ public static partial class Labels
     public const string SettingsCouldNotBeRead =
         "your settings could not be read; trading is stopped until you review them on the " + SafetyPage + " page";
 
+    /// <summary>
+    /// WHAT THE OWNER READS WHEN THE SECURITY BOARD'S POLICY IN FORCE DOES NOT VERIFY (<c>U-board-a1</c> item 6): its body differs from
+    /// its hash, or it is not a policy this build reads. Execution's health row and the dispatch gate's refusal; the row is kept.
+    /// </summary>
+    public const string BoardPolicyCouldNotBeRead =
+        "the security board's policy could not be read, so TradeAgent is in Watch only and the AI's plan admits nothing until it can be";
+
     /// <summary>The card the Safety page shows above everything else while that is true.</summary>
     public const string SettingsCouldNotBeReadTitle = "Settings TradeAgent could not read";
 

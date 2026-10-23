@@ -174,7 +174,7 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
         }
 
         // ---- containment
-        r.Add(ContainmentCheck(gateway?.Settings));
+        r.Add(ContainmentCheck(gateway?.Policy));
 
         // ---- IPC
         r.Add(await PipeReachable(ct)
@@ -255,13 +255,14 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
     /// neither: this is a property of the platform TradeAgent is running on, and three of the four
     /// modes are unaffected by it.
     /// </summary>
-    public static CheckResult ContainmentCheck(TradeAgentSettings? settings)
+    public static CheckResult ContainmentCheck(Core.Board.BoardPolicy? policy)
     {
         const string name = "AI containment";
         var facts = AgentRuntime.Containment.Facts();
 
+        // THE POLICY IN FORCE, NEVER A SETTING (U-board-a1): the mode and real money are the security board's.
         var refusal = AgentRuntime.Containment.RefusalToLaunch(
-            settings?.ModeIsLive ?? false, settings?.LiveActivated ?? false);
+            policy?.ModeIsLive ?? false, policy?.LiveActivated ?? false);
 
         if (refusal is { Length: > 0 })
             return CheckResult.Warn(name, facts.Detail,

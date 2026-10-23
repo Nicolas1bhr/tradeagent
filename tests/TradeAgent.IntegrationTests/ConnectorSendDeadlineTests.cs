@@ -1215,7 +1215,6 @@ public class ConnectorSendDeadlineTests
         var gw = new TradingGateway(db, connector, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = "ATAS-STALLED";   // so the ONE prerequisite read is the orders list
         });
 
@@ -1513,7 +1512,6 @@ public class ConnectorSendDeadlineTests
         var gw = new TradingGateway(db, connector, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = account;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;

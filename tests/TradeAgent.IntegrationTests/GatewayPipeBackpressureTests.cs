@@ -615,7 +615,6 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -691,7 +690,6 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, counting, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = inner.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -1319,7 +1317,6 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -1572,7 +1569,6 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -1860,7 +1856,6 @@ public class GatewayPipeBackpressureTests
         var gateway = new TradingGateway(db, counting, new HealthRegistry());
         gateway.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -2048,7 +2043,6 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;

@@ -30,8 +30,6 @@ public class DispatchOrderLimitsTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = mode;
-            s.LiveActivated = mode != TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -40,6 +38,8 @@ public class DispatchOrderLimitsTests(ITestOutputHelper log)
             s.Risk.MaxOrdersPerMinute = 100;
             s.Risk.MaxDailyLoss = 1_000_000m;
         });
+        gw.SetModeUnderTest(mode);
+        gw.ActivateLiveUnderTest(mode != TradingMode.PAPER);
         return gw;
     }
 

@@ -233,7 +233,6 @@ public class SweepRequestIdTests
         var gw = new TradingGateway(db, over?.Invoke(conn) ?? conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -1394,7 +1393,6 @@ public class SweepRequestIdTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = fake.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -1720,8 +1718,8 @@ public class SweepRequestIdTests
         var ordersBefore = conn.Broker.Orders.Count;
 
         // And now every AI order waits for a person.
-        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
-        gw.ActivateLive(true);
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
 
         var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "park-sweep" })
             .WaitAsync(TimeSpan.FromSeconds(30))).Data!;

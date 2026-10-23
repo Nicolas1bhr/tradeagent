@@ -41,7 +41,6 @@ public class DispatchGateTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -106,9 +105,10 @@ public class DispatchGateTests(ITestOutputHelper log)
     [Fact]
     public async Task Switching_real_money_off_while_an_order_is_in_its_risk_check_stops_it()
     {
-        var (gw, conn, db) = await Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await Ready();
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var release = new TaskCompletionSource();
         conn.Hold = release.Task;
@@ -116,15 +116,15 @@ public class DispatchGateTests(ITestOutputHelper log)
         var order = gw.PlaceAsync(AgentContext.Operator, "dg-live", TestEnv.Buy());
         await conn.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-        gw.ActivateLive(false);
+        gw.ActivateLiveUnderTest(false);
         release.SetResult();
         var outcome = await SwallowAsync(order);
 
-        log.WriteLine($"LiveActivated        : {gw.Settings.LiveActivated}");
+        log.WriteLine($"LiveActivated        : {gw.Policy.LiveActivated}");
         log.WriteLine($"outcome              : {outcome}");
         log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}   place calls : {conn.Places}");
 
-        Assert.False(gw.Settings.LiveActivated);
+        Assert.False(gw.Policy.LiveActivated);
         Assert.Equal(0, conn.Places);
         Assert.Empty(conn.Broker.Orders);
         await gw.DisposeAsync();
@@ -144,9 +144,10 @@ public class DispatchGateTests(ITestOutputHelper log)
     [Fact]
     public async Task An_approval_is_not_dispatched_after_the_mode_moved_while_it_was_being_checked()
     {
-        var (gw, conn, db) = await Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await Ready();
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var parked = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "dg-appr", TestEnv.Buy()));
@@ -159,11 +160,11 @@ public class DispatchGateTests(ITestOutputHelper log)
         var press = gw.ApproveAsync("dg-appr");
         await conn.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));   // inside the approval's own risk check
 
-        gw.SetMode(TradingMode.PAPER);
+        gw.SetModeUnderTest(TradingMode.PAPER);
         release.SetResult();
         var outcome = await SwallowAsync(press);
 
-        log.WriteLine($"mode now             : {gw.Settings.Mode}   (proposed under LIVE_CONFIRM)");
+        log.WriteLine($"mode now             : {gw.Policy.Mode}   (proposed under LIVE_CONFIRM)");
         log.WriteLine($"outcome              : {outcome}");
         log.WriteLine($"record               : {gw.GetRequest("dg-appr")?.State.ToString() ?? "none"}");
         log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}   place calls : {conn.Places}");

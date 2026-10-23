@@ -47,7 +47,6 @@ public class LossDayClosureTests(ITestOutputHelper log)
             clock is null ? null : new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;

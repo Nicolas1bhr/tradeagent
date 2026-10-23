@@ -317,7 +317,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         var blockers = new List<string>();
         if (settings.AiTradingStopped) blockers.Add("you have stopped AI trading");
-        if (!settings.LiveActivated) blockers.Add("real-money trading has not been switched on");
+        if (!gateway.Policy.LiveActivated) blockers.Add("real-money trading has not been switched on");
 
         var newest = SafeNewestQuote();
         var gaps = new List<ReportGap>();
@@ -373,7 +373,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Connector = gateway.Connector.DisplayName,
             ConnectorIsPaper = caps.IsPaper,
             Account = settings.SelectedAccountId,
-            Mode = settings.Mode.ToString(),
+            Mode = gateway.Policy.Mode.ToString(),
             ExecutionAvailable = available,
             ExecutionBlockedReason = blocked,
             DataAge = newest is { } q ? at - q : null,

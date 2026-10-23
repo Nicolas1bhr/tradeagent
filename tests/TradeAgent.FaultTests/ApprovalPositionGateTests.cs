@@ -51,8 +51,6 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
             clock is null ? new GatewayOptions() : new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
-            s.LiveActivated = true;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 100m;
@@ -61,6 +59,8 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
             s.Risk.MaxOrdersPerMinute = 100;
             s.Risk.MaxDailyLoss = 1_000_000m;
         });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);

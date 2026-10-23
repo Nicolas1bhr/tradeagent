@@ -206,7 +206,6 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
             new GatewayOptions { Clock = clock, MaxQuoteAge = TimeSpan.FromDays(3650) });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = PaperConnector.TheAccount;
             s.Risk.InstrumentAllowlist = ["BTCUSDT"];
             s.Risk.MaxOrderQuantity = 10m;

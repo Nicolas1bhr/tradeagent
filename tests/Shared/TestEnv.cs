@@ -235,9 +235,12 @@ public static class TestEnv
     /// reason <c>SweepRequestIdTests.SweepBudget</c> states at length — inside it are durable SQLite
     /// commits at <c>synchronous=FULL</c>, which is a clock kept by the runner's disk.</para>
     /// </summary>
+    /// <para><paramref name="mode"/> and <paramref name="live"/> set THIS gateway's in-memory policy through the test host's seam
+    /// (<c>U-board-a1</c>): the mode and real money are the security board's policy, never a setting, and the store cannot hold a
+    /// live one — so a fixture that drives the live gates sets them here, after the settings, and nowhere a product path can.</para>
     public static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> Ready(
         Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null,
-        TimeSpan? emergencyBudget = null)
+        TimeSpan? emergencyBudget = null, TradingMode mode = TradingMode.PAPER, bool live = false)
     {
         var db = NewDb();
         var conn = emergencyBudget is { } budget
@@ -252,7 +255,6 @@ public static class TestEnv
         var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
@@ -265,6 +267,8 @@ public static class TestEnv
             s.Risk.InstrumentAllowlist = [.. Instruments];
             settings?.Invoke(s);
         });
+        if (mode != TradingMode.PAPER) gw.SetModeUnderTest(mode);
+        if (live) gw.ActivateLiveUnderTest(true);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);

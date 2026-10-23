@@ -93,7 +93,6 @@ public class QuoteClockTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, paper, health, new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = PaperConnector.TheAccount;
             s.Risk.InstrumentAllowlist = ["BTCUSDT"];
             s.Risk.MaxOrderQuantity = 10m;
@@ -196,7 +195,6 @@ public class QuoteClockTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -313,7 +311,6 @@ public class QuoteClockTests(ITestOutputHelper log)
         await using var simGw = new TradingGateway(simDb, sim, simHealth, new GatewayOptions { Clock = simClock });
         simGw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = sim.Broker.AccountId;
             s.Risk.InstrumentAllowlist = ["ES"];
         });

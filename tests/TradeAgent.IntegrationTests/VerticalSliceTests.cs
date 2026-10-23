@@ -100,7 +100,7 @@ public class GatewayThroughPipeTests
             Assert.False(reply.Ok, $"'{op}' should not exist on the agent channel");
             Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
         }
-        Assert.Equal(TradingMode.PAPER, gw.Settings.Mode);
+        Assert.Equal(TradingMode.PAPER, gw.Policy.Mode);
     }
 
     [Fact]

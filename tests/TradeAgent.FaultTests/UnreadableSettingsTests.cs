@@ -42,7 +42,6 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         var configured = new TradingGateway(db, conn, new HealthRegistry());
         configured.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.AiTradingStopped = true;
             s.Risk.InstrumentAllowlist = ["MES"];
@@ -52,7 +51,9 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         Assert.Contains("\"ai_trading_stopped\":true", saved);
         configured.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
-        db.SetKv("settings", damaged == "" ? saved : saved.Replace("\"PAPER\"", damaged));
+        // DAMAGED IN A FIELD THIS BUILD STILL READS (U-board-a1): the row holds no mode since the board, so the damage is the kill
+        // switch's own value — a type change the parser refuses, which is the catch every shape below takes.
+        db.SetKv("settings", damaged == "" ? saved : saved.Replace("\"ai_trading_stopped\":true", $"\"ai_trading_stopped\":{damaged}"));
         return (db, saved);
     }
 
@@ -81,8 +82,8 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         log.WriteLine($"settings row on disk : {db.GetKv("settings")}");
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}");
-        log.WriteLine($"LiveActivated        : {gw.Settings.LiveActivated}");
-        log.WriteLine($"Mode                 : {gw.Settings.Mode}");
+        log.WriteLine($"LiveActivated        : {gw.Policy.LiveActivated}");
+        log.WriteLine($"Mode                 : {gw.Policy.Mode}");
         log.WriteLine($"InstrumentAllowlist  : [{string.Join(",", gw.Settings.Risk.InstrumentAllowlist)}]");
         log.WriteLine($"InstrumentAllowed(ES): {gw.Settings.Risk.InstrumentAllowed("ES")}");
         log.WriteLine($"InstrumentAllowed(MES): {gw.Settings.Risk.InstrumentAllowed("MES")}   (the owner's own instrument)");
@@ -92,7 +93,7 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
 
         Assert.True(gw.Settings.CouldNotBeRead);
         Assert.True(gw.Settings.AiTradingStopped);           // the kill switch stays DOWN
-        Assert.False(gw.Settings.LiveActivated);             // real money is not switched on
+        Assert.False(gw.Policy.LiveActivated);             // real money is not switched on
         Assert.Empty(gw.Settings.Risk.InstrumentAllowlist);
         Assert.False(gw.Settings.Risk.InstrumentAllowed("ES"));    // ...and empty now allows NOTHING
         Assert.False(gw.Settings.Risk.InstrumentAllowed("MES"));   // not even the one the owner set
@@ -116,7 +117,7 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
     /// these has to fail closed the same way — otherwise this is a test about one string.
     /// </summary>
     [Theory]
-    [InlineData("\"LIVE_LOCKED\"")]          // an enum name a newer build wrote
+    [InlineData("\"LIVE_LOCKED\"")]          // a word where a newer build wrote another type
     [InlineData("[\"PAPER\"]")]              // a type change: a scalar field that became an array
     [InlineData("{\"name\":\"PAPER\"}")]     // ...or an object
     public async Task Every_shape_of_unreadable_row_fails_closed(string damaged)
@@ -125,7 +126,7 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         using var _1 = db;
         var (gw, conn) = await RestartOver(db);
 
-        log.WriteLine($"damaged mode value   : {damaged}");
+        log.WriteLine($"damaged value        : {damaged}");
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}");
         log.WriteLine($"InstrumentAllowed(ES): {gw.Settings.Risk.InstrumentAllowed("ES")}");
@@ -216,35 +217,35 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE BOUNDARY WITH U-GATES, NAMED RATHER THAN DUPLICATED. A mode written as a NUMBER is not a
-    /// parse failure at all — <c>System.Text.Json</c>'s enum converter accepts numbers and casts one
-    /// it does not recognise straight onto the enum — so this row IS read, and what refuses it is
-    /// <c>TradeAgentSettings.ModeIsRecognised</c>, U-gates' check. Asserting it here keeps the two
-    /// failures apart: if this ever started reporting "could not be read", the owner would be told
-    /// their settings are damaged when in fact they are intact and one value is from the future.
+    /// THE BOUNDARY WITH AN EARLIER BUILD'S MODE, NAMED RATHER THAN DUPLICATED (rewritten by <c>U-board-a1</c>: the mode is the security
+    /// board's policy and this type no longer holds one). A row an earlier build saved with a mode written as a NUMBER parses — the
+    /// key is not this type's at all — so it is NOT "could not be read": the owner's values are kept, and what refuses it is the
+    /// earlier-home check, which will not guess what a mode it cannot name meant (<c>HOME_ARMED_BEFORE_THE_BOARD</c>). If this ever
+    /// started reporting "could not be read", the owner would be told their settings are damaged when they are intact.
     /// </summary>
     [Fact]
     public async Task A_numeric_mode_is_the_unknown_mode_check_and_not_this_one()
     {
-        var (db, _) = OwnersRowMadeUnreadable("999");
+        var (db, saved) = OwnersRowMadeUnreadable("");
         using var _1 = db;
+        db.SetKv("settings", "{\"mode\":999," + saved[1..]);
         var (gw, conn) = await RestartOver(db);
 
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}   (the row parsed)");
-        log.WriteLine($"ModeIsRecognised     : {gw.Settings.ModeIsRecognised}   (U-gates' check)");
+        log.WriteLine($"earlier setting      : {gw.EarlierLiveSetting?.Mode}   (the earlier-home check)");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}   (the owner's own value, kept)");
         log.WriteLine($"InstrumentAllowlist  : [{string.Join(",", gw.Settings.Risk.InstrumentAllowlist)}]   (kept)");
 
         Assert.False(gw.Settings.CouldNotBeRead);
-        Assert.False(gw.Settings.ModeIsRecognised);
+        Assert.Equal("999", gw.EarlierLiveSetting?.Mode);
         // The owner's values survive, which is the whole reason the two are not one check.
         Assert.True(gw.Settings.AiTradingStopped);
         Assert.Equal(new[] { "MES" }, gw.Settings.Risk.InstrumentAllowlist);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
-            gw.PlaceAsync(new AgentContext("a"), "us-999", TestEnv.Buy()));
+            gw.PlaceAsync(AgentContext.Operator, "us-999", TestEnv.Buy("MES")));
         log.WriteLine($"buy                  : {denied.Code} — {denied.Message}");
-        Assert.Equal(ErrorCode.MODE_FORBIDS_EXECUTION, denied.Code);
+        Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, denied.Code);
         Assert.Equal(0, conn.Places);
         await gw.DisposeAsync();
     }
@@ -311,7 +312,6 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         var first = new TradingGateway(db, conn, new HealthRegistry());
         first.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.AiTradingStopped = false;
             s.Risk.InstrumentAllowlist = ["ES"];

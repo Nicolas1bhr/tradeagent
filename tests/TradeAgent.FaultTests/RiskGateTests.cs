@@ -46,7 +46,6 @@ public class RiskGateTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -447,7 +446,6 @@ public class RiskGateTests(ITestOutputHelper log)
         var restarted = new TradingGateway(db2, conn, new HealthRegistry(), new GatewayOptions { Clock = conn.Broker.Clock });
         restarted.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = ["NQ", "ES"];
             s.Risk.MaxOrderQuantity = 10m;
@@ -509,7 +507,6 @@ public class RiskGateTests(ITestOutputHelper log)
         var restarted = new TradingGateway(db2, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         restarted.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = ["XYZ", "ES"];   // the health probe prices XYZ, and only XYZ
             s.Risk.MaxOrderQuantity = 10m;

@@ -63,9 +63,10 @@ public sealed class RiskPolicy
     /// close or a reduce, and it does not flatten anything — closing on a breach is its own unit.
     ///
     /// Zero means not enforced, exactly as on <see cref="MaxLossPerTrade"/>. What that costs is
-    /// stated where it can be acted on: a real-money mode cannot be SELECTED while this is zero
-    /// (<c>TradingGateway.SetMode</c>), because an unattended agent trading real money with no
-    /// bound on the day is the one configuration this product must not be able to reach quietly.
+    /// stated where it can be acted on: an unattended agent trading real money with no bound on the
+    /// day is the one configuration this product must not be able to reach quietly — and since
+    /// <c>U-board-a1</c> no real-money mode can be selected at all; the board's live act
+    /// (<c>U-board-live</c>) refuses it without a daily bound (R24 § 4.2).
     /// </summary>
     public decimal MaxDailyLoss { get; set; }
 
@@ -256,10 +257,14 @@ public sealed class RiskPolicy
     static bool Shortens(decimal from, decimal to) => to < from;
 }
 
+/// <summary>
+/// THE OWNER'S SETTINGS ROW. <b>No mode and no real-money switch</b> (<c>U-board-a1</c>; R24 § 4.5): both are the security board's
+/// policy in force (<c>BoardPolicy</c>), read by the gateway from <c>board_policy</c>, whose rows cannot hold a live mode or an
+/// activation. A settings row that carries either key was written by a build before the board; the gateway reads the raw row for it
+/// and refuses a live one in words (<c>TradingGateway.EarlierLiveSetting</c>) — this type never reads them.
+/// </summary>
 public sealed class TradeAgentSettings
 {
-    public TradingMode Mode { get; set; } = TradingMode.PAPER;
-    public bool LiveActivated { get; set; }
     public bool AiTradingStopped { get; set; }
     public string? SelectedRuntimeId { get; set; }
 
@@ -737,26 +742,6 @@ public sealed class TradeAgentSettings
     public decimal? AiPriceOutputPerMillion { get; set; }
 
     /// <summary>
-    /// IS THE SAVED MODE ONE THIS BUILD ACTUALLY HAS?
-    ///
-    /// <see cref="TradingMode"/> is persisted as a name, and <c>System.Text.Json</c>'s enum converter
-    /// reads NUMBERS as well — and casts a number it does not recognise straight onto the enum. A
-    /// settings row saying <c>"mode": 999</c> therefore produced a mode of 999, and every gate below
-    /// is a comparison against the named values: 999 is not OBSERVE so it executed, it is not
-    /// LIVE_CONFIRM or LIVE_AUTONOMOUS so the real-money activation switch was never consulted, and
-    /// it is not PAPER so a real-money account was not refused either. A mode nobody chose, trading
-    /// real money with the safety off (REVIEW 2026-09-05, Codex F3).
-    ///
-    /// It is not a hypothetical row: a newer build writes a mode this one has never heard of, and a
-    /// rollback reads it. So the classification fails closed — an unrecognised mode allows nothing —
-    /// and <c>TradingGateway.LoadSettings</c> says so in the owner's words.
-    /// </summary>
-    [JsonIgnore] public bool ModeIsRecognised => Enum.IsDefined(Mode);
-
-    [JsonIgnore] public bool ModeAllowsExecution => ModeIsRecognised && Mode != TradingMode.OBSERVE;
-    [JsonIgnore] public bool ModeIsLive => Mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
-
-    /// <summary>
     /// TRUE WHEN NONE OF THE VALUES ABOVE CAME FROM THE OWNER. Not persisted — it is a fact about
     /// this run, and it stops being true the moment the row is written again (see
     /// <see cref="MarkSaved"/>). The health row and the Safety page read it; nothing else sets it.
@@ -778,9 +763,7 @@ public sealed class TradeAgentSettings
     ///
     /// Every field here is instead the most restrictive value that field has:
     ///
-    ///   Mode = OBSERVE            the only mode that executes nothing at all
     ///   AiTradingStopped = true   the kill switch, down
-    ///   LiveActivated = false     real money off
     ///   SelectedAccountId = null  no account was chosen, and a guess is not a choice
     ///   allowlist = []            which now allows NOTHING
     ///   quantity, positions, orders-per-minute = 0
@@ -807,9 +790,7 @@ public sealed class TradeAgentSettings
     public static TradeAgentSettings Unreadable() => new()
     {
         CouldNotBeRead = true,
-        Mode = TradingMode.OBSERVE,
         AiTradingStopped = true,
-        LiveActivated = false,
         SelectedAccountId = null,
         AiWorksOnItsOwn = false,
         Guidance = "",

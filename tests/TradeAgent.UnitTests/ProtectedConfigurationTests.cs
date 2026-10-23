@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Diagnostics;
 using Xunit;
 
@@ -33,8 +34,8 @@ public class ProtectedConfigurationTests
     [InlineData(TradingMode.LIVE_AUTONOMOUS, false)]
     public void An_unarmed_configuration_starts_the_AI_exactly_as_before(TradingMode mode, bool activated)
     {
-        var settings = new TradeAgentSettings { Mode = mode, LiveActivated = activated };
-        Assert.Null(Containment.RefusalToLaunch(settings.ModeIsLive, settings.LiveActivated, None));
+        var policy = BoardFounding.V1 with { Mode = mode, LiveActivated = activated };
+        Assert.Null(Containment.RefusalToLaunch(policy.ModeIsLive, policy.LiveActivated, None));
     }
 
     [Theory]
@@ -42,8 +43,8 @@ public class ProtectedConfigurationTests
     [InlineData(TradingMode.LIVE_AUTONOMOUS)]
     public void Real_money_switched_on_with_no_sandbox_refuses_to_start_the_AI(TradingMode mode)
     {
-        var settings = new TradeAgentSettings { Mode = mode, LiveActivated = true };
-        var why = Containment.RefusalToLaunch(settings.ModeIsLive, settings.LiveActivated, None);
+        var policy = BoardFounding.V1 with { Mode = mode, LiveActivated = true };
+        var why = Containment.RefusalToLaunch(policy.ModeIsLive, policy.LiveActivated, None);
 
         Assert.NotNull(why);
         Assert.Contains("Real-money trading is switched on", why);
@@ -92,7 +93,7 @@ public class ProtectedConfigurationTests
     public void The_card_says_OS_sandbox_NONE_in_so_many_words()
     {
         Installed();
-        var check = Doctor.ContainmentCheck(new TradeAgentSettings { Mode = TradingMode.PAPER });
+        var check = Doctor.ContainmentCheck(BoardFounding.V1);
 
         Assert.Equal("AI containment", check.Name);
         Assert.Contains("OS sandbox: NONE", check.Detail);
@@ -105,10 +106,7 @@ public class ProtectedConfigurationTests
     [Fact]
     public void The_card_goes_amber_only_where_something_is_actually_withheld()
     {
-        var armed = Doctor.ContainmentCheck(new TradeAgentSettings
-        {
-            Mode = TradingMode.LIVE_AUTONOMOUS, LiveActivated = true
-        });
+        var armed = Doctor.ContainmentCheck(BoardFounding.V1 with { Mode = TradingMode.LIVE_AUTONOMOUS, LiveActivated = true });
 
         Assert.Equal(HealthState.DEGRADED, armed.State);
         Assert.Contains("OS sandbox: NONE", armed.Detail);

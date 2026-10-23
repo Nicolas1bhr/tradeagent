@@ -219,7 +219,7 @@ public class RestartTests
         {
             var conn = new FakeConnector(broker, new FaultProfile { DropAfterBrokerAccept = 1 });
             var gw = new TradingGateway(db, conn, new HealthRegistry());
-            gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+            gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
             await conn.ConnectAsync();
             await gw.RefreshHealthAsync();
             await gw.PlaceAsync(new AgentContext("a"), "crash-1", TestEnv.Buy());
@@ -268,17 +268,19 @@ public class RestartTests
         using (var db = new Database(file))
         {
             var gw = new TradingGateway(db, new FakeConnector(), new HealthRegistry());
-            // Before the mode, because SetMode refuses a real-money mode while the day has no bound.
+            // A live installation carries a bound on the day.
             gw.Update(s => s.Risk.MaxDailyLoss = 750m);
-            gw.SetMode(TradingMode.LIVE_CONFIRM);
-            gw.ActivateLive(true);
+            gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+            gw.ActivateLiveUnderTest(true);
             gw.Update(s => s.Risk.MaxOrderQuantity = 4m);
         }
         using (var db = new Database(file))
         {
             var gw = new TradingGateway(db, new FakeConnector(), new HealthRegistry());
-            Assert.Equal(TradingMode.LIVE_CONFIRM, gw.Settings.Mode);
-            Assert.True(gw.Settings.LiveActivated);
+            // THE SETTINGS SURVIVE; A LIVE MODE NEVER DOES (U-board-a1): the mode and real money are the security board's policy in
+            // force, read from a store that cannot hold a live one — what the test host's seam set lived in that gateway's memory only.
+            Assert.Equal((TradingMode.PAPER, false), (gw.Policy.Mode, gw.Policy.LiveActivated));
+            Assert.DoesNotContain("live_activated", db.GetKv("settings")!, StringComparison.Ordinal);
             Assert.Equal(4m, gw.Settings.Risk.MaxOrderQuantity);
             Assert.Equal(750m, gw.Settings.Risk.MaxDailyLoss);
         }
@@ -473,7 +475,7 @@ public class PolicyGateTests
     [Fact]
     public async Task Observe_mode_forbids_execution_entirely()
     {
-        var (gw, _, db) = await TestEnv.Ready(s => s.Mode = TradingMode.OBSERVE);
+        var (gw, _, db) = await TestEnv.Ready(mode: TradingMode.OBSERVE);
         using var dbh = db;
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "obs-1", TestEnv.Buy()));
@@ -487,7 +489,7 @@ public class PolicyGateTests
         using var dbh = db;
         var conn = new FakeConnector(new FakeBroker { IsSimulated = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = conn.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = conn.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
@@ -500,34 +502,30 @@ public class PolicyGateTests
     [Fact]
     public async Task Live_trading_requires_an_explicit_switch_and_not_merely_a_live_account()
     {
-        var (gw, _, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_AUTONOMOUS);
+        var (gw, _, db) = await TestEnv.Ready(mode: TradingMode.LIVE_AUTONOMOUS);
         using var dbh = db;
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "live-1", TestEnv.Buy()));
         Assert.Equal(ErrorCode.LIVE_NOT_ACTIVATED, denied.Code);
 
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
         Assert.Equal(ExecutionState.FILLED, (await gw.PlaceAsync(new AgentContext("a"), "live-2", TestEnv.Buy())).State);
     }
 
     [Fact]
     public async Task Leaving_live_mode_re_arms_the_safety()
     {
-        // The day's budget is what makes LIVE_AUTONOMOUS selectable at all now (SetMode), and it is
-        // set here for that reason and no other: what this test is about is the real-money switch.
-        var (gw, _, db) = await TestEnv.Ready(s =>
-        {
-            s.Mode = TradingMode.LIVE_AUTONOMOUS;
-            s.Risk.MaxDailyLoss = 1_000_000m;
-        });
+        // What this test is about is the real-money switch: leaving a live mode disarms it, through the test host's seam over the
+        // policy in force (U-board-a1), as the board's own act will (U-board-live).
+        var (gw, _, db) = await TestEnv.Ready(s => s.Risk.MaxDailyLoss = 1_000_000m, mode: TradingMode.LIVE_AUTONOMOUS);
         using var dbh = db;
-        gw.ActivateLive(true);
-        gw.SetMode(TradingMode.PAPER);
-        gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
+        gw.ActivateLiveUnderTest(true);
+        gw.SetModeUnderTest(TradingMode.PAPER);
+        gw.SetModeUnderTest(TradingMode.LIVE_AUTONOMOUS);
 
         // Going back to live must require the switch again, not silently remember consent.
-        Assert.False(gw.Settings.LiveActivated);
+        Assert.False(gw.Policy.LiveActivated);
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "rearm-1", TestEnv.Buy()));
         Assert.Equal(ErrorCode.LIVE_NOT_ACTIVATED, denied.Code);
@@ -597,10 +595,10 @@ public class PolicyGateTests
     [Fact]
     public async Task Autonomous_live_trading_is_refused_on_a_backend_that_cannot_prove_order_state()
     {
-        var (gw, _, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_AUTONOMOUS,
+        var (gw, _, db) = await TestEnv.Ready(mode: TradingMode.LIVE_AUTONOMOUS,
             faults: new FaultProfile { HideOrderHistory = true });
         using var dbh = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "unprov-live", TestEnv.Buy()));
@@ -610,9 +608,9 @@ public class PolicyGateTests
     [Fact]
     public async Task Confirm_mode_holds_the_order_until_a_person_approves_it()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await TestEnv.Ready(mode: TradingMode.LIVE_CONFIRM);
         using var dbh = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "confirm-1", TestEnv.Buy()));
@@ -628,9 +626,9 @@ public class PolicyGateTests
     [Fact]
     public async Task A_declined_order_is_never_sent()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await TestEnv.Ready(mode: TradingMode.LIVE_CONFIRM);
         using var dbh = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
         await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "decline-1", TestEnv.Buy()));
 

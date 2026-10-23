@@ -41,7 +41,6 @@ public class ModifyGateTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -83,11 +82,11 @@ public class ModifyGateTests(ITestOutputHelper log)
     {
         var (gw, conn, db) = await Ready(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
             s.Risk.MaxOrderQuantity = 1m;
         });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         // The order the agent is about to try to grow, placed by the person at the keyboard so that
         // it is working rather than parked.
@@ -123,9 +122,10 @@ public class ModifyGateTests(ITestOutputHelper log)
     [Fact]
     public async Task A_modify_in_live_confirm_parks_for_a_person_and_only_the_press_sends_it()
     {
-        var (gw, conn, db) = await Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await Ready(_ => { });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var working = await gw.PlaceAsync(AgentContext.Operator, "mg2-open", Buy());
         var pipe = NewPipe();

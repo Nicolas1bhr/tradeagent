@@ -168,7 +168,6 @@ public class RoleObjectivesTests
         {
             host.Gateway.Update(s =>
             {
-                s.Mode = TradingMode.PAPER;
                 s.SelectedAccountId = connector.Broker.AccountId;
                 s.Risk.MaxOrderQuantity = 10m;
                 s.Risk.MaxNotionalPerOrder = 10_000_000m;

@@ -57,7 +57,6 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"];
             s.Risk.MaxOrderQuantity = 100m;
@@ -318,10 +317,9 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         var resumed = gw.Deployments.ById(started.Id)!;
 
         // --- the mode moved ---
-        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         await gw.ReconcilePaperDeploymentsAsync(At);
         var inALiveMode = gw.Deployments.ById(started.Id)!;
-        gw.Update(s => s.Mode = TradingMode.PAPER);
 
         // --- the platform moved ---
         await gw.DisposeAsync();
@@ -422,9 +420,9 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
 
         gw.Update(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
-            s.LiveActivated = true;
         });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
         var liveRefusal = await Swallow(() => gw.PlaceAsync(inProcess, "dp-live-1",
             new PlaceIntent("BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
 

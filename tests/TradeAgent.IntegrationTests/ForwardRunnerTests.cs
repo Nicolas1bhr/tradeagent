@@ -200,7 +200,6 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
 
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = PaperConnector.TheAccount;
             s.Risk.InstrumentAllowlist = ["BTCUSDT"];
             s.Risk.MaxOrderQuantity = 10m;

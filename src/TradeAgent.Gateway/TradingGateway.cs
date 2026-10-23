@@ -49,6 +49,22 @@ public sealed class TradingGateway : IAsyncDisposable
     public ITradingConnector Connector { get; }
     public TradeAgentSettings Settings { get; private set; }
 
+    /// <summary>The security board's one store, read for the policy in force and written only by <see cref="BoardStore"/> itself.</summary>
+    readonly BoardStore _board;
+
+    /// <summary>The policy in force as this gateway read it at construction — or the unreadable shape, which fails closed.</summary>
+    BoardPolicy _policy;
+
+    /// <summary>
+    /// THE SECURITY BOARD'S POLICY IN FORCE (<c>U-board-a1</c>; R24 § 4.5): the mode and real money every gate reads, and nothing
+    /// else's. Read from <c>board_policy</c> — whose rows cannot hold a live mode or an activation — when this gateway is built, and
+    /// <see cref="BoardPolicy.Unreadable"/> when it does not verify. No public member sets it.
+    /// </summary>
+    public BoardPolicy Policy => _policy;
+
+    /// <summary>Whether the records execution stands on read: the policy, the settings row, and no earlier armed home standing.</summary>
+    bool ReadableForExecution => !Settings.CouldNotBeRead && !Policy.CouldNotBeRead && EarlierLiveSetting is null;
+
     /// <summary>
     /// WHAT AN EARLIER BUILD LEFT ARMED FOR REAL MONEY IN THIS HOME'S SETTINGS ROW, or null (<c>U-board-a1</c> item 5). While it stands
     /// every order is refused under <see cref="ErrorCode.HOME_ARMED_BEFORE_THE_BOARD"/> and the row is kept as it was found.
@@ -329,9 +345,9 @@ public sealed class TradingGateway : IAsyncDisposable
         decimal? maxNotional, DateTimeOffset expiresAt, DateTimeOffset? at = null,
         CancellationToken ct = default)
     {
-        if (Settings.Mode != TradingMode.PAPER)
+        if (Policy.Mode != TradingMode.PAPER)
             return new EnvelopeResult(false,
-                $"TradeAgent is in {Settings.Mode} and a paper envelope is granted in practice mode "
+                $"TradeAgent is in {Policy.Mode} and a paper envelope is granted in practice mode "
                 + "only, so nothing was written. Switch to practice first — the grant is about an "
                 + "account you have already decided is not real money.", null);
 
@@ -971,7 +987,7 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         // PAPER, AND THE WORD ON THE SETTINGS RATHER THAN "not live". A mode this build does not know
         // is not PAPER, and starting an experiment under one would be the software guessing.
-        if (Settings.Mode != TradingMode.PAPER) return 0;
+        if (Policy.Mode != TradingMode.PAPER) return 0;
         if (ClosureAccountId is not { Length: > 0 } account) return 0;
         if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
 
@@ -1176,7 +1192,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     string? DeploymentMovedFrom(StrategyDeploymentRow deployment)
     {
-        var mode = Settings.Mode.ToString();
+        var mode = Policy.Mode.ToString();
         var account = ClosureAccountId;
         if (deployment.PointedAt(Connector.Id, mode, account)) return null;
 
@@ -2391,7 +2407,9 @@ public sealed class TradingGateway : IAsyncDisposable
         _envelopes = new Envelopes(db);
         _deployments = new Deployments(db);
         _health = health ?? new HealthRegistry();
+        _board = new BoardStore(db);
         Settings = LoadSettings();
+        _policy = _board.InForce().Policy;
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock. AFTER the
         // settings, because the judge capital is read off them — at the moment a campaign opened before
@@ -3047,30 +3065,6 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex) { return SettingsThatCouldNotBeRead(json, ex); }
 
-        // A MODE THIS BUILD DOES NOT HAVE ALLOWS NOTHING, AND THE OWNER IS TOLD SO.
-        //
-        // TradeAgentSettings.ModeIsRecognised is what makes the refusal happen — the gates ask it,
-        // and nothing this method does is load-bearing for safety. What is load-bearing for the
-        // PERSON is this line: the failure is a setting they believe they set, so a refusal that
-        // only an agent ever reads over a pipe is not news anyone at the keyboard receives.
-        //
-        // The value is NOT rewritten to OBSERVE. Substituting a control the owner never chose is
-        // the shape of REVIEW 2026-09-05 finding 5, and rewriting it here would also destroy the
-        // evidence: a mode a NEWER build wrote is exactly what a rollback should hand back intact
-        // when the owner upgrades again.
-        if (!settings.ModeIsRecognised)
-        {
-            try
-            {
-                _log.Activity($"The trading mode saved in your settings ({(int)settings.Mode}) is not one this version " +
-                              "of TradeAgent knows, so nothing will be sent to your broker. Choose a mode on the " +
-                              "Settings page.", "warn");
-                _log.Engineering("Gateway", "unrecognised_mode", "error",
-                    metadataJson: Json.Write(new { mode = (int)settings.Mode }));
-            }
-            catch (Exception) { /* the gate is the guarantee; the sentence about it is the nicety */ }
-            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "the saved trading mode is not one this version knows");
-        }
         return settings;
     }
 
@@ -3130,41 +3124,25 @@ public sealed class TradingGateway : IAsyncDisposable
         _log.Activity("AI trading enabled");
     }
 
-    public void SetMode(TradingMode mode)
+    /// <summary>
+    /// THE TEST HOST'S SEAM OVER THE POLICY IN FORCE (<c>U-board-a1</c>; the <c>PuppetSeats.TestHost</c> precedent): internal, visible
+    /// to the three test projects alone (<c>InternalsVisibleTo</c>), and nothing in <c>src/</c> calls it (a guard says so). It moves the
+    /// mode of THIS gateway's in-memory policy only — the store cannot hold a live mode — so the live gates stay testable until the
+    /// board's own act sets them (<c>U-board-live</c>). Leaving a live mode disarms real money, as the deleted <c>SetMode</c> did.
+    /// </summary>
+    internal void SetModeUnderTest(TradingMode mode)
     {
-        // A C# enum is a number with names on some of it, and `(TradingMode)999` is a legal value of
-        // the parameter type. Nothing in the app passes one — the Settings page offers the four —
-        // but this is the only writer of the setting the whole gateway reads, and a value that gets
-        // in HERE is one no later reader can tell from a mode the owner chose.
         if (!Enum.IsDefined(mode))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"{(int)mode} is not a trading mode");
-
-        // REAL MONEY NEEDS A BOUND ON THE DAY, AND THIS IS WHERE IT IS ASKED FOR.
-        //
-        // There is no human in the loop for real money (decided 2026-09-06): the AI takes turn after
-        // turn for as long as the machine is on, and every gate but this one bounds a single order.
-        // A real-money mode with MaxDailyLoss at 0 — which on that field means NOT ENFORCED — is an
-        // unattended agent with nothing at all bounding what a day may cost, and that configuration
-        // must not be reachable by pressing one more button.
-        //
-        // It is a refusal to SELECT the mode, not a refusal to trade: the owner sets the number on
-        // the Safety page and presses the mode again. The sentence names the field, because a
-        // refusal an owner cannot act on is a refusal that gets read as the software being broken.
-        if (mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS && Settings.Risk.MaxDailyLoss <= 0m)
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Labels.LiveNeedsADailyLossBudget(mode.ToString()));
-
-        Settings.Mode = mode;
-        if (!Settings.ModeIsLive) Settings.LiveActivated = false; // leaving live re-arms the safety
-        SaveSettings();
-        _log.Activity($"Trading mode set to {mode}");
+        _policy = _policy with { Mode = mode, LiveActivated = _policy.LiveActivated && mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS };
+        StateChanged?.Invoke();
     }
 
-    /// <summary>Real money requires an explicit act. The existence of a live account is not consent.</summary>
-    public void ActivateLive(bool on)
+    /// <summary>The test host's seam over real money in the in-memory policy (see <see cref="SetModeUnderTest"/>); nothing in <c>src/</c> calls it.</summary>
+    internal void ActivateLiveUnderTest(bool on)
     {
-        Settings.LiveActivated = on;
-        SaveSettings();
-        _log.Activity(on ? "Real-money trading switched ON by the user" : "Real-money trading switched off", on ? "warn" : "info");
+        _policy = _policy with { LiveActivated = on };
+        StateChanged?.Invoke();
     }
 
     // ---------------------------------------------------------------- reads
@@ -3190,8 +3168,8 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception) { /* status must render even with the wire down */ }
 
         return new GatewayStatus(
-            Versions.ProtocolVersion.ToString(), Versions.App, Settings.Mode, Settings.AiTradingStopped,
-            Settings.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
+            Versions.ProtocolVersion.ToString(), Versions.App, Policy.Mode, Settings.AiTradingStopped,
+            Policy.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
             Connector.Capabilities.IsPaper, acct?.Id ?? Settings.SelectedAccountId, _health.Snapshot(),
             _requests.Open().Count, Unreconciled().Count, Settings.Risk)
         {
@@ -3525,12 +3503,22 @@ public sealed class TradingGateway : IAsyncDisposable
             return false;
         }
 
-        if (!Settings.ModeAllowsExecution)
+        // THE MODE IS THE SECURITY BOARD'S POLICY IN FORCE, NEVER A SETTING (U-board-a1; R24 § 4.5). A policy that did not verify
+        // reads as OBSERVE and says so; a settings row nobody could read allows nothing either, whatever the policy says, because
+        // the account and the limits it would have named are gone — the reading TradeAgentSettings.Unreadable's OBSERVE gave it.
+        if (Policy.CouldNotBeRead)
         {
-            (reason, code) = (Settings.ModeIsRecognised
-                    ? $"mode is {Settings.Mode}"
-                    : $"the saved trading mode ({(int)Settings.Mode}) is not one this version of TradeAgent knows",
-                ErrorCode.MODE_FORBIDS_EXECUTION);
+            (reason, code) = (Labels.BoardPolicyCouldNotBeRead, ErrorCode.MODE_FORBIDS_EXECUTION);
+            return false;
+        }
+        if (Settings.CouldNotBeRead)
+        {
+            (reason, code) = (Labels.SettingsCouldNotBeRead, ErrorCode.MODE_FORBIDS_EXECUTION);
+            return false;
+        }
+        if (!Policy.ModeAllowsExecution)
+        {
+            (reason, code) = ($"mode is {Policy.Mode}", ErrorCode.MODE_FORBIDS_EXECUTION);
             return false;
         }
         if (Settings.AiTradingStopped && !ctx.IsOperator)
@@ -3555,21 +3543,21 @@ public sealed class TradingGateway : IAsyncDisposable
         // for a flatten and a cancel as well as for an entry; and it is re-asked at the moment of
         // dispatch by `ReauthorizeAtDispatchOrThrow`, so a mode moved while the awaited reads were in
         // flight stops the order it was moved to stop.
-        if (ctx.IsDeployment && Settings.ModeIsLive)
+        if (ctx.IsDeployment && Policy.ModeIsLive)
         {
-            (reason, code) = ($"this is a paper deployment and the mode is {Settings.Mode}, so it "
+            (reason, code) = ($"this is a paper deployment and the mode is {Policy.Mode}, so it "
                               + "places nothing at all", ErrorCode.MODE_FORBIDS_EXECUTION);
             return false;
         }
 
-        if (Settings.ModeIsLive)
+        if (Policy.ModeIsLive)
         {
-            if (!Settings.LiveActivated)
+            if (!Policy.LiveActivated)
             {
                 (reason, code) = ("real-money trading is not switched on", ErrorCode.LIVE_NOT_ACTIVATED);
                 return false;
             }
-            if (Settings.Mode == TradingMode.LIVE_AUTONOMOUS && !Connector.Capabilities.ReconciliationProvable)
+            if (Policy.Mode == TradingMode.LIVE_AUTONOMOUS && !Connector.Capabilities.ReconciliationProvable)
             {
                 (reason, code) = ($"{Connector.DisplayName} cannot prove order state after a disconnect, so autonomous live trading is refused",
                     ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE);
@@ -3649,7 +3637,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"quantity {intent.Quantity} exceeds the limit of {r.MaxOrderQuantity}");
 
         // Paper mode must never reach a real-money account, whatever the agent asked for.
-        if (Settings.Mode == TradingMode.PAPER && !(account.IsSimulated || Connector.Capabilities.IsPaper))
+        if (Policy.Mode == TradingMode.PAPER && !(account.IsSimulated || Connector.Capabilities.IsPaper))
             throw new GatewayDeniedException(ErrorCode.MODE_ACCOUNT_MISMATCH,
                 $"account {account.Id} is not a simulation account and the mode is PAPER");
 
@@ -3949,7 +3937,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // The MUTANT is one reader for both — `StandingFor(version, Now)` as it was before this
             // unit — which makes a paper row authorise a live dispatch and a row written for one
             // account authorise on another. `PaperAllocationGateTests` measures both at the wire.
-            var standing = Settings.Mode == TradingMode.PAPER && EnvelopeReserves(accountId)
+            var standing = Policy.Mode == TradingMode.PAPER && EnvelopeReserves(accountId)
                 ? _allocations.StandingForPaper(version, Connector.Id, accountId, Now)
                 : _allocations.StandingForLive(version, Now);
 
@@ -4676,7 +4664,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // three things; this is so the sweep does not announce work it is about to decline.
             var open = OpenClosures(accountId)
                 .Where(x => string.Equals(x.Connector, Connector.Id, StringComparison.Ordinal)
-                            && x.Mode == Settings.Mode)
+                            && x.Mode == Policy.Mode)
                 .ToList();
             if (open.LastOrDefault(x => x.Symbol is null) is { } day && FlattenOwed(day) is { } dayAgain)
                 owed.Add((day, dayAgain));
@@ -4863,7 +4851,7 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 Account = breach.Account,
                 Connector = Connector.Id,
-                Mode = Settings.Mode,
+                Mode = Policy.Mode,
                 Day = breach.Day,
                 Symbol = breach.Symbol,
                 BreachKey = LossBreach.KeyFor(breach),
@@ -5501,7 +5489,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 metadataJson: Json.Write(new { breach = LossBreach.KeyFor(breach) }));
             return new LossHoldRecord
             {
-                Account = breach.Account, Connector = Connector.Id, Mode = Settings.Mode,
+                Account = breach.Account, Connector = Connector.Id, Mode = Policy.Mode,
                 Day = breach.Day, Symbol = breach.Symbol,
                 BreachKey = LossBreach.KeyFor(breach),
                 Why = $"TradeAgent could not read whether this closure is being held for you to look at "
@@ -5594,7 +5582,7 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 Account = breach.Account,
                 Connector = Connector.Id,
-                Mode = Settings.Mode,
+                Mode = Policy.Mode,
                 Day = breach.Day,
                 Symbol = breach.Symbol,
                 BreachKey = LossBreach.KeyFor(breach),
@@ -5973,7 +5961,7 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 Account = record.Account,
                 Connector = Connector.Id,
-                Mode = Settings.Mode,
+                Mode = Policy.Mode,
                 Day = record.Day,
                 Symbol = record.Symbol,
                 BreachKey = key,
@@ -6101,7 +6089,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // a mode is what makes the same platform a different undertaking — so a breach that
             // named neither could be acted on by a gateway operating neither (finding 3).
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
 
             // THE DAY IS THE CONFIRMING PULL'S — `at`, never `first.At` (U-review-med, item 3). It
             // is the instant the closure exists from, it is the instant the KEY this record is
@@ -6376,9 +6364,9 @@ public sealed class TradingGateway : IAsyncDisposable
     void ReauthorizeAtDispatchOrThrow(AgentContext ctx, ExecutionRequest stored)
     {
         AuthorizeOrThrow(ctx);
-        if (Settings.Mode != stored.Mode)
+        if (Policy.Mode != stored.Mode)
             throw new GatewayDeniedException(ErrorCode.MODE_FORBIDS_EXECUTION,
-                $"mode is now {Settings.Mode}; this request was authorized under {stored.Mode} and is not sent");
+                $"mode is now {Policy.Mode}; this request was authorized under {stored.Mode} and is not sent");
     }
 
     // ---------------------------------------------------------------- mutations
@@ -6492,9 +6480,9 @@ public sealed class TradingGateway : IAsyncDisposable
             ParametersJson = Json.Write(intent),
             ClientOrderId = ClientOrderIdFor(requestId),
             CreatedAt = Now,
-            State = Settings.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
+            State = Policy.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
                 ? ExecutionState.AWAITING_APPROVAL : ExecutionState.CREATED,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             // WHICH VERSION IS PLACING THIS, onto its own column rather than left in the parameters
             // blob. It is the caller's claim, carried verbatim; what that version is ALLOWED to do is
             // decided inside the gate below, against the ledgers.
@@ -7772,9 +7760,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 // The mode it was proposed under is the only mode it may be approved in. PAPER would
                 // send a real-money proposal to the simulator, LIVE_AUTONOMOUS would dispatch a
                 // confirm-mode order under rules the person never chose for it, OBSERVE forbids all.
-                if (Settings.Mode != TradingMode.LIVE_CONFIRM)
+                if (Policy.Mode != TradingMode.LIVE_CONFIRM)
                     throw new GatewayDeniedException(ErrorCode.MODE_FORBIDS_EXECUTION,
-                        $"mode is now {Settings.Mode}; this order was proposed under {stored.Mode} and can only be approved in LIVE_CONFIRM");
+                        $"mode is now {Policy.Mode}; this order was proposed under {stored.Mode} and can only be approved in LIVE_CONFIRM");
 
                 AuthorizeOrThrow(proposer);
 
@@ -7893,7 +7881,7 @@ public sealed class TradingGateway : IAsyncDisposable
             RequestId = requestId, AgentSessionId = ctx.SessionId, ConnectorId = Connector.Id,
             AccountId = await RequireAccountId(ct), Instrument = "-", Intent = RequestIntent.CANCEL,
             ParametersJson = Json.Write(new { order = target }), ClientOrderId = ClientOrderIdFor(requestId),
-            CreatedAt = Now, State = ExecutionState.CREATED, Mode = Settings.Mode
+            CreatedAt = Now, State = ExecutionState.CREATED, Mode = Policy.Mode
         };
         var (created, stored) = _requests.TryCreate(record);
         if (!created && _opt.IdempotencyEnabled) return stored;
@@ -7996,9 +7984,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 wasLimit = before?.LimitPrice, wasStop = before?.StopPrice
             }),
             ClientOrderId = ClientOrderIdFor(requestId), CreatedAt = Now,
-            State = Settings.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
+            State = Policy.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
                 ? ExecutionState.AWAITING_APPROVAL : ExecutionState.CREATED,
-            Mode = Settings.Mode
+            Mode = Policy.Mode
         };
         var (created, stored) = _requests.TryCreate(record);
         if (!created && _opt.IdempotencyEnabled)
@@ -8937,7 +8925,7 @@ public sealed class TradingGateway : IAsyncDisposable
             ClientOrderId = ClientOrderIdFor(requestId),
             CreatedAt = Now,
             State = ExecutionState.CREATED,
-            Mode = Settings.Mode
+            Mode = Policy.Mode
         }, paused, claims is null ? null : PressRowsLike(claims), waitsForWorkOn);
 
         // LOST THE CLAIM. Nothing was written and nothing will be sent under this id.
@@ -9456,13 +9444,13 @@ public sealed class TradingGateway : IAsyncDisposable
         // here: the closure it carries still REFUSES new risk on any platform, because refusing is
         // the safe direction, and it never SENDS, because sending is not.
         if (!string.Equals(breach.Connector, Connector.Id, StringComparison.Ordinal)
-            || breach.Mode != Settings.Mode)
+            || breach.Mode != Policy.Mode)
         {
             _log.TryEngineering("Gateway", "loss_flatten_not_this_platform", "warn",
                 metadataJson: Json.Write(new
                 {
                     breach = breachKey, recorded_on = breach.Connector, recorded_in = breach.Mode?.ToString(),
-                    operating_on = Connector.Id, operating_in = Settings.Mode.ToString()
+                    operating_on = Connector.Id, operating_in = Policy.Mode.ToString()
                 }));
             return null;
         }
@@ -9644,7 +9632,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             Account = breach.Account,
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             Day = breach.Day,   // the BREACH's day, which is the key this record is filed under
             Symbol = breach.Symbol,
             BreachKey = breachKey,
@@ -9698,7 +9686,7 @@ public sealed class TradingGateway : IAsyncDisposable
     void RestoreExecutionIfNothingIsUnconfirmed()
     {
         if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
-            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+            && ReadableForExecution)
             _health.Set(Components.ExecutionCapability, HealthState.READY);
     }
 
@@ -9818,7 +9806,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             Account = breach.Account,
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             Day = breach.Day,
             Symbol = breach.Symbol,
             BreachKey = LossBreach.KeyFor(breach),
@@ -10279,7 +10267,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             // ONLY WHERE THE BREACH WAS RECORDED: the flatten's own three-part scope, for its reasons.
             if (!string.Equals(breach.Connector, Connector.Id, StringComparison.Ordinal)
-                || breach.Mode != Settings.Mode
+                || breach.Mode != Policy.Mode
                 || !string.Equals(breach.Account, accountId, StringComparison.Ordinal))
                 continue;
 
@@ -10338,7 +10326,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             Account = breach.Account,
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             Day = breach.Day,
             Symbol = breach.Symbol,
             BreachKey = LossBreach.KeyFor(breach),
@@ -10429,7 +10417,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // different money over the same account id.
             if (exit is null || exit.Flat
                 || !string.Equals(exit.Connector, Connector.Id, StringComparison.Ordinal)
-                || exit.Mode != Settings.Mode
+                || exit.Mode != Policy.Mode
                 || !string.Equals(exit.Account, accountId, StringComparison.Ordinal))
                 continue;
 
@@ -10487,7 +10475,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             Account = exit.Account,
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             Symbol = exit.Symbol,
             Day = LossBreach.Stamp(Now),
             Since = exit.Since,
@@ -11295,7 +11283,7 @@ public sealed class TradingGateway : IAsyncDisposable
                     Connector = Connector.Id,
                     Account = accountId,
                     Symbol = p.Symbol,
-                    Mode = Settings.Mode,
+                    Mode = Policy.Mode,
                     Quantity = p.Quantity,
                     Since = at,
                     SinceEpoch = epoch,
@@ -11456,7 +11444,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // ITS CONFIRM READ THE SYMBOL OPEN, on this platform and in this mode.
             if (confirm is not { Flat: false }
                 || !string.Equals(confirm.Connector, Connector.Id, StringComparison.Ordinal)
-                || confirm.Mode != Settings.Mode)
+                || confirm.Mode != Policy.Mode)
                 continue;
 
             // ONCE: a closing again already written — whatever it found — is the closing again.
@@ -11553,7 +11541,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 ClearTheFlatteningFlag(row.RequestId);
 
             if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
-                && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+                && ReadableForExecution)
                 _health.Set(Components.ExecutionCapability, HealthState.READY);
         }
 
@@ -11709,7 +11697,7 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             Account = accountId,
             Connector = Connector.Id,
-            Mode = Settings.Mode,
+            Mode = Policy.Mode,
             Symbol = episode.Symbol,
             Day = LossBreach.Stamp(at),
             Since = episode.Since,
@@ -11767,7 +11755,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // THE PAUSE THIS EXIT IMPOSED IS LIFTED BY THE SAME TWO LINES THE BUDGET FLATTEN USES, so a
         // correct exit is not a manual outage for the rest of the day.
         if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
-            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+            && ReadableForExecution)
             _health.Set(Components.ExecutionCapability, HealthState.READY);
 
         StateChanged?.Invoke();
@@ -13477,25 +13465,21 @@ public sealed class TradingGateway : IAsyncDisposable
                       + $"{_opt.MaxQuoteAge.TotalSeconds:0}s");
             }
 
-            // An unrecognised mode is in here rather than only in LoadSettings, because this method
-            // RECOMPUTES the row from scratch on every five-second pass: a state set once at startup
-            // and overwritten a moment later is a claim that does not hold, and the gate and the
-            // screen would then disagree about whether this installation can trade at all.
+            // THE RECORDS EXECUTION STANDS ON are in here rather than only where they were read, because this method RECOMPUTES the
+            // row from scratch on every five-second pass: a state set once at startup and overwritten a moment later is a claim that
+            // does not hold, and the gate and the screen would then disagree about whether this installation can trade at all.
+            // In order: the board's policy (U-board-a1), the settings row, and a home an earlier build armed for real money — each
+            // pauses execution and names itself; then the unconfirmed work.
             var unreconciled = Unreconciled().Count;
             var latched = _unconfirmed.Values.FirstOrDefault();
-            var unknownMode = !Settings.ModeIsRecognised;
-            // A row that could not be read is FIRST, above the mode: when the whole row failed there
-            // is no saved mode to name, and "the mode is not one this version knows" would be the
-            // software reporting a value it invented a moment ago. It lives here at all for the same
-            // reason the mode arm does — this method recomputes the row from scratch every five
-            // seconds, so a state set once at startup is a claim that does not hold.
-            var unreadable = Settings.CouldNotBeRead;
+            var why = Policy.CouldNotBeRead ? Labels.BoardPolicyCouldNotBeRead
+                : Settings.CouldNotBeRead ? Labels.SettingsCouldNotBeRead
+                : EarlierLiveSetting is { } earlier ? earlier.Sentence
+                : null;
             _health.Set(Components.ExecutionCapability,
-                unreadable || unknownMode || unreconciled > 0 || latched is not null ? HealthState.PAUSED
+                why is not null || unreconciled > 0 || latched is not null ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
-                unreadable ? Labels.SettingsCouldNotBeRead
-                : unknownMode ? $"the saved trading mode ({(int)Settings.Mode}) is not one this version knows"
-                : unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
+                why ?? (unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? ""));
 
             // THE PULL RIDES THIS PASS RATHER THAN A TIMER OF ITS OWN. Every host already runs this
             // method immediately after connecting and every HealthInterval after that, so a pull

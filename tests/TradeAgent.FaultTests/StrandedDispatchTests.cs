@@ -66,7 +66,6 @@ static class Stranded
         var gw = new TradingGateway(db, c, new HealthRegistry(), options);
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = c.Inner.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;

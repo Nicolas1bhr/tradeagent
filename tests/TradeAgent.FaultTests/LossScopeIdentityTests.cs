@@ -163,7 +163,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [symbol, "NQ", "MES", "YM"];
             s.Risk.MaxOrderQuantity = 10m;
@@ -419,7 +418,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gwA = new TradingGateway(db, paper, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gwA.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = paper.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -463,8 +461,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gwB = new TradingGateway(db, live, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gwB.Update(s =>
         {
-            s.Mode = inLiveMode ? TradingMode.LIVE_CONFIRM : TradingMode.PAPER;
-            s.LiveActivated = inLiveMode;
             s.SelectedAccountId = liveBroker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -474,6 +470,8 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             s.Risk.MaxDailyLoss = 0m;      // this installation has set NO budget at all
             s.Risk.MaxLossPerTrade = 0m;
         });
+        gwB.SetModeUnderTest(inLiveMode ? TradingMode.LIVE_CONFIRM : TradingMode.PAPER);
+        gwB.ActivateLiveUnderTest(inLiveMode);
 
         clock.Advance(Tick);
         await gwB.RefreshHealthAsync();      // the health pass: the watch, then the killed-flatten sweep
@@ -569,8 +567,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, live, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
-            s.LiveActivated = true;
             s.SelectedAccountId = broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -580,6 +576,8 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             s.Risk.MaxDailyLoss = 0m;
             s.Risk.MaxLossPerTrade = 0m;
         });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
 
         var before = (live.Places, live.Closes, live.Cancels);
         clock.Advance(Tick);
@@ -628,7 +626,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gwA = new TradingGateway(db, a, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gwA.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = "ACC-A";
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -653,7 +650,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var gwB = new TradingGateway(db, b, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gwB.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = "ACC-B";
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
@@ -709,7 +705,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
                 var gwA = new TradingGateway(db, a, new HealthRegistry(), new GatewayOptions { Clock = clock });
                 gwA.Update(s =>
                 {
-                    s.Mode = TradingMode.PAPER;
                     s.SelectedAccountId = "ACC-A";
                     s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
                     s.Risk.MaxOrderQuantity = 10m;
@@ -730,7 +725,6 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             var gwB = new TradingGateway(db, b, new HealthRegistry(), new GatewayOptions { Clock = clock });
             gwB.Update(s =>
             {
-                s.Mode = TradingMode.PAPER;
                 s.SelectedAccountId = "ACC-B";
                 s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
                 s.Risk.MaxOrderQuantity = 10m;

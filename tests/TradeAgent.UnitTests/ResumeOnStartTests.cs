@@ -179,9 +179,11 @@ public class ResumeOnStartTests : IDisposable
         {
             s.AiWorksOnItsOwn = true;
             s.ResumeAiOnStart = true;
-            s.Mode = TradingMode.LIVE_AUTONOMOUS;
-            s.LiveActivated = true;
         });
+        // THE ARMED LIVE POLICY, through the test host's seam (U-board-a1): the store cannot hold one, so this is the policy a later
+        // board act will put in force (U-board-live), set on the restarted host's gateway before it resumes.
+        host.Gateway.SetModeUnderTest(TradingMode.LIVE_AUTONOMOUS);
+        host.Gateway.ActivateLiveUnderTest(true);
         try
         {
             // Nothing on any platform this suite runs on confines an AI process, so this IS the

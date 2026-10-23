@@ -42,8 +42,8 @@ public class OperatorContextTests
     static async Task<(TradingGateway Gw, Connectors.Fake.FakeConnector Conn, Database Db, GatewayPipeServer Server, PipeClient Client)>
         LiveConfirm()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
-        gw.ActivateLive(true);
+        var (gw, conn, db) = await TestEnv.Ready(mode: TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
         server.Start();
@@ -191,9 +191,9 @@ public class OperatorContextTests
     [Fact]
     public async Task The_in_process_operator_still_places_without_approval()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await TestEnv.Ready(mode: TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
 
         var placed = await gw.PlaceAsync(AgentContext.Operator, "operator-1", TestEnv.Buy());
 
@@ -294,9 +294,9 @@ public class OperatorContextTests
     [InlineData("  OPERATOR  ")]
     public async Task Every_spelling_of_the_reserved_session_is_refused_on_the_hello_frame_too(string spelling)
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        var (gw, conn, db) = await TestEnv.Ready(mode: TradingMode.LIVE_CONFIRM);
         using var _1 = db;
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
         server.Start();

@@ -38,7 +38,6 @@ public class OfflineSweepReplayTests(ITestOutputHelper log)
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
             // A CONFIGURED INSTALLATION NAMES WHAT IT MAY TRADE. An empty allowlist used to mean
             // "everything" and now means nothing (REVIEW 2026-09-05 finding 5), so this gateway

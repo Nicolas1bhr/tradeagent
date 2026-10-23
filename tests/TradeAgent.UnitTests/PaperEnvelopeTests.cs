@@ -46,10 +46,10 @@ public class PaperEnvelopeTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = mode;
             s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
         });
+        gw.SetModeUnderTest(mode);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);

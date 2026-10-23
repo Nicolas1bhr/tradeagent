@@ -70,7 +70,6 @@ public class PaperGatewayTests(ITestOutputHelper log)
         await using var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = PaperConnector.TheAccount;
             s.Risk.InstrumentAllowlist = ["BTCUSDT"];
             s.Risk.MaxOrderQuantity = 10m;
@@ -105,7 +104,7 @@ public class PaperGatewayTests(ITestOutputHelper log)
         // AND THE OTHER HALF. A live mode is refused this account — by the installation's own live
         // gate, which stands in front of every platform. The paper connector never becomes a
         // real-money path: there is no venue in its assembly to become one with.
-        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         var refused = await Assert.ThrowsAsync<GatewayDeniedException>(
             () => gw.PlaceAsync(new AgentContext("ai"), "paper-gw-2", intent));
         log.WriteLine($"{refused.Code} — {refused.Message}");
@@ -154,7 +153,6 @@ public class PaperGatewayTests(ITestOutputHelper log)
         await using var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
         {
-            s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = PaperConnector.TheAccount;
             s.Risk.InstrumentAllowlist = ["BTCUSDT"];
             s.Risk.MaxOrderQuantity = 10m;

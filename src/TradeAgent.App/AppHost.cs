@@ -1224,10 +1224,10 @@ public sealed class AppHost : IAsyncDisposable
             // the launch is minutes away from this line and the attempt it belongs to does not
             // exist yet.
             attemptId: role => Meter?.OpenAttemptIdFor(role),
-            // THE PROTECTED CONFIGURATION. Read at every launch rather than captured, because
-            // the owner arms real money on the Dashboard while the AI is working.
+            // THE PROTECTED CONFIGURATION. Read at every launch rather than captured: the mode and real money are the security
+            // board's policy in force (U-board-a1), which a later board act changes while the AI is working.
             launchRefusal: () => Containment.RefusalToLaunch(
-                Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated),
+                Gateway.Policy.ModeIsLive, Gateway.Policy.LiveActivated),
             presence: _presence,
             seats: _seats,
             // THE APP'S DOOR, read at every launch: a broker-only seat's one tool server (U-thinking-seats-c).
@@ -1610,7 +1610,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         var available = Gateway.TryAuthorizeExecution(AgentContext.Operator, out var reason);
         return new WorkspaceContext(Connector.DisplayName, Connector.Capabilities.IsPaper,
-            Gateway.Settings.SelectedAccountId, Gateway.Settings.Mode, available, reason, Gateway.Settings.Risk,
+            Gateway.Settings.SelectedAccountId, Gateway.Policy.Mode, available, reason, Gateway.Settings.Risk,
             ConnectorIsBuiltInSimulator: Connector.Id == FakeConnector.ConnectorId,
             TurnsPerSession: Gateway.Settings.MissionTurnsPerSession);
     }

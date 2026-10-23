@@ -27,16 +27,14 @@ public class ApprovalReauthorizationTests
         Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null,
         PlaceIntent? intent = null)
     {
-        // The day's budget is part of what a live installation IS now: SetMode refuses a real-money
-        // mode while it is 0, so a fixture that stands in for one carries it. Wide, because nothing
-        // in this class is about the loss budgets, and the caller may still narrow it.
+        // The day's budget is part of what a live installation IS: a fixture that stands in for one carries it. Wide, because
+        // nothing in this class is about the loss budgets, and the caller may still narrow it.
         var env = await TestEnv.Ready(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
             s.Risk.MaxDailyLoss = 1_000_000m;
             settings?.Invoke(s);
-        }, options, faults);
-        env.Gw.ActivateLive(true);
+        }, options, faults, mode: TradingMode.LIVE_CONFIRM);
+        env.Gw.ActivateLiveUnderTest(true);
         await Park(env.Gw, requestId, intent);
         return env;
     }
@@ -61,20 +59,19 @@ public class ApprovalReauthorizationTests
         var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s =>
         {
-            s.Mode = TradingMode.LIVE_CONFIRM;
             s.SelectedAccountId = accountId;
             s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
             s.Risk.MaxOrdersPerMinute = 100;
-            // A real-money mode cannot be SELECTED without a bound on the day (TradingGateway.SetMode),
-            // so a fixture that stands in for a live installation has one, as that installation must.
+            // A fixture that stands in for a live installation has a bound on the day, as that installation must.
             s.Risk.MaxDailyLoss = 1_000_000m;
         });
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
         return gw;
     }
 
@@ -160,14 +157,14 @@ public class ApprovalReauthorizationTests
         var (gw, conn, db) = await Parked($"mode-{changedTo}");
         using var dbh = db;
 
-        gw.SetMode(changedTo);
+        gw.SetModeUnderTest(changedTo);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync($"mode-{changedTo}"));
         AssertRefusedAndStillParked(denied, ErrorCode.MODE_FORBIDS_EXECUTION, gw, conn, $"mode-{changedTo}");
 
         // Back in the mode it was proposed under, with real money switched on again, the same approval works.
-        gw.SetMode(TradingMode.LIVE_CONFIRM);
-        gw.ActivateLive(true);
+        gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
+        gw.ActivateLiveUnderTest(true);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync($"mode-{changedTo}"), conn, $"mode-{changedTo}");
     }
 
@@ -177,12 +174,12 @@ public class ApprovalReauthorizationTests
         var (gw, conn, db) = await Parked("live-off");
         using var dbh = db;
 
-        gw.ActivateLive(false);
+        gw.ActivateLiveUnderTest(false);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("live-off"));
         AssertRefusedAndStillParked(denied, ErrorCode.LIVE_NOT_ACTIVATED, gw, conn, "live-off");
 
-        gw.ActivateLive(true);
+        gw.ActivateLiveUnderTest(true);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("live-off"), conn, "live-off");
     }
 
@@ -715,7 +712,7 @@ public class ApprovalReauthorizationTests
         var inner = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         var conn = new ConnectorFacade(inner, inner.Capabilities with { SupportsModify = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 

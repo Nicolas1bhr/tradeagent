@@ -3,4 +3,10 @@
     <ProjectReference Include="../TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" />
     <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The test host's seam over the policy in force (U-board-a1): SetModeUnderTest / ActivateLiveUnderTest. Nothing in src/ calls it. -->
+    <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+    <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
+    <InternalsVisibleTo Include="TradeAgent.FaultTests" />
+  </ItemGroup>
 </Project>
