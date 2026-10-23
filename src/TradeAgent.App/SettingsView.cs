@@ -146,6 +146,27 @@ sealed class SettingsPage
 
     public Control Root { get; }
 
+    /// <summary>The trading platform: shown under Connections on the owner's page.</summary>
+    internal Control Platform { get; }
+
+    /// <summary>The account the AI may see: shown under Connections on the owner's page.</summary>
+    internal Control Account { get; }
+
+    /// <summary>The ATAS bridge's repair: shown under Connections on the owner's page.</summary>
+    internal Control Bridge { get; }
+
+    /// <summary>What a paper fill pays, and the owner's override: shown under Evidence on the owner's page.</summary>
+    internal Control Friction { get; }
+
+    /// <summary>The holdout: shown under Evidence on the owner's page.</summary>
+    internal Control Holdout { get; }
+
+    /// <summary>Updates: on the owner's page (R24 § 4.3 — updating the app is his).</summary>
+    internal Control Updates { get; }
+
+    /// <summary>What a platform or account change does to his money: beside the emergency column on the owner's page.</summary>
+    internal Control WhatTheseChange { get; }
+
     public SettingsPage(AppHost host)
     {
         _host = host;
@@ -196,7 +217,7 @@ sealed class SettingsPage
                 + "is still moving. A fill here is a simulation, never proof that the price could "
                 + "have been traded.",
                 _paperButton),
-            PaperFrictionRow(),
+            Ui.Micro("What a paper fill pays is an evidence setting: it is under Evidence on the " + Labels.OwnerPage + " page."),
             Ui.Divider(),
             Option("ATAS", null, _atasInUse,
                 "Your real trading platform. TradeAgent connects to it and stays inside the limits you set.",
@@ -418,7 +439,6 @@ sealed class SettingsPage
             Ui.Divider(),
             Ui.Muted("Whether real money is used at all is the security board's decision, shown on the " + Labels.BoardPage + " page. "
                      + "Until a board seat is active, no real money is put to work.")));
-        explain.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
         // Always here, whatever the bridge row currently says. The Checks page shows this same card
         // only when the row calls for it, and that is the right rule for a page about what is wrong —
@@ -427,14 +447,21 @@ sealed class SettingsPage
         // about the trading platform already live.
         var bridge = Ui.Section("ATAS bridge", BridgeRepair.Body(_host));
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, marketData, holdout, bridge, updates)));
-        grid.Children.Add(Pages.Column(1, explain));
+        // THE OWNER'S SECTIONS LIVE ON HIS PAGE (U-settings-shed item 3; R24 § 4.7): the platform, the account and the bridge under
+        // Connections, what a paper fill pays and the holdout under Evidence, and updates. This page builds them — their handlers and
+        // their five-second pass are here — and the owner's page shows them; each control is in one tree only. Settings keeps the market
+        // data, a connection to public sources and not a limit (seat B's ruling Q4).
+        Platform = platform;
+        Account = account;
+        Bridge = bridge;
+        Friction = Ui.Section("What a paper fill pays", PaperFrictionRow());
+        Holdout = holdout;
+        Updates = updates;
+        WhatTheseChange = explain;
 
         Root = Pages.Scroll(Ui.Col(0,
-            Pages.Header("Settings",
-                "Which trading platform TradeAgent uses, which account the AI is allowed to trade, and which version you are running."),
-            grid));
+            Pages.Header("Settings", "The market data TradeAgent collects for research."),
+            marketData));
 
         EnsureAccounts();
         ApplyPaperFriction();

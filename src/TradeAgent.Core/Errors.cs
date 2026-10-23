@@ -885,7 +885,7 @@ public static partial class Labels
     /// followed it exactly with the AI still unable to trade and no reason given.
     /// </summary>
     public const string SettingsCouldNotBeReadNext =
-        "Your account was lost with them: choose it again on the Settings page.";
+        "Your account was lost with them: choose it again under " + OwnerGroupConnections + " on this page.";
 
     /// <summary>
     /// What an empty instrument allowlist means, said wherever the list is shown. An empty list is

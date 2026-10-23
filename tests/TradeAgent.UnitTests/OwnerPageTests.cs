@@ -15,7 +15,7 @@ namespace TradeAgent.Tests.Unit;
 public class OwnerPageTests
 {
     /// <summary>The owner's page as the window builds it.</summary>
-    internal static OwnerPage Build(AppHost host) => new(host);
+    internal static OwnerPage Build(AppHost host) => new(host, new SettingsPage(host));
 
     static async Task OnThePage(Func<OwnerPage, AppHost, Task> body)
     {
@@ -50,9 +50,17 @@ public class OwnerPageTests
             Labels.SaveDailyCap, Labels.SaveAiPrice,
             Labels.WithdrawEnvelope, Labels.StopDeployment, Labels.ReopenAfterReview,
             // PERCEPTION'S CARD: its own key's two presses, its budget inside the cap, its Test — and the instrument it is shown on.
-            (string)card.SaveKey.Content!, (string)card.ForgetKey.Content!, (string)card.SaveBudget.Content!, (string)card.TestButton.Content!
+            (string)card.SaveKey.Content!, (string)card.ForgetKey.Content!, (string)card.SaveBudget.Content!, (string)card.TestButton.Content!,
+            // CONNECTIONS (item 3): the platform's three, the account list's look-again, and the bridge's repair.
+            "Use the practice simulator", "Use TradeAgent paper", "Use ATAS", "Look again", Labels.ReinstallBridge,
+            // EVIDENCE (item 3): what a paper fill pays, and the holdout's two.
+            "Use my numbers", "Clear my numbers", Labels.SetHoldout, Labels.SetHoldoutFixture,
+            // UPDATES (item 3).
+            "Check for updates", "What's new", "Install update", "Turn off automatic checks"
         ];
-        Assert.Equal([.. owners.Concat(choices).Order(StringComparer.Ordinal)], [.. presses.Order(StringComparer.Ordinal)]);
+        // THE ACCOUNT LIST'S ROWS arrive when the platform answers; each is the account's own press and nothing else.
+        Assert.Equal(string.Join(" | ", owners.Concat(choices).Order(StringComparer.Ordinal)),
+            string.Join(" | ", presses.Where(p => p != "Use this account").Order(StringComparer.Ordinal)));
 
         // NONE OF THE BOARD'S, by name — so a re-added one fails here with its own words, not as a count.
         string[] board =
@@ -63,6 +71,43 @@ public class OwnerPageTests
             .. Enum.GetValues<TradingMode>().Select(Ui.ModeLabel)
         ];
         foreach (var label in board) Assert.DoesNotContain(label, presses);
+
+        // AND THE SETTINGS PAGE KEEPS THE MARKET DATA ALONE: the owner's sections are on his page, in one tree only.
+        var settings = new SettingsPage(host);
+        var left = settings.Root.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string).ToList();
+        foreach (var label in owners) Assert.DoesNotContain(label, left);
+        Assert.Contains("Download 12 months", left);
+        return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// NO EVIDENCE SETTING IS A POLICY KEY (EVID-001; R24 § 4.3): the AI's price, what a paper fill pays, the holdout, a campaign's
+    /// budgets and the judge's capital stay the owner's — measurements, never the board's to set — so no field of the board's policy
+    /// names one, and the owner's page shows the campaign figures the settings row holds, read-only, with no box for them.
+    /// </summary>
+    [Fact]
+    public Task No_evidence_setting_is_a_policy_key() => OnThePage((page, host) =>
+    {
+        string[] evidence = ["price", "friction", "fee", "slippage", "holdout", "campaign", "trial", "verdict", "exploration", "judge", "capital"];
+        var paths = TradeAgent.Core.Board.BoardPolicyBody.Flatten(TradeAgent.Core.Board.BoardPolicyBody.Canonical(TradeAgent.Core.Board.BoardFounding.V1))
+            .Select(f => f.Path).ToList();
+        var properties = typeof(TradeAgent.Core.Board.BoardPolicy).GetProperties().Select(p => p.Name).ToList();
+        foreach (var word in evidence)
+        {
+            Assert.DoesNotContain(paths, p => p.Contains(word, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(properties, p => p.Contains(word, StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(Labels.BoardFields, f => f.Path.Contains(word, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // THE CAMPAIGN FIGURES, AS THE ROW HOLDS THEM, READ-ONLY.
+        host.Gateway.Update(s => { s.CampaignTrialBudget = 120; s.CampaignExplorationBudget = 500; s.CampaignVerdictBudget = 2; s.JudgeCapital = 0m; });
+        page.Update(host.Gateway.StatusAsync().GetAwaiter().GetResult());
+        TextBlock Of(string name) => (TextBlock)typeof(OwnerPage).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
+        Assert.Equal("120", Of("_trialBudget").Text);
+        Assert.Equal("120", Of("_explorationBudget").Text);           // clamped to the trials, as a campaign reads it
+        Assert.Equal("2", Of("_verdictBudget").Text);
+        Assert.StartsWith("10000", Of("_judgeCapital").Text, StringComparison.Ordinal);   // zero reads as the judge's ten thousand
+        Assert.Contains(Labels.CampaignBudgetsAreEvidence, page.Root.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
         return Task.CompletedTask;
     });
 

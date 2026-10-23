@@ -190,4 +190,15 @@ public static partial class Labels
     /// <summary>One turn sets aside more than the whole day allows, so a fresh day cannot fund it either.</summary>
     public static string TodayCannotFundATurn(string oneTurn, string repair) =>
         $"reached, and midnight will not bring a turn back: one turn of this kind sets aside {oneTurn}, more than the whole day allows. {repair}";
+
+    /// <summary>The owner's page's four groups, in the order they are shown.</summary>
+    public const string OwnerGroupConnections = "Connections";
+    public const string OwnerGroupMoney = "Real money";
+    public const string OwnerGroupEvidence = "Evidence";
+    public const string OwnerGroupUpdates = "Updates";
+
+    /// <summary>Under the campaign budgets: what they are, and why there is no box.</summary>
+    public const string CampaignBudgetsAreEvidence =
+        "What each research campaign may spend, and the account the judge pretends to have. Evidence, not limits: each campaign copies "
+        + "them when it opens, no model sets them, and the security board cannot either. This page shows them; it has no box for them.";
 }

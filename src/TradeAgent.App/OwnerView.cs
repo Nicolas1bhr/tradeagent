@@ -113,6 +113,12 @@ sealed class OwnerPage
     readonly TextBlock _releaseNoteResult = Ui.Micro("");
     readonly Button _release;
 
+    /// <summary>
+    /// WHAT A RESEARCH CAMPAIGN MAY SPEND, AND THE JUDGE'S CAPITAL — evidence settings (EVID-001), shown read-only: no model sets them, the
+    /// security board cannot either, and this build has no box for them (seat B's ruling Q6: no new owner control).
+    /// </summary>
+    readonly TextBlock _trialBudget = Ui.Body(""), _verdictBudget = Ui.Body(""), _explorationBudget = Ui.Body(""), _judgeCapital = Ui.Body("");
+
     /// <summary>THE OWNER'S PERCEPTION CARD (<c>U-decision-card</c>): the decision model's key, budget inside the cap, price, limits and Test press.</summary>
     readonly PerceptionCard _perception;
 
@@ -317,7 +323,7 @@ sealed class OwnerPage
     static string Rate((decimal In, decimal Out) rate, string currency) =>
         $"{Amount.ExactMoney(rate.In, currency)} in and {Amount.ExactMoney(rate.Out, currency)} out";
 
-    public OwnerPage(AppHost host)
+    public OwnerPage(AppHost host, SettingsPage settings)
     {
         _host = host;
 
@@ -343,7 +349,6 @@ sealed class OwnerPage
             Ui.With(Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
                     () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions)),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
-        emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
         _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
 
@@ -383,7 +388,7 @@ sealed class OwnerPage
             Ui.Spacer(Theme.S2),
             _seatClasses));
 
-        var evidence = Ui.Section("Evidence", Ui.Col(Theme.S2,
+        var evidence = Ui.Section("What a turn is priced at", Ui.Col(Theme.S2,
             Ui.Muted("What TradeAgent counts a turn as costing. It is evidence, not a limit: no model sets it, and the security board "
                 + "cannot either. TradeAgent works out what each turn cost from the tokens your AI tool reports; if you know what you "
                 + "are actually charged, put it here and it is used instead."),
@@ -396,7 +401,15 @@ sealed class OwnerPage
                 [_priceIn, _priceOut]),
             _priceNote));
 
-        var connections = Ui.Section("Connections", Ui.Col(Theme.S2,
+        var campaigns = Ui.Section("What a research campaign may spend", Ui.Col(Theme.S2,
+            Ui.KeyValueLive("Trials per campaign", _trialBudget),
+            Ui.KeyValueLive("Of them, for exploration", _explorationBudget),
+            Ui.KeyValueLive("Final verdicts per lineage", _verdictBudget),
+            Ui.KeyValueLive("The judge's capital", _judgeCapital),
+            Ui.Spacer(Theme.S2),
+            Ui.Muted(Labels.CampaignBudgetsAreEvidence)));
+
+        var connections = Ui.Section("Key for TradeAgent's own worker", Ui.Col(Theme.S2,
             Ui.Muted("TradeAgent's own worker calls the AI provider directly, with the tools TradeAgent chose and a budget it enforces on "
                 + "every request. It cannot run a shell, install anything or reach the internet. It needs a key, which is yours."),
             Ui.Spacer(Theme.S2),
@@ -474,8 +487,13 @@ sealed class OwnerPage
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, _releaseCard, running, connections, spending, _perception.Root, evidence)));
-        grid.Children.Add(Pages.Column(1, emergency));
+            _unreadableCard, _releaseCard, running,
+            Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, settings.Bridge,
+            Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
+            Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns,
+            Ui.H2(Labels.OwnerGroupUpdates), settings.Updates)));
+        grid.Children.Add(Pages.Column(1, Ui.With(Ui.Col(Theme.S6, emergency, settings.WhatTheseChange),
+            c => c.Margin = new Thickness(Theme.S5, 0, 0, 0))));
 
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header(Labels.OwnerPage, Labels.OwnerPageSubtitle),
@@ -514,9 +532,24 @@ sealed class OwnerPage
 
         ShowAllocations();
         ShowEnvelopes();
+        ShowCampaignBudgets();
         _perception.Update();
 
         Refresh();
+    }
+
+    /// <summary>The evidence settings a campaign copies at open, read off the settings row in force — never typed here.</summary>
+    void ShowCampaignBudgets()
+    {
+        // AS A CAMPAIGN READS THEM: a negative number is zero, exploration is at most the trials, and a capital of zero or less is the
+        // judge's ten thousand (TradeAgentSettings; VenueCostModel.CapitalOf) — the figures a campaign opened now would copy.
+        var s = _host.Gateway.Settings;
+        var trials = Math.Max(0, s.CampaignTrialBudget);
+        static string N(decimal n) => Amount.Exact(n);
+        _trialBudget.Text = N(trials);
+        _explorationBudget.Text = N(Math.Min(trials, Math.Max(0, s.CampaignExplorationBudget)));
+        _verdictBudget.Text = N(Math.Max(0, s.CampaignVerdictBudget));
+        _judgeCapital.Text = N(Core.Strategy.VenueCostModel.CapitalOf(s.JudgeCapital)) + ", in the units of the data's prices";
     }
 
     // ---- the key for TradeAgent's own worker (U-key-host-pin) ---------------------------------------

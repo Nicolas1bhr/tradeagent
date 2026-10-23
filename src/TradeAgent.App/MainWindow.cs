@@ -499,8 +499,9 @@ public sealed class MainWindow : Window
         _boardPage = new BoardPage(_host.Board);
         _report = new ReportPage(_host);
         _inbox = new InboxPage(_host);
-        _owner = new OwnerPage(_host);
+        // SETTINGS FIRST: it builds the owner's connection, evidence and update sections, which the owner's page shows (U-settings-shed).
         _settings = new SettingsPage(_host);
+        _owner = new OwnerPage(_host, _settings);
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
         _oversightPage = new OversightPage(OversightSources.For(_host));
