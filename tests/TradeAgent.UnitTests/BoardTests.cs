@@ -339,6 +339,58 @@ public class BoardTests(ITestOutputHelper log)
         Assert.Equal("1", Scalar(db, "SELECT COUNT(*) FROM board_event WHERE kind='earlier-live-set-aside'"));
     }
 
+    /// <summary>
+    /// AN EARLIER ARMED ROW THIS BUILD CANNOT OTHERWISE READ IS STILL REFUSED AND STILL KEPT (fix pass 1 of <c>U-board-a1</c>, the
+    /// review's finding on <c>LoadSettings</c>): the raw <c>mode</c>/<c>live_activated</c> check runs on the raw row before anything
+    /// else can fail, so a live row with an unrelated field this build cannot read — or a row cut off mid-way — refuses every order
+    /// under <c>HOME_ARMED_BEFORE_THE_BOARD</c>, and neither an ordinary save nor a kill-switch press rewrites it; only the owner's
+    /// set-aside press does, keeping it under its own key. RED before the fix: deserialisation returned first, so the armed row was
+    /// an unreadable one, its refusal another code, and the first save wrote over it.
+    /// </summary>
+    [Theory]
+    [InlineData("{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true,\"ai_trading_stopped\":\"bad\"}")]
+    [InlineData("{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true,\"risk\":[]}")]
+    [InlineData("{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true,\"risk\":{\"max_order_qu")]
+    public async Task An_earlier_armed_row_with_a_field_this_build_cannot_read_is_refused_and_kept(string raw)
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("settings", raw);
+        var conn = new FakeConnector(new FakeBroker { IsSimulated = false });
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var earlier = gw.EarlierLiveSetting;
+        log.WriteLine($"earlier setting: {earlier}");
+        Assert.NotNull(earlier);
+
+        // AN ORDINARY SAVE AND A KILL-SWITCH PRESS WRITE NOTHING OVER THE ROW.
+        gw.Update(_ => { });
+        gw.StopAiTrading("a test press");
+        Assert.Equal(raw, db.GetKv("settings"));
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "armed-damaged", TestEnv.Buy()));
+        log.WriteLine($"{denied.Code}: {denied.Message}");
+        Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, denied.Code);
+        Assert.Contains(Labels.SetAsideEarlierLiveSetting, denied.Message, StringComparison.Ordinal);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Equal(earlier.Sentence, gw.Health.Snapshot().Single(h => h.Component == Components.ExecutionCapability).Detail);
+        await gw.DisposeAsync();
+
+        // A RESTART FINDS IT STILL THERE, AND STILL REFUSES.
+        var conn2 = new FakeConnector(new FakeBroker { IsSimulated = false });
+        await using var again = new TradingGateway(db, conn2, new HealthRegistry());
+        Assert.NotNull(again.EarlierLiveSetting);
+        Assert.Equal(raw, db.GetKv("settings"));
+
+        // ONLY THE OWNER'S PRESS MOVES IT, AND IT KEEPS THE ROW AS FOUND.
+        again.SetAsideEarlierLiveSetting();
+        Assert.Null(again.EarlierLiveSetting);
+        Assert.Equal(raw, db.GetKv(TradingGateway.SettingsBeforeBoardKey));
+        Assert.NotEqual(raw, db.GetKv("settings"));
+    }
+
     /// <summary>A mode an earlier build wrote that is not live is ignored: no refusal, the founding policy governs.</summary>
     [Fact]
     public async Task An_earlier_practice_setting_is_ignored()

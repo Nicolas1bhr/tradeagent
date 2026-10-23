@@ -3076,6 +3076,32 @@ public sealed class TradingGateway : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(json))
             return SettingsThatCouldNotBeRead(json, new InvalidOperationException("the settings row is empty"));
 
+        // A HOME AN EARLIER BUILD ARMED FOR REAL MONEY (U-board-a1 item 5; R24 § 4.5). This build never writes `mode` or
+        // `live_activated` into this row — they are the security board's policy — so either key here was written by a build
+        // before the board. A live mode, real money switched on, or a value this build cannot name is REFUSED: every order, under
+        // its own code, in words naming both versions and the repair; the row is not rewritten and nothing is converted into a
+        // policy. A mode that is plainly not live is ignored with no refusal — the owner-set values of the board's fields go.
+        //
+        // FIRST, ON THE RAW ROW, WHATEVER ELSE FAILS (U-board-a1 fix pass 1). Asked after the typed read, an armed row with one
+        // unrelated field this build cannot read — `"ai_trading_stopped":"bad"`, `"risk":[]` — returned as merely unreadable: a
+        // different refusal with no repair, and the first ordinary save then wrote over the earlier real-money setting without
+        // the owner's press. Asked here, SaveSettings keeps the row whatever the typed read makes of it.
+        EarlierLiveSetting = EarlierLiveSettingIn(json);
+        if (EarlierLiveSetting is { } earlier)
+        {
+            try
+            {
+                _log.Activity(earlier.Sentence, "warn");
+                _log.Engineering("Gateway", "home_armed_before_the_board", "error", metadataJson: Json.Write(new
+                {
+                    mode = earlier.Mode, live_activated = earlier.LiveActivated, home_schema = earlier.HomeSchema,
+                    this_schema = Versions.DatabaseSchemaVersion
+                }));
+            }
+            catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
+            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, earlier.Sentence);
+        }
+
         // A ROW THIS BUILD CANNOT READ IS NOT AN EMPTY ROW (REVIEW 2026-09-05, finding 5).
         //
         // This catch returned `new TradeAgentSettings()`, and those defaults are the permissions of
@@ -3094,28 +3120,15 @@ public sealed class TradingGateway : IAsyncDisposable
             settings = Json.Read<TradeAgentSettings>(json)
                        ?? throw new InvalidOperationException("the settings row is the JSON literal null");
         }
-        catch (Exception ex) { return SettingsThatCouldNotBeRead(json, ex); }
-
-        // A HOME AN EARLIER BUILD ARMED FOR REAL MONEY (U-board-a1 item 5; R24 § 4.5). This build never writes `mode` or
-        // `live_activated` into this row — they are the security board's policy — so either key here was written by a build
-        // before the board. A live mode, real money switched on, or a value this build cannot name is REFUSED: every order, under
-        // its own code, in words naming both versions and the repair; the row is not rewritten and nothing is converted into a
-        // policy. A mode that is plainly not live is ignored with no refusal — the owner-set values of the board's fields go.
-        EarlierLiveSetting = EarlierLiveSettingIn(json);
-        if (EarlierLiveSetting is { } earlier)
+        catch (Exception ex)
         {
-            try
-            {
-                _log.Activity(earlier.Sentence, "warn");
-                _log.Engineering("Gateway", "home_armed_before_the_board", "error", metadataJson: Json.Write(new
-                {
-                    mode = earlier.Mode, live_activated = earlier.LiveActivated, home_schema = earlier.HomeSchema,
-                    this_schema = Versions.DatabaseSchemaVersion
-                }));
-            }
-            catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
-            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, earlier.Sentence);
+            var unreadable = SettingsThatCouldNotBeRead(json, ex);
+            // The armed home's sentence over the unreadable one: it is the refusal the dispatch gate gives, and it names the press.
+            if (EarlierLiveSetting is { } armedToo)
+                _health.Set(Components.ExecutionCapability, HealthState.PAUSED, armedToo.Sentence);
+            return unreadable;
         }
+
         return settings;
     }
 
@@ -3152,7 +3165,18 @@ public sealed class TradingGateway : IAsyncDisposable
                     parts.Add(l.ValueKind == System.Text.Json.JsonValueKind.True ? "real money switched on" : $"real money set to {live}");
             }
         }
-        catch (System.Text.Json.JsonException) { return null; }
+        catch (System.Text.Json.JsonException)
+        {
+            // A ROW THAT DOES NOT PARSE AND NAMES EITHER KEY (U-board-a1 fix pass 1): this build never writes `mode` or
+            // `live_activated`, so an earlier build did, and what it set cannot be read. Refuse, never guess: armed.
+            if (raw.Contains("\"mode\"", StringComparison.Ordinal) || raw.Contains("\"live_activated\"", StringComparison.Ordinal))
+            {
+                (mode, live) = ("unreadable", "unreadable");
+                parts.Clear();
+                parts.Add("a trading mode or real-money setting this version cannot read");
+            }
+            else return null;
+        }
         if (parts.Count == 0) return null;
 
         int homeSchema;
@@ -13601,13 +13625,13 @@ public sealed class TradingGateway : IAsyncDisposable
             // THE RECORDS EXECUTION STANDS ON are in here rather than only where they were read, because this method RECOMPUTES the
             // row from scratch on every five-second pass: a state set once at startup and overwritten a moment later is a claim that
             // does not hold, and the gate and the screen would then disagree about whether this installation can trade at all.
-            // In order: the board's policy (U-board-a1), the settings row, and a home an earlier build armed for real money — each
-            // pauses execution and names itself; then the unconfirmed work.
+            // In order: a home an earlier build armed for real money (first, as at the dispatch gate: its words name the press), the
+            // board's policy (U-board-a1) and the settings row — each pauses execution and names itself; then the unconfirmed work.
             var unreconciled = Unreconciled().Count;
             var latched = _unconfirmed.Values.FirstOrDefault();
-            var why = Policy.CouldNotBeRead ? Labels.BoardPolicyCouldNotBeRead
+            var why = EarlierLiveSetting is { } earlier ? earlier.Sentence
+                : Policy.CouldNotBeRead ? Labels.BoardPolicyCouldNotBeRead
                 : Settings.CouldNotBeRead ? Labels.SettingsCouldNotBeRead
-                : EarlierLiveSetting is { } earlier ? earlier.Sentence
                 : null;
             _health.Set(Components.ExecutionCapability,
                 why is not null || unreconciled > 0 || latched is not null ? HealthState.PAUSED
