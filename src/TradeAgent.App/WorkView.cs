@@ -116,7 +116,7 @@ sealed record WorkWords(
     {
         var c = f.Forecast;
         var said = OrgText.Claim(c.Forecaster,
-            $"{c.Predicate} {c.Subject} → {c.Target}, by {OrgText.When(c.ResolveBy)}, probability {c.Probability.ToString("0.####", CultureInfo.InvariantCulture)}");
+            $"{c.Predicate} {c.Subject} → {c.Target}, by {OrgText.When(c.ResolveBy)}, probability {c.Probability.ToString(CultureInfo.InvariantCulture)}");
         var scored = c.Scored ? "" : $" The app does not score it: {c.UnscoredWhy}.";
         var outcome = f.Resolution is { } r
             ? $"The app resolved it: {r.Outcome}, resting on {r.RecordKind} {r.RecordId} ({OrgText.When(r.At)}) — {r.Why}."

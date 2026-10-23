@@ -152,6 +152,26 @@ public class WorkPageTests
     }
 
     /// <summary>
+    /// (b1) A PROBABILITY IS SHOWN EXACTLY AS THE FORECASTER RECORDED IT, culture-free and unrounded: 0.99999 is not "1" (a claim shown as
+    /// certainty) and 0.70 is not rewritten as 0.7.
+    /// RED at base: <c>0.####</c> printed 0.99999 as 1.
+    /// </summary>
+    [Fact]
+    public void A_probability_is_shown_exactly_as_recorded()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var decision = new OrgStore(db).Decide(Head, null, "routine", ["a"], "a", "a reason", [], [], Now.AddHours(-1));
+        Forecast(db, "fc-0000000000f1", decision.Id, "0.99999");
+        Forecast(db, "fc-0000000000f2", decision.Id, "0.70");
+
+        var lines = Words(db).Decisions.Single().Forecasts.Split('\n');
+
+        Assert.Contains("probability 0.99999\u201d", lines[0], StringComparison.Ordinal);
+        Assert.Contains("probability 0.70\u201d", lines[2], StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (b2) A CLAIM LONGER THAN THE PAGE PRINTS IS CUT AND SAYS SO, and an empty rationale is said to be absent — never a blank that reads as agreement.
     /// </summary>
     [Fact]
