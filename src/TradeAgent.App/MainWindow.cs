@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Organisation, Work, Costs, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
+    enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
 
     readonly AppHost _host;
 
@@ -133,6 +133,7 @@ public sealed class MainWindow : Window
     WorkPage? _work;
     CostsPage? _costs;
     DashboardPage? _dashboard;
+    BoardPage? _boardPage;
     ReportPage? _report;
     SafetyPage? _safety;
     SettingsPage? _settings;
@@ -418,6 +419,9 @@ public sealed class MainWindow : Window
         AddNav(Page.Work, Labels.NavWork);
         AddNav(Page.Costs, Labels.NavCosts);
         AddNav(Page.Dashboard, "Dashboard");
+        // THE SECURITY BOARD'S DECISIONS IN FORCE, read-only (U-settings-shed; R24 § 4.7): every limit and allowance the app enforces,
+        // beside the live picture they govern.
+        AddNav(Page.Board, Labels.BoardPage);
         // Straight after the Dashboard, because it answers the same question over a longer window:
         // the Dashboard is what is true now, the report is what was true on a day, and an owner who
         // has just read one is the person looking for the other.
@@ -492,6 +496,7 @@ public sealed class MainWindow : Window
         _work = new WorkPage(org);
         _costs = new CostsPage(org);
         _dashboard = new DashboardPage(_host, StartOrStopAgentAsync);
+        _boardPage = new BoardPage(_host.Board);
         _report = new ReportPage(_host);
         _inbox = new InboxPage(_host);
         _safety = new SafetyPage(_host);
@@ -505,6 +510,7 @@ public sealed class MainWindow : Window
         Add(Page.Work, _work.Root);
         Add(Page.Costs, _costs.Root);
         Add(Page.Dashboard, _dashboard.Root);
+        Add(Page.Board, _boardPage.Root);
         Add(Page.Report, _report.Root);
         Add(Page.Inbox, _inbox.Root);
         Add(Page.Safety, _safety.Root);
@@ -576,6 +582,7 @@ public sealed class MainWindow : Window
         _work?.Update();
         _costs?.Update();
         _dashboard?.Update(status, waiting);
+        _boardPage?.Update();
         _report?.Update();
         _inbox?.Update();
         _safety?.Update(status);

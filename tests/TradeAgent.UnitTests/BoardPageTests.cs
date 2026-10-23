@@ -1,0 +1,168 @@
+using System.Reflection;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
+using TradeAgent.App;
+using TradeAgent.Core;
+using TradeAgent.Core.Board;
+using TradeAgent.Core.Db;
+using Xunit;
+
+namespace TradeAgent.Tests.Unit;
+
+/// <summary>
+/// THE BOARD PAGE (<c>U-settings-shed</c> item 1; R24 § 4.7): every decision of the security board in force, in words, with the version
+/// that set it — a founding value labelled the app's, never the owner's — read through <see cref="BoardReader"/> and nothing that writes,
+/// built once and updated in place.
+/// </summary>
+public class BoardPageTests
+{
+    static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+    /// <summary>A policy whose standing paper envelope is set with an end, so its seven terms are flattened too.</summary>
+    static BoardPolicy WithEnvelope() => BoardFounding.V1 with
+    {
+        PaperEnvelope = new PaperEnvelopeTerms("paper", "acct", "BTCUSDT", 1m, 100m, 2, 30)
+    };
+
+    static IEnumerable<string> PathsOf(BoardPolicy policy) =>
+        BoardPolicyBody.Flatten(BoardPolicyBody.Canonical(policy)).Select(f => f.Path);
+
+    /// <summary>
+    /// EVERY POLICY KEY HAS A PLAIN LABEL: each field the founding policy holds — and each of the envelope's terms, which appear only
+    /// while one stands — has words on the page, and no label is a path in disguise. And the other way: no label waits for a key the
+    /// policy cannot hold. A key with no words is refused on the page, never shown as a decision (the page test below).
+    /// </summary>
+    [Fact]
+    public void Every_policy_key_has_a_plain_label()
+    {
+        var paths = PathsOf(BoardFounding.V1).Concat(PathsOf(WithEnvelope())).Concat(PathsOf(BoardFounding.V1 with { PaperEnvelope = null }))
+            .Distinct().ToList();
+        Assert.Contains("mode", paths);
+        Assert.Contains("risk.max_order_quantity", paths);
+        Assert.Contains("paper_envelope.instrument", paths);
+
+        foreach (var path in paths)
+        {
+            var words = Labels.BoardField(path);
+            Assert.True(words is not null, $"the policy key “{path}” has no words on the Board page");
+            Assert.DoesNotContain("_", words!.Label);
+            Assert.DoesNotContain(".", words.Label);
+            Assert.False(string.IsNullOrWhiteSpace(words.Group));
+        }
+        foreach (var words in Labels.BoardFields)
+            Assert.True(paths.Contains(words.Path), $"the label “{words.Label}” waits for “{words.Path}”, which no policy holds");
+
+        // THE PAGE REFUSES A KEY WITH NO WORDS: named in a caution line, and shown nowhere as a value.
+        Assert.Null(Labels.BoardField("a_key_no_build_has"));
+        Assert.Contains("“a_key_no_build_has”", Labels.BoardFieldUnnamed(["a_key_no_build_has"]), StringComparison.Ordinal);
+        Assert.Contains("not shown here as a decision", Labels.BoardFieldUnnamed(["x"]), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A FOUNDING VALUE IS LABELLED THE APP'S, NEVER THE OWNER'S (R24 § 4.5; honesty): on a fresh home every row the page shows reads
+    /// "founding (the app's)", the decider is the app, and nothing on the page says the owner set it.
+    /// </summary>
+    [Fact]
+    public void A_founding_value_is_labelled_the_apps_never_the_owners()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        var inForce = new BoardReader(db).InForce();
+        Assert.False(inForce.CouldNotBeRead);
+
+        var rows = Rows(page);
+        Assert.Equal(inForce.Fields.Count, rows.Count(r => r.Root.IsVisible));
+        foreach (var field in inForce.Fields)
+        {
+            var row = rows.Single(r => r.Path == field.Name);
+            Assert.True(row.Root.IsVisible, field.Name);
+            Assert.StartsWith("founding (the app's)", row.Source.Text, StringComparison.Ordinal);
+            Assert.False(string.IsNullOrWhiteSpace(row.Value.Text), field.Name);
+        }
+
+        var text = AllText(page);
+        Assert.Contains(Labels.BoardDecider(BoardDecider.App), text);
+        foreach (var claim in new[] { "set by you", "you set", "your choice", "you decided", "chosen by you" })
+            Assert.DoesNotContain(claim, text, StringComparison.OrdinalIgnoreCase);
+
+        // THE VALUES ARE THE POLICY'S OWN: the mode in its words, the plan's figure as written and never called money.
+        Assert.Equal(Ui.ModeLabel(TradingMode.PAPER), rows.Single(r => r.Path == "mode").Value.Text);
+        Assert.Equal("off — no real money", rows.Single(r => r.Path == "live_activated").Value.Text);
+        var plan = inForce.Fields.Single(f => f.Name == "plan_day_total").Value;
+        Assert.Equal($"{plan} a day, counted at list price — not money", rows.Single(r => r.Path == "plan_day_total").Value.Text);
+    }
+
+    /// <summary>
+    /// THE BOARD PAGE HOLDS NO PRESS THAT WRITES (AUTH-001): it is built from a <see cref="BoardReader"/> alone — no host, no gateway, no
+    /// store, no database it could write through — and the only press in its tree opens the version history, which reads.
+    /// </summary>
+    [Fact]
+    public void The_board_page_holds_no_press_that_writes()
+    {
+        var ctor = Assert.Single(typeof(BoardPage).GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance));
+        Assert.Equal([typeof(BoardReader)], ctor.GetParameters().Select(p => p.ParameterType));
+
+        Type[] writers = [typeof(AppHost), typeof(TradeAgent.Gateway.TradingGateway), typeof(BoardStore), typeof(Database)];
+        foreach (var f in typeof(BoardPage).GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+            Assert.DoesNotContain(f.FieldType, writers);
+
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        var buttons = page.Root.GetLogicalDescendants().OfType<Button>().ToList();
+        var only = Assert.Single(buttons);
+        Assert.Equal(Labels.ShowBoardHistory, only.Content);
+
+        Press(only);
+        Assert.Equal(Labels.HideBoardHistory, only.Content);
+        Assert.Contains(Labels.BoardHistoryFoundingOnly, AllText(page));
+        Assert.Contains(Labels.BoardRationale(null), AllText(page));
+        Assert.Contains(Labels.BoardScore(null), AllText(page));
+        Assert.Single(page.Root.GetLogicalDescendants().OfType<Button>());
+    }
+
+    /// <summary>
+    /// THE BOARD PAGE IS BUILT ONCE AND UPDATED IN PLACE (CLAUDE.md): the five-second pass writes text into the controls built at
+    /// construction and adds or removes none — the rows, the seats and an opened history are the same objects after three passes.
+    /// </summary>
+    [Fact]
+    public void The_board_page_is_built_once_and_updated_in_place()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        Press(page.Root.GetLogicalDescendants().OfType<Button>().Single());
+
+        var before = page.Root.GetLogicalDescendants().ToList();
+        var texts = before.OfType<TextBlock>().Select(t => t.Text).ToList();
+        for (var i = 0; i < 3; i++) page.Update();
+        var after = page.Root.GetLogicalDescendants().ToList();
+
+        Assert.Equal(before.Count, after.Count);
+        Assert.True(before.Zip(after).All(p => ReferenceEquals(p.First, p.Second)), "a pass replaced a control");
+        Assert.Equal(texts, after.OfType<TextBlock>().Select(t => t.Text).ToList());
+
+        // THE SEATS: one line each, the founding composition, dormant in words.
+        var text = AllText(page);
+        foreach (var seat in BoardFounding.Seats) Assert.Contains(seat.Id, text);
+        Assert.Contains(Labels.BoardSeatStatus(BoardSeatStatus.Dormant), text);
+        Assert.Contains(Labels.BoardSeatsDormant, text);
+    }
+
+    sealed record RowView(string Path, Control Root, TextBlock Value, TextBlock Source);
+
+    static List<RowView> Rows(BoardPage page)
+    {
+        var rows = (System.Collections.IDictionary)typeof(BoardPage).GetField("_rows", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
+        var list = new List<RowView>();
+        foreach (System.Collections.DictionaryEntry e in rows)
+        {
+            var t = e.Value!.GetType();
+            list.Add(new RowView((string)e.Key, (Control)t.GetProperty("Root")!.GetValue(e.Value)!,
+                (TextBlock)t.GetProperty("Value")!.GetValue(e.Value)!, (TextBlock)t.GetProperty("Source")!.GetValue(e.Value)!));
+        }
+        return list;
+    }
+
+    static string AllText(BoardPage page) =>
+        string.Join("\n", page.Root.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+}
