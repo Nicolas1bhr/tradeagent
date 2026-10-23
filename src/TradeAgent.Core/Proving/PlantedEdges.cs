@@ -121,6 +121,13 @@ public sealed record PlantedFigures(
 /// </summary>
 internal static class PlantedEdges
 {
+    /// <summary>
+    /// THE LARGEST |β|, IN TICKS PER UNIT, WHOSE FIGURES THIS BUILD REPRESENTS: the reference trade's variance carries β² in
+    /// ticks², a long, and ⌊√(2^63 − 1)⌋ is the largest whose square is one. A larger β is refused in words, never squared
+    /// past it — a wrapped square restores the noise-only denominator and states a Sharpe the market does not have.
+    /// </summary>
+    internal const long MaxBetaTicks = 3_037_000_499;
+
     /// <summary>ln 2 to decimal's 28 digits.</summary>
     const decimal Ln2 = 0.6931471805599453094172321215m;
 
@@ -328,7 +335,8 @@ internal static class PlantedEdges
 
         // THE REFERENCE TRADE'S WHOLE VARIANCE: its P&L is |β|·|z|·w plus the horizon's noise, z and w independent, so
         // Var = β²·(E[z²]·E[w²] − (E|z|·w̄)²) + the noise's — the planted move varies from reading to reading too.
-        var spread = edge.BetaTicks * edge.BetaTicks * (MeanSquareValue * meanSquare - MeanAbsoluteValue * MeanAbsoluteValue * mean * mean);
+        // β² CHECKED: Refusal keeps |β| at or below MaxBetaTicks, and a square past a long throws here rather than wrapping.
+        var spread = checked(edge.BetaTicks * edge.BetaTicks) * (MeanSquareValue * meanSquare - MeanAbsoluteValue * MeanAbsoluteValue * mean * mean);
         var sigma = Sqrt(Math.Max(0m, spread) + MinuteVariance * edge.HorizonMinutes);
         var perYear = Sqrt(readings * 365m / spec.Days);
         var trip = RoundTripBps(spec.VenueId);
@@ -350,6 +358,10 @@ internal static class PlantedEdges
     internal static string? Refusal(SyntheticMarketSpec spec, SyntheticEdge edge)
     {
         if (edge.HorizonMinutes is < 1 or > 60) return "a planted edge's horizon is 1 to 60 minutes";
+        if (edge.BetaTicks is > MaxBetaTicks or < -MaxBetaTicks)
+            return string.Create(CultureInfo.InvariantCulture,
+                $"a planted move of {edge.BetaTicks} ticks per unit cannot be represented: the figures its manifest states carry β² in ticks², a "
+                + $"whole number no larger than {long.MaxValue}, and β is at most {MaxBetaTicks} either way");
         if (ProvingSources.Shape(edge.Series) is not { } shape)
             return $"a planted edge rides one of the proving ground's series ({string.Join(", ", ProvingSources.Shapes.Select(s => s.Id))}), and '{edge.Series}' is none of them";
         if (!spec.Series.Contains(edge.Series, StringComparer.Ordinal))

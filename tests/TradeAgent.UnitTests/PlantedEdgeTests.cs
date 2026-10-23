@@ -489,6 +489,51 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A PLANTED MOVE WHOSE FIGURES CANNOT BE REPRESENTED IS REFUSED IN WORDS, NEVER STATED WITH A WRAPPED SHARPE (fix pass 2,
+    /// finding 2). The reference trade's variance carries β² in ticks²: β 4,294,967,296 squares to 2^64, which a long wraps to
+    /// zero, silently restoring the noise-only denominator. That β, the first past the largest whose square is a long
+    /// (3,037,000,500) and the most negative long are refused before anything is written; the largest, 3,037,000,499, is
+    /// planted and its manifest's Sharpe before cost is the reference trade's mean over its whole deviation, enumerated here
+    /// independently — E|z| over the spread of |z| and the noise, every z from −50 to 50 equally likely, w 1 throughout.
+    /// </summary>
+    [Fact]
+    public void A_planted_move_whose_figures_cannot_be_represented_is_refused_in_words_never_a_wrapped_sharpe()
+    {
+        using var scratch = TestEnv.NewScratch("planted-beta-range");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        const int Days = 2;
+
+        foreach (var beta in new[] { 4_294_967_296L, 3_037_000_500L, -3_037_000_500L, long.MinValue })
+        {
+            var spec = new SyntheticMarketSpec(57, "SYNA", VenueCatalog.BinanceSpot, Start, Days, new SyntheticEdge(beta));
+            var refused = Assert.Throws<ArgumentException>(() => p.Write(spec));
+            log.WriteLine($"β {beta}: {refused.Message}");
+            Assert.Contains("cannot be represented", refused.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(SyntheticMarket.TruthFile(p.Home, spec)), $"β {beta}: a refused market wrote its truth");
+        }
+
+        const long Largest = 3_037_000_499L;
+        var market = p.Write(new SyntheticMarketSpec(57, "SYNA", VenueCatalog.BinanceSpot, Start, Days, new SyntheticEdge(Largest)));
+        var figures = Truth(market).GetProperty("planted")[0].GetProperty("figures");
+        var readings = figures.GetProperty("readings").GetInt32();
+
+        double draw = 0;
+        for (var u = -10; u <= 10; u++) draw += (double)u * u / 21;
+        var minute = 0.5 * 4 * draw + 0.5 * 4 * 4 * draw;
+        double abs = 0, square = 0;
+        for (var z = -50; z <= 50; z++)
+        {
+            abs += Math.Abs(z) / 101.0;
+            square += (double)z * z / 101.0;
+        }
+        var beta2 = (double)Largest * Largest;
+        var expected = Largest * abs / Math.Sqrt(beta2 * (square - abs * abs) + minute * 60) * Math.Sqrt(readings * 365.0 / Days);
+        var said = (double)figures.GetProperty("expected_sharpe_before_cost").GetDecimal();
+        log.WriteLine($"β {Largest}: {readings} readings, enumerated Sharpe {expected:0.0000} before cost; the manifest says {said}");
+        Assert.InRange(said, expected - 0.006, expected + 0.006);
+    }
+
+    /// <summary>
     /// THE MANIFEST'S SHARPE IS THE REFERENCE TRADE'S MEAN OVER ITS TOTAL STANDARD DEVIATION (fix pass 1, finding 2). The
     /// reference trade takes every reading in the relation's direction, so its P&amp;L is |β|·|z|·w plus the horizon's noise.
     /// Enumerated here, independently of the generator's arithmetic: every reading's weight w from its move hour (the
