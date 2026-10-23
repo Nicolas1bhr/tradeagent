@@ -66,7 +66,7 @@ public class OrganisationPageTests
         Assert.Equal("Paid from: real money (an API key).", head.Billing);
 
         var member = team.Positions.Single(p => p.Id == Member);
-        Assert.Equal("Set to run on: the app's default runtime and model.", member.Seat);
+        Assert.Equal("Set to run on: nothing of its own, and where it runs is not resolved here.", member.Seat);
         Assert.Contains("unconfined: a command-line seat started as you", member.Cell, StringComparison.Ordinal);
         Assert.Equal("Paid from: your ChatGPT plan's capacity.", member.Billing);
 
@@ -84,6 +84,40 @@ public class OrganisationPageTests
             Assert.DoesNotContain(raw, everything, StringComparison.Ordinal);
         Assert.Equal(Labels.CellProofNone, words.Proof);
         Assert.Equal(Labels.CellProofHeld, OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: true), null).Proof);
+    }
+
+    /// <summary>
+    /// (a2) A POSITION WITH NO SEAT OF ITS OWN SHOWS WHAT ITS LAUNCH REALLY RESOLVES TO, never a default: Research, whose seat is the Safety page's, shows
+    /// its runtime and model as the app resolves them; a seat that cannot be resolved says why; and with nothing to resolve it, the page says
+    /// it does not know here rather than naming a runtime.
+    /// RED at base: it said "the app's default runtime and model" for every position with empty seat columns.
+    /// </summary>
+    [Fact]
+    public void A_position_without_its_own_seat_shows_what_its_launch_resolves_to_and_never_a_default()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        ResolvedSeat Resolve(string role) => role switch
+        {
+            CouncilRoles.Research => new ResolvedSeat("api", "model-r", null),
+            Member => new ResolvedSeat(null, null, "its seat names a program this computer does not run"),
+            _ => new ResolvedSeat("codex", null, null)
+        };
+
+        var words = OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: false, seatOf: Resolve), null);
+
+        string Seat(string unit, string position) => words.Units.Single(u => u.Id == unit).Positions.Single(p => p.Id == position).Seat;
+        Assert.Equal("Resolves to: api, model model-r (it has no seat of its own; the app's settings for the role decide).",
+            Seat(OrgIds.Research, CouncilRoles.Research));
+        Assert.Equal("Resolves to: codex, no model named (it has no seat of its own; the app's settings for the role decide).",
+            Seat(Team, Head));
+        Assert.Equal("Its seat cannot be resolved: its seat names a program this computer does not run.", Seat(Team, Member));
+        Assert.DoesNotContain("default", Seat(Team, Head), StringComparison.OrdinalIgnoreCase);
+
+        // NOTHING TO RESOLVE IT WITH: it does not know, and does not say a runtime.
+        var blind = OrganisationWords.Of(OrganisationRead.From(new OrgStore(db), new AiAttemptStore(db), proofHeld: false), null);
+        Assert.Equal("Set to run on: nothing of its own, and where it runs is not resolved here.",
+            blind.Units.Single(u => u.Id == Team).Positions.Single(p => p.Id == Head).Seat);
     }
 
     /// <summary>

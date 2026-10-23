@@ -6,6 +6,12 @@ using TradeAgent.Core.Db;
 namespace TradeAgent.App;
 
 /// <summary>
+/// WHERE A POSITION WITH NO SEAT OF ITS OWN WOULD RUN, as the launch resolves it (<c>AppHost.SeatFor</c>): its runtime and model, or — when the
+/// seat cannot be read or served — the reason, in the app's words. Never a default the page guessed.
+/// </summary>
+sealed record ResolvedSeat(string? Runtime, string? Model, string? Refused);
+
+/// <summary>
 /// WHAT THE ORGANISATION-FIRST PAGES ARE HANDED (<c>U-org-surface-a</c>): the stores they read, as delegates, so the page the owner sees and
 /// the page a test presses are the same control over different sources. The app builds it from <see cref="AppHost"/>'s App-internal accessors.
 /// <b>Reads only</b>: no source here writes, and none reaches the agent-facing pipe — operator authority stays in-process and on its own pages.
@@ -27,9 +33,16 @@ sealed record OrgSurfaceSources
     /// <summary>The clock a deadline is judged against and the day is cut by.</summary>
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Where a position resolves to, the way its launch does (seat columns first, else the app's settings for the role), or null where there is
+    /// nothing to ask — a test, a build with no host.
+    /// </summary>
+    public Func<string, ResolvedSeat>? SeatOf { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
+        SeatOf = host.ResolvedSeatOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
         ProofHeld = () => host.CellProofHeld,

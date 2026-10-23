@@ -66,6 +66,23 @@ public sealed class AppHost : IAsyncDisposable
 
     internal AiAttemptStore? AttemptLedger => _db is { } d ? new AiAttemptStore(d) : null;
 
+    /// <summary>
+    /// WHERE <paramref name="role"/> RUNS, as its next launch resolves it (<see cref="SeatFor"/>) — read only, for the chart page. A seat that cannot
+    /// be read or served answers with the reason in words, never a guess.
+    /// </summary>
+    internal ResolvedSeat ResolvedSeatOf(string role)
+    {
+        try
+        {
+            var seat = SeatFor(role);
+            return new ResolvedSeat(seat.Runtime, seat.Model, null);
+        }
+        catch (Exception ex)
+        {
+            return new ResolvedSeat(null, null, ex.Message);
+        }
+    }
+
     internal bool CellProofHeld => _db is { } d && new CellProofStore(d).HoldsProof();
 
     /// <summary>The public audit line (<c>U-org-audit-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>

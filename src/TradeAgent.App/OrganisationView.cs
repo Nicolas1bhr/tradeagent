@@ -13,10 +13,22 @@ sealed record OrganisationRead(
     IReadOnlyList<OrgUnitRow> Units,
     IReadOnlyList<OrgPositionRow> Positions,
     IReadOnlyDictionary<string, RecordedSeat> Seats,
-    bool ProofHeld)
+    bool ProofHeld,
+    IReadOnlyDictionary<string, ResolvedSeat>? Resolved = null)
 {
-    public static OrganisationRead From(OrgStore org, AiAttemptStore attempts, bool proofHeld) =>
-        new(org.Units(), org.Positions(), attempts.RecordedSeats(), proofHeld);
+    /// <summary>
+    /// <paramref name="seatOf"/> resolves an ACTIVE position that has no seat of its own the way its launch would; null resolves none, and the
+    /// page says so instead of naming a runtime.
+    /// </summary>
+    public static OrganisationRead From(OrgStore org, AiAttemptStore attempts, bool proofHeld, Func<string, ResolvedSeat>? seatOf = null)
+    {
+        var positions = org.Positions();
+        var resolved = seatOf is null
+            ? null
+            : positions.Where(p => p.SeatRuntime is null && p.Status == OrgPositionStatus.Active)
+                .ToDictionary(p => p.Id, p => seatOf(p.Id), StringComparer.Ordinal);
+        return new OrganisationRead(org.Units(), positions, attempts.RecordedSeats(), proofHeld, resolved);
+    }
 }
 
 /// <summary>One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on and who paid.</summary>
@@ -46,7 +58,7 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         var units = tree.Select(t =>
         {
             var (unit, depth) = t;
-            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats)).ToList();
+            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved)).ToList();
             return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions);
         }).ToList();
 
@@ -66,17 +78,26 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         return $"{unit.Kind}, {unit.Status}{closed}; {head}; {active} active {(active == 1 ? "position" : "positions")}.";
     }
 
-    static OrgPositionWords PositionWords(OrgUnitRow unit, OrgPositionRow p, IReadOnlyDictionary<string, RecordedSeat> seats)
+    static OrgPositionWords PositionWords(OrgUnitRow unit, OrgPositionRow p, IReadOnlyDictionary<string, RecordedSeat> seats,
+        IReadOnlyDictionary<string, ResolvedSeat>? resolved)
     {
         var role = unit.HeadPositionId == p.Id ? $"head of {OrgText.UnitTitle(unit)}"
             : unit.Kind == OrgUnitKind.Staff ? $"staff of {OrgText.UnitTitle(unit)}"
             : $"member of {OrgText.UnitTitle(unit)}";
 
-        var set = p.SeatRuntime is null
-            ? "Set to run on: the app's default runtime and model."
-            : p.SeatModel is null
-                ? $"Set to run on: {p.SeatRuntime}, no model named."
-                : $"Set to run on: {p.SeatRuntime}, model {p.SeatModel}.";
+        string set;
+        if (p.SeatRuntime is not null)
+            set = p.SeatModel is null ? $"Set to run on: {p.SeatRuntime}, no model named." : $"Set to run on: {p.SeatRuntime}, model {p.SeatModel}.";
+        else if (resolved is not null && resolved.TryGetValue(p.Id, out var r))
+            set = r.Refused is { Length: > 0 } why
+                ? $"Its seat cannot be resolved: {why}."
+                : r.Runtime is null
+                    ? "Resolves to: no runtime is chosen yet (it has no seat of its own; the app's settings for the role decide)."
+                    : $"Resolves to: {r.Runtime}, {(r.Model is null ? "no model named" : $"model {r.Model}")} (it has no seat of its own; the app's settings for the role decide).";
+        else if (p.Status != OrgPositionStatus.Active)
+            set = $"Set to run on: nothing of its own; it is {p.Status}, so no seat is resolved.";
+        else
+            set = "Set to run on: nothing of its own, and where it runs is not resolved here.";
 
         if (!seats.TryGetValue(p.Id, out var seat))
             return new OrgPositionWords(p.Id, role, p.Status, set,
@@ -146,7 +167,7 @@ sealed class OrganisationPage
         {
             if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld()), null);
+                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf), null);
                 read = true;
             }
             else words = OrganisationWords.Of(null, null);
