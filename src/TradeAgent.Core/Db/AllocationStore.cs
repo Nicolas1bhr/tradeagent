@@ -381,7 +381,7 @@ public sealed class Allocations(Database db)
             return new AllocationResult(false,
                 "this is the live capital ledger and the allocation offered to it is scoped to paper, "
                 + "so nothing was written. A paper allocation is written by TradeAgent's own policy "
-                + "inside an envelope you granted, never by the capital card.", null);
+                + "inside a standing paper envelope, never by the capital card.", null);
 
         var standing = _promotions.Standing(allocation.VersionId);
 
@@ -526,8 +526,9 @@ public sealed class Allocations(Database db)
         if (_envelopes.ById(envelopeId) is not { } envelope || !envelope.StandsAt(now))
             return new AllocationResult(false,
                 $"the paper envelope {Short(envelopeId)} does not stand right now, so nothing was "
-                + "allocated to paper under it. An envelope is granted by the account owner in "
-                + "TradeAgent and ends on its own date; there is no command that asks for one.", null);
+                + "allocated to paper under it. An envelope is granted inside TradeAgent — by the "
+                + "security board's policy since the board — and ends on its own date, or when withdrawn; "
+                + "there is no command that asks for one.", null);
 
         if (!string.Equals(envelope.ConnectorId, connector, StringComparison.Ordinal)
             || !string.Equals(envelope.AccountId, account, StringComparison.Ordinal))

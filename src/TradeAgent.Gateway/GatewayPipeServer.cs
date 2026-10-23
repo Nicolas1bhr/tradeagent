@@ -3812,7 +3812,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// </summary>
     object DeploymentList() => new DeploymentListReply(
         "A paper deployment is TradeAgent running a frozen strategy version forward on a practice "
-        + "account, inside the paper envelope the account owner granted once. It carries NO capital "
+        + "account, inside the paper envelope standing on that account. It carries NO capital "
         + "and NO live authority, its fills are simulated, and nothing it produces is execution "
         + "evidence. You cannot start one, widen one, point it somewhere else or move its cursor; "
         + "'deployment-stop' ends one, which only ever removes exposure.",

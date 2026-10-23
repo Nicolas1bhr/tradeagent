@@ -55,6 +55,9 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>The policy in force as this gateway read it at construction — or the unreadable shape, which fails closed.</summary>
     BoardPolicy _policy;
 
+    /// <summary>The record <see cref="_policy"/> was read from: its version, who decided it and on what basis (<c>U-board-a2</c> item 10).</summary>
+    BoardPolicyInForce? _inForce;
+
     /// <summary>
     /// THE SECURITY BOARD'S POLICY IN FORCE (<c>U-board-a1</c>; R24 § 4.5): the mode and real money every gate reads, and nothing
     /// else's. Read from <c>board_policy</c> — whose rows cannot hold a live mode or an activation — when this gateway is built, and
@@ -376,12 +379,6 @@ public sealed class TradingGateway : IAsyncDisposable
         decimal? maxNotional, DateTimeOffset expiresAt, DateTimeOffset? at = null,
         CancellationToken ct = default)
     {
-        if (Policy.Mode != TradingMode.PAPER)
-            return new EnvelopeResult(false,
-                $"TradeAgent is in {Policy.Mode} and a paper envelope is granted in practice mode "
-                + "only, so nothing was written. Switch to practice first — the grant is about an "
-                + "account you have already decided is not real money.", null);
-
         AccountInfo? account;
         try { account = await AccountAsync(ct); }
         catch (Exception ex)
@@ -391,6 +388,31 @@ public sealed class TradingGateway : IAsyncDisposable
                 + "written. An envelope is a standing grant and is never written against an account "
                 + "TradeAgent could not read.", null);
         }
+
+        var result = GrantEnvelopeOn(account, symbol, maxQuantity, maxNotional, at ?? Now, expiresAt, "granted by the account owner",
+            PaperDeploymentsPerEnvelope);
+        if (result.Ok)
+            _log.Activity($"You let TradeAgent run paper experiments on account {account!.Id} in "
+                          + $"{symbol}, up to {AllocationRow.Num(maxQuantity)} at a time"
+                          + (maxNotional is { } n ? $", worth at most {Labels.Money(n, account.Currency)}" : "")
+                          + $", until {expiresAt:yyyy-MM-dd}. No capital and no live authority came with it.");
+        return result;
+    }
+
+    /// <summary>
+    /// THE ONE GRANT PATH, whoever grants (<c>U-board-a2</c> item 10): the mode must be PAPER, the account read, and the account
+    /// provably simulated by BOTH witnesses — <c>AccountInfo.IsSimulated</c> AND <c>ConnectorCapabilities.IsPaper</c> — before one
+    /// row is written; the refusal names which witness said no. The owner's press above and the app's founding envelope below both
+    /// come through here, so neither can rest on less.
+    /// </summary>
+    EnvelopeResult GrantEnvelopeOn(AccountInfo? account, string symbol, decimal maxQuantity, decimal? maxNotional,
+        DateTimeOffset now, DateTimeOffset expiresAt, string reason, int deployments)
+    {
+        if (Policy.Mode != TradingMode.PAPER)
+            return new EnvelopeResult(false,
+                $"TradeAgent is in {Policy.Mode} and a paper envelope is granted in practice mode "
+                + "only, so nothing was written. Switch to practice first — the grant is about an "
+                + "account you have already decided is not real money.", null);
 
         if (account is null)
             return new EnvelopeResult(false,
@@ -414,19 +436,74 @@ public sealed class TradingGateway : IAsyncDisposable
                 + ". A standing grant that TradeAgent spends while you are not watching needs both to "
                 + "say so.", null);
 
-        var now = at ?? Now;
-        var result = _envelopes.Grant(new PaperEnvelopeRow(
+        return _envelopes.Grant(new PaperEnvelopeRow(
             "", Connector.Id, account.Id, symbol, account.Currency, maxQuantity, maxNotional,
-            PaperDeploymentsPerEnvelope, now, expiresAt, "granted by the account owner", null));
-
-        if (result.Ok)
-            _log.Activity($"You let TradeAgent run paper experiments on account {account.Id} in "
-                          + $"{symbol}, up to {AllocationRow.Num(maxQuantity)} at a time"
-                          + (maxNotional is { } n ? $", worth at most {Labels.Money(n, account.Currency)}" : "")
-                          + $", until {expiresAt:yyyy-MM-dd}. No capital and no live authority came with it.");
-
-        return result;
+            deployments, now, expiresAt, reason, null));
     }
+
+    /// <summary>
+    /// THE FOUNDING PAPER ENVELOPE (<c>U-board-a2</c> item 10; R24 § 4.5): while the founding policy governs — decided by
+    /// <c>app</c>, basis <c>founding</c> — the app grants the standing envelope its terms state, through <see cref="GrantEnvelopeOn"/>
+    /// (PAPER, both witnesses), on the app's own paper venue and its one account ONLY, and only when none stands there. Its reason and
+    /// its Activity line name the founding policy and its version, never the owner.
+    ///
+    /// <para><b>Once per policy version.</b> An envelope this version already granted on that pair — standing, or withdrawn by the
+    /// owner's press (his, permanently: the orchestrator's Q5) — is never granted again by it: a withdrawal the next pass undid
+    /// would be no withdrawal. A new policy version is a new decision, and grants its own.</para>
+    ///
+    /// <para><b>No expiry while no board seat is active</b> (the orchestrator's Q3): terms with no days are granted to the end of
+    /// time, which the first active board shortens. It never throws: a pass that could not grant leaves the ledger alone.</para>
+    /// </summary>
+    void GrantFoundingEnvelopeIfDue(AccountInfo account)
+    {
+        try
+        {
+            if (_inForce is not { CouldNotBeRead: false, Decider: BoardDecider.App, Basis: BoardBasis.Founding } inForce) return;
+            // NOT ON A HOME THAT CANNOT TRADE: an earlier armed row, or a settings row or policy nobody could read, grants nothing new.
+            if (!ReadableForExecution) return;
+            if (Policy.CouldNotBeRead || Policy.PaperEnvelope is not { } terms) return;
+            if (!string.Equals(Connector.Id, terms.Connector, StringComparison.Ordinal)
+                || !string.Equals(account.Id, terms.Account, StringComparison.Ordinal)) return;
+
+            var now = Now;
+            var reason = FoundingEnvelopeReason(inForce.Version);
+            if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, terms.Connector, StringComparison.Ordinal)
+                                                      && string.Equals(e.AccountId, terms.Account, StringComparison.Ordinal)
+                                                      && (e.StandsAt(now) || string.Equals(e.Reason, reason, StringComparison.Ordinal))))
+                return;
+
+            var until = terms.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
+            var result = GrantEnvelopeOn(account, terms.Instrument, terms.MaxQuantity, terms.MaxNotional, now, until, reason,
+                terms.Deployments);
+            if (!result.Ok)
+            {
+                _log.TryEngineering("Gateway", "founding_envelope_not_granted", "warn",
+                    metadataJson: Json.Write(new { version = inForce.Version, why = result.Why }));
+                return;
+            }
+            _log.Activity($"The security board's founding policy (version {inForce.Version}, set by the app) lets TradeAgent run paper "
+                          + $"experiments on its own practice account {account.Id} in {terms.Instrument}, up to "
+                          + $"{AllocationRow.Num(terms.MaxQuantity)} at a time and worth at most {Labels.Money(terms.MaxNotional, account.Currency)}"
+                          + (terms.Days is { } d ? $", for {d} days" : ", with no end date while no board seat is active")
+                          + ". No capital and no live authority came with it.");
+        }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "founding_envelope_failed", "error", ex: ex); }
+    }
+
+    /// <summary>
+    /// WHO GRANTED AN ENVELOPE, as the owner's Activity line says it (<c>U-board-a2</c>; the honesty rule): "you granted" only for
+    /// a row the owner's own press wrote, and the security board's founding policy for the app's — never his name on the app's act.
+    /// </summary>
+    static string GrantedBy(PaperEnvelopeRow envelope) =>
+        envelope.Reason.StartsWith(FoundingEnvelopeReasonPrefix, StringComparison.Ordinal)
+            ? "the security board's founding policy granted"
+            : "you granted";
+
+    const string FoundingEnvelopeReasonPrefix = "granted by the app under the security board's founding policy";
+
+    /// <summary>What the founding envelope's row says it was granted under: the policy's version, and that the app set it.</summary>
+    internal static string FoundingEnvelopeReason(int version) =>
+        $"{FoundingEnvelopeReasonPrefix}, version {version}";
 
     /// <summary>
     /// HOW MANY VERSIONS ONE ENVELOPE MAY CARRY AT A TIME. One, for now, and it is a column rather than
@@ -560,7 +637,7 @@ public sealed class TradingGateway : IAsyncDisposable
             TellResearch(allocation, envelope, now);
             _log.Activity($"TradeAgent allocated strategy version {Short(versionId)} to PAPER on account "
                           + $"{account}, up to {AllocationRow.Num(allocation.MaxQuantity)} at a time, "
-                          + "inside the paper envelope you granted. No capital and no live authority "
+                          + $"inside the paper envelope {GrantedBy(envelope)}. No capital and no live authority "
                           + "came with it.");
         }
 
@@ -662,8 +739,8 @@ public sealed class TradingGateway : IAsyncDisposable
             _log.Activity($"TradeAgent put strategy version {Short(versionId)} on PAPER on account {account} under the "
                           + "inconclusive quota — the referee could not judge it either way — for "
                           + $"{Core.Strategy.Inconclusive.Term.TotalDays:0} days, up to "
-                          + $"{AllocationRow.Num(allocation.MaxQuantity)} at a time, inside the paper envelope you "
-                          + "granted, charged one trial of its campaign. Its verdict stays refused; no capital and no "
+                          + $"{AllocationRow.Num(allocation.MaxQuantity)} at a time, inside the paper envelope "
+                          + $"{GrantedBy(envelope)}, charged one trial of its campaign. Its verdict stays refused; no capital and no "
                           + "live authority came with it.");
         }
 
@@ -727,7 +804,7 @@ public sealed class TradingGateway : IAsyncDisposable
                   + "stays refused, the slot is charged one trial of its campaign and ends with its term"
                 : "")
             + ". TradeAgent wrote this itself, under the paper "
-            + "envelope the account owner granted; there is no command that asks for one and none that "
+            + "envelope that stands on this account; there is no command that asks for one and none that "
             + "widens it. It carries NO LIVE AUTHORITY and no capital: it authorises nothing in a "
             + "real-money mode, on any other platform or on any other account. Nothing runs it yet — "
             + "the allocation is what a forward paper run would be dispatched under, and only forward "
@@ -1068,7 +1145,7 @@ public sealed class TradingGateway : IAsyncDisposable
             started++;
             _log.Activity($"TradeAgent started a PAPER deployment of strategy version "
                           + $"{Short(row.VersionId)} on account {account} in {envelope.Symbol}, inside "
-                          + "the paper envelope you granted. No capital and no live authority came "
+                          + $"the paper envelope {GrantedBy(envelope)}. No capital and no live authority came "
                           + "with it.");
         }
 
@@ -3219,6 +3296,7 @@ public sealed class TradingGateway : IAsyncDisposable
     BoardPolicy PolicyInForce()
     {
         var inForce = _board.InForce();
+        _inForce = inForce;
         if (!inForce.CouldNotBeRead) return inForce.Policy;
         try
         {
@@ -4205,7 +4283,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // so it is refused here too.
             if (!byOperator && EnvelopeReserves(account.Id))
                 throw new GatewayDeniedException(ErrorCode.ENVELOPE_ACCOUNT_RESERVED,
-                    $"account {account.Id} is under a paper envelope you granted TradeAgent, so it "
+                    $"account {account.Id} is under a standing paper envelope, so it "
                     + "accepts orders only from a strategy version TradeAgent has allocated to it, and "
                     + "this order names none. Nothing was sent. Your own orders on this account are "
                     + "unaffected, and withdrawing the envelope in TradeAgent hands the account back.");
@@ -13626,6 +13704,9 @@ public sealed class TradingGateway : IAsyncDisposable
             // rows it has just settled, and the fill pull it marks due runs on this same pass. It never throws:
             // see SettleStaleOrdersInFlightAsync.
             if (account is not null) await SettleStaleOrdersInFlightAsync(account.Id, ct);
+
+            // THE FOUNDING PAPER ENVELOPE (U-board-a2 item 10), on the paper venue only and once per policy version. It never throws.
+            if (account is not null) GrantFoundingEnvelopeIfDue(account);
 
             var symbol = Policy.Risk.InstrumentAllowlist.FirstOrDefault()
                          ?? (await InstrumentsAsync(ct)).FirstOrDefault()?.Symbol;

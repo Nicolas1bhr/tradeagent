@@ -476,7 +476,7 @@ public static class GatewaySchema
         new(Core.Ops.DeploymentList, "trade deployment list", false,
             "WHAT TRADEAGENT IS RUNNING FORWARD ON PAPER RIGHT NOW. A paper deployment is the app "
             + "running one frozen strategy version forward on a practice account, inside the paper "
-            + "envelope the account owner granted once — it carries NO capital and NO live authority, "
+            + "envelope standing on that account — it carries NO capital and NO live authority, "
             + "its fills are simulated at a bar's open, and nothing it produces is execution evidence. "
             + "Each line says the version, the instrument, the platform, the account, the state "
             + "('active', 'suspended' or 'ended'), when it started, the last bar every one of its "

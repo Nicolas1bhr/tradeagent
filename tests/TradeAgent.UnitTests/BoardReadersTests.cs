@@ -94,6 +94,76 @@ public class BoardReadersTests(ITestOutputHelper log)
         finally { await host.Gateway.DisposeAsync(); }
     }
 
+    /// <summary>
+    /// THE FOUNDING ENVELOPE IS THE APP'S AND ONLY ON THE PAPER VENUE (item 10): on <c>paper</c> / <c>PAPER-1</c>, one standing
+    /// envelope with the founding terms — BTCUSDT, at most 0.05 and 5,000 of notional, one deployment, no end date — whose reason
+    /// and Activity line name the founding policy and never the owner; written once, and not again after it is withdrawn. On the
+    /// simulator, on another venue holding an account of the same name, and on a "paper" venue whose account is not provably a
+    /// simulation, none. RED before item 10: no envelope was granted by anyone but the owner.
+    /// </summary>
+    [Fact]
+    public async Task The_founding_envelope_is_the_apps_and_only_on_the_paper_venue()
+    {
+        var terms = BoardFounding.V1.PaperEnvelope!;
+
+        // ON THE APP'S OWN PAPER VENUE AND ACCOUNT: one, with the founding terms, the app's.
+        var (gw, db) = await Gateway(BoardFounding.PaperVenue, BoardFounding.PaperAccount, simulated: true);
+        await using (gw)
+        using (db)
+        {
+            var standing = gw.Envelopes.All().Where(e => e.StandsAt(DateTimeOffset.UtcNow)).ToList();
+            foreach (var e in standing) log.WriteLine($"standing: {e.ConnectorId}/{e.AccountId} {e.Symbol} {e.MaxQuantity} {e.MaxNotional} ×{e.MaxDeployments} until {e.ExpiresAt:O} — {e.Reason}");
+            var envelope = Assert.Single(standing);
+            Assert.Equal((terms.Connector, terms.Account, terms.Instrument, terms.MaxQuantity, (decimal?)terms.MaxNotional, terms.Deployments),
+                (envelope.ConnectorId, envelope.AccountId, envelope.Symbol, envelope.MaxQuantity, envelope.MaxNotional, envelope.MaxDeployments));
+            Assert.Equal(DateTimeOffset.MaxValue.UtcDateTime, envelope.ExpiresAt.UtcDateTime);
+            Assert.Equal("granted by the app under the security board's founding policy, version 1", envelope.Reason);
+            Assert.DoesNotContain("owner", envelope.Reason, StringComparison.OrdinalIgnoreCase);
+            var said = Assert.Single(new LogStore(db).RecentActivity(200).Select(a => a.Text), t => t.Contains("founding policy", StringComparison.Ordinal));
+            log.WriteLine($"activity: {said}");
+            Assert.DoesNotContain("You ", said, StringComparison.Ordinal);
+            Assert.DoesNotContain("you granted", said, StringComparison.OrdinalIgnoreCase);
+
+            // ONCE: the next pass grants nothing more, and the owner's withdrawal holds — the next pass does not undo it.
+            await gw.RefreshHealthAsync();
+            Assert.Single(gw.Envelopes.All());
+            Assert.True(gw.WithdrawPaperEnvelope(envelope.Id).Ok);
+            await gw.RefreshHealthAsync();
+            await gw.RefreshHealthAsync();
+            Assert.Single(gw.Envelopes.All());
+            Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow));
+        }
+
+        // ON THE SIMULATOR, ON ANOTHER VENUE WITH AN ACCOUNT OF THE SAME NAME, AND ON A PAPER VENUE THAT CANNOT PROVE ITS ACCOUNT: none.
+        foreach (var (venue, account, simulated) in new[]
+                 {
+                     (FakeConnector.ConnectorId, "SIM-001", true),
+                     ("atas", BoardFounding.PaperAccount, true),
+                     (BoardFounding.PaperVenue, BoardFounding.PaperAccount, false)
+                 })
+        {
+            var (other, otherDb) = await Gateway(venue, account, simulated);
+            await using (other)
+            using (otherDb)
+            {
+                log.WriteLine($"{venue}/{account} (simulated {simulated}): {other.Envelopes.All().Count} envelope(s)");
+                Assert.Empty(other.Envelopes.All());
+            }
+        }
+    }
+
+    /// <summary>A gateway on a connector reporting <paramref name="venue"/> as its id, over one account, after one health pass.</summary>
+    static async Task<(TradingGateway Gw, Database Db)> Gateway(string venue, string account, bool simulated)
+    {
+        var db = TestEnv.NewDb();
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker { AccountId = account, IsSimulated = simulated }), venue);
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s => s.SelectedAccountId = account);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        return (gw, db);
+    }
+
     static string Repo()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

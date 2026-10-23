@@ -82,6 +82,9 @@ public class PaperGatewayTests(ITestOutputHelper log)
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
+        // THE FOUNDING ENVELOPE RESERVES PAPER-1 FOR THE APP'S OWN EXPERIMENTS (U-board-a2 item 10). This test is about an agent's
+        // own order on the paper venue, so the owner's withdraw press — his, permanently — hands the account back first.
+        foreach (var standing in gw.Envelopes.All().Where(e => e.WithdrawnAt is null)) gw.WithdrawPaperEnvelope(standing.Id);
 
         var intent = new PlaceIntent("BTCUSDT", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null);
         var request = await gw.PlaceAsync(new AgentContext("ai"), "paper-gw-1", intent);
@@ -168,6 +171,9 @@ public class PaperGatewayTests(ITestOutputHelper log)
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
+        // THE FOUNDING ENVELOPE RESERVES PAPER-1 FOR THE APP'S OWN EXPERIMENTS (U-board-a2 item 10). This test is about an agent's
+        // own order on the paper venue, so the owner's withdraw press — his, permanently — hands the account back first.
+        foreach (var standing in gw.Envelopes.All().Where(e => e.WithdrawnAt is null)) gw.WithdrawPaperEnvelope(standing.Id);
 
         // A WEEK OF MINUTES IN ONE ANSWER, the way the collector stores a stretch it catches up on;
         // each closes at 50,000 plus its number, so a quote names the minute it came from.

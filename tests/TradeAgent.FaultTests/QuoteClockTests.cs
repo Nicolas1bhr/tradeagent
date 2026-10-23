@@ -106,6 +106,9 @@ public class QuoteClockTests(ITestOutputHelper log)
 
         await paper.ConnectAsync();
         await gw.RefreshHealthAsync();
+        // THE FOUNDING ENVELOPE RESERVES PAPER-1 FOR THE APP'S OWN EXPERIMENTS (U-board-a2 item 10). This test is about an agent's
+        // own order on the paper venue, so the owner's withdraw press — his, permanently — hands the account back first.
+        foreach (var standing in gw.Envelopes.All().Where(e => e.WithdrawnAt is null)) gw.WithdrawPaperEnvelope(standing.Id);
         return new PaperRig(gw, paper, source, clock, health, db);
     }
 
