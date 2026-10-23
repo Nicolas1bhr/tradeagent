@@ -17,7 +17,7 @@ public static class GatewaySchema
 
     /// <summary>What a 'forecasts' argument is (<c>U-org-decisions</c>).</summary>
     const string ForecastsArg = "A JSON list of forecasts TradeAgent resolves from its own records, each {\"predicate\": verdict-class | "
-                                + "mandate-state, \"subject\": the version or mandate id, \"target\", \"by\": an ISO-8601 time, "
+                                + "mandate-state | unit-admissible, \"subject\": the version, mandate or unit id, \"target\", \"by\": an ISO-8601 time, "
                                 + "\"probability\": 0 to 1}; see 'forecast-add'.";
 
     public static object Describe(GatewayStatus? status = null) => new
@@ -748,8 +748,9 @@ public static class GatewaySchema
         new(Core.Ops.ForecastAdd, "trade forecast add <on> <predicate> <target> <by> <probability> [--subject ID]", false,
             "ATTACH A FORECAST to a decision of yours or to an open mandate you decide ('on', its dec-… or man-… id): a predicate "
             + $"from TradeAgent's vocabulary v{Core.Db.ForecastVocabulary.Version} — 'verdict-class' (a strategy version's verdict: "
-            + "promoted | paper-eligible | refused) or 'mandate-state' (a mandate reaching accepted | rejected | expired | "
-            + "cancelled) — its 'subject' (the version or mandate id; the mandate itself when it is the one you attach to), the "
+            + "promoted | paper-eligible | refused), 'mandate-state' (a mandate reaching accepted | rejected | expired | "
+            + "cancelled) or 'unit-admissible' (whether a version run under a unit's funding is promoted or made paper-eligible by the "
+            + "date: admitted | none) — its 'subject' (the version, mandate or unit id; the mandate itself when it is the one you attach to), the "
             + "'target', the date 'by' which it resolves, and your 'probability' from 0 to 1. TradeAgent refuses one whose outcome is "
             + "already measured, records whether it is SCORED — a forecast on an outcome you or your subtree control is recorded, "
             + "never scored, and says why — and resolves it itself from its own records: yes, no, or void when no verdict came by "
@@ -757,7 +758,7 @@ public static class GatewaySchema
             [
                 new("on", "string", true, "The decision (dec-…) or mandate (man-…) the forecast is attached to."),
                 new("predicate", "string", true, string.Join(" | ", Core.Db.ForecastVocabulary.Predicates)),
-                new("target", "string", true, "For verdict-class: promoted | paper-eligible | refused. For mandate-state: accepted | rejected | expired | cancelled."),
+                new("target", "string", true, "For verdict-class: promoted | paper-eligible | refused. For mandate-state: accepted | rejected | expired | cancelled. For unit-admissible: admitted | none."),
                 new("by", "string", true, $"When it resolves: an ISO-8601 time in the future, at most {Core.Db.DecisionLimits.ForecastHorizon.TotalDays:N0} days ahead."),
                 new("probability", "number", true, "How likely you hold it, from 0 to 1."),
                 new("subject", "string", false, "The version or mandate id it is about; the mandate it is attached to when omitted.")

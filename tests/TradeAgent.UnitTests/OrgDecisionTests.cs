@@ -15,7 +15,7 @@ namespace TradeAgent.Tests.Unit;
 /// pattern — and every position beyond the legacy pair is written by the test with raw SQL, as no writer of the chart exists yet.
 /// </summary>
 [Collection(VendorOverrideFiles.Name)]
-public class OrgDecisionTests
+public partial class OrgDecisionTests
 {
     /// <summary>
     /// The chart: <see cref="Chief"/> heads <see cref="Sub"/> under Research's division; <see cref="Head"/> heads <see cref="Team"/>
@@ -440,7 +440,7 @@ public class OrgDecisionTests
 
         foreach (var (frame, words) in new[]
                  {
-                     (ForecastFrame(on, "ver-c3", "promoted", 0.5m, "sharpe-above"), "no predicate of the forecast vocabulary v1"),
+                     (ForecastFrame(on, "ver-c3", "promoted", 0.5m, "sharpe-above"), $"no predicate of the forecast vocabulary v{ForecastVocabulary.Version}"),
                      (ForecastFrame(on, "ver-c3", "accepted", 0.5m, ForecastVocabulary.VerdictClass), "no target of verdict-class"),
                      (ForecastFrame(on, "ver-nowhere", "promoted", 0.5m, ForecastVocabulary.VerdictClass), "no strategy version"),
                      (ForecastFrame(on, "man-nowhere", "accepted", 0.5m), "no mandate"),
@@ -581,22 +581,32 @@ public class OrgDecisionTests
     }
 
     /// <summary>
-    /// (d3) THE RESOLVER READS ONLY THE VERDICT CLASS AND MANDATE EVENTS (GUARD; EVID-001, § 2.11): its two measurement reads name
-    /// <c>strategy_promotion</c> and <c>org_mandate_event</c> alone, and its source names no run, holdout, stream or ledger table.
-    /// Watched red with the verdict read joining <c>strategy_run</c> for a figure.
+    /// (d3) THE RESOLVER READS ONLY THE VERDICT CLASS, MANDATE EVENTS AND FUNDING LINEAGE (GUARD; EVID-001, § 2.11): its measurement
+    /// reads name <c>strategy_promotion</c> and <c>org_mandate_event</c> — and, REVISITED OUT LOUD BY <c>U-org-verbs-c</c> for vocabulary
+    /// v2's <c>unit-admissible</c>, <c>strategy_run</c> and <c>ai_attempt_funding</c>: a run is read for its version and its attempt
+    /// ONLY (never a figure), the lineage for its unit — and its source names no holdout, stream or ledger table, and
+    /// <c>strategy_run</c> nowhere but that one read. Watched red with the verdict read joining <c>strategy_run</c> for a figure.
     /// </summary>
     [Fact]
     public void The_resolver_reads_only_the_verdict_class_and_mandate_events()
     {
         var tables = new System.Text.RegularExpressions.Regex(@"\b(FROM|JOIN)\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        Assert.Equal(["org_mandate_event", "strategy_promotion"],
+        Assert.Equal(["ai_attempt_funding", "org_mandate_event", "strategy_promotion", "strategy_run"],
             ForecastResolver.MeasurementSql.SelectMany(q => tables.Matches(q).Select(m => m.Groups[2].Value)).Distinct().Order(StringComparer.Ordinal));
         Assert.Equal(["id", "verdict", "at"], Columns(ForecastResolver.VerdictSql));
         Assert.Equal(["id", "kind", "at"], Columns(ForecastResolver.MandateEventSql));
+        Assert.Equal(["p.id", "p.verdict", "p.at"], Columns(ForecastResolver.UnitAdmissibleSql));
+        // THE RUN AND THE LINEAGE ARE READ FOR THEIR KEYS ONLY: no figure of a run is named.
+        var named = new System.Text.RegularExpressions.Regex(@"\b([rf])\.(\w+)").Matches(ForecastResolver.UnitAdmissibleSql)
+            .Select(m => m.Value).Distinct().Order(StringComparer.Ordinal);
+        Assert.Equal(["f.attempt_id", "f.unit_id", "r.attempt", "r.version_id"], named);
+        Assert.Equal(["strategy_run"], tables.Matches(ForecastResolver.UnitAdmissibleSql).Select(m => m.Groups[2].Value)
+            .Where(t => t == "strategy_run"));
 
         var source = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.Core", "Db", "ForecastResolver.cs"));
-        foreach (var banned in new[] { "strategy_run", "referee_holdout", "referee_research", "strategy_stream", "ledger_", "strategy_trade", "forward_" })
+        foreach (var banned in new[] { "referee_holdout", "referee_research", "strategy_stream", "ledger_", "strategy_trade", "forward_" })
             Assert.DoesNotContain(banned, source, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, @"FROM strategy_run\b"));
 
         static string[] Columns(string sql) =>
             [.. sql["SELECT ".Length..sql.IndexOf(" FROM ", StringComparison.Ordinal)].Split(',').Select(c => c.Trim())];
@@ -640,14 +650,17 @@ public class OrgDecisionTests
         Assert.Equal(1L, Count(db, "org_forecast_resolution"));
         Assert.Equal(first, org.Resolution(f.Id));
 
-        // A VOCABULARY THIS BUILD DOES NOT KNOW: refused in words, left unresolved, never guessed.
+        // A VOCABULARY THIS BUILD DOES NOT KNOW: refused in words, left unresolved, never guessed. (v2 is known since U-org-verbs-c,
+        // so the version this build does not know is the next one.)
+        var unknown = ForecastVocabulary.Version + 1;
         Exec(db, """
             INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
-            VALUES('fc-0000000000v2', $d, $p, 2, 'verdict-class', 'ver-twice', 'promoted', $by, '0.5', 1, $at)
-            """, ("$d", d.Id), ("$p", Head), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0)));
+            VALUES('fc-0000000000v3', $d, $p, $v, 'verdict-class', 'ver-twice', 'promoted', $by, '0.5', 1, $at)
+            """, ("$d", d.Id), ("$p", Head), ("$v", unknown), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0)));
         var sweep = new ForecastResolver(db).Sweep(t0.AddDays(5));
-        Assert.Contains(sweep.Refused, w => w.Contains("fc-0000000000v2", StringComparison.Ordinal) && w.Contains("v1 only", StringComparison.Ordinal));
-        Assert.Null(org.Resolution("fc-0000000000v2"));
+        Assert.Contains(sweep.Refused, w => w.Contains("fc-0000000000v3", StringComparison.Ordinal)
+                                            && w.Contains($"v{unknown}", StringComparison.Ordinal) && w.Contains("never guessed", StringComparison.Ordinal));
+        Assert.Null(org.Resolution("fc-0000000000v3"));
     }
 
     // ---- U-forecast-nul: a probability with a NUL inside it, and a row the reader cannot parse ----------------------------

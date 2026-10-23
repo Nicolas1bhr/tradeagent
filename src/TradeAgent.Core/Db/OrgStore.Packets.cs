@@ -95,7 +95,8 @@ public sealed partial class OrgStore
         using (var r = c.ExecuteReader())
             while (r.Read())
             {
-                if (Probability(r) is { } probability)
+                if (VocabularyRefusal(r) is { } unknown) refused.Add(unknown);
+                else if (Probability(r) is { } probability)
                     rows.Add(new ResolvedForecast(ReadForecast(r, probability), new ResolutionRow(r.GetString(0), r.GetString(14),
                         r.GetString(15), r.GetString(16), r.GetString(17), Sql.Time(r.GetValue(18)))));
                 else refused.Add(Unreadable(r.GetString(0)));
@@ -111,11 +112,38 @@ public sealed partial class OrgStore
         var refused = new List<string>();
         while (r.Read())
         {
-            if (Probability(r) is { } probability) rows.Add(ReadForecast(r, probability));
+            if (VocabularyRefusal(r) is { } unknown) refused.Add(unknown);
+            else if (Probability(r) is { } probability) rows.Add(ReadForecast(r, probability));
             else refused.Add(Unreadable(r.GetString(0)));
         }
         return new OrgList<ForecastRow>(rows, refused);
     }
+
+    /// <summary>
+    /// THE REFUSAL OF A FORECAST ROW WHOSE VOCABULARY VERSION OR PREDICATE THIS BUILD DOES NOT KNOW, by its id, or null (the Codex second
+    /// pass of <c>U-org-packets-b</c>, folded into <c>U-org-verbs-c</c>): as the resolver refuses it, a packet never shows it as though it
+    /// were read — a predicate from another build's vocabulary means what that build says, not what this one would guess.
+    /// </summary>
+    static string? VocabularyRefusal(Microsoft.Data.Sqlite.SqliteDataReader r)
+    {
+        var version = r.GetValue(5) is long v and >= int.MinValue and <= int.MaxValue ? (int?)v : null;
+        var predicate = r.GetValue(6) as string;
+        return version is { } known && ForecastVocabulary.IsKnown(known, predicate)
+            ? null
+            : UnknownVocabulary(r.GetString(0), version) + " It is not shown.";
+    }
+
+    /// <summary>
+    /// The words that refuse a forecast of a vocabulary version or a predicate this build does not know — by id and version, never the
+    /// row's text (a row written past the app's writer could carry anything, and a packet is read by a model).
+    /// </summary>
+    internal static string UnknownVocabulary(string forecastId, int? version) =>
+        $"forecast {forecastId} is written in vocabulary v{(version is { } v ? v.ToString(CultureInfo.InvariantCulture) : "(unreadable)")} "
+        + (version is { } w && ForecastVocabulary.PredicatesOf(w) is not null
+            ? "with a predicate that version does not hold"
+            : "— a version this build does not read")
+        + $" (this build reads v1 to v{ForecastVocabulary.Version.ToString(CultureInfo.InvariantCulture)}; the row's own words are not "
+        + "repeated): never guessed.";
 
     /// <summary>A forecast row's probability, read as TEXT and parsed only when it is the one shape the writer stores; else null.</summary>
     static decimal? Probability(Microsoft.Data.Sqlite.SqliteDataReader r) =>

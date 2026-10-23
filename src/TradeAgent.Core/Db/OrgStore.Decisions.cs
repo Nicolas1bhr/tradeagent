@@ -74,16 +74,19 @@ public static class OrgDecisionKind
 }
 
 /// <summary>
-/// THE FORECAST VOCABULARY — closed and versioned (ORGANISATION § 5; RULING Q3). Version 1 holds two predicates, each resolved by
-/// the app from ONE record of its own and nothing else (§ 2.11, EVID-001): <see cref="VerdictClass"/> — the verdict class the
-/// referee records for a strategy version (<c>strategy_promotion.verdict</c>), never a holdout figure, a run's numbers, a stream or
-/// an E2–E4 value — and <see cref="MandateState"/> — the state a mandate reaches (<c>org_mandate_event</c>). A forecast outside it
-/// is refused at the write; a stored forecast whose version this build does not know is refused at resolve, never guessed.
+/// THE FORECAST VOCABULARY — closed and versioned (ORGANISATION § 5; RULING Q3). Each predicate is resolved by the app from its own
+/// records and nothing else (§ 2.11, EVID-001). Version 1 holds two: <see cref="VerdictClass"/> — the verdict class the referee
+/// records for a strategy version (<c>strategy_promotion.verdict</c>), never a holdout figure, a run's numbers, a stream or an E2–E4
+/// value — and <see cref="MandateState"/> — the state a mandate reaches (<c>org_mandate_event</c>). Version 2 (<c>U-org-verbs-c</c>)
+/// adds <see cref="UnitAdmissible"/>, the predicate a charter carries (ORGANISATION § 5: "a charter: admissible candidates … by a
+/// date"): whether any version run under the unit's RECORDED funding gets an admissible verdict class by the date — the class only.
+/// A stored v1 forecast still resolves as v1; a forecast outside the version it was written in is refused at the write, and a stored
+/// one whose version or predicate this build does not know is refused at resolve and at every read that would show it, never guessed.
 /// </summary>
 public static class ForecastVocabulary
 {
-    /// <summary>The vocabulary this build writes and resolves.</summary>
-    public const int Version = 1;
+    /// <summary>The vocabulary this build writes.</summary>
+    public const int Version = 2;
 
     /// <summary><c>verdict-class(version, promoted | paper-eligible | refused, by)</c>.</summary>
     public const string VerdictClass = "verdict-class";
@@ -91,17 +94,42 @@ public static class ForecastVocabulary
     /// <summary><c>mandate-state(mandate, accepted | rejected | expired | cancelled, by)</c>.</summary>
     public const string MandateState = "mandate-state";
 
-    public static readonly string[] Predicates = [VerdictClass, MandateState];
+    /// <summary>
+    /// <c>unit-admissible(unit, admitted | none, by)</c> — v2: <c>admitted</c> when a version with a run whose launch was funded by
+    /// the unit (<c>strategy_run.attempt</c> ⋈ <c>ai_attempt_funding</c>, the lineage written at admission — never today's chart) gets
+    /// the referee's <c>promoted</c> or <c>paper-eligible</c> class after the forecast and by its date; <c>none</c> when none does.
+    /// Resolved at the date.
+    /// </summary>
+    public const string UnitAdmissible = "unit-admissible";
+
+    /// <summary>The targets of <see cref="UnitAdmissible"/>.</summary>
+    public const string Admitted = "admitted", NoneAdmitted = "none";
+
+    /// <summary>The predicates of the version this build writes.</summary>
+    public static readonly string[] Predicates = [VerdictClass, MandateState, UnitAdmissible];
+
+    /// <summary>The predicates of <paramref name="version"/>, or null for a version this build does not know.</summary>
+    public static IReadOnlyList<string>? PredicatesOf(int version) => version switch
+    {
+        1 => [VerdictClass, MandateState],
+        2 => Predicates,
+        _ => null
+    };
 
     /// <summary>The targets a predicate may name.</summary>
     public static IReadOnlyList<string> Targets(string predicate) => predicate switch
     {
         VerdictClass => [PromotionVerdict.Promoted, PromotionVerdict.PaperEligible, PromotionVerdict.Refused],
         MandateState => [MandateEventKind.Accepted, MandateEventKind.Rejected, MandateEventKind.Expired, MandateEventKind.Cancelled],
+        UnitAdmissible => [Admitted, NoneAdmitted],
         _ => []
     };
 
+    /// <summary>Whether <paramref name="predicate"/> is one of the version this build writes.</summary>
     public static bool IsKnown(string? predicate) => predicate is not null && Array.IndexOf(Predicates, predicate) >= 0;
+
+    /// <summary>Whether a stored forecast of <paramref name="version"/> and <paramref name="predicate"/> is one this build can read.</summary>
+    public static bool IsKnown(int version, string? predicate) => predicate is not null && PredicatesOf(version) is { } known && known.Contains(predicate);
 
     /// <summary>The longest probability text: "0." and the 28 places a decimal holds exactly, so no stated digit is ever rounded.</summary>
     public const int MaxProbabilityChars = 30;
@@ -296,7 +324,8 @@ public sealed partial class OrgStore
     /// since a forecast is timestamped before its outcome (precommitment); at most <see cref="DecisionLimits.MaxForecasts"/> on one
     /// record. <c>scored</c> is computed here (<see cref="Unscored"/>), never stated by the forecaster.
     /// </summary>
-    ForecastRow AddForecast(string forecaster, string? attempt, string? decisionId, string? mandateId, ForecastClaim claim, DateTimeOffset now)
+    ForecastRow AddForecast(string forecaster, string? attempt, string? decisionId, string? mandateId, ForecastClaim claim, DateTimeOffset now,
+        string? subjectByDefault = null)
     {
         if (!ForecastVocabulary.IsKnown(claim.Predicate))
             throw Refused($"'{claim.Predicate}' is no predicate of the forecast vocabulary v{ForecastVocabulary.Version}: "
@@ -310,8 +339,8 @@ public sealed partial class OrgStore
             throw Refused($"the forecast's date {claim.By:u} is beyond the {DecisionLimits.ForecastHorizon.TotalDays:N0}-day horizon.");
         if (claim.Probability is < 0m or > 1m || !ForecastVocabulary.IsProbabilityText(Sql.D(claim.Probability)))
             throw Refused($"{claim.Probability.ToString(CultureInfo.InvariantCulture)} is no probability: a number from 0 to 1.");
-        var subject = claim.Subject ?? mandateId
-            ?? throw Refused("a forecast names its subject: the version or the mandate it is about.");
+        var subject = claim.Subject ?? mandateId ?? subjectByDefault
+            ?? throw Refused("a forecast names its subject: the version, the mandate or the unit it is about.");
         if (subject.Length > DecisionLimits.MaxRefIdChars)
             throw Refused($"a forecast's subject is an id of at most {DecisionLimits.MaxRefIdChars} characters.");
 
@@ -323,6 +352,14 @@ public sealed partial class OrgStore
             using var v = db.Cmd("SELECT verdict FROM strategy_promotion WHERE version_id=$v ORDER BY at, rowid LIMIT 1", ("$v", subject));
             if (v.ExecuteScalar() is string verdict)
                 throw Refused($"version {subject} already has a verdict ({verdict}): a forecast on an outcome already measured is no forecast.");
+        }
+        else if (claim.Predicate == ForecastVocabulary.UnitAdmissible)
+        {
+            // A UNIT THAT IS THERE AND NOT CLOSED. Scored: the referee decides a verdict class, never the forecaster or its subtree
+            // (ORGANISATION § 5; survey Q5) — the subtree only asks.
+            var unit = Units().FirstOrDefault(u => u.Id == subject) ?? throw Refused($"'{subject}' is no unit on the chart.");
+            if (unit.Status == OrgUnitStatus.Closed)
+                throw Refused($"unit {subject} is closed: a forecast on what it will admit is about nothing that can happen.");
         }
         else
         {

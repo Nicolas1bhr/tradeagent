@@ -7,9 +7,11 @@ public sealed record ForecastSweep(int Resolved, IReadOnlyList<string> Refused);
 
 /// <summary>
 /// THE APP RESOLVES FORECASTS FROM ITS OWN MEASUREMENTS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5; ORCHESTRATION § 2.11) — once
-/// per tick, inside the organisation's sweep. It READS EXACTLY TWO MEASURED RECORDS, each by a named constant a guard test reads:
-/// the referee's verdict class on a version (<see cref="VerdictSql"/>: <c>strategy_promotion</c>'s version, verdict and time) and a
-/// mandate's events (<see cref="MandateEventSql"/>: <c>org_mandate_event</c>'s kind and time). Never a holdout, a run's figures, a
+/// per tick, inside the organisation's sweep. It READS EXACTLY THREE MEASURED RECORDS, each by a named constant a guard test reads:
+/// the referee's verdict class on a version (<see cref="VerdictSql"/>: <c>strategy_promotion</c>'s version, verdict and time), a
+/// mandate's events (<see cref="MandateEventSql"/>: <c>org_mandate_event</c>'s kind and time) and, for vocabulary v2's
+/// <c>unit-admissible</c>, the admissible verdict classes on versions a unit's launches funded (<see cref="UnitAdmissibleSql"/>: the
+/// same promotion columns, joined to a run only by its version and attempt and to the funding lineage by its unit). Never a holdout, a run's figures, a
 /// stream, an E2–E4 value or a ledger revision (EVID-001): a forecast that could resolve on one of those would let a position
 /// learn what the protocol keeps from it.
 ///
@@ -30,8 +32,17 @@ public sealed class ForecastResolver(Database db)
     /// <summary>One mandate's events, oldest first.</summary>
     public const string MandateEventSql = "SELECT id, kind, at FROM org_mandate_event WHERE mandate_id = $subject ORDER BY id";
 
-    /// <summary>The two measurement reads, and nothing else the resolver reads to decide an outcome.</summary>
-    public static readonly string[] MeasurementSql = [VerdictSql, MandateEventSql];
+    /// <summary>
+    /// THE ADMISSIBLE VERDICTS ON VERSIONS A UNIT FUNDED (vocabulary v2, <c>unit-admissible</c>): the referee's promotion rows whose class
+    /// is admissible, for a version with a run whose launch's RECORDED funding chain holds the unit — the run's version and attempt and
+    /// nothing else of it, never a figure (EVID-001), and the lineage written at admission, never today's chart. Oldest first.
+    /// </summary>
+    public const string UnitAdmissibleSql =
+        "SELECT p.id, p.verdict, p.at FROM strategy_promotion p WHERE p.verdict IN ($promoted, $paper) AND EXISTS (SELECT 1 FROM strategy_run r "
+        + "JOIN ai_attempt_funding f ON f.attempt_id = r.attempt WHERE r.version_id = p.version_id AND f.unit_id = $subject) ORDER BY p.at, p.rowid";
+
+    /// <summary>The three measurement reads, and nothing else the resolver reads to decide an outcome.</summary>
+    public static readonly string[] MeasurementSql = [VerdictSql, MandateEventSql, UnitAdmissibleSql];
 
     /// <summary>Resolves every forecast whose outcome the app's records now settle; each in its own write. Answers what it did.</summary>
     public ForecastSweep Sweep(DateTimeOffset now)
@@ -44,10 +55,10 @@ public sealed class ForecastResolver(Database db)
         var refused = new List<string>(open.Refused);
         foreach (var f in open.Rows)
         {
-            if (f.Vocabulary != ForecastVocabulary.Version || !ForecastVocabulary.IsKnown(f.Predicate))
+            // A STORED v1 FORECAST STILL RESOLVES AS v1; a version or a predicate this build does not know is refused by id, never guessed.
+            if (!ForecastVocabulary.IsKnown(f.Vocabulary, f.Predicate))
             {
-                refused.Add($"forecast {f.Id} is written in vocabulary v{f.Vocabulary.ToString(CultureInfo.InvariantCulture)} "
-                            + $"('{f.Predicate}'), and this build resolves v{ForecastVocabulary.Version} only: it is left unresolved, never guessed.");
+                refused.Add(OrgStore.UnknownVocabulary(f.Id, f.Vocabulary) + " It is left unresolved.");
                 continue;
             }
             if (Decide(f, now) is { } r && org.RecordResolution(f.Id, r.Outcome, r.Kind, r.Id, r.Why, now)) resolved++;
@@ -58,6 +69,7 @@ public sealed class ForecastResolver(Database db)
     /// <summary>The resolution the measurements settle for <paramref name="f"/> now, or null while it is open.</summary>
     (string Outcome, string Kind, string Id, string Why)? Decide(ForecastRow f, DateTimeOffset now)
     {
+        if (f.Predicate == ForecastVocabulary.UnitAdmissible) return DecideUnit(f, now);
         var (sql, closes) = f.Predicate == ForecastVocabulary.VerdictClass
             ? (VerdictSql, (Func<string, bool>)(_ => true))
             : (MandateEventSql, (Func<string, bool>)(k => k == f.Target || MandateEventKind.Closes(k)));
@@ -83,9 +95,27 @@ public sealed class ForecastResolver(Database db)
             : (ForecastOutcome.No, OrgRefKind.Mandate, f.Subject, $"mandate {f.Subject} was not {f.Target} by {f.ResolveBy:u}");
     }
 
+    /// <summary>
+    /// <c>unit-admissible</c> AT ITS DATE, never before: the first admissible verdict recorded after the forecast and by its date on a
+    /// version the unit funded — <c>admitted</c> yes, <c>none</c> no — or, with none, <c>none</c> yes and <c>admitted</c> no, resting on
+    /// the unit. A verdict recorded before the forecast was written is not counted: a forecast is made before its outcome.
+    /// </summary>
+    (string Outcome, string Kind, string Id, string Why)? DecideUnit(ForecastRow f, DateTimeOffset now)
+    {
+        if (now <= f.ResolveBy) return null;
+        foreach (var (id, word, at) in Read(UnitAdmissibleSql, f.Subject))
+        {
+            if (at <= f.At || at > f.ResolveBy) continue;
+            return (f.Target == ForecastVocabulary.Admitted ? ForecastOutcome.Yes : ForecastOutcome.No, OrgRefKind.Promotion, id,
+                $"the referee recorded '{word}' at {at:u} for a version run under unit {f.Subject}'s funding");
+        }
+        return (f.Target == ForecastVocabulary.NoneAdmitted ? ForecastOutcome.Yes : ForecastOutcome.No, "unit", f.Subject,
+            $"no version run under unit {f.Subject}'s funding was promoted or made paper-eligible between {f.At:u} and {f.ResolveBy:u}");
+    }
+
     List<(string Id, string Word, DateTimeOffset At)> Read(string sql, string subject) => db.Read(_ =>
     {
-        using var c = db.Cmd(sql, ("$subject", subject));
+        using var c = db.Cmd(sql, ("$subject", subject), ("$promoted", PromotionVerdict.Promoted), ("$paper", PromotionVerdict.PaperEligible));
         using var r = c.ExecuteReader();
         var rows = new List<(string, string, DateTimeOffset)>();
         while (r.Read())
