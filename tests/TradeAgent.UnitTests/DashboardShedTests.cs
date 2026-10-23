@@ -50,3 +50,23 @@ public class DashboardShedTests
         finally { await host.Gateway.DisposeAsync(); }
     }
 }
+
+/// <summary>
+/// THE RAIL (<c>U-settings-shed</c> item 5; R24 § 4.7): the pages in the order the owner reads them after the shed — the Board beside the
+/// Dashboard it governs, the owner's page where Safety was, Oversight last — every page on the rail exactly once.
+/// </summary>
+public class RailOrderTests
+{
+    [Fact]
+    public void The_rail_lists_the_pages_in_order()
+    {
+        Assert.Equal(
+            ["Chat", "Dashboard", TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, "Settings",
+                "Activity", "Checks", "Oversight"],
+            MainWindow.Rail.Select(r => r.Label));
+
+        // EVERY PAGE ONCE: a page the enum has and the rail lacks is a page nobody can reach.
+        Assert.Equal(Enum.GetValues<MainWindow.Page>().Order(), MainWindow.Rail.Select(r => r.Page).Order());
+        Assert.Equal(MainWindow.Rail.Count, MainWindow.Rail.Select(r => r.Page).Distinct().Count());
+    }
+}

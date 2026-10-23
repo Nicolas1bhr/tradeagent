@@ -36,7 +36,35 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, Settings, Activity, Checks, Oversight }
+    internal enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, Settings, Activity, Checks, Oversight }
+
+    /// <summary>
+    /// THE RAIL, IN ORDER (<c>U-settings-shed</c>; R24 § 4.7), as data so a test reads the order the window builds:
+    /// <list type="bullet">
+    /// <item>The Board straight after the Dashboard: the decisions in force beside the live picture they govern.</item>
+    /// <item>The daily report after them, because it answers the Dashboard's question over a longer window.</item>
+    /// <item>The owner's page where Safety was: what stays his — the emergency family, his connections, his money, evidence, updates.</item>
+    /// <item>Settings — the market data — then the diagnostic tail.</item>
+    /// <item>Oversight last: the owner's word for his private line, his alone and never shown to an agent (U-org-watcher-b).</item>
+    /// </list>
+    /// <c>U-org-surface-a</c> put the organisation first: Organisation, Work and Costs follow Chat (R24 § 4.7).
+    /// </summary>
+    internal static readonly IReadOnlyList<(Page Page, string Label)> Rail =
+    [
+        (Page.Chat, "Chat"),
+        (Page.Organisation, Labels.NavOrganisation),
+        (Page.Work, Labels.NavWork),
+        (Page.Costs, Labels.NavCosts),
+        (Page.Dashboard, "Dashboard"),
+        (Page.Board, Labels.BoardPage),
+        (Page.Report, "Daily report"),
+        (Page.Inbox, "Inbox"),
+        (Page.Owner, Labels.OwnerPage),
+        (Page.Settings, "Settings"),
+        (Page.Activity, "Activity"),
+        (Page.Checks, "Checks"),
+        (Page.Oversight, "Oversight")
+    ];
 
     readonly AppHost _host;
 
@@ -258,8 +286,8 @@ public sealed class MainWindow : Window
 
         // Chat is the landing page. It is the thing that replaced the console, and when no agent is
         // running it is the one screen with a designed answer to "so how do I start?". Nothing is
-        // lost by not landing on the dashboard: mode, platform, account, AI state and any waiting
-        // approval all live in the chrome, which is on screen whatever page is selected.
+        // lost by not landing on the dashboard: mode, platform, account and AI state all live in the
+        // chrome, which is on screen whatever page is selected.
         Select(Page.Chat);
     }
 
@@ -379,29 +407,7 @@ public sealed class MainWindow : Window
 
     Control BuildRail()
     {
-        AddNav(Page.Chat, "Chat");
-        // The organisation first (U-org-surface-a; R24 § 4.7): the chart, the work and the costs are what the app is about, so they come before
-        // the older pages. They only read.
-        AddNav(Page.Organisation, Labels.NavOrganisation);
-        AddNav(Page.Work, Labels.NavWork);
-        AddNav(Page.Costs, Labels.NavCosts);
-        AddNav(Page.Dashboard, "Dashboard");
-        // THE SECURITY BOARD'S DECISIONS IN FORCE, read-only (U-settings-shed; R24 § 4.7): every limit and allowance the app enforces,
-        // beside the live picture they govern.
-        AddNav(Page.Board, Labels.BoardPage);
-        // Straight after the Dashboard, because it answers the same question over a longer window:
-        // the Dashboard is what is true now, the report is what was true on a day, and an owner who
-        // has just read one is the person looking for the other.
-        AddNav(Page.Report, "Daily report");
-        AddNav(Page.Inbox, "Inbox");
-        AddNav(Page.Owner, Labels.OwnerPage);
-        // Between Safety and the diagnostic tail on purpose. Choosing the platform and the account
-        // is a configuration act adjacent to the limits, not a thing you go looking for among logs.
-        AddNav(Page.Settings, "Settings");
-        AddNav(Page.Activity, "Activity");
-        AddNav(Page.Checks, "Checks");
-        // The owner's word for his private line, last of all: his alone, and never shown to an agent (U-org-watcher-b).
-        AddNav(Page.Oversight, "Oversight");
+        foreach (var (page, label) in Rail) AddNav(page, label);
 
         var summary = new Button
         {
