@@ -11,11 +11,35 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 ## Do this first
 
 **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
-heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-22 23:1x, HALTED on the owner's word for security updates), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
+heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-23 09:5x, RESUMED on the owner's word: the security board, R24), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
-**2026-10-22 23:1x — HALTED ON THE OWNER'S WORD (security updates) — resume from `fleet/handoff/ORCHESTRATOR.md`'s HALTED block, then the seats'
+**2026-10-23 09:5x — RESUMED ON THE OWNER'S WORD; the security board (R24) is the direction — resume from `fleet/handoff/ORCHESTRATOR.md`'s RESUMED
+block, then the seats' handoffs.** The owner, 2026-10-23 ~00:0x, verbatim: "okay let's resume with our same momentum i'd like you to continue what was going on
+and update everything that should be after the world wode php exploit. i noticed that the app is a not only a bad reflection of the current software but also
+currently holds way too much decision making in the settings and such. based on the end vision this software will run a continuously running wild and zany
+orchestration of agents. on all sorts of investment related ventures as wide as index fund trading, to copy trading to even crazy and crazier stuff than memecoin
+sniping and so on. the "security" should come from the security board not programmatic immutable parameters in the ui. i'll let you decide how we should address
+this all, as always you can always ping me if you need my input i won't be available in about an hour". His two answers, both against the recommendation: real money
+— "The board decides alone" (only the kill switch stays his); AI spend — "The board sets it" (within his ChatGPT plan; a paid key still needs his word).
+- **The direction:** `docs/research/2026-10-23/R24-security-board.md` (main `f12041b0` + review `dd16ccbf`), with PRINCIPLES, VISION, ORGANISATION § 15 and
+  `CLAUDE.md` amended; twelve open questions with defaults (§ 9). Interim rule (orchestrator): until a board seat is ACTIVE, a paper- or plan-only ACT with no
+  other decider stays the owner's labelled press; values come from the app's founding policy (attempt 4's paper envelope); live never returns to him.
+- **Landed since the resume (10; 26 this run), main `82a28fe3`, schema 46:** U-execution-environment `05dfda7d`, U-org-audit-a `145e3c30`, U-org-verbs-a
+  `3e346c8e`, U-number-entry-culture `2acb64bf` (his 0,05→5 defect), U-security-sweep-a `6701416a` (.NET 10.0.13 in the Linux kit, Brotli off),
+  U-billing-followups `94671afa`, U-org-surface-a `f5e96ca2` (the org pages), U-proving-ground-b `2e92cc63`, U-cli-code-mode `ee03238c` (attempt 4's
+  cause: the app's own deny set disabled codex's code-mode host on the CLI seats since `ca235dcc`), U-org-verbs-b `82a28fe3`.
+- **Security (PHP2Shell, CVE-2026-109618/-109619):** not in our stack; the sweep (fleet `tmp/SWEEP-2026-10-23/report.md`) found our own .NET and Brotli
+  exposure (fixed above) and the eMudhra CA compromise (U-tls-denylist briefed). The owner's server: 11 security updates and its private-network client; the Mac's tools
+  updated (and .NET SDK 10.0.402 — an in-place host update needs a fresh inode on macOS).
+- **The tape records on his Linux server since 2026-10-23 03:59** (kit of `6701416a`, account `tradeagent`, display 127.0.0.1 only; all eight sources
+  answered 200; the one-hour watch VERIFIED). NOT YET: its first daily report.
+- **Building:** the board train [U-board-a1 (rung 47), U-board-a2, U-settings-shed]; U-org-verbs-c (rung 48); then U-tls-denylist, the Codex second passes.
+- **The owner's, open:** the real-model check turn for U-cli-code-mode (his sign-in, his plan); the org pages' UI check (the Mac was locked); macOS 26.7.1
+  (restart); R24's defaults; his go for M-org1.
+
+**2026-10-22 23:1x — HALTED ON THE OWNER'S WORD (security updates; HISTORY since the 2026-10-23 resume) — resume from `fleet/handoff/ORCHESTRATOR.md`'s HALTED block, then the seats'
 handoffs (`fleet/handoff/A.md`, `B.md`).** The owner, verbatim: "we have to run many security updates due to yesterdays worldwide php exploit, can you halt
 everything, i'll update claude code compact your context and ask you to resume / update all the other tools and software we use." Halted cleanly: no leg running,
 no lock, nothing merged mid-landing; all session crons deleted and the external wake paused; main `4b2af1e7`, schema 46.
