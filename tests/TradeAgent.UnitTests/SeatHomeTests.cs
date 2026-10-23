@@ -367,7 +367,7 @@ public class SeatHomeTests
     /// A link at <paramref name="link"/> to <paramref name="target"/>: a symbolic link, and on Windows a junction for a folder (no
     /// privilege needed). False only for a Windows file link the account may not create, which needs the symlink privilege.
     /// </summary>
-    static bool Link(string link, string target, bool folder)
+    internal static bool Link(string link, string target, bool folder)
     {
         if (!OperatingSystem.IsWindows())
         {
