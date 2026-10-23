@@ -37,3 +37,18 @@ Red-first tests (quote each red at base): (a) `A_planted_edge_decays_by_its_half
 on real markets (the honest scope, VISION § 6.4 — process, not market truth). Nothing real is read; every parameter is a hand-set constant.
 Out of scope: the host process, configurations, scoring a configuration (c). Conflicts: `U-backtest-parity` — after it. Gate and report per
 `fleet/BUILDER-PROMPT-v2.md`. `## Report` ≤ 20 lines appended here.
+
+## Report
+Tip f03b91a0 (code; this report commits on top); base f086f797, no rung. Gate: build Release --no-incremental "0 Warning(s) 0 Error(s)"; 3× via suite.sh each green: PlantedEdgeTests 6/6, RefereePowerTests 3/3, SyntheticMarketTests 6/6, ProvingHomeTests 6/6; CI 39867519523 "success" 12/12 jobs; names "removed: 0" (sets 3201 → 3210, [Fact] 3014 → 3023).
+1 DONE c74e5986: series, half-life (β·2^(−t/H), decimal series, no Math.Pow), regimes, doctrine; manifest figures (bps/signal, round trip, Sharpe before/after cost) from the spec only.
+2 DONE 15a6f7a1: funding-like (8 h, fundingTime/fundingRate), open-interest-like level (hourly change carries z), taker-ratio-like (buySellRatio); INSIDE refused on the bare signal. A playbook program nets +208.86 on an inside edge, −84.00 beside one.
+3 DONE d188d5a1: leaky join, pre-fee only, in-sample only — each refused unless it is the trap it names; manifest's honest_app_says.
+4 DONE 2f0eac73: ProvingCampaign.Open — judge first, SetHoldout + CampaignStore.Open in one write, budgets from spec; refused on a real ledger and on another proving home's.
+5 DONE f03b91a0: power table (non-Timing, 12 seeds, ≤ 15-day markets, ~20 s locally).
+DEVIATIONS: the unchanged referee parses a version in its process's kind, so RefereePowerTests sets ProvingGround.ThisProcess (as a proving host would) in a DisableParallelization collection; "stated α" = AlphaWealth.Alpha 0.25 (R04's α_paper), the only α the holdout states. (e) is part of the power class.
+RED at base f086f797 (new tests compiled against base): 55 errors, e.g. "error CS0117: 'SyntheticEdge' does not contain a definition for 'HalfLifeDays'", "'SyntheticMarketSpec' does not contain a definition for 'Holdout'"; per item: item 2 "'ProvingSources' does not contain a definition for 'Funding'", item 3 "'SyntheticEdge' does not contain a definition for 'LeakyJoin'", item 4 "The name 'ProvingCampaign' does not exist". (g) guard green at base by construction (part a's goldens re-pinned).
+MUTANT: FirstSeenAfter → TimeSpan.Zero ⇒ (b) "the as-of gate sees the leak: correlation 0.958" (source join 0.958); restored, green (gate −0.051).
+POWER (PASS/12, program long while signal > 0.0030, binance-spot, holdout 2/6/14 d): noise 1, 0, 0 | β6 (15.15 bps) 8, 9, 11 | β8 (20.20) 9, 12, 12 | β12 (30.30) 12, 12, 12. Table sha256 03eb3477…b896 identical on ubuntu, macOS, windows (CI trx) and the Mac. Seen while tuning: β4 (10.10 bps, under cost for this program) passed 7/10 at 2 d and 2/10 at 8 d — power falls with depth for a sub-cost edge, as it should; not asserted.
+Tests box: run 20261023-004830-f03b91a0 GREEN — Fault 498/498, Unit 2178 passed 0 failed, Integration 747 passed 0 failed, timing 6+91+20 passed 0 failed; his files unchanged.
+Review: fleet/tmp/A-org/u-proving-ground-b/U-proving-ground-b-review.md (Codex, not acted on).
+NOT VERIFIED: that synthetic power equals power on real markets (process, not market truth); the manifest's Sharpe is a stated reference trade (every reading traded), not this program's; no proving host sets ThisProcess yet (part c).
