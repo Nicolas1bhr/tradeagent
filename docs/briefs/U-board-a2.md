@@ -138,3 +138,17 @@ verdict or live-eligibility class is in its record. The board never widens its o
 the kill switch and the kernel's invariants have no writer reachable from a board position.
 
 Gate and report per `fleet/BUILDER-PROMPT-v2.md`. `## Report` ≤ 20 lines appended here.
+
+## Report (the stopped builder's facts, recorded by fix pass 1; its own `## Report` was never written)
+Commits on a1 b829ba80: item 11 f8463468 · item 8 e3d94d45 · item 9 81314b58 · item 10 bd5c4f45 · CI 39900270112's three tests 1e89bbf1 · extra A 22a6a69a · extra B 9704aba5.
+C: the 0.10 board share is left as a1 wrote it and read by nothing here. D: the daily-loss gate stays deleted (a card for U-board-live). Rulings: as in the header.
+Removed test name (vs a1): `The_owners_comma_reads_as_five_hundredths_in_the_envelope_box`, with item 11's envelope box. Its CI 39917001666 was RED on PaperBooksTests (three platforms).
+
+## Fix pass 1 (2026-10-23, a fresh fixer; rebased onto u-board-a1 b829ba80)
+- PaperBooksTests red (CI 39917001666): CLOSED, 86f05082 — `GrantOfTwo` withdraws every standing envelope through the owner's press first (PaperGatewayTests' precedent); no assertion changed. Local 8/8, three runs.
+- [P1] unreadable `settings_while_armed`: CLOSED, bbfc3ea7 — read as settings nobody can read (`SettingsThatCouldNotBeRead`: Stop holds, the damaged press kept under `settings_unreadable`, the armed sentence stays the gate's). `BoardTests.A_kept_press_nobody_can_read_holds_stop_through_the_restart_and_the_set_aside`: RED at base ("after the restart: armed True, unreadable False, stopped False"), GREEN after.
+- [P2] founding grant race: CLOSED, 652cc885 — the look and the grant are one `_db.Write` (a nested write joins it); test seam `FoundingEnvelopeFoundNone`. `BoardReadersTests.Two_health_passes_at_once_grant_the_founding_envelope_once`: RED at base ("The collection contained 2 items", "passes that met after the empty read: 2"), GREEN after.
+- [P2] Errors.cs Safety-page repairs: NOT touched here — closed by U-settings-shed in the train.
+- Mutant (P1 fallback restored) ⇒ its test RED ("stopped False"); restored.
+- Gate: Release build 0 warnings, 0 errors; BoardTests + BoardReadersTests 22/22 and PaperBooksTests 8/8, three runs under suite.sh. names.sh 9704aba5..652cc885: removed 0, added 2.
+- Tests box: NOT RUN — `ready : NO - a run is in progress`. CI on this tip: dispatched after this record; its result is NOT VERIFIED here.
