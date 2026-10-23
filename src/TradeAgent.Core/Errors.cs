@@ -141,7 +141,12 @@ public enum ErrorCode
     // re-scoped, or its position was fenced, after it started, so every operation it asks is refused. Not ROLE_MAY_NOT_TRADE, which
     // is about moving money, and not TOOL_NOT_GRANTED, which is a tool its launch never had: this launch HAD the authority and the
     // organisation took it away, and the answer is never "ask again" — the next launch, under whatever replaced it, starts fresh.
-    ATTEMPT_FENCED
+    ATTEMPT_FENCED,
+    // A HOME AN EARLIER BUILD ARMED FOR REAL MONEY (U-board-a1; R24 § 4.5): its settings row says a live mode or real money switched
+    // on, written by a build before the security board. Not MODE_FORBIDS_EXECUTION, which is about the mode in force: this build
+    // never reads a mode from settings, and the repair is the owner's one press that sets the earlier setting aside — never a
+    // conversion of it into a decision nobody made.
+    HOME_ARMED_BEFORE_THE_BOARD
 }
 
 /// <summary>
@@ -1043,6 +1048,23 @@ public static partial class Labels
     /// sentence names the field the owner has to fill in, because a refusal that does not is a
     /// refusal they cannot act on.
     /// </summary>
+    /// <summary>
+    /// THE OWNER'S ONE PRESS OVER A HOME AN EARLIER BUILD ARMED FOR REAL MONEY (<c>U-board-a1</c> item 5): a narrowing, so one press.
+    /// Spelled once — the refusal's repair names it, and the page that carries the press shows it.
+    /// </summary>
+    public const string SetAsideEarlierLiveSetting = "Set aside the earlier real-money setting";
+
+    /// <summary>
+    /// THE REFUSAL OF A HOME AN EARLIER BUILD ARMED FOR REAL MONEY, naming both versions and the repair (<c>U-board-a1</c> item 5;
+    /// CLAUDE.md, "refuse, never guess"): what the row holds, the schema the home was at when this build opened it, this build's, and
+    /// the one press that sets it aside. Nothing is converted and nothing is switched.
+    /// </summary>
+    public static string HomeArmedBeforeTheBoard(string held, int homeSchema, int thisSchema) =>
+        $"Your settings were saved by an earlier version of TradeAgent (database schema {homeSchema}) with {held}. This version "
+        + $"(database schema {thisSchema}) takes the trading mode and real money from the security board's policy, never from "
+        + $"settings, and it will not guess what you meant, so it is sending nothing to your broker. Press “{SetAsideEarlierLiveSetting}”: "
+        + "your settings row is kept exactly as it was under its own name, and the founding policy (Practice, no real money) governs.";
+
     public static string LiveNeedsADailyLossBudget(string mode) =>
         $"{mode} places real orders and nothing here is watching the day, so it cannot be chosen "
         + $"while “{MaxDailyLoss}” is 0. Set that limit on the " + SafetyPage + " page first.";
@@ -1257,6 +1279,7 @@ public static class Errors
         // and the specific reason travels in the technical text rather than being spelled twice.
         [ErrorCode.RUNTIME_COMMANDS_UNREADABLE]    = (Labels.RuntimesCouldNotBeRead(), Labels.OverrideFileRepair(Labels.RuntimesFile), false),
         [ErrorCode.ATAS_LAYOUT_UNREADABLE]         = (Labels.AtasLayoutCouldNotBeRead(), Labels.OverrideFileRepair(Labels.AtasFile), false),
+        [ErrorCode.HOME_ARMED_BEFORE_THE_BOARD]    = ("An earlier version of TradeAgent left real-money trading armed in your settings, so this version is sending nothing to your broker.", $"Press “{Labels.SetAsideEarlierLiveSetting}”. Your settings are kept as they were under their own name, and Practice governs until the security board decides.", false),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)

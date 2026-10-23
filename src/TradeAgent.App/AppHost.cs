@@ -5,6 +5,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
 using TradeAgent.Core;
 using TradeAgent.Core.Audit;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Core.Oversight;
@@ -116,6 +117,12 @@ public sealed class AppHost : IAsyncDisposable
 
     public Database Db => _db!;
     public TradingGateway Gateway { get; private set; } = null!;
+
+    /// <summary>
+    /// THE SECURITY BOARD, READ (<c>U-board-a1</c>; R24 § 4.7): the policy in force with every field's version, its history and the
+    /// seats — the one read the Board page takes. Reads only; nothing in the app writes the board's tables but <see cref="BoardStore"/>.
+    /// </summary>
+    public BoardReader Board => new(Db);
     public HealthRegistry Health { get; } = new();
     public AgentSupervisor Agent { get; private set; } = null!;
     public OnboardingStore Onboarding { get; private set; } = null!;

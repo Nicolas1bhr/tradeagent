@@ -1,5 +1,6 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Gateway;
@@ -47,6 +48,19 @@ public sealed class TradingGateway : IAsyncDisposable
 
     public ITradingConnector Connector { get; }
     public TradeAgentSettings Settings { get; private set; }
+
+    /// <summary>
+    /// WHAT AN EARLIER BUILD LEFT ARMED FOR REAL MONEY IN THIS HOME'S SETTINGS ROW, or null (<c>U-board-a1</c> item 5). While it stands
+    /// every order is refused under <see cref="ErrorCode.HOME_ARMED_BEFORE_THE_BOARD"/> and the row is kept as it was found.
+    /// </summary>
+    public EarlierLiveSetting? EarlierLiveSetting { get; private set; }
+
+    /// <summary>
+    /// THE OWNER'S ONE PRESS OVER AN EARLIER ARMED HOME (<c>U-board-a1</c> item 5) — a narrowing, in-process only: the row as found is
+    /// kept under its own key and the current shape written, and the founding policy governs. Nothing is converted into a policy row.
+    /// </summary>
+    public void SetAsideEarlierLiveSetting() { }
+
     public HealthRegistry Health => _health;
     public ExecutionRequestStore Requests => _requests;
     public CompositeRequestStore Composites => _composites;
