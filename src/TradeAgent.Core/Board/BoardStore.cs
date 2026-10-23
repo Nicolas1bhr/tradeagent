@@ -64,7 +64,8 @@ public sealed class BoardStore(Database db)
                 """, ("$at", when), ("$schema", homeSchema),
                 ("$share", BoardFounding.BudgetShare.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 ("$detail", $"the app founded the board: policy version 1 decided by {BoardDecider.App} on the {BoardBasis.Founding} basis; "
-                            + $"seats {string.Join(", ", seats.Select(s => s.Id))} dormant; the home was at schema {homeSchema}"));
+                            + $"seats {string.Join(", ", seats.Select(s => s.Id))} dormant; the home was at schema {homeSchema}; "
+                            + BoardFounding.PaperValuesSource));
             return e.ExecuteNonQuery();
         });
     }

@@ -6,11 +6,12 @@ namespace TradeAgent.Core.Board;
 
 /// <summary>
 /// THE STANDING PAPER ENVELOPE'S TERMS AS A POLICY STATES THEM (R24 § 4.5): on the app's own paper venue only, one instrument, a
-/// quantity and a value ceiling, how many deployments it carries and for how many days. Terms, not an envelope: the paper allocator
-/// grants one from them through the gateway's own grant path (<c>U-board-a2</c>), and the founding record of rung 47 states none.
+/// quantity and a value ceiling — BOTH bind each deployment, so the value ceiling is the one that binds whenever the instrument's
+/// price makes the quantity worth more — how many deployments it carries, and for how many days, or null for no expiry. Terms, not
+/// an envelope: the paper allocator grants one from them through the gateway's own grant path (<c>U-board-a2</c>).
 /// </summary>
 public sealed record PaperEnvelopeTerms(string Connector, string Account, string Instrument, decimal MaxQuantity, decimal MaxNotional,
-    int Deployments, int Days);
+    int Deployments, int? Days);
 
 /// <summary>
 /// THE BOARD'S POLICY, TYPED (<c>U-board-a1</c>; R24 §§ 4.1, 4.5): every value the gateway, the meter and the paper allocator read
@@ -134,7 +135,7 @@ public static class BoardPolicyBody
         List<string> InstrumentAllowlist);
 
     sealed record EnvelopeBody(string Connector, string Account, string Instrument, decimal MaxQuantity, decimal MaxNotional,
-        int Deployments, int Days);
+        int Deployments, int? Days);
 
     static readonly JsonSerializerOptions Strict = new()
     {

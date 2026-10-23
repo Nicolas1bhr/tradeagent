@@ -8,9 +8,13 @@ namespace TradeAgent.Core.Board;
 /// basis <see cref="BoardBasis.Founding"/> — never attributed to the owner, and never written from what an older settings row held.
 ///
 /// <para><b>The values are the build's current defaults</b> (<c>Core/Trading.cs</c>; a test holds them equal to the settings'
-/// own while those fields still live there). The standing paper envelope and the instrument allowlist have no default today: they
-/// are the orchestrator's to decide and arrive with <c>U-board-a2</c>, so this record states none — an empty allowlist allows
-/// nothing, as it always has.</para>
+/// own while those fields still live there). Where today has no default — the instrument allowlist and the standing paper envelope
+/// — the values are the ones the orchestrator ruled on 2026-10-23 (R24 § 4.5, Q3): the values the owner chose for M0 attempt 4's
+/// paper loop, so the next attempt stays comparable. They are the APP'S founding values, decided by <c>app</c>, never attributed to
+/// him: <c>BTCUSDT</c> alone; one standing envelope on the app's own paper venue only (<c>paper</c>, <c>PAPER-1</c>), each
+/// deployment at most 0.05 BTC AND at most 5,000 USDT of notional — the notional cap is the one that binds whenever BTC's price
+/// makes 0.05 BTC worth more than 5,000 USDT — the build's one deployment per envelope, and no expiry while no board seat is active
+/// (the first active board sets its life). Nothing here authorises anything live.</para>
 /// </summary>
 public static class BoardFounding
 {
@@ -30,7 +34,7 @@ public static class BoardFounding
             LossMinClosureHours = 24m,
             LossStrikeWindowDays = 7,
             ValuationLossExitMinutes = 15m,
-            InstrumentAllowlist = []
+            InstrumentAllowlist = [PaperInstrument]
         },
         PlanDayTotal = 40m,
         RoleShares = new Dictionary<string, decimal>(StringComparer.Ordinal),
@@ -42,8 +46,21 @@ public static class BoardFounding
         ReviewMinutes = 30,
         HeadCeilingHours = 24,
         RewakeFloorMinutes = new Dictionary<string, int>(RewakeFloors.DefaultMinutes, StringComparer.Ordinal),
-        PaperEnvelope = null
+        PaperEnvelope = new PaperEnvelopeTerms(PaperVenue, PaperAccount, PaperInstrument, MaxQuantity: 0.05m, MaxNotional: 5_000m,
+            Deployments: 1, Days: null)
     };
+
+    /// <summary>The app's own paper venue and its one account (<c>PaperConnector.ConnectorId</c>, <c>TheAccount</c>; a test holds them equal).</summary>
+    public const string PaperVenue = "paper", PaperAccount = "PAPER-1";
+
+    /// <summary>The one instrument the founding policy allows: the one the paper venue lists and the tape records.</summary>
+    public const string PaperInstrument = "BTCUSDT";
+
+    /// <summary>Where the founding paper values come from, as the founding event records it — the app's decision, citing its source.</summary>
+    public const string PaperValuesSource =
+        "the allowlist and the paper envelope are the values the owner chose for M0 attempt 4's paper loop, set here by the app as its "
+        + "founding values: BTCUSDT; each deployment at most 0.05 BTC and at most 5,000 USDT notional, the notional cap binding whenever "
+        + "BTC's price makes 0.05 BTC worth more; one deployment; no expiry while no board seat is active";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family

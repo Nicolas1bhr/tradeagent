@@ -96,9 +96,14 @@ public class BoardTests(ITestOutputHelper log)
         Assert.Equal((1, "app", "founding", (string?)null, (string?)null, (decimal?)null),
             (history.Version, history.Decider, history.Basis, history.Rationale, history.EvidenceClass, history.Score));
 
-        // THE FOUNDING VALUES ARE THE BUILD'S CURRENT DEFAULTS where the settings still hold one.
+        // THE FOUNDING VALUES ARE THE BUILD'S CURRENT DEFAULTS where the settings still hold one — every limit but the allowlist,
+        // which has no default and is the orchestrator's ruled value, with the paper envelope (R24 § 4.5, Q3).
         var defaults = new TradeAgentSettings();
-        Assert.Empty(RiskPolicy.Changes(defaults.Risk, BoardFounding.V1.Risk));
+        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(defaults.Risk, BoardFounding.V1.Risk));
+        Assert.Equal(["BTCUSDT"], BoardFounding.V1.Risk.InstrumentAllowlist);
+        Assert.Equal(new PaperEnvelopeTerms(TradeAgent.Connectors.Paper.PaperConnector.ConnectorId, TradeAgent.Connectors.Paper.PaperConnector.TheAccount,
+            "BTCUSDT", 0.05m, 5_000m, TradingGateway.PaperDeploymentsPerEnvelope, null), BoardFounding.V1.PaperEnvelope);
+        Assert.Contains("0.05 BTC", Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'"), StringComparison.Ordinal);
         Assert.Equal((defaults.AiPlanDailyCapacity, defaults.MissionReviewMinutes, defaults.HeadCeilingHours, defaults.AiLanes,
                 defaults.AiLanesPerPool, defaults.AiLanesPerCellClass, defaults.AiTurnAllowanceInputTokens, defaults.AiTurnAllowanceOutputTokens),
             (BoardFounding.V1.PlanDayTotal, BoardFounding.V1.ReviewMinutes, BoardFounding.V1.HeadCeilingHours, BoardFounding.V1.Lanes,
@@ -109,7 +114,9 @@ public class BoardTests(ITestOutputHelper log)
         await using var _gw = gw;
         var status = await gw.StatusAsync();
         Assert.Equal((TradingMode.PAPER, false), (status.Mode, status.LiveActivated));
-        Assert.Empty(RiskPolicy.Changes(status.Risk, inForce.Policy.Risk));
+        // THE LIMITS THE STATUS SHOWS ARE THE POLICY'S, but for the allowlist, which the gateway still reads from the settings row
+        // until U-board-a2 moves every limit's read onto the policy (item 8).
+        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(status.Risk, inForce.Policy.Risk));
     }
 
     /// <summary>
