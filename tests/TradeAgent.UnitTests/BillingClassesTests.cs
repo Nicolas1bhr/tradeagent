@@ -221,6 +221,9 @@ public class BillingClassesTests : IDisposable
             Interlocked.Increment(ref Reads);
             return Task.FromResult(new SeatReading(SeatHomeTests.FakeProbe.Allowed + "plugins   stable   false\n", "[]", true, billing()));
         }
+
+        /// <summary>The CLI class's tool dry run (<c>U-cli-code-mode</c>), canned as <see cref="SeatHomeTests.FakeProbe"/>'s: one exec_command call that ran.</summary>
+        public Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct) => Task.FromResult(new SeatHomeTests.FakeProbe().Tools);
     }
 
     // ---- (a) (b) (c) admission per class ----------------------------------------------------------------------------------
