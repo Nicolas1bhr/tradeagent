@@ -1923,6 +1923,13 @@ public sealed class MissionLoop
         public IAgentConversation Conversation { get; } = conversation;
         public CancellationTokenSource Own { get; } = own;
         public string? Fence { get; set; }
+
+        /// <summary>
+        /// THE HAND-OVER (<c>U-org-verbs-b</c> fix pass 1, Codex P1-2): held by a fence from its check that this launch is still the
+        /// one running to the end of its cancel, and by the turn's own commit while it stops being the one running. So a fence's
+        /// cancel never outlives its launch: the position's next turn cannot begin on the conversation until it is done.
+        /// </summary>
+        public SemaphoreSlim HandOver { get; } = new(1, 1);
     }
 
     /// <summary>
@@ -1938,6 +1945,18 @@ public sealed class MissionLoop
     /// not be missed. Nothing in the product sets it.
     /// </summary>
     internal Func<string, Task>? AfterAdmission { get; set; }
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-org-verbs-b</c> fix pass 1): awaited with the position's id once a fence has found its launch still the
+    /// one running and before that launch is ended — the instant a turn hand-over must not slip into. Nothing in the product sets it.
+    /// </summary>
+    internal Func<string, Task>? AfterFenceCheck { get; set; }
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-org-verbs-b</c> fix pass 1): told the position's id when its turn, over, waits to hand over because a
+    /// fence is ending that very launch. Nothing in the product sets it.
+    /// </summary>
+    internal Action<string>? HandOverWaiting { get; set; }
 
     /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
     string? _role;
@@ -2509,14 +2528,22 @@ public sealed class MissionLoop
             catch (Exception) { continue; }   // no verdict: the broker refuses every operation of a launch whose fence it cannot read
             if (words is null) continue;
 
-            lock (_gate)
+            // CHECKED AND ENDED IN ONE HAND-OVER: the turn cannot stop being the one running between the check and the cancel, so the
+            // cancel lands on this launch's own process or on nothing — never on the position's next turn.
+            await turn.HandOver.WaitAsync();
+            try
             {
-                // STILL THAT LAUNCH: a turn that committed meanwhile is over, and the position's next one is not this fence's.
-                if (!_launched.TryGetValue(turn.Role, out var still) || !ReferenceEquals(still, turn)) continue;
-                turn.Fence = words;
+                lock (_gate)
+                {
+                    // STILL THAT LAUNCH: a turn that committed meanwhile is over, and the position's next one is not this fence's.
+                    if (!_launched.TryGetValue(turn.Role, out var still) || !ReferenceEquals(still, turn)) continue;
+                    turn.Fence = words;
+                }
+                if (AfterFenceCheck is { } paused) await paused(turn.Role);
+                await End(turn);
+                ended++;
             }
-            await End(turn);
-            ended++;
+            finally { turn.HandOver.Release(); }
         }
         if (ended > 0) Changed?.Invoke();
         return ended;
@@ -3260,11 +3287,20 @@ public sealed class MissionLoop
             // fence signalled after this line finds nothing of this turn to end.
             string? fence = null;
             if (running is not null)
-                lock (_gate)
+            {
+                // THE HAND-OVER: a fence ending this very launch finishes first, so its cancel never reaches the turn after this one.
+                if (running.HandOver.CurrentCount == 0) HandOverWaiting?.Invoke(role);
+                await running.HandOver.WaitAsync(CancellationToken.None);
+                try
                 {
-                    if (_launched.TryGetValue(role, out var still) && ReferenceEquals(still, running)) _launched.Remove(role);
-                    fence = running.Fence;
+                    lock (_gate)
+                    {
+                        if (_launched.TryGetValue(role, out var still) && ReferenceEquals(still, running)) _launched.Remove(role);
+                        fence = running.Fence;
+                    }
                 }
+                finally { running.HandOver.Release(); }
+            }
 
             // ---- THE TURN'S ONE COMMITTED TRANSITION ------------------------------------------
             // The launch record closed, what the turn left in `out/` published, its plan and journal

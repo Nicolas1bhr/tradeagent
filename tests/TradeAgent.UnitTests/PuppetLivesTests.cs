@@ -585,6 +585,56 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (g3) A FENCE NEVER CANCELS ANOTHER TURN (<c>U-org-verbs-b</c> fix pass 1, Codex P1-2): the member's turn under M is the one
+    /// running when the fence checks it; in that instant, before the fence ends it, the turn finishes on its own and the member is
+    /// woken for its next turn, under no mandate. The fence must end the launch it found and nothing else: the successor runs to its
+    /// own end (exit 0, its own reply). RED at base: the fence's cancel landed on the successor's process.
+    /// </summary>
+    [Fact]
+    public async Task A_fence_never_cancels_the_turn_that_follows_the_one_it_fenced()
+    {
+        const string head = "pos-fe11ce000005", member = "pos-fe11ce000006", team = "team-fe11ce02";
+        await using var life = await PuppetLife.Begin("fence-handover", seed: SeedTeam(team, head, member));
+        var org = new OrgStore(life.Host.Db);
+        var m = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        life.Script(member, ["signal turning", "await finish-1", "usage 10 0 5", "final Done."],
+            ["signal successor", "await finish-2", "usage 10 0 5", "final Second."]);
+        await life.RunUntil(() => life.Reached("turning"), "the member's puppet is mid-turn on the mandate");
+        var fenced = Assert.Single(life.AttemptsOf(member)).Id;
+
+        // THE INSTANT AFTER THE CHECK: the fenced turn ends on its own and its successor is woken; the hand-over runs as far as it can.
+        var mission = life.Host.Mission;
+        var handOver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successorRanMeanwhile = false;
+        mission.HandOverWaiting = role => { if (role == member) handOver.TrySetResult(); };
+        mission.AfterFenceCheck = async role =>
+        {
+            if (role != member) return;
+            mission.AfterFenceCheck = null;
+            life.Release("finish-1");
+            life.Wake(member);
+            var deadline = DateTimeOffset.UtcNow + PuppetLife.Patience;
+            while (!life.Reached("successor") && !handOver.Task.IsCompleted && DateTimeOffset.UtcNow < deadline) await Task.Delay(50);
+            successorRanMeanwhile = life.Reached("successor");
+        };
+        org.Cancel(m.Id, head, null, "the question is answered elsewhere", DateTimeOffset.UtcNow);
+        Assert.Equal(1, await mission.EndFencedAsync());
+
+        await life.RunUntil(() => life.Reached("successor"), "the member's next turn started");
+        life.Release("finish-2");
+        await life.RunUntil(() => life.AttemptsOf(member) is { Count: 2 } two && two.All(a => a.State != AiAttemptState.LAUNCHED) && life.Presence.Live == 0,
+            "both of the member's turns ended");
+        var (first, second) = (life.AttemptsOf(member)[0], life.AttemptsOf(member)[1]);
+        Assert.Equal(fenced, first.Id);
+        Assert.Null(second.MandateId);
+        Assert.True(second.ExitCode == 0,
+            $"the successor {second.Id} was cancelled by the fence on {fenced}: exit {second.ExitCode}, cost {second.Cost} of {second.ReservedCost} reserved; " +
+            $"it had started while the fence held its check: {successorRanMeanwhile}");
+        output.WriteLine($"life (fence hand-over): the successor ran meanwhile: {successorRanMeanwhile}; {life.Counts()}");
+    }
+
+    /// <summary>
     /// (f2) THE LEGACY PAIR ON UNCONFINED SEATS ARE REFUSED ALL THREE, ON THE REAL KERNEL (<c>U-org-verbs-a</c>): their puppets play the
     /// CLI class — unconfined, the class the legacy pair's real seats record — and each asks <c>trade mandate rescope</c>,
     /// <c>trade mandate propose</c> and <c>trade org show</c>; every one is refused in the gate's words (research heads the division
