@@ -238,7 +238,7 @@ public static class SyntheticMarket
         // THE MARKET'S OWN NAME (R3): its raw files and its truth are named by its spec, so a second market for the same
         // instrument and month never writes over the files an earlier dataset and its truth were recorded from.
         var key = Key(spec, start);
-        var truth = Path.Combine(home.TruthDir, $"{spec.Instrument}-{key}.json");
+        var truth = TruthFile(home, spec);
         if (File.Exists(truth))
             throw new InvalidOperationException(
                 $"this market ({spec.Instrument}, seed {spec.Seed}, from {start:O} for {spec.Days} days) is already written in this "
@@ -366,6 +366,10 @@ public static class SyntheticMarket
     /// THE NAME A MARKET'S FILES CARRY: the first 16 hex digits of the SHA-256 over everything its spec says — seed,
     /// instrument, venue, start, days and planted edge — so two markets share a name only when they are the same market.
     /// </summary>
+    /// <summary>Where <paramref name="spec"/>'s market keeps its truth in <paramref name="home"/>: named by everything the spec says.</summary>
+    internal static string TruthFile(ProvingHome home, SyntheticMarketSpec spec) =>
+        Path.Combine(home.TruthDir, $"{spec.Instrument}-{Key(spec, spec.Start.ToUniversalTime())}.json");
+
     static string Key(SyntheticMarketSpec spec, DateTimeOffset start) => Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture,
         $"{spec.Seed}|{spec.Instrument}|{spec.VenueId}|{start:O}|{spec.Days}|{spec.Edge?.BetaTicks.ToString(CultureInfo.InvariantCulture) ?? "-"}|{spec.Edge?.HorizonMinutes.ToString(CultureInfo.InvariantCulture) ?? "-"}")
         + (spec.Extended

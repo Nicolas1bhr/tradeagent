@@ -526,6 +526,43 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A CAMPAIGN IS OPENED ONLY WITH THE SPEC THAT WROTE ITS MARKET (fix pass 1, finding 3). A market written with its holdout
+    /// from day 21: the proving process's press with the same spec but a holdout from day 7 is refused in words, and so is one
+    /// with any other generating field changed — here the seed — with no cutoff and no campaign written; the spec that wrote
+    /// the market opens its campaign at day 21.
+    /// </summary>
+    [Fact]
+    public void A_campaign_is_opened_only_with_the_spec_that_wrote_its_market()
+    {
+        using var scratch = TestEnv.NewScratch("campaign-spec");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        var spec = new SyntheticMarketSpec(91, "SYNA", VenueCatalog.BinanceSpot, Start, 28, SyntheticEdge.InSampleOnly(16))
+        {
+            Holdout = new SyntheticHoldout(21, TrialBudget: 10, VerdictBudget: 2)
+        };
+        var market = p.Write(spec);
+        new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
+        var at = Start.AddDays(28);
+
+        var earlier = ProvingCampaign.Open(p.Home, p.Db, market, spec with { Holdout = new SyntheticHoldout(7, 10, 2) }, at);
+        log.WriteLine(earlier.Why);
+        Assert.False(earlier.Ok, "a campaign was opened from day 7 over a market whose in-sample trap was planted up to day 21");
+        Assert.Contains("holdout", earlier.Why, StringComparison.Ordinal);
+
+        var reseeded = ProvingCampaign.Open(p.Home, p.Db, market, spec with { Seed = 92 }, at);
+        log.WriteLine(reseeded.Why);
+        Assert.False(reseeded.Ok, "a campaign was opened with a spec of another seed");
+        Assert.Contains("is not the spec that wrote", reseeded.Why, StringComparison.Ordinal);
+
+        Assert.Null(new DatasetStore(p.Db).ById(market.Dataset.Id)!.HoldoutFrom);
+        Assert.Empty(new CampaignStore(p.Db).All());
+
+        var opened = ProvingCampaign.Open(p.Home, p.Db, market, spec, at);
+        Assert.True(opened.Ok, opened.Why);
+        Assert.Equal(Start.AddDays(21), opened.Campaign!.HoldoutFrom);
+    }
+
+    /// <summary>
     /// (f) THE MANIFEST IS WRITTEN ONLY INTO A PROVING HOME — and the holdout and campaign only into its own ledger. Beside a
     /// stand-in real home: a market with edges, traps and a holdout written through a real home's stores is refused before
     /// anything is written; written into the proving home, its manifest lies in that home's truth folder and states every
