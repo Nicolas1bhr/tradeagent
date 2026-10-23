@@ -6,7 +6,8 @@ prompt, because the software does not have one.
 ## What it does
 
 TradeAgent gives an AI assistant a safe, limited way to see your trading account in ATAS and to place
-orders in it — with you holding every switch.
+orders in it — with the emergency switches always in your hands, and every limit coming from the security
+board's policy (the app's founding values until the board decides), never from the AI.
 
 - **You talk to the AI inside TradeAgent's own window.** There is no black terminal, and nothing to
   install by hand. The Chat page is the conversation.
@@ -15,10 +16,11 @@ orders in it — with you holding every switch.
 - **The AI works in its own folder** on your computer. It can write notes, write its own tools, and
   look things up on the internet.
 - **It can keep working when you are not there.** Two presses on the Dashboard and it carries on by
-  itself — researching, testing strategies, trading inside your limits — until you pause it.
+  itself — researching, testing strategies, trading inside the limits in force — until you pause it.
 - **The AI cannot log in to your broker.** It has no access to your password. That is a deliberate
   part of the design, not an oversight.
-- **It starts in practice mode.** Nothing real can happen until you switch real money on yourself.
+- **It starts in practice mode.** The trading mode and real money are the security board's decision, not a
+  switch in the app, and until a board seat is active nothing real can happen.
 
 ## Installing it
 
@@ -133,7 +135,7 @@ Four more things worth knowing:
   its line under *Running now*, and when your AI asks about such a verdict it is told it was withdrawn, on
   which date and why. Judging a withdrawn strategy again is not available yet.
 - **Your AI cannot update TradeAgent.** It cannot check, download or install anything — the same rule
-  that keeps it away from the mode switch and the kill switch.
+  that keeps it away from the kill switch and from everything on the Owner page.
 - **The check needs the internet, and that is all it needs it for.** If your machine is offline the
   Settings page says it could not check, and nothing else changes.
 
@@ -298,11 +300,20 @@ of anything it could not work out.
 Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded
 automatically. There is a section on this page below.
 
-**Safety** — the trading mode, the seven limits, and the three emergency buttons. Everything on this
-page belongs to you; the AI cannot reach any of it and has no way to ask.
+**Board** — the security board's decisions in force: the trading mode, the seven limits, the AI's
+allowances and the standing paper envelope, each with its value, the version that set it, who decided it
+and since when. Until a board seat is active every value there is marked *founding (the app's)* — the
+app's founding value, never yours and never the AI's. The page only reads; it has no button that changes
+anything.
 
-**Settings** — which trading platform is in use, which account the AI may trade, and which version of
-TradeAgent you are running. You can change the platform and the account here after setup. Changing
+**Owner** — what only you decide: the three emergency buttons, your connections (the trading platform,
+the account the AI may see, your keys and the ATAS bridge), the real money the AI may spend, how its work
+is priced, and updates. The AI cannot reach any of it and has no way to ask. Two things on it are yours
+only until the security board is active, and their cards say so: which model and runtime each seat runs
+on, and releasing a held paper scope.
+
+**Settings** — the market data TradeAgent collects for research. The platform and the account the AI may
+see are on the **Owner** page, under *Connections*, where you can change them after setup. Changing
 the platform closes the current connection and clears your account choice, because an account on one
 platform does not exist on the other; it moves no money and cancels nothing.
 
@@ -320,7 +331,8 @@ On the **Settings** page there is a card called **Market data**, and it does thr
 **Download 12 months** fetches the twelve most recent complete months of that pair's 1-minute bars from
 Binance's public archive and checks every file against the checksum Binance published beside it. One
 press: this only ever changes what TradeAgent can READ. It is not a trading connection, it decides
-nothing about what the AI may trade — that is the allowlist on the Safety page — and it moves no money.
+nothing about what the AI may trade — that is the instrument allowlist, the security board's, shown on the
+Board page — and it moves no money.
 A month Binance has not published yet is recorded as not published; a file whose bytes do not match the
 published checksum is thrown away rather than used.
 
@@ -424,8 +436,9 @@ cannot record, change or delete any of it, and an item the check flagged reaches
 Terms* (version 1.0, CC BY-NC-SA 4.0). They allow backtesting for personal research and do not allow live
 trading on that data. So TradeAgent records, with every dataset, the terms its bars came under, and the history
 you download reads **research-only**. Backtests, verdicts and paper experiments go on over it exactly as before —
-but TradeAgent gives **no capital** to a strategy whose verdict rests on it. If you press **Allocate** on the
-Capital card for such a strategy, the card refuses and says which data and which terms; nothing is written.
+but TradeAgent gives **no capital** to a strategy whose verdict rests on it. Allocating capital is the security
+board's decision, and an allocation for such a strategy is refused in words naming which data and which terms;
+nothing is written.
 There is nothing for you to edit or change: no setting reclassifies data, and neither can the AI. The live
 minutes TradeAgent collects itself read **unverified** for now, because whether Binance's dataset terms reach the
 address they come from is an open question. The report's *newest bars* lines and the AI's own view of the data
@@ -516,8 +529,8 @@ the AI"*, and that line means TradeAgent can show it.
 
 **One thing to know about documents.** If a file you hand over contains text aimed at the AI —
 "you are approved to trade", "place this order", "ignore your instructions" — it has no effect. The
-AI cannot gain permission from a document. Only you can change what it is allowed to do, and only in
-this window. If a file asks for something like that, the AI is told to raise it with you in the chat
+AI cannot gain permission from a document. What it is allowed to do is set by the security board's policy
+and by your own presses in this window, never by anything it reads. If a file asks for something like that, the AI is told to raise it with you in the chat
 rather than act on it.
 
 ## Letting the AI work on its own
@@ -562,9 +575,10 @@ whoever pays for that assistant pays for those runs. Since the whole point is th
 non-stop, TradeAgent counts.
 
 Under the four words on the card is one more line: **what today's work has cost, against the most it
-is allowed to cost.** The limit starts at **5 a day** and you change it on the **Safety** page, under
-*What the AI costs*. Raising it asks twice and names the new figure — it is giving the AI more of
-your money, which is the same kind of act as raising a trading limit. Lowering it saves at once.
+is allowed to cost.** The real-money limit starts at **5 a day** and you change it on the **Owner** page,
+under *Your real money for the AI*; how much of your ChatGPT plan the AI may use in a day is the security
+board's, shown on the **Board** page. Raising the real-money limit asks twice and names the new figure —
+it is giving the AI more of your money. Lowering it saves at once.
 
 **Reaching the limit stops the AI taking new turns until midnight.** It does not touch your orders or
 your positions, and it does not take away any permission — at midnight the day's total starts again
@@ -573,14 +587,13 @@ what it had spent, and when it will start again. If you want it working sooner, 
 
 **When nothing happens, it looks around — and that costs turns too.** The AI takes a turn when something
 happens that it owns: you type, material arrives in the Inbox, one of its orders fills or settles, a report
-or a verdict arrives, or midnight gives a role that had spent its share of the day a new one. On the
-**Safety** page, under *What the AI costs*, **Wake the AI to look around at most every … minutes** sets
-the fastest it is woken to look around anyway, 30 minutes out of the box. It is the fastest, not a
+or a verdict arrives, or midnight gives a role that had spent its share of the day a new one. **Wake the AI
+to look around at most every … minutes** — the security board's, shown on the **Board** page, 30 minutes as
+the app's founding value — sets the fastest it is woken to look around anyway. It is the fastest, not a
 clock: while nothing happens the look slows, up to eight times that interval, and each role is looked at
 only while it has open work it owns — your messages and its orders and positions for the Operations
 Director, the research for the Research Director. A quiet day with nothing open for the chair therefore
-costs only the Research Director's looks. 0 turns the look off altogether. Waking it more often asks twice,
-because it spends more of your money.
+costs only the Research Director's looks. 0 turns the look off altogether.
 
 **The limit is applied before a turn runs, not after it.** Before a turn starts, TradeAgent writes
 down that it is about to spend and sets aside the most that turn could cost; the turn only runs if
@@ -597,12 +610,12 @@ AI stops a little before the number rather than a little after it.
 input allowance at whichever is higher of the plain and cache-write rates, plus the output allowance
 at the output rate, with reasoning counted inside output. Assuming the cheaper of the two would let a
 turn be billed above its own reservation, and the limit would be passed by the difference. The two
-allowances are on the **Safety** page under *What the AI costs*, right below the limit. They save in
-one press — they take no permission and give none — and the direction is the trade: a bigger
+allowances are the security board's, shown on the **Board** page as the app's founding values, and the
+direction is the trade: a bigger
 allowance is a safer limit and fewer turns a day. A smaller one sets less aside only where the turn
 is held to it — TradeAgent's own harness, which stops a turn before a request that could pass it; on
 the AI company's own program nothing can stop a turn midway, so there no less than the shipped
-default is ever set aside. A zero in either box means the shipped default.
+default is ever set aside. A zero in either means the shipped default.
 
 **Your own typed questions are counted too.** A message you send on the Chat page is a run of the AI
 tool like any other, so it is reserved before it is sent and charged when it comes back. If the
@@ -624,15 +637,16 @@ could have cost rather than what they did.
 
 **If one turn could cost more than your whole daily limit, the AI cannot start at all**, and the card
 says exactly that instead of "waiting until 00:00" — because midnight will not repair it. Raise the
-limit, choose a cheaper model, or lower the turn allowance.
+real-money limit on the **Owner** page, or choose a cheaper model; the turn allowance is the security
+board's.
 
-**Which model it runs on is TradeAgent's choice, and it is on the Safety page.** Under *What the AI
-costs*, above the two price boxes, there is a row of models with what each one costs per million
-tokens in and out. One press picks one; *TradeAgent's choice* hands it back to the one this build
+**Which model it runs on is yours until the security board is active, and it is on the Owner page.**
+Under *What each seat runs on* there is a row of models with what each one costs per million tokens in
+and out. One press picks one; *TradeAgent's choice* hands it back to the one this build
 ships as the default. It asks once, because it takes no permission and gives none — the daily limit
 above is unchanged either way, and a dearer model simply reaches it sooner. It is the single biggest
 lever you have over what the AI costs: the dearest model on the list is at least a hundred times the
-cheapest.
+cheapest. From the first active board seat the choice is the board's, and the card is no longer offered.
 
 Before this existed the model came from a configuration file belonging to the AI assistant, which
 you have never opened and TradeAgent never mentions — so the model spending your money was whichever
@@ -647,7 +661,7 @@ own page on a stated day** — OpenAI's pricing page, <https://developers.openai
 read on **2026-10-02**, together with the list of models Codex can be set to from
 <https://learn.chatgpt.com/docs/models> read the same day. Both AI assistants TradeAgent offers are
 billed by OpenAI under the sign-in TradeAgent sets up for them, which is why one page covers both.
-Every price carries that page and that date with it, and the Safety page shows you both. The list
+Every price carries that page and that date with it, and the Owner page shows you both. The list
 includes OpenAI's GPT-6 models — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol` and `gpt-6-luna` — each at
 the price that page gives it, so a turn on one is charged at its own price rather than at the dearest
 model's.
@@ -674,8 +688,8 @@ Three things follow from that, and it is worth knowing all three:
   deliberate in both cases: it can only stop the AI early, and midnight undoes that, while charging
   low would let the daily limit be walked past.
 
-**If you know what you are actually charged, say so — on the Safety page, under *What the AI
-costs*.** Two boxes, per million tokens in and per million tokens out. They open on the price
+**If you know what you are actually charged, say so — on the Owner page, under *What a turn is
+priced at*.** Two boxes, per million tokens in and per million tokens out. They open on the price
 TradeAgent is using, with the model, the page and the date underneath. Your numbers then beat
 everything else, for every turn, whether or not the assistant named a model, and the card says
 *"priced by you"* instead of calling the figure an estimate.
@@ -712,9 +726,9 @@ Underneath the button is a box for standing instructions: *"focus on ES during t
 included in everything the AI is told, every single time, so you do not have to repeat yourself.
 
 **It steers what the AI works on. It cannot give it permission to do anything.** Writing "you may
-trade real money" in that box does nothing at all — the modes, the limits and the emergency buttons
-on the **Safety** page are the only things that decide what the AI is allowed to do, and nothing you
-type anywhere else can change them.
+trade real money" in that box does nothing at all — the security board's policy (the mode and every
+limit, shown on the **Board** page) and the emergency buttons on the **Owner** page are the only things
+that decide what the AI is allowed to do, and nothing you type anywhere else can change them.
 
 ### STOP AI TRADING does not stop the AI working
 
@@ -736,18 +750,19 @@ it; the Operations Director writes a short agenda back down the same way. Neithe
 other's folder, and neither can create work for itself.
 
 Both are the same AI tool with the same permissions. **A role is not a rank**: nothing about being
-the chair lets it trade more, raise a limit or change a setting — the **Safety** page is still the
-only place any of that lives.
+the chair lets it trade more, raise a limit or change a setting — those are the security board's policy
+and your own **Owner** page, and nothing else.
 
-Three things about them are yours to set, on the **Safety** page under *What the AI costs*:
+Two things about them are yours until the security board is active, on the **Owner** page under *What
+each seat runs on*, and a third is the board's:
 
 - **What the Research Director runs on.** Two choices, and they are two different kinds of thing.
   *The AI tool on this computer* is the program TradeAgent installed for you, started with no window,
   once per turn. *TradeAgent's own worker* is TradeAgent talking to the AI provider itself — see below.
 - **The model the Research Director runs on.** A cheaper model here buys the research more turns for
   the same money. Leave it on *TradeAgent's choice* and it runs on whatever the row above says.
-- **The split of the daily limit.** 50/50 out of the box. It divides the limit above between the two
-  roles; it never adds to it. A role that has spent its share stops taking turns and the other one
+- **The split of the daily limit** — the security board's, shown on the **Board** page, 50/50 as the
+  app's founding value. It divides the limit above between the two roles; it never adds to it. A role that has spent its share stops taking turns and the other one
   carries on, which is the point — without a split, whichever role woke first would spend the whole
   day.
 
@@ -755,7 +770,7 @@ Three things about them are yours to set, on the **Safety** page under *What the
 
 The AI tool on your computer is somebody else's program. TradeAgent can start it, stop it and read
 what it prints, and that is all: it decides for itself what to read, how much of it to read and what
-to do next, so the limit you set on how much one turn may use is a number TradeAgent can only check
+to do next, so the limit on how much one turn may use is a number TradeAgent can only check
 *between* turns. A turn that reads far more than you allowed has already been billed by the time
 TradeAgent sees it.
 
@@ -785,7 +800,7 @@ It can do **less** than the AI tool, not more. It still cannot place an order un
 allowed to, and the Research Director never is.
 
 **It needs a key, and TradeAgent will not save it.** Paste your provider's API key into the box
-under *What the AI costs*. TradeAgent keeps it in memory while it is open, sends it with each
+under *Key for TradeAgent's own worker* on the **Owner** page. TradeAgent keeps it in memory while it is open, sends it with each
 request, and forgets it when you close the app — so you paste it again next time you start. That is
 deliberate and it is the honest reason: nothing on Windows yet stops the AI's own program from
 reading the files TradeAgent keeps, so a key written into one of those files is a key the AI could
@@ -800,10 +815,10 @@ key** asks a second time, naming the address. Something on your computer changed
 program is one of the things that could; if it was not you, do not paste your key. TradeAgent never
 remembers that second press: after a restart it asks again. And if TradeAgent's own worker is ever about to
 send your key to any address other than the one you pasted it for, it does not send anything: it forgets the
-key, charges that turn nothing, and the Safety page then says no key is held. Paste it again if the new
+key, charges that turn nothing, and the Owner page then says no key is held. Paste it again if the new
 address is the one you meant.
 
-With no key held, a role set to TradeAgent's own worker **sends nothing at all** and the Safety page
+With no key held, a role set to TradeAgent's own worker **sends nothing at all** and the Owner page
 says so in orange. Any turn it is woken for in the meantime ends at once and is charged nothing — not the
 amount set aside for it. Nothing is lost; it starts working the moment you paste one.
 
@@ -815,8 +830,8 @@ delivered to it — and an `out` folder, which is the only way anything leaves.
 
 TradeAgent can ask a *decision model* — Jev, at TypeSafe or through OpenRouter — short typed questions,
 each answered with probabilities. Nothing asks it anything yet except the test on its card, and no AI
-can reach any of it. Everything about it is on the **Safety** page, in the **Perception** card under
-*What the AI costs*:
+can reach any of it. Everything about it is on the **Owner** page, in the **Perception** card under
+*Real money*:
 
 - **Which decision model.** Two buttons, one press each. The one you choose is the one whose price and
   limits the card shows and the one a key you paste is kept for.
@@ -869,25 +884,27 @@ puts the last one it accepted back, and tells the AI so on its next turn.
 
 ## The four modes
 
-Set on the **Safety** page.
+**The mode is the security board's decision, not a button in the app.** The **Board** page shows the one
+in force, who decided it and since when. Until a board seat is active it is the app's founding value,
+**Practice**, with real money switched off — and nothing in the app selects a real-money mode.
 
-| Mode | Presses | Meaning |
-|---|---|---|
-| **Watch only** | one | The AI can look at everything and place nothing. |
-| **Practice** | one | Orders go to a simulated account. Nothing real. Start here and stay a while. |
-| **Real, ask me first** | two | The AI proposes each order; nothing happens until you approve it. |
-| **Real, fully automatic** | two | The AI trades on its own, inside the limits you set. |
+| Mode | Meaning |
+|---|---|
+| **Watch only** | The AI can look at everything and place nothing. |
+| **Practice** | Orders go to a simulated account. Nothing real. |
+| **Real, ask me first** | The AI proposes each order; nothing is sent on its own word. |
+| **Real, fully automatic** | The AI trades on its own, inside the limits in force. |
 
-**The two real-money modes take two presses; the other two take one.** The first press turns the
-button red and says what the second one will do — *"Confirm: let the AI propose real orders"*, and
-for the fully automatic mode *"Confirm: let the AI place real orders without asking"*. Watch only and
-Practice are one press because they can only ever take authority away, and a screen that argues with
-someone trying to stop is a screen that gets people hurt. That asymmetry is the rule everywhere in
-TradeAgent: giving the AI room asks twice, taking it away happens at once.
+What stays yours keeps the rule that runs through all of TradeAgent: giving the AI room asks twice,
+taking it away happens at once, because a screen that argues with someone trying to stop is a screen
+that gets people hurt.
 
-The two real-money modes need you to switch real-money trading on **separately** — choosing the mode
-is not consent on its own. And if you leave a real mode and come back, you have to switch it on again.
-It does not remember your permission.
+**A home an earlier version armed for real money is refused, in the app.** If your settings were saved by
+an earlier version with a real-money mode or real money switched on, this version sends nothing to your
+broker and says so — naming both versions — in a strip at the top of the window, on every page, with one
+button: **Set aside the earlier real-money setting**. One press, because it only takes away. Your old
+settings are kept exactly as they were under their own name, nothing is converted or deleted, and the
+founding policy (Practice, no real money) governs from then on.
 
 ### While real money is switched on, TradeAgent will not start the AI at all
 
@@ -898,8 +915,8 @@ hand it a short list of environment variables rather than a copy of its own, and
 program is on the other end of the AI's connection before believing anything it says about itself. But
 none of that is a sandbox, and the Checks page says so in those words: **OS sandbox: NONE**.
 
-So in the one configuration where that gap would matter — a real-money mode **and** real-money trading
-switched on — TradeAgent refuses to start the assistant and says:
+So in the one configuration where that gap would matter — a real-money mode **and** real money switched
+on in the policy in force — TradeAgent refuses to start the assistant and says:
 
 > Real-money trading is switched on, and no operating-system sandbox confines the AI assistant's
 > program on this computer: it runs as the same Windows user as TradeAgent and can read and write
@@ -910,25 +927,13 @@ switched on — TradeAgent refuses to start the assistant and says:
 everything else the AI does. Choosing a real mode is not what triggers this — arming it is. When a real
 sandbox exists, this refusal lifts on its own and nothing else changes.
 
-### What "Real, ask me first" actually looks like
+### There is no per-order approval any more
 
-The AI decides it wants to buy or sell. Nothing is sent. Instead:
-
-1. An amber bar appears at the top of the window: *"The AI is asking permission — 1 order waiting"*,
-   with **Review the request**.
-2. The Dashboard shows exactly what it wants to do — buy or sell, which instrument, how many, at what
-   kind of price.
-3. **Decline** takes one press. **Approve** takes two: the first press changes the button to say what
-   you are about to confirm — *"Confirm: place this order"* — and the second does it. A single
-   misplaced click cannot send an order.
-4. **A request goes stale after fifteen minutes.** The line under it says so: *"asked at 14:02 —
-   approve before 14:17; from then, approving declines it instead."* Nothing is sent when the time
-   runs out; the request simply stops being approvable, and pressing Approve after that declines it.
-   A price that was worth acting on a quarter of an hour ago is not one to act on now.
-5. **Approving is not a rubber stamp on an earlier decision.** Every rule is checked again at the
-   moment you press — the mode, the kill switch, the account, your limits, the connection, the price.
-   So an approval can be refused for a reason that did not exist when the AI asked, and the Dashboard
-   tells you which one.
+Earlier versions raised an amber bar — *"The AI is asking permission"* — and showed an **Approve** and a
+**Decline** button on the Dashboard for each order the AI proposed in *Real, ask me first*. Both are gone:
+whether real money is used is the security board's decision, and a press per real order cannot be one of
+its decisions. Until a board seat is active no real-money mode is in force, so nothing is waiting for
+anyone to approve it.
 
 ## The three emergency buttons
 
@@ -1060,16 +1065,12 @@ and nothing went anywhere. Different sentence, different meaning, on purpose.
 
 ## The seven safety limits
 
-On the **Safety** page. Change a number, press **Save limits**, and it applies to the next order.
-These are enforced before anything reaches your broker. The AI cannot raise them and has no command
-to ask.
-
-**Lowering one saves in a press. Raising one asks twice** — the button turns red and names the limit
-you widened, *"Confirm: widen “Most orders per minute”"*, or counts them if you changed several. A
-raised cap is the same act as choosing a real-money mode, done with a number instead of a button.
-Note the three fields where "wider" is not "larger": **0** in the money box and in the two loss boxes
-means *not enforced*, so setting one of them to 0 is the widest that limit gets and asks twice, while
-a smaller number saves at once.
+**They are the security board's, shown on the Board page** — each with its value, the version that set
+it and who decided it. Until a board seat is active every one of them is the app's founding value; no
+button in the app changes one, and the AI cannot raise them and has no command to ask. They are enforced
+before anything reaches your broker, and a new value applies to the next order. Note the three where
+"wider" is not "larger": **0** for the money limit and for the two loss limits means *not enforced*, the
+widest that limit gets.
 
 The seven:
 
@@ -1082,18 +1083,18 @@ The seven:
 - **which instruments** it may touch at all.
 
 **The two loss limits are the only ones about what has happened rather than about what is being
-sent**, and they are in your account's currency: once the day is down by the amount you set — money
+sent**, and they are in your account's currency: once the day is down by the amount in force — money
 already lost plus what your open positions are down right now — the AI is refused every order that
 could take on more, and once one position is down by the per-position amount it
 may not be added to. **Closing or reducing a position is never refused by them.** Both start at **0**,
-which means not enforced — but you cannot choose either real-money mode until you have set a daily
-one, and the refusal says so, because nobody is watching the day for you.
+which means not enforced — but no real-money mode can be in force until a daily one is set, and the
+refusal says so, because nobody is watching the day for you.
 
 **TradeAgent watches the day itself, and a breach is written down.** It re-measures your open
 positions every few seconds — not only when the AI sends something — so a position that goes through
 your daily limit while the AI is quiet is still caught. When two separate readings a few seconds
-apart agree that a limit is breached, TradeAgent records it: the Safety page then says so under the
-two boxes, the daily report says since when, and the AI is told the same thing in its own words. One
+apart agree that a limit is breached, TradeAgent records it: the Owner page then says so beside the
+emergency buttons, the daily report says since when, and the AI is told the same thing in its own words. One
 odd price does not close a day; two readings that agree do.
 
 **Once it is closed it stays closed for at least 24 hours**, and that is deliberate. It does not
@@ -1102,25 +1103,26 @@ or because you raised the limit afterwards — those are all the same event, and
 itself the moment the number moved would not be a limit. There is no command the AI can send that
 reopens anything.
 
-**The 24 hours is yours to change, and so is the window below it.** Two more boxes on the Safety
-page: *How long it stays closed after a losing day (hours)*, and *Days in which a second losing day
-holds it for you*. They start at 24 and 7. On these two the SMALLER number is the one that gives the
-AI more room — a shorter pause is more days it can lose a budget in — so **making either one smaller
-asks you twice**, exactly as raising a limit does, and making one larger saves in a press. Neither
-change touches a closure that is already standing: every closure is judged by the numbers that were
-in force when it happened, and the Safety page and the daily report both say which those were. A
-number you set today applies to the next one.
+**The 24 hours and the window below it are the security board's.** The **Board** page shows both —
+*How long it stays closed after a losing day* and the days in which a second losing day holds it — at 24
+and 7, the app's founding values. On these two the SMALLER number is the one that gives the AI more room:
+a shorter pause is more days it can lose a budget in. Neither change touches a closure that is already
+standing: every closure is judged by the numbers that were in force when it happened, and the Owner page
+and the daily report both say which those were. A number in force today applies to the next one.
 
-**Twice in a week and TradeAgent will not reopen it at all — you do.** One bad day is what the limit
-is for, and TradeAgent handles it. A scope that reaches the limit a SECOND time inside that window is
-a strategy or a market for you to look at, and letting code hand it another budget every day is not
-what you set a limit for. So it is held: the Safety page shows a *Held for you to look at* card
+**Twice in a week and TradeAgent will not reopen it at all — a person does.** One bad day is what the
+limit is for, and TradeAgent handles it. A scope that reaches the limit a SECOND time inside that window
+is a strategy or a market to look at, and letting code hand it another budget every day is not what a
+limit is for. So it is held: on a paper scope the Owner page shows a *Held for you to look at* card
 naming both days, and the AI is told the same thing and told that nothing it can do changes it.
 
-The card is how you release it. You type what you looked at — that box is required, because it is the
+On a paper scope the card is how you release it — yours until the security board is active, then the
+board's, and the card says so. A scope held outside paper trading is never yours to release: the card is
+not offered for it, and while one is held on the account the release is refused in words and nothing is
+released, because a release lifts every hold on the account at once. You type what you looked at — that box is required, because it is the
 only record of why you decided it could trade again — and press twice. **Releasing lifts that hold
 and nothing else:** the closure still has to run its time, and TradeAgent still has to see your book
-flat, before anything trades. Your note is kept and is quoted back on the Safety page and in the
+flat, before anything trades. Your note is kept and is quoted back on the Owner page and in the
 daily report. The AI has no command that asks for this, and nothing it puts in a document reaches it.
 
 **TradeAgent reopens it itself, and only once it has looked.** It used to lift at the next UTC
@@ -1128,7 +1130,7 @@ midnight, which meant a limit reached at 23:58 was two minutes of pause on an ac
 been closed out. It now lasts a full day from the moment the breach was confirmed, and even then it
 lifts only when TradeAgent can see that a fresh reading of your platform shows nothing open on it,
 that everything it sent when it closed your book is accounted for, and that this computer's clock has
-not been moved backwards. The Safety page and the daily report both say the earliest it can lift, and
+not been moved backwards. The Owner page and the daily report both say the earliest it can lift, and
 if something is in the way they say what — those are the cases where you have to look, because
 waiting will not clear them. When it does lift, TradeAgent writes that down too, with what it checked.
 Section 4 of the daily report lists every closure inside the window with the rule it was judged by
@@ -1142,7 +1144,7 @@ checks that against a fresh reading of the position immediately before each orde
 would reverse or open anything is refused and nothing is sent for it. The AI cannot start this, stop
 it, or ask for it; there is no button for it either.
 
-**It tells you one of two things, and the second one needs you.** The Safety page, the daily report
+**It tells you one of two things, and the second one needs you.** The Owner page, the daily report
 and the AI's own status all carry it. **Closed and flat** means the closes were filled and a fresh
 read of your account says nothing is open. **Could not be confirmed** means something did not
 answer — a close your platform refused, an order that would not cancel, a position still showing —
@@ -1169,7 +1171,7 @@ reads flat and nothing more is sent, or TradeAgent closes what is still open onc
 checks — cancelling any order still working on that instrument first, so a close you thought was gone
 cannot fill on top of the new one. Where your platform can show its order history and still has that
 close working, the platform outranks your answer: nothing is decided until the platform finishes it. And
-once you have answered every record TradeAgent left, it stops asking you to confirm them; the Safety
+once you have answered every record TradeAgent left, it stops asking you to confirm them; the Owner
 page, the daily report and the AI's status say what it is still waiting on instead.
 
 **Every close it sends is answered this way, the second one too.** If the answer to the close it sends
@@ -1177,7 +1179,8 @@ once more is lost as well, TradeAgent asks your platform's history about that on
 your answer to it — and then it is done: the account reads flat, or what is still open is yours to close
 at your platform, and TradeAgent says so. It never closes a third time. Once your platform reads flat and
 the closure has run its time, the account reopens as usual. The same goes for a position TradeAgent closes
-because it could not work out what it was worth for longer than your Safety page allows: if the answer to
+because it could not work out what it was worth for longer than the policy in force allows (*Close a
+position nobody can value after*, on the Board page): if the answer to
 that close is lost, it asks your platform's history (or takes your answer), clears its records so trading
 and its other such closes are not held up, and — only if the position is still open and still cannot be
 valued — closes it once more. If a price for it has come back, it leaves it open and says why: your loss
@@ -1203,30 +1206,30 @@ ones yet" and "any of them" are different sentences, and only one of them is a d
 
 ## Letting TradeAgent run its own paper experiments
 
-On the **Safety** page, under *Paper experiments, with no capital*, and it is the one place you hand
-TradeAgent something without handing over money. Name an instrument, a size, a value limit if you
-want one, and how many days it runs for, then press twice — the button turns red and says in full
-what the second press does. After that, whenever TradeAgent's own referee finds a version favourable
+**The paper envelope is the security board's grant**, shown on the **Board** page. Until a board seat is
+active it is the app's founding envelope: one instrument on TradeAgent's own paper venue, with a size and a
+value limit, and no end date until the first active board sets its life. It is the one thing TradeAgent is
+handed without any money. Under it, whenever TradeAgent's own referee finds a version favourable
 on months it was never shown, TradeAgent puts that version into the grant by itself and tells its
 research role, without asking you again: that is the whole point of the card, because a strategy
 cannot earn the forward evidence that promotes it until something runs it forward. When more than one is waiting, the one
 with the stronger research record goes first, and one whose held-back months the AI that wrote it may already have read
 about (the report says "may be remembered") goes after every one whose months it cannot have. A version the referee could not judge
 either way — it traded nothing on the held-back months, or lost over less than a year of them — may also go in, but only
-inside a grant of three or more runs at a time (this card grants one, so not today): at most a third of the runs, one per
+inside a grant of three or more runs at a time (the founding envelope carries one, so not today): at most a third of the runs, one per
 line of research at a time, once, for 90 days, each charged one of its campaign's research trials, and its verdict stays
 refused. What it cannot do
 is anything else. The account must be a practice account on **both** your platform's word and the
-account's own, and TradeAgent must be in *Practice* when you press — stricter than it is for a single
-order, because this grant is spent while you are not watching. Nothing written under it is capital,
+account's own, and TradeAgent must be in *Practice* — stricter than it is for a single order, because
+this grant is spent while you are not watching. Nothing written under it is capital,
 and it can never authorise an order in *Real, ask me first* or *Real, fully automatic*, on another
 platform, or on another account: those are separate refusals, not a setting. While a grant stands,
 that account also stops accepting AI orders that do not say which strategy version they are for —
-your own orders on it are untouched. **Withdraw this paper envelope** takes it back in one press plus
-a confirm, and everything running under it stops at once. The grant ends on its own date and nothing
-renews it.
+your own orders on it are untouched. Taking it back is always yours: **Withdraw this paper envelope**, on
+the **Owner** page under *What TradeAgent is running*, takes it back in one press plus a confirm, and
+everything running under it stops at once. A grant with an end date ends on it, and nothing renews it.
 
-*Running now* on the same card is what is actually being run, which is a different fact from what is
+*Running now*, beside it on the Owner page, is what is actually being run, which is a different fact from what is
 allowed: a grant is a ceiling, and a deployment is TradeAgent running one frozen version forward on
 your practice account under it. Each line says the version, the instrument, the account, whether the
 run is **active**, **suspended** or **ended**, and the last minute every one of its orders was
@@ -1252,17 +1255,15 @@ refuses it, and starts no fresh run on that account and instrument until the pos
 Everything you had set is stored together, and a version change or an interrupted write can leave
 that record in a state this version cannot make sense of. When that happens TradeAgent does **not**
 carry on with whatever it can salvage, and it does not fall back on the settings a new install ships
-with — those are wider than yours. It stops the AI, switches real money off, allows no instrument at
-all, and puts every limit at zero, and the Dashboard says *"your settings could not be read; trading
-is stopped until you review them on the Safety page."*
+with. It stops the AI and allows nothing, and the Dashboard says *"your settings could not be read;
+trading is stopped until you review them on the Owner page."*
 
-To fix it, open **Safety**. A yellow panel at the top says the same thing. Check every value on that
-page — they are all showing zero, because none of them came from you — and press **Save limits**.
-Putting your own numbers back raises every limit from zero, so this is a save that asks twice: the
-button names what it is widening and the second press writes it. The panel disappears as soon as you
-do. The trading mode and your account go the same way, so set the mode on that page too — a
-real-money mode is two presses as well — and choose your account again on **Settings**. Nothing here
-needs a file, a folder or a command: if you can see the panel, you can undo it.
+To fix it, open **Owner**. A yellow panel at the top says the same thing. Check every value on that
+page — your real-money limit, the price of a turn, what a paper fill pays — and press **Save the daily
+limit** to save them again. The panel disappears as soon as you do. Your account goes the same way, so
+choose it again under *Connections* on the same page. The mode and the limits are not in your settings
+at all — they are the security board's policy, on the Board page — so there is nothing of theirs to put
+back. Nothing here needs a file, a folder or a command: if you can see the panel, you can undo it.
 
 ## If a backtest says it will not guess an instrument's size step
 
@@ -1394,7 +1395,7 @@ it is not skippable.
 
 **An order refused for breaking a limit, or because prices went stale.**
 Working as intended. TradeAgent will not size an order from an out-of-date price, and it will not
-exceed a limit you set. The reason appears in Activity.
+exceed a limit in force. The reason appears in Activity.
 
 ## What works, and what is not finished
 
@@ -1416,6 +1417,9 @@ no black window at any point:
 5. It was cancelled, and the book was checked afterwards from outside TradeAgent: no orders, no
    position.
 
+That run is a record of what happened then: the per-order approval it went through has since been
+removed (see *There is no per-order approval any more*).
+
 Since then, the piece inside ATAS refuses to place an order at all unless it has first written down
 the order's own reference where a crash cannot lose it. So "the order was sent but nobody wrote it
 down" is not a state this can end up in.
@@ -1425,8 +1429,8 @@ down" is not a state this can end up in.
 - **Nothing has ever been tried with real money**, by anyone, on purpose. Everything above was on a
   simulated account.
 - **No strategy can be given capital yet.** The history TradeAgent downloads is Binance's archive, whose
-  terms allow research and not live trading, so the Capital card refuses every strategy judged on it and
-  says why; backtests and paper go on. See *The terms the history came under*.
+  terms allow research and not live trading, so an allocation is refused for every strategy judged on it,
+  in words that say why; backtests and paper go on. See *The terms the history came under*.
 - **Fully automatic trading is not available on ATAS**, and the Checks page says so in those words.
   It needs two things proven — that your order reference survives the round trip, and that order
   history reaches far enough back to answer "what happened to this one". Until a platform confirms
@@ -1452,7 +1456,7 @@ down" is not a state this can end up in.
   your bill.** Nobody has reconciled a day of TradeAgent's figures with an invoice from OpenAI. The
   prices were read from the supplier's page on 2026-10-02 and go stale on their schedule; a turn
   whose model the assistant did not name is charged at the dearest one and labelled as an estimate.
-  If you know your real rate, the two boxes on the Safety page beat all of it. See *What it costs
+  If you know your real rate, the two boxes on the Owner page beat all of it. See *What it costs
   you, and the daily limit*.
 
 The engineering record of exactly what is proven and what is not is in

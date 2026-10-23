@@ -225,7 +225,9 @@ public class TwoPressGrantTests
 
         var guide = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "USER-GUIDE.md"));
         Assert.Contains(Labels.ResumeAiTradingArmed, guide);
-        Assert.Contains(Labels.ModeAutonomousArmed, guide);
+        // NOR A REAL-MONEY MODE PRESS AT ALL (U-settings-shed fix pass 1): the mode is the security board's decision and no build has the
+        // press, so the guide no longer quotes its armed sentence — the sentence this test once required is the control it no longer has.
+        Assert.DoesNotContain(Labels.ModeAutonomousArmed, guide);
     }
 
     // ---- 4. the holdout card (U-referee-1) -------------------------------------------------------
