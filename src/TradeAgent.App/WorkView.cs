@@ -8,7 +8,7 @@ namespace TradeAgent.App;
 
 /// <summary>ONE READ OF THE WORK: the open mandates, the deliveries waiting to be judged, and the decisions of the last week with their forecasts.</summary>
 sealed record WorkRead(
-    IReadOnlyList<OpenMandate> Open,
+    OrgList<OpenMandate> Open,
     OrgList<DeliveryToJudge> Deliveries,
     OrgList<RecentDecision> Decisions,
     DateTimeOffset Now,
@@ -51,10 +51,10 @@ sealed record WorkWords(
         if (read is null)
             return new WorkWords(unreadable is { Length: > 0 } ? Labels.SurfaceUnreadable(unreadable) : Labels.SurfaceNotRead, [], [], [], "");
 
-        var refused = read.Deliveries.Refused.Concat(read.Decisions.Refused).ToList();
+        var refused = read.Open.Refused.Concat(read.Deliveries.Refused).Concat(read.Decisions.Refused).ToList();
         return new WorkWords(
             "",
-            [.. read.Open.Select(o => Mandate(o, read))],
+            [.. read.Open.Rows.Select(o => Mandate(o, read))],
             [.. read.Deliveries.Rows.Select(Delivery)],
             [.. read.Decisions.Rows.Select(Decision)],
             string.Join("\n", refused));

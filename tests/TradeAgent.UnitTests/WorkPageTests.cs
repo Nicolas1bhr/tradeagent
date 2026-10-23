@@ -225,6 +225,31 @@ public class WorkPageTests
     }
 
     /// <summary>
+    /// (d2) A MANDATE THAT CANNOT BE READ IS REFUSED IN WORDS AND THE PAGE KEEPS GOING: one open mandate whose stored checks are not what the app
+    /// writes is named by its id beside a good one, which is still shown — nothing throws through the refresh.
+    /// RED at base: the bad row threw a <c>JsonException</c> out of the read.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_mandate_is_named_and_the_good_one_is_still_shown()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Mandate(db, "man-0000000000g1", Head, Member, "issued");
+        Mandate(db, "man-0000000000g2", Head, Member, "issued");
+        Exec(db, "DROP TRIGGER org_mandate_sealed_u");   // the test damages one row the way only a writer past the app could
+        Exec(db, "UPDATE org_mandate SET checks='not json' WHERE id='man-0000000000g2'");
+
+        var words = Words(db);
+
+        Assert.Equal(["man-0000000000g1"], words.Mandates.Select(m => m.Id));
+        Assert.Contains("mandate man-0000000000g2 cannot be read", words.Unreadable, StringComparison.Ordinal);
+        var page = new WorkPage(Sources(db));
+        page.Update();   // does not throw
+        Assert.Single(page.MandateCards.Children);
+        Assert.True(page.UnreadableText.IsVisible);
+    }
+
+    /// <summary>
     /// (d) A RECORD THAT CANNOT BE READ IS NAMED AND THE REST IS STILL SHOWN: a decision whose stored options are not what the app writes is refused
     /// by its id, the other decisions are listed, and a page with no store says it has not read yet.
     /// </summary>

@@ -69,7 +69,9 @@ public class OrgSurfaceReadsTests
         Launch(db, Member, now.AddMinutes(-2), mandate: "man-000000000001");
         Unreported(db, unknown);
 
-        var open = new OrgStore(db).MandatesOpen();
+        var read = new OrgStore(db).MandatesOpen();
+        Assert.Empty(read.Refused);
+        var open = read.Rows;
 
         Assert.Equal(new[] { "man-000000000005", "man-000000000002", "man-000000000001" }, open.Select(o => o.Mandate.Id));
         Assert.Equal("delivered", open.Single(o => o.Mandate.Id == "man-000000000002").Status);

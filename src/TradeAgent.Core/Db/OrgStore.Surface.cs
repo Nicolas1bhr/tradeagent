@@ -46,10 +46,10 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// EVERY OPEN MANDATE ON THE CHART, newest first, each with its latest status and its measured spend — ONE query. Open is what
-    /// <see cref="IsOpen"/> says: no closing event has been written. A mandate's spend is the launch ledger's, as <see cref="SpendOf"/>
+    /// <see cref="IsOpen"/> says: no closing event has been written. A mandate whose stored claims cannot be read is refused by its id, never thrown through the list. A mandate's spend is the launch ledger's, as <see cref="SpendOf"/>
     /// reads it; a resolved launch with no cost is counted apart in <see cref="MandateSpend.Unknown"/> and never added as zero.
     /// </summary>
-    public IReadOnlyList<OpenMandate> MandatesOpen() => db.Read(_ =>
+    public OrgList<OpenMandate> MandatesOpen() => db.Read(_ =>
     {
         var closing = MandateEventKind.Closing.Select((_, i) => $"$c{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
         var cols = string.Join(", ", MandateCols.Split(", ").Select(x => "m." + x));
@@ -69,12 +69,23 @@ public sealed partial class OrgStore
             """, [.. closing.Select((n, i) => (n, (object?)MandateEventKind.Closing[i]))]);
         using var r = c.ExecuteReader();
         var rows = new List<OpenMandate>();
+        var refused = new List<string>();
         while (r.Read())
-            rows.Add(new OpenMandate(ReadMandate(r), Sql.S(r.GetValue(15)),
-                new MandateSpend((decimal)r.GetDouble(16), (decimal)r.GetDouble(17), Convert.ToInt32(r.GetValue(18), CultureInfo.InvariantCulture),
-                    Convert.ToInt32(r.GetValue(19), CultureInfo.InvariantCulture)),
-                Convert.ToInt32(r.GetValue(20), CultureInfo.InvariantCulture)));
-        return (IReadOnlyList<OpenMandate>)rows;
+        {
+            var id = r.GetString(0);
+            try
+            {
+                rows.Add(new OpenMandate(ReadMandate(r), Sql.S(r.GetValue(15)),
+                    new MandateSpend((decimal)r.GetDouble(16), (decimal)r.GetDouble(17), Convert.ToInt32(r.GetValue(18), CultureInfo.InvariantCulture),
+                        Convert.ToInt32(r.GetValue(19), CultureInfo.InvariantCulture)),
+                    Convert.ToInt32(r.GetValue(20), CultureInfo.InvariantCulture)));
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidCastException or FormatException)
+            {
+                refused.Add($"mandate {id} cannot be read as TradeAgent writes one: it is not shown.");
+            }
+        }
+        return new OrgList<OpenMandate>(rows, refused);
     });
 
     /// <summary>
