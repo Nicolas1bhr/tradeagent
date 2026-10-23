@@ -448,8 +448,19 @@ public static class Versions
     /// <para><b>48 — a unit's charter is its decision record</b> (<c>U-org-verbs-c</c>, rung 48 — the board's assignment; 47 is
     /// <c>U-board-a1</c>'s): <c>org_unit.charter_decision_id</c> (REFERENCES <c>org_decision</c>) replaces the never-written
     /// <c>charter_publication_id</c>, dropped. NULL on every seeded unit; written by <c>OrgStore.Charter</c> in the charter's own write.</para>
+    ///
+    /// <para><b>47 — the security board as data</b> (<c>U-board-a1</c>, rung <see cref="BoardRung"/>, after <c>U-billing-classes</c>' 46;
+    /// R24 §§ 4.1, 4.5): <c>board_seat</c> (the board's seats, minted by the app — broker, cell or harness, never <c>cli</c>; dormant
+    /// only), <c>board_policy</c> (one row per version, the highest in force: decider <c>app</c> and basis <c>founding</c> only, mode
+    /// OBSERVE or PAPER and <c>live_activated</c> 0 only — a live mode or an activation cannot be stored — its body canonical JSON with
+    /// its SHA-256) and <c>board_event</c> (the founding, an earlier live setting set aside) — each refusing UPDATE and DELETE by trigger,
+    /// one writer, <c>BoardStore</c>. The rung writes the founding record once — version 1, three seats and the founding event, in one
+    /// transaction — and nothing from the settings row: the owner-set values of the fields the board now holds simply go.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 48;
+
+    /// <summary>The security board's rung, spelled once (<c>U-board-a1</c>); a unit overtaken renumbers it here.</summary>
+    public const int BoardRung = 47;
 
     /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
     public const int InputLineageRung = 45;

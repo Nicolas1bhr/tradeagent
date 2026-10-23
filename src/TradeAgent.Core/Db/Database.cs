@@ -2924,6 +2924,69 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{charterRung}') ON CONFLICT(key) DO UPDATE SET value='{charterRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-board-a1): a unit overtaken renumbers here and in Versions, nothing else.
+        const int boardRung = Versions.BoardRung;
+        if (have < boardRung)
+        {
+            // THE SECURITY BOARD AS DATA — `U-board-a1` (R24 §§ 4.1, 4.5). Three tables, in this file because the gateway reads the policy
+            // on every order and a later board act must write its effect in the same transaction (never `org_*`: the board is outside
+            // the chart). `board_seat` — the board's seats, minted by the app: seat class broker, cell or harness, never `cli`; dormant
+            // only, because nothing launches one before the activation gate. `board_policy` — the policy, one row per version, the
+            // highest in force: decided by `app` on the founding basis only at this rung (`U-board-b` widens both in its own rung), its
+            // mode OBSERVE or PAPER and real money off — a live mode or an activation is UNSTORABLE (`U-board-live` relaxes it in its
+            // own rung) — its body canonical JSON with its SHA-256. `board_event` — what happened to the board: its founding, an earlier
+            // live setting set aside. EVERY TABLE REFUSES UPDATE AND DELETE BY TRIGGER: a version is superseded by a new one, never
+            // rewritten. One writer, `BoardStore`. NO BACKFILL FROM THE SETTINGS ROW: an owner-set value of a field the board now holds
+            // simply goes (CLAUDE.md, no backward compatibility). `IF NOT EXISTS` throughout and the stamp last, because the rungs run in
+            // autocommit and a crash before the stamp runs this again over what it made.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS board_seat(
+                  id            TEXT PRIMARY KEY CHECK (substr(id, 1, 6) = 'board-' AND length(id) BETWEEN 7 AND 40),
+                  seat_class    TEXT NOT NULL CHECK (seat_class IN ('broker','cell','harness')),
+                  model_class   TEXT NOT NULL CHECK (model_class IN ('strong','standard')),
+                  vendor_family TEXT NOT NULL CHECK (length(vendor_family) BETWEEN 1 AND 40),
+                  status        TEXT NOT NULL CHECK (status = 'dormant'),
+                  founded_at    TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS board_policy(
+                  version        INTEGER PRIMARY KEY CHECK (version >= 1),
+                  decider        TEXT NOT NULL CHECK (decider = 'app'),
+                  basis          TEXT NOT NULL CHECK (basis = 'founding'),
+                  written_at     TEXT NOT NULL,
+                  mode           TEXT NOT NULL CHECK (mode IN ('OBSERVE','PAPER')),
+                  live_activated INTEGER NOT NULL CHECK (live_activated = 0),
+                  body           TEXT NOT NULL CHECK (length(body) BETWEEN 2 AND 65536),
+                  body_sha256    TEXT NOT NULL CHECK (length(body_sha256) = 64),
+                  supersedes     INTEGER REFERENCES board_policy(version),
+                  CHECK ((version = 1 AND supersedes IS NULL) OR supersedes = version - 1)
+                );
+                CREATE TABLE IF NOT EXISTS board_event(
+                  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                  at             TEXT NOT NULL,
+                  kind           TEXT NOT NULL CHECK (kind IN ('founded','earlier-live-set-aside')),
+                  policy_version INTEGER REFERENCES board_policy(version),
+                  home_schema    INTEGER CHECK (home_schema IS NULL OR home_schema >= 0),
+                  budget_share   TEXT,
+                  detail         TEXT NOT NULL CHECK (length(detail) BETWEEN 1 AND 2000),
+                  CHECK (kind <> 'founded' OR (policy_version = 1 AND home_schema IS NOT NULL AND budget_share IS NOT NULL))
+                );
+                CREATE TRIGGER IF NOT EXISTS board_seat_sealed_u BEFORE UPDATE ON board_seat
+                BEGIN SELECT RAISE(ABORT, 'a board seat''s row is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS board_seat_sealed_d BEFORE DELETE ON board_seat
+                BEGIN SELECT RAISE(ABORT, 'a board seat''s row is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS board_policy_sealed_u BEFORE UPDATE ON board_policy
+                BEGIN SELECT RAISE(ABORT, 'a policy version is written once and never updated: a new version supersedes it'); END;
+                CREATE TRIGGER IF NOT EXISTS board_policy_sealed_d BEFORE DELETE ON board_policy
+                BEGIN SELECT RAISE(ABORT, 'a policy version is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS board_event_sealed_u BEFORE UPDATE ON board_event
+                BEGIN SELECT RAISE(ABORT, 'a board event is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS board_event_sealed_d BEFORE DELETE ON board_event
+                BEGIN SELECT RAISE(ABORT, 'a board event is never deleted'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{boardRung}') ON CONFLICT(key) DO UPDATE SET value='{boardRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
