@@ -4313,8 +4313,8 @@ public sealed class TradingGateway : IAsyncDisposable
         if (allocation is null)
             throw new GatewayDeniedException(ErrorCode.ALLOCATION_NONE,
                 $"strategy version {Short(version)} has no capital allocated to it that stands right now, "
-                + "so nothing was sent. Capital is allocated by the account owner in TradeAgent, on the "
-                + "Safety page; there is no command that asks for it, and an allocation whose promotion "
+                + "so nothing was sent. Capital for real money is the security board's to allocate, and it "
+                + "stays closed until the board can act; there is no command that asks for it, and an allocation whose promotion "
                 + "has been withdrawn stops standing the moment it is withdrawn.");
 
         // WHAT IT WOULD BE HOLDING: a run's own book, or the account's position for every other caller; plus the
@@ -5975,7 +5975,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (released is null && ReviewHold(breach) is { } hold)
             return "HELD for you to look at — TradeAgent will not reopen it by itself, and you release "
-                   + $"it on the Safety page. {hold.Episodes.Count} closures were counted.";
+                   + $"it on the Owner page. {hold.Episodes.Count} closures were counted.";
 
         return $"still closed — earliest {EligibleFor(breach).UtcDateTime:yyyy-MM-dd HH:mm} UTC.{note}";
     }

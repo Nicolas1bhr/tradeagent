@@ -300,9 +300,9 @@ public class MissionInstructionsTests
         Assert.Contains("`trade data list` says what the app", text);
         Assert.Contains("`trade data bars` serves the bars", text);
 
-        // The allowlist stays the owner's, on the page where they set it.
+        // The allowlist is the security board's policy (U-board-a2), on the page that shows it.
         Assert.Contains("the allowlist below is", text);
-        Assert.Contains("Safety page in the TradeAgent window", text);
+        Assert.Contains("Board page in the TradeAgent window", text);
     }
 
     /// <summary>
@@ -350,7 +350,7 @@ public class MissionInstructionsTests
         "holds and where every byte of it came from, `trade data bars` serves the bars, and your own",
         "working files go in `data/`.",
         "Which instruments you may touch is not this platform's business either: the allowlist below is",
-        "the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing",
+        "the security board's policy in force, shown on the Board page in the TradeAgent window, and the only thing",
         "that decides what you may trade."
     ];
 

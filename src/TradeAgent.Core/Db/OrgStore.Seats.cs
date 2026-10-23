@@ -14,7 +14,7 @@ public sealed partial class OrgStore
     /// every position without a seat runs on today's sources.</para>
     ///
     /// <para><b>Validated, each refused by name, nothing written:</b> a position the chart holds and has not ended; never the legacy pair,
-    /// whose seat is the Safety page (the orchestrator's Q5); a runtime <paramref name="knownRuntime"/> knows (the catalogue, which this
+    /// whose seat is the Owner page, the owner's until a security board seat is active (the orchestrator's Q5); a runtime <paramref name="knownRuntime"/> knows (the catalogue, which this
     /// assembly cannot see); a model named; positive token figures. A smaller allowance than the shipped bound lowers what is set aside
     /// only on the app's harness, which holds the turn to it — on a vendor's program the reservation never drops below the shipped bound
     /// (<see cref="SeatSpec.Reserved"/>), so seating a position raises no ceiling and removes no permission.</para>
@@ -25,7 +25,7 @@ public sealed partial class OrgStore
         if (Position(position) is not { } row) throw Refused($"the chart holds no position '{position}' to seat.");
         if (row.EndedAt is not null || row.Status == OrgPositionStatus.Ended) throw Refused($"position '{position}' has ended; an ended position is not seated.");
         if (CouncilRoles.IsKnown(position))
-            throw Refused($"'{position}' is seated on the Safety page, where its runtime and model are chosen; its seat columns stay empty.");
+            throw Refused($"'{position}' is seated on the Owner page, where its runtime and model are chosen; its seat columns stay empty.");
         if (runtime is not { Length: > 0 } || !knownRuntime(runtime)) throw Refused($"'{runtime}' is not a runtime this build knows.");
         if (model is not { Length: > 0 and <= 128 } || !model.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '/'))
             throw Refused("a seat names its model in at most 128 letters, digits and . - _ : / — nothing else.");

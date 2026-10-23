@@ -23,7 +23,7 @@ namespace TradeAgent.Gateway;
 ///
 /// <para><b>What a hold is, and what it is not.</b> It removes the CODE path out of a closure and
 /// nothing else: the refusals, the flatten and every other rule are <c>U-flatten-1</c>'s and
-/// <c>U-reopen-1</c>'s, unchanged. The way out is the owner's own release on the Safety page, and a
+/// <c>U-reopen-1</c>'s, unchanged. The way out is the owner's own release on the Owner page, and a
 /// release lifts the HOLD only — the receipt still needs the eligibility instant, the fresh flat
 /// read and the honest clock. Nothing an agent can reach writes, lifts or asks for any of it.</para>
 /// </summary>
@@ -106,7 +106,7 @@ public static class LossHold
                + "keeps reaching the budget is a strategy or a market for you to look at rather than "
                + $"something to let back in every day. It has been held for review since "
                + $"{at.UtcDateTime:yyyy-MM-dd HH:mm} UTC. It stays closed until you release it yourself on the "
-               + "Safety page, and releasing it lifts this hold only — the closure still has to run its "
+               + "Owner page, and releasing it lifts this hold only — the closure still has to run its "
                + "time and TradeAgent still has to see your book flat before anything trades.";
     }
 

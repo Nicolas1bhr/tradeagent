@@ -327,7 +327,11 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         // v6 (U-execution-environment): the reach section tells an executor's cell seat where it runs — a sealed Linux cell, its
         // network, its door tools and that `trade` is not on its path — and its own wall; trading's line follows the command line, not code.
         (6, CouncilRoles.Operations, "7f00ed7885022e9c7436b9d23808f375fa1e68096560efa00cbd639f7a494d74"),
-        (6, CouncilRoles.Research, "244181ac0be42eba2bbf8bc36a6d2984036f7b55011f27a93a1d582197d531c5")
+        (6, CouncilRoles.Research, "244181ac0be42eba2bbf8bc36a6d2984036f7b55011f27a93a1d582197d531c5"),
+        // v7 (U-board-a2): the allowlist is the security board's policy in force, shown on the Board page, and permission lives only
+        // in that policy and the owner's own presses — the Safety page is gone.
+        (7, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
+        (7, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc")
     ];
 
     /// <summary>

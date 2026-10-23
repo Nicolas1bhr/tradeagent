@@ -26,7 +26,7 @@ public static class SeatResolver
 
     /// <summary>
     /// A POSITION'S OWN SEAT, or null where it has none and today's sources stand — no database, a launch with no role, a name the
-    /// chart holds no position for, or a position whose four seat columns are all NULL. The legacy pair are seated on the Safety page
+    /// chart holds no position for, or a position whose four seat columns are all NULL. The legacy pair are seated on the Owner page
     /// (the orchestrator's Q5): a seat column set on either of them is damage no writer here makes, and is refused rather than obeyed or
     /// ignored. Throws <see cref="SeatRefusedException"/> for a seat that cannot be read; a chart that cannot be read throws as it is.
     /// </summary>
@@ -38,7 +38,7 @@ public static class SeatResolver
             return row.SeatRuntime is null && row.SeatModel is null && row.SeatAllowIn is null && row.SeatAllowOut is null
                 ? null
                 : throw SeatColumns.Refused(role, SeatColumns.RuntimeColumn,
-                    "is set, but the Operations and Research Directors are seated on the Safety page");
+                    "is set, but the Operations and Research Directors are seated on the Owner page");
         return SeatColumns.Of(row, id => RuntimeCatalog.Find(id) is not null);
     }
 }

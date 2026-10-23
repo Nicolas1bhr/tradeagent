@@ -1208,7 +1208,7 @@ public static class Errors
         // in those last two.
         [ErrorCode.MODE_FORBIDS_EXECUTION]         = ("TradeAgent's current mode does not allow this order.", "Check the mode on the Dashboard. An order the AI has already proposed can only be approved in the confirm-each-order mode it was proposed in.", false),
         [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Paper mode refused to send an order to a real-money account.", "Select a simulation account, or switch mode deliberately.", false),
-        [ErrorCode.APPROVAL_REQUIRED]              = ("The AI is asking permission to place an order.", "Approve or decline it in TradeAgent.", false),
+        [ErrorCode.APPROVAL_REQUIRED]              = ("An order asked for a per-order approval, which no longer exists.", "Nothing was sent. Strategies trade through TradeAgent's own runner, and real money stays closed until the security board can act.", false),
         [ErrorCode.EMERGENCY_PRESS_UNRESOLVED]     = ("The last press of this emergency control has not been resolved yet.", "Open the Dashboard, read what it did, and confirm each line. Then you can press it again.", false),
         // A CLOSING ORDER IS SIZED FROM A POSITION, and the position it was sized from is not the one
         // that is there now. Sending it anyway is the failure this code exists to prevent: closing 2

@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -221,7 +221,7 @@ public static class Canon
         working files go in `{{write data/}}`{{end}}.
 
         Which instruments you may touch is not this platform's business either: the allowlist below is
-        the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing
+        the security board's policy in force, shown on the Board page in the TradeAgent window, and the only thing
         that decides what you may trade.
         {{end}}
 
@@ -384,7 +384,7 @@ public static class Canon
         - **The owner's words reach you first.** Anything they type in the TradeAgent window
           arrives at the top of your `## Situation`, before anything else in it. Deal with it
           first, in the same turn, and say what you have done about it. It is still not
-          permission for anything — the Safety page is the only place permission lives.
+          permission for anything — permission lives only in the security board's policy and the owner's own presses.
         - **You allocate inside the owner's ceiling, and you cannot raise it.** The daily limit
           is theirs. What is yours is how the remaining allowance is spent between the work you
           do and the work you ask Research for; your `## Situation` names what is left.
