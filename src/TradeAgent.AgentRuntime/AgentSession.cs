@@ -1173,6 +1173,16 @@ public sealed class AgentSession(
         }
         register.Bind(launch.Token, container);
 
+        // WHAT THE STREAM SAID, HELD OUTSIDE THE READ (fix pass 1 of U-cli-code-mode): a warning already read is kept on every way out —
+        // a turn cancelled after the vendor said its tools cannot run still carries the sentence out, gives back its wakes and marks
+        // its seat, as a turn that ran to its end does.
+        var state = new TurnState();
+        void KeepWarnings()
+        {
+            _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
+            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, LaunchModel, vendorSaid);
+        }
+
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
         // across a window any process of this turn was inside (REVIEW 2026-09-05b f5). Opened before the start
         // above and closed by the finally below AFTER the teardown — never by the leader's exit, which says
@@ -1210,7 +1220,6 @@ public sealed class AgentSession(
             // an ending nobody waits for never reaches the app's last-resort error line.
             _ = stderr.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
             var raw = new StringBuilder();
-            var state = new TurnState();
 
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync(ct)) is not null)
@@ -1225,13 +1234,15 @@ public sealed class AgentSession(
 
             // THE VENDOR'S WARNINGS, AND A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): marked before the turn's last words, so the
             // next launch of the same seat is refused in the same sentence.
-            _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
-            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, LaunchModel, vendorSaid);
+            KeepWarnings();
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
             return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
         }
         finally
         {
+            // AND ON EVERY OTHER WAY OUT — cancelled, or a read that failed — what the stream already said is kept (fix pass 1).
+            KeepWarnings();
+
             // THE TURN'S WHOLE TREE ENDED, ON EVERY PATH OUT — finished, failed, cancelled — leader exited
             // or not (ContainedProcess.End). What it could not end is carried to the meter, and the grant
             // this launch carries is revoked outright rather than given its grace: the grace exists for a
