@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Safety, Settings, Activity, Checks, Oversight }
+    enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, Settings, Activity, Checks, Oversight }
 
     readonly AppHost _host;
 
@@ -135,7 +135,7 @@ public sealed class MainWindow : Window
     DashboardPage? _dashboard;
     BoardPage? _boardPage;
     ReportPage? _report;
-    SafetyPage? _safety;
+    OwnerPage? _owner;
     SettingsPage? _settings;
     InboxPage? _inbox;
     ActivityPage? _activity;
@@ -427,7 +427,7 @@ public sealed class MainWindow : Window
         // has just read one is the person looking for the other.
         AddNav(Page.Report, "Daily report");
         AddNav(Page.Inbox, "Inbox");
-        AddNav(Page.Safety, "Safety");
+        AddNav(Page.Owner, Labels.OwnerPage);
         // Between Safety and the diagnostic tail on purpose. Choosing the platform and the account
         // is a configuration act adjacent to the limits, not a thing you go looking for among logs.
         AddNav(Page.Settings, "Settings");
@@ -499,7 +499,7 @@ public sealed class MainWindow : Window
         _boardPage = new BoardPage(_host.Board);
         _report = new ReportPage(_host);
         _inbox = new InboxPage(_host);
-        _safety = new SafetyPage(_host);
+        _owner = new OwnerPage(_host);
         _settings = new SettingsPage(_host);
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
@@ -513,7 +513,7 @@ public sealed class MainWindow : Window
         Add(Page.Board, _boardPage.Root);
         Add(Page.Report, _report.Root);
         Add(Page.Inbox, _inbox.Root);
-        Add(Page.Safety, _safety.Root);
+        Add(Page.Owner, _owner.Root);
         Add(Page.Settings, _settings.Root);
         Add(Page.Activity, _activity.Root);
         Add(Page.Checks, _checks.Root);
@@ -585,7 +585,7 @@ public sealed class MainWindow : Window
         _boardPage?.Update();
         _report?.Update();
         _inbox?.Update();
-        _safety?.Update(status);
+        _owner?.Update(status);
         _settings?.Update(status);
         _activity?.Update();
         _checks?.Update();
@@ -714,9 +714,9 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// The same control as the one on the Safety page, built the same way and asking twice in the
+    /// The same control as the one on the owner's page, built the same way and asking twice in the
     /// same direction — the header's copy is the one an owner reaches from every page, so a version
-    /// of it that resumed on a single press would make the Safety page's second press decorative.
+    /// of it that resumed on a single press would make the owner's page's second press decorative.
     /// It is the chrome's variant pair rather than the emergency fill; the behaviour is identical.
     /// </summary>
     internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume) =>

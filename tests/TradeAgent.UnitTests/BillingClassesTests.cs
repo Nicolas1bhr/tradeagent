@@ -514,7 +514,7 @@ public class BillingClassesTests : IDisposable
     /// <summary>
     /// (g) THE SITUATION NAMES ITS SEAT'S CEILING, AND THE SAFETY PAGE SHOWS BOTH. A role before its first admitted launch is told both
     /// ceilings — the gate would ask both of a seat nobody has read; after a plan launch only the plan's, never as money; after a key
-    /// launch only the money's. The card shows both figures, each in its own words. (The Safety page half: <c>SafetyPage</c> below.)
+    /// launch only the money's. The card shows both figures, each in its own words. (The owner's page half: <c>OwnerPage</c> below.)
     /// </summary>
     [Fact]
     public void The_situation_names_its_seats_ceiling_and_the_safety_page_shows_both()
@@ -692,42 +692,6 @@ public class BillingClassesTests : IDisposable
         await over.Gateway.DisposeAsync();
     }
 
-    /// <summary>
-    /// (f) RAISING THE PLAN CEILING ASKS TWICE AND LOWERING SAVES IN ONE — the Safety page's own press over its own box: a raise names
-    /// the figure as the plan's, at list price; an edit disarms a raise armed for another figure; a lower or unchanged figure saves at
-    /// once. And the money box beside it keeps its own press.
-    /// </summary>
-    [Fact]
-    public void Raising_the_plan_ceiling_asks_twice_and_lowering_saves_in_one()
-    {
-        var saved = new List<decimal>();
-        var current = 40m;
-        var box = TradeAgent.App.Ui.AmountField(current, AmountKind.Decimal);
-        var b = TradeAgent.App.SafetyPage.BuildSavePlanCapacity(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
-
-        box.Box.Text = "60";
-        Press(b);
-        Assert.Empty(saved);
-        Assert.Equal(Labels.RaisePlanCapacityArmed("60 USD"), b.Content);
-        Assert.Contains("ChatGPT plan, counted at list price", (string)b.Content!, StringComparison.Ordinal);
-
-        box.Box.Text = "100";                       // an edit disarms the raise that named 60
-        Press(b);
-        Assert.Empty(saved);
-        Assert.Equal(Labels.RaisePlanCapacityArmed("100 USD"), b.Content);
-        Press(b);
-        Assert.Equal([100m], saved);
-
-        current = 100m;
-        box.Box.Text = "10";                        // lowering: one press
-        Press(b);
-        Assert.Equal([100m, 10m], saved);
-        Assert.Equal(Labels.SavePlanCapacity, b.Content);
-        current = 10m;
-        Press(b);                               // unchanged: one press
-        Assert.Equal([100m, 10m, 10m], saved);
-    }
-
     static void Press(Avalonia.Controls.Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
 
     /// <summary>
@@ -736,17 +700,17 @@ public class BillingClassesTests : IDisposable
     /// out"), and every seat's class in words.
     /// </summary>
     [Fact]
-    public void The_safety_page_shows_both_ceilings_and_every_seats_class()
+    public void The_owners_page_shows_both_ceilings_and_every_seats_class()
     {
         var meter = Meter(money: 10m, plan: 40m);
         using (meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations))
             Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
-        var (money, plan) = TradeAgent.App.SafetyPage.TodayLines(meter.Today);
+        var (money, plan) = TradeAgent.App.OwnerPage.TodayLines(meter.Today);
         Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} in real money.", money);
         Assert.Equal($"Today: {Labels.Money(Turn, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.",
             plan);
 
-        var seats = TradeAgent.App.SafetyPage.SeatClassesLine(
+        var seats = TradeAgent.App.OwnerPage.SeatClassesLine(
             CouncilRoles.All.Select(r => (CouncilRoles.Title(r), meter.ClassOf(r))));
         Assert.Contains($"{CouncilRoles.Title(CouncilRoles.Operations)} — your ChatGPT plan's capacity", seats, StringComparison.Ordinal);
         Assert.Contains($"{CouncilRoles.Title(CouncilRoles.Research)} — not read yet, so its turns count against both limits", seats,
@@ -762,7 +726,7 @@ public class BillingClassesTests : IDisposable
             .Select(f => f.Name).ToList();
         Assert.Empty(withCredits);
         Assert.DoesNotContain("credit",
-            File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.App", "DashboardView.cs")), StringComparison.OrdinalIgnoreCase);
+            File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.App", "OwnerView.cs")), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -842,17 +806,17 @@ public class BillingClassesTests : IDisposable
     /// money line untouched — nothing of the 10 is spent and it is not reached — and the mirror, the money cap used up, leaves the plan's.
     /// </summary>
     [Fact]
-    public void Each_safety_page_line_says_reached_only_for_its_own_ceiling()
+    public void Each_owners_page_line_says_reached_only_for_its_own_ceiling()
     {
         Spent(BillingClasses.Plan, 40m);
-        var (money, plan) = TradeAgent.App.SafetyPage.TodayLines(Meter(money: 10m, plan: 40m).Today);
+        var (money, plan) = TradeAgent.App.OwnerPage.TodayLines(Meter(money: 10m, plan: 40m).Today);
         Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} in real money.", money);
         Assert.Equal($"Today: {Labels.Money(40m, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money"
                      + " — reached; the next turn of this kind waits for midnight.", plan);
 
         using var other = TestEnv.NewDb();
         Spent(BillingClasses.Key, 10m, db: other);
-        (money, plan) = TradeAgent.App.SafetyPage.TodayLines(Meter(money: 10m, plan: 40m, db: other).Today);
+        (money, plan) = TradeAgent.App.OwnerPage.TodayLines(Meter(money: 10m, plan: 40m, db: other).Today);
         Assert.EndsWith(" in real money — reached; the next turn of this kind waits for midnight.", money, StringComparison.Ordinal);
         Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.", plan);
     }

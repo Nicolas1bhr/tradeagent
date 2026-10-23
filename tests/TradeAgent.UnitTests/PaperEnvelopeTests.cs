@@ -135,37 +135,32 @@ public class PaperEnvelopeTests
     }
 
     /// <summary>
-    /// THE CARD: TWO PRESSES TO GRANT, ONE PRESS PLUS A CONFIRM TO WITHDRAW.
-    ///
-    /// <para>Granting is the owner handing a standing authority to software that will spend it while
-    /// they are asleep, so it is the allocate card's rule and says in full what the second press does.
-    /// Withdrawing only ever takes authority away — the kill switch's rule — so it asks once, and the
-    /// one question it does ask is the one the Safety page asks of every confirm: this is the control,
-    /// pressed, and not a reconstruction of it.</para>
+    /// THE OWNER'S PAGE: ONE PRESS PLUS A CONFIRM TO WITHDRAW, AND NO PRESS TO GRANT (<c>U-settings-shed</c>). Granting an envelope is a
+    /// widening and the security board's decision now; withdrawing only ever takes authority away — the kill switch's rule — so it
+    /// stays the owner's and asks once: this is the control, pressed, and not a reconstruction of it.
     /// </summary>
     [Fact]
-    public void Granting_an_envelope_is_two_presses_and_withdrawing_is_one_press_plus_confirm()
+    public void Withdrawing_an_envelope_is_one_press_plus_confirm_and_no_page_grants_one()
     {
-        (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) typed =
-            ("ES", 2m, null, At.AddDays(30));
-        (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until)? granted = null;
         string? withdrew = null;
-
-        var grant = SafetyPage.BuildEnvelopeConfirm(() => typed, () => "USD",
-            (s, q, n, u) => granted = (s, q, n, u));
-
-        Press(grant);
-        Assert.Null(granted);
-        Assert.Equal(Labels.EnvelopeArmed("ES", "2", null, At.AddDays(30)), grant.Content);
-
-        Press(grant);
-        Assert.Equal(typed, granted);
-
-        var withdraw = SafetyPage.BuildEnvelopeWithdrawConfirm(() => "an-envelope", id => withdrew = id);
+        var withdraw = OwnerPage.BuildEnvelopeWithdrawConfirm(() => "an-envelope", id => withdrew = id);
         Press(withdraw);
         Assert.Null(withdrew);
+        Assert.Equal(Labels.WithdrawEnvelopeArmed, withdraw.Content);
         Press(withdraw);
         Assert.Equal("an-envelope", withdrew);
+
+        // NOTHING IN THE APP GRANTS ONE: the gateway's grant has no caller on any page.
+        foreach (var file in Directory.GetFiles(Path.Combine(Repo(), "src", "TradeAgent.App"), "*.cs"))
+            Assert.DoesNotContain("GrantPaperEnvelopeAsync(", File.ReadAllText(file), StringComparison.Ordinal);
+    }
+
+    static string Repo()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
     }
 
     /// <summary>

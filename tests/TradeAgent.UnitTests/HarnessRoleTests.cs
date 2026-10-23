@@ -199,42 +199,21 @@ public class HarnessRoleTests : IDisposable
         return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
     }
 
-    // ---- the Safety page --------------------------------------------------------------------------
+    // ---- the owner's page --------------------------------------------------------------------------
 
     /// <summary>
     /// THE BOX IS MASKED. The owner may be sharing a screen, and this is the one control in the product
     /// a provider credential passes through.
     /// </summary>
     [Fact]
-    public void The_key_box_on_the_safety_page_is_masked()
+    public void The_key_box_on_the_owners_page_is_masked()
     {
-        var field = SafetyPage.BuildHarnessKeyField();
+        var field = OwnerPage.BuildHarnessKeyField();
 
         Assert.Equal('•', field.PasswordChar);
         Assert.Equal(Labels.HarnessKey, field.PlaceholderText);
         // Empty when the page is built: a control that opened holding a credential would be one.
         Assert.True(string.IsNullOrEmpty(field.Text));
-    }
-
-    /// <summary>
-    /// THE ROW OFFERS THE TWO KINDS OF THING AND NOTHING ELSE, and each button hands back exactly what
-    /// the settings row stores — null for "the AI tool the owner chose", the harness id for the other.
-    /// </summary>
-    [Fact]
-    public void The_safety_page_offers_the_ai_tool_and_the_apps_own_worker()
-    {
-        var chosen = new List<string?>();
-        var row = SafetyPage.BuildRuntimeRow(chosen.Add);
-
-        Assert.Equal(2, row.Children.Count);
-        var cli = Assert.IsType<Button>(row.Children[0]);
-        var own = Assert.IsType<Button>(row.Children[1]);
-        Assert.Equal(Labels.RuntimeIsTheCli, cli.Content);
-        Assert.Equal(Labels.RuntimeIsTheHarness, own.Content);
-
-        Press(cli);
-        Press(own);
-        Assert.Equal([null, Harness], chosen);
     }
 
     static void Press(Button b) =>

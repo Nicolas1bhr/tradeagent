@@ -424,7 +424,7 @@ sealed class ChatView
         return Ui.Col(Theme.S4,
             Ui.H2("Talk to the AI here"),
             Ui.Muted("It can read your account, your positions and live prices, and it can place orders — " +
-                     "never beyond the limits set on the Safety page. Everything it does appears in this " +
+                     "never beyond the limits the security board has set (the " + TradeAgent.Core.Labels.BoardPage + " page shows them). Everything it does appears in this " +
                      "transcript as it happens."),
             Ui.With(Ui.Eyebrow("Try asking"), t => t.Margin = new Thickness(0, Theme.S2, 0, 0)),
             suggestions);

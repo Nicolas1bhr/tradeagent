@@ -37,10 +37,10 @@ public class TwoPressGrantTests
     /// hands the permission back to something that trades real money, so it is two, and it says so.
     /// </summary>
     [Fact]
-    public void The_safety_pages_kill_switch_stops_in_one_press_and_resumes_in_two()
+    public void The_owners_pages_kill_switch_stops_in_one_press_and_resumes_in_two()
     {
         var stopped = false;
-        var b = SafetyPage.BuildKillSwitch(() => stopped, () => stopped = true, () => stopped = false);
+        var b = OwnerPage.BuildKillSwitch(() => stopped, () => stopped = true, () => stopped = false);
 
         Assert.Equal(Labels.StopAiTrading, b.Content);
         Press(b);
@@ -87,7 +87,7 @@ public class TwoPressGrantTests
     public void A_half_pressed_resume_survives_a_refresh_and_is_abandoned_when_the_state_moves_on()
     {
         var stopped = true;
-        var b = SafetyPage.BuildKillSwitch(() => stopped, () => stopped = true, () => stopped = false);
+        var b = OwnerPage.BuildKillSwitch(() => stopped, () => stopped = true, () => stopped = false);
 
         Ui.SetResting(b, Labels.ResumeAiTrading, "emergency");
         Press(b);
@@ -112,126 +112,6 @@ public class TwoPressGrantTests
             MaxLossPerTrade = trade, MaxDailyLoss = daily
         };
 
-    [Fact]
-    public void A_save_that_widens_one_cap_takes_two_presses_and_names_it()
-    {
-        (RiskPolicy Pending, string Named)[] cases =
-        [
-            (Policy(qty: 2m), Labels.MaxOrderQuantity),
-            (Policy(notional: 600m), Labels.MaxNotionalPerOrder),
-            // Zero is "not enforced" on this field alone, so it is the widest value it has.
-            (Policy(notional: 0m), Labels.MaxNotionalPerOrder),
-            (Policy(positions: 3), Labels.MaxOpenPositions),
-            (Policy(perMinute: 7), Labels.MaxOrdersPerMinute),
-            (Policy(allow: ["ES", "NQ"]), Labels.InstrumentAllowlist)
-        ];
-
-        foreach (var (pending, named) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-            Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen “{named}” to {pending.FigureOf(named)}", b.Content);
-
-            Press(b);
-            Assert.Equal($"{named}: {1}", $"{named}: {saved}");
-            Assert.Equal(Labels.SaveLimits, b.Content);
-        }
-    }
-
-    /// <summary>
-    /// The other direction, and the reason the whole button is not simply two-press: an owner
-    /// taking authority away — including the one clearing the allowlist to stop everything — should
-    /// not have to argue with the software about it.
-    /// </summary>
-    [Fact]
-    public void A_save_that_only_narrows_takes_one_press()
-    {
-        (RiskPolicy Pending, string What)[] cases =
-        [
-            (Policy(), "unchanged"),
-            (Policy(qty: 0m), "quantity to zero"),
-            (Policy(notional: 400m), "a smaller money cap"),
-            (Policy(positions: 0), "no open positions"),
-            (Policy(perMinute: 1), "fewer orders a minute"),
-            (Policy(allow: ["es"]), "the same instrument, cased differently"),
-            (Policy(allow: []), "the allowlist cleared, which allows nothing")
-        ];
-
-        foreach (var (pending, what) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-
-            Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
-                $"{what}: saved {saved}, button says {b.Content}");
-        }
-    }
-
-    /// <summary>
-    /// THE TWO LOSS BUDGETS ARE GRANTS IN BOTH THE WAYS THE OTHER MONEY CAP IS.
-    ///
-    /// Raising one lets the AI lose more before anything refuses it, and setting one to ZERO — which
-    /// on these two fields, as on the notional cap, means "not enforced" — removes the bound
-    /// altogether. The second is the one a plain "is the number bigger" comparison reads as a
-    /// narrowing and saves on a single press, which is how a day's budget disappears by accident.
-    /// </summary>
-    [Fact]
-    public void A_save_that_widens_a_loss_budget_takes_two_presses_and_names_it()
-    {
-        (RiskPolicy Pending, string Named)[] cases =
-        [
-            (Policy(trade: 300m), Labels.MaxLossPerTrade),
-            (Policy(trade: 0m), Labels.MaxLossPerTrade),
-            (Policy(daily: 600m), Labels.MaxDailyLoss),
-            (Policy(daily: 0m), Labels.MaxDailyLoss)
-        ];
-
-        foreach (var (pending, named) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-            Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen \u201c{named}\u201d to {pending.FigureOf(named)}", b.Content);
-
-            Press(b);
-            Assert.Equal($"{named}: {1}", $"{named}: {saved}");
-            Assert.Equal(Labels.SaveLimits, b.Content);
-        }
-    }
-
-    /// <summary>
-    /// And the other direction on the same two fields: a SMALLER budget is less room, and an owner
-    /// tightening the day's loss after a bad morning is not arguing with the software about it.
-    /// </summary>
-    [Fact]
-    public void A_smaller_loss_budget_saves_in_one_press()
-    {
-        (RiskPolicy Pending, string What)[] cases =
-        [
-            (Policy(trade: 100m), "a smaller per-position loss budget"),
-            (Policy(daily: 100m), "a smaller daily loss budget"),
-            (Policy(trade: 100m, daily: 100m), "both tightened together")
-        ];
-
-        foreach (var (pending, what) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-
-            Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
-                $"{what}: saved {saved}, button says {b.Content}");
-        }
-    }
-
     /// <summary>
     /// The comparison alone, on the two fields where turning the limit OFF is the widest thing the
     /// owner can do to it — and where nothing, however large, widens a limit that is already off.
@@ -249,23 +129,6 @@ public class TwoPressGrantTests
 
         Assert.Equal(new[] { Labels.MaxLossPerTrade, Labels.MaxDailyLoss },
             RiskPolicy.Widenings(Policy(), Policy(trade: 0m, daily: 0m)));
-    }
-
-    /// <summary>
-    /// Several widened limits are counted, and each is named with the figure the second press writes (U-number-entry-culture fix pass 1:
-    /// a confirmation that named no figure could be completed for any figure typed under it).
-    /// </summary>
-    [Fact]
-    public void A_save_that_widens_several_caps_counts_them()
-    {
-        var saved = 0;
-        var b = SafetyPage.BuildSaveLimits(() => Policy(), () => Policy(qty: 9m, perMinute: 60), () => saved++);
-
-        Press(b);
-
-        Assert.Equal(0, saved);
-        Assert.Equal($"Confirm: widen 2 of your safety limits — “{Labels.MaxOrderQuantity}” to 9, “{Labels.MaxOrdersPerMinute}” to 60",
-            b.Content);
     }
 
     /// <summary>
@@ -297,7 +160,7 @@ public class TwoPressGrantTests
     [Fact]
     public void The_armed_emergency_kill_switch_paints_text_that_is_not_its_own_fill()
     {
-        var b = SafetyPage.BuildKillSwitch(() => true, () => { }, () => { });
+        var b = OwnerPage.BuildKillSwitch(() => true, () => { }, () => { });
         Ui.SetResting(b, Labels.ResumeAiTrading, "emergency");
 
         Press(b);
@@ -319,18 +182,20 @@ public class TwoPressGrantTests
     /// running app; see the unit's report.
     /// </summary>
     [Fact]
-    public void The_safety_page_builds_all_three_controls_through_those_factories()
+    public void The_owners_page_builds_all_three_emergency_controls_through_those_factories()
     {
-        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "DashboardView.cs"));
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "OwnerView.cs"));
 
         Assert.Contains("_stopButton = BuildKillSwitch(", text);
         // U-board-a2: the limits are the security board's policy, so the Save limits press left the page with its boxes.
         Assert.DoesNotContain("BuildSaveLimits(() =>", text);
+        Assert.Contains("Ui.Confirm(Labels.CancelAllWorkingOrders, \"Confirm: cancel all working orders\"", text);
+        Assert.Contains("Ui.Confirm(Labels.CloseAllPositions, \"Confirm: close all positions with market orders\"", text);
 
-        // The one-press versions of all three, so a revert cannot pass by adding rather than editing.
-        Assert.DoesNotContain("Ui.Secondary(Ui.ModeLabel(", text);
-        Assert.DoesNotContain("Ui.Primary(Labels.SaveLimits", text);
+        // The one-press versions, so a revert cannot pass by adding rather than editing.
         Assert.DoesNotContain("Ui.Big(", text);
+        Assert.DoesNotContain("Ui.Danger(Labels.CancelAllWorkingOrders", text);
+        Assert.DoesNotContain("Ui.Danger(Labels.CloseAllPositions", text);
     }
 
     [Fact]
@@ -436,149 +301,7 @@ public class TwoPressGrantTests
         Assert.Equal(0, applied);
     }
 
-    // ---- 5. the capital allocation card (U-allocator-1) ------------------------------------------
-
-    /// <summary>
-    /// ALLOCATING CAPITAL TO A PROMOTED VERSION IS TWO PRESSES IN BOTH DIRECTIONS, and the armed
-    /// sentence names the version and the figure.
-    ///
-    /// <para>The rule everywhere else on this page is "widening asks twice, narrowing asks once". This
-    /// control has no way down: <c>Allocations</c> exposes one write and it only inserts, so a smaller
-    /// ceiling is a NEW permanent record from now on and no press anywhere takes one back. The first
-    /// press is the last moment the owner can change their mind, which is the holdout card's reason.
-    /// "Confirm" alone would not say whose money is going where.</para>
-    /// </summary>
-    [Fact]
-    public void Allocating_capital_takes_two_presses_and_the_armed_sentence_names_the_version()
-    {
-        var typed = ("2b3c4d5e6f7a8b9c0d1e", 3m, (decimal?)null);
-        (string Version, decimal Quantity, decimal? Notional)? applied = null;
-        var b = SafetyPage.BuildAllocateConfirm(() => typed, () => null, () => "USD",
-            (v, q, n) => applied = (v, q, n));
-
-        Press(b);
-        Assert.Null(applied);
-        Assert.Equal("Confirm: version 2b3c4d5e6f7a may hold up to 3 at a time — more than it may hold now",
-            b.Content);
-
-        Press(b);
-        Assert.Equal("2b3c4d5e6f7a8b9c0d1e", applied?.Version);
-        Assert.Equal(3m, applied?.Quantity);
-        Assert.Null(applied?.Notional);
-    }
-
-    /// <summary>
-    /// A CHANGED FIGURE UNDER A HALF-PRESSED BUTTON DISARMS IT. The sentence the owner read named one
-    /// version and one ceiling; completing it against another would put the owner's money behind a
-    /// decision they did not agree to, and the row cannot be taken back afterwards.
-    /// </summary>
-    [Fact]
-    public void Changing_the_allocation_disarms_a_half_pressed_button()
-    {
-        var typed = ("2b3c4d5e6f7a8b9c0d1e", 3m, (decimal?)null);
-        var applied = 0;
-        var b = SafetyPage.BuildAllocateConfirm(() => typed, () => null, () => "USD", (_, _, _) => applied++);
-
-        Press(b);
-        Assert.True(Ui.IsArmed(b));
-
-        typed = ("a-different-version", 3m, null);
-        Ui.Relabel(b, Labels.Allocate, SafetyPage.AllocateArmed(typed, null, "USD"));
-
-        Assert.False(Ui.IsArmed(b));
-        Assert.Equal(Labels.Allocate, b.Content);
-        Assert.Equal(0, applied);
-    }
-
-    /// <summary>
-    /// AN EMPTY VERSION BOX ALLOCATES NOTHING, EVEN ON A SECOND PRESS. Which version the capital is
-    /// for is the whole of the decision, and a guess at what the owner meant is the one thing this
-    /// control must never make.
-    /// </summary>
-    [Fact]
-    public void An_empty_version_allocates_nothing_on_either_press()
-    {
-        var applied = 0;
-        var b = SafetyPage.BuildAllocateConfirm(() => ("  ", 3m, null), () => null, () => "USD",
-            (_, _, _) => applied++);
-
-        Press(b);
-        Press(b);
-
-        Assert.Equal(0, applied);
-    }
-
-    /// <summary>
-    /// THE TWO CLOSURE DURATIONS WIDEN BY GETTING SMALLER (<c>U-reopen-2</c>, item 3).
-    ///
-    /// <para>Every cap above them on this page is a ceiling, where larger is wider. These two are
-    /// pauses: a shorter closure is more days the AI may lose a budget in, and a shorter strike
-    /// window is fewer episodes that ever add up to a hold the owner has to release by hand. So
-    /// SHORTENING either is the grant and asks twice, and lengthening one saves in a press — which is
-    /// the direction a "bigger number means more authority" comparison gets exactly backwards.</para>
-    /// </summary>
-    [Fact]
-    public void A_save_that_shortens_a_closure_or_a_strike_window_takes_two_presses_and_names_it()
-    {
-        (RiskPolicy Pending, string Named)[] cases =
-        [
-            (Closure(hours: 6m), Labels.LossMinClosure),
-            // Zero is "no closure beyond the UTC day", so it is the widest value the field has.
-            (Closure(hours: 0m), Labels.LossMinClosure),
-            (Closure(window: 3), Labels.LossStrikeWindow),
-            // And zero here switches the strike rule off altogether.
-            (Closure(window: 0), Labels.LossStrikeWindow)
-        ];
-
-        foreach (var (pending, named) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-            Assert.Equal($"{named}: {0}", $"{named}: {saved}");
-            Assert.Equal($"Confirm: widen \u201c{named}\u201d to {pending.FigureOf(named)}", b.Content);
-
-            Press(b);
-            Assert.Equal($"{named}: {1}", $"{named}: {saved}");
-        }
-    }
-
-    /// <summary>
-    /// LENGTHENING EITHER OF THEM SAVES IN ONE PRESS. An owner who decides a losing day should cost
-    /// the AI a week rather than a day is taking authority away, and should not have to argue with
-    /// the software about it — this page's rule, on the two fields where it reads backwards.
-    /// </summary>
-    [Fact]
-    public void A_save_that_lengthens_a_closure_or_a_strike_window_takes_one_press()
-    {
-        (RiskPolicy Pending, string What)[] cases =
-        [
-            (Closure(hours: 48m), "a longer closure"),
-            (Closure(window: 30), "a longer strike window"),
-            (Closure(hours: 24m, window: 7), "both unchanged")
-        ];
-
-        foreach (var (pending, what) in cases)
-        {
-            var saved = 0;
-            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
-
-            Press(b);
-
-            Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
-                $"{what}: saved {saved}, button says {b.Content}");
-        }
-    }
-
-    /// <summary>The page's own policy with one or both durations changed; everything else at Policy().</summary>
-    static RiskPolicy Closure(decimal hours = 24m, int window = 7)
-    {
-        var p = Policy();
-        p.LossMinClosureHours = hours;
-        p.LossStrikeWindowDays = window;
-        return p;
-    }
+    // ---- 5. the capital allocation card: shed (U-settings-shed) — allocating capital is the security board's decision -----------
 
     // ---- 6. the review-hold release card (U-reopen-2) --------------------------------------------
 
@@ -595,7 +318,7 @@ public class TwoPressGrantTests
     public void Releasing_a_review_hold_takes_two_presses_and_the_armed_sentence_names_the_scopes()
     {
         string? released = null;
-        var b = SafetyPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
+        var b = OwnerPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
             note => released = note);
         b.IsEnabled = true;
 
@@ -623,7 +346,7 @@ public class TwoPressGrantTests
     public void An_empty_note_releases_nothing_on_either_press(string note)
     {
         var released = 0;
-        var b = SafetyPage.BuildReleaseConfirm(() => ["your account"], () => note, _ => released++);
+        var b = OwnerPage.BuildReleaseConfirm(() => ["your account"], () => note, _ => released++);
         b.IsEnabled = true;
 
         Press(b);
@@ -642,7 +365,7 @@ public class TwoPressGrantTests
     public void Changing_what_is_held_disarms_a_half_pressed_release()
     {
         var released = 0;
-        var b = SafetyPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
+        var b = OwnerPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
             _ => released++);
         b.IsEnabled = true;
 
@@ -657,13 +380,13 @@ public class TwoPressGrantTests
     }
 
     /// <summary>
-    /// THE SAFETY PAGE BUILDS ITS RELEASE CARD WITH THAT FACTORY — the line that ties the control
+    /// THE OWNER'S PAGE BUILDS ITS RELEASE CARD WITH THAT FACTORY — the line that ties the control
     /// pressed above to the one the owner sees, which no test off a running app can otherwise reach.
     /// </summary>
     [Fact]
-    public void The_safety_page_builds_its_release_card_with_the_two_press_factory()
+    public void The_owners_page_builds_its_release_card_with_the_two_press_factory()
     {
-        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "DashboardView.cs"));
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "OwnerView.cs"));
         Assert.Contains("BuildReleaseConfirm(HeldScopes, () => _releaseNote.Text ?? \"\", ApplyRelease)", text);
         Assert.DoesNotContain("Ui.Button(Labels.ReopenAfterReview", text);
     }

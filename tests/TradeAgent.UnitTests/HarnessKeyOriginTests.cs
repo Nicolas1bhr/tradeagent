@@ -207,7 +207,7 @@ public class HarnessKeyOriginTests : IDisposable
             Labels.HarnessKeyPastedForAnotherOrigin(KeyOrigin.Of(pastedFor.BaseUrl)!, KeyOrigin.Of(elsewhere.BaseUrl)),
             said.Text);
         Assert.Contains(KeyOrigin.Of(elsewhere.BaseUrl)!, said.Text, StringComparison.Ordinal);
-        Assert.Contains("paste it again on the Safety page if you meant that", said.Text, StringComparison.Ordinal);
+        Assert.Contains("paste it again on the " + Labels.OwnerPage + " page if you meant that", said.Text, StringComparison.Ordinal);
         Assert.Equal(said.Text, ended.KeyWithheld);
 
         // AND THE ROW SAYS WHY IT COST NOTHING, in the same words: a zero with no reason is a zero nobody
@@ -255,7 +255,7 @@ public class HarnessKeyOriginTests : IDisposable
         var harness = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
         Assert.Equal(provider.BaseUrl, harness.BaseUrl);
 
-        var to = SafetyPage.HarnessKeyDestination(harness);
+        var to = OwnerPage.HarnessKeyDestination(harness);
         var origin = KeyOrigin.Of(provider.BaseUrl)!;
         Assert.Equal(origin, to.Origin);
         Assert.False(to.BuiltIn);
@@ -266,7 +266,7 @@ public class HarnessKeyOriginTests : IDisposable
 
         var holder = new HarnessKey();
         var pressed = new List<bool>();
-        var save = SafetyPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
+        var save = OwnerPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
 
         Press(save);
         Assert.False(holder.Held);
@@ -281,18 +281,18 @@ public class HarnessKeyOriginTests : IDisposable
         Assert.False(Ui.IsArmed(save));
 
         var fresh = new HarnessKey();
-        var again = SafetyPage.BuildSaveHarnessKey(fresh, () => _pasted, () => to, _ => { });
+        var again = OwnerPage.BuildSaveHarnessKey(fresh, () => _pasted, () => to, _ => { });
         Press(again);
         Assert.False(fresh.Held);
         Assert.True(Ui.IsArmed(again));
 
-        var shipped = SafetyPage.HarnessKeyDestination(
+        var shipped = OwnerPage.HarnessKeyDestination(
             RuntimeCatalog.BuiltIn().Single(m => m.Id == ApiAgentRuntime.RuntimeId));
         Assert.True(shipped.BuiltIn);
         Assert.DoesNotContain("not TradeAgent's built-in address",
             Labels.HarnessKeyDestination(shipped.Origin, shipped.BuiltIn, shipped.BuiltInOrigin), StringComparison.Ordinal);
         var builtIn = new HarnessKey();
-        Press(SafetyPage.BuildSaveHarnessKey(builtIn, () => _pasted, () => shipped, _ => { }));
+        Press(OwnerPage.BuildSaveHarnessKey(builtIn, () => _pasted, () => shipped, _ => { }));
         Assert.True(builtIn.Held);
         Assert.Equal(shipped.Origin, builtIn.Origin);
 
@@ -321,14 +321,14 @@ public class HarnessKeyOriginTests : IDisposable
     {
         using var first = new FakeProvider();
         using var second = new FakeProvider();
-        var to = SafetyPage.HarnessKeyDestination(PointedAt(first));
+        var to = OwnerPage.HarnessKeyDestination(PointedAt(first));
         var holder = new HarnessKey();
         var pressed = new List<bool>();
-        var save = SafetyPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
+        var save = OwnerPage.BuildSaveHarnessKey(holder, () => _pasted, () => to, pressed.Add);
 
         Press(save);
         Assert.True(Ui.IsArmed(save));
-        to = SafetyPage.HarnessKeyDestination(PointedAt(second));
+        to = OwnerPage.HarnessKeyDestination(PointedAt(second));
         Press(save);
 
         Assert.False(holder.Held);

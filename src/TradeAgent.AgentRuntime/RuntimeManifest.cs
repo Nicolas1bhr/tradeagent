@@ -1330,7 +1330,7 @@ public static class RuntimeCatalog
             // one CLAUDE.md allows — a pasted key in the app's own window. It is held in memory for
             // the session and written nowhere, which is what the sentence beside the box says.
             SignInDescription =
-                "Paste your OpenAI API key on the Safety page. TradeAgent keeps it in memory for this "
+                "Paste your OpenAI API key on the " + Labels.OwnerPage + " page. TradeAgent keeps it in memory for this "
                 + "session only, never writes it to disk, and clears it when it closes — so it is never "
                 + "left sitting beside an AI process nothing on this computer confines.",
             ApiKey = new ApiKeyPlan

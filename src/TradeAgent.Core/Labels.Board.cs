@@ -145,4 +145,49 @@ public static partial class Labels
     public const string BoardSeatsDormant =
         "No board seat is active, so nothing above has been decided by the board: every value is the app's founding policy. "
         + "A seat starts only once a sealed workspace has been proven on this computer.";
+
+    // ---- the owner's page -------------------------------------------------------------------------------------------------------
+
+    /// <summary>The line under the owner's page title: what is his, and where everything else is.</summary>
+    public const string OwnerPageSubtitle =
+        "What only you decide: stopping the AI, your connections and keys, the real money it may spend, how its work is priced, and "
+        + "updates. Every limit and allowance is the security board's — the " + BoardPage + " page shows each one in force.";
+
+    /// <summary>The emergency press that cancels every working order (two presses).</summary>
+    public const string CancelAllWorkingOrders = "Cancel all working orders";
+
+    /// <summary>The emergency press that closes every position (two presses).</summary>
+    public const string CloseAllPositions = "Close all positions";
+
+    /// <summary>
+    /// "REOPEN AFTER REVIEW" IS HIS ONLY UNTIL THE BOARD IS ACTIVE (the orchestrator's ruling of 2026-10-23 on the owner's behalf): said on
+    /// the card that carries the press, so the owner is not surprised the day it is gone.
+    /// </summary>
+    public const string ReopenAfterReviewIsYoursUntilTheBoard =
+        "Reopening a held paper scope is yours until the security board is active, then the board's.";
+
+    /// <summary>The plan's day-total is the board's decision: the owner's page reads the plan's day and points at where it is decided.</summary>
+    public const string PlanDayTotalIsTheBoards =
+        "How much of your plan the AI may use in a day is the security board's decision; the " + BoardPage + " page shows it.";
+
+    /// <summary>What would let a real-money turn start again when midnight will not: the owner's own limit, or a cheaper model.</summary>
+    public const string TodayMoneyRepair =
+        "Only a higher real-money limit below, or a cheaper model — the security board's choice — changes that.";
+
+    /// <summary>The same, said away from the owner's page (the activity log): it names the page.</summary>
+    public const string TodayMoneyRepairOnTheOwnerPage =
+        "Only a higher real-money limit on the " + OwnerPage + " page, or a cheaper model — the security board's choice — changes that.";
+
+    /// <summary>What would let a plan turn start again when midnight will not: both the board's.</summary>
+    public const string TodayPlanRepair =
+        "Only a higher plan day-total or a cheaper model changes that, and both are the security board's; the " + BoardPage
+        + " page shows the day-total.";
+
+    /// <summary>A ceiling of 0: no day admits a turn of this kind, so the line does not promise midnight.</summary>
+    public static string TodayAdmitsNothing(string repair) =>
+        $"reached, and midnight will not bring a turn back: a limit of 0 admits no turn of this kind on any day. {repair}";
+
+    /// <summary>One turn sets aside more than the whole day allows, so a fresh day cannot fund it either.</summary>
+    public static string TodayCannotFundATurn(string oneTurn, string repair) =>
+        $"reached, and midnight will not bring a turn back: one turn of this kind sets aside {oneTurn}, more than the whole day allows. {repair}";
 }

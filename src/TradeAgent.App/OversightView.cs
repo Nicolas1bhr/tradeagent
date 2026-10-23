@@ -282,7 +282,7 @@ sealed class OversightPage
 
     /// <summary>
     /// THE PRESS OVER ITS OWN BOX: a confirmation completes only the figure it named, so editing the box disarms a raise armed for another
-    /// figure, and the new one asks twice of its own — the daily limit's rule (<see cref="SafetyPage.BuildSaveDailyCap(AmountField, Func{decimal}, Func{string}, Action, Action{string}?)"/>).
+    /// figure, and the new one asks twice of its own — the daily limit's rule (<see cref="OwnerPage.BuildSaveDailyCap(AmountField, Func{decimal}, Func{string}, Action, Action{string}?)"/>).
     /// A BOX THAT READS AS NOTHING REFUSES EITHER PRESS (<c>U-number-entry-culture</c>, fix pass 2): it never saves 0 or the cap in force.
     /// </summary>
     internal static Button BuildSaveCap(AmountField box, Func<decimal> current, Func<string> currency, Action save, Action<string>? refuse = null)

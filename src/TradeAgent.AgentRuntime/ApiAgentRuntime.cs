@@ -158,7 +158,7 @@ public sealed class ApiAgentRuntime(
     public Task SignInWithApiKeyAsync(string key, CancellationToken ct = default) =>
         throw new TradeAgentException(ErrorCode.AI_AUTH_FAILED,
             $"{manifest.DisplayName} holds its key in memory only, so there is nothing here to sign in to. "
-            + "Paste the key on the Safety page; TradeAgent keeps it for this session and never writes it down.");
+            + "Paste the key on the " + Labels.OwnerPage + " page; TradeAgent keeps it for this session and never writes it down.");
 
     /// <summary>A key is held, or it is not. Nothing here contacts the provider to find out.</summary>
     public Task<AuthState> GetAuthenticationStateAsync(CancellationToken ct = default) =>

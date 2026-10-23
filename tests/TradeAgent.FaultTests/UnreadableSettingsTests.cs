@@ -442,8 +442,8 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
 
         // And the sentences point at controls that exist: the page in the nav rail, and the button
         // on it. Both come from the same constants the screens are built from.
-        Assert.Contains(Labels.SafetyPage, Labels.SettingsCouldNotBeRead);
-        Assert.Contains(Labels.SaveLimits, Labels.SettingsCouldNotBeReadBanner);
+        Assert.Contains(Labels.OwnerPage, Labels.SettingsCouldNotBeRead);
+        Assert.Contains(Labels.SaveDailyCap, Labels.SettingsCouldNotBeReadBanner);
 
         await gw.DisposeAsync();
     }

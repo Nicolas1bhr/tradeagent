@@ -169,7 +169,7 @@ public class MissionCostSurfacesTests
         var shipped = CostCatalog.Highest(CostCatalog.BuiltIn(), "codex");
         Assert.NotNull(shipped);
 
-        var hint = SafetyPage.ShippedRateHint(shipped);
+        var hint = OwnerPage.ShippedRateHint(shipped);
         Assert.Contains(shipped!.Model, hint);
         Assert.Contains(shipped.Source, hint);
         Assert.Contains(shipped.PricedAt, hint);
@@ -181,7 +181,7 @@ public class MissionCostSurfacesTests
     public void The_safety_page_claims_no_default_rate_for_a_runtime_nothing_is_shipped_for()
     {
         Assert.Null(CostCatalog.Highest(CostCatalog.BuiltIn(), "custom"));
-        Assert.Contains("ships no list price", SafetyPage.ShippedRateHint(null));
+        Assert.Contains("ships no list price", OwnerPage.ShippedRateHint(null));
     }
 
     // ---- the Safety page's ceiling ---------------------------------------------------------------
@@ -196,7 +196,7 @@ public class MissionCostSurfacesTests
         var saved = 0;
         var current = 5m;
         var pending = 20m;
-        var b = SafetyPage.BuildSaveDailyCap(() => current, () => pending, () => "USD", () => saved++);
+        var b = OwnerPage.BuildSaveDailyCap(() => current, () => pending, () => "USD", () => saved++);
 
         Press(b);
         Assert.Equal(0, saved);
@@ -213,7 +213,7 @@ public class MissionCostSurfacesTests
         var saved = 0;
         var current = 5m;
         var pending = 1m;
-        var b = SafetyPage.BuildSaveDailyCap(() => current, () => pending, () => "USD", () => saved++);
+        var b = OwnerPage.BuildSaveDailyCap(() => current, () => pending, () => "USD", () => saved++);
 
         Press(b);
         Assert.Equal(1, saved);
@@ -231,7 +231,7 @@ public class MissionCostSurfacesTests
         var saved = new List<decimal>();
         var current = 5m;
         var box = Ui.AmountField(current, AmountKind.Decimal);
-        var b = SafetyPage.BuildSaveDailyCap(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
+        var b = OwnerPage.BuildSaveDailyCap(box, () => current, () => "USD", () => saved.Add(box.Value ?? current));
 
         box.Box.Text = "6";
         Press(b);
@@ -259,7 +259,7 @@ public class MissionCostSurfacesTests
     public void Leaving_the_daily_cap_alone_saves_in_one_press()
     {
         var saved = 0;
-        var b = SafetyPage.BuildSaveDailyCap(() => 5m, () => 5m, () => "USD", () => saved++);
+        var b = OwnerPage.BuildSaveDailyCap(() => 5m, () => 5m, () => "USD", () => saved++);
         Press(b);
         Assert.Equal(1, saved);
     }
@@ -279,7 +279,7 @@ public class MissionCostSurfacesTests
         var saved = 0;
         var current = (In: 10m, Out: 50m);
         var pending = (In: 1.25m, Out: 10m);
-        var b = SafetyPage.BuildSaveAiPrice(() => current, () => pending, () => "USD", () => saved++);
+        var b = OwnerPage.BuildSaveAiPrice(() => current, () => pending, () => "USD", () => saved++);
 
         Press(b);
         Assert.Equal(0, saved);
@@ -297,7 +297,7 @@ public class MissionCostSurfacesTests
     public void Raising_what_the_ai_is_priced_at_saves_in_one_press()
     {
         var saved = 0;
-        var b = SafetyPage.BuildSaveAiPrice(() => (In: 1.25m, Out: 10m), () => (In: 10m, Out: 50m),
+        var b = OwnerPage.BuildSaveAiPrice(() => (In: 1.25m, Out: 10m), () => (In: 10m, Out: 50m),
             () => "USD", () => saved++);
 
         Press(b);
@@ -314,7 +314,7 @@ public class MissionCostSurfacesTests
     public void Lowering_only_the_output_half_of_the_price_still_asks_twice()
     {
         var saved = 0;
-        var b = SafetyPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 25m),
+        var b = OwnerPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 25m),
             () => "USD", () => saved++);
 
         Press(b);
@@ -328,7 +328,7 @@ public class MissionCostSurfacesTests
     public void Leaving_the_ai_price_alone_saves_in_one_press()
     {
         var saved = 0;
-        var b = SafetyPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 50m),
+        var b = OwnerPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 50m),
             () => "USD", () => saved++);
 
         Press(b);

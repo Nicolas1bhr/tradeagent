@@ -327,7 +327,7 @@ sealed class SettingsPage
                      "public archive and checks every file against the checksum Binance published beside it. A month " +
                      "that has not been published is recorded as such; a file whose bytes do not match is thrown away."),
             Ui.Micro("This is history to research with. It is not a trading connection, it does not decide what the AI " +
-                     "may trade — that is the allowlist on the Safety page — and it moves no money. The AI can read " +
+                     "may trade — that is the instrument allowlist, the security board's, on the " + Labels.BoardPage + " page — and it moves no money. The AI can read " +
                      "this data and everything recorded about where it came from; it cannot collect, change or delete it.")));
 
         // THE HOLDOUT. Two presses, and here rather than on the Safety page because it is about the
@@ -416,7 +416,8 @@ sealed class SettingsPage
                      "account on one platform does not exist on the other. Neither change moves money, cancels " +
                      "an order or closes a position."),
             Ui.Divider(),
-            Ui.Muted("Whether real money is allowed at all is a separate switch, on the Safety page.")));
+            Ui.Muted("Whether real money is used at all is the security board's decision, shown on the " + Labels.BoardPage + " page. "
+                     + "Until a board seat is active, no real money is put to work.")));
         explain.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
         // Always here, whatever the bridge row currently says. The Checks page shows this same card

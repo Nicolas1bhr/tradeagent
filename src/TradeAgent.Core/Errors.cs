@@ -314,7 +314,7 @@ public static partial class Labels
     public const string DailySpendingLimitReached =
         "The AI has reached the most it may spend on itself today, so this turn was not started. "
         + "Nothing was sent to the AI tool. It starts again after midnight, or sooner if you raise "
-        + "the daily limit on the Safety page.";
+        + "the daily limit on the " + OwnerPage + " page.";
 
     /// <summary>
     /// The same refusal from the owner's PLAN-CAPACITY ceiling (<c>U-billing-classes</c>): a turn on his AI plan counted at list price,
@@ -322,8 +322,8 @@ public static partial class Labels
     /// </summary>
     public const string DailyPlanCapacityReached =
         "The AI has used today's share of your AI plan that TradeAgent may spend (its turns counted at list price, not money), so "
-        + "this turn was not started. Nothing was sent to the AI tool. It starts again after midnight, or sooner if you raise the "
-        + "plan-capacity limit on the Safety page.";
+        + "this turn was not started. Nothing was sent to the AI tool. It starts again after midnight, or sooner if the security board raises "
+        + "its plan day-total (the " + BoardPage + " page shows it).";
 
     /// <summary>
     /// The same refusal from a ROLE's share rather than the owner's whole day. A different sentence
@@ -332,7 +332,7 @@ public static partial class Labels
     /// </summary>
     public static string RoleShareReached(string role) =>
         $"The {role} has used its share of today's AI spending limit, so this turn was not started. "
-        + "Nothing was sent to the AI tool. The split is on the Safety page.";
+        + "Nothing was sent to the AI tool. The split is the security board's decision; the " + BoardPage + " page shows it.";
 
     /// <summary>
     /// THE SAME REFUSAL FROM A UNIT'S ENVELOPE (<c>U-org-envelopes</c>): one unit of the launch's funding chain has no room for
@@ -487,7 +487,7 @@ public static partial class Labels
     /// </summary>
     public const string HarnessKeyNotHeld =
         "No API key is held for TradeAgent's own worker, so it started nothing. Paste one on the "
-        + "Safety page — it is kept in memory for this session only and never written to disk.";
+        + OwnerPage + " page — it is kept in memory for this session only and never written to disk.";
 
     /// <summary>
     /// WHAT A HARNESS TURN SAYS WHEN THE KEY IT HOLDS WAS PASTED FOR ANOTHER ORIGIN (<c>U-key-host-pin</c>).
@@ -500,7 +500,7 @@ public static partial class Labels
     public static string HarnessKeyPastedForAnotherOrigin(string pastedFor, string? pointsAt) =>
         $"The key was pasted for {pastedFor}; TradeAgent's own worker now points at "
         + $"{pointsAt ?? "an address TradeAgent cannot read"}. Nothing was sent, the key has been forgotten "
-        + "and this turn costs nothing — paste it again on the Safety page if you meant that.";
+        + "and this turn costs nothing — paste it again on the " + OwnerPage + " page if you meant that.";
 
     /// <summary>
     /// WHAT A DECISION-MODEL CALL SAYS WHEN NO KEY IS HELD FOR IT (<c>U-decision-port</c>). Its key is held apart from
@@ -795,9 +795,6 @@ public static partial class Labels
         $"Confirm: price the AI's work at {amount} — a lower price lets it take more turns before "
         + "your daily limit stops it";
 
-    /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
-    public const string SafetyPage = "Safety";
-
     /// <summary>
     /// AN AMOUNT WITH ITS CURRENCY, OR WITHOUT ONE WHERE NOTHING NAMED A CURRENCY.
     ///
@@ -864,7 +861,7 @@ public static partial class Labels
     /// of those is a sentence they cannot act on.
     /// </summary>
     public const string SettingsCouldNotBeRead =
-        "your settings could not be read; trading is stopped until you review them on the " + SafetyPage + " page";
+        "your settings could not be read; trading is stopped until you review them on the " + OwnerPage + " page";
 
     /// <summary>
     /// WHAT THE OWNER READS WHEN THE SECURITY BOARD'S POLICY IN FORCE DOES NOT VERIFY (<c>U-board-a1</c> item 6): its body differs from
@@ -873,18 +870,18 @@ public static partial class Labels
     public const string BoardPolicyCouldNotBeRead =
         "the security board's policy could not be read, so TradeAgent is in Watch only and the AI's plan admits nothing until it can be";
 
-    /// <summary>The card the Safety page shows above everything else while that is true.</summary>
+    /// <summary>The card the owner's page shows above everything else while that is true.</summary>
     public const string SettingsCouldNotBeReadTitle = "Settings TradeAgent could not read";
 
     /// <summary>The same fact, said on the page that repairs it, where it can be a whole sentence.</summary>
     public const string SettingsCouldNotBeReadBanner =
         "Your settings could not be read, so TradeAgent has stopped the AI and is allowing nothing. "
-        + "Check every value on this page, then press " + SaveLimits + " to save them again.";
+        + "Check every value on this page, then press “" + SaveDailyCap + "” to save them again.";
 
     /// <summary>
-    /// THE HALF OF THE REPAIR THAT IS NOT ON THE SAFETY PAGE. Everything the owner had set was lost
-    /// together, and the account is set elsewhere, on Settings (the mode is the security board's policy since
-    /// <c>U-board-a1</c>, never a setting). A repair sentence that only mentions the limits leaves an owner who
+    /// THE HALF OF THE REPAIR THAT IS NOT IN THE BOXES. Everything the owner had set was lost
+    /// together, and the account is chosen, not typed. (The trading mode is no setting since the
+    /// security board: it is the policy's, and an unreadable settings row cannot lose it.) A repair sentence that only mentions the limits leaves an owner who
     /// followed it exactly with the AI still unable to trade and no reason given.
     /// </summary>
     public const string SettingsCouldNotBeReadNext =
@@ -1076,7 +1073,7 @@ public static partial class Labels
 
     public static string LiveNeedsADailyLossBudget(string mode) =>
         $"{mode} places real orders and nothing here is watching the day, so it cannot be chosen "
-        + $"while “{MaxDailyLoss}” is 0. Set that limit on the " + SafetyPage + " page first.";
+        + $"while “{MaxDailyLoss}” is 0. That limit is the security board's decision; the " + BoardPage + " page shows it.";
 
     /// <summary>
     /// What the second press of <see cref="SaveLimits"/> will do, when the values in the boxes give
@@ -1180,7 +1177,7 @@ public static class Errors
         // WHAT IS HELD BACK NOW (U-run-trace): not one dataset's bars alone but every pair's over the same months, the
         // market context TradeAgent recorded over them, and the trades of any run that reaches them.
         [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read something you are holding back, and was refused.", "No action needed. What you hold back stays private: every pair's prices over those months, the market news and figures TradeAgent recorded over them, and the trades of any strategy run that reaches them. TradeAgent uses them itself to judge a finished strategy.", false),
-        [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
+        [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed: a campaign's budgets are evidence settings, shown on the " + Labels.OwnerPage + " page, and a new campaign keeps the same held-back data.", false),
         [ErrorCode.AI_SEAT_REFUSED]                = ("TradeAgent did not start the AI, because the AI's own settings are not the ones TradeAgent gave it.", "The message names what is out of place and where. Nothing else about the AI is changed.", false),
         [ErrorCode.CELL_UNAVAILABLE]               = ("TradeAgent did not start a program that was to run in a cell, because this computer cannot confine it the way a cell requires.", "Nothing was started and nothing else changed. A cell needs Linux with Landlock ABI 6 or newer (kernel 6.12 or later); the technical detail names what this computer has.", false),
         [ErrorCode.LAUNCH_HELD]                    = ("TradeAgent held back one AI launch while the Operations Director's turn holds permission to trade.", "No action needed. It starts as soon as that turn ends.", false),
@@ -1188,7 +1185,7 @@ public static class Errors
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
         // turn starts fresh. The two boxes named here are the ones on the Safety page.
-        [ErrorCode.CONTEXT_BUDGET_EXCEEDED]        = ("One AI turn reached the most it is allowed to read and write, so TradeAgent stopped it before its next request.", $"Nothing was lost. Raise “{Labels.TurnAllowanceIn}” on the Safety page if its work needs more room.", false),
+        [ErrorCode.CONTEXT_BUDGET_EXCEEDED]        = ("One AI turn reached the most it is allowed to read and write, so TradeAgent stopped it before its next request.", $"Nothing was lost. “{Labels.TurnAllowanceIn}” is the security board's decision; the {Labels.BoardPage} page shows it.", false),
         [ErrorCode.TOOL_NOT_GRANTED]               = ("The AI asked for something TradeAgent does not let that part of it do.", "No action needed. The request was refused and recorded.", false),
         [ErrorCode.ATTEMPT_FENCED]                 = ("A part of the AI asked to keep working on something its organisation had already cancelled or re-scoped.", "No action needed. The request was refused and recorded, and that part's turn was ended.", false),
         // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
@@ -1227,12 +1224,12 @@ public static class Errors
         // all, which the sentence says so that a working limit does not read as a fault.
         // A version refused for live is told apart in the hint, because "allocate capital" would send the
         // owner to a card that refuses them: the evidence under it is research-only data (U-data-licence).
-        [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocate capital to that version on the Safety page — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names. If the message says REFUSED FOR LIVE, the evidence under that version is research-only data: no capital can stand on it, and backtests and paper go on.", false),
-        [ErrorCode.ALLOCATION_EXCEEDED]            = ("This order would take a strategy past the capital you allocated to it, so it was not sent.", "Nothing was sent and your positions are untouched. There is nothing to do: the strategy may trade again once it is holding less, or you can raise its allocation on the Safety page.", false),
+        [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocating capital is the security board's decision, and none is put to work before the board is active — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names. If the message says REFUSED FOR LIVE, the evidence under that version is research-only data: no capital can stand on it, and backtests and paper go on.", false),
+        [ErrorCode.ALLOCATION_EXCEEDED]            = ("This order would take a strategy past the capital you allocated to it, so it was not sent.", "Nothing was sent and your positions are untouched. There is nothing to do: the strategy may trade again once it is holding less, or the security board can raise its allocation.", false),
         // THE PAPER-ENVELOPE SENTENCE. Nothing is wrong and nothing needs pressing: the AI asked to
         // trade an account the owner set aside for TradeAgent's own experiments without saying which
         // experiment, and the account is doing exactly what they granted it for.
-        [ErrorCode.ENVELOPE_ACCOUNT_RESERVED]      = ("The AI tried to place an order on the practice account you set aside for TradeAgent's own paper experiments, without saying which strategy version it was for, so nothing was sent.", "Nothing was sent and your positions are untouched. There is nothing for you to do: that account only accepts orders from a version TradeAgent has allocated to it, and your own orders on it are unaffected. Withdraw the paper envelope on the Safety page if you want the account back.", false),
+        [ErrorCode.ENVELOPE_ACCOUNT_RESERVED]      = ("The AI tried to place an order on the practice account you set aside for TradeAgent's own paper experiments, without saying which strategy version it was for, so nothing was sent.", "Nothing was sent and your positions are untouched. There is nothing for you to do: that account only accepts orders from a version TradeAgent has allocated to it, and your own orders on it are unaffected. Withdraw the paper envelope on the " + Labels.OwnerPage + " page if you want the account back.", false),
         // THE OTHER HALF OF POSITION_MOVED, and the owner has to be told which half this is. Above:
         // the position already changed. Here: TradeAgent is holding an earlier order on the same
         // instrument that it never got an answer for, and that order can still fill and move the
@@ -1264,7 +1261,7 @@ public static class Errors
         // this order was wrong; the day, or the position, is already down as far as the owner said
         // it may go. Closing and reducing are untouched, which is the half an owner has to be told
         // — a refusal that reads as "trading is off" is one they would answer by raising the budget.
-        [ErrorCode.LOSS_BUDGET_REACHED]            = ("The AI has lost as much as you allow it to, so it is not being allowed to take on any more risk.", $"Nothing was sent. Closing or reducing a position is still allowed. If TradeAgent has confirmed the breach it has also closed what was open, and it reopens the account itself once the closure has run its 24 hours and it can see your book is flat — there is nothing to press. Change the budget on the {Labels.SafetyPage} page if it is too tight.", false),
+        [ErrorCode.LOSS_BUDGET_REACHED]            = ("The AI has lost as much as you allow it to, so it is not being allowed to take on any more risk.", $"Nothing was sent. Closing or reducing a position is still allowed. If TradeAgent has confirmed the breach it has also closed what was open, and it reopens the account itself once the closure has run its 24 hours and it can see your book is flat — there is nothing to press. The budget is the security board's decision; the {Labels.BoardPage} page shows it.", false),
         // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
         // broken — TradeAgent could not work out whether one would be. A change to an order it
         // cannot read is a change whose effect on your exposure is unknown; so is an order in an

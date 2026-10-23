@@ -226,7 +226,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     {
         var repo = Repo();
 
-        var screen = File.ReadAllText(Path.Combine(repo, "src", "TradeAgent.App", "DashboardView.cs"));
+        var screen = File.ReadAllText(Path.Combine(repo, "src", "TradeAgent.App", "OwnerView.cs"));
         Assert.Contains("_lossClosedNote,", screen, StringComparison.Ordinal);
         Assert.Contains("_host.Gateway.ClosureToday()", screen, StringComparison.Ordinal);
 

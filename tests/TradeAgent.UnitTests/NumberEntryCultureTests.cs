@@ -190,34 +190,37 @@ public class NumberEntryCultureTests
         Assert.Equal(8m, lanes.Value);
     }
 
-    // ---- the Safety page, built the way the app builds it --------------------------------------------------------
+    // ---- the owner's page, built the way the app builds it (U-settings-shed: the Safety page's board boxes are shed) -----------
 
     static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-    /// <summary>The Safety page over a composed host and the fake platform, handed to <paramref name="body"/> and disposed after.</summary>
-    static async Task OnThePage(Func<SafetyPage, AppHost, Task> body)
+    /// <summary>The owner's page over a composed host and the fake platform, handed to <paramref name="body"/> and disposed after.</summary>
+    static async Task OnThePage(Func<OwnerPage, AppHost, Task> body)
     {
         using var db = TestEnv.NewDb();
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
-        try { await body(new SafetyPage(host), host); }
+        try { await body(OwnerPageTests.Build(host), host); }
         finally { await host.Gateway.DisposeAsync(); }
     }
 
-    static T Field<T>(SafetyPage page, string name) =>
-        (T)typeof(SafetyPage).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
+    static T Field<T>(OwnerPage page, string name) =>
+        (T)typeof(OwnerPage).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
 
     /// <summary>
-    /// (item 3) EVERY NUMBER BOX ON THE SAFETY PAGE IS THE ONE FIELD: the built tree holds no stock number control at all, and the
-    /// four money boxes the owner still sets there — the real-money cap, two prices and perception's budget — are each an
-    /// <see cref="AmountField"/>. (U-board-a2: the limits, the plan ceiling, the allowance, the review interval, the lanes, the research
-    /// share, the allocation and the envelope's figures are the security board's policy now, and their boxes went with their writers.)
+    /// (item 3) EVERY NUMBER BOX ON THE OWNER'S PAGE IS THE ONE FIELD: the built tree holds no stock number control at all, and the four
+    /// money boxes that stay the owner's (<c>U-settings-shed</c>; R24 § 4.3) — the real-money cap, the AI's two prices and perception's
+    /// budget — are each an <see cref="AmountField"/>. The twenty-two limit, allowance, lane, allocation and envelope boxes left with the
+    /// security board's decisions; none of them is on any page now.
     /// </summary>
     [Fact]
-    public Task Every_number_box_on_the_safety_page_is_an_amount_field() => OnThePage((page, _) =>
+    public Task Every_number_box_on_the_owners_page_is_an_amount_field() => OnThePage((page, _) =>
     {
         var all = page.Root.GetLogicalDescendants().ToList();
         Assert.Empty(all.OfType<NumericUpDown>());
         Assert.Equal(4, all.OfType<AmountField>().Count());
+        Assert.True(new HashSet<AmountField>([Field<AmountField>(page, "_dailyCap"), Field<AmountField>(page, "_priceIn"),
+                Field<AmountField>(page, "_priceOut"), Field<PerceptionCard>(page, "_perception").BudgetBox])
+            .SetEquals(all.OfType<AmountField>()));
 
         // AND THE OVERSIGHT PAGE'S CAP (fix pass 2): the one money box there, built the way the window builds the page.
         using var store = new OversightStore(Path.Combine(TestEnv.Home, $"oversight-entry-{Guid.NewGuid():n}.db"), DateTimeOffset.UtcNow);
@@ -310,14 +313,37 @@ public class NumberEntryCultureTests
         Assert.Equal("2", typedFirst.CapBox.Box.Text);
     }
 
+    /// <summary>
+    /// (item 3) THE OWNER'S COMMA READS AS FIVE HUNDREDTHS IN THE REAL-MONEY CAP'S BOX — re-targeted by <c>U-settings-shed</c> from the
+    /// envelope's box of his defect, which left with the board's decisions, to the money box that stays his. RED at 988c9487: "0,05" typed
+    /// into the stock number box and committed with Enter read as 5.
+    /// </summary>
+    [Fact]
+    public Task The_owners_comma_reads_as_five_hundredths_in_the_real_money_cap_box() => OnThePage((page, host) =>
+    {
+        host.Gateway.Update(s => s.AiDailyCostCap = 0m);
+        var cap = Field<AmountField>(page, "_dailyCap");
+        cap.Box.Text = "0,05";
+
+        Assert.Equal("0,05", cap.Box.Text);
+        Assert.Equal(0.05m, cap.Value);
+        Assert.Equal(Labels.AmountReads("0.05"), cap.Reading.Text);
+
+        var save = PressLabelled(page, Labels.SaveDailyCap);
+        Press(save);
+        Assert.True(Ui.IsArmed(save));
+        Assert.Equal(Labels.RaiseDailyCapArmed(Amount.ExactMoney(0.05m, host.SpendToday.Currency)), save.Content);
+        return Task.CompletedTask;
+    });
+
     /// <summary>The page's button that says <paramref name="label"/> at rest, found in the built tree the owner sees.</summary>
-    static Button PressLabelled(SafetyPage page, string label) =>
+    static Button PressLabelled(OwnerPage page, string label) =>
         page.Root.GetLogicalDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
 
     /// <summary>
-    /// (item 4) A BOX THAT READS AS NOTHING REFUSES THE PRESS — EITHER PRESS — AND NEVER SAVES A FALLBACK. RED at 988c9487: the envelope's
-    /// "days" box left empty read as zero days, so the grant named an envelope ending the moment it was granted; an empty cap or
-    /// limit box read as the figure already in force.
+    /// (item 4) A BOX THAT READS AS NOTHING REFUSES THE PRESS — EITHER PRESS — AND NEVER SAVES A FALLBACK. RED at 988c9487: an empty cap or
+    /// limit box read as the figure already in force. (<c>U-settings-shed</c>: the envelope and limit halves left with the board's boxes;
+    /// the AI's price, which stays his, takes the limit's place.)
     /// </summary>
     [Fact]
     public Task An_unreadable_box_refuses_the_press_never_saves_a_fallback() => OnThePage((page, host) =>
@@ -344,6 +370,16 @@ public class NumberEntryCultureTests
         Assert.Equal(capWas, host.Gateway.Settings.AiDailyCostCap);
         Assert.Equal(Labels.PressRefused(Labels.DailyCostCap, Labels.AmountEmpty), capNote.Text);
 
+        // THE AI'S PRICE, ONE HALF EMPTY: refused in words on either press, the rate in force unchanged.
+        host.Gateway.Update(s => { s.AiPriceInputPerMillion = 10m; s.AiPriceOutputPerMillion = 50m; });
+        Field<AmountField>(page, "_priceIn").Box.Text = "";
+        Field<AmountField>(page, "_priceOut").Box.Text = "50";
+        var savePrice = PressLabelled(page, Labels.SaveAiPrice);
+        Press(savePrice);
+        Press(savePrice);
+        Assert.Equal((10m, 50m), (host.Gateway.Settings.AiPriceInputPerMillion, host.Gateway.Settings.AiPriceOutputPerMillion));
+        Assert.Equal(Labels.PressRefused(Labels.AiPriceIn, Labels.AmountEmpty), Field<TextBlock>(page, "_priceNote").Text);
+
         // AND A BOX THAT READS AGAIN SAVES, back in the note's resting colour.
         cap.Box.Text = "0,5";
         Press(saveCap);
@@ -355,7 +391,7 @@ public class NumberEntryCultureTests
     /// <summary>
     /// (item 5) THE ARMED GRANT NAMES THE EXACT FIGURE TYPED — and a one-press save's note names the exact figure written. The money
     /// formatter rounds past four places, so before this a raise to 0.00005 asked "up to 0.0001": the second press wrote one figure
-    /// under a sentence naming another.
+    /// under a sentence naming another. (<c>U-settings-shed</c>: the envelope's half left with the board's boxes.)
     /// </summary>
     [Fact]
     public Task The_armed_grant_names_the_exact_figure_typed() => OnThePage((page, host) =>
@@ -392,10 +428,9 @@ public class NumberEntryCultureTests
     });
 
     /// <summary>
-    /// (fix pass 1) AN EDIT UNDER AN ARMED PRESS DISARMS IT, AND THE ARMED SENTENCE NAMES THE FIGURE IT WILL WRITE — on the limits, the
-    /// AI's price and the review interval, as the ceilings, the lanes and the envelope already did. RED at 46bfc570: "2" typed into the
-    /// largest order, Save limits armed, "2000" typed under it — the press stayed armed and its next press wrote 2000 under a sentence that
-    /// named no figure at all.
+    /// (fix pass 1) AN EDIT UNDER AN ARMED PRESS DISARMS IT, AND THE ARMED SENTENCE NAMES THE FIGURE IT WILL WRITE — on the AI's price and
+    /// the real-money cap, the two presses over his own boxes. RED at 46bfc570 (on the limits' press, shed by <c>U-settings-shed</c>): "2"
+    /// typed, the press armed, "2000" typed under it — the press stayed armed and its next press wrote 2000 under a sentence naming no figure.
     /// </summary>
     [Fact]
     public Task An_edit_under_an_armed_press_disarms_it_and_the_sentence_names_the_figure() => OnThePage((page, host) =>
@@ -417,51 +452,54 @@ public class NumberEntryCultureTests
         Press(savePrice);
         Assert.Equal(10m, host.Gateway.Settings.AiPriceInputPerMillion);
         Assert.Contains("0.0001", (string)savePrice.Content!, StringComparison.Ordinal);
+
+        // THE REAL-MONEY CAP: a raise armed for 2 is disarmed by 2000 typed under it; armed again, the sentence names 2000.
+        host.Gateway.Update(s => s.AiDailyCostCap = 1m);
+        var cap = Field<AmountField>(page, "_dailyCap");
+        var saveCap = PressLabelled(page, Labels.SaveDailyCap);
+        cap.Box.Text = "2";
+        Press(saveCap);
+        Assert.True(Ui.IsArmed(saveCap));
+        cap.Box.Text = "2000";
+        Assert.False(Ui.IsArmed(saveCap));
+        Press(saveCap);
+        Assert.Equal(1m, host.Gateway.Settings.AiDailyCostCap);
+        Assert.True(Ui.IsArmed(saveCap));
+        Assert.Equal(Labels.RaiseDailyCapArmed(Amount.ExactMoney(2000m, host.SpendToday.Currency)), saveCap.Content);
+        Press(saveCap);
+        Assert.Equal(2000m, host.Gateway.Settings.AiDailyCostCap);
         return Task.CompletedTask;
     });
 
     /// <summary>
-    /// (fix pass 1) NO TYPED FIGURE CRASHES THE APP: a box whose figure feeds a date or a duration has a stated most, and a figure past it
-    /// is refused in the reading line, never thrown out of the keystroke. RED at 46bfc570: "3000000" typed into the envelope's days threw
-    /// ArgumentOutOfRangeException out of the box's own text change (a date three million days from now does not exist).
+    /// (fix pass 1) NO TYPED FIGURE CRASHES THE APP: a figure past a box's stated most is refused in the reading line, never thrown out of
+    /// the keystroke, and the press over it refuses. RED at 46bfc570 on the envelope's days ("3000000" threw ArgumentOutOfRangeException
+    /// out of the box's own text change); <c>U-settings-shed</c> shed that box and the durations, so the guard now walks every box that stays.
     /// </summary>
     [Fact]
-    public void No_typed_figure_throws_and_a_figure_past_a_boxs_stated_most_is_refused()
+    public Task No_typed_figure_throws_and_a_figure_past_a_boxs_stated_most_is_refused() => OnThePage((page, host) =>
     {
-        // U-board-a2: the envelope's days box left the Safety page with the envelope's grant (the founding policy's now), so the box is
-        // built here the way that page built it, and the refusal is the box's own.
-        var days = Ui.AmountField(30m, AmountKind.Whole, 0m, Amount.MostDays);
-
-        Assert.Null(Record.Exception(() => days.Box.Text = "3000000"));
-        Assert.Equal("3000000", days.Box.Text);
-        Assert.Null(days.Value);
-        Assert.Equal(Labels.AmountAbove("3000000", Amount.Exact(Amount.MostDays)), days.Refusal);
-        Assert.Equal(days.Refusal, days.Reading.Text);
-        Assert.Equal(Theme.Caution, days.Reading.Foreground);
+        var capWas = host.Gateway.Settings.AiDailyCostCap;
+        var cap = Field<AmountField>(page, "_dailyCap");
+        var saveCap = PressLabelled(page, Labels.SaveDailyCap);
+        foreach (var box in page.Root.GetLogicalDescendants().OfType<AmountField>())
+        {
+            Assert.Null(Record.Exception(() => box.Box.Text = "99999999999999999999"));
+            Assert.Null(box.Value);
+            Assert.NotNull(box.Refusal);
+            Assert.Equal(box.Refusal, box.Reading.Text);
+            Assert.Equal(Theme.Caution, box.Reading.Foreground);
+        }
+        Assert.Null(Record.Exception(() => Press(saveCap)));
+        Assert.Null(Record.Exception(() => Press(saveCap)));
+        Assert.Equal(capWas, host.Gateway.Settings.AiDailyCostCap);
+        Assert.Equal(Labels.PressRefused(Labels.DailyCostCap, cap.Refusal!), Field<TextBlock>(page, "_capNote").Text);
 
         // THE MOST IT TAKES STILL READS.
-        Assert.Null(Record.Exception(() => days.Box.Text = Amount.Exact(Amount.MostDays)));
-        Assert.Equal(Amount.MostDays, days.Value);
-
-        // EVERY DURATION'S BOX, PAST ITS MOST: refused in words, never thrown — and its most is a span every clock can add.
-        foreach (var (name, most) in new[]
-                 {
-                     ("days", Amount.MostDays), ("hours", Amount.MostHours), ("minutes", Amount.MostMinutes)
-                 })
-        {
-            var box = Ui.AmountField(1m, AmountKind.Decimal, 0m, most);
-            Assert.Null(Record.Exception(() => box.Box.Text = "999999999"));
-            Assert.Equal($"{name}: {Labels.AmountAbove("999999999", Amount.Exact(most))}", $"{name}: {box.Refusal}");
-            box.Box.Text = Amount.Exact(most);
-            Assert.Equal(most, box.Value);
-        }
-        var now = DateTimeOffset.UtcNow;
-        Assert.Null(Record.Exception(() => now.AddDays((double)Amount.MostDays)));
-        Assert.Null(Record.Exception(() => now + TradeAgent.Gateway.LossReopen.ClosureOf(Amount.MostHours)));
-        Assert.Null(Record.Exception(() => now + TradeAgent.Gateway.ValuationLoss.BoundOf(Amount.MostMinutes)));
-        // The review interval is looked at up to eight times slower while nothing happens (MissionLoop.NextLook).
-        Assert.Null(Record.Exception(() => now + TimeSpan.FromTicks(TimeSpan.FromMinutes((double)Amount.MostMinutes).Ticks * 8)));
-    }
+        Assert.Null(Record.Exception(() => cap.Box.Text = "1000000000"));
+        Assert.Equal(1_000_000_000m, cap.Value);
+        return Task.CompletedTask;
+    });
 
     /// <summary>
     /// (fix pass 1) THE PAPER FEE AND SLIPPAGE SHOW THEIR READING BEFORE THEIR SAVE, as every money and limit box does: "reads as …" or the
@@ -540,7 +578,7 @@ public class NumberEntryCultureTests
 
         host.Gateway.Update(s => s.AiDailyCostCap = 42m);           // the setting moves under the box the owner is typing in
         page.Update(await host.Gateway.StatusAsync());
-        typeof(SafetyPage).GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
+        typeof(OwnerPage).GetMethod("Refresh", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, null);
         Field<PerceptionCard>(page, "_perception").Update();
 
         Assert.Equal(before, fields.Select(f => (f.Box.Text, f.Value, f.Reading.Text)).ToList());
@@ -575,9 +613,9 @@ public class NumberEntryCultureTests
 
     /// <summary>
     /// (item 7) NO SCROLL CHANGES A NUMBER — the owner, 2026-10-22: "it's also important that values cannot be changed by scrolling over
-    /// them if they weren't clicked in the first place". A wheel over a money or limit box, not clicked into and then clicked into,
-    /// changes neither its figure nor its text, and the event is left unhandled so the page scrolls. Decided: a FOCUSED box takes no
-    /// wheel change either — typing is the one way a figure changes.
+    /// them if they weren't clicked in the first place". A wheel over a money box, not clicked into and then clicked into, changes neither
+    /// its figure nor its text, and the event is left unhandled so the page scrolls. Decided: a FOCUSED box takes no wheel change either —
+    /// typing is the one way a figure changes. (<c>U-settings-shed</c>: the walk is the owner's four boxes.)
     ///
     /// <para>RED at 988c9487 through the stock number box with its spinner: unfocused, the wheel was already left alone (a guard,
     /// green at base); clicked into, one wheel notch stepped 7 to 8 and swallowed the scroll — Expected (7, False), Actual (8, True).</para>

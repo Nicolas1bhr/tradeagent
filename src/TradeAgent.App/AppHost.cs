@@ -2366,11 +2366,11 @@ public sealed class AppHost : IAsyncDisposable
             host.Gateway.Log.Activity(spend.CapCannotFundATurn
                     // Midnight does not repair this one, so the line must not promise that it will.
                     ? $"One AI turn can cost up to {reservation}, which is more than the whole {cap}, so "
-                      + "the AI cannot start a turn at all. Raise the limit on the Safety page, or choose a cheaper "
-                      + "model there."
+                      + "the AI cannot start a turn at all. " + (spend.Class == BillingClasses.Plan ? Labels.TodayPlanRepair : Labels.TodayMoneyRepairOnTheOwnerPage)
                     : $"The AI has used {money} today, and the next turn would take it past its {cap}. "
-                      + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety "
-                      + "page to let it carry on.",
+                      + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. " + (spend.Class == BillingClasses.Plan
+                          ? $"Only the security board can raise its plan day-total sooner; the {Labels.BoardPage} page shows it."
+                          : $"Raise the limit on the {Labels.OwnerPage} page to let it carry on."),
                 "warn");
             host.Changed?.Invoke();
         }

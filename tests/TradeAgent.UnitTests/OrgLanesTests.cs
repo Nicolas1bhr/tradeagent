@@ -209,7 +209,8 @@ public class OrgLanesTests : IDisposable
 
     /// <summary>
     /// (i) GUARD: NO PIPE OP OR VERB NAMES A LANE OR A POOL, no op takes an argument that would set one, the packet carries no
-    /// field for one, and the settings are written from the Safety page alone — in the shape of
+    /// field for one, and nothing in the product writes the settings (<c>U-settings-shed</c>: the lanes are the security board's, and
+    /// the owner's page holds no box for them) — in the shape of
     /// <c>OrgLedgerTests.No_pipe_op_writes_an_org_table</c>.
     /// </summary>
     [Fact]
@@ -252,36 +253,6 @@ public class OrgLanesTests : IDisposable
         var cell = AppHost.LaneOfSeat(SeatClasses.Cell);
         Assert.True(cell.IsConfined);
         Assert.True(cell.Counted);
-    }
-
-    /// <summary>RAISING THE LANE COUNT ASKS TWICE AND NAMES THE FIGURE; lowering it saves in one press.</summary>
-    [Fact]
-    public void Raising_the_lanes_asks_twice_and_lowering_saves_at_once()
-    {
-        var saved = 0;
-        var current = (1, 1, 1);
-        var pending = (3, 1, 1);
-        var b = SafetyPage.BuildSaveLanes(() => current, () => pending, () => saved++);
-
-        Press(b);
-        Assert.Equal(0, saved);
-        Assert.Equal(Labels.RaiseLanesArmed(3, 1, 1), b.Content);
-        Press(b);
-        Assert.Equal(1, saved);
-
-        // A RAISE OF THE POOL'S LIMIT ALONE IS A RAISE: it asks twice too.
-        current = (3, 1, 1);
-        pending = (3, 2, 1);
-        Press(b);
-        Assert.Equal(1, saved);
-        Press(b);
-        Assert.Equal(2, saved);
-
-        // Lowering saves at once.
-        current = (3, 2, 1);
-        pending = (2, 2, 1);
-        Press(b);
-        Assert.Equal(3, saved);
     }
 
     static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -653,32 +624,6 @@ public class OrgLanesTests : IDisposable
         await Task.WhenAll(tick.Lanes).WaitAsync(T);
         Assert.NotNull(loop.TryPass(unsealed => scanner.Scan(default, unsealed)));
         Assert.NotNull(Report().Sha256);
-    }
-
-    /// <summary>
-    /// (review 4) RED before the fix: A CONFIRMATION COMPLETES ONLY THE FIGURES IT NAMED. A raise to two lanes is armed, the box is
-    /// changed to eight, and the armed press saves nothing — it asks again, naming eight.
-    /// </summary>
-    [Fact]
-    public void Editing_a_lane_box_disarms_a_raise_armed_for_another_figure()
-    {
-        var saved = new List<int>();
-        var lanes = Ui.AmountField(1m, AmountKind.Whole, 1m);
-        var perPool = Ui.AmountField(1m, AmountKind.Whole, 1m);
-        var perCell = Ui.AmountField(1m, AmountKind.Whole, 1m);
-        (int, int, int) Pending() => ((int)(lanes.Value ?? 1), (int)(perPool.Value ?? 1), (int)(perCell.Value ?? 1));
-        var b = SafetyPage.BuildSaveLanes([lanes, perPool, perCell], () => (1, 1, 1), Pending, () => saved.Add(Pending().Item1));
-
-        lanes.Box.Text = "2";
-        Press(b);
-        Assert.Equal(Labels.RaiseLanesArmed(2, 1, 1), b.Content);
-
-        lanes.Box.Text = "8";
-        Press(b);
-        Assert.Empty(saved);
-        Assert.Equal(Labels.RaiseLanesArmed(8, 1, 1), b.Content);
-        Press(b);
-        Assert.Equal([8], saved);
     }
 
     // ---- the seam host --------------------------------------------------------------------------------------------

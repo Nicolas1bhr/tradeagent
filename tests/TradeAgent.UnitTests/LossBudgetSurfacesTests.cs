@@ -199,18 +199,6 @@ public class LossBudgetCompositionTests
         return dir.FullName;
     }
 
-    [Fact]
-    public void The_safety_page_puts_both_budgets_in_the_limits_block_through_the_shared_widgets()
-    {
-        var text = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "DashboardView.cs"));
-
-        // U-board-a2 (item 11): both budgets are the security board's policy now, so the page holds neither box and writes neither —
-        // they are read from the policy in force and shown read-only on the Board page (U-settings-shed).
-        Assert.DoesNotContain("_maxLossPerTrade", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("_maxDailyLoss", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("s.Risk.", text, StringComparison.Ordinal);
-    }
-
     /// <summary>The hint names the account's currency once the platform has said what it is.</summary>
     [Fact]
     public void The_hint_says_what_a_zero_means_and_names_the_currency_only_when_it_is_known()

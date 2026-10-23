@@ -1003,28 +1003,6 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
-    /// The two boxes that set the allowance save in ONE press — they take no permission and give
-    /// none — and a zero in either reads as the shipped default rather than as an allowance of
-    /// nothing, which would be a reservation of nothing and a ceiling holding nothing back.
-    /// </summary>
-    [Fact]
-    public void The_turn_allowance_saves_in_one_press_and_a_zero_box_reads_as_the_default()
-    {
-        var saved = 0;
-        var b = SafetyPage.BuildSaveTurnAllowance(() => saved++);
-        b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Assert.Equal(1, saved);
-        Assert.Equal(Labels.SaveTurnAllowance, b.Content);
-
-        Assert.Equal(TurnAllowance.Default,
-            SafetyPage.PendingAllowance(0m, 0m));
-        Assert.Equal(new TurnAllowance(400_000, 8_000),
-            SafetyPage.PendingAllowance(400_000m, 8_000m));
-        // An empty box is no longer "leave it as it is": since U-number-entry-culture it refuses the press in words, and
-        // NumberEntryCultureTests.An_unreadable_box_refuses_the_press_never_saves_a_fallback presses it.
-    }
-
-    /// <summary>
     /// A host whose own reading of the day ALWAYS admits — an unmetered one, which is the permissive
     /// default — so the only thing that can stop the turn below is the reservation's transaction.
     /// </summary>

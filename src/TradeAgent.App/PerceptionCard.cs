@@ -66,7 +66,7 @@ sealed record PerceptionWords(
 /// <item><b>Which decision model</b>: Jev at TypeSafe or through OpenRouter, one press each — the card's choice and no
 /// setting: it decides which address the box binds a key to and whose price and limits are shown, and it grants
 /// nothing.</item>
-/// <item><b>The key</b>: pasted into a masked box, taken by <see cref="SafetyPage.BuildSaveHarnessKey"/> into
+/// <item><b>The key</b>: pasted into a masked box, taken by <see cref="OwnerPage.BuildSaveHarnessKey"/> into
 /// <see cref="AppHost.PerceptionKey"/> for the chosen instrument's address — one press for TradeAgent's built-in address,
 /// two naming it for any other — the box emptied, the address shown, never a character of the key; forgotten in one
 /// press. Memory only, for the reason the worker's is (<see cref="Labels.HarnessKeyHint"/>).</item>
@@ -209,7 +209,7 @@ sealed class PerceptionCard
             t.Width = double.NaN;
             t.HorizontalAlignment = HorizontalAlignment.Stretch;
         });
-        SaveKey = SafetyPage.BuildSaveHarnessKey(_src.Key, () => KeyBox.Text, Destination, AfterKeyPress);
+        SaveKey = OwnerPage.BuildSaveHarnessKey(_src.Key, () => KeyBox.Text, Destination, AfterKeyPress);
         ForgetKey = Ui.Button(Labels.ForgetHarnessKey, Forget);
 
         BudgetBox = Ui.AmountField(ReadOr(_src.Budget, 0m), AmountKind.Decimal);
@@ -453,7 +453,7 @@ sealed class PerceptionCard
     /// THE ADDRESS THE BOX BINDS A KEY TO: the chosen instrument's, compared with the one this build ships for it — never
     /// with anything a file says, and a file cannot move it anyway (<see cref="DecisionInstruments"/>).
     /// </summary>
-    SafetyPage.KeyDestination Destination()
+    OwnerPage.KeyDestination Destination()
     {
         var shipped = DecisionInstruments.BuiltIn().Single(i => i.Id == _chosen);
         var live = Read().Instruments.FirstOrDefault(i => i.Id == _chosen) ?? shipped;
@@ -488,7 +488,7 @@ sealed class PerceptionCard
 
     /// <summary>
     /// PERCEPTION'S DAILY BUDGET: RAISING IT ASKS TWICE AND NAMES THE FIGURE; LOWERING IT, OR ZERO, SAVES IN ONE PRESS.
-    /// The cap's rule (<see cref="SafetyPage.BuildSaveDailyCap"/>): a raise gives perception more of the owner's money,
+    /// The cap's rule (<see cref="OwnerPage.BuildSaveDailyCap"/>): a raise gives perception more of the owner's money,
     /// and hesitating on the way down costs it. A factory, so a test presses the control the owner sees.
     /// </summary>
     internal static Button BuildSaveBudget(Func<decimal> current, Func<decimal> pending, Func<string> currency, Action save,

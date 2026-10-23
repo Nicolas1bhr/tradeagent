@@ -159,7 +159,7 @@ public class LossFlattenSurfacesTests(ITestOutputHelper log)
     {
         var repo = Repo();
 
-        var screen = File.ReadAllText(Path.Combine(repo, "src", "TradeAgent.App", "DashboardView.cs"));
+        var screen = File.ReadAllText(Path.Combine(repo, "src", "TradeAgent.App", "OwnerView.cs"));
         Assert.Contains("_lossFlattenNote,", screen, StringComparison.Ordinal);
         Assert.Contains("FlattenStateToday()", screen, StringComparison.Ordinal);
 
