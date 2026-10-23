@@ -1066,7 +1066,7 @@ public static partial class Labels
     /// the one press that sets it aside. Nothing is converted and nothing is switched.
     /// </summary>
     public static string HomeArmedBeforeTheBoard(string held, int homeSchema, int thisSchema) =>
-        $"Your settings were saved by an earlier version of TradeAgent (database schema {homeSchema}) with {held}. This version "
+        $"Your settings were saved by an earlier version of TradeAgent ({(homeSchema > 0 ? $"database schema {homeSchema}" : $"before database schema {thisSchema}")}) with {held}. This version "
         + $"(database schema {thisSchema}) takes the trading mode and real money from the security board's policy, never from "
         + $"settings, and it will not guess what you meant, so it is sending nothing to your broker. Press “{SetAsideEarlierLiveSetting}”: "
         + "your settings row is kept exactly as it was under its own name, and the founding policy (Practice, no real money) governs.";

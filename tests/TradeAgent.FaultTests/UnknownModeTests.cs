@@ -8,27 +8,14 @@ using Xunit.Abstractions;
 namespace TradeAgent.Tests.Fault;
 
 /// <summary>
-/// A MODE THIS BUILD DOES NOT KNOW IS NOT A MODE, AND IT MUST NOT TRADE (REVIEW 2026-09-05, Codex F3).
+/// A MODE AN EARLIER BUILD SAVED IN THE SETTINGS ROW IS NEVER THE MODE IN FORCE (rewritten by <c>U-board-a1</c>; R24 § 4.5).
 ///
-/// <c>TradingMode</c> is written to the settings row as a name, and <c>System.Text.Json</c>'s enum
-/// converter reads NUMBERS as well as names — and casts a number it does not recognise straight onto
-/// the enum without complaint. So a row saying <c>"mode": 999</c> produced a settings object whose
-/// mode was 999, and every gate in <c>TryAuthorizeExecution</c> is written as a comparison against
-/// the named modes:
-///
-///   ModeAllowsExecution  =  Mode != OBSERVE           -> 999 is allowed to execute
-///   ModeIsLive           =  LIVE_CONFIRM or LIVE_AUTONOMOUS -> 999 is not live, so the live
-///                                                       activation switch is never consulted
-///   the PAPER guard      =  Mode == PAPER             -> 999 is not paper, so a real-money account
-///                                                       is not refused either
-///
-/// which is a mode that trades real money with the safety switch off and nobody asked. It is not a
-/// hypothetical row: a newer build writes a mode this one has never heard of, and a rollback reads
-/// it. Neither is 999 special — anything outside the four named values takes the same path.
-///
-/// The fix is that the classification itself fails closed: a value that is not one of the named
-/// modes allows nothing, and the owner is told in the app's own words rather than by an order that
-/// quietly went out.
+/// <para>The class was written for REVIEW 2026-09-05's Codex F3: <c>"mode": 999</c> in the settings row produced a mode of 999 that
+/// executed, consulted no real-money switch and refused no real account. Since the security board the mode is not a setting at all —
+/// it is the board's policy in force, whose store cannot hold a live mode — so the finding cannot recur where it was found. What a
+/// pre-board row's <c>mode</c> key does now is held here: a value that is plainly not live (OBSERVE, PAPER) is ignored with no
+/// refusal and the founding policy governs; a live value, or one this build cannot name — 999 included — refuses every order under
+/// <c>HOME_ARMED_BEFORE_THE_BOARD</c>, the owner is told in words, and nothing reaches the broker.</para>
 /// </summary>
 public class UnknownModeTests(ITestOutputHelper log)
 {
@@ -55,8 +42,8 @@ public class UnknownModeTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE FINDING, RUN. Restart over a settings row with an undefined numeric mode, then submit a
-    /// buy. Nothing may reach the broker.
+    /// THE FINDING, RUN AGAINST THE BOARD. Restart over a settings row with an undefined numeric mode, then submit a buy: nothing
+    /// reaches the broker, and the refusal is the earlier-home one — this build will not guess what 999 meant.
     /// </summary>
     [Fact]
     public async Task An_undefined_numeric_mode_executes_nothing()
@@ -64,9 +51,8 @@ public class UnknownModeTests(ITestOutputHelper log)
         var (gw, conn, db) = await RestartOver(SeedWithMode999);
         using var _1 = db;
 
-        log.WriteLine($"mode read back        : {(int)gw.Policy.Mode} ({gw.Policy.Mode})");
-        log.WriteLine($"ModeAllowsExecution   : {gw.Policy.ModeAllowsExecution}");
-        log.WriteLine($"ModeIsLive            : {gw.Policy.ModeIsLive}   (live_activated is false)");
+        log.WriteLine($"mode in force         : {gw.Policy.Mode} (the board's policy, never the row's)");
+        log.WriteLine($"earlier setting       : {gw.EarlierLiveSetting?.Mode}");
         log.WriteLine($"account               : {gw.Settings.SelectedAccountId} simulated={conn.Broker.IsSimulated}");
 
         var authorized = gw.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code);
@@ -78,17 +64,17 @@ public class UnknownModeTests(ITestOutputHelper log)
         log.WriteLine($"buy                   : {denied.Code} — {denied.Message}");
         log.WriteLine($"orders at the broker  : {conn.Broker.Orders.Count}");
 
+        Assert.Equal(TradingMode.PAPER, gw.Policy.Mode);
         Assert.False(authorized);
-        Assert.Equal(ErrorCode.MODE_FORBIDS_EXECUTION, code);
-        Assert.Equal(ErrorCode.MODE_FORBIDS_EXECUTION, denied.Code);
+        Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, code);
+        Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, denied.Code);
         Assert.Empty(conn.Broker.Orders);
         Assert.Equal(0, conn.Places);
     }
 
     /// <summary>
-    /// AND THE OWNER IS TOLD, in the app's own words, on the screen they already read. A refusal an
-    /// agent receives over a pipe is not news the person at the keyboard ever sees; the whole failure
-    /// here is a setting they believe they set.
+    /// AND THE OWNER IS TOLD, in the app's own words, on the screen they already read: the activity line names the mode the row
+    /// held, both versions, and the press that sets it aside.
     /// </summary>
     [Fact]
     public async Task The_owner_is_told_that_the_saved_mode_is_not_one_this_build_knows()
@@ -100,72 +86,71 @@ public class UnknownModeTests(ITestOutputHelper log)
         foreach (var line in said) log.WriteLine($"activity : {line}");
 
         Assert.Contains(said, m => m.Contains("mode", StringComparison.OrdinalIgnoreCase)
-                                   && m.Contains("999", StringComparison.Ordinal));
+                                   && m.Contains("999", StringComparison.Ordinal)
+                                   && m.Contains(Labels.SetAsideEarlierLiveSetting, StringComparison.Ordinal));
         Assert.DoesNotContain(said, m => m.Contains("Exception", StringComparison.Ordinal));
         await gw.DisposeAsync();
     }
 
     /// <summary>
-    /// THE OTHER DIRECTION, so that "fails closed" does not quietly mean "refuses everything". Every
-    /// mode the app actually offers still parses and still trades exactly as it did.
+    /// THE OTHER DIRECTION, so that "fails closed" does not quietly mean "refuses everything": an earlier row's PAPER is ignored and
+    /// the founding policy trades on paper exactly as before; its LIVE_CONFIRM or LIVE_AUTONOMOUS with real money switched on is
+    /// never honoured — it is refused as an earlier armed home and nothing reaches the broker.
     /// </summary>
     [Theory]
     [InlineData("PAPER")]
     [InlineData("LIVE_CONFIRM")]
     [InlineData("LIVE_AUTONOMOUS")]
-    public async Task A_mode_this_build_does_know_is_read_and_honoured(string mode)
+    public async Task A_mode_an_earlier_build_saved_is_never_the_mode_in_force(string mode)
     {
         var db = TestEnv.NewDb();
         using var _1 = db;
         db.SetKv("settings", SeedWithMode999
             .Replace("999", $"\"{mode}\"")
-            .Replace("\"live_activated\":false", "\"live_activated\":true")
+            .Replace("\"live_activated\":false", mode == "PAPER" ? "\"live_activated\":false" : "\"live_activated\":true")
             .Replace("REAL-001", "SIM-001"));
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
-        Assert.Equal(mode, gw.Policy.Mode.ToString());
-        Assert.True(gw.Policy.ModeAllowsExecution);
-        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out var why), why);
-
-        // LIVE_CONFIRM parks and says so by refusing; the other two send. Both are "the mode was
-        // honoured", which is the whole point of this direction.
-        if (mode == "LIVE_CONFIRM")
+        Assert.Equal(TradingMode.PAPER, gw.Policy.Mode);
+        if (mode == "PAPER")
         {
-            var parked = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
-                gw.PlaceAsync(new AgentContext("a"), $"um-{mode}", TestEnv.Buy()));
-            log.WriteLine($"{mode} : {parked.Code}, record = {gw.GetRequest($"um-{mode}")!.State}, orders = {conn.Broker.Orders.Count}");
-            Assert.Equal(ErrorCode.APPROVAL_REQUIRED, parked.Code);
-            Assert.Equal(ExecutionState.AWAITING_APPROVAL, gw.GetRequest($"um-{mode}")!.State);
-            Assert.Empty(conn.Broker.Orders);
-        }
-        else
-        {
+            Assert.Null(gw.EarlierLiveSetting);
             var placed = await gw.PlaceAsync(new AgentContext("a"), $"um-{mode}", TestEnv.Buy());
             log.WriteLine($"{mode} : {placed.State}, orders at the broker = {conn.Broker.Orders.Count}");
             Assert.Equal(ExecutionState.FILLED, placed.State);
             Assert.Single(conn.Broker.Orders);
         }
+        else
+        {
+            Assert.Equal(mode, gw.EarlierLiveSetting?.Mode);
+            var refused = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                gw.PlaceAsync(new AgentContext("a"), $"um-{mode}", TestEnv.Buy()));
+            log.WriteLine($"{mode} : {refused.Code}, orders = {conn.Broker.Orders.Count}");
+            Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, refused.Code);
+            Assert.Empty(conn.Broker.Orders);
+        }
         await gw.DisposeAsync();
     }
 
     /// <summary>
-    /// OBSERVE is the mode that already refused, and it has to keep refusing with its own words —
-    /// otherwise the test above proves only that SOMETHING refuses.
+    /// AN EARLIER ROW'S OBSERVE IS IGNORED TOO — it is not live, so it is no armed home and refuses nothing of its own; the founding
+    /// policy governs, and on this real-money account Practice itself refuses the order (the paper-on-real guard), in its own words.
     /// </summary>
     [Fact]
-    public async Task Observe_still_refuses_with_the_mode_it_actually_is()
+    public async Task An_earlier_watch_only_mode_is_ignored_and_the_founding_policy_governs()
     {
         var (gw, conn, db) = await RestartOver(SeedWithMode999.Replace("999", "\"OBSERVE\""));
         using var _1 = db;
 
-        Assert.Equal(TradingMode.OBSERVE, gw.Policy.Mode);
-        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code));
-        log.WriteLine($"OBSERVE : {code} — {why}");
-        Assert.Equal(ErrorCode.MODE_FORBIDS_EXECUTION, code);
-        Assert.Contains("OBSERVE", why);
+        Assert.Null(gw.EarlierLiveSetting);
+        Assert.Equal(TradingMode.PAPER, gw.Policy.Mode);
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "um-observe", TestEnv.Buy()));
+        log.WriteLine($"OBSERVE : {denied.Code} — {denied.Message}");
+        Assert.Equal(ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
         Assert.Equal(0, conn.Places);
         await gw.DisposeAsync();
     }

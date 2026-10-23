@@ -75,7 +75,38 @@ public sealed class TradingGateway : IAsyncDisposable
     /// THE OWNER'S ONE PRESS OVER AN EARLIER ARMED HOME (<c>U-board-a1</c> item 5) — a narrowing, in-process only: the row as found is
     /// kept under its own key and the current shape written, and the founding policy governs. Nothing is converted into a policy row.
     /// </summary>
-    public void SetAsideEarlierLiveSetting() { }
+    public void SetAsideEarlierLiveSetting()
+    {
+        if (EarlierLiveSetting is not { } earlier) return;
+        var raw = _db.GetKv("settings");
+        var at = Now;
+        _db.Write(_ =>
+        {
+            // THE ROW AS FOUND, UNDER ITS OWN KEY, ONCE: a second earlier row is never written over the first.
+            if (raw is not null && !_db.AddKvOnce(SettingsBeforeBoardKey, raw) && _db.GetKv(SettingsBeforeBoardKey) != raw)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    "an earlier settings row is already kept under its own name, and this one differs from it; nothing was changed");
+            _db.SetKv("settings", Json.Write(Settings));
+            _board.RecordEarlierLiveSetAside(at,
+                $"the owner set aside the settings an earlier build saved (mode {earlier.Mode ?? "absent"}, live_activated "
+                + $"{earlier.LiveActivated ?? "absent"}, home schema {earlier.HomeSchema}); the row is kept under {SettingsBeforeBoardKey}; "
+                + "nothing was converted into a policy");
+            return 0;
+        });
+        EarlierLiveSetting = null;
+        Settings.MarkSaved();
+        try
+        {
+            _log.Activity("You set aside the real-money setting an earlier version of TradeAgent saved. Your settings are kept exactly as "
+                          + "they were under their own name, and the security board's founding policy (Practice, no real money) governs.");
+        }
+        catch (Exception) { /* the record is the guarantee; the sentence about it is the nicety */ }
+        RestoreExecutionIfNothingIsUnconfirmed();
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>Where the owner's press keeps an earlier armed home's settings row, as it was found.</summary>
+    public const string SettingsBeforeBoardKey = "settings_before_board";
 
     public HealthRegistry Health => _health;
     public ExecutionRequestStore Requests => _requests;
@@ -3065,7 +3096,70 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex) { return SettingsThatCouldNotBeRead(json, ex); }
 
+        // A HOME AN EARLIER BUILD ARMED FOR REAL MONEY (U-board-a1 item 5; R24 § 4.5). This build never writes `mode` or
+        // `live_activated` into this row — they are the security board's policy — so either key here was written by a build
+        // before the board. A live mode, real money switched on, or a value this build cannot name is REFUSED: every order, under
+        // its own code, in words naming both versions and the repair; the row is not rewritten and nothing is converted into a
+        // policy. A mode that is plainly not live is ignored with no refusal — the owner-set values of the board's fields go.
+        EarlierLiveSetting = EarlierLiveSettingIn(json);
+        if (EarlierLiveSetting is { } earlier)
+        {
+            try
+            {
+                _log.Activity(earlier.Sentence, "warn");
+                _log.Engineering("Gateway", "home_armed_before_the_board", "error", metadataJson: Json.Write(new
+                {
+                    mode = earlier.Mode, live_activated = earlier.LiveActivated, home_schema = earlier.HomeSchema,
+                    this_schema = Versions.DatabaseSchemaVersion
+                }));
+            }
+            catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
+            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, earlier.Sentence);
+        }
         return settings;
+    }
+
+    /// <summary>
+    /// WHAT THE RAW ROW HOLDS OF AN EARLIER BUILD'S MODE AND REAL-MONEY SWITCH, or null when neither is armed: <c>mode</c> armed unless
+    /// it is plainly OBSERVE or PAPER (by name, or the number an earlier build's converter read as one), <c>live_activated</c> armed
+    /// unless it is <c>false</c>. Refuse, never guess: a value this build cannot name counts as armed.
+    /// </summary>
+    EarlierLiveSetting? EarlierLiveSettingIn(string raw)
+    {
+        string? mode = null, live = null;
+        var parts = new List<string>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (doc.RootElement.TryGetProperty("mode", out var m))
+            {
+                mode = m.ValueKind == System.Text.Json.JsonValueKind.String ? m.GetString() : m.GetRawText();
+                var plainlyNotLive = m.ValueKind switch
+                {
+                    System.Text.Json.JsonValueKind.String => m.GetString() is { } w
+                        && (w.Equals(nameof(TradingMode.OBSERVE), StringComparison.OrdinalIgnoreCase)
+                            || w.Equals(nameof(TradingMode.PAPER), StringComparison.OrdinalIgnoreCase)),
+                    System.Text.Json.JsonValueKind.Number => m.TryGetInt32(out var n) && n is (int)TradingMode.OBSERVE or (int)TradingMode.PAPER,
+                    _ => false
+                };
+                if (!plainlyNotLive) parts.Add($"the trading mode {mode}");
+            }
+            if (doc.RootElement.TryGetProperty("live_activated", out var l))
+            {
+                live = l.GetRawText();
+                if (l.ValueKind != System.Text.Json.JsonValueKind.False)
+                    parts.Add(l.ValueKind == System.Text.Json.JsonValueKind.True ? "real money switched on" : $"real money set to {live}");
+            }
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+        if (parts.Count == 0) return null;
+
+        int homeSchema;
+        try { homeSchema = _board.FoundingHomeSchema() ?? 0; }
+        catch (Exception) { homeSchema = 0; }
+        return new EarlierLiveSetting(mode, live, homeSchema,
+            Labels.HomeArmedBeforeTheBoard(string.Join(" and ", parts), homeSchema, Versions.DatabaseSchemaVersion));
     }
 
     /// <summary>
@@ -3095,6 +3189,15 @@ public sealed class TradingGateway : IAsyncDisposable
 
     void SaveSettings()
     {
+        // AN EARLIER ARMED HOME'S ROW IS KEPT AS IT WAS FOUND until the owner's own press sets it aside (U-board-a1 item 5): a change
+        // made meanwhile — the kill switch included — holds in this run and writes nothing over the row, so neither a press nor a
+        // restart can make the earlier real-money setting disappear without his choice.
+        if (EarlierLiveSetting is not null)
+        {
+            try { _log.TryEngineering("Gateway", "settings_kept_as_found", "info"); } catch (Exception) { }
+            StateChanged?.Invoke();
+            return;
+        }
         _db.SetKv("settings", Json.Write(Settings));
         // THIS IS THE RECOVERY. The row on disk is now one this build wrote, so it is readable by
         // definition, and the banner and the health row that were saying otherwise have to stop on
@@ -3500,6 +3603,15 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             (reason, code) = ("TradeAgent is installing a new version of itself and is about to close",
                 ErrorCode.UPDATE_INSTALL_IN_PROGRESS);
+            return false;
+        }
+
+        // A HOME AN EARLIER BUILD ARMED FOR REAL MONEY sends nothing, under its own code and in words naming both versions and the
+        // repair (U-board-a1 item 5). Above the mode, because the mode in force is not what that row says, and the owner must read
+        // why rather than a refusal about Practice.
+        if (EarlierLiveSetting is { } armed)
+        {
+            (reason, code) = (armed.Sentence, ErrorCode.HOME_ARMED_BEFORE_THE_BOARD);
             return false;
         }
 
