@@ -2984,6 +2984,11 @@ public sealed class Database : IDisposable
                 BEGIN SELECT RAISE(ABORT, 'a board event is never deleted'); END;
                 """);
 
+            // THE FOUNDING RECORD, ONCE, in one transaction of its own and only while no policy row exists — so a re-run after a
+            // crash before the stamp writes nothing twice. The home's own stamp is recorded with it: a refusal of an earlier armed
+            // home names the version it was at.
+            Board.BoardStore.Found(this, have, DateTimeOffset.UtcNow);
+
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{boardRung}') ON CONFLICT(key) DO UPDATE SET value='{boardRung}';");
         }
 
