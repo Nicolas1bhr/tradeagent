@@ -1144,18 +1144,47 @@ public static class SeatProfile
     }
 
     /// <summary>
-    /// <paramref name="path"/> with every link resolved, as the vendor's <c>canonicalize</c> resolves it: <c>realpath</c> on Linux and
-    /// macOS, the final link target on Windows.
+    /// <paramref name="path"/> with every link resolved, ON EVERY FOLDER OF IT AS WELL AS THE FILE, as the vendor's <c>canonicalize</c>
+    /// (Rust's <c>std::fs::canonicalize</c>) resolves it: <c>realpath</c> on Linux and macOS, and on Windows the final path of an open
+    /// handle (<c>GetFinalPathNameByHandleW</c>), so a junction on a parent folder such as <c>bin</c> is resolved too. A link resolved on
+    /// the program alone is not the folder codex looks in (fix pass 1 of <c>U-cli-code-mode</c>).
     /// </summary>
     static string RealPath(string path)
     {
-        if (OperatingSystem.IsWindows())
-            return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) return FinalPathWindows(path);
         var resolved = realpath(path, IntPtr.Zero);
         if (resolved == IntPtr.Zero) throw new IOException($"{path} could not be resolved (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
         try { return System.Runtime.InteropServices.Marshal.PtrToStringUTF8(resolved) ?? path; }
         finally { free(resolved); }
     }
+
+    /// <summary>
+    /// The path Windows reports for an open handle on <paramref name="path"/>, every reparse point on the way followed, less its
+    /// verbatim prefix (<c>\\?\C:\…</c> becomes <c>C:\…</c>, <c>\\?\UNC\…</c> becomes <c>\\…</c>). Throws <see cref="IOException"/>
+    /// when it cannot be had.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static string FinalPathWindows(string path)
+    {
+        using var handle = File.OpenHandle(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var buffer = new char[512];
+        while (true)
+        {
+            var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+            if (length == 0)
+                throw new IOException($"{path} could not be resolved (Windows error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+            if (length < buffer.Length)
+            {
+                var final = new string(buffer, 0, (int)length);
+                if (final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + final[8..];
+                return final.StartsWith(@"\\?\", StringComparison.Ordinal) ? final[4..] : final;
+            }
+            buffer = new char[length];
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern uint GetFinalPathNameByHandleW(Microsoft.Win32.SafeHandles.SafeFileHandle file, [System.Runtime.InteropServices.Out] char[] path, uint length, uint flags);
 
     [System.Runtime.InteropServices.DllImport("libc", SetLastError = true, EntryPoint = "realpath")]
     static extern IntPtr realpath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, IntPtr resolved);

@@ -75,6 +75,48 @@ public partial class CliCodeModeTests
     }
 
     /// <summary>
+    /// (D) GUARD: CODEX STARTED THROUGH A LINKED FOLDER IS CHECKED WHERE CODEX ITSELF LOOKS. Codex canonicalizes its own path, every
+    /// folder on it resolved (<c>install-context/src/lib.rs:246-248</c>), and prefers the host in its real package's
+    /// <c>codex-resources/</c>; so a seat launched through a junction (Windows) or a folder link (elsewhere) to the package's <c>bin</c>
+    /// is checked there, not beside the link. Here the host beside codex is the pin and the package's <c>codex-resources/</c> holds
+    /// another program: verification must refuse it. Red at base on Windows, which resolved a link on the program itself only.
+    /// </summary>
+    [Fact]
+    public async Task A_cli_seat_started_through_a_linked_folder_is_checked_where_codex_looks()
+    {
+        var (codex, script, _) = SeatHomeTests.Seat(nameof(A_cli_seat_started_through_a_linked_folder_is_checked_where_codex_looks));
+        var root = Path.GetDirectoryName(script)!;
+        var bin = Directory.CreateDirectory(Path.Combine(root, "package", "bin")).FullName;
+        var real = Path.Combine(bin, Path.GetFileName(script));
+        File.Copy(script, real);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(real, File.GetUnixFileMode(script));
+        SeatHomeTests.PinTo(codex, real);
+        var companion = codex.Install.Companions.Single();
+
+        // THE LINK: <root>/elsewhere/bin -> <root>/package/bin, and no codex-resources beside the link.
+        var link = Path.Combine(Directory.CreateDirectory(Path.Combine(root, "elsewhere")).FullName, "bin");
+        Assert.True(SeatHomeTests.Link(link, bin, folder: true));
+        var exe = Path.Combine(link, Path.GetFileName(script));
+        codex.Executable = exe;
+        var workspace = Directory.CreateDirectory(Path.Combine(root, "role-home")).FullName;
+        var argv = AgentArgs.For(codex, "", resuming: false, "gpt-6-luna");
+
+        var clean = await SeatProfile.VerifyAsync(codex, exe, argv, workspace, new SeatHomeTests.FakeProbe(), default);
+        Assert.False(clean.Refused, clean.Refusal);
+
+        var resources = Directory.CreateDirectory(Path.Combine(root, "package", "codex-resources")).FullName;
+        var other = Path.Combine(resources, companion.Name);
+        File.WriteAllText(other, "a different program, where codex looks first\n");
+        var found = SeatProfile.Sha256Of(other);
+
+        var verdict = await SeatProfile.VerifyAsync(codex, exe, argv, workspace, new SeatHomeTests.FakeProbe(), default);
+        Assert.True(verdict.Refused, $"a CLI seat started through {link} was admitted while codex's real package holds another {companion.Name}");
+        Assert.Contains(found, verdict.Refusal, StringComparison.Ordinal);
+        Assert.Contains(companion.Sha256, verdict.Refusal, StringComparison.Ordinal);
+        Assert.Equal(ErrorCode.AI_VERSION_UNSUPPORTED, verdict.Code);
+    }
+
+    /// <summary>
     /// THE MEASURED PINS ARE THE BUILD'S: every platform's codex plan names code mode's host, beside codex and in the package's
     /// resources, with the SHA-256 hashed from the vendor's own rust-v0.160.1 archive (2026-10-23).
     /// </summary>
