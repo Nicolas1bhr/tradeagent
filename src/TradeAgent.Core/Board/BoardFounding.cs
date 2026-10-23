@@ -53,6 +53,14 @@ public static class BoardFounding
     /// <summary>The app's own paper venue and its one account (<c>PaperConnector.ConnectorId</c>, <c>TheAccount</c>; a test holds them equal).</summary>
     public const string PaperVenue = "paper", PaperAccount = "PAPER-1";
 
+    /// <summary>
+    /// THE APP'S OWN PAPER VENUES (the orchestrator's ruling, fix pass 1 of <c>U-board-a2</c>): the practice simulator
+    /// (<c>FakeConnector.ConnectorId</c>) and the paper venue (<see cref="PaperVenue"/>; a test holds both equal). While the founding
+    /// policy governs, its allowlist covers every instrument one of these lists, on a connector that reports itself a practice
+    /// platform; on any other venue it is <see cref="PaperInstrument"/> alone. A later policy decides its own.
+    /// </summary>
+    public static readonly IReadOnlyList<string> AppPaperVenues = ["fake", PaperVenue];
+
     /// <summary>The one instrument the founding policy allows: the one the paper venue lists and the tape records.</summary>
     public const string PaperInstrument = "BTCUSDT";
 

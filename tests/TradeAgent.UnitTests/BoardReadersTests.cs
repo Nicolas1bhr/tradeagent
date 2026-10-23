@@ -186,6 +186,71 @@ public class BoardReadersTests(ITestOutputHelper log)
         Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.GetUtcNow()));
     }
 
+    /// <summary>
+    /// THE FOUNDING ALLOWLIST COVERS THE APP'S OWN PAPER VENUES' INSTRUMENTS (the orchestrator's ruling, fix pass 1 of <c>U-board-a2</c>):
+    /// the practice simulator lists ES, NQ, MES and YM and not BTCUSDT, so its health pass quotes an instrument it lists, and an
+    /// order there in ES reaches the per-order limits instead of the allowlist; an instrument it does not list is still refused,
+    /// and on any other venue — here one reporting <c>atas</c>, paper or not — the allowlist stays BTCUSDT alone. RED before the
+    /// ruling: the simulator's health pass quoted BTCUSDT, which it does not list, and ES was "not on the allowed instrument list".
+    /// </summary>
+    [Fact]
+    public async Task The_founding_allowlist_covers_the_apps_own_paper_venues_instruments_and_nothing_else()
+    {
+        string AllowlistRefusal(string symbol) => $"{symbol} is not on the allowed instrument list";
+        Assert.Equal([FakeConnector.ConnectorId, BoardFounding.PaperVenue], BoardFounding.AppPaperVenues);
+
+        // THE PRACTICE SIMULATOR: its health pass quotes what it lists, and its listed instruments reach the per-order limits.
+        using (var db = TestEnv.NewDb())
+        {
+            var broker = new FakeBroker();
+            var conn = new FakeConnector(broker);
+            var quoted = new List<string>();
+            conn.QuoteChanged += q => { lock (quoted) quoted.Add(q.Symbol); };
+            var host = AppHost.Composed(db, conn, new AgentPresence());
+            try
+            {
+                host.Gateway.Update(s => s.SelectedAccountId = broker.AccountId);
+                await conn.ConnectAsync();
+                await host.Gateway.RefreshHealthAsync();
+                log.WriteLine($"simulator health pass quoted: {string.Join(", ", quoted)}; market data {host.Gateway.Health.Get(Components.MarketData).State}");
+                Assert.NotEmpty(quoted);
+                Assert.All(quoted, s => Assert.Contains(FakeBroker.Instruments, i => i.Symbol == s));
+
+                var es = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                    host.Gateway.PlaceAsync(new AgentContext("a"), "es-on-the-simulator", TestEnv.Buy("ES", 2m)));
+                log.WriteLine($"ES ×2 on the simulator: {es.Code}: {es.Message}");
+                Assert.Equal("quantity 2 exceeds the limit of 1", es.Message);
+
+                var xyz = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                    host.Gateway.PlaceAsync(new AgentContext("a"), "xyz-on-the-simulator", TestEnv.Buy("XYZ", 2m)));
+                log.WriteLine($"XYZ ×2 on the simulator: {xyz.Code}: {xyz.Message}");
+                Assert.Equal(AllowlistRefusal("XYZ"), xyz.Message);
+                Assert.Empty(broker.Orders);
+            }
+            finally { await host.Gateway.DisposeAsync(); }
+        }
+
+        // ANY OTHER VENUE: BTCUSDT alone, even where the platform lists ES and calls itself a practice platform.
+        using (var db = TestEnv.NewDb())
+        {
+            var broker = new FakeBroker();
+            var conn = new RecordingConnector(new FakeConnector(broker), "atas");
+            var host = AppHost.Composed(db, conn, new AgentPresence());
+            try
+            {
+                host.Gateway.Update(s => s.SelectedAccountId = broker.AccountId);
+                await conn.ConnectAsync();
+                await host.Gateway.RefreshHealthAsync();
+                var es = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                    host.Gateway.PlaceAsync(new AgentContext("a"), "es-elsewhere", TestEnv.Buy("ES", 2m)));
+                log.WriteLine($"ES ×2 on a venue reporting atas: {es.Code}: {es.Message}");
+                Assert.Equal(AllowlistRefusal("ES"), es.Message);
+                Assert.Empty(broker.Orders);
+            }
+            finally { await host.Gateway.DisposeAsync(); }
+        }
+    }
+
     /// <summary>A clock that moves a millisecond every time it is read, so two grants never share an instant.</summary>
     sealed class Ticking(DateTimeOffset start) : TimeProvider
     {

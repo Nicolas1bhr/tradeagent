@@ -506,6 +506,27 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception ex) { _log.TryEngineering("Gateway", "founding_envelope_failed", "error", ex: ex); }
     }
 
+    /// <summary>
+    /// WHETHER THE FOUNDING ALLOWLIST COVERS THIS VENUE'S OWN INSTRUMENTS (the orchestrator's ruling, fix pass 1): the founding policy
+    /// governs — decided by <c>app</c>, basis <c>founding</c>, read — its allowlist in force is the founding list itself, and this
+    /// connector is one of the app's own paper venues (<see cref="BoardFounding.AppPaperVenues"/>) AND reports itself a practice
+    /// platform. Anything else — another list included — is that list alone, exactly.
+    /// </summary>
+    bool FoundingCoversThisVenue =>
+        _inForce is { CouldNotBeRead: false, Decider: BoardDecider.App, Basis: BoardBasis.Founding }
+        && Policy.Risk.InstrumentAllowlist.Count == BoardFounding.V1.Risk.InstrumentAllowlist.Count
+        && Policy.Risk.InstrumentAllowlist.All(BoardFounding.V1.Risk.InstrumentAllowed)
+        && Connector.Capabilities.IsPaper
+        && BoardFounding.AppPaperVenues.Contains(Connector.Id, StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE ALLOWLIST AS IT APPLIES ON THIS VENUE: the policy's own list, or — only where <see cref="FoundingCoversThisVenue"/> — an
+    /// instrument this venue lists, read from the instrument list it published. An empty or unread list adds nothing: refused.
+    /// </summary>
+    internal bool InstrumentAllowedHere(string symbol) =>
+        Policy.Risk.InstrumentAllowed(symbol)
+        || (FoundingCoversThisVenue && _instrumentCache.Any(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase)));
+
     /// <summary>A TEST SEAM: called once a pass has found no founding envelope to stand on, before it grants one. Null in the app.</summary>
     internal Action? FoundingEnvelopeFoundNone { get; set; }
 
@@ -3935,7 +3956,8 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var r = Policy.Risk;
 
-        if (!r.InstrumentAllowed(intent.Symbol))
+        if (FoundingCoversThisVenue) await EnsureInstrumentsAsync(ct);
+        if (!InstrumentAllowedHere(intent.Symbol))
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{intent.Symbol} is not on the allowed instrument list");
 
         if (intent.Quantity <= 0)
@@ -4052,7 +4074,7 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var r = Policy.Risk;
 
-        if (!r.InstrumentAllowed(intent.Symbol))
+        if (!InstrumentAllowedHere(intent.Symbol))
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"{intent.Symbol} is not on the allowed instrument list");
 
@@ -13753,7 +13775,17 @@ public sealed class TradingGateway : IAsyncDisposable
             // THE FOUNDING PAPER ENVELOPE (U-board-a2 item 10), on the paper venue only and once per policy version. It never throws.
             if (account is not null) GrantFoundingEnvelopeIfDue(account);
 
-            var symbol = Policy.Risk.InstrumentAllowlist.FirstOrDefault()
+            // ON THE APP'S OWN PAPER VENUES, AN INSTRUMENT THE VENUE LISTS (the orchestrator's ruling): the allowlist's own first if it
+            // is listed there, else the venue's first — never a symbol the venue does not list, which the simulator would price anyway.
+            string? symbol;
+            if (FoundingCoversThisVenue)
+            {
+                await EnsureInstrumentsAsync(ct);
+                symbol = _instrumentCache.FirstOrDefault(i => Policy.Risk.InstrumentAllowed(i.Symbol))?.Symbol
+                         ?? _instrumentCache.FirstOrDefault()?.Symbol;
+            }
+            else
+                symbol = Policy.Risk.InstrumentAllowlist.FirstOrDefault()
                          ?? (await InstrumentsAsync(ct)).FirstOrDefault()?.Symbol;
             if (symbol is not null)
             {
