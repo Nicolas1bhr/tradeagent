@@ -11533,3 +11533,44 @@ correlation 0.958"; restored, green (−0.051).
 - that synthetic power equals power on real markets (process, not market truth);
 - the manifest's Sharpe is a stated reference trade, not any program's;
 - no proving host sets ThisProcess yet (part c).
+
+## U-cli-code-mode — the CLI seat class gets codex's code-mode host back on a code-mode-only model, broker and cell keep it closed, and a seat whose tools cannot run is refused in words
+
+**Landed** (land.sh, seat A's train A7, unit 1, with seat B's U-org-verbs-b) on `main` (stacked tip ecf89fde; re-stacked onto train B10's code by fresh fixer a48c39be94630259c, both sides kept in AgentSession.cs and TurnMeter.cs; DECLARED test change 0ce2c50c: BillingClassesTests.SignInProbe gains ToolsAsync with SeatHomeTests.FakeProbe's canned run, no assertion changed; re-stack gate 99/99 unit 3×, names removed 0; builder a0652230cbc338bd9, fresh fixer a00a762df4838a8ef for pass 1, both opus/high; BUILD RUN 2026-10-23). **P1** from the
+orchestrator's survey `fleet/tmp/M4-regression/report.md` (≈95 % confidence): the app's own deny set left every code-mode-only model, gpt-6-luna and every model on the owner's
+account included, with no working tool — `--disable code_mode_host` in CodexCliDeny since ca235dcc (U-seat-home) plus `features.code_mode_host = false` in the seat config. No rung.
+**Attempt 4's turns, labelled:** "the seat had no working tool: code-mode host disabled by the app (ca235dcc)" — never counted as the model's behaviour.
+**Protections:** the agent boundary (operator authority and the pipe untouched; the CLI class was already unconfined with `--dangerously-bypass-approvals-and-sandbox`; code mode's
+nested tools are the class's own exec_command and apply_patch) · Law 2 and the cells (broker and cell keep the pair explicitly, the gpt-5.5 pin and the refusal of `exec`) ·
+CRED-001 (the host is a child of the codex that holds the login; containment ends the tree at turn end) · the pin (the second vendor program is pinned per platform and refused in
+words) · refuse, never guess · evidence (attempt 4's turns stay as they ran).
+**CI:** train A7's run 39914807419 on 06d49aee: 12/12 green (linux-host 33 min); train-check below. Earlier: 39871022284 RED on HomeFilesGuardTests on three test jobs (the pin check touched System.IO in a guarded type), fixed by four reviewed entries, each with its
+reason, the guard unchanged; its linux-host red (two loopback listeners in the app) did not recur, cause NOT VERIFIED · 39878214796 on 558c7a13 12/12 green ·
+39888923550 on 12a0103d (fix pass 1) 12/12 green (linux-host 33 min).
+**Tests box:** run 20261023-041957-12a0103d GREEN on the code tip 12a0103d: Fault 498/498; Integration 748 passed, 0 failed, 63 not run; Unit 2211 passed, 0 failed, 42 not run; timing 6 + 91 + 20 passed, 0 failed; his files unchanged.
+**Review:** Codex, same three findings in both runs: P1 a Windows parent-folder junction could make verify check a different codex-resources than the one codex runs; P2 a cancelled
+turn lost the unavailable-tools warning; P2 LaunchModel, re-read at turn end, marked the wrong model. Fresh fixer, pass 1: 9df455b8 resolves codex's real path on Windows as codex
+does, every folder's junction included; 4045bebc keeps a warning already read when the turn is cancelled; 12a0103d reads the turn's model once, at launch. Re-review: all three
+CLOSED, no regression (`fleet/tmp/A-org/u-cli-code-mode-fix1/U-cli-code-mode-rereview.md`).
+**Build:**
+1. The pair moved off the CLI class and onto broker and cell explicitly; `code_mode_host` is on the CLI allowlist and excluded from broker and cell.
+2. `codex-code-mode-host` is pinned as data (`InstallPlan.Companions`), looked up in `../codex-resources`, then beside the real path. VerifyAsync refuses a missing or different
+   host in words naming both hashes; CI's codex fetch checks it too. The hashes (sha256 of bin/codex-code-mode-host from the rust-v0.160.1 codex-package archives, each archive's
+   digest equal to GitHub's): win-x64 b905b516…ba78d, linux-x64 b33e8a52…14e1, linux-arm64 fbccde22…fd8, mac-arm64 6ac432b1…236b2f, mac-x64 345b92c2…00d2b2.
+3. (a) A one-call loopback dry run for the CLI class (`CodexToolProbe`), cached by binary, template and model. Deviation, accepted: the dry run's marker is `probe-<nonce>`, so the output
+   must come from a call that ran. (b) An `error` item no longer counts as a command; vendor warnings go to the engineering log and an Activity line; `ToolsUnavailablePattern`
+   (data) refuses that seat in words until its profile or model changes, and gives the turn's wakes back.
+4. The doctrine in BrokerSeat.cs and ORCHESTRATION.md is corrected: with the host on, the JavaScript runs in a codex-code-mode-host child of the codex that holds the login.
+**RED and mutants:** (A) "the CLI class still disables codex's code-mode host"; (B) "the code-mode exec did not run: its output was code-mode host is disabled; exit 0" (this Mac,
+pinned codex 0.160.1; on Linux, CI's Cell step); (C) CommandItems "Expected: 0 Actual: 1"; (D) "a CLI seat with no codex-code-mode-host beside codex was admitted".
+MUTANTS, each watched red and restored: the pair back on the CLI class ⇒ (A), (B); dropped from the broker ⇒ "argv lacks '--disable code_mode_host'"; dropped from the cell ⇒
+(A); the wake give-back removed ⇒ A_turn_whose_tools_could_not_run_gives_back_its_wakes. Pass 1: the junction test's RED forced on this Mac (the Windows RED against the old code NOT RUN); the cancelled-warning and model-switch tests RED before, GREEN after; MUTANT RealPath reverted ⇒ the junction test red. Judged scan false positives: cancel.Token, timer.Token, input_tokens, "output is the token".
+**Process, recorded:** (1) the builder's report push went out while scan.sh had exited 1: it was chained with `;`, and the exclusion was passed as an env var. The hits were the known
+false positives plus a report line, and a proper re-scan printed SCAN CLEAN. (2) the builder hashed the two vendor binaries in the owner's `~/.codex/packages` release folder;
+they equal the pins, and no config or credential there was opened. The orchestrator's clarification: hashing vendor program files there is allowed; nothing else under ~/.codex, ever.
+**Not verified:** Windows companion resolution against a real codex.exe install; the dry run's exec_command branch against a real classic-tools model; the loop's refusal after a
+dead turn, end to end (unit test only); the macOS x64 and Linux arm64 hashes, run (measured only); the first run's linux-host listeners; GetFinalPathNameByHandleW against a real codex.exe or a UNC path; the Stop button's CancelAsync path; **THE REAL-MODEL TURN**, on the
+owner's word after landing — one research turn on gpt-6-luna in a fresh home reads PLAN.md and makes one served `trade` call, no host process is left after it, and codex's
+warning is absent.
+**CARD, DUE BEFORE M-org1:** the broker and cell seats' gpt-5.5 metadata differs between the dry run (bundled) and the live account (fallback), so the tools verified may not be
+the tools offered (survey § 5).
