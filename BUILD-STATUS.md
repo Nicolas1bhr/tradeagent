@@ -11639,3 +11639,40 @@ the rung number and comments only; the landed tree itself was NOT RUN on the box
 **Declared removals (7):** TwoPressGrantTests ×4 (the deleted mode row); LossBudgetSurfaces.A_real_money_mode_cannot_be_chosen_while_the_day_has_no_loss_budget; UnknownModeTests ×2
 renamed. BoardTests' rung const went 47 → 49. About 60 files moved mechanically to the `SetModeUnderTest` seam.
 **Not verified:** the app was not run; no real armed home on a real broker. **CARD:** the deleted "live needs a daily-loss bound" check is re-added by U-board-live on the board's act.
+
+## U-board-a2 — part a2 of U-board-a: the gateway's limits, the meter and the loop, and the paper allocator read the board's founding policy; the owner keeps his acts until a board seat is active
+
+**Landed** (land.sh, seat A's train A8, unit 2, on U-board-a1, with seat B's U-settings-shed) on `main`. Builder a4356fb66e1a608c9 and fixer adedfa5fbb976ca73 (pass 1), both opus/high;
+re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No rung; canon v7. Money path: red-first, with one watched mutant per pass.
+**CI:** train A8's run 39927102697 on b691ad85 — 12/12 green (linux-host 33 min, windows-5 29 min). Earlier runs:
+- 39900270112 RED;
+- 39917001666 RED on PaperBooksTests (fixed in pass 1);
+- 39922424686 and 39924767226 cancelled, superseded by pass 1's last commit and by the train run.
+**Tests box:** NOT RUN — the box was busy at each `ready`.
+**Rulings (the orchestrator's, on the owner's behalf, his to overrule):**
+- GENERAL RULE: until a board seat is ACTIVE, an act that affects only paper or plan capacity, and would otherwise have no decider, stays the owner's in-process press,
+  labelled "yours until the security board is active". VALUES come from the founding policy (decider `app`). Live mode, live activation and real-money allocation never return
+  to him.
+- The loss-hold release stays his while no seat is active; envelope withdraw is his permanently; seat choices stay settings until a seat is active.
+- The founding allowlist also covers the instruments of the app's own paper venues ([fake, paper], IsPaper), but only while the allowlist in force is the founding one
+  (the fixer's condition, accepted). Anywhere else it stays BTCUSDT.
+**Build:**
+- 8: every gateway limit is read from the policy in force.
+- 9: the plan's day-total, the role shares, the turn allowance, the lanes, the review interval and the heads' ceilings are read from the policy.
+- 10: the founding standing paper envelope is granted by the app once per policy version, through the gateway's grant path.
+- 11: compile-only deletions of the Safety page's writers.
+- A: owner- and agent-facing "Safety page" sentences repointed. Errors.cs's three are closed by U-settings-shed in this train.
+- B: a press made in a refused armed home is kept beside the earlier row, so it survives a restart.
+- C: nothing reads the 0.10 share.
+- D: the live daily-loss gate stays deleted (U-board-live's card).
+**Fix pass 1 (Codex review + CI), each RED first:**
+- PaperBooksTests: the fixture withdraws the founding envelope through the owner's press (as PaperGatewayTests does); no assertion changed.
+- P1: an unreadable kept press now fails closed, so Stop holds. RED "armed True, unreadable False, stopped False". MUTANT: the fallback restored ⇒ red.
+- P2: the founding grant's check and write are now ONE write. RED: two envelopes.
+- The simulator allowlist: RED "simulator health pass quoted: BTCUSDT"; GREEN, it quotes ES, ES ×2 hits the 1-unit limit, and XYZ is refused.
+- Re-reviews: all CLOSED.
+**Process slips, recorded:**
+- 84741d96 was pushed before scan.sh was judged; its 5 hits were judged false positives on the AI turn-allowance counters' names.
+- At 09:01 the builder wrote stray edits into seat B's worktree. The orchestrator contained it, and nothing of B's was lost.
+**Declared:** `The_owners_comma_reads_as_five_hundredths_in_the_envelope_box` removed with item 11's envelope box. About 25 classes were rewritten and about 70 files moved to the risk seam.
+**Not verified:** the app was not run. Allocate and GrantPaperEnvelopeAsync keep no product caller; they are kept because tests use them.
