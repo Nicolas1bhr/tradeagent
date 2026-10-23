@@ -152,6 +152,48 @@ public class BoardReadersTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// TWO HEALTH PASSES AT ONCE GRANT THE FOUNDING ENVELOPE ONCE (fix pass 1 of <c>U-board-a2</c>, the review's P2 on item 10): two
+    /// passes on the paper venue, held together just after the read that found no envelope, on a clock that moves between them —
+    /// so two grants would hash to two ids — leave exactly one envelope, and the owner's one withdrawal leaves none standing. RED
+    /// before the fix: the read and the write were two transactions, both passes found none, and two envelopes were granted.
+    /// </summary>
+    [Fact]
+    public async Task Two_health_passes_at_once_grant_the_founding_envelope_once()
+    {
+        using var db = TestEnv.NewDb();
+        var clock = new Ticking(DateTimeOffset.UtcNow);
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker { AccountId = BoardFounding.PaperAccount, IsSimulated = true }),
+            BoardFounding.PaperVenue);
+        await using var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
+        await conn.ConnectAsync();
+        var account = await conn.GetAccountAsync(BoardFounding.PaperAccount);
+        Assert.NotNull(account);
+        Assert.Empty(gw.Envelopes.All());
+
+        // HELD TOGETHER AFTER THE EMPTY READ: each pass that found none waits there for the other, up to two seconds.
+        using var both = new Barrier(2);
+        var metThere = 0;
+        gw.FoundingEnvelopeFoundNone = () => { if (both.SignalAndWait(TimeSpan.FromSeconds(2))) Interlocked.Increment(ref metThere); };
+        await Task.WhenAll(Task.Run(() => gw.GrantFoundingEnvelopeIfDue(account!)), Task.Run(() => gw.GrantFoundingEnvelopeIfDue(account!)));
+
+        var all = gw.Envelopes.All();
+        foreach (var e in all) log.WriteLine($"envelope {e.Id[..12]} granted {e.GrantedAt:O} — {e.Reason}");
+        log.WriteLine($"passes that met after the empty read: {metThere}");
+        var envelope = Assert.Single(all);
+        Assert.True(gw.WithdrawPaperEnvelope(envelope.Id).Ok);
+        Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.GetUtcNow()));
+    }
+
+    /// <summary>A clock that moves a millisecond every time it is read, so two grants never share an instant.</summary>
+    sealed class Ticking(DateTimeOffset start) : TimeProvider
+    {
+        long _ticks = start.UtcTicks;
+        public override DateTimeOffset GetUtcNow() =>
+            new(Interlocked.Add(ref _ticks, TimeSpan.TicksPerMillisecond), TimeSpan.Zero);
+    }
+
     /// <summary>A gateway on a connector reporting <paramref name="venue"/> as its id, over one account, after one health pass.</summary>
     static async Task<(TradingGateway Gw, Database Db)> Gateway(string venue, string account, bool simulated)
     {

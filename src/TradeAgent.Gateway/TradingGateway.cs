@@ -462,7 +462,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para><b>No expiry while no board seat is active</b> (the orchestrator's Q3): terms with no days are granted to the end of
     /// time, which the first active board shortens. It never throws: a pass that could not grant leaves the ledger alone.</para>
     /// </summary>
-    void GrantFoundingEnvelopeIfDue(AccountInfo account)
+    internal void GrantFoundingEnvelopeIfDue(AccountInfo account)
     {
         try
         {
@@ -473,16 +473,24 @@ public sealed class TradingGateway : IAsyncDisposable
             if (!string.Equals(Connector.Id, terms.Connector, StringComparison.Ordinal)
                 || !string.Equals(account.Id, terms.Account, StringComparison.Ordinal)) return;
 
-            var now = Now;
             var reason = FoundingEnvelopeReason(inForce.Version);
-            if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, terms.Connector, StringComparison.Ordinal)
-                                                      && string.Equals(e.AccountId, terms.Account, StringComparison.Ordinal)
-                                                      && (e.StandsAt(now) || string.Equals(e.Reason, reason, StringComparison.Ordinal))))
-                return;
+            // THE LOOK AND THE GRANT ARE ONE TRANSACTION (fix pass 1, the review's P2): two health passes at once — the timer's and the
+            // owner's refresh — would otherwise both find none and both grant, at two instants and so under two ids, and the owner's
+            // one withdrawal would leave the other standing. A nested write joins this one, so the grant path is unchanged.
+            var result = _db.Write(_ =>
+            {
+                var now = Now;
+                if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, terms.Connector, StringComparison.Ordinal)
+                                                          && string.Equals(e.AccountId, terms.Account, StringComparison.Ordinal)
+                                                          && (e.StandsAt(now) || string.Equals(e.Reason, reason, StringComparison.Ordinal))))
+                    return null;
+                FoundingEnvelopeFoundNone?.Invoke();
 
-            var until = terms.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
-            var result = GrantEnvelopeOn(account, terms.Instrument, terms.MaxQuantity, terms.MaxNotional, now, until, reason,
-                terms.Deployments);
+                var until = terms.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
+                return GrantEnvelopeOn(account, terms.Instrument, terms.MaxQuantity, terms.MaxNotional, now, until, reason,
+                    terms.Deployments);
+            });
+            if (result is null) return;
             if (!result.Ok)
             {
                 _log.TryEngineering("Gateway", "founding_envelope_not_granted", "warn",
@@ -497,6 +505,9 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex) { _log.TryEngineering("Gateway", "founding_envelope_failed", "error", ex: ex); }
     }
+
+    /// <summary>A TEST SEAM: called once a pass has found no founding envelope to stand on, before it grants one. Null in the app.</summary>
+    internal Action? FoundingEnvelopeFoundNone { get; set; }
 
     /// <summary>
     /// WHO GRANTED AN ENVELOPE, as the owner's Activity line says it (<c>U-board-a2</c>; the honesty rule): "you granted" only for
