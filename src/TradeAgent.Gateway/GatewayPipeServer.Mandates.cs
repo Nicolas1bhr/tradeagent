@@ -378,8 +378,10 @@ public sealed partial class GatewayPipeServer
                     measured_spend = Measured(Gateway.Org.SpendOf(pm.Id)) }
             : null;
         var successor = Gateway.Org.SuccessorOf(m.Id);
-        // THE LAUNCHES ITS CANCELLATION OR RE-SCOPE FENCED (U-org-verbs-b): refused from that instant, their turns ended.
-        var fenced = Gateway.Org.FencedBy(m.Id);
+        // THE LAUNCHES ITS CANCELLATION OR RE-SCOPE FENCED (U-org-verbs-b): refused from that instant; each turn 'ended' only once
+        // its row is closed, and 'ending' until then — the fence's end is asynchronous, and a claim of it before the ledger has it is
+        // not a measurement (fix pass 1, Codex P2).
+        var fenced = Gateway.Org.FencedBy(m.Id).Select(f => (object)new { attempt = f.Attempt, turn = f.Ended ? "ended" : "ending" }).ToList();
         var deliveries = Gateway.Org.Deliveries(m.Id).Reverse().ToList();
         var events = Gateway.Org.MandateEvents(m.Id).Reverse().ToList();
         var forecasts = Gateway.Org.ForecastsOn(m.Id).Reverse().ToList();
@@ -466,7 +468,7 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>The answer of <c>mandate-show</c>, in one place, so the frame measured is the frame sent.</summary>
-    object Show(MandateRow m, object measured, object? predecessor, string? successor, IReadOnlyList<string> fenced, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
+    object Show(MandateRow m, object measured, object? predecessor, string? successor, IReadOnlyList<object> fenced, List<object> deliveries, List<object> events, List<object> forecasts, int deliveriesTotal,
         int eventsTotal, int forecastsTotal, bool deliveriesMore, string? deliveriesNext, bool eventsMore, long? eventsNext,
         bool forecastsMore, string? forecastsNext, string? leftOut) => new
     {
@@ -495,7 +497,8 @@ public sealed partial class GatewayPipeServer
                + "to this mandate. The checks, the events and the seal are TradeAgent's records. A forecast's probability is its "
                + "forecaster's claim; whether it is scored, and its resolution beside it, are TradeAgent's. A 'predecessor' is the "
                + "mandate this one was re-scoped from, with its own measured spend, which stays its own. 'fenced' names the launches its "
-               + "cancellation or re-scope took authority from mid-turn: each was refused from then on and its turn ended."
+               + "cancellation or re-scope took authority from mid-turn, each refused from then on; its 'turn' is 'ended' once the launch "
+               + "is closed in TradeAgent's ledger, and 'ending' while it is still open, its end not yet recorded."
     };
 
     /// <summary>What a bounded answer left out, in words naming each list's rest and the call that reads it.</summary>

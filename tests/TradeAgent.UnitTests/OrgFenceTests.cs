@@ -240,7 +240,7 @@ public partial class OrgAssignmentTests
         {
             var shown = await server.CallAsync(Frame(Ops.MandateShow, ("mandate", mandate)), Head, Launch(db, Head));
             Assert.True(shown.Ok, Json.Write(shown.Error));
-            return [.. Body(shown).GetProperty("fenced").EnumerateArray().Select(a => a.GetString()!)];
+            return [.. Body(shown).GetProperty("fenced").EnumerateArray().Select(a => a.GetProperty("attempt").GetString()!)];
         }
 
         var m = await Assigned(server, db);
@@ -257,5 +257,44 @@ public partial class OrgAssignmentTests
         Assert.True(rescoped.Ok, Json.Write(rescoped.Error));
         Assert.Equal([underOld], await Fenced(old));
         Assert.Empty(await Fenced(Body(rescoped).GetProperty("mandate").GetString()!));
+    }
+
+    /// <summary>
+    /// (5b) <c>mandate-show</c> CLAIMS ONLY WHAT IS MEASURED (<c>U-org-verbs-b</c> fix pass 1, Codex P2): a launch the cancellation
+    /// fenced whose row is still open — its cancel pending, its process maybe running — is shown <c>ending</c>, never as a turn that
+    /// ended; once its row is closed it is shown <c>ended</c>. The note says which is which and claims no end the ledger has not
+    /// recorded. RED at base: the launch was a bare id under a note saying its turn ended.
+    /// </summary>
+    [Fact]
+    public async Task Mandate_show_says_a_fenced_turn_is_ending_until_its_launch_is_closed()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+
+        var m = await Assigned(server, db);
+        var running = Launch(db, Member, mandate: m);
+        Assert.True((await server.CallAsync(Frame(Ops.MandateCancel, ("mandate", m), ("why", CancelWhy)), Head, Launch(db, Head))).Ok);
+
+        async Task<(string Attempt, string Turn, string Note)> Shown()
+        {
+            var shown = await server.CallAsync(Frame(Ops.MandateShow, ("mandate", m)), Head, Launch(db, Head));
+            Assert.True(shown.Ok, Json.Write(shown.Error));
+            var fenced = Assert.Single(Body(shown).GetProperty("fenced").EnumerateArray());
+            Assert.True(fenced.ValueKind == System.Text.Json.JsonValueKind.Object,
+                $"'fenced' names {fenced} under the note \"{Body(shown).GetProperty("note").GetString()}\"");
+            return (fenced.GetProperty("attempt").GetString()!, fenced.GetProperty("turn").GetString()!, Body(shown).GetProperty("note").GetString()!);
+        }
+
+        // ITS CANCEL PENDING: the row is open, so the turn is ending — not ended.
+        var (attempt, turn, note) = await Shown();
+        Assert.Equal((running, "ending"), (attempt, turn));
+        Assert.DoesNotContain("its turn ended", note, StringComparison.Ordinal);
+        Assert.Contains("'ending'", note, StringComparison.Ordinal);
+
+        // ITS ROW CLOSED: now it ended.
+        Assert.True(new AiAttemptStore(db).End(running, -1, DateTimeOffset.UtcNow, 0, 0, 0, 0, 0, null, 0.10m, null, null));
+        Assert.Equal((running, "ended"), ((await Shown()).Attempt, (await Shown()).Turn));
     }
 }

@@ -22,6 +22,12 @@ public sealed record OrgFence(string Attempt, string Position, string Cause, str
           + "and an attempt under a stale authority does nothing more";
 }
 
+/// <summary>
+/// ONE LAUNCH A MANDATE'S CANCELLATION OR RE-SCOPE FENCED, AS THE LEDGER HAS IT (<c>U-org-verbs-b</c>): <paramref name="Ended"/> is
+/// whether its row is closed — measured, never inferred from the fence: until it is, its turn is ending, not ended.
+/// </summary>
+public sealed record FencedLaunch(string Attempt, bool Ended);
+
 public sealed partial class OrgStore
 {
     /// <summary>
@@ -88,20 +94,20 @@ public sealed partial class OrgStore
     /// THE LAUNCHES <paramref name="mandateId"/>'S OWN CANCELLATION OR RE-SCOPE FENCED (<c>U-org-verbs-b</c> item 5): those under it
     /// that had started and had not ended when the transition was written — the ones it took authority from mid-turn, oldest first.
     /// Empty while the mandate is open, or closed any other way. A launch that ended before the transition did nothing under a stale
-    /// authority, and is not named.
+    /// authority, and is not named. Each says whether its row is closed yet (<see cref="FencedLaunch.Ended"/>).
     /// </summary>
-    public IReadOnlyList<string> FencedBy(string mandateId) => db.Read(_ =>
+    public IReadOnlyList<FencedLaunch> FencedBy(string mandateId) => db.Read(_ =>
     {
         DateTimeOffset at;
         using (var c = db.Cmd("SELECT kind, at FROM org_mandate_event WHERE mandate_id=$m AND kind <> $claim ORDER BY id DESC LIMIT 1",
                    ("$m", mandateId), ("$claim", MandateEventKind.Proposed)))
         using (var r = c.ExecuteReader())
         {
-            if (!r.Read() || r.GetString(0) is not (MandateEventKind.Cancelled or MandateEventKind.Rescoped)) return (IReadOnlyList<string>)[];
+            if (!r.Read() || r.GetString(0) is not (MandateEventKind.Cancelled or MandateEventKind.Rescoped)) return (IReadOnlyList<FencedLaunch>)[];
             at = Sql.Time(r.GetValue(1));
         }
 
-        var fenced = new List<(DateTimeOffset Started, string Id)>();
+        var fenced = new List<(DateTimeOffset Started, FencedLaunch Launch)>();
         using (var c = db.Cmd("SELECT id, started_at, ended_at, role FROM ai_attempt WHERE mandate_id=$m", ("$m", mandateId)))
         using (var r = c.ExecuteReader())
             while (r.Read())
@@ -109,8 +115,8 @@ public sealed partial class OrgStore
                 var started = Sql.Time(r.GetValue(1));
                 var ended = Sql.TimeN(r.GetValue(2));
                 if (NeverFenced(Sql.S(r.GetValue(3))) || started > at || ended < at) continue;
-                fenced.Add((started, r.GetString(0)));
+                fenced.Add((started, new FencedLaunch(r.GetString(0), ended is not null)));
             }
-        return (IReadOnlyList<string>)[.. fenced.OrderBy(f => f.Started).Select(f => f.Id)];
+        return (IReadOnlyList<FencedLaunch>)[.. fenced.OrderBy(f => f.Started).Select(f => f.Launch)];
     });
 }
