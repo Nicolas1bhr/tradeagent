@@ -975,7 +975,11 @@ public sealed class AgentSession(
         // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
         var seatClass = SeatClass;
         var launchSeat = Launch;
-        var args = AgentArgs.For(manifest, message, resuming: Resumes(seatClass), model: LaunchModel, seatClass, launchSeat.Door,
+        // THE MODEL THIS TURN LAUNCHES WITH, READ ONCE (fix pass 1 of U-cli-code-mode): every use below — the argv, the seat's dry
+        // run, the dead-seat check and the mark a turn whose tools could not run leaves — names this one, never a model chosen while
+        // the turn ran. A broker seat's is its pin; any other's is the one its verification was asked about.
+        var launchModel = BrokerSeat.IsVerified(seatClass) ? BrokerSeat.ModelOf(seatClass) : launchSeat.Model;
+        var args = AgentArgs.For(manifest, message, resuming: Resumes(seatClass), model: launchModel, seatClass, launchSeat.Door,
             out var promptInArgv);
 
         // THE SEAT'S PROFILE, VERIFIED AS IT STARTS, fresh or resumed (U-seat-home): the pin, the deny set on this very argv, the
@@ -984,7 +988,7 @@ public sealed class AgentSession(
         // the turn: a host with no meter starts turns too, and this is the last moment before the start.
         var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, launchSeat, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
-        if (DeadSeats.Refusal(manifest, seat.Profile, LaunchModel) is { } deadSeat)
+        if (DeadSeats.Refusal(manifest, seat.Profile, launchModel) is { } deadSeat)
             throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, deadSeat);
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
@@ -1025,7 +1029,7 @@ public sealed class AgentSession(
             _sessionExists = false;
             _threadId = null;
             _freshWhy = SessionWhy.Profile;
-            args = AgentArgs.For(manifest, message, resuming: false, model: LaunchModel, seatClass, launchSeat.Door, out promptInArgv);
+            args = AgentArgs.For(manifest, message, resuming: false, model: launchModel, seatClass, launchSeat.Door, out promptInArgv);
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
 
@@ -1180,7 +1184,7 @@ public sealed class AgentSession(
         void KeepWarnings()
         {
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
-            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, LaunchModel, vendorSaid);
+            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, launchModel, vendorSaid);
         }
 
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner

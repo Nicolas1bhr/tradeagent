@@ -142,6 +142,34 @@ public partial class CliCodeModeTests
     }
 
     /// <summary>
+    /// (C) THE MODEL MARKED IS THE MODEL THE TURN LAUNCHED WITH (fix pass 1, review finding 3): a turn launched on model A whose stream
+    /// says its tools cannot run, with model B chosen before its process exits, marks A — A's next admission is refused, B's is not. At
+    /// the unit's code the mark re-read the settings at the turn's end and marked B.
+    /// </summary>
+    [Fact]
+    public async Task The_model_marked_dead_is_the_model_the_turn_launched_with()
+    {
+        var model = "model-a";
+        var (session, release) = HeldTurn(nameof(The_model_marked_dead_is_the_model_the_turn_launched_with), () => model);
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+
+        var turn = session.SendAsync("continue");
+        await WarningRead(session, turn);
+        model = "model-b";
+        File.WriteAllText(release, "");
+        await turn;
+        Assert.Contains(Warning, ended?.ToolsUnavailable, StringComparison.Ordinal);
+
+        var onB = session.CheckSeat();
+        Assert.False(onB.Refused, $"model-b, chosen after the turn launched on model-a, was marked dead: {onB.Refusal}");
+        model = "model-a";
+        var onA = session.CheckSeat();
+        Assert.True(onA.Refused, "model-a, whose turn's tools could not run, was admitted again");
+        Assert.Contains("model-a", onA.Refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (C) THE VENDOR'S WARNING GOES TO THE ENGINEERING LOG AND AN ACTIVITY LINE, through the meter every conversation is metered by.
     /// </summary>
     [Fact]
