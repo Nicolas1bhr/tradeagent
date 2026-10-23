@@ -791,9 +791,28 @@ sealed class OwnerPage
 
     // ---- the review hold and its release (U-reopen-2) -------------------------------------------
 
-    /// <summary>WHAT IS BEING HELD FOR REVIEW RIGHT NOW, in the owner's words — "your account" and the instruments.</summary>
+    /// <summary>
+    /// WHETHER ANY BOARD SEAT IS ACTIVE. A BOARD THAT CANNOT BE READ IS NOT "NO BOARD": it answers active, so nothing that is his only
+    /// until the board is active is offered or taken over a board this build cannot read.
+    /// </summary>
+    bool BoardActive()
+    {
+        try { return _host.Board.AnyActive; }
+        catch (Exception) { return true; }
+    }
+
+    /// <summary>WHAT IS BEING HELD FOR REVIEW ON PAPER RIGHT NOW, in the owner's words — "your account" and the instruments.</summary>
     IReadOnlyList<string> HeldScopes() =>
-        [.. _host.Gateway.HoldsForReview().Select(h => h.Symbol ?? "your account")];
+        [.. _host.Gateway.HoldsForReview().Where(IsPaperHold).Select(ScopeWords)];
+
+    static string ScopeWords(LossHoldRecord h) => h.Symbol ?? "your account";
+
+    /// <summary>
+    /// WHETHER A HOLD IS ON A PAPER SCOPE (Codex P1 on <c>U-settings-shed</c>): the mode the gateway recorded on the hold, and only
+    /// <see cref="TradingMode.PAPER"/> — a hold with no mode, or one this build cannot name as paper, is not his to release (refuse,
+    /// never guess). Before an active board only paper can be held; a retained live hold is the board's, never this page's.
+    /// </summary>
+    internal static bool IsPaperHold(LossHoldRecord h) => h.Mode == TradingMode.PAPER;
 
     /// <summary>
     /// The card, on the five-second pass and in place: whether it is offered at all, what it says is held, and what the second press
@@ -801,16 +820,13 @@ sealed class OwnerPage
     /// </summary>
     void ShowHeldForReview()
     {
-        var holds = _host.Gateway.HoldsForReview();
-        bool boardActive;
-        try { boardActive = _host.Board.AnyActive; }
-        catch (Exception) { boardActive = true; }      // A BOARD THAT CANNOT BE READ IS NOT "NO BOARD": the release is not offered.
-        _releaseCard.IsVisible = ReleaseOffered(holds.Count, boardActive);
+        var holds = _host.Gateway.HoldsForReview().Where(IsPaperHold).ToList();
+        _releaseCard.IsVisible = ReleaseOffered(holds.Count, BoardActive());
         if (!_releaseCard.IsVisible) return;
 
         _releaseHeld.Text = string.Join(" ", holds.Select(h => h.Why));
         Ui.Relabel(_release, Labels.ReopenAfterReview,
-            Labels.ReleaseHoldArmed([.. holds.Select(h => h.Symbol ?? "your account")]));
+            Labels.ReleaseHoldArmed([.. holds.Select(ScopeWords)]));
     }
 
     /// <summary>
@@ -819,6 +835,22 @@ sealed class OwnerPage
     /// </summary>
     void ApplyRelease(string note)
     {
+        // PAPER ONLY, READ AGAIN AT THE PRESS: the gateway's release lifts every hold on the account at once, so while any of them is not
+        // paper it is never called — refused in words, nothing written. And never once a board seat is active (a board that cannot be
+        // read counts as active), whatever the card showed a tick ago.
+        var held = _host.Gateway.HoldsForReview();
+        var notPaper = held.Where(h => !IsPaperHold(h)).Select(ScopeWords).ToList();
+        if (notPaper.Count > 0 || BoardActive())
+        {
+            _releaseNoteResult.Text = notPaper.Count > 0
+                ? Labels.ReleaseRefusedNotPaper(notPaper)
+                : Labels.ReleaseRefusedBoardActive;
+            _releaseNoteResult.Foreground = Theme.Caution;
+            _releaseNoteResult.IsVisible = true;
+            ShowHeldForReview();
+            return;
+        }
+
         var result = _host.Gateway.ReleaseHold(note);
         _releaseNoteResult.Text = result.Why;
         _releaseNoteResult.Foreground = result.Ok ? Theme.Positive : Theme.Caution;

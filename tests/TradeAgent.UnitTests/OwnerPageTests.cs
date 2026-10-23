@@ -127,6 +127,101 @@ public class OwnerPageTests
             StringComparison.Ordinal);
     }
 
+    static T Field<T>(object page, string name) =>
+        (T)page.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
+
+    static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+    /// <summary>One standing closure held for review on <paramref name="account"/>, written as the gateway would have, in <paramref name="mode"/>.</summary>
+    static TradeAgent.Gateway.LossBreachRecord SeedHold(TradeAgent.Core.Db.Database db, string connector, string account, TradingMode mode,
+        string? symbol = null)
+    {
+        var at = new DateTimeOffset(2026, 10, 20, 14, 0, 0, TimeSpan.Zero);
+        var breach = new TradeAgent.Gateway.LossBreachRecord
+        {
+            Account = account, Connector = connector, Mode = mode, Day = "2026-10-20", Symbol = symbol,
+            FirstSeenAt = at, ConfirmedAt = at, Loss = 1_200m, DayBudget = 1_000m, Currency = "USD"
+        };
+        db.SetKv(TradeAgent.Gateway.LossBreach.KeyFor(breach), Json.Write(breach));
+        db.SetKv(TradeAgent.Gateway.LossHold.HoldKey(connector, breach), Json.Write(new TradeAgent.Gateway.LossHoldRecord
+        {
+            Account = account, Connector = connector, Mode = mode, Day = breach.Day, Symbol = symbol,
+            BreachKey = TradeAgent.Gateway.LossBreach.KeyFor(breach), Episodes = ["2026-10-17 14:00 UTC", "2026-10-20 14:00 UTC"],
+            StrikeWindowDays = 7, WindowFrom = "2026-10-14", At = at,
+            Why = $"{symbol ?? "Your account"} reached its loss budget twice inside seven days, so it is held for you to look at."
+        }));
+        return breach;
+    }
+
+    /// <summary>
+    /// THE OWNER'S RELEASE IS FOR PAPER SCOPES ONLY (Codex P1 on <c>U-settings-shed</c>; the orchestrator's ruling Q4: before an active
+    /// board only paper can be held, and "every widening of a live limit or of real money stays the board's"). A hold on a live-mode scope —
+    /// retained from before the board, the board's seats dormant — is not offered, and pressing the release twice anyway is refused in
+    /// words and writes no release row: the gateway's <c>ReleaseHold</c> lifts every hold on the account at once, so the page never calls
+    /// it while one of them is not paper. A paper hold beside it changes nothing; a paper hold alone is released.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_release_never_reaches_a_scope_that_is_not_paper()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host.Gateway;
+            gw.Update(s => s.SelectedAccountId = "ACC-1");
+            var live = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.LIVE_AUTONOMOUS);
+            Assert.False(host.Board.AnyActive);
+            Assert.NotEmpty(host.Board.Seats());
+            Assert.All(host.Board.Seats(), s => Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Dormant, s.Status));
+            Assert.Single(gw.HoldsForReview());
+
+            var page = Build(host);
+            page.Update(await gw.StatusAsync());
+            var release = Field<Button>(page, "_release");
+            Field<TextBox>(page, "_releaseNote").Text = "looked at the live account";
+            Press(release);
+            Press(release);
+
+            // NO RELEASE ROW: the live hold stands, and the page said why.
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, live)));
+            Assert.Single(gw.HoldsForReview());
+            Assert.Equal(Labels.ReleaseRefusedNotPaper(["your account"]), Field<TextBlock>(page, "_releaseNoteResult").Text);
+            Assert.False(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible);
+
+            // A PAPER HOLD BESIDE IT: offered (it is paper), and the press still refuses — the release cannot take one without the other.
+            var paper = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.PAPER, symbol: "BTCUSDT");
+            page.Update(await gw.StatusAsync());
+            Assert.True(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible);
+            Field<TextBox>(page, "_releaseNote").Text = "looked at both";
+            Press(release);
+            Press(release);
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, live)));
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, paper)));
+            Assert.Equal(Labels.ReleaseRefusedNotPaper(["your account"]), Field<TextBlock>(page, "_releaseNoteResult").Text);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+
+        // A PAPER HOLD ALONE IS RELEASED, through the gateway's own release.
+        using var db2 = TestEnv.NewDb();
+        var host2 = AppHost.Composed(db2, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host2.Gateway;
+            gw.Update(s => s.SelectedAccountId = "ACC-1");
+            var paper = SeedHold(db2, gw.Connector.Id, "ACC-1", TradingMode.PAPER, symbol: "BTCUSDT");
+            var page = Build(host2);
+            page.Update(await gw.StatusAsync());
+            Assert.True(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible);
+            Field<TextBox>(page, "_releaseNote").Text = "looked at the paper run";
+            var release = Field<Button>(page, "_release");
+            Press(release);
+            Press(release);
+            Assert.NotNull(db2.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, paper)));
+            Assert.Empty(gw.HoldsForReview());
+        }
+        finally { await host2.Gateway.DisposeAsync(); }
+    }
+
     /// <summary>
     /// TODAY'S LINE PROMISES MIDNIGHT ONLY WHEN A FRESH DAY CAN FUND ONE TURN (<c>U-billing-classes</c>' review, P2): a reached day whose
     /// next turn fits a whole day waits for midnight; one whose single turn sets aside more than the whole day — or whose limit is 0 —

@@ -164,7 +164,26 @@ public static partial class Labels
     /// the card that carries the press, so the owner is not surprised the day it is gone.
     /// </summary>
     public const string ReopenAfterReviewIsYoursUntilTheBoard =
-        "Reopening a held paper scope is yours until the security board is active, then the board's.";
+        "Reopening a held paper scope is " + YoursUntilTheBoardIsActive + ", then the board's.";
+
+    /// <summary>
+    /// THE WORDS ON EVERY PRESS THAT IS HIS ONLY WHILE NO BOARD SEAT IS ACTIVE (the orchestrator's ruling of 2026-10-23): the release of a
+    /// held paper scope and the seat choices. Spelled once, so the two presses cannot drift apart.
+    /// </summary>
+    public const string YoursUntilTheBoardIsActive = "yours until the security board is active";
+
+    /// <summary>
+    /// THE RELEASE REFUSED BECAUSE A HELD SCOPE IS NOT PAPER (Codex P1 on <c>U-settings-shed</c>): the owner's release is for paper scopes
+    /// only, and the release lifts every hold on the account at once, so while one of them is not paper nothing is released.
+    /// </summary>
+    public static string ReleaseRefusedNotPaper(IReadOnlyList<string> scopes) =>
+        $"Nothing was released. {string.Join(", ", scopes)} {(scopes.Count == 1 ? "is" : "are")} held outside paper trading, and "
+        + "reopening anything but a paper scope is the security board's decision, never this page's. The release lifts every hold on "
+        + "this account at once, so it stays refused while one of them is not paper.";
+
+    /// <summary>The release refused because a board seat is active (or the board cannot be read): from then on a release is the board's act.</summary>
+    public const string ReleaseRefusedBoardActive =
+        "Nothing was released. A security board seat is active, so reopening a held scope is the board's decision now, never this page's.";
 
     /// <summary>The plan's day-total is the board's decision: the owner's page reads the plan's day and points at where it is decided.</summary>
     public const string PlanDayTotalIsTheBoards =
