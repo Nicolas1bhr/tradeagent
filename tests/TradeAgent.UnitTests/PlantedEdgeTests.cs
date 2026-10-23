@@ -355,8 +355,9 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (c) THE PRE-FEE EDGE PASSES FRICTIONLESS AND FAILS AT THE VENUE COST. A trap whose gross move per signal is below the
-    /// venue's round trip: the unchanged backtest of a program that trades it nets above zero under
+    /// (c) THE PRE-FEE EDGE PASSES FRICTIONLESS AND FAILS AT THE VENUE COST. A trap twice whose largest move per signal is
+    /// below the venue's round trip (β 2; fix pass 1 refuses the β 3 this test planted before, whose average signal was under
+    /// the round trip and whose best selection was not): the unchanged backtest of a program that trades it nets above zero under
     /// <see cref="ExecutionModel.Frictionless"/> and below zero under the app's own venue cost model. The manifest states the
     /// gross under the round trip; a "pre-fee" edge above it is refused as a real edge.
     /// </summary>
@@ -365,7 +366,7 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     {
         using var scratch = TestEnv.NewScratch("pre-fee");
         using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
-        var market = p.Write(new SyntheticMarketSpec(51, "SYNA", VenueCatalog.BinanceSpot, Start, 21, SyntheticEdge.PreFeeOnly(3)));
+        var market = p.Write(new SyntheticMarketSpec(51, "SYNA", VenueCatalog.BinanceSpot, Start, 21, SyntheticEdge.PreFeeOnly(2)));
         new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
 
         var program = Program("SYNA", ProvingSources.Signal, ProvingSources.ValueField, "x > 0.0030", "x <= 0.0030");
@@ -386,6 +387,73 @@ public class PlantedEdgeTests(ITestOutputHelper log)
             SyntheticEdge.PreFeeOnly(16))));
         log.WriteLine(real.Message);
         Assert.Contains("it is a real edge, not a trap", real.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// EVERY PRE-FEE TRAP THE BUILD ACCEPTS LOSES AT THE VENUE'S COST, HOWEVER SELECTIVELY ITS SIGNALS ARE TRADED (fix pass 1,
+    /// finding 1). For each β from 10 down to 1: a trap the build refuses is refused in words; on one it accepts, the existing
+    /// threshold program (long while the signal is above 0.0030) and the most selective threshold the series allows (only its
+    /// largest reading, 0.0050) are backtested, and what the planted relation earned them — the trap market's frictionless net
+    /// less the same seed's noise twin's, the same trades on the same noise — is below what the venue charged them on the trap
+    /// market. Noise-free by construction: the twin is the same seed without the relation, and the signal that times the trades
+    /// is the same stream in both. The hysteresis program the bound is drawn for — in at the largest reading, out only at the
+    /// smallest — is logged, not asserted: its planted gross per round trip is 2R·β in expectation but its few long holds make
+    /// any one market's figure noisy.
+    /// </summary>
+    [Fact]
+    public void Every_pre_fee_trap_the_build_accepts_loses_at_the_venue_cost_however_selectively_its_signals_are_traded()
+    {
+        using var scratch = TestEnv.NewScratch("pre-fee-selective");
+        const ulong Seed = 53;
+        string[][] programs =
+        [
+            ["x > 0.0030", "x <= 0.0030"],
+            ["x > 0.0049", "x <= 0.0049"]
+        ];
+        string[] hysteresis = ["x > 0.0049", "x < -0.0049"];
+
+        using var twin = new Proving(Path.Combine(scratch.Dir, "twin"));
+        var noise = twin.Write(new SyntheticMarketSpec(Seed, "SYNA", VenueCatalog.BinanceSpot, Start, 21));
+        new VenueStore(twin.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
+
+        var accepted = 0;
+        for (var beta = 10L; beta >= 1; beta--)
+        {
+            using var p = new Proving(Path.Combine(scratch.Dir, $"beta-{beta}"));
+            SyntheticMarketWritten market;
+            try
+            {
+                market = p.Write(new SyntheticMarketSpec(Seed, "SYNA", VenueCatalog.BinanceSpot, Start, 21, SyntheticEdge.PreFeeOnly(beta)));
+            }
+            catch (ArgumentException refused)
+            {
+                log.WriteLine($"β {beta}: refused — {refused.Message}");
+                Assert.Contains("it is a real edge, not a trap", refused.Message, StringComparison.Ordinal);
+                continue;
+            }
+            accepted++;
+            new VenueStore(p.Db).Sync(SyntheticMarket.Venues(VenueCatalog.BinanceSpot, ["SYNA"]));
+
+            foreach (var rule in programs.Append(hysteresis))
+            {
+                var program = Program("SYNA", ProvingSources.Signal, ProvingSources.ValueField, rule[0], rule[1]);
+                var free = Backtest(log, p.Home, p.Db, market.Dataset, program, ExecutionModel.Frictionless);
+                var venue = Backtest(log, p.Home, p.Db, market.Dataset, program, VenueCost(p.Db, market.Dataset));
+                var bare = Backtest(log, twin.Home, twin.Db, noise.Dataset, program, ExecutionModel.Frictionless);
+                Assert.Equal(bare.Metrics.Trades, free.Metrics.Trades);
+                Assert.Equal(free.Metrics.Trades, venue.Metrics.Trades);
+
+                var planted = free.Metrics.NetPnl!.Value - bare.Metrics.NetPnl!.Value;
+                var cost = free.Metrics.NetPnl!.Value - venue.Metrics.NetPnl!.Value;
+                log.WriteLine($"β {beta}, entry {rule[0]}, exit {rule[1]}: {free.Metrics.Trades} trades, planted gross {planted}, venue cost {cost}, "
+                              + $"net at the venue {venue.Metrics.NetPnl}");
+                if (rule == hysteresis) continue;
+                Assert.True(free.Metrics.Trades > 0, $"β {beta}: entry {rule[0]} never traded");
+                Assert.True(planted < cost,
+                    $"β {beta}: the pre-fee trap paid for its costs — entry {rule[0]}, exit {rule[1]}: planted gross {planted} against a venue cost of {cost}");
+            }
+        }
+        Assert.True(accepted > 0, "the build accepts no pre-fee trap at all");
     }
 
     /// <summary>
