@@ -1063,13 +1063,16 @@ public static partial class Labels
     /// <summary>
     /// THE REFUSAL OF A HOME AN EARLIER BUILD ARMED FOR REAL MONEY, naming both versions and the repair (<c>U-board-a1</c> item 5;
     /// CLAUDE.md, "refuse, never guess"): what the row holds, the schema the home was at when this build opened it, this build's, and
-    /// the one press that sets it aside. Nothing is converted and nothing is switched.
+    /// the one press that sets it aside. Nothing is converted and nothing is switched. A refusal never strands a real position (seat A's
+    /// ruling, fix pass 1): the words say that only what opens or adds is refused, and that his emergency presses still go out.
     /// </summary>
     public static string HomeArmedBeforeTheBoard(string held, int homeSchema, int thisSchema) =>
         $"Your settings were saved by an earlier version of TradeAgent ({(homeSchema > 0 ? $"database schema {homeSchema}" : $"before database schema {thisSchema}")}) with {held}. This version "
         + $"(database schema {thisSchema}) takes the trading mode and real money from the security board's policy, never from "
-        + $"settings, and it will not guess what you meant, so it is sending nothing to your broker. Press “{SetAsideEarlierLiveSetting}”: "
-        + "your settings row is kept exactly as it was under its own name, and the founding policy (Practice, no real money) governs.";
+        + $"settings, and it will not guess what you meant, so it sends your broker nothing that opens or adds to a position. What only "
+        + "reduces still goes out: your Cancel all working orders and Close all positions, and the automatic closes of your loss budget. "
+        + $"Press “{SetAsideEarlierLiveSetting}”: your settings row is kept exactly as it was under its own name, and the founding policy "
+        + "(Practice, no real money) governs.";
 
     public static string LiveNeedsADailyLossBudget(string mode) =>
         $"{mode} places real orders and nothing here is watching the day, so it cannot be chosen "
@@ -1285,7 +1288,7 @@ public static class Errors
         // and the specific reason travels in the technical text rather than being spelled twice.
         [ErrorCode.RUNTIME_COMMANDS_UNREADABLE]    = (Labels.RuntimesCouldNotBeRead(), Labels.OverrideFileRepair(Labels.RuntimesFile), false),
         [ErrorCode.ATAS_LAYOUT_UNREADABLE]         = (Labels.AtasLayoutCouldNotBeRead(), Labels.OverrideFileRepair(Labels.AtasFile), false),
-        [ErrorCode.HOME_ARMED_BEFORE_THE_BOARD]    = ("An earlier version of TradeAgent left real-money trading armed in your settings, so this version is sending nothing to your broker.", $"Press “{Labels.SetAsideEarlierLiveSetting}”. Your settings are kept as they were under their own name, and Practice governs until the security board decides.", false),
+        [ErrorCode.HOME_ARMED_BEFORE_THE_BOARD]    = ("An earlier version of TradeAgent left real-money trading armed in your settings, so this version sends your broker nothing that opens or adds to a position. Cancel all working orders and Close all positions still work, and so do the automatic closes of your loss budget.", $"Press “{Labels.SetAsideEarlierLiveSetting}”. Your settings are kept as they were under their own name, and Practice governs until the security board decides.", false),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)
