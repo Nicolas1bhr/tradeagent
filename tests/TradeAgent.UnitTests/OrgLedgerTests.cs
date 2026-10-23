@@ -363,6 +363,10 @@ public class OrgLedgerTests
         // decider's, behind OrgVerbCaller and the store's own decider check), Propose writes org_mandate_event (the holder's claim);
         // PredecessorOf, SuccessorOf and ProposalsUnread are reads. None writes the chart.
         mandate = [.. mandate, "PredecessorOf", "ProposalsUnread", "Propose", "Rescope", "SuccessorOf"];
+        // REVISITED, OUT LOUD, BY U-org-surface-a: five READS the organisation-first pages are built from (OrgStore.Surface.cs) — a position's
+        // recorded seat assurance, every open mandate, every delivery waiting, the decisions since a time and the escalations addressed to the
+        // owner. Each is one SELECT across the chart; none writes anything, and no op, verb or argument reaches them (the pages only read).
+        mandate = [.. mandate, "DecisionsSince", "DeliveriesAwaiting", "EscalationsToOwner", "MandatesOpen", "SeatAssuranceOf"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
