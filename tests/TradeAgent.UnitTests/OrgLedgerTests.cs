@@ -367,6 +367,12 @@ public class OrgLedgerTests
         // recorded seat assurance, every open mandate, every delivery waiting, the decisions since a time and the escalations addressed to the
         // owner. Each is one SELECT across the chart; none writes anything, and no op, verb or argument reaches them (the pages only read).
         mandate = [.. mandate, "DecisionsSince", "DeliveriesAwaiting", "EscalationsToOwner", "MandatesOpen", "SeatAssuranceOf"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-b: three READS of the fence — FencedSince (whether a launch is fenced, and by what),
+        // FencedBy (the launches a mandate's cancellation or re-scope fenced, for mandate-show) and NeverFenced (the legacy pair's
+        // exemption, a pure check). None writes anything: a mandate-level fence IS its cancelled or rescoped event, which Cancel and
+        // Rescope already write, and the position-wide `fenced` org_event has no writer until O6 parts c–d (the source scan below
+        // is unchanged).
+        mandate = [.. mandate, "FencedBy", "FencedSince", "NeverFenced"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
