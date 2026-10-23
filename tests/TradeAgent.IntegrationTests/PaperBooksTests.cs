@@ -43,6 +43,9 @@ public class PaperBooksTests(ITestOutputHelper log)
     /// </summary>
     static PaperEnvelopeRow GrantOfTwo(Rig rig, decimal quantity = 5m, decimal? notional = 5_000_000m)
     {
+        // THE FOUNDING ENVELOPE (U-board-a2 item 10) stands on PAPER-1 from the rig's first health pass, one run at a time; this
+        // grant of two is what these tests are about, so the owner's withdraw press — his, permanently — takes the founding one first.
+        foreach (var standing in rig.Gw.Envelopes.All().Where(e => e.WithdrawnAt is null)) rig.Gw.WithdrawPaperEnvelope(standing.Id);
         var granted = rig.Gw.Envelopes.Grant(new PaperEnvelopeRow(
             "", rig.Gw.Connector.Id, PaperConnector.TheAccount, "BTCUSDT", "USDT", quantity, notional, 2,
             rig.Origin, rig.Origin.AddDays(30), "test: two runs at a time on one symbol", null));
