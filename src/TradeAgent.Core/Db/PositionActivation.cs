@@ -141,8 +141,8 @@ public sealed class SeatRegister
 /// on any real-model seat, a harness head included; no flag or setting lifts it. <b>No unconfined neighbour:</b> while a position
 /// beyond the legacy pair is active, every unconfined launch — the legacy pair and the owner's chat included — is refused, and a
 /// position beyond the pair is refused while an unconfined launch is open. The legacy pair otherwise keep their existing two-role
-/// behaviour on unconfined seats. Positions are written by nothing until <c>U-org-verbs</c>, so the neighbour rule has no production
-/// effect before then.</para>
+/// behaviour on unconfined seats. <c>org-hire</c> (<c>U-org-verbs-c</c>) writes a position DORMANT and no organisation verb activates
+/// one, so the neighbour rule has no production effect until a position is activated.</para>
 /// </summary>
 public static class PositionActivation
 {

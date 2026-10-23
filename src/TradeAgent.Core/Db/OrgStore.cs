@@ -349,17 +349,17 @@ public sealed record OrgPositionRow(
     DateTimeOffset? EndedAt);
 
 /// <summary>
-/// THE ORGANISATION LEDGER, READ — and only read: <b>there is no public writer yet</b>.
+/// THE ORGANISATION LEDGER: its readers, and the verbs that restructure it.
 ///
-/// <para>The schema-28 rung is the one writer today, and its seed is the whole chart: the root, two divisions and
-/// the two legacy positions. The verbs that restructure it — charter, merge, close, hire, retire, a child
-/// envelope — arrive as this class's writers in <c>U-org-verbs</c>, validated against <see cref="OrgUnitKind"/>,
-/// <see cref="OrgUnitStatus"/> and <see cref="OrgPositionStatus"/>, minting random ids, and recording each act as
-/// an <c>org_event</c> whose detail is composed by the app. No pipe op and no <c>trade</c> verb writes any of it,
-/// and none will: an agent asks, and the app decides.</para>
+/// <para>The schema-28 rung seeded the chart: the root, two divisions and the two legacy positions. The verbs that
+/// restructure it are this class's writers — <see cref="Charter"/> and <see cref="Hire"/> (<c>U-org-verbs-c</c>); merge,
+/// close, retire and a child envelope's tilt arrive with parts d and e — each validated against <see cref="OrgUnitKind"/>,
+/// <see cref="OrgUnitStatus"/>, <see cref="OrgPositionStatus"/> and the rights matrix (<see cref="OrgRights"/>), minting
+/// random ids, and recording each act as an <c>org_event</c> whose detail is composed by the app. An agent ASKS through
+/// <c>org-charter</c> or <c>org-hire</c>, and the app decides; no op writes a row the app did not check.</para>
 ///
-/// <para><b>Rows are measurement; titles and charters are claims.</b> A unit's charter is a publication referenced
-/// by id, never text copied into a row. Nothing here confers authority — order permission stays
+/// <para><b>Rows are measurement; titles and charters are claims.</b> A unit's charter is its <c>charter</c> decision record
+/// referenced by id (<c>charter_decision_id</c>, rung 48) — the rationale a ledger entry marked claim — never text copied into a row. Nothing here confers authority — order permission stays
 /// <see cref="CouncilRoles.MayPlaceOrders"/>, bound to <c>operations</c>, and never follows headship.</para>
 ///
 /// <para><b>A value from a newer build reads as itself.</b> The readers return the columns as stored and judge no
@@ -459,8 +459,8 @@ public sealed partial class OrgStore(Database db)
 
     /// <summary>
     /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, in the order they were created — ONE read, the activation gate's no-unconfined-
-    /// neighbour question (<see cref="PositionActivation"/>; ORCHESTRATION § 2.3). Nothing writes a position yet (<c>U-org-verbs</c>),
-    /// so on a home the app made this is empty.
+    /// neighbour question (<see cref="PositionActivation"/>; ORCHESTRATION § 2.3). <see cref="Hire"/> writes a position DORMANT, so a
+    /// hire never adds to it: on a home the app made this is empty until a position is activated, which no organisation verb does.
     /// </summary>
     public IReadOnlyList<string> ActivePositionsBeyondLegacy() => db.Read(_ =>
     {
