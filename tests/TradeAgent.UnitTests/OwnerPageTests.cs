@@ -403,6 +403,30 @@ public class OwnerPageTests
     });
 
     /// <summary>
+    /// A RELEASE ROW THAT CANNOT BE READ IS NO RELEASE, ON THE CARD AS IN THE GATEWAY (Codex re-review of fix pass 2, P2): the gateway
+    /// answers a malformed release row as no release and keeps the hold, so the owner's card keeps showing that held paper scope too.
+    /// </summary>
+    [Fact]
+    public async Task A_paper_hold_beside_an_unreadable_release_row_stays_on_the_card()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host.Gateway;
+            gw.Update(s => s.SelectedAccountId = "ACC-1");
+            var paper = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.PAPER, symbol: "BTCUSDT");
+            db.SetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, paper), "{ this is not a release");
+            Assert.Single(gw.HoldsForReview());
+
+            var page = Build(host);
+            page.Update(await gw.StatusAsync());
+            Assert.True(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE RESEARCH DIRECTOR'S CLI CHOICE FOLLOWS THE SETUP'S CLI (Codex re-review 2 of <c>U-settings-shed</c>, P2): chosen under Codex,
     /// then the setup switched to another CLI, Research resolves to the newly prepared CLI — the one its turns run on — never the old one.
     /// </summary>

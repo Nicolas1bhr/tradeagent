@@ -1043,6 +1043,17 @@ sealed class OwnerPage
     /// it — each judged by <see cref="Judge"/>. The page reads the rows by the breach they are filed under, the key the release writes by,
     /// so what it judges is exactly what a press would release. Closures or rows it cannot read leave nothing judged paper.
     /// </summary>
+    /// <summary>
+    /// Whether a release row lifts its hold — only one that reads as a release. The gateway answers an unreadable release row as no
+    /// release and keeps the hold (<c>ReadRelease</c>), so the card must still show that scope as held (Codex re-review of fix pass 2, P2).
+    /// </summary>
+    static bool Released(string? json)
+    {
+        if (json is null) return false;
+        try { return Json.Read<LossReleaseRecord>(json) is not null; }
+        catch (Exception) { return false; }
+    }
+
     (List<JudgedHold> Paper, List<JudgedHold> NotPaper) HoldsByPaper()
     {
         var paper = new List<JudgedHold>();
@@ -1055,7 +1066,7 @@ sealed class OwnerPage
             foreach (var b in _host.Gateway.OpenClosures(account))
             {
                 if (_host.Db.GetKv(LossHold.HoldKey(connector, b)) is not { } json) continue;
-                if (_host.Db.GetKv(LossHold.ReleaseKey(connector, b)) is not null) continue;
+                if (Released(_host.Db.GetKv(LossHold.ReleaseKey(connector, b)))) continue;
                 LossHoldRecord? hold;
                 try { hold = Json.Read<LossHoldRecord>(json); }
                 catch (Exception) { hold = null; }
