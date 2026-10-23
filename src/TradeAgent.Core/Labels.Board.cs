@@ -193,6 +193,16 @@ public static partial class Labels
         + "reopening anything but a paper scope is the security board's decision, never this page's. The release lifts every hold on "
         + "this account at once, so it stays refused while one of them is not paper.";
 
+    /// <summary>
+    /// The release refused because a hold row does not match the closure it is filed under — it names another closure, or a mode other
+    /// than that closure's (Codex re-review 2 of <c>U-settings-shed</c>, P1). The release lifts what a row is FILED under, so a row that
+    /// says something else is never released on a guess, tampered or not.
+    /// </summary>
+    public static string ReleaseRefusedMismatch(IReadOnlyList<string> scopes) =>
+        $"Nothing was released. The hold on {string.Join(", ", scopes)} does not match the closure it is filed under — it names another "
+        + "closure or another mode — so TradeAgent will not release it on a guess. Reopening anything but a paper scope is the security "
+        + "board's decision, never this page's, and the release lifts every hold on this account at once.";
+
     /// <summary>The release refused because a board seat is active (or the board cannot be read): from then on a release is the board's act.</summary>
     public const string ReleaseRefusedBoardActive =
         "Nothing was released. A security board seat is active, so reopening a held scope is the board's decision now, never this page's.";

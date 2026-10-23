@@ -346,6 +346,40 @@ public class OwnerPageTests
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
+    /// <summary>
+    /// A PAPER HOLD FILED UNDER A LIVE BREACH IS NEVER RELEASED (Codex re-review 2 of <c>U-settings-shed</c>, P1): the gateway releases
+    /// the breach a hold is FILED under, so the page judges that breach — its mode, and whether the hold names exactly it — never the
+    /// breach the hold's own text claims. A paper hold's row copied under a live breach's key is a mismatch, refused in words, and no
+    /// release row is written for either scope.
+    /// </summary>
+    [Fact]
+    public async Task A_paper_hold_filed_under_a_live_breach_is_never_released_by_the_owner()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host.Gateway;
+            gw.Update(s => s.SelectedAccountId = "ACC-1");
+            var paper = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.PAPER, symbol: "BTCUSDT");
+            var live = SeedHold(db, gw.Connector.Id, "ACC-1", TradingMode.LIVE_AUTONOMOUS);
+            db.SetKv(TradeAgent.Gateway.LossHold.HoldKey(gw.Connector.Id, live),
+                db.GetKv(TradeAgent.Gateway.LossHold.HoldKey(gw.Connector.Id, paper))!);
+            Assert.False(host.Board.AnyActive);
+
+            var page = Build(host);
+            page.Update(await gw.StatusAsync());
+            Field<TextBox>(page, "_releaseNote").Text = "looked at it";
+            var release = Field<Button>(page, "_release");
+            Press(release);
+            Press(release);
+
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, live)));
+            Assert.Null(db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, paper)));
+            Assert.Equal(Labels.ReleaseRefusedMismatch(["your account"]), Field<TextBlock>(page, "_releaseNoteResult").Text);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
 
     /// <summary>
     /// THE RESEARCH DIRECTOR'S CLI PRESS SELECTS THE CLI EVEN WITH A WORKER KEY HELD (Codex re-review of fix pass 1, P2): clearing the

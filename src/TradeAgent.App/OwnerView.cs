@@ -992,35 +992,70 @@ sealed class OwnerPage
     }
 
     /// <summary>WHAT IS BEING HELD FOR REVIEW ON PAPER RIGHT NOW, in the owner's words — "your account" and the instruments.</summary>
-    IReadOnlyList<string> HeldScopes() => [.. HoldsByPaper().Paper.Select(ScopeWords)];
+    IReadOnlyList<string> HeldScopes() => [.. HoldsByPaper().Paper.Select(j => j.Scope)];
 
-    static string ScopeWords(LossHoldRecord h) => h.Symbol ?? "your account";
+    /// <summary>The words for one closure's scope — "your account" or the instrument — taken off the BREACH, which is what a release lifts.</summary>
+    static string ScopeWords(LossBreachRecord b) => b.Symbol ?? "your account";
+
+    /// <summary>What the page makes of one closure's hold row: a paper hold he may release, a hold that is not paper, or a row that does not match.</summary>
+    internal enum HoldJudgement { Paper, NotPaper, Mismatch }
+
+    /// <summary>One held closure, judged: the breach the row is FILED under, the row as read (null when unreadable), and the verdict.</summary>
+    internal sealed record JudgedHold(LossBreachRecord FiledUnder, LossHoldRecord? Hold, HoldJudgement Judgement)
+    {
+        public string Scope => ScopeWords(FiledUnder);
+    }
 
     /// <summary>
-    /// WHETHER A HOLD IS ON A PAPER SCOPE (Codex P1 on <c>U-settings-shed</c>, and its re-review): the hold's own mode AND the mode of
-    /// the breach it holds, both <see cref="TradingMode.PAPER"/>. Both, because the gateway answers a hold row it cannot read as HELD and
-    /// stamps it with the mode in force NOW — so a live breach under a malformed hold would read as paper on the hold alone. A missing
-    /// mode, a breach this page cannot find or read, or one it cannot name as paper is not his to release (refuse, never guess). Before
-    /// an active board only paper can be held; a retained live hold is the board's, never this page's.
+    /// WHETHER ONE HOLD IS HIS TO RELEASE (Codex P1 on <c>U-settings-shed</c> and both re-reviews): judged against the breach the row is
+    /// FILED under — the breach the gateway's release lifts — never against the breach the row's own text names. The row must name exactly
+    /// that breach (its key, account, instrument and day) and carry that breach's mode; any difference is a <see cref="HoldJudgement.Mismatch"/>,
+    /// refused in words whether it was tampered with or not. Only then is it paper, and only when that breach's mode is
+    /// <see cref="TradingMode.PAPER"/>. A row this page cannot read is not paper (refuse, never guess): the gateway answers an unreadable row as
+    /// HELD and stamps it with the mode in force NOW, so its stamp is not evidence. Before an active board only paper can be held; a retained
+    /// live hold is the board's, never this page's.
     /// </summary>
-    internal static bool IsPaperHold(LossHoldRecord h, TradingMode? breachMode) =>
-        h.Mode == TradingMode.PAPER && breachMode == TradingMode.PAPER;
-
-    /// <summary>The holds on the selected account, split by <see cref="IsPaperHold"/> against the breaches they hold.</summary>
-    (List<LossHoldRecord> Paper, List<LossHoldRecord> NotPaper) HoldsByPaper()
+    internal static HoldJudgement Judge(LossBreachRecord filedUnder, LossHoldRecord? hold)
     {
-        var holds = _host.Gateway.HoldsForReview();
-        var breachModes = new Dictionary<string, TradingMode?>(StringComparer.Ordinal);
+        if (hold is null) return HoldJudgement.NotPaper;
+        if (hold.BreachKey != LossBreach.KeyFor(filedUnder) || hold.Account != filedUnder.Account
+            || hold.Symbol != filedUnder.Symbol || hold.Day != filedUnder.Day || hold.Mode != filedUnder.Mode)
+            return HoldJudgement.Mismatch;
+        return filedUnder.Mode == TradingMode.PAPER ? HoldJudgement.Paper : HoldJudgement.NotPaper;
+    }
+
+    /// <summary>
+    /// Every closure on the selected account that the gateway's release would lift — a hold row filed under it and no release row beside
+    /// it — each judged by <see cref="Judge"/>. The page reads the rows by the breach they are filed under, the key the release writes by,
+    /// so what it judges is exactly what a press would release. Closures or rows it cannot read leave nothing judged paper.
+    /// </summary>
+    (List<JudgedHold> Paper, List<JudgedHold> NotPaper) HoldsByPaper()
+    {
+        var paper = new List<JudgedHold>();
+        var notPaper = new List<JudgedHold>();
         try
         {
-            foreach (var b in _host.Gateway.OpenClosures(_host.Gateway.ClosureAccountId))
-                breachModes.TryAdd(LossBreach.KeyFor(b), b.Mode);
+            var connector = _host.Gateway.Connector.Id;
+            var account = _host.Gateway.ClosureAccountId;
+            if (account.Length == 0) return (paper, notPaper);
+            foreach (var b in _host.Gateway.OpenClosures(account))
+            {
+                if (_host.Db.GetKv(LossHold.HoldKey(connector, b)) is not { } json) continue;
+                if (_host.Db.GetKv(LossHold.ReleaseKey(connector, b)) is not null) continue;
+                LossHoldRecord? hold;
+                try { hold = Json.Read<LossHoldRecord>(json); }
+                catch (Exception) { hold = null; }
+                var judged = new JudgedHold(b, hold, Judge(b, hold));
+                (judged.Judgement == HoldJudgement.Paper ? paper : notPaper).Add(judged);
+            }
         }
-        catch (Exception) { breachModes.Clear(); }          // breaches it cannot read: no hold is judged paper
-        var paper = new List<LossHoldRecord>();
-        var notPaper = new List<LossHoldRecord>();
-        foreach (var h in holds)
-            (IsPaperHold(h, breachModes.TryGetValue(h.BreachKey, out var m) ? m : null) ? paper : notPaper).Add(h);
+        catch (Exception)
+        {
+            // Closures or rows it cannot read: nothing is his to release, and a press is refused in words.
+            paper.Clear();
+            notPaper.Clear();
+            notPaper.Add(new JudgedHold(new LossBreachRecord(), null, HoldJudgement.NotPaper));
+        }
         return (paper, notPaper);
     }
 
@@ -1034,9 +1069,9 @@ sealed class OwnerPage
         _releaseCard.IsVisible = ReleaseOffered(holds.Count, BoardActive());
         if (!_releaseCard.IsVisible) return;
 
-        _releaseHeld.Text = string.Join(" ", holds.Select(h => h.Why));
+        _releaseHeld.Text = string.Join(" ", holds.Select(h => h.Hold!.Why));
         Ui.Relabel(_release, Labels.ReopenAfterReview,
-            Labels.ReleaseHoldArmed([.. holds.Select(ScopeWords)]));
+            Labels.ReleaseHoldArmed([.. holds.Select(h => h.Scope)]));
     }
 
     /// <summary>
@@ -1048,11 +1083,12 @@ sealed class OwnerPage
         // PAPER ONLY, READ AGAIN AT THE PRESS: the gateway's release lifts every hold on the account at once, so while any of them is not
         // paper it is never called — refused in words, nothing written. And never once a board seat is active (a board that cannot be
         // read counts as active), whatever the card showed a tick ago.
-        var notPaper = HoldsByPaper().NotPaper.Select(ScopeWords).ToList();
+        var notPaper = HoldsByPaper().NotPaper;
+        var mismatched = notPaper.Where(h => h.Judgement == HoldJudgement.Mismatch).Select(h => h.Scope).ToList();
         if (notPaper.Count > 0 || BoardActive())
         {
-            _releaseNoteResult.Text = notPaper.Count > 0
-                ? Labels.ReleaseRefusedNotPaper(notPaper)
+            _releaseNoteResult.Text = mismatched.Count > 0 ? Labels.ReleaseRefusedMismatch(mismatched)
+                : notPaper.Count > 0 ? Labels.ReleaseRefusedNotPaper([.. notPaper.Select(h => h.Scope)])
                 : Labels.ReleaseRefusedBoardActive;
             _releaseNoteResult.Foreground = Theme.Caution;
             _releaseNoteResult.IsVisible = true;
