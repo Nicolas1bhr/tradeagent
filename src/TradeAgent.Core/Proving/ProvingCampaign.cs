@@ -36,6 +36,8 @@ public static class ProvingCampaign
             throw new InvalidOperationException(
                 $"a proving market's holdout and campaign are set only in the database of the home it was written into, and the database at "
                 + $"{db.FilePath} does not live in the proving home at {home.Dir} (SIM-001). Nothing was read or written.");
+        if (Unbound(home, market, spec) is { } why)
+            return new CampaignOpened(false, why + " Nothing was written.", null);
         if (spec.Holdout is not { } holdout)
             return new CampaignOpened(false, "this market's spec sets no holdout, so there is no cutoff to set and no campaign to open.", null);
 
@@ -63,4 +65,35 @@ public static class ProvingCampaign
                 holdout.TrialBudget, holdout.VerdictBudget, at);
         });
     }
+
+    /// <summary>
+    /// WHY <paramref name="spec"/> IS NOT THE SPEC THAT WROTE <paramref name="market"/>, in words — or null. A market is judged
+    /// only on the spec it was generated from: its manifest's holdout first, in words of its own, since an in-sample trap is
+    /// planted up to its market's own cutoff and judged from another is not the trap it names; then every other generating
+    /// field, through the name the spec gives the market's truth, which is the SHA-256 of all of them.
+    /// </summary>
+    static string? Unbound(ProvingHome home, SyntheticMarketWritten market, SyntheticMarketSpec spec)
+    {
+        if (!market.TruthFile.StartsWith(home.TruthDir + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(market.TruthFile))
+            return $"the market's truth at {market.TruthFile} is not in this proving home's truth folder, {home.TruthDir}, so there is no "
+                   + "manifest to bind this spec to.";
+
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(market.TruthFile));
+        var written = manifest.RootElement.TryGetProperty("holdout", out var h) && h.ValueKind == System.Text.Json.JsonValueKind.Object
+            ? new SyntheticHoldout(h.GetProperty("from_day").GetInt32(), h.GetProperty("trial_budget").GetInt32(), h.GetProperty("verdict_budget").GetInt32())
+            : null;
+        if (written != spec.Holdout)
+            return $"this spec's holdout ({Words(spec.Holdout)}) is not the holdout the market was written with ({Words(written)}): an "
+                   + "in-sample trap is on up to its market's own cutoff, and judged from another cutoff it is not the trap its manifest names.";
+
+        var named = SyntheticMarket.TruthFile(home, spec);
+        if (!ProvingHome.Same(market.TruthFile, named) || !File.Exists(named))
+            return $"this spec is not the spec that wrote the market: it names its market's truth {Path.GetFileName(named)}, and the market's "
+                   + $"truth is {Path.GetFileName(market.TruthFile)} — its seed, instrument, venue, start, span, series, edges or holdout differ.";
+        return null;
+    }
+
+    static string Words(SyntheticHoldout? holdout) => holdout is { } h
+        ? $"from day {h.FromDay}, {h.TrialBudget} trial(s), {h.VerdictBudget} verdict(s)"
+        : "none";
 }
