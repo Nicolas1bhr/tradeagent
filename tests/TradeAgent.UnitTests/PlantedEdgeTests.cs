@@ -457,6 +457,75 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE MANIFEST'S SHARPE IS THE REFERENCE TRADE'S MEAN OVER ITS TOTAL STANDARD DEVIATION (fix pass 1, finding 2). The
+    /// reference trade takes every reading in the relation's direction, so its P&amp;L is |β|·|z|·w plus the horizon's noise.
+    /// Enumerated here, independently of the generator's arithmetic: every reading's weight w from its move hour (the
+    /// half-life and the regime), every z from −50 to 50 equally likely, the minute's noise from its four uniform draws and its
+    /// two volatility regimes. The manifest's Sharpe before and after the venue's round trip match the enumeration's to the
+    /// manifest's two places.
+    /// </summary>
+    [Fact]
+    public void The_manifest_s_sharpe_is_the_reference_trade_s_mean_over_its_total_deviation()
+    {
+        using var scratch = TestEnv.NewScratch("planted-sharpe");
+        using var p = new Proving(Path.Combine(scratch.Dir, "proving"));
+        const int Days = 7;
+        var edges = new[]
+        {
+            new SyntheticEdge(16, 30) { HalfLifeDays = 3, Regimes = [new SyntheticRegime(1, 5)] },
+            new SyntheticEdge(-8) { Series = ProvingSources.TakerRatio }
+        };
+        var market = p.Write(new SyntheticMarketSpec(81, "SYNA", VenueCatalog.BinanceSpot, Start, Days, edges[0])
+        {
+            Series = [ProvingSources.Signal, ProvingSources.TakerRatio],
+            Edges = [edges[1]]
+        });
+
+        // THE MINUTE'S NOISE: four draws from −10 to 10, doubled half the time.
+        double draw = 0;
+        for (var u = -10; u <= 10; u++) draw += (double)u * u / 21;
+        var minute = 0.5 * 4 * draw + 0.5 * 4 * 4 * draw;
+        const double Trip = 0.0024 * 100_000;
+
+        var stated = Truth(market).GetProperty("planted");
+        for (var e = 0; e < edges.Length; e++)
+        {
+            var edge = edges[e];
+            var shape = ProvingSources.Shape(edge.Series)!;
+            double n = 0, sum = 0, squares = 0;
+            var readings = 0;
+            for (var k = 0; k < shape.Count(Days); k++)
+            {
+                var hour = (shape.SourceMinute(k) * 60 + 2) / 3600 + 1;
+                if (hour >= Days * 24) continue;
+                readings++;
+                var on = edge.Regimes.Count == 0 || edge.Regimes.Any(r => hour >= r.FromDay * 24 && hour < r.ToDay * 24);
+                var w = !on ? 0 : edge.HalfLifeDays is { } h ? Math.Pow(2, -(double)hour / (h * 24)) : 1;
+                for (var z = -50; z <= 50; z++)
+                {
+                    var pnl = Math.Abs(edge.BetaTicks) * Math.Abs(z) * w;
+                    n++;
+                    sum += pnl;
+                    squares += pnl * pnl;
+                }
+            }
+            var mean = sum / n;
+            var sd = Math.Sqrt(squares / n - mean * mean + minute * edge.HorizonMinutes);
+            var perYear = Math.Sqrt(readings * 365.0 / Days);
+            var before = mean / sd * perYear;
+            var after = (mean - Trip) / sd * perYear;
+
+            var figures = stated[e].GetProperty("figures");
+            var said = (Before: (double)figures.GetProperty("expected_sharpe_before_cost").GetDecimal(),
+                After: (double)figures.GetProperty("expected_sharpe_after_cost").GetDecimal());
+            log.WriteLine($"edge {e + 1}: enumerated Sharpe {before:0.0000} before cost, {after:0.0000} after; the manifest says {said.Before} and {said.After}");
+            Assert.Equal(readings, figures.GetProperty("readings").GetInt32());
+            Assert.InRange(said.Before, before - 0.006, before + 0.006);
+            Assert.InRange(said.After, after - 0.006, after + 0.006);
+        }
+    }
+
+    /// <summary>
     /// (f) THE MANIFEST IS WRITTEN ONLY INTO A PROVING HOME — and the holdout and campaign only into its own ledger. Beside a
     /// stand-in real home: a market with edges, traps and a holdout written through a real home's stores is refused before
     /// anything is written; written into the proving home, its manifest lies in that home's truth folder and states every

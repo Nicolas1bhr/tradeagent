@@ -108,7 +108,7 @@ public sealed record SyntheticEdge(long BetaTicks, int HorizonMinutes = 60)
 /// <param name="MeanWeight">The mean of w over those readings: the half-life's decay times the regime's on and off.</param>
 /// <param name="BpsPerSignal">The expected gross move per reading, |β|·E|z|·w̄, in basis points of the first open.</param>
 /// <param name="RoundTripBps">Two fills at the venue's published taker fee and the app's slippage, or null where this build has read no fee.</param>
-/// <param name="SharpeBeforeCost">The reference trade's annualised Sharpe before costs.</param>
+/// <param name="SharpeBeforeCost">The reference trade's annualised Sharpe before costs: its mean over its whole standard deviation, the planted move's spread from reading to reading and the noise's.</param>
 /// <param name="SharpeAfterCost">The same after the venue's round trip on every reading, or null without a fee.</param>
 public sealed record PlantedFigures(
     int Readings, decimal MeanWeight, decimal BpsPerSignal, decimal? RoundTripBps, decimal SharpeBeforeCost, decimal? SharpeAfterCost);
@@ -279,6 +279,9 @@ internal static class PlantedEdges
         return null;
     }
 
+    /// <summary>E[z²] for a reading drawn uniformly from −R to R: R(R + 1)/3.</summary>
+    internal static decimal MeanSquareValue => SyntheticMarket.SignalRange * (SyntheticMarket.SignalRange + 1m) / 3m;
+
     /// <summary>The round trip at <paramref name="venueId"/>, in basis points: two fills at its published taker fee and the app's slippage.</summary>
     internal static decimal? RoundTripBps(string venueId) =>
         VenueCostModel.FeeOf(venueId) is { } fee ? 2m * (fee.TakerRate + VenueCostModel.SlippageRate) * 10_000m : null;
@@ -291,17 +294,25 @@ internal static class PlantedEdges
         var hours = spec.Days * 24L;
         var readings = 0;
         var weights = 0m;
+        var squares = 0m;
         for (var k = 0; k < shape.Count(spec.Days); k++)
         {
             var hour = MoveHour(shape.SourceMinute(k), ProvingSources.Delay);
             if (hour >= hours) continue;
             readings++;
-            weights += Weight(edge, hour);
+            var w = Weight(edge, hour);
+            weights += w;
+            squares += w * w;
         }
 
         var mean = readings == 0 ? 0m : weights / readings;
+        var meanSquare = readings == 0 ? 0m : squares / readings;
         var gross = Math.Abs(edge.BetaTicks) * MeanAbsoluteValue * mean;
-        var sigma = Sqrt(MinuteVariance * edge.HorizonMinutes);
+
+        // THE REFERENCE TRADE'S WHOLE VARIANCE: its P&L is |β|·|z|·w plus the horizon's noise, z and w independent, so
+        // Var = β²·(E[z²]·E[w²] − (E|z|·w̄)²) + the noise's — the planted move varies from reading to reading too.
+        var spread = edge.BetaTicks * edge.BetaTicks * (MeanSquareValue * meanSquare - MeanAbsoluteValue * MeanAbsoluteValue * mean * mean);
+        var sigma = Sqrt(Math.Max(0m, spread) + MinuteVariance * edge.HorizonMinutes);
         var perYear = Sqrt(readings * 365m / spec.Days);
         var trip = RoundTripBps(spec.VenueId);
         var tripTicks = trip * SyntheticMarket.StartTicks / 10_000m;
