@@ -674,6 +674,175 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Empty(new OrgStore(life.Host.Db).MandatesOf(Research));
     }
 
+    /// <summary>A unit and its head, active, as only a test may write the chart.</summary>
+    static Action<Database> SeedDivision(string division, string head) => db => db.Write(_ =>
+    {
+        const string at = "2026-10-23T12:00:00.0000000Z";
+        foreach (var line in new[]
+                 {
+                     $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{division}', '{OrgIds.Root}', 'division', NULL, 'active', '{at}')",
+                     $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{head}', '{division}', 'org/{head}', 'active', '{at}')",
+                     $"UPDATE org_unit SET head_position_id='{head}' WHERE id='{division}'"
+                 })
+        {
+            using var c = db.Cmd(line);
+            c.ExecuteNonQuery();
+        }
+        return 0;
+    });
+
+    /// <summary>A JSON argument as a puppet's script carries it: one word, each quote escaped.</summary>
+    static string Word(object value) => JsonSerializer.Serialize(value).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    /// <summary>
+    /// (g) O6 PART C ON THE REAL KERNEL, WITH A PUPPET SEAT (<c>U-org-verbs-c</c>): a division head on a puppet seat — MEDIATED, the
+    /// manifest <see cref="Puppet.Manifest"/> builds — charters through <c>trade org charter</c>: a charter citing nothing current is
+    /// refused (the earning test), two bounded-experiment teams are chartered, each with an AI share, a rationale and a
+    /// <c>unit-admissible</c> forecast, and a third that week is refused (the throttle). In its next turn it hires through <c>trade org
+    /// hire</c>: past five members of the second team (five the test seated) refused, two DORMANT positions into the first, and one into
+    /// <c>div-operations</c> refused as a two-seat board act. The chart, the events, the decisions and the ledger rationale read back,
+    /// and every refusal wrote nothing. No model.
+    /// </summary>
+    [Fact]
+    public async Task A_puppet_division_head_charters_a_team_and_hires_two_dormant_positions_into_it()
+    {
+        const string head = "pos-5e55dd000001", division = "div-5e55dd00";
+        await using var life = await PuppetLife.Begin("org-structure", seed: SeedDivision(division, head));
+        var org = new OrgStore(life.Host.Db);
+        var collapse = DateTimeOffset.UtcNow.AddDays(60).ToString("O");
+        var forecasts = Word(new[] { new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted,
+            by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m } });
+        string[] chartering =
+        [
+            $"trade org charter team 0.2 \"a family nobody has worked yet\" --forecasts {forecasts}",
+            $"trade org charter team 0.2 \"the funding skew family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
+            $"trade org charter team 0.2 \"the basis family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
+            $"trade org charter team 0.1 \"a third family this week\" --forecasts {forecasts} --collapse-by {collapse}",
+            "signal chartered", "usage 100 0 10", "final Chartered."
+        ];
+        life.Script(head, chartering);
+        life.Wake(head);
+        await life.RunUntil(() => life.Reached("chartered") && life.AttemptsOf(head).Any(a => a.State == AiAttemptState.ENDED),
+            "the head's puppet chartered");
+
+        var charter = TradeSteps(life, head, 1);
+        Assert.Equal(4, charter.Count);
+        Assert.True((int?)charter[0]["exit"] != 0, $"a charter citing nothing current was served: {Said(charter[0])}");
+        Assert.Contains("the earning test", Said(charter[0]), StringComparison.Ordinal);
+        Assert.True((int?)charter[1]["exit"] == 0, $"the first charter was refused: {Said(charter[1])}");
+        Assert.True((int?)charter[2]["exit"] == 0, $"the second charter was refused: {Said(charter[2])}");
+        Assert.True((int?)charter[3]["exit"] != 0, $"a third charter that week was served: {Said(charter[3])}");
+        Assert.Contains("the most it makes in a week", Said(charter[3]), StringComparison.Ordinal);
+        var teams = org.Units().Where(u => u.ParentId == division).ToList();
+        Assert.Equal(2, teams.Count);
+        var (first, second) = (teams[0].Id, teams[1].Id);
+
+        // FIVE MEMBERS IN THE SECOND TEAM, as only a test may seat them; then the head's next turn hires.
+        life.Host.Db.Write(_ =>
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                using var c = life.Host.Db.Cmd("INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id, $u, $h, 'dormant', $at)",
+                    ("$id", $"pos-5e55dd0001{i:00}"), ("$u", second), ("$h", $"org/pos-5e55dd0001{i:00}"), ("$at", DateTimeOffset.UtcNow.ToString("O")));
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        });
+        life.Script(head, chartering,
+        [
+            $"trade org hire {second} \"a sixth executor\" --forecasts {forecasts}",
+            $"trade org hire {first} \"an executor for the skew\" --forecasts {forecasts}",
+            $"trade org hire {first} \"a second executor for the skew\" --forecasts {forecasts}",
+            $"trade org hire {OrgIds.Operations} \"an executor beside operations\" --forecasts {forecasts}",
+            "trade org show", "usage 100 0 10", "final Hired."
+        ]);
+        life.Wake(head);
+        await life.RunUntil(() => life.AttemptsOf(head).Count(a => a.State == AiAttemptState.ENDED) >= 2, "the head's puppet hired");
+
+        var hire = TradeSteps(life, head, 2);
+        Assert.Equal(5, hire.Count);
+        Assert.True((int?)hire[0]["exit"] != 0, $"a sixth member was served: {Said(hire[0])}");
+        Assert.Contains("has 5 members", Said(hire[0]), StringComparison.Ordinal);
+        Assert.True((int?)hire[1]["exit"] == 0, $"the first hire was refused: {Said(hire[1])}");
+        Assert.True((int?)hire[2]["exit"] == 0, $"the second hire was refused: {Said(hire[2])}");
+        Assert.True((int?)hire[3]["exit"] != 0, $"a hire into div-operations was served: {Said(hire[3])}");
+        Assert.Contains("a two-seat board act", Said(hire[3]), StringComparison.Ordinal);
+        Assert.True((int?)hire[4]["exit"] == 0, $"org show was refused: {Said(hire[4])}");
+
+        // THE CHART: two teams under the division, head vacant, each its share and its charter decision; two DORMANT positions in the
+        // first, none active beyond the head — and nothing under div-operations but what was there.
+        foreach (var t in org.Units().Where(u => u.ParentId == division))
+            Assert.Equal(((string?)null, "0.2", OrgUnitStatus.Active), (t.HeadPositionId, t.EnvelopeShare, t.Status));
+        var hired = org.Positions().Where(p => p.UnitId == first).ToList();
+        Assert.Equal(2, hired.Count);
+        Assert.All(hired, p => Assert.Equal((OrgPositionStatus.Dormant, (string?)null), (p.Status, p.SeatRuntime)));
+        Assert.Equal([head], org.ActivePositionsBeyondLegacy());
+        Assert.Equal(5, org.Positions().Count(p => p.UnitId == second));
+        Assert.DoesNotContain(org.Positions(), p => p.UnitId == OrgIds.Operations && p.Id != CouncilRoles.Operations);
+
+        // THE EVENTS AND THE DECISIONS, decided by the head; THE RATIONALE, the head's own ledger entries.
+        var decisions = org.DecisionsOf(head);
+        Assert.Equal(2, decisions.Count(d => d.Kind == OrgDecisionKind.Charter));
+        Assert.Equal(2, decisions.Count(d => d.Kind == OrgDecisionKind.Hire));
+        Assert.Equal(teams.Select(t => t.CharterDecisionId).Order(StringComparer.Ordinal),
+            decisions.Where(d => d.Kind == OrgDecisionKind.Charter).Select(d => (string?)d.Id).Order(StringComparer.Ordinal));
+        var ledger = new ResearchLedger(life.Host.Db);
+        var why = decisions.Select(d => ledger.Latest(d.LedgerEntryId)!.Text).ToList();
+        Assert.Contains("the funding skew family earns a team", why);
+        Assert.Contains("an executor for the skew", why);
+        Assert.All(decisions.Where(d => d.Kind == OrgDecisionKind.Charter), d =>
+            Assert.Contains(org.ForecastsOn(d.Id), f => f.Predicate == ForecastVocabulary.UnitAdmissible));
+        var events = life.Host.Db.Read(_ =>
+        {
+            using var c = life.Host.Db.Cmd("SELECT kind, decider FROM org_event WHERE kind IN ('chartered', 'hired') ORDER BY id");
+            using var r = c.ExecuteReader();
+            var rows = new List<(string, string)>();
+            while (r.Read()) rows.Add((r.GetString(0), r.GetString(1)));
+            return rows;
+        });
+        Assert.Equal([(OrgEventKind.Chartered, head), (OrgEventKind.Chartered, head), (OrgEventKind.Hired, head), (OrgEventKind.Hired, head)], events);
+        output.WriteLine($"life (org-structure) org show: {Said(hire[4]).Trim()[..Math.Min(400, Said(hire[4]).Trim().Length)]}");
+        output.WriteLine($"life (org-structure): {life.Counts()}");
+    }
+
+    /// <summary>
+    /// (g2) THE LEGACY PAIR ON UNCONFINED SEATS ARE REFUSED CHARTER AND HIRE, ON THE REAL KERNEL (<c>U-org-verbs-c</c>): their puppets
+    /// play the CLI class — unconfined, the class the legacy pair's real seats record — and each asks <c>trade org charter</c> and
+    /// <c>trade org hire</c>; both are refused in the gate's words (headship grants no verb), and nothing is written. No model.
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pair_on_unconfined_puppet_seats_are_refused_charter_and_hire()
+    {
+        await using var life = await PuppetLife.Begin("org-structure-legacy", seatClass: SeatPlan.CliClass);
+        var org = new OrgStore(life.Host.Db);
+        var (units, positions) = (org.Units().Count, org.Positions().Count);
+        string[] steps =
+        [
+            "trade org charter team 0.2 \"w\" --forecasts [] --collapse-by 2099-01-01T00:00:00Z",
+            $"trade org hire {OrgIds.Research} \"w\" --forecasts []",
+            "usage 10 0 5",
+            "final Refused."
+        ];
+        life.Script(Research, steps);
+        life.Script(Chair, steps);
+        life.Wake(Research);
+        life.Wake(Chair);
+        await life.RunUntil(() => life.AttemptsOf(Research).Any(a => a.State == AiAttemptState.ENDED)
+                                  && life.AttemptsOf(Chair).Any(a => a.State == AiAttemptState.ENDED), "the legacy pair turned");
+
+        foreach (var role in new[] { Research, Chair })
+        {
+            var asked = TradeSteps(life, role, 1);
+            Assert.Equal(2, asked.Count);
+            foreach (var step in asked)
+            {
+                Assert.True((int?)step["exit"] != 0, $"{role}'s {step["args"]?.ToJsonString()} was served on an unconfined seat");
+                Assert.Contains("Heading a unit grants no verb by itself", Said(step), StringComparison.Ordinal);
+            }
+        }
+        Assert.Equal((units, positions), (org.Units().Count, org.Positions().Count));
+    }
+
     /// <summary>
     /// THE MATERIAL PASS WAITS FOR A PUPPET TURN'S QUIESCENCE (COUNCIL rule 7): while the chair's puppet is mid-turn its process is
     /// in the host's presence register and the app's own pass refuses to walk the inbox — nothing walked, the window unmoved; once

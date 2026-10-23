@@ -238,6 +238,14 @@ public static class Ops
     public const string OrgShow = "org-show";
 
     /// <summary>
+    /// A HEAD CHARTERS A UNIT UNDER ITS OWN, AND HIRES A POSITION INTO ITS SUBTREE (<c>U-org-verbs-c</c>; ORCHESTRATION § 2.9): each a
+    /// mandatory decision record with a forecast, inside the rights matrix, the chart's bounds, the weekly throttle and the earning
+    /// test. A hire is DORMANT — it activates nothing — and neither reaches <c>operations</c> or its division, a two-seat board act.
+    /// NOT in <see cref="Mutating"/>: neither places an order nor reaches operator authority.
+    /// </summary>
+    public const string OrgCharter = "org-charter", OrgHire = "org-hire";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
@@ -268,11 +276,12 @@ public static class Ops
 
     /// <summary>
     /// Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>; <c>U-org-verbs-a</c>:
-    /// <see cref="MandateRescope"/>, <see cref="MandatePropose"/>, <see cref="OrgShow"/>).
+    /// <see cref="MandateRescope"/>, <see cref="MandatePropose"/>, <see cref="OrgShow"/>; <c>U-org-verbs-c</c>: <see cref="OrgCharter"/>,
+    /// <see cref="OrgHire"/>).
     /// </summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
-        LateralList, MandateRescope, MandatePropose, OrgShow];
+        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

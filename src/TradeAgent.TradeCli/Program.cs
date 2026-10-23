@@ -405,17 +405,29 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         }
 
         // `trade org show` (U-org-verbs-a): the caller's own place on the chart. It takes no argument; one sent is refused by the gateway.
+        // `trade org charter` and `trade org hire` (U-org-verbs-c): every flag is sent on under its own name, '-' read as '_'.
         case "org":
         {
             foreach (var (key, value) in flags)
                 if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
                     a[key.Replace('-', '_')] = value;
 
-            return (pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant() switch
+            // `trade org charter <kind> <ai_share> <rationale> --forecasts JSON …` and `trade org hire <unit> <rationale> --forecasts
+            // JSON …` (U-org-verbs-c): the positionals fill, in the form's order, what no flag named, and the last takes every word left.
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
             {
-                "show" => (Ops.OrgShow, a),
-                _ => (null, a)
-            };
+                case "show":
+                    return (Ops.OrgShow, a);
+                case "charter":
+                    Fill(a, rest, "kind", "ai_share", "rationale");
+                    return (Ops.OrgCharter, a);
+                case "hire":
+                    Fill(a, rest, "unit", "rationale");
+                    return (Ops.OrgHire, a);
+                default:
+                    return (null, a);
+            }
         }
 
         // `trade decision record <choice> <rationale> --options JSON …`, `list` and `show <id>` (U-org-decisions): the

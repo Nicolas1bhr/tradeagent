@@ -323,7 +323,25 @@ public class OrgLedgerTests
         Assert.Empty(show.Args);
         Assert.False(show.Mutating);
         Assert.Equal("trade org show", show.Cli);
-        foreach (var op in GatewaySchema.Ops().Where(o => o.Op != Ops.OrgShow))
+        // REVISITED, OUT LOUD, BY U-org-verbs-c (declared): TWO ops WRITE the chart — `org-charter` and `org-hire`, `trade org charter`
+        // and `trade org hire`, behind OrgVerbCaller and OrgStore's own checks (the rights matrix, the bounds, the throttle, the earning
+        // test). Neither is mutating, and each takes EXACTLY the arguments pinned here: none names a seat, a head's id, a parent, a
+        // share of anything but the new unit's own AI share, or a position — the parent is the caller's own unit, the head is vacant or
+        // the new position, the id is minted, and the position is dormant. Every other op keeps the whole check below.
+        var structural = new Dictionary<string, (string Cli, string[] Args)>
+        {
+            [Ops.OrgCharter] = ("trade org charter", ["kind", "ai_share", "rationale", "forecasts", "refs", "options", "collapse_by"]),
+            [Ops.OrgHire] = ("trade org hire", ["unit", "rationale", "forecasts", "head", "refs", "options"])
+        };
+        foreach (var (name, (cli, args)) in structural)
+        {
+            var op = Assert.Single(GatewaySchema.Ops(), o => o.Op == name);
+            Assert.False(op.Mutating);
+            Assert.StartsWith(cli + " ", op.Cli, StringComparison.Ordinal);
+            Assert.Equal(args, op.Args.Select(a => a.Name));
+            Assert.DoesNotContain(name, Ops.Mutating);
+        }
+        foreach (var op in GatewaySchema.Ops().Where(o => o.Op != Ops.OrgShow && !structural.ContainsKey(o.Op)))
         {
             foreach (var word in chart)
             {

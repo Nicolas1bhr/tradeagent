@@ -725,6 +725,51 @@ public static class GatewaySchema
             + "It takes no argument, and writes nothing.",
             []),
 
+        // THE STRUCTURAL VERBS (U-org-verbs-c, O6 part c; ORCHESTRATION § 2.9): a head charters a unit under its own and hires a
+        // position into its subtree, each a decision record with a forecast, inside the rights matrix, the chart's bounds, the weekly
+        // throttle and the earning test. Served only to a launch whose recorded seat assurance carries the organisation's verbs.
+        new(Core.Ops.OrgCharter, "trade org charter <kind> <ai_share> <rationale> --forecasts JSON [--refs JSON] [--options JSON] [--collapse-by T]", false,
+            "CHARTER A UNIT UNDER YOUR OWN — a team (under a division or a subdivision), a subdivision (under a division) or a division "
+            + "(under the organisation) — with a fraction of your unit's AI envelope ('ai_share', above 0 and at most 1; your units' "
+            + "shares together at most 1, and enough to fund one turn of your seat), your 'rationale' and the 'options' you weighed "
+            + "(claims), and at least one 'unit-admissible' forecast in 'forecasts' with its subject left empty (the new unit). It must "
+            + "EARN its place: cite in 'refs' current work of your subtree — a run its launches funded, a promotion of a version such a "
+            + "run ran, or a delivery on one of its mandates, from the last 30 days — or charter it as a funded, bounded experiment "
+            + "('collapse_by', an ISO-8601 date within 90 days, with an AI share of at most 0.25). TradeAgent mints the unit's id, leaves "
+            + "its head vacant, and writes the unit, your 'charter' decision (the rationale your own ledger entry), its forecasts and one "
+            + "event in ONE write — or refuses in words and writes nothing: only the head of the parent charters, at most two structural "
+            + "changes happen in the organisation a week, a fourth manager layer is earned only by an experiment's record, and nothing "
+            + "about `operations` or its division is any organisation verb's (it is a two-seat act of the security board). It places no "
+            + "order and moves no money.",
+            [
+                new("kind", "string", true, $"{Core.Db.OrgUnitKind.Team} | {Core.Db.OrgUnitKind.Subdivision} | {Core.Db.OrgUnitKind.Division}."),
+                new("ai_share", "number", true, "The fraction of your unit's AI envelope the new unit is given: above 0, at most 1."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one 'unit-admissible', its subject left empty."),
+                new("refs", "string", false, "A JSON list of {\"kind\": run | promotion | delivery | …, \"id\"}: the current work the charter earns its place on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted."),
+                new("collapse_by", "string", false, "For a bounded experiment instead of cited work: the ISO-8601 date it collapses unless its forecast holds, within 90 days.")
+            ]),
+
+        new(Core.Ops.OrgHire, "trade org hire <unit> <rationale> --forecasts JSON [--head true] [--refs JSON] [--options JSON]", false,
+            "HIRE A POSITION into a unit whose PARENT you head (a team's head does not grow its own team; its parent's head does), or "
+            + "appoint one to that unit's VACANT head ('head': true — replacing a head is a different operation, not this one). The "
+            + "position is DORMANT: TradeAgent mints its id and home, gives it no seat, and it runs nothing until it is seated and "
+            + "activated, neither of which is an organisation verb's. Your 'rationale' and 'options' are claims; 'forecasts' carries at "
+            + "least one (a 'unit-admissible' with its subject left empty is the unit). It must EARN its place: the unit's first "
+            + "position, a hire inside a unit chartered as a bounded experiment before its collapse date, or current work of your subtree "
+            + "cited in 'refs'. One write — or refused in words with nothing written: at most 10 positions that have not ended in the "
+            + "organisation, at most 5 members in a unit, never into a closed unit, and nothing in `operations`' division (a two-seat act "
+            + "of the security board). It places no order and moves no money.",
+            [
+                new("unit", "string", true, "The unit to hire into: one whose parent you head."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one."),
+                new("head", "string", false, "true to appoint the new position to the unit's vacant head; false (a member) when omitted."),
+                new("refs", "string", false, "A JSON list of {\"kind\": run | promotion | delivery | …, \"id\"}: the current work the hire earns its place on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
+            ]),
+
         // THE ORGANISATION'S DECISION RECORDS (U-org-decisions, O5b; ORGANISATION § 5): a routine decision recorded with its rationale
         // as the author's own ledger entry, and its own read back. Served only to a launch whose recorded seat assurance carries the
         // organisation's verbs.

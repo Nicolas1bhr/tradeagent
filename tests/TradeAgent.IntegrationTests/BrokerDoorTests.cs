@@ -476,8 +476,11 @@ public class BrokerDoorTests
                 ["type"] = "object", ["properties"] = new Dictionary<string, object>()
             }),
             (_, _, _) => Task.FromResult(ToolAnswer.Ok("the test verb answered", "test-verb-show")));
-        // U-org-verbs-a: THE THREE NEW ORGANISATION VERBS, as the app composes them, sit behind the same gate as the test verb.
-        string[] three = [.. new[] { Ops.MandateRescope, Ops.MandatePropose, Ops.OrgShow }.Select(BrokerDoor.VerbName)];
+        // U-org-verbs-a: THE THREE NEW ORGANISATION VERBS, as the app composes them, sit behind the same gate as the test verb — and
+        // U-org-verbs-c's two structural verbs, org_charter and org_hire, beside them.
+        string[] three = [.. new[] { Ops.MandateRescope, Ops.MandatePropose, Ops.OrgShow, Ops.OrgCharter, Ops.OrgHire }.Select(BrokerDoor.VerbName)];
+        Assert.Contains("org_charter", three);
+        Assert.Contains("org_hire", three);
         var real = BrokerDoor.OrganisationVerbs(() => server).Where(v => three.Contains(v.Spec.Name)).ToList();
         Assert.Equal(three, real.Select(v => v.Spec.Name));
         var recorded = new Dictionary<string, string> { ["attempt-unconfined"] = "unconfined", ["attempt-carried"] = "carried" };

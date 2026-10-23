@@ -17,7 +17,7 @@ public partial class OrgRightsConformanceTests
         new(id, parent, kind, head, OrgUnitStatus.Active, null, null, DateTimeOffset.UnixEpoch, null);
 
     static readonly OrgUnitRow Root = U(OrgIds.Root, null, OrgUnitKind.Root);
-    static readonly OrgUnitRow Ops = U(OrgIds.Operations, OrgIds.Root, OrgUnitKind.Division, CouncilRoles.Operations);
+    static readonly OrgUnitRow OpsDivision = U(OrgIds.Operations, OrgIds.Root, OrgUnitKind.Division, CouncilRoles.Operations);
     static readonly OrgUnitRow Research = U(OrgIds.Research, OrgIds.Root, OrgUnitKind.Division, CouncilRoles.Research);
 
     /// <summary>
@@ -82,8 +82,8 @@ public partial class OrgRightsConformanceTests
         var deep = U("team-under-ops", OrgIds.Operations, OrgUnitKind.Team, "pos-000000000001");
         foreach (var op in OrgOperation.Structural)
         {
-            Assert.Equal(OrgReserved.DivOperations, OrgRights.ReservedOf(op, Ops, [Root]));
-            Assert.Equal(OrgReserved.DivOperations, OrgRights.ReservedOf(op, deep, [Ops, Root]));
+            Assert.Equal(OrgReserved.DivOperations, OrgRights.ReservedOf(op, OpsDivision, [Root]));
+            Assert.Equal(OrgReserved.DivOperations, OrgRights.ReservedOf(op, deep, [OpsDivision, Root]));
         }
         Assert.Equal(OrgReserved.Chief, OrgRights.ReservedOf(OrgOperation.Appoint, Root, []));
         Assert.Equal(OrgReserved.None, OrgRights.ReservedOf(OrgOperation.Appoint, U("team-x", OrgIds.Research, OrgUnitKind.Team), [Research, Root]));

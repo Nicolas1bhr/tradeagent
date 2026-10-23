@@ -1,0 +1,102 @@
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+
+namespace TradeAgent.Gateway;
+
+/// <summary>
+/// THE STRUCTURAL VERBS ON THE PIPE (<c>U-org-verbs-c</c>, O6 part c; ORCHESTRATION § 2.9): <c>org-charter</c> and <c>org-hire</c>.
+/// Each proves its caller with O5a's ONE helper (<see cref="OrgVerbCaller"/>: the active position its launch grant proved, on a seat
+/// whose RECORDED assurance carries the organisation's verbs — never headship) before anything is read or written, and hands the act
+/// to <see cref="OrgStore"/>, whose writers read the rights matrix, the bounds, the throttle and the earning test. Neither places an
+/// order, activates a position, seats one, or reaches the mode, the kill switch, an approval, live activation, an update or a
+/// credential; neither reaches <c>operations</c> or its division, which the matrix answers a two-seat board act.
+/// </summary>
+public sealed partial class GatewayPipeServer
+{
+    /// <summary>What a structural verb's refusal of an argument it does not take says.</summary>
+    const string StructureArgsWhy = "A unit's or a position's record is the app's: its id, its parent, its head, its home, its status and its "
+                                    + "seat are written by TradeAgent from the chart and by nothing a frame carries. Nothing was written.";
+
+    /// <summary>
+    /// CHARTERS A UNIT UNDER THE CALLER'S OWN (<see cref="OrgStore.Charter"/>): the kind, the AI share, the rationale and options,
+    /// the cited work, the forecasts and — for a bounded experiment — the collapse date. The share is sized against the parent's
+    /// envelope as the host that meters launches resolves it, and one turn of the caller's own recorded seat; a host that meters
+    /// nothing refuses it.
+    /// </summary>
+    object OrgCharter(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var share = req.Dec("ai_share")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'ai_share' is required: the fraction of your unit's AI envelope the new unit is given, above 0 and at most 1. Nothing was written.");
+        var collapse = req.Str("collapse_by") is { } raw ? When(raw, "collapse_by") : (DateTimeOffset?)null;
+        var made = Gateway.Org.Charter(new CharterRequest(caller, ctx.AttemptId, Require(req, "kind"), share, Require(req, "rationale"),
+            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts"), collapse), FundingOf(caller, ctx.AttemptId), DateTimeOffset.UtcNow);
+        return new
+        {
+            unit = made.Unit.Id,
+            kind = made.Unit.Kind,
+            parent = made.Unit.ParentId,
+            head = "vacant",
+            status = made.Unit.Status,
+            ai_share = made.Unit.EnvelopeShare,
+            decision = DecisionReply(made.Decision),
+            note = "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
+                   + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
+                   + "own ledger entry, marked claim — and its unit-admissible forecast resolves at its date from the referee's verdicts "
+                   + "on versions the unit's launches funded. It counts toward the organisation's two structural changes a week."
+        };
+    }
+
+    /// <summary>
+    /// HIRES A POSITION INTO A UNIT WHOSE PARENT THE CALLER HEADS, or appoints one to its VACANT head (<see cref="OrgStore.Hire"/>).
+    /// The position is DORMANT: it runs nothing until it is activated, and activation is no organisation verb's.
+    /// </summary>
+    object OrgHire(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var hired = Gateway.Org.Hire(new HireRequest(caller, ctx.AttemptId, Require(req, "unit"), NamedFlag(req, "head", whenAbsent: false),
+            Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+        return new
+        {
+            position = hired.Position.Id,
+            unit = hired.Position.UnitId,
+            status = hired.Position.Status,
+            home = hired.Position.HomeDir,
+            seat = "none",
+            decision = DecisionReply(hired.Decision),
+            note = "Hired DORMANT: the position's id and home are TradeAgent's, it has no seat, and it runs nothing — no wake reaches "
+                   + "it and no launch starts for it until it is seated and activated, neither of which is an organisation verb's. "
+                   + "The hire is your 'hire' decision, the rationale your own ledger entry, marked claim."
+        };
+    }
+
+    /// <summary>
+    /// WHAT A CHARTER'S SHARE IS SIZED AGAINST, as the host that meters launches reads it (<see cref="TradingGateway.AiEnvelopes"/>):
+    /// for each ceiling, the nearest envelope at or above the caller's unit — the parent-to-be — and what one turn of the caller's own
+    /// recorded launch reserves. Null when nothing meters, the reading fails, or it holds no reading of that unit: refused, never guessed.
+    /// </summary>
+    CharterFunding? FundingOf(string caller, string? attemptId)
+    {
+        IReadOnlyList<UnitDay>? days;
+        try { days = Gateway.AiEnvelopes?.Invoke(caller); }
+        catch (Exception) { days = null; }
+        var unit = Gateway.Org.UnitOf(caller);
+        if (days is null || unit is null || !days.Any(d => d.UnitId == unit.Id)) return null;
+        if ((attemptId is { } id ? Gateway.Attempt(id) : null) is not { } attempt) return null;
+
+        var parent = new List<CeilingEnvelope>();
+        foreach (var ceiling in days.Select(d => d.Ceiling).Distinct(StringComparer.Ordinal))
+        {
+            // THE CHAIN IS NEAREST FIRST (the caller's unit, then each above it): the first envelope in this ceiling binds.
+            var chain = days.Where(d => d.Ceiling == ceiling).ToList();
+            var start = chain.FindIndex(d => d.UnitId == unit.Id);
+            if (start < 0) return null;
+            if (chain.Skip(start).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } envelope) return null;
+            parent.Add(new CeilingEnvelope(ceiling, envelope));
+        }
+        return parent.Count == 0 ? null : new CharterFunding(caller, attempt.ReservedCost, parent);
+    }
+}
