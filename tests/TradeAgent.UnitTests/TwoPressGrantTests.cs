@@ -324,7 +324,8 @@ public class TwoPressGrantTests
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "DashboardView.cs"));
 
         Assert.Contains("_stopButton = BuildKillSwitch(", text);
-        Assert.Contains("BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,", text);
+        // U-board-a2: the limits are the security board's policy, so the Save limits press left the page with its boxes.
+        Assert.DoesNotContain("BuildSaveLimits(() =>", text);
 
         // The one-press versions of all three, so a revert cannot pass by adding rather than editing.
         Assert.DoesNotContain("Ui.Secondary(Ui.ModeLabel(", text);

@@ -29,14 +29,11 @@ public class SafetyLookWordsTests
     {
         Assert.Contains("at most", Labels.ReviewEvery, StringComparison.Ordinal);
 
-        // The page's words as one string: its literals are split across lines with `" + "`, and the joins are not
-        // part of what the owner reads.
+        // The page's paragraph left with its box (U-board-a2: the review interval is the security board's policy); what is left of
+        // the page must not say the old words either.
         var page = Regex.Replace(
             File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "DashboardView.cs")), "\"\\s*\\+\\s*\"", "");
         Assert.DoesNotContain("This is how often it is woken to", page, StringComparison.Ordinal);
-        Assert.Contains("the fastest it is woken to look around", page, StringComparison.Ordinal);
-        Assert.Contains("slows while nothing happens", page, StringComparison.Ordinal);
-        Assert.Contains("only while it has open work it owns", page, StringComparison.Ordinal);
 
         // AND THE GUIDE AND THE CONTRACT SAY THE SAME.
         var guide = File.ReadAllText(Path.Combine(Repo(), "docs", "USER-GUIDE.md"));

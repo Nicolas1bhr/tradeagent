@@ -208,15 +208,16 @@ public class NumberEntryCultureTests
 
     /// <summary>
     /// (item 3) EVERY NUMBER BOX ON THE SAFETY PAGE IS THE ONE FIELD: the built tree holds no stock number control at all, and the
-    /// twenty-six money and limit boxes — nine limits, the two ceilings, the allowance, the review interval, three lanes, two prices,
-    /// the research share, two allocation and three envelope figures, and perception's budget — are each an <see cref="AmountField"/>.
+    /// four money boxes the owner still sets there — the real-money cap, two prices and perception's budget — are each an
+    /// <see cref="AmountField"/>. (U-board-a2: the limits, the plan ceiling, the allowance, the review interval, the lanes, the research
+    /// share, the allocation and the envelope's figures are the security board's policy now, and their boxes went with their writers.)
     /// </summary>
     [Fact]
     public Task Every_number_box_on_the_safety_page_is_an_amount_field() => OnThePage((page, _) =>
     {
         var all = page.Root.GetLogicalDescendants().ToList();
         Assert.Empty(all.OfType<NumericUpDown>());
-        Assert.Equal(26, all.OfType<AmountField>().Count());
+        Assert.Equal(4, all.OfType<AmountField>().Count());
 
         // AND THE OVERSIGHT PAGE'S CAP (fix pass 2): the one money box there, built the way the window builds the page.
         using var store = new OversightStore(Path.Combine(TestEnv.Home, $"oversight-entry-{Guid.NewGuid():n}.db"), DateTimeOffset.UtcNow);
@@ -309,28 +310,6 @@ public class NumberEntryCultureTests
         Assert.Equal("2", typedFirst.CapBox.Box.Text);
     }
 
-    /// <summary>
-    /// (item 3) THE OWNER'S COMMA READS AS FIVE HUNDREDTHS IN THE ENVELOPE BOX — "The most any one of them may hold at once", the box of
-    /// his defect. RED at 988c9487: "0,05" typed into the stock number box and committed with Enter read as 5.
-    /// </summary>
-    [Fact]
-    public Task The_owners_comma_reads_as_five_hundredths_in_the_envelope_box() => OnThePage((page, _) =>
-    {
-        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
-        var quantity = Field<AmountField>(page, "_envelopeQuantity");
-        quantity.Box.Text = "0,05";
-
-        Assert.Equal("0,05", quantity.Box.Text);
-        Assert.Equal(0.05m, quantity.Value);
-        Assert.Equal(Labels.AmountReads("0.05"), quantity.Reading.Text);
-
-        var grant = Field<Button>(page, "_grantEnvelope");
-        Press(grant);
-        Assert.True(Ui.IsArmed(grant));
-        Assert.Contains("in ES, up to 0.05 at a time", (string)grant.Content!, StringComparison.Ordinal);
-        return Task.CompletedTask;
-    });
-
     /// <summary>The page's button that says <paramref name="label"/> at rest, found in the built tree the owner sees.</summary>
     static Button PressLabelled(SafetyPage page, string label) =>
         page.Root.GetLogicalDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
@@ -343,32 +322,6 @@ public class NumberEntryCultureTests
     [Fact]
     public Task An_unreadable_box_refuses_the_press_never_saves_a_fallback() => OnThePage((page, host) =>
     {
-        // THE ENVELOPE, DAYS EMPTY: no arming, no grant, on either press — the note names the box and the form.
-        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
-        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "1";
-        Field<AmountField>(page, "_envelopeDays").Box.Text = "";
-        var grant = Field<Button>(page, "_grantEnvelope");
-        var envelopeNote = Field<TextBlock>(page, "_envelopeNote");
-        foreach (var _ in new[] { 1, 2 })
-        {
-            Press(grant);
-            Assert.False(Ui.IsArmed(grant));
-            Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, Labels.AmountEmpty), envelopeNote.Text);
-            Assert.True(envelopeNote.IsVisible);
-            Assert.Equal(Theme.Caution, envelopeNote.Foreground);
-        }
-        Assert.Null(host.Gateway.Envelopes.Standing(host.Gateway.Connector.Id, host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow));
-
-        // ARMED FOR A READ FIGURE, THEN EDITED INTO A REFUSAL: the edit disarms, and the next press refuses rather than granting.
-        Field<AmountField>(page, "_envelopeDays").Box.Text = "30";
-        Press(grant);
-        Assert.True(Ui.IsArmed(grant));
-        Field<AmountField>(page, "_envelopeDays").Box.Text = "30,5";
-        Assert.False(Ui.IsArmed(grant));
-        Press(grant);
-        Assert.False(Ui.IsArmed(grant));
-        Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, Labels.AmountNotWhole("30,5")), envelopeNote.Text);
-
         // THE DAILY CAP, "1,000" — a thousand or one: nothing saved, the note names the form. And an armed raise edited into a
         // refusal is disarmed, so its second press saves nothing either.
         var capWas = host.Gateway.Settings.AiDailyCostCap;
@@ -391,16 +344,6 @@ public class NumberEntryCultureTests
         Assert.Equal(capWas, host.Gateway.Settings.AiDailyCostCap);
         Assert.Equal(Labels.PressRefused(Labels.DailyCostCap, Labels.AmountEmpty), capNote.Text);
 
-        // A LIMIT THAT COUNTS WHOLE THINGS, given the owner's comma: refused as "a whole number", the limits in force unchanged.
-        var positionsWas = host.Gateway.Settings.Risk.MaxOpenPositions;
-        Field<AmountField>(page, "_maxPositions").Box.Text = "0,05";
-        var saveLimits = PressLabelled(page, Labels.SaveLimits);
-        Press(saveLimits);
-        Press(saveLimits);
-        Assert.Equal(positionsWas, host.Gateway.Settings.Risk.MaxOpenPositions);
-        Assert.Contains("a whole number", Field<TextBlock>(page, "_limitsNote").Text, StringComparison.Ordinal);
-        Assert.StartsWith(Labels.PressRefused(Labels.MaxOpenPositions, ""), Field<TextBlock>(page, "_limitsNote").Text, StringComparison.Ordinal);
-
         // AND A BOX THAT READS AGAIN SAVES, back in the note's resting colour.
         cap.Box.Text = "0,5";
         Press(saveCap);
@@ -417,15 +360,6 @@ public class NumberEntryCultureTests
     [Fact]
     public Task The_armed_grant_names_the_exact_figure_typed() => OnThePage((page, host) =>
     {
-        // THE OWNER'S COMMA IN THE ENVELOPE, AND A VALUE CEILING PAST FOUR PLACES.
-        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
-        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "0,05";
-        Field<AmountField>(page, "_envelopeNotional").Box.Text = "0,00005";
-        var grant = Field<Button>(page, "_grantEnvelope");
-        Press(grant);
-        Assert.True(Ui.IsArmed(grant));
-        Assert.Contains("up to 0.05 at a time, worth at most 0.00005", (string)grant.Content!, StringComparison.Ordinal);
-
         // THE DAILY CAP RAISED TO 0.00005: the sentence names 0.00005, not 0.0001, and the second press writes exactly that.
         host.Gateway.Update(s => s.AiDailyCostCap = 0m);
         var cap = Field<AmountField>(page, "_dailyCap");
@@ -466,32 +400,6 @@ public class NumberEntryCultureTests
     [Fact]
     public Task An_edit_under_an_armed_press_disarms_it_and_the_sentence_names_the_figure() => OnThePage((page, host) =>
     {
-        // SAVE LIMITS: armed for 2, edited to 2000 — disarmed, nothing saved; armed again, the sentence names 2000.
-        host.Gateway.Update(s => s.Risk.MaxOrderQuantity = 1m);
-        var quantity = Field<AmountField>(page, "_maxQty");
-        var saveLimits = PressLabelled(page, Labels.SaveLimits);
-        var limitsNote = Field<TextBlock>(page, "_limitsNote");
-        quantity.Box.Text = "2";
-        Press(saveLimits);
-        Assert.True(Ui.IsArmed(saveLimits));
-        quantity.Box.Text = "2000";
-        Assert.False(Ui.IsArmed(saveLimits));
-        Press(saveLimits);
-        Assert.Equal(1m, host.Gateway.Settings.Risk.MaxOrderQuantity);
-        Assert.True(Ui.IsArmed(saveLimits));
-        Assert.Contains($"“{Labels.MaxOrderQuantity}” to 2000", (string)saveLimits.Content!, StringComparison.Ordinal);
-        Press(saveLimits);
-        Assert.Equal(2000m, host.Gateway.Settings.Risk.MaxOrderQuantity);
-        Assert.Contains($"“{Labels.MaxOrderQuantity}” is now 2000", limitsNote.Text, StringComparison.Ordinal);
-
-        // THE ALLOWLIST UNDER THE SAME PRESS: an armed widening is disarmed by an edit of the list too.
-        quantity.Box.Text = "3000";
-        Press(saveLimits);
-        Assert.True(Ui.IsArmed(saveLimits));
-        Field<TextBox>(page, "_allowlist").Text = "ES, NQ";
-        Assert.False(Ui.IsArmed(saveLimits));
-        Assert.Equal(2000m, host.Gateway.Settings.Risk.MaxOrderQuantity);
-
         // THE AI'S PRICE: a lower price armed for one figure is disarmed by the next one typed.
         host.Gateway.Update(s =>
         {
@@ -509,19 +417,6 @@ public class NumberEntryCultureTests
         Press(savePrice);
         Assert.Equal(10m, host.Gateway.Settings.AiPriceInputPerMillion);
         Assert.Contains("0.0001", (string)savePrice.Content!, StringComparison.Ordinal);
-
-        // THE REVIEW INTERVAL: a shorter interval armed for one figure is disarmed by the next one typed.
-        host.Gateway.Update(s => s.MissionReviewMinutes = 30);
-        var review = Field<AmountField>(page, "_reviewEvery");
-        var saveReview = PressLabelled(page, Labels.SaveReviewEvery);
-        review.Box.Text = "20";
-        Press(saveReview);
-        Assert.True(Ui.IsArmed(saveReview));
-        review.Box.Text = "1";
-        Assert.False(Ui.IsArmed(saveReview));
-        Press(saveReview);
-        Assert.Equal(30, host.Gateway.Settings.MissionReviewMinutes);
-        Assert.Equal(Labels.LowerReviewEveryArmed(1), saveReview.Content);
         return Task.CompletedTask;
     });
 
@@ -531,15 +426,11 @@ public class NumberEntryCultureTests
     /// ArgumentOutOfRangeException out of the box's own text change (a date three million days from now does not exist).
     /// </summary>
     [Fact]
-    public Task No_typed_figure_throws_and_a_figure_past_a_boxs_stated_most_is_refused() => OnThePage((page, _) =>
+    public void No_typed_figure_throws_and_a_figure_past_a_boxs_stated_most_is_refused()
     {
-        Field<TextBox>(page, "_envelopeSymbol").Text = "ES";
-        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "1";
-        var days = Field<AmountField>(page, "_envelopeDays");
-        var grant = Field<Button>(page, "_grantEnvelope");
-        var envelopeNote = Field<TextBlock>(page, "_envelopeNote");
-        Press(grant);
-        Assert.True(Ui.IsArmed(grant));
+        // U-board-a2: the envelope's days box left the Safety page with the envelope's grant (the founding policy's now), so the box is
+        // built here the way that page built it, and the refusal is the box's own.
+        var days = Ui.AmountField(30m, AmountKind.Whole, 0m, Amount.MostDays);
 
         Assert.Null(Record.Exception(() => days.Box.Text = "3000000"));
         Assert.Equal("3000000", days.Box.Text);
@@ -547,25 +438,18 @@ public class NumberEntryCultureTests
         Assert.Equal(Labels.AmountAbove("3000000", Amount.Exact(Amount.MostDays)), days.Refusal);
         Assert.Equal(days.Refusal, days.Reading.Text);
         Assert.Equal(Theme.Caution, days.Reading.Foreground);
-        Assert.False(Ui.IsArmed(grant));
-        Assert.Null(Record.Exception(() => Press(grant)));
-        Assert.False(Ui.IsArmed(grant));
-        Assert.Equal(Labels.PressRefused(Labels.EnvelopeUntil, days.Refusal!), envelopeNote.Text);
 
-        // THE MOST IT TAKES STILL READS, AND ARMS A GRANT ENDING ON A DAY THAT EXISTS.
+        // THE MOST IT TAKES STILL READS.
         Assert.Null(Record.Exception(() => days.Box.Text = Amount.Exact(Amount.MostDays)));
         Assert.Equal(Amount.MostDays, days.Value);
-        Press(grant);
-        Assert.True(Ui.IsArmed(grant));
 
-        // EVERY DURATION ON THE PAGE, PAST ITS MOST: refused in words, never thrown — and its most is a span every clock can add.
+        // EVERY DURATION'S BOX, PAST ITS MOST: refused in words, never thrown — and its most is a span every clock can add.
         foreach (var (name, most) in new[]
                  {
-                     ("_lossStrikeWindow", Amount.MostDays), ("_lossMinClosure", Amount.MostHours),
-                     ("_valuationExit", Amount.MostMinutes), ("_reviewEvery", Amount.MostMinutes)
+                     ("days", Amount.MostDays), ("hours", Amount.MostHours), ("minutes", Amount.MostMinutes)
                  })
         {
-            var box = Field<AmountField>(page, name);
+            var box = Ui.AmountField(1m, AmountKind.Decimal, 0m, most);
             Assert.Null(Record.Exception(() => box.Box.Text = "999999999"));
             Assert.Equal($"{name}: {Labels.AmountAbove("999999999", Amount.Exact(most))}", $"{name}: {box.Refusal}");
             box.Box.Text = Amount.Exact(most);
@@ -577,8 +461,7 @@ public class NumberEntryCultureTests
         Assert.Null(Record.Exception(() => now + TradeAgent.Gateway.ValuationLoss.BoundOf(Amount.MostMinutes)));
         // The review interval is looked at up to eight times slower while nothing happens (MissionLoop.NextLook).
         Assert.Null(Record.Exception(() => now + TimeSpan.FromTicks(TimeSpan.FromMinutes((double)Amount.MostMinutes).Ticks * 8)));
-        return Task.CompletedTask;
-    });
+    }
 
     /// <summary>
     /// (fix pass 1) THE PAPER FEE AND SLIPPAGE SHOW THEIR READING BEFORE THEIR SAVE, as every money and limit box does: "reads as …" or the
@@ -703,8 +586,8 @@ public class NumberEntryCultureTests
     public Task A_scroll_over_a_money_box_never_changes_its_value_and_scrolls_the_page() => OnThePage((page, _) =>
     {
         var fields = page.Root.GetLogicalDescendants().OfType<AmountField>().ToList();
-        Assert.Equal(26, fields.Count);
-        Field<AmountField>(page, "_envelopeQuantity").Box.Text = "0,05";
+        Assert.Equal(4, fields.Count);
+        Field<AmountField>(page, "_dailyCap").Box.Text = "0,05";
 
         foreach (var field in fields)
         {
@@ -722,7 +605,7 @@ public class NumberEntryCultureTests
             Assert.Equal(before, (field.Box.Text, field.Value));
             Assert.False(focused.Handled);
         }
-        Assert.Equal(0.05m, Field<AmountField>(page, "_envelopeQuantity").Value);
+        Assert.Equal(0.05m, Field<AmountField>(page, "_dailyCap").Value);
         return Task.CompletedTask;
     });
 }

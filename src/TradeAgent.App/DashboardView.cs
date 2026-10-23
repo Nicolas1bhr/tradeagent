@@ -1039,22 +1039,7 @@ sealed class SafetyPage
     readonly AppHost _host;
 
     readonly Button _stopButton;
-    readonly AmountField _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
-    readonly AmountField _maxLossPerTrade, _maxDailyLoss;
 
-    /// <summary>
-    /// THE TWO DURATIONS, in the same card as the budgets they are about. They are the only boxes on
-    /// this page where a SMALLER number is the grant, which is why they carry their own hint and why
-    /// <c>RiskPolicy.Widenings</c> compares them the other way round.
-    /// </summary>
-    readonly AmountField _lossMinClosure, _lossStrikeWindow, _valuationExit;
-
-    /// <summary>
-    /// The two loss hints, kept because they name the ACCOUNT'S currency and the account has not
-    /// answered when this page is built. <see cref="Update"/> writes it in when it has.
-    /// </summary>
-    readonly TextBlock _tradeLossHint = Ui.Micro(Labels.LossBudgetHint());
-    readonly TextBlock _dailyLossHint = Ui.Micro(Labels.LossBudgetHint());
 
     /// <summary>
     /// WHETHER EITHER BUDGET HAS ALREADY FIRED TODAY, said beside the boxes that set them.
@@ -1094,21 +1079,9 @@ sealed class SafetyPage
     readonly AmountField _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
 
-    /// <summary>
-    /// THE SECOND CEILING (<c>U-billing-classes</c>): the owner's ChatGPT plan's capacity, a list-price equivalent and never money — its
-    /// box, its note, today's figure for each ceiling and every seat's class in words, all updated in place.
-    /// </summary>
-    readonly AmountField _planCap;
-    readonly TextBlock _planCapNote = Ui.Micro("");
     readonly TextBlock _moneyToday = Ui.Body("");
     readonly TextBlock _planToday = Ui.Body("");
     readonly TextBlock _seatClasses = Ui.Micro("");
-    readonly AmountField _allowanceIn, _allowanceOut;
-    readonly TextBlock _allowanceNote = Ui.Micro("");
-    readonly AmountField _reviewEvery;
-    readonly TextBlock _reviewNote = Ui.Micro("");
-    readonly AmountField _lanes, _lanesPerPool, _lanesPerCellClass;
-    readonly TextBlock _lanesNote = Ui.Micro("");
     readonly AmountField _priceIn, _priceOut;
     readonly TextBlock _priceNote = Ui.Micro("");
     readonly Panel _modelRow;
@@ -1122,10 +1095,9 @@ sealed class SafetyPage
     /// </summary>
     string? _modelRowRuntime;
 
-    /// <summary>The Research Director's three settings: what it runs on, which model, and its share.</summary>
+    /// <summary>The Research Director's two settings: what it runs on and which model.</summary>
     readonly Panel _researchRuntimeRow;
     readonly Panel _researchModelRow;
-    readonly AmountField _researchShare;
     readonly TextBlock _councilNote = Ui.Micro("");
 
     /// <summary>
@@ -1174,25 +1146,8 @@ sealed class SafetyPage
     /// </summary>
     string? _harnessKeyNotTaken;
 
-    readonly TextBox _allowlist;
-    readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
 
-    /// <summary>
-    /// THE CAPITAL ALLOCATION CARD. A text box for the version, two ceilings, and one two-press button.
-    ///
-    /// <c>_allocationValue</c> is live rather than rebuilt, like every other reading on these pages:
-    /// the dashboard tree is built once and updated in place, and a rebuild on the five-second tick
-    /// would wipe a half-pressed confirmation.
-    /// </summary>
-    readonly TextBox _allocationVersion = Ui.With(Ui.TextField(placeholder: "a promoted version id"),
-        t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
-
-    readonly AmountField _allocationQuantity = Ui.AmountField(0m, AmountKind.Decimal);
-    readonly AmountField _allocationNotional = Ui.AmountField(0m, AmountKind.Decimal);
-    readonly TextBlock _allocationValue = Ui.Body("");
-    readonly TextBlock _allocationNote = Ui.Micro("");
-    readonly Button _allocate;
 
     /// <summary>
     /// THE PAPER-ENVELOPE CARD, BESIDE THE CAPITAL CARD BECAUSE IT IS THE OTHER HALF OF THE SAME
@@ -1200,16 +1155,9 @@ sealed class SafetyPage
     ///
     /// <c>_envelopeValue</c> is live rather than rebuilt, like every other reading on these pages.
     /// </summary>
-    readonly TextBox _envelopeSymbol = Ui.With(Ui.TextField(placeholder: "an instrument, e.g. ES"),
-        t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
-
-    readonly AmountField _envelopeQuantity = Ui.AmountField(0m, AmountKind.Decimal);
-    readonly AmountField _envelopeNotional = Ui.AmountField(0m, AmountKind.Decimal);
-    readonly AmountField _envelopeDays = Ui.AmountField(30m, AmountKind.Whole, 0m, Amount.MostDays);
     readonly TextBlock _envelopeValue = Ui.Body("");
     readonly TextBlock _envelopeNote = Ui.Micro("");
     readonly TextBlock _deploymentValue = Ui.Body("");
-    readonly Button _grantEnvelope;
     readonly Button _withdrawEnvelope;
     readonly Button _stopDeployment;
 
@@ -1736,6 +1684,9 @@ sealed class SafetyPage
             // them, and refuses the next press until they are resolved on the Dashboard. Holding a
             // nonce here so the button could "retry" is what this replaces — it made a definite
             // failure unpressable-past, and it survived a restart into a position that was not flat.
+            // THE DAY'S LOSS CLOSURE AND WHAT WAS DONE ABOUT IT, here since the limits card left this page (U-board-a2).
+            _lossClosedNote,
+            _lossFlattenNote,
             Ui.With(Ui.Confirm("Cancel all working orders", "Confirm: cancel all working orders",
                     () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), "Cancel all working orders")),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch),
@@ -1744,33 +1695,8 @@ sealed class SafetyPage
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
         emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
-        var r = _host.Gateway.Settings.Risk;
-        _maxQty = Ui.AmountField(r.MaxOrderQuantity, AmountKind.Decimal);
-        _maxNotional = Ui.AmountField(r.MaxNotionalPerOrder, AmountKind.Decimal);
-        _maxPositions = Ui.AmountField(r.MaxOpenPositions, AmountKind.Whole);
-        _maxPerMinute = Ui.AmountField(r.MaxOrdersPerMinute, AmountKind.Whole);
-        _maxLossPerTrade = Ui.AmountField(r.MaxLossPerTrade, AmountKind.Decimal);
-        _maxDailyLoss = Ui.AmountField(r.MaxDailyLoss, AmountKind.Decimal);
-        _lossMinClosure = Ui.AmountField(r.LossMinClosureHours, AmountKind.Decimal, 0m, Amount.MostHours);
-        _lossStrikeWindow = Ui.AmountField(r.LossStrikeWindowDays, AmountKind.Whole, 0m, Amount.MostDays);
-        _valuationExit = Ui.AmountField(r.ValuationLossExitMinutes, AmountKind.Decimal, 0m, Amount.MostMinutes);
-        // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
-        // rather than everything is. It said "any".
-        _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
-        _planCap = Ui.AmountField(_host.Gateway.Settings.AiPlanDailyCapacity, AmountKind.Decimal);
-        // THE OTHER HALF OF THE CEILING'S ARITHMETIC. The limit above is only a limit because a
-        // number is set aside before each turn, and this is that number in tokens. The boxes open on
-        // what is in force, so an owner correcting it can see what they are correcting.
-        var allowance = TurnAllowance.From(_host.Gateway.Settings.AiTurnAllowanceInputTokens,
-            _host.Gateway.Settings.AiTurnAllowanceOutputTokens);
-        _allowanceIn = Ui.AmountField(allowance.InputTokens, AmountKind.Whole);
-        _allowanceOut = Ui.AmountField(allowance.OutputTokens, AmountKind.Whole);
-        _reviewEvery = Ui.AmountField(_host.Gateway.Settings.MissionReviewMinutes, AmountKind.Whole, 0m, Amount.MostMinutes);
-        _lanes = LaneField(_host.Gateway.Settings.AiLanes);
-        _lanesPerPool = LaneField(_host.Gateway.Settings.AiLanesPerPool);
-        _lanesPerCellClass = LaneField(_host.Gateway.Settings.AiLanesPerCellClass);
 
         // THE BOXES OPEN ON WHAT THE AI IS ACTUALLY BEING CHARGED, not on empty. An owner correcting
         // a rate has to be able to see the one in force to know whether it needs correcting, and the
@@ -1791,8 +1717,6 @@ sealed class SafetyPage
             () => HarnessKeyDestination(_host.Harness?.Manifest), AfterHarnessKeyPress);
         _researchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency,
             m => ChooseRoleModel(CouncilRoles.Research, m));
-        _researchShare = Ui.AmountField(
-            Math.Round(_host.Gateway.Settings.ShareForRole(CouncilRoles.Research) * 100m), AmountKind.Whole, 0m, 100m);
 
         // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
         // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
@@ -1817,71 +1741,10 @@ sealed class SafetyPage
             // THE PLAN'S CAPACITY (U-billing-classes): a list-price equivalent, never money — its own box and its own two presses.
             Ui.Label("Your ChatGPT plan's capacity (counted at list price, not money)"),
             _planToday,
-            Ui.FieldRow(Labels.PlanDailyCapacity, _planCap,
-                "0 stops every turn on your plan. Raising this lets the AI use more of your plan, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            BuildSavePlanCapacity(_planCap, () => _host.Gateway.Settings.AiPlanDailyCapacity,
-                () => _host.SpendToday.Currency, SavePlanCapacity, why => Ui.Refuse(_planCapNote, why)),
-            _planCapNote,
             Ui.Micro(Labels.PlanVendorLimit),
             Ui.Micro(Labels.PlanSharedWithYou),
             Ui.Spacer(Theme.S2),
             _seatClasses,
-            Ui.Divider(),
-            // BESIDE THE CEILING, because the two are one arithmetic: what is set aside before each
-            // turn is what decides how many turns fit inside the limit above. It takes no permission
-            // and gives none — the ceiling is unchanged either way — so it saves in one press, and
-            // the hint says which direction each box moves.
-            Ui.Muted("Before every turn TradeAgent sets aside the most that turn could cost, and the "
-                + "turn runs only if it still fits under the limit above. This is how much a turn is "
-                + "allowed to use."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.TurnAllowanceIn, _allowanceIn),
-            Ui.FieldRow(Labels.TurnAllowanceOut, _allowanceOut, Labels.TurnAllowanceHint),
-            Ui.Spacer(Theme.S2),
-            BuildSaveTurnAllowance(SaveTurnAllowance),
-            _allowanceNote,
-            Ui.Divider(),
-            // BESIDE THE CEILING, because this is the other half of what the AI costs: the limit
-            // above is what it may spend, and this is how often it spends anything at all when
-            // nothing has happened. A turn happens because something happened that a role owns — the
-            // owner typed, material arrived, its own order filled or settled, a report or a verdict
-            // arrived — and this is the look for the days when none of that does: the FASTEST one
-            // (U-quiet-review slows it while nothing happens) and only for a role that has open work
-            // it owns (U-reconcile-wakes). The page says that, not "this often".
-            Ui.Muted("The AI takes a turn when something happens. This is the fastest it is woken to "
-                + "look around anyway — research, backtests, the journal. The look slows while nothing "
-                + "happens, up to eight times this interval, and each role is looked at only while it has "
-                + "open work it owns: your messages and its orders and positions for the Operations "
-                + "Director, the research for the Research Director. Every wake is a turn it is charged "
-                + "for, so a shorter interval costs more."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.ReviewEvery, _reviewEvery,
-                "0 means it is woken only when something actually happens. Waking it more often spends "
-                + "more of your money, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            DisarmedByEdits(BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
-                SaveReviewEvery, () => Ui.Refusal((Labels.ReviewEvery, _reviewEvery)), why => Ui.Refuse(_reviewNote, why)), [_reviewEvery]),
-            _reviewNote,
-            Ui.Divider(),
-            // THE LANES (U-org-lanes), BESIDE THE CEILING: how many positions may work at once is how fast the limit above
-            // is spent. Policy the owner sets here and nowhere else — and the page says plainly what raising it can and
-            // cannot do today, because the code allows one unconfined turn at a time whatever these say.
-            Ui.Muted("How many of the AI's positions may work at the same moment, how many of them on one AI account, and "
-                + "how many in one kind of sealed workspace. Your own chat is never counted and never waits for these. "
-                + "Today every position runs without a sealed workspace, and TradeAgent lets only one such position work "
-                + "at a time whatever these say — so until a proven sealed workspace exists on this computer, raising "
-                + "them lets nothing extra run."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.Lanes, _lanes),
-            Ui.FieldRow(Labels.LanesPerPool, _lanesPerPool),
-            Ui.FieldRow(Labels.LanesPerCellClass, _lanesPerCellClass,
-                "Raising any of these lets the AI spend faster, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            BuildSaveLanes([_lanes, _lanesPerPool, _lanesPerCellClass], CurrentLanes, PendingLanes, SaveLanes,
-                () => Ui.Refusal((Labels.Lanes, _lanes), (Labels.LanesPerPool, _lanesPerPool), (Labels.LanesPerCellClass, _lanesPerCellClass)),
-                why => Ui.Refuse(_lanesNote, why)),
-            _lanesNote,
             Ui.Divider(),
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
             // worth what the rate below says a turn costs. The owner never edits a file to set it —
@@ -1925,11 +1788,6 @@ sealed class SafetyPage
             _harnessKeyNote,
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.ResearchModel, _researchModelRow),
-            Ui.FieldRow(Labels.ResearchShare, _researchShare,
-                "A split of the limit above, not an addition to it. A cheaper model here buys the "
-                + "research more turns for the same money."),
-            Ui.Spacer(Theme.S2),
-            BuildSaveResearchShare(SaveResearchShare),
             _councilNote,
             Ui.Divider(),
             Ui.Muted("TradeAgent works out what each turn cost from the tokens your AI tool reports. "
@@ -1943,75 +1801,7 @@ sealed class SafetyPage
                 [_priceIn, _priceOut]),
             _priceNote));
 
-        var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
-            Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point. "
-                + "Lowering one saves in a press; raising one is a grant, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.MaxOrderQuantity, _maxQty),
-            Ui.FieldRow(Labels.MaxNotionalPerOrder, _maxNotional,
-                "0 means not enforced. For futures this is the right default — one contract is worth far more on paper than it costs to trade."),
-            Ui.FieldRow(Labels.MaxOpenPositions, _maxPositions),
-            Ui.FieldRow(Labels.MaxOrdersPerMinute, _maxPerMinute),
-            // THE TWO THAT ARE ABOUT WHAT IS LOST RATHER THAN WHAT IS SENT. Every limit above them
-            // bounds one order and none of them bounds a day: an agent may lose the account one
-            // permitted order at a time and break nothing above this line.
-            Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint),
-            Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint),
-            // THE TWO THAT ARE ABOUT WHAT HAPPENS AFTER a budget is reached rather than about the
-            // budget itself. Under the budgets because they are meaningless without them, and with
-            // their own hint because they are the one pair on this page where the smaller number is
-            // the one that hands the AI more room.
-            Ui.FieldRow(Labels.LossMinClosure, _lossMinClosure),
-            Ui.FieldRow(Labels.LossStrikeWindow, _lossStrikeWindow, Labels.LossClosureHint),
-            Ui.FieldRow(Labels.ValuationLossExit, _valuationExit, Labels.ValuationLossExitHint),
-            _lossClosedNote,
-            _lossFlattenNote,
-            Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
-                "Comma separated. " + Labels.NoInstrumentAllowed),
-            Ui.Spacer(Theme.S2),
-            DisarmedByEdits(BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits, LimitsRefusal,
-                    why => Ui.Refuse(_limitsNote, why)),
-                [_maxQty, _maxNotional, _maxPositions, _maxPerMinute, _maxLossPerTrade, _maxDailyLoss, _lossMinClosure,
-                    _lossStrikeWindow, _valuationExit], _allowlist),
-            _limitsNote));
 
-        // THE CAPITAL ALLOCATION. Here rather than beside the holdout on the Settings page because it
-        // is about what the AI may DO with money, which is what this page is: `docs/COUNCIL.md`:14-15
-        // lists the capital gate beside the loss gate, and the card above is where the loss budgets are.
-        //
-        // TWO PRESSES IN BOTH DIRECTIONS, which only the holdout card also is. The usual rule on this
-        // page is that widening asks twice and narrowing asks once, because hesitating on the way down
-        // costs money. This control has no way down: an allocation row cannot be edited or deleted, so
-        // a smaller ceiling is a NEW permanent record and there is no press that takes one back. The
-        // armed sentence names the version and the figures, and says so when it widens.
-        //
-        // A typed value under a half-pressed button disarms it (`RelabelAllocation`), for the reason
-        // the holdout card and the unconfirmed-orders card do the same: a confirmation armed against
-        // one sentence must not be completable against a different one.
-        _allocationNote.IsVisible = false;
-        _allocationVersion.TextChanged += (_, _) => RelabelAllocation();
-        _allocationQuantity.ValueChanged += (_, _) => RelabelAllocation();
-        _allocationNotional.ValueChanged += (_, _) => RelabelAllocation();
-        _allocate = BuildAllocateConfirm(ReadAllocation, StandingAllocation, AccountCurrency, ApplyAllocation,
-            AllocationRefusal, why => Ui.Refuse(_allocationNote, why));
-
-        var allocation = Ui.Section("Capital for a promoted strategy", Ui.Col(Theme.S2,
-            Ui.Muted("Only a version TradeAgent's own referee has promoted can be given capital, and only "
-                + "that version may trade it. The AI cannot allocate anything and has no command to ask."),
-            Ui.Spacer(Theme.S2),
-            Ui.KeyValueLive("Allocated now", _allocationValue),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.AllocationVersion, _allocationVersion,
-                "The version id from the daily report. A version whose promotion no longer stands is refused."),
-            Ui.FieldRow(Labels.AllocationQuantity, _allocationQuantity),
-            Ui.FieldRow(Labels.AllocationNotional, _allocationNotional,
-                "0 means no value limit, exactly as it does above."),
-            Ui.Spacer(Theme.S2),
-            _allocate,
-            _allocationNote,
-            Ui.Micro("Every allocation is kept for good. Lowering one writes a new record from now on "
-                + "rather than changing the old one, so what this version was allowed to hold, and when, "
-                + "stays readable afterwards.")));
 
         // THE PAPER ENVELOPE, BESIDE THE CAPITAL CARD AND SAYING THE OPPOSITE THING.
         //
@@ -2025,12 +1815,6 @@ sealed class SafetyPage
         // TWO PRESSES TO GRANT, ONE PRESS PLUS A CONFIRM TO WITHDRAW, and a typed value under a
         // half-pressed button disarms it, for the reason the allocation card does the same.
         _envelopeNote.IsVisible = false;
-        _envelopeSymbol.TextChanged += (_, _) => RelabelEnvelope();
-        _envelopeQuantity.ValueChanged += (_, _) => RelabelEnvelope();
-        _envelopeNotional.ValueChanged += (_, _) => RelabelEnvelope();
-        _envelopeDays.ValueChanged += (_, _) => RelabelEnvelope();
-        _grantEnvelope = BuildEnvelopeConfirm(ReadEnvelope, AccountCurrency, ApplyEnvelope,
-            EnvelopeRefusal, why => Ui.Refuse(_envelopeNote, why));
         _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
         _stopDeployment = BuildDeploymentStopConfirm(RunningDeploymentId, ApplyDeploymentStop);
 
@@ -2047,14 +1831,6 @@ sealed class SafetyPage
             // TradeAgent's own has no answer yet. Live rather than rebuilt, like every other reading.
             Ui.KeyValueLive("Running now", _deploymentValue),
             Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.EnvelopeSymbol, _envelopeSymbol),
-            Ui.FieldRow(Labels.EnvelopeQuantity, _envelopeQuantity),
-            Ui.FieldRow(Labels.EnvelopeNotional, _envelopeNotional,
-                "0 means no value limit, exactly as it does above."),
-            Ui.FieldRow(Labels.EnvelopeUntil, _envelopeDays,
-                "The grant ends by itself on that day. Nothing here renews."),
-            Ui.Spacer(Theme.S2),
-            _grantEnvelope,
             _withdrawEnvelope,
             _stopDeployment,
             _envelopeNote,
@@ -2122,7 +1898,7 @@ sealed class SafetyPage
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, limits, _releaseCard, allocation, envelope, spending, _perception.Root)));
+            _unreadableCard, _releaseCard, envelope, spending, _perception.Root)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -2144,7 +1920,6 @@ sealed class SafetyPage
 
         // The unit of the two loss budgets, once the platform has said what it is. Read from the
         // gateway rather than from `status`, which carries the limits but not the account's currency.
-        _tradeLossHint.Text = _dailyLossHint.Text = Labels.LossBudgetHint(_host.Gateway.AccountCurrency);
 
         // The closure, off the record and never recomputed from today's figure — see
         // TradingGateway.ClosureToday. Updated in place on the five-second pass like every other row
@@ -2182,7 +1957,6 @@ sealed class SafetyPage
         // The live line only. The three boxes and the button are left exactly as the owner left them:
         // a tick that rewrote a typed version id, or relabelled a half-pressed confirmation, would be
         // this page deciding what they meant.
-        ShowAllocations();
         ShowEnvelopes();
         _perception.Update();
 
@@ -2471,31 +2245,6 @@ sealed class SafetyPage
         return b;
     }
 
-    /// <summary>
-    /// What the box says, as the two fractions it would be saved as. Clamped into 0..100 and written
-    /// to BOTH roles, so the two always sum to the whole day: a chair left on an unrelated default
-    /// while the owner moved the other one is a day that does not add up.
-    /// </summary>
-    void SaveResearchShare()
-    {
-        // THE BOX TAKES 0 TO 100 AND NOTHING ELSE (U-number-entry-culture): outside that, or unreadable, it refuses in words
-        // rather than being clamped or read as the split in force.
-        if (Ui.Refusal((Labels.ResearchShare, _researchShare)) is { } why)
-        {
-            Ui.Refuse(_councilNote, why);
-            return;
-        }
-        var percent = (int)_researchShare.Figure;
-        _host.Gateway.Update(s =>
-        {
-            s.RoleShare[CouncilRoles.Research] = percent / 100m;
-            s.RoleShare[CouncilRoles.Operations] = (100 - percent) / 100m;
-        });
-        var said = Labels.SplitReads(percent, CouncilRoles.Title(CouncilRoles.Operations),
-            CouncilRoles.Title(CouncilRoles.Research));
-        _host.Gateway.Log.Activity(said);
-        Ui.Said(_councilNote, $"Saved. {said}");
-    }
 
     /// <summary>
     /// The user guide and the agent's own AGENTS.md both said these were set in this window; until
@@ -2566,17 +2315,6 @@ sealed class SafetyPage
     /// Writes the ceiling. The activity line is in the owner's words and names the figure, because
     /// this is the one setting whose effect they will meet later as an AI that stopped.
     /// </summary>
-    /// <summary>
-    /// Writes the plan's ceiling (<c>U-billing-classes</c>). The activity line names it as plan capacity at list price, never as money.
-    /// </summary>
-    void SavePlanCapacity()
-    {
-        var cap = _planCap.Figure;
-        _host.Gateway.Update(s => s.AiPlanDailyCapacity = cap);
-        var figure = Amount.ExactMoney(cap, _host.SpendToday.Currency);
-        _host.Gateway.Log.Activity($"The AI may now use up to {figure} a day of your ChatGPT plan, counted at list price");
-        Ui.Said(_planCapNote, $"Saved. The AI may use up to {figure} a day of your ChatGPT plan, counted at list price — not money.");
-    }
 
     void SaveDailyCap()
     {
@@ -2595,147 +2333,7 @@ sealed class SafetyPage
     internal static TurnAllowance PendingAllowance(decimal input, decimal output) =>
         TurnAllowance.From((long)input, (long)output);
 
-    TurnAllowance PendingTurnAllowance() => PendingAllowance(_allowanceIn.Figure, _allowanceOut.Figure);
 
-    /// <summary>
-    /// Writes what one turn may use, and says what that works out to in money at the model in force —
-    /// which is the number the owner actually has to weigh against the ceiling above.
-    /// </summary>
-    void SaveTurnAllowance()
-    {
-        // AN EMPTY OR UNREADABLE BOX REFUSES (U-number-entry-culture): it was read as the allowance in force.
-        if (Ui.Refusal((Labels.TurnAllowanceIn, _allowanceIn), (Labels.TurnAllowanceOut, _allowanceOut)) is { } why)
-        {
-            Ui.Refuse(_allowanceNote, why);
-            return;
-        }
-        var allowance = PendingTurnAllowance();
-        _host.Gateway.Update(s =>
-        {
-            s.AiTurnAllowanceInputTokens = allowance.InputTokens;
-            s.AiTurnAllowanceOutputTokens = allowance.OutputTokens;
-        });
-
-        var spend = _host.SpendToday;
-        var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
-        _host.Gateway.Log.Activity($"One AI turn now sets aside up to {reservation}");
-        Ui.Said(_allowanceNote, Labels.TurnAllowanceReads(
-            allowance.InputTokens, allowance.OutputTokens, reservation));
-    }
-
-    /// <summary>A lane count's box: whole numbers from one to <see cref="LanePolicy.MaxLanes"/>.</summary>
-    static AmountField LaneField(int value) =>
-        Ui.AmountField(LanePolicy.Clamp(value), AmountKind.Whole, 1m, LanePolicy.MaxLanes);
-
-    (int Lanes, int PerPool, int PerCellClass) CurrentLanes()
-    {
-        var s = _host.Gateway.Settings;
-        return (LanePolicy.Clamp(s.AiLanes), LanePolicy.Clamp(s.AiLanesPerPool), LanePolicy.Clamp(s.AiLanesPerCellClass));
-    }
-
-    (int Lanes, int PerPool, int PerCellClass) PendingLanes()
-    {
-        // NO CLAMP AND NO FALLBACK (U-number-entry-culture): each box takes 1 to the most lanes and refuses anything else in words.
-        return ((int)_lanes.Figure, (int)_lanesPerPool.Figure, (int)_lanesPerCellClass.Figure);
-    }
-
-    /// <summary>Writes the three lane numbers, in-process, and says what they now allow.</summary>
-    void SaveLanes()
-    {
-        var p = PendingLanes();
-        _host.Gateway.Update(s =>
-        {
-            s.AiLanes = p.Lanes;
-            s.AiLanesPerPool = p.PerPool;
-            s.AiLanesPerCellClass = p.PerCellClass;
-        });
-        var said = $"Up to {p.Lanes} of the AI's positions may now work at once ({p.PerPool} on one AI account, "
-                   + $"{p.PerCellClass} in one kind of sealed workspace); only one runs without a sealed workspace at a time";
-        _host.Gateway.Log.Activity(said);
-        Ui.Said(_lanesNote, $"Saved. {said}.");
-    }
-
-    int PendingReviewEvery() => (int)_reviewEvery.Figure;
-
-    /// <summary>
-    /// Writes the heartbeat. It takes effect at the next start, because the interval is read once
-    /// when the loop is built — and the note says so rather than letting the owner watch for a
-    /// change that is not coming until then.
-    /// </summary>
-    void SaveReviewEvery()
-    {
-        var minutes = PendingReviewEvery();
-        _host.Gateway.Update(s => s.MissionReviewMinutes = minutes);
-        var said = minutes == 0
-            ? "The AI is now woken only when something happens"
-            : $"The AI is now woken to look around at most every {minutes} minute{(minutes == 1 ? "" : "s")}";
-        _host.Gateway.Log.Activity(said);
-        Ui.Said(_reviewNote, $"Saved. {said}, from the next time TradeAgent starts.");
-    }
-
-    /// <summary>
-    /// The first limit box that reads as nothing, as the press says it — asked before <see cref="PendingLimits"/> on either press,
-    /// so an empty or unreadable box is never saved as 0 or as the limit in force (<c>U-number-entry-culture</c>).
-    /// </summary>
-    string? LimitsRefusal() => Ui.Refusal(
-        (Labels.MaxOrderQuantity, _maxQty), (Labels.MaxNotionalPerOrder, _maxNotional), (Labels.MaxOpenPositions, _maxPositions),
-        (Labels.MaxOrdersPerMinute, _maxPerMinute), (Labels.MaxLossPerTrade, _maxLossPerTrade), (Labels.MaxDailyLoss, _maxDailyLoss),
-        (Labels.LossMinClosure, _lossMinClosure), (Labels.LossStrikeWindow, _lossStrikeWindow), (Labels.ValuationLossExit, _valuationExit));
-
-    RiskPolicy PendingLimits()
-    {
-        return new RiskPolicy
-        {
-            MaxOrderQuantity = _maxQty.Figure,
-            MaxNotionalPerOrder = _maxNotional.Figure,
-            MaxOpenPositions = (int)_maxPositions.Figure,
-            MaxOrdersPerMinute = (int)_maxPerMinute.Figure,
-            MaxLossPerTrade = _maxLossPerTrade.Figure,
-            MaxDailyLoss = _maxDailyLoss.Figure,
-            LossMinClosureHours = _lossMinClosure.Figure,
-            LossStrikeWindowDays = (int)_lossStrikeWindow.Figure,
-            ValuationLossExitMinutes = _valuationExit.Figure,
-            InstrumentAllowlist = (_allowlist.Text ?? "")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-        };
-    }
-
-    void SaveLimits()
-    {
-        var pending = PendingLimits();
-        // WHAT THIS SAVE WRITES, NAMED BACK WITH ITS FIGURES (fix pass 1) — read before the write, which changes the policy in place.
-        var changed = RiskPolicy.Changes(_host.Gateway.Settings.Risk, pending);
-        _host.Gateway.Update(s =>
-        {
-            s.Risk.MaxOrderQuantity = pending.MaxOrderQuantity;
-            s.Risk.MaxNotionalPerOrder = pending.MaxNotionalPerOrder;
-            s.Risk.MaxOpenPositions = pending.MaxOpenPositions;
-            s.Risk.MaxOrdersPerMinute = pending.MaxOrdersPerMinute;
-            s.Risk.MaxLossPerTrade = pending.MaxLossPerTrade;
-            s.Risk.MaxDailyLoss = pending.MaxDailyLoss;
-            s.Risk.LossMinClosureHours = pending.LossMinClosureHours;
-            s.Risk.LossStrikeWindowDays = pending.LossStrikeWindowDays;
-            s.Risk.ValuationLossExitMinutes = pending.ValuationLossExitMinutes;
-            s.Risk.InstrumentAllowlist = pending.InstrumentAllowlist;
-        });
-        _host.Gateway.Log.Activity("You changed the safety limits");
-
-        // AN EMPTY BOX IS A DECISION AND IT IS SAID BACK. Clearing the list used to widen the AI's
-        // authority to every instrument the platform offers, silently; it now removes all of it,
-        // just as silently, unless this sentence says which one happened.
-        var nothingAllowed = _host.Gateway.Settings.Risk.InstrumentAllowlist.Count == 0;
-        var named = changed.Count == 0 ? "" : " " + Labels.LimitsNowAre([.. changed.Select(l => (l, pending.FigureOf(l)))]);
-        _limitsNote.Text = nothingAllowed
-            ? $"Saved.{named} {Labels.NoInstrumentAllowed}"
-            : $"Saved.{named} New orders are checked against these immediately.";
-        _limitsNote.Foreground = nothingAllowed ? Theme.Caution : Theme.Positive;
-
-        // The save above rewrote the row, so the warning stops HERE rather than up to five seconds
-        // later on the refresh tick. Pressing the only button a warning names and watching nothing
-        // change is how an owner concludes the software is broken and stops trying.
-        _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
-    }
 
     // ---- the review hold and its release (U-reopen-2) -------------------------------------------
 
@@ -2787,92 +2385,9 @@ sealed class SafetyPage
         ShowHeldForReview();
     }
 
-    // ---- the capital allocation --------------------------------------------------------------
-
-    /// <summary>What is in the three boxes right now. A blank version is left blank, never guessed at.</summary>
-    (string Version, decimal Quantity, decimal? Notional) ReadAllocation() =>
-        ((_allocationVersion.Text ?? "").Trim(),
-            _allocationQuantity.Figure,
-            _allocationNotional.Figure is var n && n > 0m ? n : null);
-
-    /// <summary>Why the allocation press does nothing right now, or null while both figures read.</summary>
-    string? AllocationRefusal() =>
-        Ui.Refusal((Labels.AllocationQuantity, _allocationQuantity), (Labels.AllocationNotional, _allocationNotional));
-
-    /// <summary>
-    /// What the version in the box is allowed to hold as things stand, or null because nothing is —
-    /// which is what the armed sentence compares the typed figures against. A ledger this build
-    /// cannot read answers null, so the sentence says the proposal widens: the conservative reading,
-    /// and the one that cannot quietly turn a grant into a one-press save.
-    /// </summary>
-    AllocationRow? StandingAllocation()
-    {
-        var version = (_allocationVersion.Text ?? "").Trim();
-        if (version.Length == 0) return null;
-        try { return _host.Gateway.Allocations.StandingForLive(version, DateTimeOffset.UtcNow)?.Allocation; }
-        catch (Exception) { return null; }
-    }
-
     string AccountCurrency() => _host.Gateway.AccountCurrency;
 
-    void ApplyAllocation(string version, decimal quantity, decimal? notional)
-    {
-        var result = _host.Gateway.Allocate(version, quantity, notional, "allocated by the account owner");
-        _allocationNote.Text = result.Why;
-        _allocationNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
-        _allocationNote.IsVisible = true;
-        ShowAllocations();
-    }
-
-    /// <summary>
-    /// Keeps the armed sentence in step with the three boxes, and disarms as it goes. A confirmation
-    /// armed against one version and one ceiling must not be completable against another — this one
-    /// cannot be taken back afterwards.
-    /// </summary>
-    void RelabelAllocation()
-    {
-        // A FIGURE THAT READS AS NOTHING HAS NO SENTENCE: the press is disarmed and refuses until it reads again.
-        if (AllocationRefusal() is not null) { Ui.DisarmConfirm(_allocate); return; }
-        Ui.Relabel(_allocate, Labels.Allocate,
-            AllocateArmed(ReadAllocation(), StandingAllocation(), AccountCurrency()));
-    }
-
-    /// <summary>
-    /// WHAT STANDS ALLOCATED RIGHT NOW, in the live line rather than a rebuilt tree. An allocation
-    /// whose promotion no longer stands is shown and MARKED: it is the one the owner most needs to
-    /// see, and hiding it would read as "nothing is allocated" while the row is still on the table.
-    /// </summary>
-    void ShowAllocations()
-    {
-        try
-        {
-            var standing = _host.Gateway.Allocations.Standing(DateTimeOffset.UtcNow);
-            _allocationValue.Text = standing.Count == 0
-                ? "nothing — no version has been given capital"
-                : string.Join("; ", standing.Select(s =>
-                    $"{s.Allocation.VersionId[..Math.Min(12, s.Allocation.VersionId.Length)]} "
-                    + $"up to {AllocationRow.Num(s.Allocation.MaxQuantity)}"
-                    // REFUSED FOR LIVE IS NOT A WITHDRAWN PROMOTION (`U-data-licence`): the verdict stands
-                    // and the evidence under it confers no live eligibility, in the gate's own sentence.
-                    + (s.Authorises ? ""
-                        : s.RefusedForLive is { } refused ? $" — REFUSED FOR LIVE: {refused}"
-                        : " — its promotion no longer stands, so it may trade nothing")));
-        }
-        catch (Exception) { _allocationValue.Text = "could not be read"; }
-    }
-
     // ---- the paper envelope -------------------------------------------------------------------
-
-    /// <summary>What is in the four boxes right now. A blank instrument is left blank, never guessed at.</summary>
-    (string Symbol, decimal Quantity, decimal? Notional, DateTimeOffset Until) ReadEnvelope() =>
-        ((_envelopeSymbol.Text ?? "").Trim(),
-            _envelopeQuantity.Figure,
-            _envelopeNotional.Figure is var n && n > 0m ? n : null,
-            DateTimeOffset.UtcNow.AddDays((double)_envelopeDays.Figure));
-
-    /// <summary>Why the grant press does nothing right now, or null while all three figures read.</summary>
-    string? EnvelopeRefusal() => Ui.Refusal((Labels.EnvelopeQuantity, _envelopeQuantity),
-        (Labels.EnvelopeNotional, _envelopeNotional), (Labels.EnvelopeUntil, _envelopeDays));
 
     /// <summary>
     /// The envelope the withdrawal press is about: the one standing on the platform and the account
@@ -2887,23 +2402,6 @@ sealed class SafetyPage
                 _host.Gateway.Connector.Id, _host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow)?.Id;
         }
         catch (Exception) { return null; }
-    }
-
-    /// <summary>
-    /// Takes the press. The gateway asks the platform about the account, so the result is AWAITED
-    /// rather than dropped: a grant that was refused has to say so on the card and not disappear into
-    /// an unobserved task.
-    /// </summary>
-    async void ApplyEnvelope(string symbol, decimal quantity, decimal? notional, DateTimeOffset until)
-    {
-        EnvelopeResult result;
-        try { result = await _host.Gateway.GrantPaperEnvelopeAsync(symbol, quantity, notional, until); }
-        catch (Exception ex) { result = new EnvelopeResult(false, ex.Message, null); }
-
-        _envelopeNote.Text = result.Why;
-        _envelopeNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
-        _envelopeNote.IsVisible = true;
-        ShowEnvelopes();
     }
 
     /// <summary>
@@ -2954,16 +2452,6 @@ sealed class SafetyPage
         _envelopeNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
         _envelopeNote.IsVisible = true;
         ShowEnvelopes();
-    }
-
-    /// <summary>
-    /// Keeps the armed sentence in step with the four boxes, and disarms as it goes. A confirmation
-    /// armed against one instrument, one size and one date must not be completable against another.
-    /// </summary>
-    void RelabelEnvelope()
-    {
-        if (EnvelopeRefusal() is not null) { Ui.DisarmConfirm(_grantEnvelope); return; }
-        Ui.Relabel(_grantEnvelope, Labels.GrantEnvelope, EnvelopeArmed(ReadEnvelope(), AccountCurrency()));
     }
 
     /// <summary>
