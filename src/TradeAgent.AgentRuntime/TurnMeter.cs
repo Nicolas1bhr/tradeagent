@@ -794,7 +794,8 @@ public sealed class TurnMeter
     /// work (<see cref="AgentTurnEnded.GateRefused"/> with <c>BeforeAnyWork</c>, <c>U-thinking-seats-a</c> review item 1): no
     /// process started and no request was sent, and the row says so with the refusal's kind. And so is the harness's first request
     /// withheld for its size (<see cref="AgentTurnEnded.FirstRequestWithheld"/>, <c>U-org-seats</c> fix pass 1): nothing of the turn was
-    /// posted.</item>
+    /// posted. And so is a launch the conversation refused because its seat's billing class moved between admission and exec
+    /// (<see cref="AgentTurnEnded.BillingMoved"/>, <c>U-billing-followups</c> fix pass 1): no process started.</item>
     /// <item><b>No usage otherwise</b> — unknown, and <see cref="AiAttemptStore.End"/> charges the
     /// reservation, as before: a turn that showed work, or whose stream said nothing recognisable, may
     /// have been billed for requests nothing measured, and unknown is never zero. That includes a turn
@@ -805,7 +806,8 @@ public sealed class TurnMeter
     TurnPrice Charge(AgentTurnEnded ended, string? role) =>
         ended.Usage is null
         && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null || ended.KeyNotHeld is not null
-            || ended.GateRefused is { BeforeAnyWork: true } || ended.FirstRequestWithheld is not null)
+            || ended.GateRefused is { BeforeAnyWork: true } || ended.FirstRequestWithheld is not null
+            || ended.BillingMoved is not null)
             ? new TurnPrice(0m, Currency(), null)
             : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
 
@@ -828,7 +830,7 @@ public sealed class TurnMeter
         with
         {
             Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld ?? ended.GateRefused?.Refusal.Words
-                ?? ended.FirstRequestWithheld,
+                ?? ended.FirstRequestWithheld ?? ended.BillingMoved,
             GateKind = ended.GateRefused?.Refusal.Kind.ToString(),
             CanonVersion = ended.Canon?.Version,
             CanonSha256 = ended.Canon?.Sha256,

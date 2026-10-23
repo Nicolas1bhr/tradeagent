@@ -546,6 +546,9 @@ public sealed class AgentSession(
     /// <summary>What an admission verified of the seat, for the start to hold itself to.</summary>
     sealed record AdmittedSeat(string? Profile, string BillingClass);
 
+    /// <summary>The refusal of the turn in flight for a billing class that moved after its admission (<see cref="AgentTurnEnded.BillingMoved"/>); null otherwise.</summary>
+    string? _billingMoved;
+
     /// <summary>The runtime profile the CLI session this conversation resumes was opened under, or null for none yet.</summary>
     string? _sessionProfile;
 
@@ -854,6 +857,7 @@ public sealed class AgentSession(
         _canon = null;
         _promptIn = null;
         _session = null;
+        _billingMoved = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -912,7 +916,9 @@ public sealed class AgentSession(
                 // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
                 GateRefused = gateRefused,
                 // AND THE SESSION IT RAN IN: fresh, with why, or resumed — null for a turn that launched nothing (U-org-packets-a).
-                Session = _session
+                Session = _session,
+                // AND THE APP'S OWN REFUSAL FOR A BILLING CLASS THAT MOVED AFTER ADMISSION, where there was one: nothing started.
+                BillingMoved = _billingMoved
             });
         }
         return gateRefused;
@@ -978,11 +984,16 @@ public sealed class AgentSession(
         // before this line would run on the key under a plan reservation — outside the real-money cap. Re-read here from the same
         // reading the admission used (the app's own, of the seat's sign-in; never an agent's word): another class — or one that can no
         // longer be read, unknown where the row says plan or key — starts nothing, and the row closes on this sentence.
+        // The sentence travels out as data on the turn's end (AgentTurnEnded.BillingMoved), set here and nowhere else, so the meter
+        // closes the row as this refusal — charged nothing, since nothing started — rather than as a turn that reported no usage.
         if (admitted is not null && BillingClasses.Of(seat.BillingClass) is var billed && billed != admitted.BillingClass)
-            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
+        {
+            _billingMoved =
                 $"TradeAgent did not start the AI: the turn was recorded against {BillingClasses.Words(admitted.BillingClass)}, and its " +
                 $"sign-in now reads as {BillingClasses.Words(billed)}. Nothing was started; the next turn is checked against the limit of " +
-                "the sign-in it runs on.");
+                "the sign-in it runs on.";
+            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, _billingMoved);
+        }
 
         // THE ACTIVATION GATE, ONCE MORE, IMMEDIATELY BEFORE THE PROCESS (U-thinking-seats-a; ORCHESTRATION § 2.3): the meter asked
         // it before admitting the turn, and a host with no meter starts turns too. This seat is a CLI seat outside any cell — or a

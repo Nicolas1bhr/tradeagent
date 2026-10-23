@@ -198,6 +198,17 @@ public class BillingClassesTests : IDisposable
         Assert.Contains(BillingClasses.Words(admittedAs), said, StringComparison.Ordinal);
         Assert.Contains(BillingClasses.Words(startsAs), said, StringComparison.Ordinal);
         Assert.NotEqual(AiAttemptState.LAUNCHED, row.State);
+
+        // AND THE ROW ITSELF SAYS WHY (fix pass 1, Codex point a): the refusal is the app's own record of its own act, written on the
+        // attempt's context in words naming both classes — never closed as a turn that merely reported no usage, whose reservation
+        // stands as its cost for requests nothing measured. No process started, so nothing was asked of any vendor.
+        Assert.NotNull(row.Context);
+        using var context = System.Text.Json.JsonDocument.Parse(row.Context!);
+        Assert.True(context.RootElement.TryGetProperty("refused", out var refused), $"the row closed with no refusal: {row.Context}");
+        Assert.Contains(BillingClasses.Words(admittedAs), refused.GetString(), StringComparison.Ordinal);
+        Assert.Contains(BillingClasses.Words(startsAs), refused.GetString(), StringComparison.Ordinal);
+        Assert.NotEqual(AiAttemptStore.UnreportedReason, row.UnpricedReason);
+        Assert.Equal(0m, row.Cost);
     }
 
     /// <summary>The CLI's own report with a sign-in whose class <paramref name="billing"/> answers at each read.</summary>
