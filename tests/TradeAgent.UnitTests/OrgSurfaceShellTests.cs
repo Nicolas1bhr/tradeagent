@@ -34,12 +34,10 @@ public class OrgSurfaceShellTests
     public void The_rail_lists_the_pages_in_order()
     {
         var text = Source("MainWindow.cs");
-        var rail = text[text.IndexOf("Control BuildRail()", StringComparison.Ordinal)..];
-        rail = rail[..rail.IndexOf("var summary", StringComparison.Ordinal)];
-        var entries = Regex.Matches(rail, @"AddNav\(Page\.(\w+),\s*([^)]+)\)").Select(m => (Page: m.Groups[1].Value, Label: m.Groups[2].Value.Trim())).ToList();
+        var entries = MainWindow.Rail.Select(r => (Page: r.Page.ToString(), Label: r.Label)).ToList();
 
         Assert.Equal(new[] { "Chat", "Organisation", "Work", "Costs" }, entries.Take(4).Select(e => e.Page));
-        Assert.Equal(new[] { "\"Chat\"", "Labels.NavOrganisation", "Labels.NavWork", "Labels.NavCosts" }, entries.Take(4).Select(e => e.Label));
+        Assert.Equal(new[] { "Chat", Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts }, entries.Take(4).Select(e => e.Label));
         Assert.Equal(new[] { "Organisation", "Work", "Costs" }, new[] { Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts });
         Assert.Equal(entries.Count, entries.Select(e => e.Page).Distinct().Count());   // no page twice
 

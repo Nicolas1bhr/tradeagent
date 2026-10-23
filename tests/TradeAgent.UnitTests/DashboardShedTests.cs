@@ -61,7 +61,8 @@ public class RailOrderTests
     public void The_rail_lists_the_pages_in_order()
     {
         Assert.Equal(
-            ["Chat", "Dashboard", TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, "Settings",
+            ["Chat", TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts, "Dashboard",
+                TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, "Settings",
                 "Activity", "Checks", "Oversight"],
             MainWindow.Rail.Select(r => r.Label));
 

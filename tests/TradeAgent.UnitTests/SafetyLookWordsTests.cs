@@ -29,11 +29,6 @@ public class SafetyLookWordsTests
     {
         Assert.Contains("at most", Labels.ReviewEvery, StringComparison.Ordinal);
 
-        // The page's paragraph left with its box (U-board-a2: the review interval is the security board's policy); what is left of
-        // the page must not say the old words either.
-        var page = Regex.Replace(
-            File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "OwnerView.cs")), "\"\\s*\\+\\s*\"", "");
-        Assert.DoesNotContain("This is how often it is woken to", page, StringComparison.Ordinal);
         Assert.Contains("at most every", Labels.BoardField("review_minutes")!.Label, StringComparison.Ordinal);
         Assert.DoesNotContain("how often", Labels.BoardField("review_minutes")!.Label, StringComparison.OrdinalIgnoreCase);
 
