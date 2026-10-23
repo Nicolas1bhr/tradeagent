@@ -3188,14 +3188,23 @@ public sealed class TradingGateway : IAsyncDisposable
 
             // THE OWNER'S PRESSES MADE WHILE IT STOOD (U-board-a2 extra item B): kept beside the armed row, never over it, by
             // SaveSettings — so a Stop pressed in a refused home is still pressed after a restart. This build's own write, read
-            // like any row it wrote; one it cannot read is passed over and the armed row's own reading stands.
+            // like any row it wrote. ONE IT CANNOT READ IS SETTINGS NOBODY CAN READ (fix pass 1): never the armed row's own reading
+            // in its place, which would lift a kept Stop on a guess. Stop holds, the damaged press is kept as evidence, and the
+            // armed home's sentence stays the one the gate gives.
             if (_db.GetKv(SettingsWhileArmedKey) is { } kept)
             {
                 try
                 {
-                    if (Json.Read<TradeAgentSettings>(kept) is { } pressed) return pressed;
+                    return Json.Read<TradeAgentSettings>(kept)
+                           ?? throw new InvalidOperationException("the kept press is the JSON literal null");
                 }
-                catch (Exception ex) { _log.TryEngineering("Gateway", "settings_while_armed_unreadable", "error", ex: ex); }
+                catch (Exception ex)
+                {
+                    _log.TryEngineering("Gateway", "settings_while_armed_unreadable", "error", ex: ex);
+                    var unreadable = SettingsThatCouldNotBeRead(kept, ex);
+                    _health.Set(Components.ExecutionCapability, HealthState.PAUSED, earlier.Sentence);
+                    return unreadable;
+                }
             }
         }
 
