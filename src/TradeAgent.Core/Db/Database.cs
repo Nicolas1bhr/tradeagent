@@ -2925,6 +2925,7 @@ public sealed class Database : IDisposable
         }
 
         // THE RUNG'S NUMBER, SPELLED ONCE (U-board-a1): a unit overtaken renumbers here and in Versions, nothing else.
+        // 47: unused (overtaken by U-org-verbs-c, 2026-10-23)
         const int boardRung = Versions.BoardRung;
         if (have < boardRung)
         {

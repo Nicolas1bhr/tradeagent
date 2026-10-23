@@ -449,6 +449,7 @@ public static class Versions
     /// <c>U-board-a1</c>'s): <c>org_unit.charter_decision_id</c> (REFERENCES <c>org_decision</c>) replaces the never-written
     /// <c>charter_publication_id</c>, dropped. NULL on every seeded unit; written by <c>OrgStore.Charter</c> in the charter's own write.</para>
     ///
+    /// 47: unused (overtaken by U-org-verbs-c, 2026-10-23)
     /// <para><b>49 — the security board as data</b> (<c>U-board-a1</c>, rung <see cref="BoardRung"/>, after <c>U-org-verbs-c</c>'s 48 —
     /// 47 stays unused; R24 §§ 4.1, 4.5): <c>board_seat</c> (the board's seats, minted by the app — broker, cell or harness, never <c>cli</c>; dormant
     /// only), <c>board_policy</c> (one row per version, the highest in force: decider <c>app</c> and basis <c>founding</c> only, mode
