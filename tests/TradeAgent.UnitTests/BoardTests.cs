@@ -195,6 +195,22 @@ public class BoardTests(ITestOutputHelper log)
                 log.WriteLine($"{sql[..Math.Min(60, sql.Length)]}…: {refused.Message}");
             }
 
+        // NOR BY A REPLACE OVER ITS ROWID UNDER ANOTHER KEY (fix pass 1, second step, the re-review): `board-4` replacing board-1's
+        // rowid would delete board-1's composition record and write another; a version or an event replaced through the rowid the same.
+        foreach (var sql in new[]
+                 {
+                     "INSERT OR REPLACE INTO board_seat(rowid, id, seat_class, model_class, vendor_family, status, founded_at) "
+                     + $"VALUES((SELECT rowid FROM board_seat WHERE id='board-1'), 'board-4', 'harness', '{other}', 'another', 'dormant', 'x')",
+                     "INSERT OR REPLACE INTO board_policy(rowid, decider, basis, written_at, mode, live_activated, body, body_sha256, supersedes) "
+                     + "VALUES(1, 'app', 'founding', '2026-10-23T00:00:00.0000000Z', 'OBSERVE', 0, $body, $sha, NULL)",
+                     "INSERT OR REPLACE INTO board_event(rowid, at, kind, policy_version, home_schema, budget_share, detail) "
+                     + $"VALUES({eventId}, '2026-10-23T00:00:00.0000000Z', 'earlier-live-set-aside', NULL, NULL, NULL, 'rewritten')"
+                 })
+        {
+            var refused = Assert.Throws<SqliteException>(() => Exec(db, sql, ("$body", body + " "), ("$sha", Sha256Hex.Of(body + " "))));
+            log.WriteLine($"{sql[..Math.Min(60, sql.Length)]}…: {refused.Message}");
+        }
+
         // AN UPSERT IS AN UPDATE, AND THE UPDATE SEAL ALREADY REFUSES IT; asked here so the two seals are read as one promise.
         Assert.Throws<SqliteException>(() => Exec(db,
             "INSERT INTO board_seat(id, seat_class, model_class, vendor_family, status, founded_at) VALUES('board-1', 'harness', 'strong', 'x', 'dormant', 'x') "

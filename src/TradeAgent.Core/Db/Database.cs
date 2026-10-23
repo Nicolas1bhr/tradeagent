@@ -2938,7 +2938,9 @@ public sealed class Database : IDisposable
             // live setting set aside. EVERY TABLE REFUSES UPDATE AND DELETE BY TRIGGER: a version is superseded by a new one, never
             // rewritten — AND AN INSERT OVER A KEY IT ALREADY HOLDS (fix pass 1): `INSERT OR REPLACE` deletes the row it collides with
             // without firing a DELETE trigger while recursive triggers are off, every connection's default, so the update and delete
-            // seals alone let a replace rewrite a seat, a version or an event. One writer, `BoardStore`. NO BACKFILL FROM THE SETTINGS ROW: an owner-set value of a field the board now holds
+            // seals alone let a replace rewrite a seat, a version or an event. And no row is reachable under a second key: `board_seat`
+            // is WITHOUT ROWID (a replace over board-1's rowid under the id `board-4` deleted board-1), and the policy's version and
+            // the event's id ARE their rowids, so each table's one key is the whole of what an insert can collide with. One writer, `BoardStore`. NO BACKFILL FROM THE SETTINGS ROW: an owner-set value of a field the board now holds
             // simply goes (CLAUDE.md, no backward compatibility). `IF NOT EXISTS` throughout and the stamp last, because the rungs run in
             // autocommit and a crash before the stamp runs this again over what it made.
             Exec("""
@@ -2949,7 +2951,7 @@ public sealed class Database : IDisposable
                   vendor_family TEXT NOT NULL CHECK (length(vendor_family) BETWEEN 1 AND 40),
                   status        TEXT NOT NULL CHECK (status = 'dormant'),
                   founded_at    TEXT NOT NULL
-                );
+                ) WITHOUT ROWID;
                 CREATE TABLE IF NOT EXISTS board_policy(
                   version        INTEGER PRIMARY KEY CHECK (version >= 1),
                   decider        TEXT NOT NULL CHECK (decider = 'app'),
