@@ -224,6 +224,12 @@ public static partial class Labels
     /// <summary>The caution card over a home an earlier build left armed for real money.</summary>
     public const string EarlierLiveSettingTitle = "Real money armed by an earlier version";
 
+    /// <summary>
+    /// The header's AI line over an earlier armed home (fix pass 1, Codex P2): shown before "stopped", because while it stands every order
+    /// is refused whatever the kill switch says, and the repair is the strip under the header.
+    /// </summary>
+    public const string HeaderEarlierLiveSetting = "Every order refused — set aside the real-money setting an earlier version saved";
+
     /// <summary>What the one press did, in the gateway's terms: kept, not converted; the founding policy governs.</summary>
     public const string EarlierLiveSettingSetAside =
         "Set aside. Your earlier settings are kept exactly as they were under their own name, nothing was converted, and the founding "

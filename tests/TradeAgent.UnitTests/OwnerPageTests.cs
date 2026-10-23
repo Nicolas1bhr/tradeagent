@@ -49,8 +49,7 @@ public class OwnerPageTests
             Labels.SaveHarnessKey, Labels.ForgetHarnessKey,
             Labels.SaveDailyCap, Labels.SaveAiPrice,
             Labels.WithdrawEnvelope, Labels.StopDeployment, Labels.ReopenAfterReview,
-            // AN EARLIER ARMED HOME's one press (item 6) — a narrowing, offered only while the gateway reads one.
-            Labels.SetAsideEarlierLiveSetting,
+            // (AN EARLIER ARMED HOME's one press is the window's strip since fix pass 1 — above every page, not on this one.)
             // PERCEPTION'S CARD: its own key's two presses, its budget inside the cap, its Test — and the instrument it is shown on.
             (string)card.SaveKey.Content!, (string)card.ForgetKey.Content!, (string)card.SaveBudget.Content!, (string)card.TestButton.Content!,
             // CONNECTIONS (item 3): the platform's three, the account list's look-again, and the bridge's repair.
@@ -289,11 +288,11 @@ public class EarlierArmedHomeTests
         Assert.Equal(Labels.EarlierLiveSettingSetAside, card.Note.Text);
         Assert.True(card.Note.IsVisible);
 
-        // AND THE PAGE WIRES THE GATEWAY'S OWN READING AND ITS ONE PRESS, nowhere else in the app.
+        // AND THE WINDOW WIRES THE GATEWAY'S OWN READING AND ITS ONE PRESS (since fix pass 1: a strip above every page), nowhere else.
         var root = Repo();
-        var owner = File.ReadAllText(Path.Combine(root, "src", "TradeAgent.App", "OwnerView.cs"));
-        Assert.Contains("new EarlierArmedHome(() => _host.Gateway.EarlierLiveSetting, () => _host.Gateway.SetAsideEarlierLiveSetting())",
-            owner, StringComparison.Ordinal);
+        var window = File.ReadAllText(Path.Combine(root, "src", "TradeAgent.App", "MainWindow.cs"));
+        Assert.Contains("new(() => host.Gateway.EarlierLiveSetting, () => host.Gateway.SetAsideEarlierLiveSetting())",
+            window, StringComparison.Ordinal);
         Assert.Equal(1, Directory.GetFiles(Path.Combine(root, "src", "TradeAgent.App"), "*.cs")
             .Sum(f => System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(f), @"SetAsideEarlierLiveSetting\(\)").Count));
     }
@@ -322,6 +321,62 @@ public class EarlierArmedHomeTests
         Press(refused.Press);
         Assert.True(refused.Card.IsVisible);
         Assert.Contains("the row could not be kept", refused.Note.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AN EARLIER ARMED HOME IS REFUSED WHERE THE APP OPENS (Codex P2 on <c>U-settings-shed</c>): the app lands on Chat, so a refusal that
+    /// lives on one page is a refusal nobody sees. The gateway's sentence and its one press are a strip of the window's own, above every
+    /// page and updated before anything else on the tick; and the header's AI line names the refusal even while AI trading is stopped —
+    /// "AI trading stopped" must not stand in for "every order is refused until you set the earlier setting aside".
+    /// </summary>
+    [Fact]
+    public async Task An_earlier_armed_home_is_refused_where_the_app_opens()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("settings", "{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true,\"ai_trading_stopped\":true}");
+        new TradeAgent.Core.Db.OnboardingStore(db).Complete(OnboardingStep.SETUP_COMPLETE);
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var gw = host.Gateway;
+            Assert.True(host.Onboarding.IsComplete());
+            Assert.True(gw.Settings.AiTradingStopped);
+            var earlier = Assert.IsType<TradeAgent.Core.Board.EarlierLiveSetting>(gw.EarlierLiveSetting);
+
+            // THE WINDOW'S OWN STRIP, outside the page host, built with the shell and updated first on every tick.
+            var window = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "MainWindow.cs"));
+            var shell = window[window.IndexOf("void EnsureShell()", StringComparison.Ordinal)..window.IndexOf("Control BuildHeader()", StringComparison.Ordinal)];
+            Assert.Contains("_shellSurface.Children.Add(Ui.With(BuildEarlierArmedStrip(), c => c[Grid.RowProperty] = 1));", shell, StringComparison.Ordinal);
+            Assert.True(shell.IndexOf("BuildEarlierArmedStrip()", StringComparison.Ordinal) < shell.IndexOf("Select(Page.Chat);", StringComparison.Ordinal));
+            var update = window[window.IndexOf("void UpdateShell(GatewayStatus status)", StringComparison.Ordinal)..];
+            Assert.Contains("_earlierArmed?.Update();", update[..update.IndexOf("_modePillHost", StringComparison.Ordinal)], StringComparison.Ordinal);
+            // AND ONE STRIP ONLY: the owner's page no longer builds a card of its own.
+            Assert.DoesNotContain("new EarlierArmedHome(", File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "OwnerView.cs")),
+                StringComparison.Ordinal);
+
+            // THE STRIP OVER THIS HOME: the gateway's own sentence and the one press, visible at once.
+            var strip = MainWindow.EarlierArmedStrip(host);
+            strip.Update();
+            Assert.True(strip.Card.IsVisible);
+            Assert.Equal(earlier.Sentence, strip.Sentence.Text);
+            Assert.Equal(Labels.SetAsideEarlierLiveSetting, strip.Press.Content);
+            Assert.True(strip.Press.IsEnabled);
+
+            // THE HEADER NEVER HIDES IT BEHIND "STOPPED".
+            var status = await gw.StatusAsync();
+            Assert.True(status.AiTradingStopped);
+            var line = MainWindow.AiLine(status, gw.EarlierLiveSetting);
+            Assert.Equal(Labels.HeaderEarlierLiveSetting, line.Text);
+            Assert.Equal(MainWindow.AiTone.Refused, line.Tone);
+            Assert.Equal("AI trading stopped", MainWindow.AiLine(status, null).Text);
+
+            // ONE PRESS, AND IT IS GONE FROM EVERY PAGE.
+            strip.Press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.Null(gw.EarlierLiveSetting);
+            Assert.False(strip.Card.IsVisible);
+            Assert.Equal("AI trading stopped", MainWindow.AiLine(await gw.StatusAsync(), gw.EarlierLiveSetting).Text);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 
     static string Repo()

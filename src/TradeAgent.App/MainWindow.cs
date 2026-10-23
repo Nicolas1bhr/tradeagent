@@ -158,6 +158,13 @@ public sealed class MainWindow : Window
     OversightPage? _oversightPage;
     OversightBanner? _oversightBanner;
 
+    /// <summary>
+    /// A HOME AN EARLIER BUILD LEFT ARMED FOR REAL MONEY, refused in the gateway's own sentence with its one press (<c>U-settings-shed</c>
+    /// item 6, fix pass 1 for Codex P2): a strip of the window's own, above every page, because the app opens on Chat and a refusal that
+    /// lives on one page is a refusal nobody sees.
+    /// </summary>
+    OwnerPage.EarlierArmedHome? _earlierArmed;
+
     bool _shellBuilt;
     bool _updating;
 
@@ -263,8 +270,10 @@ public sealed class MainWindow : Window
         _wizard = null;
 
         _shellSurface.Children.Add(Ui.With(BuildHeader(), c => c[Grid.RowProperty] = 0));
-        // Row 1 held the "the AI is asking permission" banner until U-settings-shed shed the per-order approval (R24 § 4.2); it stays
-        // empty so the rows below keep their places.
+        // Row 1, first under the header and above every page: an earlier armed home's refusal and its one press (fix pass 1, Codex P2).
+        // While it stands every order is refused, so it outranks the strips below it, and it is on screen whatever page is selected —
+        // including Chat, where the app opens.
+        _shellSurface.Children.Add(Ui.With(BuildEarlierArmedStrip(), c => c[Grid.RowProperty] = 1));
         // The owner's severe finding straight after the approval banner: money first, then his private line (U-org-watcher-b).
         _shellSurface.Children.Add(Ui.With(BuildOversightBanner(), c => c[Grid.RowProperty] = 2));
         _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 3));
@@ -337,6 +346,36 @@ public sealed class MainWindow : Window
             Child = grid
         };
     }
+
+    /// <summary>The earlier armed home's strip: built once with the shell, updated in place first on every tick.</summary>
+    Control BuildEarlierArmedStrip()
+    {
+        _earlierArmed = EarlierArmedStrip(_host);
+        // MARGINS ON THE CARD AND ITS NOTE, never on a wrapper: a hidden control takes no room, so a home nothing armed shows no band.
+        _earlierArmed.Card.Margin = new Thickness(Tokens.S5, Tokens.S3);
+        _earlierArmed.Note.Margin = new Thickness(Tokens.S5, Tokens.S2);
+        return _earlierArmed.Root;
+    }
+
+    /// <summary>
+    /// THE STRIP OVER THIS HOST: the gateway's own reading and its one press, and nothing else in the app calls that press. Static and
+    /// handed the host, so the strip a test presses is the strip the window shows.
+    /// </summary>
+    internal static OwnerPage.EarlierArmedHome EarlierArmedStrip(AppHost host) =>
+        new(() => host.Gateway.EarlierLiveSetting, () => host.Gateway.SetAsideEarlierLiveSetting());
+
+    /// <summary>The header's AI line's tone: the dot beside it.</summary>
+    internal enum AiTone { Allowed, Paused, Stopped, Refused }
+
+    /// <summary>
+    /// THE HEADER'S AI LINE (fix pass 1, Codex P2). An earlier armed home comes FIRST, before "stopped": while it stands every order is
+    /// refused whatever the kill switch says, and "AI trading stopped" would hide the one thing the owner has to do — set it aside.
+    /// </summary>
+    internal static (string Text, AiTone Tone) AiLine(GatewayStatus status, Core.Board.EarlierLiveSetting? earlier) =>
+        earlier is not null ? (Labels.HeaderEarlierLiveSetting, AiTone.Refused)
+        : status.AiTradingStopped ? ("AI trading stopped", AiTone.Stopped)
+        : status.ExecutionAvailable ? ("AI trading allowed", AiTone.Allowed)
+        : ($"AI paused — {status.ExecutionBlockedReason}", AiTone.Paused);
 
     /// <summary>The owner's in-app alert for a severe finding (<see cref="OversightBanner"/>): built once, updated in place.</summary>
     Control BuildOversightBanner()
@@ -516,6 +555,10 @@ public sealed class MainWindow : Window
 
     void UpdateShell(GatewayStatus status)
     {
+        // FIRST: an earlier armed home's refusal, read off the gateway itself and never off the status — so nothing below it, a stopped
+        // kill switch included, decides whether it shows.
+        _earlierArmed?.Update();
+
         // The pill is the one header element that changes shape rather than text, so it is rebuilt —
         // but only when the mode actually changed, never on the five-second tick.
         var modeSignature = $"{status.Mode}|{status.LiveActivated}";
@@ -528,9 +571,14 @@ public sealed class MainWindow : Window
         _metaPlatform.Text = Ui.PlatformLabel(status);
         _metaAccount.Text = status.AccountId ?? "none";
 
-        if (status.AiTradingStopped) { _metaAi.Text = "AI trading stopped"; _aiDot.Fill = Tokens.Danger; }
-        else if (status.ExecutionAvailable) { _metaAi.Text = "AI trading allowed"; _aiDot.Fill = Tokens.Positive; }
-        else { _metaAi.Text = $"AI paused — {status.ExecutionBlockedReason}"; _aiDot.Fill = Tokens.Caution; }
+        var (aiText, aiTone) = AiLine(status, _host.Gateway.EarlierLiveSetting);
+        _metaAi.Text = aiText;
+        _aiDot.Fill = aiTone switch
+        {
+            AiTone.Allowed => Tokens.Positive,
+            AiTone.Paused => Tokens.Caution,
+            _ => Tokens.Danger
+        };
 
         // SetResting, not Content plus SetVariant: a half-pressed RESUME has to survive the
         // five-second tick, and only the control knows whether it is half-pressed.
