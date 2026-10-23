@@ -354,14 +354,17 @@ public class OwnerPageTests
     [Fact]
     public Task The_research_cli_press_selects_the_cli_while_a_worker_key_is_held() => OnThePage((page, host) =>
     {
+        // THE RULE, NOT THE SHARED KEY: HarnessKey.Shared is process-wide, so a test that held it would leak into every other class.
+        // What the press writes is fed to AppHost's own static rule with a key held.
         host.Gateway.Update(s => s.SelectedRuntimeId = "codex");
-        host.HarnessKey.Set("fake-key-for-this-test", "https://api.openai.com");
-        Assert.True(host.HarnessKey.Held);
         var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
+        string? Resolved() => AppHost.RuntimeForRole(CouncilRoles.Research,
+            host.Gateway.Settings.RuntimeForRole(CouncilRoles.Research), host.Gateway.Settings.SelectedRuntimeId, keyHeld: true);
+
         Press((Button)card.ResearchRuntimeRow.Children[1]);
-        Assert.True(TradeAgent.AgentRuntime.RuntimeCatalog.IsHarness(host.RuntimeForRole(CouncilRoles.Research)));
+        Assert.True(TradeAgent.AgentRuntime.RuntimeCatalog.IsHarness(Resolved()));
         Press((Button)card.ResearchRuntimeRow.Children[0]);
-        Assert.Equal("codex", host.RuntimeForRole(CouncilRoles.Research));
+        Assert.Equal("codex", Resolved());
         return Task.CompletedTask;
     });
 
