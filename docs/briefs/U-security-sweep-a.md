@@ -35,3 +35,16 @@ NOT in this unit:
 Host note: since about 00:4x this Mac's dotnet is SDK 10.0.402, with runtimes 10.0.11 and 10.0.13. A local exit 137 before then was the host's, not the code's.
 Protections: none of the money path is touched. The no-terminal rule holds: the kit still installs itself. Refuse, never guess: an unknown encoding stays refused.
 Evidence beyond CI: none needed. Gate and report per `fleet/BUILDER-PROMPT-v2.md`. `## Report` ≤ 20 lines appended here.
+
+## Report
+Tip: see the commit this lands in (code tip ddbdf1d791, CI run 39870560557 green, 12 jobs incl. linux-host). Base 82dd6ed3; main has since moved 47 files, none overlapping this diff.
+Gate: build Release --no-incremental `0 Warning(s) 0 Error(s)`; NoBrotliGuardTests 3x `Passed: 1` (suite lock); 79 tests in Tape/ForwardBar/DownloadPart/InstrumentCheck/BinanceArchive/SuiteReachesNoVendor/BrokerSeat/OrgLedger/CandleSource classes 1x `Passed: 79`; names.sh vs merge-base: `removed: 0`, sets 3201 -> 3202 (vs current main it shows removed 28 = main's later additions, not mine).
+1. DONE .NET: build.yml:362/368 10.0.400 -> 10.0.402 (rollForward disable). Added a `dotnet --version` step to the Windows `package` job and a runtime-print step to package-linux. DEVIATION: the app's AssemblyName is TradeAgent, so the files are TradeAgent.runtimeconfig.json / TradeAgent.deps.json (not TradeAgent.App.*; my first run failed on it, fixed in ddbdf1d7).
+   CI lines: package-linux `10.0.402`; runtimeconfig `"includedFrameworks": [ { "name": "Microsoft.NETCore.App", "version": "10.0.13" } ]` and deps.json `Microsoft.NETCore.App.Runtime.linux-x64/10.0.13`; Windows package job `10.0.402`.
+2. DONE Brotli: GZip|Deflate at Downloader:104, ForwardBarCollector:67, InstrumentVerifier:55, TapeCollector:90; CodexSurfaceProbe "br" arm deleted so it hits the unknown-encoding refusal. Guard NoBrotliGuardTests (src/**/*.cs, comment lines skipped).
+   RED before: `Failed!  - Failed: 1` listing Downloader.cs:104, TapeCollector.cs:90, InstrumentVerifier.cs:55, ForwardBarCollector.cs:67. GREEN after. MUTANT (All back on TapeCollector.cs:90): `Failed!  - Failed: 1 ... TapeCollector.cs:90`.
+   REVERT when a .NET 10 servicing release lists brotli >= 1.1.1 in src/native/external/brotli-version.txt on release/10.0, or in its release notes (then restore All and delete the guard).
+3. DONE bumps, none dropped: Microsoft.Data.Sqlite 10.0.13 (Core, Connectors.Paper), ProtectedData 10.0.13, Avalonia/Desktop/Themes.Fluent 12.1.4, Microsoft.NET.Test.Sdk 18.11.0 (assets resolve to these); SQLitePCLRaw 2.1.13 and codex 0.160.1 untouched.
+Tests box (full suite on this tree): Fault 498/498, Integration 747 passed 0 failed 61 not run, Unit 2170 passed 0 failed 42 not run (skips); his files unchanged.
+Review: Codex file at fleet/tmp/A-org/u-security-sweep-a/U-security-sweep-a-review.md, 1 finding (P1 AssemblyName in the new CI step), already fixed in ddbdf1d7 and proven green by the run.
+NOT done/verified: no direct unit test exists for CodexSurfaceProbe (the refused-"br" arm is untested beyond the guard); no full local suite (CI + tests box only); the Brotli guard cannot see a header written by hand or a computed enum; CodexSurfaceProbe.cs touched at one line only.
