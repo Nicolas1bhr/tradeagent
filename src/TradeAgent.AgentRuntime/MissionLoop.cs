@@ -414,6 +414,16 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public string? FirstRequestWithheld { get; init; }
 
     /// <summary>
+    /// THE SENTENCE THE CONVERSATION REFUSED TO START THIS TURN IN BECAUSE ITS SEAT'S BILLING CLASS MOVED BETWEEN ADMISSION AND EXEC,
+    /// or null — and when it is not null, NO PROCESS OF THIS TURN WAS STARTED (<c>U-billing-followups</c> item 1, fix pass 1). Set by
+    /// <see cref="AgentSession"/> on one path only: the pre-exec re-reading of the seat's sign-in named another class than the one the
+    /// row was admitted and reserved under, or none it could read. Like <see cref="KeyNotHeld"/> it is the app's own record of its own
+    /// act, so it can carry money: <see cref="TurnMeter"/> charges the turn nothing and writes the sentence, naming both classes, on the
+    /// row as its refusal — never the close of a turn that merely reported no usage.
+    /// </summary>
+    public string? BillingMoved { get; init; }
+
+    /// <summary>
     /// TRUE WHEN THE TURN HANDED REQUESTS OVER AND NO PROVIDER ACCEPTED ANY (<c>U-org-packets-b</c> fix pass 2): each one failed to
     /// connect, timed out, or was answered with a status outside 2xx — a wrong pasted key's 401, a 429, a 5xx — or the turn was
     /// cancelled before an answer began. Set by <see cref="ApiConversation"/>, the one runtime that sees each request's answer; false
