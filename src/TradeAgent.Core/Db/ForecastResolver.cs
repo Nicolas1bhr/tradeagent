@@ -36,10 +36,16 @@ public sealed class ForecastResolver(Database db)
     /// THE ADMISSIBLE VERDICTS ON VERSIONS A UNIT FUNDED (vocabulary v2, <c>unit-admissible</c>): the referee's promotion rows whose class
     /// is admissible, for a version with a run whose launch's RECORDED funding chain holds the unit — the run's version and attempt and
     /// nothing else of it, never a figure (EVID-001), and the lineage written at admission, never today's chart. Oldest first.
+    /// <para><b>AS OF THE FORECAST'S DATE</b> (the Codex review of <c>U-org-verbs-c</c>, P1): every joined row that carries a time is
+    /// cut at <c>$by</c>. The promotion's <c>at</c> is cut by <see cref="DecideUnit"/> (which also needs it after the forecast); the
+    /// run's <c>created_at</c> is cut here, so a run recorded after the date never credits a verdict the unit had not funded by then. The
+    /// funding row carries no time of its own: it is written in the same transaction that admits its launch
+    /// (<see cref="AiAttemptStore"/>'s <c>Begin</c>), before that launch can record a run, so the run's cutoff bounds it too.</para>
     /// </summary>
     public const string UnitAdmissibleSql =
         "SELECT p.id, p.verdict, p.at FROM strategy_promotion p WHERE p.verdict IN ($promoted, $paper) AND EXISTS (SELECT 1 FROM strategy_run r "
-        + "JOIN ai_attempt_funding f ON f.attempt_id = r.attempt WHERE r.version_id = p.version_id AND f.unit_id = $subject) ORDER BY p.at, p.rowid";
+        + "JOIN ai_attempt_funding f ON f.attempt_id = r.attempt WHERE r.version_id = p.version_id AND f.unit_id = $subject "
+        + "AND r.created_at <= $by) ORDER BY p.at, p.rowid";
 
     /// <summary>The three measurement reads, and nothing else the resolver reads to decide an outcome.</summary>
     public static readonly string[] MeasurementSql = [VerdictSql, MandateEventSql, UnitAdmissibleSql];
@@ -103,7 +109,7 @@ public sealed class ForecastResolver(Database db)
     (string Outcome, string Kind, string Id, string Why)? DecideUnit(ForecastRow f, DateTimeOffset now)
     {
         if (now <= f.ResolveBy) return null;
-        foreach (var (id, word, at) in Read(UnitAdmissibleSql, f.Subject))
+        foreach (var (id, word, at) in Read(UnitAdmissibleSql, f.Subject, f.ResolveBy))
         {
             if (at <= f.At || at > f.ResolveBy) continue;
             return (f.Target == ForecastVocabulary.Admitted ? ForecastOutcome.Yes : ForecastOutcome.No, OrgRefKind.Promotion, id,
@@ -113,9 +119,10 @@ public sealed class ForecastResolver(Database db)
             $"no version run under unit {f.Subject}'s funding was promoted or made paper-eligible between {f.At:u} and {f.ResolveBy:u}");
     }
 
-    List<(string Id, string Word, DateTimeOffset At)> Read(string sql, string subject) => db.Read(_ =>
+    List<(string Id, string Word, DateTimeOffset At)> Read(string sql, string subject, DateTimeOffset? by = null) => db.Read(_ =>
     {
         using var c = db.Cmd(sql, ("$subject", subject), ("$promoted", PromotionVerdict.Promoted), ("$paper", PromotionVerdict.PaperEligible));
+        if (by is { } cut) c.Parameters.AddWithValue("$by", Sql.T(cut));
         using var r = c.ExecuteReader();
         var rows = new List<(string, string, DateTimeOffset)>();
         while (r.Read())

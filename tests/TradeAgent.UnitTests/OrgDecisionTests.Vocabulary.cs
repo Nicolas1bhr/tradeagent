@@ -13,14 +13,14 @@ namespace TradeAgent.Tests.Unit;
 public partial class OrgDecisionTests
 {
     /// <summary>A run of <paramref name="version"/> by <paramref name="attempt"/>, as only a test may write it (its references off).</summary>
-    static void Run(Database db, string id, string version, string attempt)
+    static void Run(Database db, string id, string version, string attempt, DateTimeOffset? at = null)
     {
         db.Exec("PRAGMA foreign_keys=OFF");
         Exec(db, """
             INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills,
                                      exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt)
             VALUES($id, $v, 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, NULL, $attempt)
-            """, ("$id", id), ("$v", version), ("$at", Stamp), ("$attempt", attempt));
+            """, ("$id", id), ("$v", version), ("$at", at is { } t ? Sql(t) : Stamp), ("$attempt", attempt));
         db.Exec("PRAGMA foreign_keys=ON");
     }
 
@@ -94,6 +94,38 @@ public partial class OrgDecisionTests
         Assert.Contains("no target of unit-admissible", Assert.Throws<TradeAgentException>(() => org.Forecast(Head, null, decision.Id,
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, PromotionVerdict.Promoted, by, 0.5m), now)).Message,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (5c) <c>unit-admissible</c> RESOLVES FROM LINEAGE AS OF ITS DATE (the Codex review of <c>U-org-verbs-c</c>, P1): a version is
+    /// made paper-eligible inside the window, but the team's launch first runs it only AFTER the forecast's date. The run was not on the
+    /// record at the date, so the team had funded no admitted version by then: <c>admitted</c> resolves no, <c>none</c> yes, however
+    /// late the sweep — a forecast is resolved by what was true at its date, never by a later fact (EVID-001). RED at base: the run
+    /// recorded after the date credited the earlier verdict, <c>admitted</c> yes.
+    /// </summary>
+    [Fact]
+    public void A_run_recorded_after_the_date_never_resolves_a_unit_admissible_forecast()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var by = now.AddDays(2);
+        var decision = org.Decide(Head, null, OrgDecisionKind.Routine, ["charter the work"], "charter the work", "the team runs the funding skew",
+            [], [
+                new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, by, 0.6m),
+                new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.NoneAdmitted, by, 0.4m)
+            ], now);
+        var f = org.ForecastsOn(decision.Id);
+
+        Version(db, "ver-late");
+        Verdict(db, "ver-late", PromotionVerdict.PaperEligible, now.AddHours(1));
+        Run(db, "run-late", "ver-late", Funded(db, Member, Team, Sub, OrgIds.Research, OrgIds.Root), by.AddHours(1));
+
+        Assert.Equal(2, new ForecastResolver(db).Sweep(by.AddHours(2)).Resolved);
+        var admitted = org.Resolution(f[0].Id)!;
+        Assert.Equal((ForecastOutcome.No, "unit", Team), (admitted.Outcome, admitted.RecordKind, admitted.RecordId));
+        Assert.Equal(ForecastOutcome.Yes, org.Resolution(f[1].Id)!.Outcome);
     }
 
     /// <summary>A forecast row written past the app's writer, in the vocabulary version and predicate given, due at <paramref name="by"/>.</summary>

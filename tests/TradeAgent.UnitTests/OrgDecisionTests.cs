@@ -599,7 +599,9 @@ public partial class OrgDecisionTests
         // THE RUN AND THE LINEAGE ARE READ FOR THEIR KEYS ONLY: no figure of a run is named.
         var named = new System.Text.RegularExpressions.Regex(@"\b([rf])\.(\w+)").Matches(ForecastResolver.UnitAdmissibleSql)
             .Select(m => m.Value).Distinct().Order(StringComparer.Ordinal);
-        Assert.Equal(["f.attempt_id", "f.unit_id", "r.attempt", "r.version_id"], named);
+        // ... and the run's time for the cutoff at the forecast's date alone (the Codex review's P1): a run recorded after it never counts.
+        Assert.Equal(["f.attempt_id", "f.unit_id", "r.attempt", "r.created_at", "r.version_id"], named);
+        Assert.Contains("r.created_at <= $by", ForecastResolver.UnitAdmissibleSql, StringComparison.Ordinal);
         Assert.Equal(["strategy_run"], tables.Matches(ForecastResolver.UnitAdmissibleSql).Select(m => m.Groups[2].Value)
             .Where(t => t == "strategy_run"));
 
