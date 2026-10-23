@@ -29,8 +29,9 @@ public enum EdgeTrap
     LeakyJoin,
 
     /// <summary>
-    /// Twice the largest move any one signal plants is below the venue's round trip at every price the market reaches, so no
-    /// selection of its signals clears the venue's costs: a frictionless run passes, the venue's cost fails it.
+    /// Twice the largest move any one signal plants, summed over every pre-fee trap of its market, is below the venue's round
+    /// trip at every price the market reaches, so no selection or combination of the market's pre-fee signals clears the
+    /// venue's costs: a frictionless run passes, the venue's cost fails it.
     /// </summary>
     PreFeeOnly,
 
@@ -84,7 +85,7 @@ public sealed record SyntheticEdge(long BetaTicks, int HorizonMinutes = 60)
     public static SyntheticEdge LeakyJoin(long betaTicks, TimeSpan firstSeenAfter, string series = ProvingSources.Signal) =>
         new(betaTicks) { Series = series, Trap = EdgeTrap.LeakyJoin, FirstSeenAfter = firstSeenAfter };
 
-    /// <summary>An edge that exists only before fees: twice its largest move per signal must be below the venue's round trip.</summary>
+    /// <summary>An edge that exists only before fees: twice its largest move per signal, with every other pre-fee trap's of its market, must be below the venue's round trip.</summary>
     public static SyntheticEdge PreFeeOnly(long betaTicks, string series = ProvingSources.Signal) =>
         new(betaTicks) { Series = series, Trap = EdgeTrap.PreFeeOnly };
 
@@ -261,21 +262,37 @@ internal static class PlantedEdges
     }
 
     /// <summary>
-    /// WHY A PRE-FEE TRAP IN <paramref name="spec"/> IS NOT ONE AT THE PRICES ITS MARKET REACHED, in words — or null: the
-    /// round trip is a share of the price and the planted move is in ticks, so the bound is checked again at the lowest price
-    /// the generated market touches, before anything is written.
+    /// THE MOST ANY POLICY CAN GAIN, IN EXPECTATION AND IN TICKS, PER ROUND TRIP ON EVERY PRE-FEE TRAP OF <paramref name="spec"/>
+    /// TOGETHER: the sum of each one's <see cref="MostPerRoundTrip(SyntheticMarketSpec, SyntheticEdge)"/>. A program may read
+    /// every series its market writes and hold one position through the moves of all of them, but the traps' readings are
+    /// independent streams, so what it gains on each is bounded by that trap's own figure over the round trips its position
+    /// makes as that trap's readings see it — never more than the round trips it pays for. The honest claim of a pre-fee trap
+    /// is that no selection or combination of its market's pre-fee signals clears the venue's round trip; this is that bound.
+    /// </summary>
+    internal static decimal MostPerRoundTrip(SyntheticMarketSpec spec) =>
+        spec.Planted.Where(e => e.Trap == EdgeTrap.PreFeeOnly).Sum(e => MostPerRoundTrip(spec, e));
+
+    /// <summary>How many pre-fee traps <paramref name="spec"/> plants, in words for a refusal.</summary>
+    static string PreFeeTraps(SyntheticMarketSpec spec) =>
+        spec.Planted.Count(e => e.Trap == EdgeTrap.PreFeeOnly) is var n && n == 1
+            ? "its one pre-fee trap, twice its largest move per signal,"
+            : $"its {n} pre-fee traps together, the sum of twice each one's largest move per signal,";
+
+    /// <summary>
+    /// WHY THE PRE-FEE TRAPS IN <paramref name="spec"/> ARE NOT TRAPS AT THE PRICES ITS MARKET REACHED, in words — or null:
+    /// the round trip is a share of the price and the planted move is in ticks, so the market's bound, every pre-fee trap's
+    /// together, is checked again at the lowest price the generated market touches, before anything is written.
     /// </summary>
     internal static string? RefusalAtLowest(SyntheticMarketSpec spec, long lowestTicks)
     {
         if (RoundTripBps(spec.VenueId) is not { } trip) return null;
-        foreach (var edge in spec.Planted.Where(e => e.Trap == EdgeTrap.PreFeeOnly))
-        {
-            var most = MostPerRoundTrip(spec, edge) * 10_000m / Math.Max(1L, lowestTicks);
-            if (most >= trip)
-                return $"a pre-fee trap is below the venue's round trip at every price its market reaches: the most a policy can gain per "
-                       + $"round trip on it is {decimal.Round(most, 2, MidpointRounding.ToEven)} bps of the market's lowest price, "
-                       + $"{lowestTicks * SyntheticMarket.TickSize}, not below {decimal.Round(trip, 2, MidpointRounding.ToEven)} bps — it is a real edge, not a trap";
-        }
+        if (!spec.Planted.Any(e => e.Trap == EdgeTrap.PreFeeOnly)) return null;
+        var most = MostPerRoundTrip(spec) * 10_000m / Math.Max(1L, lowestTicks);
+        if (most >= trip)
+            return $"a pre-fee trap is below the venue's round trip at every price its market reaches, however its market's pre-fee signals "
+                   + $"are chosen and combined: the most a policy can gain per round trip on {PreFeeTraps(spec)} is "
+                   + $"{decimal.Round(most, 2, MidpointRounding.ToEven)} bps of the market's lowest price, {lowestTicks * SyntheticMarket.TickSize}, "
+                   + $"not below {decimal.Round(trip, 2, MidpointRounding.ToEven)} bps — it is a real edge, not a trap";
         return null;
     }
 
@@ -370,12 +387,14 @@ internal static class PlantedEdges
                 if (spec.Planted.Count(e => e.Series == edge.Series) > 1)
                     return $"a pre-fee trap's series is its own: another relation on '{edge.Series}' would add its move to the trap's on the same "
                            + "reading, and the sum is not bounded below the round trip";
-                // NO SELECTION OF ITS SIGNALS CLEARS THE ROUND TRIP — not the average signal, the best any policy can do: see MostPerRoundTrip.
-                var most = MostPerRoundTrip(spec, edge) * 10_000m / SyntheticMarket.StartTicks;
+                // NO SELECTION OR COMBINATION OF THE MARKET'S PRE-FEE SIGNALS CLEARS THE ROUND TRIP — not the average signal and not
+                // one trap at a time, the best any policy reading all of them can do: see MostPerRoundTrip(spec).
+                var most = MostPerRoundTrip(spec) * 10_000m / SyntheticMarket.StartTicks;
                 if (most >= trip)
-                    return $"a pre-fee trap is below the venue's round trip however its signals are chosen: the most a policy can gain per round "
-                           + $"trip on it, twice its largest move per signal, is {decimal.Round(most, 2, MidpointRounding.ToEven)} bps of the starting "
-                           + $"price, not below {decimal.Round(trip, 2, MidpointRounding.ToEven)} bps — it is a real edge, not a trap";
+                    return $"a pre-fee trap is below the venue's round trip however its market's pre-fee signals are chosen and combined: the "
+                           + $"most a policy can gain per round trip on {PreFeeTraps(spec)} is "
+                           + $"{decimal.Round(most, 2, MidpointRounding.ToEven)} bps of the starting price, not below "
+                           + $"{decimal.Round(trip, 2, MidpointRounding.ToEven)} bps — it is a real edge, not a trap";
                 break;
             }
             case EdgeTrap.InSampleOnly:
