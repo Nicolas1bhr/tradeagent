@@ -11497,3 +11497,39 @@ defect CI caught, fixed in ddbdf1d7, and both later runs are green.
 **Deviation ACCEPTED (seat B):** `RecordedSeats` lives in `AiAttemptStore`, because `BillingClassesTests` lets only that file name `billing_class`.
 **Tests box:** NOT RUN (busy at the build and at the fix).
 **NOT VERIFIED:** the app was not launched for this landing: the three pages' look on a real window is unseen (the Mac UI check is owed — it needs screen control to reach a page; asked of the orchestrator); `AppHost.ResolvedSeatOf`/`For` is exercised only through the window, by no unit test.
+
+## U-proving-ground-b — the market's full vocabulary: planted edges of known size, half-life and regime inside and beside doctrine, the three traps, and the referee's own power measured on them
+
+**Landed** at `a3ea9d2f` (land.sh, seat A, singly on main `68d08d6d` — train A6's prep had dropped U-cli-code-mode and U-org-verbs-b on rebase conflicts with train B10's code; builder a6590948efee3c3f1, fresh fixers a8677898f5401d5fb (pass 1) and a5807940c3579177d (pass 2); all
+opus/high; BUILD RUN 2026-10-23). Evidence-adjacent: a wrong generator would score every later configuration wrongly. Red-first, with one watched mutant per pass. No rung.
+**CI:** landing run 39895818709 on b5c6fcc1, CARRIED to a3ea9d2f (only bookkeeping paths differ): 12/12 green; land.sh check PASS, names removed 0 / added 14, SCAN CLEAN. Earlier: builder 39867519523 on f03b91a0 12/12 · fix 1 39889045860 cancelled (superseded by pass 2) · fix 2 39892092879 on d0eb83e5 12/12.
+**Tests box:** run 20261023-004830-f03b91a0 GREEN on the builder's tip (Fault 498/498; Unit 2178 passed, 0 failed; Integration 747 passed, 0 failed; timing 117 passed; his files
+unchanged). The fix passes moved code after it; the landed code ran again: run 20261023-045437-d0eb83e5 GREEN (Fault 498; Unit 2211 passed, 0 failed; Integration 748 passed, 0 failed; his files unchanged).
+**Build (the builder's report):**
+1. Edge parameters: series, half-life β·2^(−t/H) on a decimal series with no Math.Pow, regimes, doctrine. The manifest's figures come from the spec only.
+2. Funding-like (8 h), open-interest-like and taker-ratio-like series, each with its own field names. INSIDE is refused on the bare signal. A playbook program nets +208.86 on an
+   inside edge and −84.00 beside one.
+3. Leaky join, pre-fee only and in-sample only. Each is refused unless it is the trap it names, and the manifest carries `honest_app_says`.
+4. `ProvingCampaign.Open`: the judge comes first, then SetHoldout and CampaignStore.Open in one write. It is refused on a real ledger.
+5. The power table, outside the Timing category: 12 seeds, ≤ 15-day markets.
+Deviations, accepted: RefereePowerTests sets `ProvingGround.ThisProcess` in a DisableParallelization collection, because the unchanged referee parses a version in its process's
+kind. "Stated α" = AlphaWealth.Alpha 0.25.
+**RED at base:** 55 compile errors, e.g. "'SyntheticEdge' does not contain a definition for 'HalfLifeDays'". **MUTANT:** FirstSeenAfter → 0 ⇒ (b) "the as-of gate sees the leak:
+correlation 0.958"; restored, green (−0.051).
+**POWER (PASS/12, holdout 2/6/14 d):** noise 1/0/0 · β6 8/9/11 · β8 9/12/12 · β12 12/12/12. Table sha256 03eb3477…b896, identical on ubuntu, macOS, windows and the Mac.
+**Review (Codex) and fixes:** 3 real findings + 1 not real ("report absent", written since).
+- Pass 1 (bf64b7b3, e05f4ef3, 8aa0aecb):
+  - a pre-fee trap bound by 2·R·|β|·w, the most any selection of its signals can gain a round trip. RED "β 9: the pre-fee trap paid for its costs … planted gross 237.78
+    against a venue cost of 132.2169". (c) re-planted at β 2, declared: it still nets 61.02 frictionless and −73.52 at the venue.
+  - the manifest Sharpe over the whole deviation. RED "manifest says 107.54 and −106" vs enumerated 62.4127/−61.5195.
+  - Open binds the spec that wrote the market. RED "a campaign was opened from day 7 over a market whose in-sample trap was planted up to day 21".
+  - MUTANT: the bound reverted to the average ⇒ red.
+- Re-review 1: findings 1 and 2 NOT CLOSED (cross-series combination; β² overflow).
+- Pass 2: 6f4f2227 bounds the MARKET: MostPerRoundTrip sums every trap (RED "No exception was thrown" for two traps together; MUTANT Sum→Max ⇒ red); d0eb83e5 checked(β·β), |β| above MaxBetaTicks 3,037,000,499 refused in words (RED: β 4,294,967,296 was written); edge β's Sharpe 160.38 vs enumerated 160.3821. Power table and goldens unchanged.
+- Re-review 2: both CLOSED. A P2 regression is CARDED to U-proving-ground-c: the aggregate runs before later traps are validated, so a malformed later trap throws an NRE
+  instead of a worded refusal. It fails closed; no path but tests builds a spec today.
+**Not verified:**
+- pass 1's RED lines are as its fixer quoted them, not re-run; the market bound is an upper bound, not shown tight;
+- that synthetic power equals power on real markets (process, not market truth);
+- the manifest's Sharpe is a stated reference trade, not any program's;
+- no proving host sets ThisProcess yet (part c).
