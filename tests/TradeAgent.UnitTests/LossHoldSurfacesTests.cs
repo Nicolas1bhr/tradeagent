@@ -48,14 +48,14 @@ public class LossHoldSurfacesTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var (gw, conn, db) = await TestEnv.Ready(
-            s => s.Risk.MaxDailyLoss = 1_000m, new GatewayOptions { Clock = clock });
+            null, new GatewayOptions { Clock = clock }, risk: r => r.MaxDailyLoss = 1_000m);
         return (gw, conn, db, clock);
     }
 
     static async Task Breach(TradingGateway gw, TradeAgent.Connectors.Fake.FakeConnector conn,
         TestClock clock, string tag, decimal budget, ITestOutputHelper log)
     {
-        gw.Update(s => s.Risk.MaxDailyLoss = budget);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = budget);
         await gw.PlaceAsync(new AgentContext("a"), tag, TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
         clock.Advance(Tick);
@@ -65,7 +65,7 @@ public class LossHoldSurfacesTests(ITestOutputHelper log)
         log.WriteLine($"{tag,-12} closed : [{string.Join(", ", closing.Closed)}]");
         Assert.NotEmpty(closing.Closed);
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
     }
 
     /// <summary>Two episodes, the second of them held. Returns the second breach record.</summary>
@@ -172,11 +172,13 @@ public class LossHoldSurfacesTests(ITestOutputHelper log)
         await using var _2 = gw;
 
         await Breach(gw, conn, clock, "episode", 1_000m, log);
-        gw.Update(s => { s.Risk.LossMinClosureHours = 1m; s.Risk.LossStrikeWindowDays = 2; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.LossMinClosureHours = 1m; r.LossStrikeWindowDays = 2;
+        });
 
         var status = await gw.StatusAsync();
-        log.WriteLine($"live setting          : {gw.Settings.Risk.LossMinClosureHours} h / "
-                      + $"{gw.Settings.Risk.LossStrikeWindowDays} days");
+        log.WriteLine($"live setting          : {gw.Policy.Risk.LossMinClosureHours} h / "
+                      + $"{gw.Policy.Risk.LossStrikeWindowDays} days");
         log.WriteLine($"loss_closure_rule     : {status.LossClosureRule}");
         Assert.Equal("closed for at least 24 hours; a second breach inside a week is held for you to look at",
             status.LossClosureRule);

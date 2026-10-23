@@ -50,7 +50,7 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     static readonly TimeSpan Silent = TimeSpan.FromMinutes(10);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
@@ -63,14 +63,18 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);
@@ -195,7 +199,7 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     public async Task The_data_loss_exits_own_records_slower_than_its_whole_budget_still_send_its_close()
     {
         var hold = Budget + TimeSpan.FromSeconds(1);
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.ValuationLossExitMinutes = 1m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.ValuationLossExitMinutes = 1m);
         using var _1 = db;
         await using var _2 = gw;
 
@@ -668,10 +672,10 @@ public class LossFlattenConfirmTests(ITestOutputHelper log)
     [Fact]
     public async Task A_symbols_closing_again_the_days_flatten_subsumed_does_not_hold_the_symbol_for_ever()
     {
-        var (gw, conn, db, clock) = await Ready(s =>
+        var (gw, conn, db, clock) = await Ready(null, risk: r =>
         {
-            s.Risk.MaxDailyLoss = 1_500m;
-            s.Risk.MaxLossPerTrade = 500m;
+            r.MaxDailyLoss = 1_500m;
+            r.MaxLossPerTrade = 500m;
         });
         using var _1 = db;
         await using var _2 = gw;

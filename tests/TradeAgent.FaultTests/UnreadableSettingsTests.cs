@@ -1,5 +1,6 @@
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using Xunit;
@@ -44,8 +45,6 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         {
             s.SelectedAccountId = conn.Broker.AccountId;
             s.AiTradingStopped = true;
-            s.Risk.InstrumentAllowlist = ["MES"];
-            s.Risk.MaxOrderQuantity = 1m;
         });
         var saved = db.GetKv("settings")!;
         Assert.Contains("\"ai_trading_stopped\":true", saved);
@@ -84,22 +83,19 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}");
         log.WriteLine($"LiveActivated        : {gw.Policy.LiveActivated}");
         log.WriteLine($"Mode                 : {gw.Policy.Mode}");
-        log.WriteLine($"InstrumentAllowlist  : [{string.Join(",", gw.Settings.Risk.InstrumentAllowlist)}]");
-        log.WriteLine($"InstrumentAllowed(ES): {gw.Settings.Risk.InstrumentAllowed("ES")}");
-        log.WriteLine($"InstrumentAllowed(MES): {gw.Settings.Risk.InstrumentAllowed("MES")}   (the owner's own instrument)");
-        log.WriteLine($"MaxOrderQuantity     : {gw.Settings.Risk.MaxOrderQuantity}");
-        log.WriteLine($"MaxOpenPositions     : {gw.Settings.Risk.MaxOpenPositions}");
-        log.WriteLine($"MaxOrdersPerMinute   : {gw.Settings.Risk.MaxOrdersPerMinute}");
+        log.WriteLine($"InstrumentAllowlist  : [{string.Join(",", gw.Policy.Risk.InstrumentAllowlist)}]");
+        log.WriteLine($"InstrumentAllowed(ES): {gw.Policy.Risk.InstrumentAllowed("ES")}");
+        log.WriteLine($"MaxOrderQuantity     : {gw.Policy.Risk.MaxOrderQuantity}");
+        log.WriteLine($"MaxOpenPositions     : {gw.Policy.Risk.MaxOpenPositions}");
+        log.WriteLine($"MaxOrdersPerMinute   : {gw.Policy.Risk.MaxOrdersPerMinute}");
 
         Assert.True(gw.Settings.CouldNotBeRead);
         Assert.True(gw.Settings.AiTradingStopped);           // the kill switch stays DOWN
         Assert.False(gw.Policy.LiveActivated);             // real money is not switched on
-        Assert.Empty(gw.Settings.Risk.InstrumentAllowlist);
-        Assert.False(gw.Settings.Risk.InstrumentAllowed("ES"));    // ...and empty now allows NOTHING
-        Assert.False(gw.Settings.Risk.InstrumentAllowed("MES"));   // not even the one the owner set
-        Assert.Equal(0m, gw.Settings.Risk.MaxOrderQuantity);
-        Assert.Equal(0, gw.Settings.Risk.MaxOpenPositions);
-        Assert.Equal(0, gw.Settings.Risk.MaxOrdersPerMinute);
+        // THE LIMITS ARE NOT THE ROW'S (U-board-a2 item 8): they are the security board's founding policy, which an unreadable
+        // settings row neither widens nor reaches — and the gate below refuses on the unreadable row before any limit is read.
+        Assert.Empty(RiskPolicy.Changes(BoardFounding.V1.Risk, gw.Policy.Risk));
+        Assert.False(gw.Policy.Risk.InstrumentAllowed("ES"));
 
         // The gate, not just the fields: an order does not reach the broker.
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
@@ -129,11 +125,11 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         log.WriteLine($"damaged value        : {damaged}");
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}");
-        log.WriteLine($"InstrumentAllowed(ES): {gw.Settings.Risk.InstrumentAllowed("ES")}");
+        log.WriteLine($"InstrumentAllowed(ES): {gw.Policy.Risk.InstrumentAllowed("ES")}");
 
         Assert.True(gw.Settings.CouldNotBeRead);
         Assert.True(gw.Settings.AiTradingStopped);
-        Assert.False(gw.Settings.Risk.InstrumentAllowed("ES"));
+        Assert.False(gw.Policy.Risk.InstrumentAllowed("ES"));
         Assert.Equal(0, conn.Places);
         await gw.DisposeAsync();
     }
@@ -181,11 +177,11 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         log.WriteLine($"row on disk          : \"{db.GetKv("settings")}\"  (present, and empty)");
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}");
-        log.WriteLine($"MaxOrderQuantity     : {gw.Settings.Risk.MaxOrderQuantity}");
+        log.WriteLine($"MaxOrderQuantity     : {gw.Policy.Risk.MaxOrderQuantity}");
 
         Assert.True(gw.Settings.CouldNotBeRead);
         Assert.True(gw.Settings.AiTradingStopped);
-        Assert.Equal(0m, gw.Settings.Risk.MaxOrderQuantity);
+        Assert.Equal(BoardFounding.V1.Risk.MaxOrderQuantity, gw.Policy.Risk.MaxOrderQuantity);   // the policy's, untouched (U-board-a2)
         Assert.Equal(0, conn.Places);
         await gw.DisposeAsync();
     }
@@ -234,13 +230,11 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         log.WriteLine($"CouldNotBeRead       : {gw.Settings.CouldNotBeRead}   (the row parsed)");
         log.WriteLine($"earlier setting      : {gw.EarlierLiveSetting?.Mode}   (the earlier-home check)");
         log.WriteLine($"AiTradingStopped     : {gw.Settings.AiTradingStopped}   (the owner's own value, kept)");
-        log.WriteLine($"InstrumentAllowlist  : [{string.Join(",", gw.Settings.Risk.InstrumentAllowlist)}]   (kept)");
 
         Assert.False(gw.Settings.CouldNotBeRead);
         Assert.Equal("999", gw.EarlierLiveSetting?.Mode);
         // The owner's values survive, which is the whole reason the two are not one check.
         Assert.True(gw.Settings.AiTradingStopped);
-        Assert.Equal(new[] { "MES" }, gw.Settings.Risk.InstrumentAllowlist);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(AgentContext.Operator, "us-999", TestEnv.Buy("MES")));
@@ -314,24 +308,30 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         {
             s.SelectedAccountId = conn.Broker.AccountId;
             s.AiTradingStopped = false;
-            s.Risk.InstrumentAllowlist = ["ES"];
-            s.Risk.MaxOrderQuantity = 3m;
-            s.Risk.MaxOpenPositions = 4;
-            s.Risk.MaxOrdersPerMinute = 20;
         });
 
         var gw = new TradingGateway(db, conn, new HealthRegistry());
+        // THE LIMITS ARE THE POLICY'S (U-board-a2 item 8), not the row's: this gateway starts on the founding ones, and the
+        // fixture's are set on its in-memory copy, after the restart, through the test host's seam.
+        Assert.Empty(RiskPolicy.Changes(BoardFounding.V1.Risk, gw.Policy.Risk));
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["ES"];
+            r.MaxOrderQuantity = 3m;
+            r.MaxOpenPositions = 4;
+            r.MaxOrdersPerMinute = 20;
+        });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
         log.WriteLine($"CouldNotBeRead      : {gw.Settings.CouldNotBeRead}");
-        log.WriteLine($"allowlist           : [{string.Join(",", gw.Settings.Risk.InstrumentAllowlist)}]");
+        log.WriteLine($"allowlist           : [{string.Join(",", gw.Policy.Risk.InstrumentAllowlist)}]");
 
         Assert.False(gw.Settings.CouldNotBeRead);
         Assert.False(gw.Settings.AiTradingStopped);
-        Assert.Equal(3m, gw.Settings.Risk.MaxOrderQuantity);
-        Assert.Equal(4, gw.Settings.Risk.MaxOpenPositions);
-        Assert.Equal(20, gw.Settings.Risk.MaxOrdersPerMinute);
+        Assert.Equal(3m, gw.Policy.Risk.MaxOrderQuantity);
+        Assert.Equal(4, gw.Policy.Risk.MaxOpenPositions);
+        Assert.Equal(20, gw.Policy.Risk.MaxOrdersPerMinute);
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), "us-ok", TestEnv.Buy());
         log.WriteLine($"buy                 : {placed.State}, orders = {conn.Broker.Orders.Count}");
@@ -345,9 +345,10 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
     // ── item 3 ────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// THE RECOVERY, END TO END, AS THE SAFETY PAGE PERFORMS IT. `SafetyPage.SaveLimits` is one
-    /// `Gateway.Update` of the five risk fields and nothing else, so this is that write: the owner
-    /// reads the banner, types their limits back and presses Save limits. Afterwards the row on disk
+    /// THE RECOVERY, END TO END, AS THE OWNER'S PAGE PERFORMS IT. Since <c>U-board-a2</c> the limits are the security board's
+    /// policy and Save limits is gone with them, so the write is the one the owner's own page still makes — the daily cap's
+    /// save, one <c>Gateway.Update</c> of a field this row still holds: the owner reads the banner, checks his values and
+    /// presses it. Afterwards the row on disk
     /// is one this build wrote — so the warning has to stop ON THIS PASS, not after a restart, or the
     /// owner presses the only button on the page and nothing they can see changes — and a restart
     /// over the same database has to agree.
@@ -368,14 +369,7 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         Assert.True(gw.Settings.CouldNotBeRead);
         Assert.Contains("could not be read", before.Detail);
 
-        gw.Update(s =>                                   // exactly what SaveLimits writes
-        {
-            s.Risk.MaxOrderQuantity = 2m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 1;
-            s.Risk.MaxOrdersPerMinute = 4;
-            s.Risk.InstrumentAllowlist = ["MES"];
-        });
+        gw.Update(s => s.AiDailyCostCap = 2m);            // exactly what the daily cap's save writes
 
         Assert.False(gw.Settings.CouldNotBeRead);
         await gw.RefreshHealthAsync();
@@ -386,11 +380,9 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
 
         var (again, _2) = await RestartOver(db);
         log.WriteLine($"after restart : CouldNotBeRead {again.Settings.CouldNotBeRead}, "
-                      + $"allowlist [{string.Join(",", again.Settings.Risk.InstrumentAllowlist)}], "
-                      + $"quantity {again.Settings.Risk.MaxOrderQuantity}");
+                      + $"daily cap {again.Settings.AiDailyCostCap}");
         Assert.False(again.Settings.CouldNotBeRead);
-        Assert.Equal(new[] { "MES" }, again.Settings.Risk.InstrumentAllowlist);
-        Assert.Equal(2m, again.Settings.Risk.MaxOrderQuantity);
+        Assert.Equal(2m, again.Settings.AiDailyCostCap);
 
         // The damaged row is still kept. It is the only evidence of what the owner had asked for,
         // and the save above overwrote the row it was taken from.

@@ -50,7 +50,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var (gw, conn, db) = await TestEnv.Ready(
-            s => s.Risk.MaxDailyLoss = 1_000m, new GatewayOptions { Clock = clock });
+            null, new GatewayOptions { Clock = clock }, risk: r => r.MaxDailyLoss = 1_000m);
 
         await gw.PlaceAsync(new AgentContext("a"), "surf-open", TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
@@ -62,7 +62,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         Assert.NotEmpty(closing.Closed);
 
         // AND NOW THE BUDGET IS WIDENED, well past what the day has lost.
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
         conn.Broker.PriceOffset = -19m;
         await gw.QuoteAsync("ES");
 
@@ -163,7 +163,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var (gw, _, db) = await TestEnv.Ready(
-            s => s.Risk.MaxDailyLoss = 1_000m, new GatewayOptions { Clock = clock });
+            null, new GatewayOptions { Clock = clock }, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
         await using var _2 = gw;
 
@@ -186,11 +186,11 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     public async Task A_closed_symbol_is_named_on_the_status_and_in_the_report()
     {
         var clock = new TestClock(Noon);
-        var (gw, conn, db) = await TestEnv.Ready(s =>
+        var (gw, conn, db) = await TestEnv.Ready(null, new GatewayOptions { Clock = clock }, risk: r =>
         {
-            s.Risk.MaxLossPerTrade = 500m;
-            s.Risk.MaxDailyLoss = 0m;
-        }, new GatewayOptions { Clock = clock });
+            r.MaxLossPerTrade = 500m;
+            r.MaxDailyLoss = 0m;
+        });
         using var _1 = db;
         await using var _2 = gw;
 

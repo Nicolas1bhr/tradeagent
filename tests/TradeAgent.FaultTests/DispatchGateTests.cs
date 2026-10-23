@@ -31,7 +31,7 @@ public class DispatchGateTests(ITestOutputHelper log)
 {
     /// <summary>A gateway whose connector can be stopped inside the risk check's position read.</summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var db = TestEnv.NewDb();
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker()))
@@ -42,13 +42,17 @@ public class DispatchGateTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
@@ -193,7 +197,7 @@ public class DispatchGateTests(ITestOutputHelper log)
     [InlineData(5, 3)]
     public async Task Concurrent_orders_send_exactly_the_minutes_budget_and_no_more(int racers, int limit)
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxOrdersPerMinute = limit);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxOrdersPerMinute = limit);
         using var _1 = db;
 
         var release = new TaskCompletionSource();
@@ -229,7 +233,7 @@ public class DispatchGateTests(ITestOutputHelper log)
     [Fact]
     public async Task The_minutes_budget_still_admits_exactly_its_limit_one_order_at_a_time()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxOrdersPerMinute = 2);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxOrdersPerMinute = 2);
         using var _1 = db;
 
         Assert.Equal(ExecutionState.FILLED, (await gw.PlaceAsync(new AgentContext("a"), "dg-seq-1", TestEnv.Buy())).State);

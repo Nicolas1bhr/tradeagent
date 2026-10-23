@@ -71,11 +71,14 @@ public class PaperGatewayTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = PaperConnector.TheAccount;
-            s.Risk.InstrumentAllowlist = ["BTCUSDT"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["BTCUSDT"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -154,11 +157,14 @@ public class PaperGatewayTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = PaperConnector.TheAccount;
-            s.Risk.InstrumentAllowlist = ["BTCUSDT"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["BTCUSDT"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();

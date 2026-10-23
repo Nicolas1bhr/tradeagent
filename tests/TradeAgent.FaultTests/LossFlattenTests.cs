@@ -55,13 +55,16 @@ public class LossFlattenTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
             settings?.Invoke(s);
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -406,7 +409,7 @@ public class LossFlattenTests(ITestOutputHelper log)
             Account = account, Connector = conn.Id, Day = breach.Day, BreachKey = LossBreach.KeyFor(breach),
             ConfirmedAt = breach.ConfirmedAt, At = clock.GetUtcNow(), Why = "reopened by the test"
         }));
-        gw.Update(x => x.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
         var tomorrow = await gw.PlaceAsync(new AgentContext("a"), "tomorrow-2", TestEnv.Buy("ES"));
         log.WriteLine($"tomorrow's first order: {tomorrow.State}");
         Assert.Equal(ExecutionState.FILLED, tomorrow.State);

@@ -21,14 +21,14 @@ public class EmptyAllowlistTests(ITestOutputHelper log)
     [Fact]
     public async Task An_owner_who_clears_the_allowlist_stops_every_order()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.InstrumentAllowlist = ["ES"]);
+        var (gw, conn, db) = await TestEnv.Ready(null, risk: r => r.InstrumentAllowlist = ["ES"]);
         using var dbh = db;
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), "al-1", TestEnv.Buy());
         Assert.Equal(ExecutionState.FILLED, placed.State);
         log.WriteLine($"with ES on the list  : {placed.State}, orders = {conn.Broker.Orders.Count}");
 
-        gw.Update(s => s.Risk.InstrumentAllowlist.Clear());
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist.Clear());
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "al-2", TestEnv.Buy()));
@@ -48,7 +48,7 @@ public class EmptyAllowlistTests(ITestOutputHelper log)
     [Fact]
     public async Task A_populated_allowlist_still_allows_exactly_its_members()
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.InstrumentAllowlist = ["ES"]);
+        var (gw, conn, db) = await TestEnv.Ready(null, risk: r => r.InstrumentAllowlist = ["ES"]);
         using var dbh = db;
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), "al-es", TestEnv.Buy("ES"));

@@ -75,7 +75,11 @@ public class BridgeRoundTripTests
 
         using var db = TestEnv.NewDb();
         await using var gw = new TradingGateway(db, connector, new HealthRegistry());
-        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = "ATAS-LOOPBACK"; s.Risk.MaxOrderQuantity = 5m; });
+        gw.Update(s =>
+        { s.SelectedAccountId = "ATAS-LOOPBACK"; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxOrderQuantity = 5m;
+        });
         await gw.RefreshHealthAsync();
 
         var placed = await gw.PlaceAsync(new AgentContext("agent"), "bridge-1",
@@ -129,7 +133,11 @@ public class BridgeRoundTripTests
         using var db = TestEnv.NewDb();
         await using var gw = new TradingGateway(db, connector, new HealthRegistry(),
             new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
-        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = "ATAS-LOOPBACK"; s.Risk.MaxOrderQuantity = 5m; });
+        gw.Update(s =>
+        { s.SelectedAccountId = "ATAS-LOOPBACK"; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxOrderQuantity = 5m;
+        });
         await gw.RefreshHealthAsync();
 
         // The order lands in the adapter, then the bridge dies before the reply is read: exactly the

@@ -71,11 +71,11 @@ public class ValuationLossSurfacesTests(ITestOutputHelper log)
         Ready(decimal dailyBudget = 1_000m, decimal exitAfterMinutes = 15m)
     {
         var clock = new TestClock(Noon);
-        var (gw, conn, db) = await TestEnv.Ready(s =>
+        var (gw, conn, db) = await TestEnv.Ready(null, new GatewayOptions { Clock = clock }, emergencyBudget: Emergency, risk: r =>
         {
-            s.Risk.MaxDailyLoss = dailyBudget;
-            s.Risk.ValuationLossExitMinutes = exitAfterMinutes;
-        }, new GatewayOptions { Clock = clock }, emergencyBudget: Emergency);
+            r.MaxDailyLoss = dailyBudget;
+            r.ValuationLossExitMinutes = exitAfterMinutes;
+        });
         return (gw, conn, db, clock);
     }
 

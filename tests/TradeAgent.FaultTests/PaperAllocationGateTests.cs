@@ -53,7 +53,7 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     /// <summary>A gateway on a simulator both witnesses call a simulation, in practice mode.</summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
         Action<TradeAgentSettings>? settings = null, string? connectorId = null, Database? db = null,
-        string account = "SIM-001")
+        string account = "SIM-001", Action<RiskPolicy>? risk = null)
     {
         db ??= TestEnv.NewDb();
         var conn = new RecordingConnector(
@@ -63,17 +63,21 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            // The program this suite judges trades BTCUSDT, so the installation this stands in for
-            // allows it. Added here rather than to the shared list, which is every other suite's.
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"];
-            s.Risk.MaxOrderQuantity = 100m;
-            // 0 is "not enforced", which is this product's own default: the simulator reports no
-            // contract size for BTCUSDT, and a value cap is the only thing that multiplies one.
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            // The program this suite judges trades BTCUSDT, so the installation this stands in for
+            // allows it. Added here rather than to the shared list, which is every other suite's.
+            r.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"];
+            r.MaxOrderQuantity = 100m;
+            // 0 is "not enforced", which is this product's own default: the simulator reports no
+            // contract size for BTCUSDT, and a value cap is the only thing that multiplies one.
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);
@@ -347,7 +351,7 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     [Fact]
     public async Task A_paper_allocation_never_authorises_a_live_dispatch()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000_000m);
         using var _1 = db;
 
         var envelope = await Envelope(gw);
@@ -377,7 +381,7 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     [Fact]
     public async Task An_inconclusive_slot_never_authorises_a_live_dispatch()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000_000m);
         using var _1 = db;
 
         Slots(gw, 3);

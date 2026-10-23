@@ -38,7 +38,7 @@ public class RiskGateTests(ITestOutputHelper log)
     /// (<c>conn.Broker.Clock</c>), so nothing here can read two days.</para>
     /// </summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
-        Action<TradeAgentSettings>? settings = null, FaultProfile? faults = null)
+        Action<TradeAgentSettings>? settings = null, FaultProfile? faults = null, Action<RiskPolicy>? risk = null)
     {
         var db = TestEnv.NewDb();
         var clock = new TestClock();
@@ -47,13 +47,17 @@ public class RiskGateTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);
@@ -100,7 +104,7 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task Two_opening_orders_in_flight_together_cannot_both_pass_a_cap_of_one()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxOpenPositions = 1);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxOpenPositions = 1);
         using var _1 = db;
         conn.Seam = Barrier(2, RecordingConnector.HeldCall.Quote);
 
@@ -108,7 +112,7 @@ public class RiskGateTests(ITestOutputHelper log)
         var nq = gw.PlaceAsync(new AgentContext("a"), "cap-nq", TestEnv.Buy("NQ"));
         var outcomes = await Task.WhenAll(SwallowAsync(es), SwallowAsync(nq));
 
-        log.WriteLine($"cap                  : {gw.Settings.Risk.MaxOpenPositions}");
+        log.WriteLine($"cap                  : {gw.Policy.Risk.MaxOpenPositions}");
         log.WriteLine($"ES                   : {outcomes[0]}");
         log.WriteLine($"NQ                   : {outcomes[1]}");
         log.WriteLine($"connector place calls: {conn.Places}");
@@ -130,8 +134,8 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task A_working_opening_order_counts_against_the_cap_before_it_fills()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxOpenPositions = 1,
-            new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await Ready(null,
+            new FaultProfile { Fill = FillBehaviour.LeaveWorking }, risk: r => r.MaxOpenPositions = 1);
         using var _1 = db;
 
         var first = await gw.PlaceAsync(new AgentContext("a"), "rest-es", TestEnv.Buy("ES"));
@@ -156,7 +160,7 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task A_close_of_the_instrument_already_held_is_not_refused_by_the_cap()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxOpenPositions = 1);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxOpenPositions = 1);
         using var _1 = db;
 
         await gw.PlaceAsync(new AgentContext("a"), "trap-open", TestEnv.Buy("ES", 2m));
@@ -202,7 +206,7 @@ public class RiskGateTests(ITestOutputHelper log)
     {
         // 1 < 10 < 50: breached only if the ES multiplier is applied, which is precisely what a
         // missing multiplier hides.
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = FakeBroker.BasePrice("ES") * 10m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxNotionalPerOrder = FakeBroker.BasePrice("ES") * 10m);
         using var _1 = db;
 
         // Set AFTER Ready: the health refresh reads a quote, not the instrument list, so the cache
@@ -267,14 +271,14 @@ public class RiskGateTests(ITestOutputHelper log)
         using var _1 = db;
 
         var realized = await LoseTheDay(gw, conn);
-        gw.Update(s => s.Risk.MaxDailyLoss = 500m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 500m);
 
         var places = conn.Places;
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "after-budget", TestEnv.Buy("NQ")));
 
         log.WriteLine($"realised today       : {realized}");
-        log.WriteLine($"budget               : {gw.Settings.Risk.MaxDailyLoss}");
+        log.WriteLine($"budget               : {gw.Policy.Risk.MaxDailyLoss}");
         log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
         log.WriteLine($"places before/after  : {places}/{conn.Places}");
 
@@ -332,7 +336,9 @@ public class RiskGateTests(ITestOutputHelper log)
 
         await gw.PlaceAsync(new AgentContext("a"), "add-open", TestEnv.Buy("ES", 2m));
         conn.Broker.PriceOffset = -20m;
-        gw.Update(s => { s.Risk.MaxLossPerTrade = 500m; s.Risk.MaxDailyLoss = 0m; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.MaxLossPerTrade = 500m; r.MaxDailyLoss = 0m;
+        });
 
         var places = conn.Places;
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
@@ -393,13 +399,13 @@ public class RiskGateTests(ITestOutputHelper log)
     {
         // No value cap, because XYZ has no contract size and that gate would refuse first for its
         // own reasons — exactly as an owner who trades an undescribed symbol has to set none.
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxNotionalPerOrder = 0m);
         using var _1 = db;
 
         await gw.PlaceAsync(new AgentContext("a"), "xyz-open", TestEnv.Buy("XYZ"));
         conn.Broker.PriceOffset = -20m;
         await gw.CloseAsync(new AgentContext("a"), "xyz-out", "XYZ");
-        gw.Update(s => s.Risk.MaxDailyLoss = 500m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 500m);
 
         var places = conn.Places;
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
@@ -447,14 +453,17 @@ public class RiskGateTests(ITestOutputHelper log)
         restarted.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = ["NQ", "ES"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        restarted.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["NQ", "ES"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await restarted.RefreshHealthAsync();
-        restarted.Update(s => s.Risk.MaxDailyLoss = 500m);
+        restarted.UpdateRiskUnderTest(r => r.MaxDailyLoss = 500m);
 
         log.WriteLine($"ES held              : {conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity}");
         log.WriteLine($"ES marked by platform: {conn.Broker.Positions.First(p => p.Symbol == "ES").UnrealizedPnl?.ToString() ?? "null"}");
@@ -491,7 +500,7 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task An_open_position_with_a_price_but_no_contract_size_refuses_too()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxNotionalPerOrder = 0m);
         using var _1 = db;
         await gw.PlaceAsync(new AgentContext("a"), "xyz-held", TestEnv.Buy("XYZ"));
         await gw.DisposeAsync();
@@ -508,12 +517,15 @@ public class RiskGateTests(ITestOutputHelper log)
         restarted.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = ["XYZ", "ES"];   // the health probe prices XYZ, and only XYZ
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 500m;
+        });
+        restarted.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["XYZ", "ES"];   // the health probe prices XYZ, and only XYZ
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 500m;
         });
         await restarted.RefreshHealthAsync();
 
@@ -550,7 +562,7 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task No_loss_budget_means_the_day_is_never_read_and_nothing_is_refused()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxNotionalPerOrder = 0m);
         using var _1 = db;
 
         await gw.PlaceAsync(new AgentContext("a"), "free-xyz", TestEnv.Buy("XYZ"));
@@ -561,11 +573,11 @@ public class RiskGateTests(ITestOutputHelper log)
         conn.InstrumentsThrow = new ConnectorTransportException("the platform did not answer");
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), "free-again", TestEnv.Buy("XYZ"));
-        log.WriteLine($"budgets              : trade {gw.Settings.Risk.MaxLossPerTrade}, day {gw.Settings.Risk.MaxDailyLoss}");
+        log.WriteLine($"budgets              : trade {gw.Policy.Risk.MaxLossPerTrade}, day {gw.Policy.Risk.MaxDailyLoss}");
         log.WriteLine($"placed               : {placed.State}");
 
-        Assert.Equal(0m, gw.Settings.Risk.MaxDailyLoss);
-        Assert.Equal(0m, gw.Settings.Risk.MaxLossPerTrade);
+        Assert.Equal(0m, gw.Policy.Risk.MaxDailyLoss);
+        Assert.Equal(0m, gw.Policy.Risk.MaxLossPerTrade);
         Assert.Equal(ExecutionState.FILLED, placed.State);
 
         await gw.DisposeAsync();
@@ -584,14 +596,16 @@ public class RiskGateTests(ITestOutputHelper log)
 
         await gw.PlaceAsync(new AgentContext("a"), "ok-open", TestEnv.Buy("ES", 2m));
         conn.Broker.PriceOffset = -20m;
-        gw.Update(s => { s.Risk.MaxLossPerTrade = 100_000m; s.Risk.MaxDailyLoss = 0m; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.MaxLossPerTrade = 100_000m; r.MaxDailyLoss = 0m;
+        });
 
         var added = await gw.PlaceAsync(new AgentContext("a"), "ok-add", TestEnv.Buy("ES"));
         log.WriteLine($"add inside the budget: {added.State}");
         Assert.Equal(ExecutionState.FILLED, added.State);
 
         // Now tighten it: ES is far past the budget, NQ has no position at all and is not refused.
-        gw.Update(s => s.Risk.MaxLossPerTrade = 500m);
+        gw.UpdateRiskUnderTest(r => r.MaxLossPerTrade = 500m);
         var elsewhere = await gw.PlaceAsync(new AgentContext("a"), "ok-nq", TestEnv.Buy("NQ"));
         log.WriteLine($"another instrument   : {elsewhere.State}");
         Assert.Equal(ExecutionState.FILLED, elsewhere.State);
@@ -614,7 +628,7 @@ public class RiskGateTests(ITestOutputHelper log)
         using var _1 = db;
 
         await LoseTheDay(gw, conn);
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), "inside-budget", TestEnv.Buy("ES"));
         log.WriteLine($"placed               : {placed.State}");
@@ -631,7 +645,7 @@ public class RiskGateTests(ITestOutputHelper log)
     [Fact]
     public async Task No_notional_cap_means_the_missing_contract_size_is_not_asked_for()
     {
-        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxNotionalPerOrder = 0m);
         using var _1 = db;
         conn.InstrumentsThrow = new ConnectorTransportException("the platform did not answer");
 

@@ -39,7 +39,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
     static readonly DateTimeOffset Evening = new(2026, 3, 10, 22, 30, 0, TimeSpan.Zero);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(
-        TimeProvider? clock = null, Action<TradeAgentSettings>? settings = null)
+        TimeProvider? clock = null, Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var db = TestEnv.NewDb();
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
@@ -48,13 +48,17 @@ public class LossDayClosureTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);
@@ -101,7 +105,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
     [Fact]
     public async Task A_loser_closed_under_the_budget_does_not_reopen_a_day_the_record_has_closed()
     {
-        var (gw, conn, db) = await Ready(new TestClock(Evening), s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db) = await Ready(new TestClock(Evening), null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         await gw.PlaceAsync(new AgentContext("a"), "close-open", TestEnv.Buy("ES"));
@@ -145,7 +149,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
 
         // AND A WIDENED BUDGET IS NOT A REOPENED DAY EITHER — not even the widest widening there is,
         // which is the one that turns the limit off.
-        gw.Update(s => s.Risk.MaxDailyLoss = 0m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 0m);
         var stillDenied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "after-widening", TestEnv.Buy("NQ")));
         Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, stillDenied.Code);
@@ -166,7 +170,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
     [Fact]
     public async Task A_symbol_closed_for_the_day_refuses_a_re_entry_and_leaves_every_other_symbol_open()
     {
-        var (gw, conn, db) = await Ready(new TestClock(Evening), s => s.Risk.MaxLossPerTrade = 500m);
+        var (gw, conn, db) = await Ready(new TestClock(Evening), null, risk: r => r.MaxLossPerTrade = 500m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
@@ -220,7 +224,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
     public async Task The_closure_outlives_the_utc_day_it_began_in_and_ends_only_on_a_receipt()
     {
         var clock = new TestClock(Evening);
-        var (gw, conn, db) = await Ready(clock, s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db) = await Ready(clock, null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
@@ -288,7 +292,7 @@ public class LossDayClosureTests(ITestOutputHelper log)
     [Fact]
     public async Task A_closure_row_that_cannot_be_read_refuses_rather_than_reading_as_an_open_day()
     {
-        var (gw, conn, db) = await Ready(new TestClock(Evening), s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db) = await Ready(new TestClock(Evening), null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         db.SetKv(LossBreach.DayKey(conn.Broker.AccountId, Evening), "{ this is not json");

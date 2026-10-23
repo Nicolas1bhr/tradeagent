@@ -626,7 +626,7 @@ public class PipeContractTests(ITestOutputHelper log)
     [Fact]
     public async Task An_agents_own_records_still_resolve_including_the_legs_of_its_own_sweep()
     {
-        var (gw, conn, db, server, client) = await Counted(s => s.Risk.MaxOrderQuantity = 5m);
+        var (gw, conn, db, server, client) = await Counted(null, risk: r => r.MaxOrderQuantity = 5m);
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -666,7 +666,7 @@ public class PipeContractTests(ITestOutputHelper log)
     [Fact]
     public async Task Another_sessions_minted_leg_does_not_resolve()
     {
-        var (gw, conn, db, server, client) = await Counted(s => s.Risk.MaxOrderQuantity = 5m);
+        var (gw, conn, db, server, client) = await Counted(null, risk: r => r.MaxOrderQuantity = 5m);
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -989,7 +989,7 @@ public class PipeContractTests(ITestOutputHelper log)
     /// frame refused three reads into the risk check places no order either.
     /// </summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, GatewayPipeServer Server, PipeClient Client)>
-        Counted(Action<TradeAgentSettings>? settings = null)
+        Counted(Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var db = TestEnv.NewDb();
         var conn = new RecordingConnector(new Connectors.Fake.FakeConnector(new Connectors.Fake.FakeBroker()));
@@ -997,13 +997,17 @@ public class PipeContractTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 

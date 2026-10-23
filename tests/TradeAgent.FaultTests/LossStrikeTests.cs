@@ -47,7 +47,7 @@ public class LossStrikeTests(ITestOutputHelper log)
     static readonly TimeSpan Day = TimeSpan.FromHours(24);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
@@ -59,14 +59,18 @@ public class LossStrikeTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);
@@ -86,7 +90,7 @@ public class LossStrikeTests(ITestOutputHelper log)
     static async Task BreachAndFlatten(TradingGateway gw, RecordingConnector conn, TestClock clock,
         string tag, decimal budget, ITestOutputHelper log)
     {
-        gw.Update(s => s.Risk.MaxDailyLoss = budget);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = budget);
         await gw.PlaceAsync(new AgentContext("a"), tag, TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
 
@@ -101,7 +105,7 @@ public class LossStrikeTests(ITestOutputHelper log)
         Assert.True(flatten!.Flat);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
     }
 
     /// <summary>
@@ -238,7 +242,7 @@ public class LossStrikeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_daily_and_a_symbol_closure_on_one_day_are_one_incident_each_and_neither_is_held()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxLossPerTrade = 500m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxLossPerTrade = 500m);
         using var _1 = db;
         var account = conn.Broker.AccountId;
 
@@ -266,7 +270,9 @@ public class LossStrikeTests(ITestOutputHelper log)
 
         // AND BOTH REOPEN ON THEIR OWN RECEIPTS, WHICH IS THE POINT OF NOT HOLDING THEM.
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => { s.Risk.MaxDailyLoss = 100_000m; s.Risk.MaxLossPerTrade = 100_000m; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.MaxDailyLoss = 100_000m; r.MaxLossPerTrade = 100_000m;
+        });
         clock.MoveTo(LossReopen.EligibleAt(day.ConfirmedAt, Day) + TimeSpan.FromHours(1));
 
         var pass = await gw.LossWatchAsync();

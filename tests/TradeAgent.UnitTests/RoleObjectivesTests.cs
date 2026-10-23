@@ -169,11 +169,14 @@ public class RoleObjectivesTests
             host.Gateway.Update(s =>
             {
                 s.SelectedAccountId = connector.Broker.AccountId;
-                s.Risk.MaxOrderQuantity = 10m;
-                s.Risk.MaxNotionalPerOrder = 10_000_000m;
-                s.Risk.MaxOpenPositions = 10;
-                s.Risk.MaxOrdersPerMinute = 100;
-                s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            });
+            host.Gateway.UpdateRiskUnderTest(r =>
+            {
+                r.MaxOrderQuantity = 10m;
+                r.MaxNotionalPerOrder = 10_000_000m;
+                r.MaxOpenPositions = 10;
+                r.MaxOrdersPerMinute = 100;
+                r.InstrumentAllowlist = [.. TestEnv.Instruments];
             });
             await connector.ConnectAsync();
             await host.Gateway.RefreshHealthAsync();

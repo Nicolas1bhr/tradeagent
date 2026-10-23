@@ -34,7 +34,7 @@ public class ModifyGateTests(ITestOutputHelper log)
     static string NewPipe() => "ta-modgate-" + Guid.NewGuid().ToString("n")[..12];
 
     /// <summary>A gateway whose orders stay WORKING, so there is always something to modify.</summary>
-    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(Action<TradeAgentSettings> settings)
+    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready(Action<TradeAgentSettings>? settings, Action<RiskPolicy>? risk = null)
     {
         var db = TestEnv.NewDb();
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking }));
@@ -42,13 +42,17 @@ public class ModifyGateTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            settings(s);
+            settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db);
@@ -80,10 +84,7 @@ public class ModifyGateTests(ITestOutputHelper log)
     [Fact]
     public async Task A_modify_that_breaks_the_quantity_limit_never_reaches_the_wire()
     {
-        var (gw, conn, db) = await Ready(s =>
-        {
-            s.Risk.MaxOrderQuantity = 1m;
-        });
+        var (gw, conn, db) = await Ready(null, risk: r => r.MaxOrderQuantity = 1m);
         gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         using var _1 = db;
         gw.ActivateLiveUnderTest(true);
@@ -191,7 +192,7 @@ public class ModifyGateTests(ITestOutputHelper log)
         using var _1 = db;
 
         var working = await gw.PlaceAsync(new AgentContext("a"), "mg4-open", Buy());
-        gw.Update(s => s.Risk.InstrumentAllowlist = ["MES"]);
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["MES"]);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.ModifyAsync(new AgentContext("a"), "mg4-mod", working.ConnectorOrderId!, 2m, null, null));

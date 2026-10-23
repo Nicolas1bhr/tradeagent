@@ -252,7 +252,7 @@ static class Recovery
     /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
         FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
-        Database? db = null, TimeSpan? emergencyBudget = null)
+        Database? db = null, TimeSpan? emergencyBudget = null, Action<RiskPolicy>? risk = null)
     {
         db ??= TestEnv.NewDb();
         var c = new RecoveryConnector(emergencyBudget is { } budget
@@ -262,13 +262,17 @@ static class Recovery
         gw.Update(s =>
         {
             s.SelectedAccountId = c.Inner.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await c.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, c, db);
@@ -359,7 +363,11 @@ public class StartupSweepTests
         {
             var conn = new FakeConnector(broker);
             var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
-            gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; });
+            gw.Update(s =>
+            { s.SelectedAccountId = broker.AccountId; });
+            gw.UpdateRiskUnderTest(r =>
+            { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m; r.MaxOpenPositions = 10;
+            });
 
             // Swept at construction, before anything else can read the store or place an order.
             var swept = gw.GetRequest("mid-flight")!;
@@ -1597,8 +1605,7 @@ public class TickNormalizedModifyTests
         // would refuse the placement this test needs to get onto the book. Zero is the shipped
         // default and means the cap is not enforced.
         var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking },
-            settings: s => s.Risk.MaxNotionalPerOrder = 0m,
-            options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+            options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero }, risk: r => r.MaxNotionalPerOrder = 0m);
         using var dbh = db;
         var placed = await gw.PlaceAsync(new AgentContext("a"), "grid-place",
             new PlaceIntent("XYZ", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));

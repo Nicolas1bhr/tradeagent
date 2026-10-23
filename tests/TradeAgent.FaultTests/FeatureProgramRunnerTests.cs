@@ -207,11 +207,14 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = PaperConnector.TheAccount;
-            s.Risk.InstrumentAllowlist = ["BTCUSDT"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 1000;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["BTCUSDT"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 1000;
         });
 
         // AFTER the gateway, which syncs the shipped catalogue — whose BTCUSDT row is unverified on purpose.

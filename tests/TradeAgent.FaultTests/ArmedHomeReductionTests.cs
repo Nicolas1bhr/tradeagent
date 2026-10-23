@@ -44,13 +44,6 @@ public class ArmedHomeReductionTests(ITestOutputHelper log)
             QuoteClock = clock
         });
         var shape = new TradeAgentSettings { SelectedAccountId = conn.Broker.AccountId };
-        shape.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-        shape.Risk.MaxOrderQuantity = 10m;
-        shape.Risk.MaxNotionalPerOrder = 10_000_000m;
-        shape.Risk.MaxOpenPositions = 10;
-        shape.Risk.MaxOrdersPerMinute = 100;
-        shape.Risk.MaxDailyLoss = 1_000m;
-        shape.Risk.ValuationLossExitMinutes = exitAfterMinutes;
         var raw = "{\"mode\":\"LIVE_AUTONOMOUS\",\"live_activated\":true," + Json.Write(shape)[1..];
         db.SetKv("settings", raw);
 
@@ -58,6 +51,17 @@ public class ArmedHomeReductionTests(ITestOutputHelper log)
             OrderType.Market, 2m, null, null, TimeInForce.Day, "left open by an earlier build"), FillBehaviour.FillImmediately);
 
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        // THE LIMITS ARE THE POLICY'S (U-board-a2): set on this gateway's in-memory copy, never written into the armed row.
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
+            r.ValuationLossExitMinutes = exitAfterMinutes;
+        });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         Assert.NotNull(gw.EarlierLiveSetting);

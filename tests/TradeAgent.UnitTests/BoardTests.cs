@@ -99,7 +99,7 @@ public class BoardTests(ITestOutputHelper log)
         // THE FOUNDING VALUES ARE THE BUILD'S CURRENT DEFAULTS where the settings still hold one — every limit but the allowlist,
         // which has no default and is the orchestrator's ruled value, with the paper envelope (R24 § 4.5, Q3).
         var defaults = new TradeAgentSettings();
-        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(defaults.Risk, BoardFounding.V1.Risk));
+        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(new RiskPolicy(), BoardFounding.V1.Risk));
         Assert.Equal(["BTCUSDT"], BoardFounding.V1.Risk.InstrumentAllowlist);
         Assert.Equal(new PaperEnvelopeTerms(TradeAgent.Connectors.Paper.PaperConnector.ConnectorId, TradeAgent.Connectors.Paper.PaperConnector.TheAccount,
             "BTCUSDT", 0.05m, 5_000m, TradingGateway.PaperDeploymentsPerEnvelope, null), BoardFounding.V1.PaperEnvelope);
@@ -114,9 +114,9 @@ public class BoardTests(ITestOutputHelper log)
         await using var _gw = gw;
         var status = await gw.StatusAsync();
         Assert.Equal((TradingMode.PAPER, false), (status.Mode, status.LiveActivated));
-        // THE LIMITS THE STATUS SHOWS ARE THE POLICY'S, but for the allowlist, which the gateway still reads from the settings row
-        // until U-board-a2 moves every limit's read onto the policy (item 8).
-        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(status.Risk, inForce.Policy.Risk));
+        // THE LIMITS THE STATUS SHOWS ARE THE POLICY'S, every one of them, the allowlist included (U-board-a2 item 8).
+        Assert.Empty(RiskPolicy.Changes(status.Risk, inForce.Policy.Risk));
+        Assert.Equal(["BTCUSDT"], status.Risk.InstrumentAllowlist);
     }
 
     /// <summary>
@@ -391,6 +391,10 @@ public class BoardTests(ITestOutputHelper log)
         Assert.Null(gw.EarlierLiveSetting);
         var status = await gw.StatusAsync();
         Assert.Equal((TradingMode.PAPER, false), (status.Mode, status.LiveActivated));
+        // THE ROW'S `risk` KEY GOVERNS NOTHING EITHER (U-board-a2 item 8): the founding allowlist is in force, not the row's ES and NQ —
+        // so the order below is let through the allowlist on this gateway's seam, to reach the paper-on-real refusal it is about.
+        Assert.Equal(["BTCUSDT"], status.Risk.InstrumentAllowlist);
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["ES"]);
         var after = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "armed-2", TestEnv.Buy()));
         log.WriteLine($"after the press: {after.Code}: {after.Message}");
@@ -493,7 +497,9 @@ public class BoardTests(ITestOutputHelper log)
 
         var (gw, conn) = await Gateway(db);
         await using var _gw = gw;
-        gw.Update(s => { s.SelectedAccountId = conn.Broker.AccountId; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; });
+        gw.Update(s =>
+        { s.SelectedAccountId = conn.Broker.AccountId; });
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = [.. TestEnv.Instruments]);
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "unreadable-1", TestEnv.Buy()));
         log.WriteLine($"{denied.Code}: {denied.Message}");

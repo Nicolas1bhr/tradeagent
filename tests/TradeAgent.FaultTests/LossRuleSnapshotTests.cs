@@ -45,7 +45,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
     static readonly TimeSpan Day = TimeSpan.FromHours(24);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
-        DateTimeOffset? start = null, Action<TradeAgentSettings>? settings = null)
+        DateTimeOffset? start = null, Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var clock = new TestClock(start ?? Noon);
         var db = TestEnv.NewDb();
@@ -57,14 +57,18 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);
@@ -73,7 +77,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
     static async Task BreachAndFlatten(TradingGateway gw, RecordingConnector conn, TestClock clock,
         string tag, decimal budget, ITestOutputHelper log)
     {
-        gw.Update(s => s.Risk.MaxDailyLoss = budget);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = budget);
         await gw.PlaceAsync(new AgentContext("a"), tag, TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
 
@@ -85,7 +89,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
         Assert.NotEmpty(closing.Closed);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
     }
 
     /// <summary>
@@ -112,7 +116,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
 
         // THE OWNER SHORTENS IT TO AN HOUR. On the live setting that would put the earliest instant
         // at the next UTC midnight; on the record's own it stays a day out.
-        gw.Update(s => s.Risk.LossMinClosureHours = 1m);
+        gw.UpdateRiskUnderTest(r => r.LossMinClosureHours = 1m);
         var snapshotted = LossReopen.EligibleAt(breach.ConfirmedAt, Day);
         var live = LossReopen.EligibleAt(breach.ConfirmedAt, TimeSpan.FromHours(1));
         log.WriteLine($"eligible       : snapshot {snapshotted:yyyy-MM-dd HH:mm}Z / live {live:yyyy-MM-dd HH:mm}Z");
@@ -160,7 +164,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
     public async Task A_closure_the_owner_shortened_before_the_breach_governs_that_breach()
     {
         var evening = new DateTimeOffset(2026, 3, 10, 22, 0, 0, TimeSpan.Zero);
-        var (gw, conn, db, clock) = await Ready(evening, s => s.Risk.LossMinClosureHours = 6m);
+        var (gw, conn, db, clock) = await Ready(evening, null, risk: r => r.LossMinClosureHours = 6m);
         using var _1 = db;
         var account = conn.Broker.AccountId;
 
@@ -204,8 +208,8 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
         clock.MoveTo(LossReopen.EligibleAt(breach.ConfirmedAt, Day) + TimeSpan.FromMinutes(1));
         Assert.Single((await gw.LossWatchAsync()).Reopened);
 
-        gw.Update(s => s.Risk.LossMinClosureHours = 240m);
-        log.WriteLine($"widened to     : {gw.Settings.Risk.LossMinClosureHours} h");
+        gw.UpdateRiskUnderTest(r => r.LossMinClosureHours = 240m);
+        log.WriteLine($"widened to     : {gw.Policy.Risk.LossMinClosureHours} h");
         Assert.Null(gw.DayClosed(account));
 
         var places = conn.Places;
@@ -248,7 +252,9 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
         Assert.Null(old.StrikeWindowDays);
 
         // AND THE LIVE SETTING IS NARROWED AS FAR AS IT GOES, which must change nothing about it.
-        gw.Update(s => { s.Risk.LossMinClosureHours = 0m; s.Risk.LossStrikeWindowDays = 0; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.LossMinClosureHours = 0m; r.LossStrikeWindowDays = 0;
+        });
 
         var reading = gw.ReopenReading();
         log.WriteLine($"reopens at     : {reading.At:yyyy-MM-dd HH:mm}Z");
@@ -269,7 +275,7 @@ public class LossRuleSnapshotTests(ITestOutputHelper log)
     [Fact]
     public async Task A_second_breach_outside_the_owners_own_window_is_not_a_strike()
     {
-        var (gw, conn, db, clock) = await Ready(settings: s => s.Risk.LossStrikeWindowDays = 2);
+        var (gw, conn, db, clock) = await Ready(risk: r => r.LossStrikeWindowDays = 2);
         using var _1 = db;
         var account = conn.Broker.AccountId;
 

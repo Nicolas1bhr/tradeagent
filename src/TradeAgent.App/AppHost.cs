@@ -1613,7 +1613,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         var available = Gateway.TryAuthorizeExecution(AgentContext.Operator, out var reason);
         return new WorkspaceContext(Connector.DisplayName, Connector.Capabilities.IsPaper,
-            Gateway.Settings.SelectedAccountId, Gateway.Policy.Mode, available, reason, Gateway.Settings.Risk,
+            Gateway.Settings.SelectedAccountId, Gateway.Policy.Mode, available, reason, Gateway.Policy.Risk,
             ConnectorIsBuiltInSimulator: Connector.Id == FakeConnector.ConnectorId,
             TurnsPerSession: Gateway.Settings.MissionTurnsPerSession);
     }

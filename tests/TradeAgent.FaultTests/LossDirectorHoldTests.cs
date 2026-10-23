@@ -57,12 +57,15 @@ public class LossDirectorHoldTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -72,7 +75,7 @@ public class LossDirectorHoldTests(ITestOutputHelper log)
     static async Task<LossBreachRecord> BreachAndFlatten(TradingGateway gw, RecordingConnector conn,
         TestClock clock, string tag, decimal budget, ITestOutputHelper log)
     {
-        gw.Update(s => s.Risk.MaxDailyLoss = budget);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = budget);
         await gw.PlaceAsync(new AgentContext("a"), tag, TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
 
@@ -84,7 +87,7 @@ public class LossDirectorHoldTests(ITestOutputHelper log)
         Assert.NotEmpty(closing.Closed);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
         return gw.DayClosed(conn.Broker.AccountId)!;
     }
 

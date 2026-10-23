@@ -94,11 +94,14 @@ public class QuoteClockTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = PaperConnector.TheAccount;
-            s.Risk.InstrumentAllowlist = ["BTCUSDT"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = ["BTCUSDT"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
 
         await paper.ConnectAsync();
@@ -196,11 +199,14 @@ public class QuoteClockTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -219,11 +225,11 @@ public class QuoteClockTests(ITestOutputHelper log)
         Assert.StartsWith(ErrorCode.DECISION_EXPIRED.ToString(), expired, StringComparison.Ordinal);
 
         // THREE: the valuation reads it too. A loss budget makes the watch value the open position.
-        gw.Update(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 1_000_000m);
         var pass = await gw.LossWatchAsync();
         log.WriteLine($"loss watch                   : ran={pass.Ran} why={pass.Why}");
         Assert.DoesNotContain("older than", pass.Why ?? "", StringComparison.Ordinal);
-        gw.Update(s => s.Risk.MaxDailyLoss = 0m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 0m);
 
         // FOUR: forty seconds pass inside the position read. The risk check took a price five seconds
         // old; the gate after the read measures it on the same, moved clock — forty-five — and refuses.
@@ -312,8 +318,8 @@ public class QuoteClockTests(ITestOutputHelper log)
         simGw.Update(s =>
         {
             s.SelectedAccountId = sim.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = ["ES"];
         });
+        simGw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["ES"]);
         await sim.ConnectAsync();
         await simGw.RefreshHealthAsync();
         var simRow = simHealth.Get(Components.MarketData);

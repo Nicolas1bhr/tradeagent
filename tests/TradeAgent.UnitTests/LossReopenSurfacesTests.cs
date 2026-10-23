@@ -49,7 +49,7 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var (gw, conn, db) = await TestEnv.Ready(
-            s => s.Risk.MaxDailyLoss = 1_000m, new GatewayOptions { Clock = clock });
+            null, new GatewayOptions { Clock = clock }, risk: r => r.MaxDailyLoss = 1_000m);
 
         await gw.PlaceAsync(new AgentContext("a"), "surf-open", TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
@@ -59,7 +59,7 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
         Assert.NotEmpty((await gw.LossWatchAsync()).Closed);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
         return (gw, conn, db, clock);
     }
 
@@ -184,7 +184,7 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
         // first one is still on disk and must stop being the answer. The order goes out first, while
         // the budget is still wide; the budget is then narrowed to what the ledger already carries.
         await gw.PlaceAsync(new AgentContext("a"), "second-open", TestEnv.Buy("ES"));
-        gw.Update(s => s.Risk.MaxDailyLoss = 1_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 1_000m);
         conn.Broker.PriceOffset = -20m;
         clock.Advance(Tick);
         await gw.LossWatchAsync();

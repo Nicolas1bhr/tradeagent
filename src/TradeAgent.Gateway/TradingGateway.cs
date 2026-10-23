@@ -2893,7 +2893,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // to read that it happened.
         var valuation = ValuationReading();
 
-        var r = Settings.Risk;
+        var r = Policy.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced with
         {
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
@@ -3293,6 +3293,35 @@ public sealed class TradingGateway : IAsyncDisposable
         StateChanged?.Invoke();
     }
 
+    /// <summary>
+    /// THE TEST HOST'S SEAM OVER THE GATEWAY'S LIMITS IN THE IN-MEMORY POLICY (<c>U-board-a2</c> item 8): the limits are the security
+    /// board's policy, which only <see cref="BoardStore"/> writes and only the app's founding decides, so a fixture that needs a wider
+    /// quantity or another allowlist changes THIS gateway's copy here — internal, visible to the three test projects alone, and called
+    /// from nowhere in <c>src/</c> (a guard says so). Nothing it does reaches the store or survives a restart.
+    /// </summary>
+    internal void UpdateRiskUnderTest(Action<RiskPolicy> change)
+    {
+        var risk = _policy.Risk;
+        change(risk);
+        _policy = _policy with { Risk = risk };
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// THE TEST HOST'S SEAM OVER THE REST OF THE IN-MEMORY POLICY (<c>U-board-a2</c> item 9): the plan's day-total, the shares, the
+    /// allowance, the lanes and the wake policy, as <see cref="UpdateRiskUnderTest"/> moves the limits. The mode and real money are
+    /// NOT moved here — <see cref="SetModeUnderTest"/> and <see cref="ActivateLiveUnderTest"/> are their only seams — and a change that
+    /// would move either is refused.
+    /// </summary>
+    internal void SetPolicyUnderTest(Func<BoardPolicy, BoardPolicy> change)
+    {
+        var next = change(_policy);
+        if (next.Mode != _policy.Mode || next.LiveActivated != _policy.LiveActivated)
+            throw new InvalidOperationException("the mode and real money move through SetModeUnderTest and ActivateLiveUnderTest alone");
+        _policy = next;
+        StateChanged?.Invoke();
+    }
+
     // ---------------------------------------------------------------- reads
 
     public async Task<GatewayStatus> StatusAsync(CancellationToken ct = default)
@@ -3319,7 +3348,7 @@ public sealed class TradingGateway : IAsyncDisposable
             Versions.ProtocolVersion.ToString(), Versions.App, Policy.Mode, Settings.AiTradingStopped,
             Policy.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
             Connector.Capabilities.IsPaper, acct?.Id ?? Settings.SelectedAccountId, _health.Snapshot(),
-            _requests.Open().Count, Unreconciled().Count, Settings.Risk)
+            _requests.Open().Count, Unreconciled().Count, Policy.Risk)
         {
             AiState = ai.State,
             AiTurnsToday = ai.TurnsToday,
@@ -3781,7 +3810,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     async Task<OrderPricing> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
     {
-        var r = Settings.Risk;
+        var r = Policy.Risk;
 
         if (!r.InstrumentAllowed(intent.Symbol))
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{intent.Symbol} is not on the allowed instrument list");
@@ -3898,7 +3927,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     void PerOrderLimitsAtDispatchOrThrow(PlaceIntent intent, OrderPricing priced)
     {
-        var r = Settings.Risk;
+        var r = Policy.Risk;
 
         if (!r.InstrumentAllowed(intent.Symbol))
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
@@ -4028,7 +4057,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     void OpenPositionCapOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions, string requestId)
     {
-        var limit = Settings.Risk.MaxOpenPositions;
+        var limit = Policy.Risk.MaxOpenPositions;
         var open = new HashSet<string>(
             positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), StringComparer.Ordinal);
 
@@ -4332,7 +4361,7 @@ public sealed class TradingGateway : IAsyncDisposable
         if (SymbolClosed(account.Id, intent.Symbol) is { } sym)
             throw new GatewayDeniedException(ErrorCode.LOSS_BUDGET_REACHED, sym.Why);
 
-        var r = Settings.Risk;
+        var r = Policy.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return;
 
         // The multiplier lives in the instrument list, and a cold cache is the state a configured
@@ -4636,7 +4665,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // thresholds cannot promise, and a substituted clock that does not advance would report
         // every reading as instantaneous. It decides nothing. See LastLossWatchTook.
         var took = System.Diagnostics.Stopwatch.StartNew();
-        var r = Settings.Risk;
+        var r = Policy.Risk;
 
         // A CLOSURE THAT IS STANDING IS WORK THIS TICK OWES WHATEVER THE BUDGETS NOW SAY. With
         // neither budget set nothing is measured and the platform is not asked — the rule
@@ -5811,7 +5840,7 @@ public sealed class TradingGateway : IAsyncDisposable
         if (account.Length == 0) return [];
 
         var now = Now;
-        var window = Math.Max(Settings.Risk.LossStrikeWindowDays, 1);
+        var window = Math.Max(Policy.Risk.LossStrikeWindowDays, 1);
         var lines = new List<(DateTimeOffset At, string Line)>();
 
         List<(string Key, string Value)> rows;
@@ -6264,14 +6293,14 @@ public sealed class TradingGateway : IAsyncDisposable
             DayBudget = reading.DayBudget,
             TradeBudget = reading.TradeBudget,
             Currency = reading.Currency,
-            SettingsRevision = Sha256Hex.Of(Json.Write(Settings.Risk))[..12],
+            SettingsRevision = Sha256Hex.Of(Json.Write(Policy.Risk))[..12],
 
             // THE RULE THIS EPISODE WILL BE JUDGED BY, TAKEN NOW. The settings hash above is an
             // identity and not an arithmetic — nothing can compute an eligibility instant from it —
             // so the two numbers that decide when this closure lifts are on the row in their own
             // right, and every reader uses them instead of whatever is set when it asks.
-            MinClosure = LossReopen.ClosureOf(Settings.Risk.LossMinClosureHours),
-            StrikeWindowDays = Settings.Risk.LossStrikeWindowDays,
+            MinClosure = LossReopen.ClosureOf(Policy.Risk.LossMinClosureHours),
+            StrikeWindowDays = Policy.Risk.LossStrikeWindowDays,
 
             // AND THE BASELINE THE CLOSURE'S RESTART PENALTY IS MEASURED FROM. The counter is the
             // account's and lives across episodes; what this closure is charged is how much it grows
@@ -6474,7 +6503,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     DispatchSlot ReserveDispatchOrThrow()
     {
-        var limit = Settings.Risk.MaxOrdersPerMinute;
+        var limit = Policy.Risk.MaxOrdersPerMinute;
         lock (_recentDispatches)
         {
             var at = Now;
@@ -11346,7 +11375,7 @@ public sealed class TradingGateway : IAsyncDisposable
     TimeSpan ValuationExitBound() =>
         Settings.CouldNotBeRead
             ? _opt.ValuationLossExitAfter
-            : ValuationLoss.BoundOf(Settings.Risk.ValuationLossExitMinutes);
+            : ValuationLoss.BoundOf(Policy.Risk.ValuationLossExitMinutes);
 
     /// <summary>
     /// CAN THIS OPEN POSITION BE VALUED AT ALL, and if not, in the watch's own words why not.
@@ -13598,7 +13627,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // see SettleStaleOrdersInFlightAsync.
             if (account is not null) await SettleStaleOrdersInFlightAsync(account.Id, ct);
 
-            var symbol = Settings.Risk.InstrumentAllowlist.FirstOrDefault()
+            var symbol = Policy.Risk.InstrumentAllowlist.FirstOrDefault()
                          ?? (await InstrumentsAsync(ct)).FirstOrDefault()?.Symbol;
             if (symbol is not null)
             {

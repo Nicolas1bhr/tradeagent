@@ -25,15 +25,18 @@ public class ApprovalReauthorizationTests
     /// <summary>A gateway in LIVE_CONFIRM with real-money switched on, and one agent order parked.</summary>
     static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> Parked(string requestId,
         Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null,
-        PlaceIntent? intent = null)
+        PlaceIntent? intent = null, Action<RiskPolicy>? risk = null)
     {
         // The day's budget is part of what a live installation IS: a fixture that stands in for one carries it. Wide, because
         // nothing in this class is about the loss budgets, and the caller may still narrow it.
         var env = await TestEnv.Ready(s =>
         {
-            s.Risk.MaxDailyLoss = 1_000_000m;
             settings?.Invoke(s);
-        }, options, faults, mode: TradingMode.LIVE_CONFIRM);
+        }, options, faults, mode: TradingMode.LIVE_CONFIRM, risk: r =>
+        {
+            r.MaxDailyLoss = 1_000_000m;
+            risk?.Invoke(r);
+        });
         env.Gw.ActivateLiveUnderTest(true);
         await Park(env.Gw, requestId, intent);
         return env;
@@ -60,13 +63,16 @@ public class ApprovalReauthorizationTests
         gw.Update(s =>
         {
             s.SelectedAccountId = accountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
             // A fixture that stands in for a live installation has a bound on the day, as that installation must.
-            s.Risk.MaxDailyLoss = 1_000_000m;
+            r.MaxDailyLoss = 1_000_000m;
         });
         gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         await conn.ConnectAsync();
@@ -344,7 +350,7 @@ public class ApprovalReauthorizationTests
     [Fact]
     public async Task The_rate_limit_counts_the_approvals_dispatched_since_parking()
     {
-        var (gw, conn, db) = await Parked("rate-1", s => s.Risk.MaxOrdersPerMinute = 2);
+        var (gw, conn, db) = await Parked("rate-1", null, risk: r => r.MaxOrdersPerMinute = 2);
         using var dbh = db;
         await Park(gw, "rate-2");
         await Park(gw, "rate-3");
@@ -364,7 +370,7 @@ public class ApprovalReauthorizationTests
     [Fact]
     public async Task The_position_limit_counts_the_positions_opened_since_parking()
     {
-        var (gw, conn, db) = await Parked("pos-es", s => s.Risk.MaxOpenPositions = 1);
+        var (gw, conn, db) = await Parked("pos-es", null, risk: r => r.MaxOpenPositions = 1);
         using var dbh = db;
         await Park(gw, "pos-nq", TestEnv.Buy(symbol: "NQ"));
 
@@ -377,7 +383,7 @@ public class ApprovalReauthorizationTests
         Assert.Single(conn.Broker.Orders);
         Assert.Equal(ExecutionState.AWAITING_APPROVAL, gw.GetRequest("pos-es")!.State);
 
-        gw.Update(s => s.Risk.MaxOpenPositions = 2);
+        gw.UpdateRiskUnderTest(r => r.MaxOpenPositions = 2);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("pos-es"), conn, "pos-es");
     }
 
@@ -387,12 +393,12 @@ public class ApprovalReauthorizationTests
         var (gw, conn, db) = await Parked("qty-1", intent: TestEnv.Buy(qty: 3m));
         using var dbh = db;
 
-        gw.Update(s => s.Risk.MaxOrderQuantity = 1m);
+        gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 1m);
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("qty-1"));
         AssertRefusedAndStillParked(denied, ErrorCode.RISK_LIMIT_EXCEEDED, gw, conn, "qty-1");
 
-        gw.Update(s => s.Risk.MaxOrderQuantity = 3m);
+        gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 3m);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("qty-1"), conn, "qty-1");
     }
 
@@ -408,13 +414,13 @@ public class ApprovalReauthorizationTests
         using var dbh = db;
         Assert.Empty(new RiskPolicy().InstrumentAllowlist);   // the default names nothing, so it allows nothing
 
-        gw.Update(s => s.Risk.InstrumentAllowlist = ["NQ"]);   // ES is now off the list
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["NQ"]);   // ES is now off the list
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("allow-1"));
         AssertRefusedAndStillParked(denied, ErrorCode.RISK_LIMIT_EXCEEDED, gw, conn, "allow-1");
         Assert.Contains("allowed instrument list", denied.Message);
 
-        gw.Update(s => s.Risk.InstrumentAllowlist = ["ES", "NQ"]);
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["ES", "NQ"]);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("allow-1"), conn, "allow-1");
     }
 
@@ -434,13 +440,13 @@ public class ApprovalReauthorizationTests
         Assert.NotEqual(1m, contractSize);
         var price = FakeBroker.BasePrice("ES");
 
-        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50
+        gw.UpdateRiskUnderTest(r => r.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("notional-1"));
         AssertRefusedAndStillParked(denied, ErrorCode.RISK_LIMIT_EXCEEDED, gw, conn, "notional-1");
         Assert.Contains("order value", denied.Message);
 
-        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * contractSize + price);
+        gw.UpdateRiskUnderTest(r => r.MaxNotionalPerOrder = price * contractSize + price);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("notional-1"), conn, "notional-1");
     }
 
@@ -693,14 +699,14 @@ public class ApprovalReauthorizationTests
         // instrument's tick, the base price and the quoted price are no longer the same number.
         var price = conn.Broker.Quote("ES", DateTimeOffset.UtcNow).Last!.Value;
 
-        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50: only the multiplied value breaches it
+        gw.UpdateRiskUnderTest(r => r.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50: only the multiplied value breaches it
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "notional-x", TestEnv.Buy()));
         Assert.Equal(ErrorCode.RISK_LIMIT_EXCEEDED, denied.Code);
         Assert.Contains("order value", denied.Message);
         Assert.Empty(conn.Broker.Orders);
 
-        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * contractSize + price);   // just above the multiplied value
+        gw.UpdateRiskUnderTest(r => r.MaxNotionalPerOrder = price * contractSize + price);   // just above the multiplied value
         Assert.Equal(ExecutionState.FILLED, (await gw.PlaceAsync(new AgentContext("a"), "notional-ok", TestEnv.Buy())).State);
     }
 
@@ -712,7 +718,11 @@ public class ApprovalReauthorizationTests
         var inner = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         var conn = new ConnectorFacade(inner, inner.Capabilities with { SupportsModify = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s =>
+        { s.SelectedAccountId = inner.Broker.AccountId; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m;
+        });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 

@@ -31,12 +31,15 @@ public class DispatchOrderLimitsTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000_000m;
         });
         gw.SetModeUnderTest(mode);
         gw.ActivateLiveUnderTest(mode != TradingMode.PAPER);
@@ -65,7 +68,9 @@ public class DispatchOrderLimitsTests(ITestOutputHelper log)
         await conn.Reached.Task;   // the order is inside the dispatch gate, in the position read
 
         // The owner, on the Safety page, takes ES off the allowlist and lowers the size cap.
-        gw.Update(s => { s.Risk.InstrumentAllowlist = ["NQ"]; s.Risk.MaxOrderQuantity = 1m; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = ["NQ"]; r.MaxOrderQuantity = 1m;
+        });
         log.WriteLine("owner narrowed the limits while the order was inside the gate");
 
         release.SetResult();
@@ -110,7 +115,7 @@ public class DispatchOrderLimitsTests(ITestOutputHelper log)
         Assert.Equal(ErrorCode.APPROVAL_REQUIRED.ToString(), parked);
 
         // The owner narrows the cap on the Safety page, then presses Approve on the card.
-        gw.Update(s => s.Risk.MaxOrderQuantity = 1m);
+        gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 1m);
 
         var places = conn.Places;
         var approved = "SENT";

@@ -616,10 +616,13 @@ public class GatewayPipeBackpressureTests
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -691,17 +694,20 @@ public class GatewayPipeBackpressureTests
         gw.Update(s =>
         {
             s.SelectedAccountId = inner.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOrdersPerMinute = 100;
 
             // AN ALLOWLIST, WHICH IS WHAT A CONFIGURED INSTALLATION HAS — and it is what keeps the
             // instrument cache cold. `RefreshHealthAsync` reads the instrument list only to pick a
             // symbol to quote when nothing is allowlisted, so on a configured install nothing warms
             // that cache and the FIRST placement is the one that pays for it. Cold is the normal
             // state here, not a contrived one.
-            s.Risk.InstrumentAllowlist.Add("ES");
+            r.InstrumentAllowlist.Add("ES");
         });
         await counting.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -755,7 +761,7 @@ public class GatewayPipeBackpressureTests
     {
         // The allowlist is what keeps the instrument cache cold, and it is what a configured
         // installation has: health reads the instrument list only when nothing is allowlisted.
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.InstrumentAllowlist.Add("ES"));
+        var (gw, conn, db) = await TestEnv.Ready(null, risk: r => r.InstrumentAllowlist.Add("ES"));
         using var _1 = db;
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
@@ -1318,11 +1324,14 @@ public class GatewayPipeBackpressureTests
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -1570,11 +1579,14 @@ public class GatewayPipeBackpressureTests
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 200;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -1857,11 +1869,14 @@ public class GatewayPipeBackpressureTests
         gateway.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gateway.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await gateway.RefreshHealthAsync();
 
@@ -2044,11 +2059,14 @@ public class GatewayPipeBackpressureTests
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();

@@ -40,7 +40,7 @@ public class LossWatchTests(ITestOutputHelper log)
     static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
@@ -52,13 +52,17 @@ public class LossWatchTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);
@@ -82,7 +86,7 @@ public class LossWatchTests(ITestOutputHelper log)
     [Fact]
     public async Task A_book_that_goes_through_the_budget_with_no_order_arriving_closes_the_day()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
@@ -164,7 +168,7 @@ public class LossWatchTests(ITestOutputHelper log)
     [Fact]
     public async Task A_single_print_through_the_budget_that_the_next_pull_disagrees_with_closes_nothing()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
@@ -226,7 +230,7 @@ public class LossWatchTests(ITestOutputHelper log)
     [Fact]
     public async Task A_book_valued_only_by_a_stale_price_records_nothing_and_says_why()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
@@ -268,10 +272,10 @@ public class LossWatchTests(ITestOutputHelper log)
     [Fact]
     public async Task The_watch_closes_the_symbol_that_breached_and_leaves_the_rest_of_the_book_open()
     {
-        var (gw, conn, db, clock) = await Ready(s =>
+        var (gw, conn, db, clock) = await Ready(null, risk: r =>
         {
-            s.Risk.MaxLossPerTrade = 500m;
-            s.Risk.MaxDailyLoss = 0m;
+            r.MaxLossPerTrade = 500m;
+            r.MaxDailyLoss = 0m;
         });
         using var _1 = db;
 
@@ -332,7 +336,7 @@ public class LossWatchTests(ITestOutputHelper log)
     [Fact]
     public async Task A_closure_already_written_is_never_rewritten_by_a_later_pull()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;

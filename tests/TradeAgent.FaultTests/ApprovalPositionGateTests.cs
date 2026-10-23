@@ -52,12 +52,15 @@ public class ApprovalPositionGateTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 100m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 100m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000_000m;
         });
         gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         gw.ActivateLiveUnderTest(true);

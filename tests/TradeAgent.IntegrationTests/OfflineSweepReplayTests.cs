@@ -39,15 +39,18 @@ public class OfflineSweepReplayTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
             // A CONFIGURED INSTALLATION NAMES WHAT IT MAY TRADE. An empty allowlist used to mean
             // "everything" and now means nothing (REVIEW 2026-09-05 finding 5), so this gateway
             // lists the suite's instruments the way TestEnv.Ready does — otherwise the resting buy
             // below is refused RISK_LIMIT_EXCEEDED and there is no completed sweep to replay.
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();

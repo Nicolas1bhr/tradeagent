@@ -219,7 +219,11 @@ public class RestartTests
         {
             var conn = new FakeConnector(broker, new FaultProfile { DropAfterBrokerAccept = 1 });
             var gw = new TradingGateway(db, conn, new HealthRegistry());
-            gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+            gw.Update(s =>
+            { s.SelectedAccountId = broker.AccountId; });
+            gw.UpdateRiskUnderTest(r =>
+            { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m;
+            });
             await conn.ConnectAsync();
             await gw.RefreshHealthAsync();
             await gw.PlaceAsync(new AgentContext("a"), "crash-1", TestEnv.Buy());
@@ -269,10 +273,10 @@ public class RestartTests
         {
             var gw = new TradingGateway(db, new FakeConnector(), new HealthRegistry());
             // A live installation carries a bound on the day.
-            gw.Update(s => s.Risk.MaxDailyLoss = 750m);
+            gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 750m);
             gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
             gw.ActivateLiveUnderTest(true);
-            gw.Update(s => s.Risk.MaxOrderQuantity = 4m);
+            gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 4m);
         }
         using (var db = new Database(file))
         {
@@ -281,8 +285,8 @@ public class RestartTests
             // force, read from a store that cannot hold a live one — what the test host's seam set lived in that gateway's memory only.
             Assert.Equal((TradingMode.PAPER, false), (gw.Policy.Mode, gw.Policy.LiveActivated));
             Assert.DoesNotContain("live_activated", db.GetKv("settings")!, StringComparison.Ordinal);
-            Assert.Equal(4m, gw.Settings.Risk.MaxOrderQuantity);
-            Assert.Equal(750m, gw.Settings.Risk.MaxDailyLoss);
+            Assert.Equal(4m, gw.Policy.Risk.MaxOrderQuantity);
+            Assert.Equal(750m, gw.Policy.Risk.MaxDailyLoss);
         }
     }
 }
@@ -489,7 +493,11 @@ public class PolicyGateTests
         using var dbh = db;
         var conn = new FakeConnector(new FakeBroker { IsSimulated = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = conn.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s =>
+        { s.SelectedAccountId = conn.Broker.AccountId; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m;
+        });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
@@ -518,7 +526,7 @@ public class PolicyGateTests
     {
         // What this test is about is the real-money switch: leaving a live mode disarms it, through the test host's seam over the
         // policy in force (U-board-a1), as the board's own act will (U-board-live).
-        var (gw, _, db) = await TestEnv.Ready(s => s.Risk.MaxDailyLoss = 1_000_000m, mode: TradingMode.LIVE_AUTONOMOUS);
+        var (gw, _, db) = await TestEnv.Ready(null, mode: TradingMode.LIVE_AUTONOMOUS, risk: r => r.MaxDailyLoss = 1_000_000m);
         using var dbh = db;
         gw.ActivateLiveUnderTest(true);
         gw.SetModeUnderTest(TradingMode.PAPER);
@@ -650,14 +658,14 @@ public class PolicyGateTests
 
         switch (limit)
         {
-            case "qty": gw.Update(s => s.Risk.MaxOrderQuantity = 1m); break;
-            case "notional": gw.Update(s => s.Risk.MaxNotionalPerOrder = 10m); break;
-            case "positions": gw.Update(s => s.Risk.MaxOpenPositions = 0); break;
-            case "rate": gw.Update(s => s.Risk.MaxOrdersPerMinute = 0); break;
+            case "qty": gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 1m); break;
+            case "notional": gw.UpdateRiskUnderTest(r => r.MaxNotionalPerOrder = 10m); break;
+            case "positions": gw.UpdateRiskUnderTest(r => r.MaxOpenPositions = 0); break;
+            case "rate": gw.UpdateRiskUnderTest(r => r.MaxOrdersPerMinute = 0); break;
             // REPLACES the list rather than adding to it: TestEnv.Ready now names the instruments a
             // configured installation trades, and "ES is not on the owner's list" is what this case
             // is about.
-            case "instrument": gw.Update(s => s.Risk.InstrumentAllowlist = ["MES"]); break;
+            case "instrument": gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = ["MES"]); break;
         }
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
@@ -671,7 +679,7 @@ public class PolicyGateTests
     {
         var (gw, conn, db) = await TestEnv.Ready();
         using var dbh = db;
-        gw.Update(s => s.Risk.MaxOrdersPerMinute = 2);
+        gw.UpdateRiskUnderTest(r => r.MaxOrdersPerMinute = 2);
 
         await gw.PlaceAsync(new AgentContext("a"), "rate-1", TestEnv.Buy());
         await gw.PlaceAsync(new AgentContext("a"), "rate-2", TestEnv.Buy());

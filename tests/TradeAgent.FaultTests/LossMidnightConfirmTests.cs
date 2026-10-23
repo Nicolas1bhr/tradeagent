@@ -47,12 +47,15 @@ public class LossMidnightConfirmTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -130,7 +133,9 @@ public class LossMidnightConfirmTests(ITestOutputHelper log)
         var clock = new TestClock(start);
         using var db = TestEnv.NewDb();
         var (gw, conn) = await Ready(db, clock);
-        gw.Update(s => { s.Risk.MaxDailyLoss = 0m; s.Risk.MaxLossPerTrade = 100m; });
+        gw.UpdateRiskUnderTest(r =>
+        { r.MaxDailyLoss = 0m; r.MaxLossPerTrade = 100m;
+        });
 
         await gw.PlaceAsync(new AgentContext("a"), "two-es", TestEnv.Buy("ES"));
         await gw.PlaceAsync(new AgentContext("a"), "two-nq", TestEnv.Buy("NQ"));

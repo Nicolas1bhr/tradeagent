@@ -62,11 +62,11 @@ public class PressIdShapeTests(ITestOutputHelper log)
         // multiplying by a substituted 1, and a cap left on here would refuse this placement for a
         // reason that has nothing to do with what the test measures — the shape of the id the press
         // sends. Zero is the shipped default and means the cap is not enforced.
-        var (gw, conn, db) = await TestEnv.Ready(s =>
+        var (gw, conn, db) = await TestEnv.Ready(null, risk: r =>
         {
-            s.Risk.MaxOrderQuantity = 5m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.InstrumentAllowlist = [symbol];
+            r.MaxOrderQuantity = 5m;
+            r.MaxNotionalPerOrder = 0m;
+            r.InstrumentAllowlist = [symbol];
         });
         using var dbh = db;
 
@@ -157,11 +157,14 @@ public class PressIdShapeTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();

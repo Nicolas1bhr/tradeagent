@@ -348,7 +348,7 @@ public partial class PaperDeploymentTests
         var deployment = gw.Deployments.Open().Single();
         await SeedAPosition(gw, conn, deployment);
 
-        gw.Update(s => s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]);
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = [.. TestEnv.Instruments]);
         await gw.EndPaperDeploymentAsync(deployment.Id, "test: the owner stopped it");
 
         await PassAt(gw, clock, At.AddSeconds(30));                     // the END's own minute
@@ -358,7 +358,7 @@ public partial class PaperDeploymentTests
         var inTheNextMinute = Flattens(gw, deployment.Id);
         var line = gw.DeploymentReadings().Single(d => d.Id == deployment.Id).Line;
 
-        gw.Update(s => s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"]);
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = [.. TestEnv.Instruments, "BTCUSDT"]);
         await PassAt(gw, clock, At.AddMinutes(1).AddSeconds(50));       // still that minute
         var sameMinuteAllowed = Flattens(gw, deployment.Id).Count;
         await PassAt(gw, clock, At.AddMinutes(2).AddSeconds(5));

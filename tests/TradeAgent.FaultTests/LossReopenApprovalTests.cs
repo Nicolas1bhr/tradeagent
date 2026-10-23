@@ -66,12 +66,15 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         gw.ActivateLiveUnderTest(true);
@@ -117,7 +120,7 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
         Assert.True(parkedAt < breach.ConfirmedAt);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
         clock.MoveTo(LossReopen.EligibleAt(breach.ConfirmedAt, TimeSpan.FromHours(24)) + TimeSpan.FromMinutes(1));
         var pass = await gw.LossWatchAsync();
         Assert.Single(pass.Reopened);
@@ -211,7 +214,7 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
         Assert.True(gw.FlattenToday(account)!.Flat);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
 
         // THE OWNER OPENS SOMETHING BY HAND while the account is closed, and the AI proposes a
         // reduce against it. A reduce is never refused by a loss budget, so it parks.

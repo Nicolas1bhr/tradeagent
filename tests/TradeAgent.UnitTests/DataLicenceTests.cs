@@ -285,7 +285,7 @@ public class DataLicenceTests
     {
         foreach (var verdict in new[] { PromotionVerdict.Promoted, PromotionVerdict.PaperEligible })
         {
-            var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments, Pair]);
+            var (gw, conn, db) = await TestEnv.Ready(null, risk: r => r.InstrumentAllowlist = [.. TestEnv.Instruments, Pair]);
             using var _1 = db;
             var archive = new DataLicences(db).Newest(BinanceArchive.Source)!;
             var j = Promote(db, BinanceArchive.Source, archive.Licence, verdict);

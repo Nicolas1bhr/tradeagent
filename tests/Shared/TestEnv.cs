@@ -237,10 +237,11 @@ public static class TestEnv
     /// </summary>
     /// <para><paramref name="mode"/> and <paramref name="live"/> set THIS gateway's in-memory policy through the test host's seam
     /// (<c>U-board-a1</c>): the mode and real money are the security board's policy, never a setting, and the store cannot hold a
-    /// live one — so a fixture that drives the live gates sets them here, after the settings, and nowhere a product path can.</para>
+    /// live one — so a fixture that drives the live gates sets them here, after the settings, and nowhere a product path can.
+    /// <paramref name="risk"/> moves the gateway's limits the same way (<c>U-board-a2</c>): they are the policy's, not a setting.</para>
     public static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> Ready(
         Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null, FaultProfile? faults = null,
-        TimeSpan? emergencyBudget = null, TradingMode mode = TradingMode.PAPER, bool live = false)
+        TimeSpan? emergencyBudget = null, TradingMode mode = TradingMode.PAPER, bool live = false, Action<RiskPolicy>? risk = null)
     {
         var db = NewDb();
         var conn = emergencyBudget is { } budget
@@ -256,17 +257,23 @@ public static class TestEnv
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
+            settings?.Invoke(s);
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
             // "ALLOWED TO TRADE" NOW HAS TO NAME WHAT IT MAY TRADE. An empty allowlist used to mean
             // "everything", which is the defect REVIEW 2026-09-05 finding 5 turned into a re-armed
             // AI; it now allows nothing, so a configured installation — which is what this helper
             // stands in for — lists its instruments.
-            s.Risk.InstrumentAllowlist = [.. Instruments];
-            settings?.Invoke(s);
+            r.InstrumentAllowlist = [.. Instruments];
         });
+        // A FIXTURE'S OWN LIMITS, after the suite's: the gateway's limits are the security board's policy (U-board-a2), so they are
+        // moved on THIS gateway's in-memory copy through the test host's seam, never through a settings row.
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         if (mode != TradingMode.PAPER) gw.SetModeUnderTest(mode);
         if (live) gw.ActivateLiveUnderTest(true);
         await conn.ConnectAsync();

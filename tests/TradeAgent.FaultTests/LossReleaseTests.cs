@@ -57,12 +57,15 @@ public class LossReleaseTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
@@ -73,7 +76,7 @@ public class LossReleaseTests(ITestOutputHelper log)
     static async Task BreachAndFlatten(TradingGateway gw, RecordingConnector conn, TestClock clock,
         string tag, decimal budget, ITestOutputHelper log)
     {
-        gw.Update(s => s.Risk.MaxDailyLoss = budget);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = budget);
         await gw.PlaceAsync(new AgentContext("a"), tag, TestEnv.Buy("ES"));
         conn.Broker.PriceOffset = -20m;
 
@@ -85,7 +88,7 @@ public class LossReleaseTests(ITestOutputHelper log)
         Assert.NotEmpty(closing.Closed);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
     }
 
     /// <summary>
@@ -138,7 +141,7 @@ public class LossReleaseTests(ITestOutputHelper log)
         // EPISODE TWO, AND THE FLATTEN'S CLOSE IS LOST ON THE WAY BACK. The position goes; the row
         // stays flagged and UNKNOWN.
         clock.MoveTo(new DateTimeOffset(2026, 3, 13, 9, 0, 0, TimeSpan.Zero));
-        gw.Update(s => s.Risk.MaxDailyLoss = 2_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 2_000m);
         await gw.PlaceAsync(new AgentContext("a"), "episode-two", TestEnv.Buy("ES"));
         conn.Faults.DropAfterBrokerAccept = 1;
         conn.Broker.PriceOffset = -20m;
@@ -147,7 +150,7 @@ public class LossReleaseTests(ITestOutputHelper log)
         clock.Advance(Tick);
         await gw.LossWatchAsync();
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 100_000m);
 
         var second = gw.DayClosed(account)!;
         log.WriteLine($"flatten flat   : {gw.FlattenToday(account)?.Flat}");

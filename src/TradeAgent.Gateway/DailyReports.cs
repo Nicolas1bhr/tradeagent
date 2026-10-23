@@ -451,7 +451,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                 + "running forward is not in this report"));
         }
 
-        var budget = gateway.Settings.Risk.MaxDailyLoss;
+        var budget = gateway.Policy.Risk.MaxDailyLoss;
         // OFF THE RECORD, LIKE EVERY OTHER SURFACE. It costs no platform call — the closure is a row
         // this app wrote — so it belongs in a report that asks the platform nothing.
         var closed = gateway.ClosureToday();

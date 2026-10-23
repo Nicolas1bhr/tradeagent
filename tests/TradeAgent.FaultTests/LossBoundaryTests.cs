@@ -32,7 +32,7 @@ public class LossBoundaryTests(ITestOutputHelper log)
     static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, TestClock Clock)> Ready(
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Action<RiskPolicy>? risk = null)
     {
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
@@ -41,13 +41,17 @@ public class LossBoundaryTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 10_000_000m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
             settings?.Invoke(s);
         });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        if (risk is not null) gw.UpdateRiskUnderTest(risk);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
         return (gw, conn, db, clock);
@@ -71,10 +75,10 @@ public class LossBoundaryTests(ITestOutputHelper log)
     [Fact]
     public async Task A_confirmed_breach_opens_exactly_one_boundary_for_the_account_and_the_day()
     {
-        var (gw, conn, db, clock) = await Ready(s =>
+        var (gw, conn, db, clock) = await Ready(null, risk: r =>
         {
-            s.Risk.MaxDailyLoss = 1_000m;
-            s.Risk.MaxLossPerTrade = 500m;
+            r.MaxDailyLoss = 1_000m;
+            r.MaxLossPerTrade = 500m;
         });
         using var _1 = db;
 
@@ -138,7 +142,7 @@ public class LossBoundaryTests(ITestOutputHelper log)
     [Fact]
     public async Task A_breach_on_the_next_utc_day_while_the_scope_is_still_closed_opens_no_second_boundary()
     {
-        var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, conn, db, clock) = await Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var boundaries = new CouncilBoundaries(db);

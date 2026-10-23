@@ -47,8 +47,8 @@ public class PaperEnvelopeTests
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
         });
+        gw.UpdateRiskUnderTest(r => r.InstrumentAllowlist = [.. TestEnv.Instruments]);
         gw.SetModeUnderTest(mode);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();

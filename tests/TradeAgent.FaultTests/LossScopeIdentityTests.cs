@@ -164,13 +164,16 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [symbol, "NQ", "MES", "YM"];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;   // not enforced, so no multiplier is asked for
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 0m;          // only the PER-SYMBOL budget may close anything
-            s.Risk.MaxLossPerTrade = 100m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [symbol, "NQ", "MES", "YM"];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;   // not enforced, so no multiplier is asked for
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 0m;          // only the PER-SYMBOL budget may close anything
+            r.MaxLossPerTrade = 100m;
         });
         return (gw, conn, db, clock);
     }
@@ -215,7 +218,7 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             log.WriteLine($"  SymbolsClosedToday    : [{string.Join(",", gw.SymbolsClosedToday(conn.Broker.AccountId))}]");
 
             conn.Broker.PriceOffset = 0m;
-            gw.Update(s => s.Risk.MaxLossPerTrade = 1_000_000m);
+            gw.UpdateRiskUnderTest(r => r.MaxLossPerTrade = 1_000_000m);
             clock.Advance(Tick);
 
             var before = conn.Places;
@@ -419,12 +422,15 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gwA.Update(s =>
         {
             s.SelectedAccountId = paper.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gwA.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await paper.ConnectAsync();
         await gwA.RefreshHealthAsync();
@@ -462,13 +468,16 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gwB.Update(s =>
         {
             s.SelectedAccountId = liveBroker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 0m;      // this installation has set NO budget at all
-            s.Risk.MaxLossPerTrade = 0m;
+        });
+        gwB.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 0m;      // this installation has set NO budget at all
+            r.MaxLossPerTrade = 0m;
         });
         gwB.SetModeUnderTest(inLiveMode ? TradingMode.LIVE_CONFIRM : TradingMode.PAPER);
         gwB.ActivateLiveUnderTest(inLiveMode);
@@ -568,13 +577,16 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 0m;
-            s.Risk.MaxLossPerTrade = 0m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 0m;
+            r.MaxLossPerTrade = 0m;
         });
         gw.SetModeUnderTest(TradingMode.LIVE_CONFIRM);
         gw.ActivateLiveUnderTest(true);
@@ -627,12 +639,15 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gwA.Update(s =>
         {
             s.SelectedAccountId = "ACC-A";
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gwA.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await a.ConnectAsync();
         await gwA.RefreshHealthAsync();
@@ -651,12 +666,15 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         gwB.Update(s =>
         {
             s.SelectedAccountId = "ACC-B";
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gwB.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         await b.ConnectAsync();
         await gwB.RefreshHealthAsync();
@@ -706,11 +724,14 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
                 gwA.Update(s =>
                 {
                     s.SelectedAccountId = "ACC-A";
-                    s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-                    s.Risk.MaxOrderQuantity = 10m;
-                    s.Risk.MaxNotionalPerOrder = 0m;
-                    s.Risk.MaxOpenPositions = 10;
-                    s.Risk.MaxOrdersPerMinute = 100;
+                });
+                gwA.UpdateRiskUnderTest(r =>
+                {
+                    r.InstrumentAllowlist = [.. TestEnv.Instruments];
+                    r.MaxOrderQuantity = 10m;
+                    r.MaxNotionalPerOrder = 0m;
+                    r.MaxOpenPositions = 10;
+                    r.MaxOrdersPerMinute = 100;
                 });
                 await a.ConnectAsync();
                 await gwA.RefreshHealthAsync();
@@ -726,12 +747,15 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             gwB.Update(s =>
             {
                 s.SelectedAccountId = "ACC-B";
-                s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-                s.Risk.MaxOrderQuantity = 10m;
-                s.Risk.MaxNotionalPerOrder = 0m;
-                s.Risk.MaxOpenPositions = 10;
-                s.Risk.MaxOrdersPerMinute = 100;
-                s.Risk.MaxDailyLoss = 1_000m;
+            });
+            gwB.UpdateRiskUnderTest(r =>
+            {
+                r.InstrumentAllowlist = [.. TestEnv.Instruments];
+                r.MaxOrderQuantity = 10m;
+                r.MaxNotionalPerOrder = 0m;
+                r.MaxOpenPositions = 10;
+                r.MaxOrdersPerMinute = 100;
+                r.MaxDailyLoss = 1_000m;
             });
             await b.ConnectAsync();
             await gwB.RefreshHealthAsync();

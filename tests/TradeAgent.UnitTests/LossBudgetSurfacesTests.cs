@@ -107,10 +107,10 @@ public class LossStatusFieldsTests
     [Fact]
     public async Task The_status_carries_the_day_and_the_two_budgets()
     {
-        var (gw, _, db) = await TestEnv.Ready(s =>
+        var (gw, _, db) = await TestEnv.Ready(null, risk: r =>
         {
-            s.Risk.MaxDailyLoss = 2_000m;
-            s.Risk.MaxLossPerTrade = 500m;
+            r.MaxDailyLoss = 2_000m;
+            r.MaxLossPerTrade = 500m;
         });
         using var _1 = db;
         await using var _2 = gw;
@@ -161,12 +161,12 @@ public class LossStatusFieldsTests
     public async Task A_day_that_cannot_be_worked_out_is_absent_while_the_budget_is_still_named()
     {
         // XYZ is the symbol the simulator trades and does not describe, so the day cannot be sized.
-        var (gw, _, db) = await TestEnv.Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        var (gw, _, db) = await TestEnv.Ready(null, risk: r => r.MaxNotionalPerOrder = 0m);
         using var _1 = db;
         await using var _2 = gw;
 
         await gw.PlaceAsync(new AgentContext("a"), "status-xyz", TestEnv.Buy("XYZ"));
-        gw.Update(s => s.Risk.MaxDailyLoss = 2_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 2_000m);
 
         var status = await gw.StatusAsync();
         var json = Json.Write(status);

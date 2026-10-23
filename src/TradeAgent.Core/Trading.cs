@@ -352,7 +352,9 @@ public sealed class TradeAgentSettings
 
     public string? SelectedConnectorId { get; set; }
     public string? SelectedAccountId { get; set; }
-    public RiskPolicy Risk { get; set; } = new();
+    // THE GATEWAY'S LIMITS ARE NOT HERE (U-board-a2 item 8; R24 § 4.5): they are the security board's policy in force
+    // (`BoardPolicy.Risk`), decided by `app` at the founding until the board decides. A `risk` key an earlier build left in
+    // this row is read past and governs nothing — no migration, no dual reader.
 
     /// <summary>
     /// THE OWNER HAS SAID THE AI MAY WORK ON ITS OWN — turns back to back, with nobody typing.
@@ -765,8 +767,6 @@ public sealed class TradeAgentSettings
     ///
     ///   AiTradingStopped = true   the kill switch, down
     ///   SelectedAccountId = null  no account was chosen, and a guess is not a choice
-    ///   allowlist = []            which now allows NOTHING
-    ///   quantity, positions, orders-per-minute = 0
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
@@ -775,11 +775,8 @@ public sealed class TradeAgentSettings
     ///   Campaign*Budget = 0       a campaign opened from an unreadable row allows no attempt at all
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
     ///
-    /// <c>MaxNotionalPerOrder</c>, <c>MaxLossPerTrade</c> and <c>MaxDailyLoss</c> stay at 0, which on
-    /// those three fields alone means "not enforced": none of them has a floor, and a quantity cap of
-    /// zero has already refused every order before a notional or a loss is computed. Leaving them is
-    /// also the only reading that does not make an unreadable row the event that starts refusing
-    /// CLOSES — they bound new risk, and a row nobody could read must not trap a live position.
+    /// The gateway's limits are no longer here (<c>U-board-a2</c>): they are the security board's policy, and an
+    /// unreadable row refuses every order at the dispatch gate itself (<c>U-board-a1</c>), before any limit is read.
     /// The emergency controls are deliberately still reachable — they take no mode, no
     /// allowlist and no cap, and an owner holding a live position needs them most on the day the
     /// software cannot read its own settings.
@@ -810,14 +807,7 @@ public sealed class TradeAgentSettings
         // And the reserve inside a budget of zero, which is zero however it is written. It is stated
         // rather than left to the clamp, because a default read off the shipped value would be a
         // number from a row nobody can vouch for.
-        CampaignExplorationBudget = 0,
-        Risk = new RiskPolicy
-        {
-            MaxOrderQuantity = 0m,
-            MaxOpenPositions = 0,
-            MaxOrdersPerMinute = 0,
-            InstrumentAllowlist = []
-        }
+        CampaignExplorationBudget = 0
     };
 }
 

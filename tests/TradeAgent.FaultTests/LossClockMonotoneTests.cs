@@ -64,12 +64,15 @@ public class LossClockMonotoneTests(ITestOutputHelper log)
         gw.Update(s =>
         {
             s.SelectedAccountId = conn.Broker.AccountId;
-            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
-            s.Risk.MaxOrderQuantity = 10m;
-            s.Risk.MaxNotionalPerOrder = 0m;
-            s.Risk.MaxOpenPositions = 10;
-            s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 0m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+            r.MaxDailyLoss = 1_000m;
         });
         return gw;
     }
@@ -88,7 +91,7 @@ public class LossClockMonotoneTests(ITestOutputHelper log)
         Assert.NotEmpty(closing.Closed);
 
         conn.Broker.PriceOffset = 0m;
-        gw.Update(s => s.Risk.MaxDailyLoss = 1_000_000m);
+        gw.UpdateRiskUnderTest(r => r.MaxDailyLoss = 1_000_000m);
 
         var breach = gw.DayClosed(conn.Broker.AccountId)!;
         log.WriteLine($"closed at               : {breach.ConfirmedAt.UtcDateTime:u}");

@@ -42,7 +42,7 @@ public class LossFlattenSurfacesTests(ITestOutputHelper log)
     {
         var clock = new TestClock(Noon);
         var (gw, conn, db) = await TestEnv.Ready(
-            s => s.Risk.MaxDailyLoss = 1_000m, new GatewayOptions { Clock = clock });
+            null, new GatewayOptions { Clock = clock }, risk: r => r.MaxDailyLoss = 1_000m);
 
         await gw.PlaceAsync(new AgentContext("a"), "flat-open", TestEnv.Buy("ES"));
         if (refuseTheClose) conn.Faults.RejectNext = 1;
@@ -79,7 +79,7 @@ public class LossFlattenSurfacesTests(ITestOutputHelper log)
     [Fact]
     public async Task An_open_day_carries_no_flatten_field_at_all()
     {
-        var (gw, _, db) = await TestEnv.Ready(s => s.Risk.MaxDailyLoss = 1_000m);
+        var (gw, _, db) = await TestEnv.Ready(null, risk: r => r.MaxDailyLoss = 1_000m);
         using var _1 = db;
         await using var _2 = gw;
 
