@@ -137,6 +137,19 @@ public static class OrgEventKind
     /// that restructure the chart (retire, close, merge, veto — O6 parts c–d), in their own write.
     /// </summary>
     public const string Fenced = "fenced";
+
+    /// <summary>A unit chartered by its parent's head (<c>U-org-verbs-c</c>, <see cref="OrgStore.Charter"/>); decided by that position.</summary>
+    public const string Chartered = "chartered";
+
+    /// <summary>A position hired, DORMANT, by the head of its unit's parent (<c>U-org-verbs-c</c>, <see cref="OrgStore.Hire"/>).</summary>
+    public const string Hired = "hired";
+
+    /// <summary>
+    /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
+    /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
+    /// positions instead. <c>closed</c> and <c>merged</c> arrive with their verbs (part d); they are named so the count needs no edit.
+    /// </summary>
+    public static readonly string[] Structural = [Chartered, "closed", "merged"];
 }
 
 /// <summary>

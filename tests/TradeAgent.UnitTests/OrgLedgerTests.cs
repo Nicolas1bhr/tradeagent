@@ -373,6 +373,13 @@ public class OrgLedgerTests
         // Rescope already write, and the position-wide `fenced` org_event has no writer until O6 parts c–d (the source scan below
         // is unchanged).
         mandate = [.. mandate, "FencedBy", "FencedSince", "NeverFenced"];
+
+        // REVISITED, OUT LOUD, BY U-org-verbs-c: Charter — the FIRST verb that writes the chart. It writes org_unit (one row: a unit
+        // under the caller's own, head vacant) and org_event (one `chartered` event), with its mandatory `charter` decision, forecasts
+        // and ledger entry, in one write — behind OrgVerbCaller and the store's own checks: the rights matrix (OrgRights), the
+        // bounds, the weekly throttle and the earning test. OrgStore.Verbs.cs joins the writers of org_unit and org_event below. It
+        // writes no seat, activates nothing, and reaches neither `operations` nor its division (the matrix answers a board act).
+        mandate = [.. mandate, "Charter"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
@@ -386,7 +393,7 @@ public class OrgLedgerTests
             @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
             RegexOptions.IgnoreCase);
         Assert.Equal(
-            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs"],
+            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs", "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))
                 .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))

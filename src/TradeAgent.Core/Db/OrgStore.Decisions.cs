@@ -56,7 +56,7 @@ public static class DecisionLimits
 /// <summary>
 /// WHAT A DECISION RECORD IS (ORGANISATION § 5; RULING Q2): <see cref="Routine"/> is the only kind <c>decision-record</c> writes.
 /// The MANDATORY kinds — a charter, a merge, a close, a dormancy, an envelope tilt, a family's kill or branch, a verdict request,
-/// a paper nomination, a worker replaced, a proposal to the owner — are written by the verb that performs each act
+/// a paper nomination, a worker replaced, a proposal to the owner, a hire (<c>U-org-verbs-c</c>) — are written by the verb that performs each act
 /// (<c>U-org-verbs</c>, O6), in that act's own write, so no record of one can stand without the act behind it. They are named
 /// here so the verb can refuse them in words.
 /// </summary>
@@ -65,8 +65,11 @@ public static class OrgDecisionKind
     public const string Routine = "routine";
 
     public static readonly string[] Mandatory =
-        ["charter", "merge", "close", "dormancy", "envelope-tilt", "family-kill", "family-branch", "verdict-request",
-         "paper-nomination", "worker-replacement", "owner-proposal"];
+        [Charter, "merge", "close", "dormancy", "envelope-tilt", "family-kill", "family-branch", "verdict-request",
+         "paper-nomination", "worker-replacement", "owner-proposal", Hire];
+
+    /// <summary>A unit chartered (<see cref="OrgStore.Charter"/>); a position hired (<see cref="OrgStore.Hire"/>; <c>U-org-verbs-c</c>).</summary>
+    public const string Charter = "charter", Hire = "hire";
 
     public static readonly string[] All = [Routine, .. Mandatory];
 
@@ -270,6 +273,22 @@ public sealed partial class OrgStore
         if (kind != OrgDecisionKind.Routine)
             throw Refused($"'{kind}' is no kind of decision: '{OrgDecisionKind.Routine}' — the mandatory kinds "
                           + $"({string.Join(", ", OrgDecisionKind.Mandatory)}) are written by the verbs that perform them.");
+        var row = WriteDecision(position, attempt, kind, options, choice, rationale, refs, now);
+        if (forecasts.Count > DecisionLimits.MaxForecasts)
+            throw Refused($"a decision carries at most {DecisionLimits.MaxForecasts} forecasts.");
+        foreach (var f in forecasts) AddForecast(position, attempt, row.Id, null, f, now);
+        return row;
+    });
+
+    /// <summary>
+    /// THE DECISION ROW AND ITS RATIONALE, INSIDE THE CALLER'S WRITE — <see cref="Decide"/>'s for a routine decision, and the internal
+    /// path of a MANDATORY kind: the verb that performs the act (<see cref="Charter"/>, <see cref="Hire"/>) calls it in that act's own
+    /// write, so no record of one can stand without the act behind it (ORGANISATION § 5). Validated as every decision is: options,
+    /// choice, refs that are there, the whole record's size; the rationale is the position's own ledger entry, marked claim.
+    /// </summary>
+    DecisionRow WriteDecision(string position, string? attempt, string kind, IReadOnlyList<string> options, string choice,
+        string rationale, IReadOnlyList<OrgRef> refs, DateTimeOffset now)
+    {
         if (options.Count is 0 or > DecisionLimits.MaxOptions)
             throw Refused($"a decision names the options it considered, 1 to {DecisionLimits.MaxOptions}.");
         foreach (var o in options.Append(choice))
@@ -292,11 +311,8 @@ public sealed partial class OrgStore
             ("$options", JsonSerializer.Serialize(options)), ("$choice", choice), ("$refs", JsonSerializer.Serialize(refs)),
             ("$entry", entry.Id), ("$at", Sql.T(now))))
             c.ExecuteNonQuery();
-        if (forecasts.Count > DecisionLimits.MaxForecasts)
-            throw Refused($"a decision carries at most {DecisionLimits.MaxForecasts} forecasts.");
-        foreach (var f in forecasts) AddForecast(position, attempt, row.Id, null, f, now);
         return row;
-    });
+    }
 
     /// <summary>
     /// ATTACHES ONE FORECAST TO A RECORD OF THE CALLER'S: its own decision (<c>dec-…</c>), or an open mandate it decides
