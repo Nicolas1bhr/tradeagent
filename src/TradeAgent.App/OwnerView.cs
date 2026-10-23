@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
@@ -88,6 +89,85 @@ sealed class OwnerPage
 
     /// <summary>Why the last press did not take the key, until the next press — held, so the tick does not wipe it mid-read.</summary>
     string? _harnessKeyNotTaken;
+
+    /// <summary>A HOME AN EARLIER BUILD LEFT ARMED FOR REAL MONEY, refused in the gateway's own sentence, with its one press (item 6).</summary>
+    readonly EarlierArmedHome _earlierArmed;
+
+    /// <summary>
+    /// AN EARLIER ARMED HOME, IN THE APP (<c>U-settings-shed</c> item 6; R24 § 4.5): while the gateway reads a settings row an earlier build
+    /// left armed for real money, a caution card carries the gateway's own refusal — both versions and the repair — and ONE press that
+    /// sets the earlier setting aside. One press because it only takes away, like stop; the gateway keeps the row as it was under its own
+    /// name and converts nothing (<c>TradingGateway.SetAsideEarlierLiveSetting</c>). Nothing calls it but the press: the five-second pass
+    /// only reads. Built once; <see cref="Update"/> writes text and visibility.
+    /// </summary>
+    internal sealed class EarlierArmedHome
+    {
+        readonly Func<EarlierLiveSetting?> _earlier;
+        readonly Action _setAside;
+
+        public Control Root { get; }
+        public Border Card { get; }
+        public TextBlock Sentence { get; } = Ui.Body("");
+        public Button Press { get; }
+        public TextBlock Note { get; } = Ui.Micro("");
+
+        public EarlierArmedHome(Func<EarlierLiveSetting?> earlier, Action setAside)
+        {
+            _earlier = earlier;
+            _setAside = setAside;
+            Press = Ui.Primary(Labels.SetAsideEarlierLiveSetting, SetAside);
+            Press.HorizontalAlignment = HorizontalAlignment.Left;
+            Note.IsVisible = false;
+            Card = new Border
+            {
+                Background = Theme.CautionSoft,
+                BorderBrush = Theme.Caution,
+                BorderThickness = new Thickness(1),
+                CornerRadius = Theme.Radius,
+                Padding = new Thickness(Theme.S5),
+                IsVisible = false,
+                Child = Ui.Col(Theme.S3,
+                    Ui.With(Ui.Eyebrow(Labels.EarlierLiveSettingTitle), t => t.Foreground = Theme.Caution),
+                    Sentence,
+                    Press)
+            };
+            Root = Ui.Col(Theme.S2, Card, Note);
+        }
+
+        void SetAside()
+        {
+            try
+            {
+                _setAside();
+                Note.Text = Labels.EarlierLiveSettingSetAside;
+                Note.Foreground = Theme.Positive;
+            }
+            catch (Exception ex)
+            {
+                Note.Text = Labels.EarlierLiveSettingNotSetAside(ex.Message);
+                Note.Foreground = Theme.Caution;
+            }
+            Note.IsVisible = true;
+            Update();
+        }
+
+        /// <summary>The five-second pass: reads the gateway's reading and writes it in place. It never presses.</summary>
+        public void Update()
+        {
+            EarlierLiveSetting? earlier;
+            try { earlier = _earlier(); }
+            catch (Exception ex)
+            {
+                Sentence.Text = Labels.EarlierLiveSettingNotSetAside(ex.Message);
+                Card.IsVisible = true;
+                Press.IsEnabled = false;
+                return;
+            }
+            Card.IsVisible = earlier is not null;
+            Press.IsEnabled = earlier is not null;
+            Sentence.Text = earlier?.Sentence ?? "";
+        }
+    }
 
     /// <summary>THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.</summary>
     readonly Border _unreadableCard;
@@ -482,12 +562,15 @@ sealed class OwnerPage
                 Ui.Body(Labels.SettingsCouldNotBeReadNext, Theme.Caution))
         };
 
+        // AN EARLIER ARMED HOME, ABOVE EVERYTHING ELSE: while it stands every order is refused, and this is the one press that repairs it.
+        _earlierArmed = new EarlierArmedHome(() => _host.Gateway.EarlierLiveSetting, () => _host.Gateway.SetAsideEarlierLiveSetting());
+
         // AFTER THE REAL MONEY, because perception's budget is a slice of that cap.
         _perception = PerceptionCard.For(_host);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, _releaseCard, running,
+            _earlierArmed.Root, _unreadableCard, _releaseCard, running,
             Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, settings.Bridge,
             Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
             Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns,
@@ -504,6 +587,7 @@ sealed class OwnerPage
     {
         // Read from the gateway, not from `status`: GatewayStatus is the agent-facing shape and this is a fact about the row this build read.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
+        _earlierArmed.Update();
 
         var (moneyToday, planToday) = TodayLines(_host.SpendToday);
         _moneyToday.Text = moneyToday;

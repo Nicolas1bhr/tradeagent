@@ -49,6 +49,8 @@ public class OwnerPageTests
             Labels.SaveHarnessKey, Labels.ForgetHarnessKey,
             Labels.SaveDailyCap, Labels.SaveAiPrice,
             Labels.WithdrawEnvelope, Labels.StopDeployment, Labels.ReopenAfterReview,
+            // AN EARLIER ARMED HOME's one press (item 6) — a narrowing, offered only while the gateway reads one.
+            Labels.SetAsideEarlierLiveSetting,
             // PERCEPTION'S CARD: its own key's two presses, its budget inside the cap, its Test — and the instrument it is shown on.
             (string)card.SaveKey.Content!, (string)card.ForgetKey.Content!, (string)card.SaveBudget.Content!, (string)card.TestButton.Content!,
             // CONNECTIONS (item 3): the platform's three, the account list's look-again, and the bridge's repair.
@@ -154,5 +156,84 @@ public class OwnerPageTests
         Assert.Contains("midnight will not bring a turn back", planLine, StringComparison.Ordinal);
         Assert.EndsWith(Labels.TodayPlanRepair, planLine, StringComparison.Ordinal);
         Assert.Contains("security board", planLine, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// AN EARLIER ARMED HOME, IN THE APP (<c>U-settings-shed</c> item 6; R24 § 4.5; CLAUDE.md "refuse, never guess" and "the first change that
+/// refuses older homes ships that in-app path with it"): a home whose settings an earlier build left armed for real money is refused in
+/// the gateway's own sentence — both versions and the repair — on the owner's page, and ONE press sets the earlier setting aside (a
+/// narrowing, like stop). Nothing is converted and nothing is touched until he presses; no terminal anywhere.
+/// </summary>
+public class EarlierArmedHomeTests
+{
+    static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+    static readonly TradeAgent.Core.Board.EarlierLiveSetting Armed = new("LIVE_AUTONOMOUS", "true", 46,
+        Labels.HomeArmedBeforeTheBoard("a live mode and real money switched on", 46, 47));
+
+    [Fact]
+    public void An_earlier_armed_home_is_refused_in_the_app_and_one_press_sets_its_live_setting_aside()
+    {
+        TradeAgent.Core.Board.EarlierLiveSetting? earlier = Armed;
+        var pressed = 0;
+        var card = new OwnerPage.EarlierArmedHome(() => earlier, () => { pressed++; earlier = null; });
+        card.Update();
+
+        Assert.True(card.Card.IsVisible);
+        Assert.Equal(Armed.Sentence, card.Sentence.Text);
+        Assert.Contains("schema 46", card.Sentence.Text, StringComparison.Ordinal);
+        Assert.Contains("schema 47", card.Sentence.Text, StringComparison.Ordinal);
+        Assert.Equal(Labels.SetAsideEarlierLiveSetting, card.Press.Content);
+
+        // ONE PRESS: a narrowing, never armed first.
+        Press(card.Press);
+        Assert.Equal(1, pressed);
+        Assert.False(Ui.IsArmed(card.Press));
+        Assert.False(card.Card.IsVisible);
+        Assert.Equal(Labels.EarlierLiveSettingSetAside, card.Note.Text);
+        Assert.True(card.Note.IsVisible);
+
+        // AND THE PAGE WIRES THE GATEWAY'S OWN READING AND ITS ONE PRESS, nowhere else in the app.
+        var root = Repo();
+        var owner = File.ReadAllText(Path.Combine(root, "src", "TradeAgent.App", "OwnerView.cs"));
+        Assert.Contains("new EarlierArmedHome(() => _host.Gateway.EarlierLiveSetting, () => _host.Gateway.SetAsideEarlierLiveSetting())",
+            owner, StringComparison.Ordinal);
+        Assert.Equal(1, Directory.GetFiles(Path.Combine(root, "src", "TradeAgent.App"), "*.cs")
+            .Sum(f => System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(f), @"SetAsideEarlierLiveSetting\(\)").Count));
+    }
+
+    [Fact]
+    public void An_earlier_armed_home_is_left_untouched_until_the_press()
+    {
+        TradeAgent.Core.Board.EarlierLiveSetting? earlier = Armed;
+        var pressed = 0;
+        var card = new OwnerPage.EarlierArmedHome(() => earlier, () => pressed++);
+
+        for (var i = 0; i < 5; i++) card.Update();           // the five-second pass, five times over
+        Assert.Equal(0, pressed);
+        Assert.True(card.Card.IsVisible);
+        Assert.Equal(Armed, earlier);
+
+        // A HOME NOTHING ARMED SHOWS NO CARD AND OFFERS NO PRESS.
+        var none = new OwnerPage.EarlierArmedHome(() => null, () => pressed++);
+        none.Update();
+        Assert.False(none.Card.IsVisible);
+        Assert.Equal(0, pressed);
+
+        // A PRESS THE GATEWAY REFUSES IS SAID, AND THE CARD STAYS.
+        var refused = new OwnerPage.EarlierArmedHome(() => Armed, () => throw new InvalidOperationException("the row could not be kept"));
+        refused.Update();
+        Press(refused.Press);
+        Assert.True(refused.Card.IsVisible);
+        Assert.Contains("the row could not be kept", refused.Note.Text, StringComparison.Ordinal);
+    }
+
+    static string Repo()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
     }
 }

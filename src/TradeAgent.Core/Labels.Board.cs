@@ -201,4 +201,16 @@ public static partial class Labels
     public const string CampaignBudgetsAreEvidence =
         "What each research campaign may spend, and the account the judge pretends to have. Evidence, not limits: each campaign copies "
         + "them when it opens, no model sets them, and the security board cannot either. This page shows them; it has no box for them.";
+
+    /// <summary>The caution card over a home an earlier build left armed for real money.</summary>
+    public const string EarlierLiveSettingTitle = "Real money armed by an earlier version";
+
+    /// <summary>What the one press did, in the gateway's terms: kept, not converted; the founding policy governs.</summary>
+    public const string EarlierLiveSettingSetAside =
+        "Set aside. Your earlier settings are kept exactly as they were under their own name, nothing was converted, and the founding "
+        + "policy (Practice, no real money) governs until the security board decides.";
+
+    /// <summary>The press, or the reading, refused: said, and the card stays.</summary>
+    public static string EarlierLiveSettingNotSetAside(string why) =>
+        $"The earlier real-money setting was not set aside: {why}. Every order stays refused until it is.";
 }
