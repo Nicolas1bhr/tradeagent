@@ -47,3 +47,16 @@ Red-first (quote each red at base): items 2–5's checks.
 **NOT in scope:** close/merge/retire/veto/activation/the seat ceiling (part d); trial and verdict shares, tilt, verdict narrowing (e); fences; helpers; seats (`U-org-seats`).
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; branch CI on three platforms; Codex review; names vs
 `main` 0 removed; tests box line). `## Report` ≤ 20 lines appended here.
+
+## Report
+Tip of code: `f0962ad5` (base `50f4d45c`, rung 48). Gate: `build -c Release --no-incremental` → 0 Warning(s), 0 Error(s) · Org{Ledger,RightsConformance,Decision,Structure}Tests + PuppetLivesTests 3× → Passed 85/85 each; BrokerDoorTests (integration) 3× → 24/24 each · CI 39898458908 SUCCESS, all three platforms · names.sh: removed: 0, added: 14 (sets base 3262, tip 3276) · tests box: NOT RUN — busy (exit 4, a run in progress).
+1 done `27da52e6` — `charter_decision_id` replaces `charter_publication_id`; crash-before-stamp: old dropped/new not added, all-but-stamp, and an old home each reopen at 48 with the column and the charter kept (`The_charter_rung_replaces_…_reruns_after_a_crash_before_its_stamp`).
+2 done `e8d55850` (+ pipe half in item 6) — `OrgRights`; every "owner's two presses" is "a two-seat board act", refused naming that no board seat is active; no answer is the owner's.
+3 done `0157aa19` — `OrgStore.Charter`, one test per refusal (17-row theory). Deviation: the share is sized against the caller's own recorded launch reservation (no seat binds a new unit yet); a host with no meter refuses.
+4 done `20eee3c1` — `OrgStore.Hire` (dormant; appointment only into a vacant head). Declared: a hire must carry ≥ 1 forecast; earning passes as the unit's first, inside a live bounded experiment's unit, or citing current work.
+5 done `1cfcb755` — vocabulary v2 `unit-admissible`; packet reads refuse unknown version/predicate by id. Resolver guard revised out loud (strategy_run read for version+attempt only); the "unknown version" fixture moved v2→v3.
+6 done `64af4f37` — ops, schema, CLI, door, guard pinned exact args; conformance over every row × 4 classes; puppet act + legacy refusal. `f0962ad5`: docs follow.
+RED at base: item 2 CS0103 `OrgRelation`; 3 CS0246 `CharterFunding`; 4 CS0246 `HireRequest`; 5 CS0117 `UnitAdmissible`, and the packet test on base reads: Expected [fc-7a2c…] Actual [3 rows]; 6 CS0117 `Ops.OrgCharter`.
+Mutant (`Hire` writes active): "'operations' runs unconfined, and 'pos-892ce923ca1e' is active beyond the legacy pair…" Failed 1; restored, Passed.
+Codex review: `fleet/tmp/B-scratch/u-org-verbs-c/U-org-verbs-c-review.md` — complete, 2 findings (P1 unit-admissible credits a run after the deadline; P2 sibling-share sum skips NULL legacy shares), NOT acted on.
+Not done/verified: no full local suite; Windows tests box not run; the earning test's delivery/promotion routes untested; no board verb or owner press built.
