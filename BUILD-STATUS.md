@@ -11598,3 +11598,44 @@ ORCHESTRATION §§ 2.3 (fences), 2.9 (restructuring is a transaction); R24-check
 **Deviations ACCEPTED (seat B):** a new unit's share is sized against the caller's own recorded launch reservation (new units have no seat); a host with no meter refuses a charter; a hire carries ≥ 1 forecast; the earning test passes as the unit's first position, inside a live bounded experiment, or with cited current work; the unknown-version fixture moved from v2 to v3; on any non-legacy unit a NULL share means no cap of its own.
 **Tests box:** NOT RUN (busy at the build and at the fix).
 **NOT VERIFIED:** the earning test's delivery and promotion routes (no test); the gateway's `LegacyShares` reading at the pipe level; any real model chartering or hiring (M-org1).
+
+## U-board-a1 — part a1 of U-board-a: the security board as data — three dormant seats outside the chart, one founding policy decided by `app`, live closed by construction, an earlier armed home refused
+
+**Landed** (land.sh, seat A's train A8, unit 1, with U-board-a2 and seat B's U-settings-shed) on `main`. Builder adb37464d20ba408d (opus/xhigh); fixer abfd41190e5c96de7 (pass 1, opus/high);
+re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. R24's first unit (§§ 4.1, 4.5, 7): AUTH-001/002, CHANGE-001, ORDER-001/SIGNAL-001, EVID-001, BUDGET-001, refuse-never-guess, recovery.
+**RUNG 49** (tradeagent.db). It was built as 47 and RENUMBERED at its rebase, because U-org-verbs-c's 48 landed first. The rung ladder and the Versions note say
+"47: unused (overtaken by U-org-verbs-c, 2026-10-23)". A home stamped 48 was proved to open and gain 49. Since this landing, the first unit to land takes the lowest free rung.
+**CI:** train A8's run 39927102697 on b691ad85 — 12/12 green (linux-host 33 min, windows-5 29 min). Earlier runs:
+- 39889621609 RED: the org-ledger guard lacked IsOffChart, now declared as a read;
+- 39893757367 12/12 on f3979578 · 39898151691 12/12 on a1ffb56b · 39915192739 12/12 on 09042fe3.
+**Tests box:** 20261023-090214-09042fe3 GREEN (Unit 2238, Fault 502/502, Integration 748, 0 failed; his files unchanged). That was before the renumber re-stack, which changed
+the rung number and comments only; the landed tree itself was NOT RUN on the box.
+**Build:**
+1. Three board tables, with CHECKs: decider `app`, basis `founding`, mode OBSERVE|PAPER, live_activated 0, a seat class never `cli`, status dormant. UPDATE, DELETE and
+   (pass 1) any insert over an existing key are refused; board_seat is WITHOUT ROWID.
+2. `BoardStore` is the only writer. Version 1, the three dormant seats on two model classes, and the founding event are written in one transaction. The reader is strict:
+   hash, canonical spelling, round-trip.
+3. A board id is refused at mint, as a holder, a decider, a note's party and a verb caller.
+4. Mode and real money moved onto the policy in force.
+5. An earlier armed home is refused (HOME_ARMED_BEFORE_THE_BOARD, both schemas named) and its row is kept as found.
+6. An unreadable policy fails closed.
+7. The Safety page's mode row and real-money switch are deleted, with the dev host's stdin mode, live and risk lines.
+**Rulings (the orchestrator's, on the owner's behalf, his to overrule):**
+- The founding paper values are attempt 4's envelope: allowlist [BTCUSDT], one envelope on the app's paper venue, ≤ 0.05 BTC and ≤ 5,000 USDT notional per deployment
+  (the notional cap binds first), no expiry while no seat is active. Decider `app`; never attributed to him.
+- The board's founding budget share is 0.10 of the plan's AI day-total: the builder's placeholder, ACCEPTED (R24 open question 7: only he changes it).
+- A refused armed home sends nothing that opens or adds exposure. Reductions still go out: the automatic loss and valuation exits, and his Cancel all and Close all.
+  PROTECTED PROPERTY: PRINCIPLES' app-owned emergency risk reduction and the owner's emergency family stay intact, so a refusal never strands a real position.
+  The code already sent only reductions: the both-halves test ("places 0, closes 1") is a GUARD, green at base. The RED was on the refusal's words, which now name Cancel all,
+  Close all and the loss budget's closes.
+**RED and mutant:**
+- "'no such table: board_policy'"; "Not found: \"security board\""; No_app_path_selects_a_live_mode "Actual: TradingMode Mode";
+- An_earlier_home_armed_for_real_money_places_nothing_and_keeps_its_row: "No exception was thrown", while the LIVE_AUTONOMOUS row placed a real-account order;
+- MUTANT: the armed check deleted ⇒ "Expected HOME_ARMED_BEFORE_THE_BOARD Actual TRADING_PERMISSION_UNAVAILABLE"; restored, green.
+**Review (Codex):**
+- A P1 on health-refresh exits, resolved by the reductions-only ruling above.
+- P2 raw armed keys were read after deserialization: now read first (RED ×3; MUTANT ⇒ red).
+- P2 INSERT OR REPLACE could rewrite board rows: sealed. Re-review 1 found the rowid path, now closed; re-review 2 CLEAN.
+**Declared removals (7):** TwoPressGrantTests ×4 (the deleted mode row); LossBudgetSurfaces.A_real_money_mode_cannot_be_chosen_while_the_day_has_no_loss_budget; UnknownModeTests ×2
+renamed. BoardTests' rung const went 47 → 49. About 60 files moved mechanically to the `SetModeUnderTest` seam.
+**Not verified:** the app was not run; no real armed home on a real broker. **CARD:** the deleted "live needs a daily-loss bound" check is re-added by U-board-live on the board's act.
