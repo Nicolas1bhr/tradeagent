@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using Xunit;
 
@@ -413,7 +414,7 @@ public partial class OrgAssignmentTests
             (read.Floor(OrgLevel.Executor), read.Floor(OrgLevel.Team), read.Floor(OrgLevel.Department)));
         Assert.Equal(TimeSpan.Zero, read.After(OrgLevel.Executor, 3));
         Assert.Equal(new Dictionary<string, int> { [OrgLevel.Executor] = 15, [OrgLevel.Team] = 60, [OrgLevel.Department] = 240 },
-            new TradeAgentSettings().RewakeFloorMinutes);
+            BoardFounding.V1.RewakeFloorMinutes);
 
         foreach (var zero in new[] { RewakeFloors.None, RewakeFloors.From(OrgLevel.All.ToDictionary(l => l, _ => -1), null) })
         {

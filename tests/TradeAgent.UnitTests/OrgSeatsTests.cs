@@ -420,12 +420,12 @@ public class OrgSeatsTests : IDisposable
         Assert.NotNull(role.Cost);
         Assert.Equal(TurnBound.Reservation, host.SeatFor(CouncilRoles.Research).Bound);
 
-        host.Gateway.Update(s => { s.AiTurnAllowanceInputTokens = 300_000; s.AiTurnAllowanceOutputTokens = 8_000; });
+        host.Gateway.SetPolicyUnderTest(p => p with { TurnAllowanceInput = 300_000, TurnAllowanceOutput = 8_000 });
         Assert.Equal(role.Cost, meter.Reservation(CouncilRoles.Research).Cost);
         Assert.Equal(chair.Cost, meter.Reservation().Cost);
         Assert.Equal(Small, host.SeatFor(CouncilRoles.Research).Allowance);
 
-        host.Gateway.Update(s => { s.AiTurnAllowanceInputTokens = 2_400_000; s.AiTurnAllowanceOutputTokens = 40_000; });
+        host.Gateway.SetPolicyUnderTest(p => p with { TurnAllowanceInput = 2_400_000, TurnAllowanceOutput = 40_000 });
         Assert.True(meter.Reservation(CouncilRoles.Research).Cost > role.Cost, "a raised allowance did not raise a CLI reservation");
     }
 

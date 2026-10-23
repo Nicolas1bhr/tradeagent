@@ -7,6 +7,7 @@ using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
@@ -131,6 +132,9 @@ sealed class PuppetLife : IAsyncDisposable
     int _wakes;
     ProcessWide _found = null!;
 
+    /// <summary>The life's change to the security board's policy in force, applied to every gateway it composes (<c>U-board-a2</c>).</summary>
+    Func<BoardPolicy, BoardPolicy>? _policy;
+
     PuppetLife(string scripts, string? seatClass)
     {
         Scripts = scripts;
@@ -143,7 +147,7 @@ sealed class PuppetLife : IAsyncDisposable
     /// through the supervisor's own prepare and start.
     /// </summary>
     public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null,
-        Action<TradeAgentSettings>? settings = null)
+        Action<TradeAgentSettings>? settings = null, Func<BoardPolicy, BoardPolicy>? policy = null)
     {
         // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
         var found = ProcessWide.Note();
@@ -152,7 +156,7 @@ sealed class PuppetLife : IAsyncDisposable
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
             Environment.SetEnvironmentVariable("DOTNET_ROOT", Puppet.DotnetRoot);
 
-        var life = new PuppetLife(Puppet.NewScripts(name), seatClass) { _found = found };
+        var life = new PuppetLife(Puppet.NewScripts(name), seatClass) { _found = found, _policy = policy };
         DeployTrade();
 
         life.DatabasePath = Path.Combine(TestEnv.Home, $"puppet-life-{Guid.NewGuid():n}.db");
@@ -178,6 +182,8 @@ sealed class PuppetLife : IAsyncDisposable
         await connector.ConnectAsync();
         Presence = new AgentPresence();
         Host = AppHost.Composed(db, connector, Presence);
+        // THE POLICY'S VALUES ARE NOT A SETTING (U-board-a2): a life that needs other ones sets them on each gateway it composes.
+        if (_policy is not null) Host.Gateway.SetPolicyUnderTest(_policy);
         Host.Agent.VersionDeadline = TimeSpan.FromSeconds(30);
         _server = new GatewayPipeServer(Host.Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
         _server.Start();

@@ -228,8 +228,7 @@ public sealed record MissionOptions
     /// It exists because "nothing happened" is not the same as "there is nothing worth doing": the
     /// research, the backtests and the journal are the job, and a market that has been quiet for an
     /// hour is not a reason to stop working on them. It is a setting rather than a constant because
-    /// every tick costs a turn, and what a turn costs is the owner's business — see
-    /// <c>TradeAgentSettings.MissionReviewMinutes</c>, where lowering it asks twice.
+    /// every tick costs a turn — see <c>BoardPolicy.ReviewMinutes</c>, the security board's policy (<c>U-board-a2</c>).
     ///
     /// <para>It is the FASTEST the look comes round. While only looks wake a role, each one raises
     /// the next at twice its own interval, up to eight of these; the first real event brings it back

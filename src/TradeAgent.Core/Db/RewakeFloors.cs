@@ -11,8 +11,8 @@ namespace TradeAgent.Core.Db;
 /// <para><b>What it never delays.</b> It shapes ONLY the sweep's re-raise of an owed mandate after a launch of it: the issued
 /// wake, code's retry, the decider's rejection, the holder's own requested wake and the owner's words keep their time.</para>
 ///
-/// <para><b>The owner's, in-process</b> (<see cref="TradeAgentSettings.RewakeFloorMinutes"/>): no verb, no pipe op and no agent
-/// reaches it.</para>
+/// <para><b>The security board's policy</b> (<c>BoardPolicy.RewakeFloorMinutes</c>, <c>U-board-a2</c>; the app's founding value until the
+/// board decides): no verb, no pipe op and no agent reaches it.</para>
 /// </summary>
 public sealed record RewakeFloors(IReadOnlyDictionary<string, TimeSpan> Floors, IReadOnlyDictionary<string, TimeSpan> Ceilings)
 {

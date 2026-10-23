@@ -43,6 +43,17 @@ public sealed record BoardPolicy
     /// <summary>Each role's fraction of the day-total, by role id; absent is an equal share.</summary>
     public required IReadOnlyDictionary<string, decimal> RoleShares { get; init; }
 
+    /// <summary>
+    /// THIS ROLE'S FRACTION OF THE DAY'S CEILING (<c>U-board-a2</c> item 9; the reader the settings row held until the shares moved here):
+    /// its share when it is one, and an equal share when none is set or the one set is not a fraction — a zero or a negative would be a
+    /// role that can never work, which is a stop nobody pressed. A slice of the ceiling, never an addition to it: shares are applied on
+    /// top of the global gate, so shares summing past one still cannot spend past the ceiling.
+    /// </summary>
+    public decimal ShareForRole(string role) =>
+        RoleShares.TryGetValue(role, out var s) && s > 0m && s <= 1m
+            ? s
+            : 1m / CouncilRoles.All.Length;
+
     public required long TurnAllowanceInput { get; init; }
     public required long TurnAllowanceOutput { get; init; }
     public required int Lanes { get; init; }

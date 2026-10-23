@@ -597,12 +597,14 @@ public class BillingClassesTests : IDisposable
         try
         {
             foreach (var role in CouncilRoles.All) Finished(db, role, BillingClasses.Plan);
-            host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 40m; });
+            host.Gateway.Update(s => s.AiDailyCostCap = 0m);
+            host.Gateway.SetPolicyUnderTest(p => p with { PlanDayTotal = 40m });
             Assert.All(CouncilRoles.All, role => Assert.Equal(BillingClasses.Plan, host.BillingClassOf(role)));
             Assert.Null(host.ReportInputs().ReviewNotFunded);
 
             // NEITHER CLASS CAN FUND ONE: unfunded, as before.
-            host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 0m; });
+            host.Gateway.Update(s => s.AiDailyCostCap = 0m);
+            host.Gateway.SetPolicyUnderTest(p => p with { PlanDayTotal = 0m });
             Assert.NotNull(host.ReportInputs().ReviewNotFunded);
         }
         finally { await host.Gateway.DisposeAsync(); }
@@ -632,7 +634,8 @@ public class BillingClassesTests : IDisposable
         {
             Finished(db, CouncilRoles.Research, BillingClasses.Key);
             Finished(db, CouncilRoles.Operations, BillingClasses.Plan);
-            host.Gateway.Update(s => { s.AiDailyCostCap = money; s.AiPlanDailyCapacity = plan; });
+            host.Gateway.Update(s => s.AiDailyCostCap = money);
+            host.Gateway.SetPolicyUnderTest(p => p with { PlanDayTotal = plan });
             Assert.Equal(BillingClasses.Key, host.BillingClassOf(CouncilRoles.Research));
             Assert.Equal(BillingClasses.Plan, host.BillingClassOf(CouncilRoles.Operations));
 
@@ -654,26 +657,39 @@ public class BillingClassesTests : IDisposable
     // ---- (f) the setting ------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// (f) THE SETTING: the plan's capacity ships at the owner's 40 a day, beside the money cap's 5; the app's own meter holds plan turns to
-    /// it and key turns to the money cap — a money cap of nothing leaves the plan's room whole, and the reverse — and a settings row
-    /// nobody could read allows no plan turn at all.
+    /// (f) THE SETTING AND THE POLICY: the money cap ships at 5 and is the owner's setting; the plan's day-total is the security board's
+    /// founding 40 (<c>U-board-a2</c> item 9) — the app's own meter holds plan turns to it and key turns to the money cap, a money cap of
+    /// nothing leaves the plan's room whole, and the reverse — and a settings row nobody could read allows no plan turn at all, whatever
+    /// the policy's day-total.
     /// </summary>
     [Fact]
-    public void The_app_holds_plan_turns_to_the_plan_setting_and_an_unreadable_row_to_nothing()
+    public async Task The_app_holds_plan_turns_to_the_plan_setting_and_an_unreadable_row_to_nothing()
     {
-        Assert.Equal((5m, 40m), (new TradeAgentSettings().AiDailyCostCap, new TradeAgentSettings().AiPlanDailyCapacity));
-        Assert.Equal((0m, 0m), (TradeAgentSettings.Unreadable().AiDailyCostCap, TradeAgentSettings.Unreadable().AiPlanDailyCapacity));
+        Assert.Equal((5m, 40m), (new TradeAgentSettings().AiDailyCostCap, TradeAgent.Core.Board.BoardFounding.V1.PlanDayTotal));
+        Assert.Equal((0m, 0m), (TradeAgentSettings.Unreadable().AiDailyCostCap, TradeAgent.Core.Board.BoardPolicy.Unreadable().PlanDayTotal));
 
         using var db = TestEnv.NewDb();
         var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
             new AgentPresence());
-        host.Gateway.Update(s => { s.AiDailyCostCap = 0m; s.AiPlanDailyCapacity = 40m; });
+        host.Gateway.Update(s => s.AiDailyCostCap = 0m);
         var meter = host.Meter!;
         Assert.Equal(40m, meter.TodayIn(BillingClasses.Plan).Cap);
         Assert.Equal(0m, meter.TodayIn(BillingClasses.Key).Cap);
         Assert.Equal(40m, meter.Today.PlanReading!.Cap);
-        host.Gateway.Update(s => { s.AiDailyCostCap = 10m; s.AiPlanDailyCapacity = 0m; });
+        host.Gateway.Update(s => s.AiDailyCostCap = 10m);
+        host.Gateway.SetPolicyUnderTest(p => p with { PlanDayTotal = 0m });
         Assert.Equal((0m, 10m), (meter.TodayIn(BillingClasses.Plan).Cap, meter.TodayIn(BillingClasses.Key).Cap));
+        await host.Gateway.DisposeAsync();
+
+        // A SETTINGS ROW NOBODY COULD READ admits no plan turn, though the policy in force still says 40.
+        using var damaged = TestEnv.NewDb();
+        damaged.SetKv("settings", "{\"ai_trading_stopped\":\"bad\"}");
+        var over = TradeAgent.App.AppHost.Composed(damaged,
+            new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()), new AgentPresence());
+        Assert.True(over.Gateway.Settings.CouldNotBeRead);
+        Assert.Equal(40m, over.Gateway.Policy.PlanDayTotal);
+        Assert.Equal(0m, over.Meter!.TodayIn(BillingClasses.Plan).Cap);
+        await over.Gateway.DisposeAsync();
     }
 
     /// <summary>
@@ -862,7 +878,7 @@ public class BillingClassesTests : IDisposable
             }
 
         var root = RepoRoot();
-        string[] settings = [nameof(TradeAgentSettings.AiDailyCostCap), nameof(TradeAgentSettings.AiPlanDailyCapacity)];
+        string[] settings = [nameof(TradeAgentSettings.AiDailyCostCap), nameof(TradeAgent.Core.Board.BoardPolicy.PlanDayTotal)];
         var reaching = Directory.GetFiles(Path.Combine(root, "src", "TradeAgent.Gateway"), "*.cs", SearchOption.AllDirectories)
             .Append(Path.Combine(root, "src", "TradeAgent.AgentRuntime", "BrokerDoor.cs"))
             .Where(f => settings.Any(name => File.ReadAllText(f).Contains(name, StringComparison.Ordinal)))

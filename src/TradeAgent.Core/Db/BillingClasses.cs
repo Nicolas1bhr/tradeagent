@@ -6,7 +6,7 @@ namespace TradeAgent.Core.Db;
 /// never one"). Three words, the values of <c>ai_attempt.billing_class</c>:
 /// <list type="bullet">
 /// <item><see cref="Plan"/> — the owner's AI plan (a ChatGPT sign-in): its turns are capacity the subscription includes, counted at
-/// list price against <see cref="TradeAgentSettings.AiPlanDailyCapacity"/>, a list-price EQUIVALENT and never money.</item>
+/// list price against the security board's plan day-total (<c>BoardPolicy.PlanDayTotal</c>), a list-price EQUIVALENT and never money.</item>
 /// <item><see cref="Key"/> — an API key (the app's harness, perception's decision model, a CLI signed in with a pasted key): real money,
 /// counted against <see cref="TradeAgentSettings.AiDailyCostCap"/>.</item>
 /// <item><see cref="Unknown"/> — nobody established which: a seat with no seat profile, a sign-in text that matches neither pattern, a row

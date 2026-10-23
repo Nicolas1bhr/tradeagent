@@ -266,13 +266,13 @@ public class TurnAllowanceTests : IDisposable
         Assert.False(meter.Today.CanPrice);
     }
 
-    /// <summary>The allowance is a setting, and zeroes in it are the shipped bound rather than none.</summary>
+    /// <summary>The allowance is the security board's founding policy's (<c>U-board-a2</c>), and zeroes in it are the shipped bound rather than none.</summary>
     [Fact]
     public void The_allowance_is_a_setting_and_a_zero_in_it_is_not_an_allowance_of_nothing()
     {
-        var s = new TradeAgentSettings();
-        Assert.Equal(1_200_000, s.AiTurnAllowanceInputTokens);
-        Assert.Equal(20_000, s.AiTurnAllowanceOutputTokens);
+        var p = TradeAgent.Core.Board.BoardFounding.V1;
+        Assert.Equal(1_200_000, p.TurnAllowanceInput);
+        Assert.Equal(20_000, p.TurnAllowanceOutput);
 
         Assert.Equal(TurnAllowance.Default, TurnAllowance.From(0, 0));
         Assert.Equal(new TurnAllowance(500, 20_000), TurnAllowance.From(500, -1));

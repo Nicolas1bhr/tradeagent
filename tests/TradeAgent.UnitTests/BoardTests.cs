@@ -104,11 +104,12 @@ public class BoardTests(ITestOutputHelper log)
         Assert.Equal(new PaperEnvelopeTerms(TradeAgent.Connectors.Paper.PaperConnector.ConnectorId, TradeAgent.Connectors.Paper.PaperConnector.TheAccount,
             "BTCUSDT", 0.05m, 5_000m, TradingGateway.PaperDeploymentsPerEnvelope, null), BoardFounding.V1.PaperEnvelope);
         Assert.Contains("0.05 BTC", Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'"), StringComparison.Ordinal);
-        Assert.Equal((defaults.AiPlanDailyCapacity, defaults.MissionReviewMinutes, defaults.HeadCeilingHours, defaults.AiLanes,
-                defaults.AiLanesPerPool, defaults.AiLanesPerCellClass, defaults.AiTurnAllowanceInputTokens, defaults.AiTurnAllowanceOutputTokens),
+        // THE METER'S AND THE LOOP'S VALUES are the ones the settings shipped until U-board-a2 moved them here (item 9): the plan's 40,
+        // a 30-minute review, 24 hours a head, one lane each, the shipped allowance and the shipped re-wake floors.
+        Assert.Equal((40m, 30, 24, 1, 1, 1, TurnAllowance.Default.InputTokens, TurnAllowance.Default.OutputTokens),
             (BoardFounding.V1.PlanDayTotal, BoardFounding.V1.ReviewMinutes, BoardFounding.V1.HeadCeilingHours, BoardFounding.V1.Lanes,
                 BoardFounding.V1.LanesPerPool, BoardFounding.V1.LanesPerCellClass, BoardFounding.V1.TurnAllowanceInput, BoardFounding.V1.TurnAllowanceOutput));
-        Assert.Equal(defaults.RewakeFloorMinutes.OrderBy(k => k.Key), BoardFounding.V1.RewakeFloorMinutes.OrderBy(k => k.Key));
+        Assert.Equal(RewakeFloors.DefaultMinutes.OrderBy(k => k.Key), BoardFounding.V1.RewakeFloorMinutes.OrderBy(k => k.Key));
 
         var (gw, _) = await Gateway(db);
         await using var _gw = gw;
@@ -556,8 +557,8 @@ public class BoardTests(ITestOutputHelper log)
 
     /// <summary>
     /// NO APP PATH SELECTS A LIVE MODE OR SWITCHES REAL MONEY ON: the settings hold neither, the gateway has no public method that
-    /// takes a mode or an activation, the policy's store has no public writer at all, the test host's seam is internal and nothing in
-    /// <c>src/</c> calls it, and the dev host reads no <c>mode</c>, <c>live</c> or <c>risk</c> line. RED at the shape commit:
+    /// takes a mode or an activation, the policy's store has no public writer at all, the test host's seams are internal and nothing in
+    /// <c>src/</c> calls any of them (every <c>…UnderTest</c> method since <c>U-board-a2</c>, the limits' and the policy's included), and the dev host reads no <c>mode</c>, <c>live</c> or <c>risk</c> line. RED at the shape commit:
     /// <c>SetMode</c> and <c>ActivateLive</c> were public.
     /// </summary>
     [Fact]
@@ -576,7 +577,7 @@ public class BoardTests(ITestOutputHelper log)
 
         var callers = SourceFiles()
             .SelectMany(f => File.ReadLines(f).Select((line, i) => (f, i, line)))
-            .Where(l => Regex.IsMatch(l.line, @"(SetModeUnderTest|ActivateLiveUnderTest)\s*\(") && !l.line.Contains("internal void", StringComparison.Ordinal))
+            .Where(l => Regex.IsMatch(l.line, @"\w+UnderTest\s*\(") && !l.line.Contains("internal void", StringComparison.Ordinal))
             .Select(l => $"{Path.GetFileName(l.f)}:{l.i + 1}")
             .ToList();
         Assert.Empty(callers);

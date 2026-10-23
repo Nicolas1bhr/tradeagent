@@ -93,7 +93,8 @@ public class SeatSignInTests
         try
         {
             host.SeatSignIn = rig.Service;
-            host.Gateway.Update(s => { s.AiDailyCostCap = 40m; s.AiPlanDailyCapacity = 0m; });
+            host.Gateway.Update(s => s.AiDailyCostCap = 40m);
+            host.Gateway.SetPolicyUnderTest(p => p with { PlanDayTotal = 0m });
             File.WriteAllText(rig.Plan, "");
             File.WriteAllText(rig.Marker, "");
             Rig.OnThisThread(host.SeatSignInPass(0, CancellationToken.None));

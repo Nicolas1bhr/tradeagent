@@ -1,5 +1,6 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using Xunit;
 
@@ -224,22 +225,24 @@ public class CouncilRoleTests
     public void Each_role_has_its_own_model_and_an_equal_share_of_the_day_by_default()
     {
         var s = new TradeAgentSettings();
+        // THE SHARES ARE THE SECURITY BOARD'S POLICY (U-board-a2 item 9); the founding one sets none, so each role has half.
+        var p = BoardFounding.V1;
 
-        Assert.Equal(0.5m, s.ShareForRole(CouncilRoles.Operations));
-        Assert.Equal(0.5m, s.ShareForRole(CouncilRoles.Research));
+        Assert.Equal(0.5m, p.ShareForRole(CouncilRoles.Operations));
+        Assert.Equal(0.5m, p.ShareForRole(CouncilRoles.Research));
         Assert.Null(s.ModelForRole(CouncilRoles.Research));
 
         s.SelectedModelId = "gpt-5.6-sol";
         Assert.Equal("gpt-5.6-sol", s.ModelForRole(CouncilRoles.Research));
 
         s.RoleModel[CouncilRoles.Research] = "gpt-5.6-mini";
-        s.RoleShare[CouncilRoles.Research] = 0.25m;
+        p = p with { RoleShares = new Dictionary<string, decimal> { [CouncilRoles.Research] = 0.25m } };
         Assert.Equal("gpt-5.6-mini", s.ModelForRole(CouncilRoles.Research));
         Assert.Equal("gpt-5.6-sol", s.ModelForRole(CouncilRoles.Operations));
-        Assert.Equal(0.25m, s.ShareForRole(CouncilRoles.Research));
+        Assert.Equal(0.25m, p.ShareForRole(CouncilRoles.Research));
 
-        s.RoleShare[CouncilRoles.Research] = 0m;
-        Assert.Equal(0.5m, s.ShareForRole(CouncilRoles.Research));
+        p = p with { RoleShares = new Dictionary<string, decimal> { [CouncilRoles.Research] = 0m } };
+        Assert.Equal(0.5m, p.ShareForRole(CouncilRoles.Research));
     }
 
 }

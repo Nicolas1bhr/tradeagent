@@ -322,39 +322,20 @@ public sealed class TradeAgentSettings
         RoleRuntime.TryGetValue(role, out var r) && r.Length > 0 ? r : null;
 
     /// <summary>
-    /// EACH ROLE'S SLICE OF <see cref="AiDailyCostCap"/>, as a fraction, or absent for an equal
-    /// share. Fifty-fifty across the two roles this build runs.
-    ///
-    /// It is a slice of the owner's ceiling and never an addition to it: the chair allocates INSIDE
-    /// what the owner allowed and cannot raise it — <c>docs/COUNCIL.md</c>, "Budgets are reserved,
-    /// not checked". A share is applied on top of the global gate rather than instead of it, so
-    /// shares that sum to more than one still cannot spend more than the cap; what they would do is
-    /// let one role take the whole day, which is the failure the share exists to prevent.
-    /// </summary>
-    public Dictionary<string, decimal> RoleShare { get; set; } = [];
-
-    /// <summary>
     /// The model this role will be asked to run on: its own choice, then the single choice that
     /// predates the council, then null for the runtime's default.
     /// </summary>
     public string? ModelForRole(string role) =>
         RoleModel.TryGetValue(role, out var m) && m.Length > 0 ? m : SelectedModelId;
 
-    /// <summary>
-    /// This role's fraction of the day's ceiling. An equal share when nothing was chosen, and an
-    /// equal share when what was chosen is not a fraction — a zero or a negative here would be a
-    /// role that can never work, which is a stop nobody pressed.
-    /// </summary>
-    public decimal ShareForRole(string role) =>
-        RoleShare.TryGetValue(role, out var s) && s > 0m && s <= 1m
-            ? s
-            : 1m / CouncilRoles.All.Length;
 
     public string? SelectedConnectorId { get; set; }
     public string? SelectedAccountId { get; set; }
     // THE GATEWAY'S LIMITS ARE NOT HERE (U-board-a2 item 8; R24 § 4.5): they are the security board's policy in force
-    // (`BoardPolicy.Risk`), decided by `app` at the founding until the board decides. A `risk` key an earlier build left in
-    // this row is read past and governs nothing — no migration, no dual reader.
+    // (`BoardPolicy.Risk`), decided by `app` at the founding until the board decides. Nor are the plan's day-total, the roles'
+    // shares, the turn allowance, the lanes, the review interval, the heads' ceiling or the re-wake floors (item 9): the meter and
+    // the loop read them from the same policy. A key an earlier build left in this row for any of them is read past and governs
+    // nothing — no migration, no dual reader. The owner's real-money cap and perception's budget inside it stay here (AUTH-001).
 
     /// <summary>
     /// THE OWNER HAS SAID THE AI MAY WORK ON ITS OWN — turns back to back, with nobody typing.
@@ -505,66 +486,6 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
-    /// THE FASTEST THE AI IS WOKEN WHEN NOTHING HAS HAPPENED, in minutes. 0 is off, and then only a
-    /// real event — the owner typing, material arriving, a fill, an order settling, a report or a verdict
-    /// arriving, the day turning over for a role its allowance stopped — starts a turn.
-    ///
-    /// <para>It is the fastest pace, not the pace: while only looks wake a role the next is raised at twice
-    /// the last, up to eight of these (<c>U-quiet-review</c>), and a role is looked at only while it has
-    /// open work it owns — an owner's message, an order or a position for the chair, the standing research
-    /// mandate for Research (<c>RoleObjectives</c>, <c>U-reconcile-wakes</c>).</para>
-    ///
-    /// The AI takes a turn because something happened. That leaves the case where nothing has, which
-    /// is not the same as there being nothing worth doing: the research, the backtests and the
-    /// journal are the job, and an hour of quiet market is not a reason to stop working on them. So
-    /// this is the heartbeat, and it is a setting because every tick is a paid turn — LOWERING it
-    /// spends more of the owner's money and therefore asks twice on the Safety page, which is the
-    /// opposite direction from every risk limit and is why it is not one of them.
-    /// </summary>
-    public int MissionReviewMinutes { get; set; } = 30;
-
-    /// <summary>
-    /// THE LANES (<c>U-org-lanes</c>, <c>docs/ORCHESTRATION.md</c> § 2.5): how many positions the loop may turn at once, and
-    /// how many of them on one AI account's quota pool and in one cell class. One each by default — N = 1 until grants are
-    /// bound to containers and cells exist. Edited on the Safety page only, and RAISING asks twice: more lanes spend faster.
-    /// No pipe op, verb or packet field reads or writes them.
-    ///
-    /// <para><b>Not an authority boundary.</b> This file lives under <c>state/</c>, which an unconfined neighbour can
-    /// rewrite, so the code bounds what it can mean: at most one turn on a seat nothing confines runs at a time whatever
-    /// these say (<c>LanePolicy.UnconfinedCeiling</c>), and until a proven cell exists raising them admits nothing extra.</para>
-    /// </summary>
-    public int AiLanes { get; set; } = 1;
-
-    /// <inheritdoc cref="AiLanes"/>
-    public int AiLanesPerPool { get; set; } = 1;
-
-    /// <inheritdoc cref="AiLanes"/>
-    public int AiLanesPerCellClass { get; set; } = 1;
-
-    /// <summary>
-    /// THE LONGEST A HEAD AFTER THE LEGACY PAIR MAY GO UNWOKEN, in hours (<c>U-org-wakes</c>; ORGANISATION § 10: "heads wake on
-    /// material events with a maximum interval (default 24 h)"). A floor every turn of that head resets, never a heartbeat; zero
-    /// raises none. One value for every level until the levels' horizons (VISION § 7.5) are set apart. The owner's, in-process:
-    /// no verb, no pipe op and no agent reaches it.
-    /// </summary>
-    public int HeadCeilingHours { get; set; } = 24;
-
-    /// <summary>
-    /// THE SOONEST A HOLDER WHOSE LAUNCH ENDED WITHOUT DELIVERING IS WOKEN AGAIN FOR THAT MANDATE, in minutes per level
-    /// (<c>U-rewake-floor</c>; ORCHESTRATION § 2.5: "a maximum interval per level, a floor and never a heartbeat"), keyed by
-    /// <see cref="Db.OrgLevel"/>: shipped as executor 15, team 60, department 240. Each further undelivered launch doubles it, to
-    /// eight times the floor and never past the level's ceiling (<see cref="Db.RewakeFloors"/>). Zero is the re-wake at once; below
-    /// zero reads zero; a level missing reads its default. It delays only that re-wake: the issued wake, a retry, a rejection, the
-    /// holder's own requested wake and the owner's words keep their time. A floor changed while a re-wake is pending leaves that
-    /// one where it is; the next reads the new value. The owner's, in-process: no verb, no pipe op and no agent reaches it.
-    ///
-    /// <para><b>Not an authority boundary.</b> This file lives under <c>state/</c>, which an unconfined neighbour can rewrite: lowering
-    /// it to zero restores the sweep as it was before the floor — admission, the mandate's allocation, its half-spent escalation and
-    /// its deadline still bound the spend — and never more.</para>
-    /// </summary>
-    public Dictionary<string, int> RewakeFloorMinutes { get; set; } = new(Db.RewakeFloors.DefaultMinutes, StringComparer.Ordinal);
-
-    /// <summary>
     /// HOW LONG A MESSAGE THE OWNER TYPED MAY GO WITHOUT AN OUTCOME BEFORE THE DAILY REPORT CALLS IT
     /// OVERDUE (<c>docs/COUNCIL.md</c> round 4: "Owner text enters Operations' agenda first, with
     /// receipt, disposition and deadline").
@@ -580,25 +501,10 @@ public sealed class TradeAgentSettings
     public int OwnerReplyDeadlineHours { get; set; } = 24;
 
     /// <summary>
-    /// WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, in input tokens. See
-    /// <see cref="TurnAllowance"/>: it is an upper bound, not a prediction, and the direction is
-    /// deliberate — reserving too much costs a turn the owner gets back at midnight, reserving too
-    /// little is a ceiling that can be walked past.
-    ///
-    /// A setting rather than a constant because the right bound depends on the model: a runtime with
-    /// a small context window can never use this much, and an owner who has measured their own turns
-    /// can say so. Zero or less reads as the shipped default; it is not an allowance of nothing.
-    /// </summary>
-    public long AiTurnAllowanceInputTokens { get; set; } = TurnAllowance.Default.InputTokens;
-
-    /// <summary>The other half of the allowance, in output tokens. Reasoning is inside it.</summary>
-    public long AiTurnAllowanceOutputTokens { get; set; } = TurnAllowance.Default.OutputTokens;
-
-    /// <summary>
     /// THE MOST THE AI MAY SPEND ON ITSELF IN ONE LOCAL DAY, in <c>costs.json</c>'s currency — IN REAL MONEY (<c>U-billing-classes</c>):
     /// the ceiling of every launch billed to an API key (the app's harness, perception's decision model, a CLI signed in with a pasted
     /// key) and of every launch whose billing nobody established. A turn on the owner's AI plan is counted against
-    /// <see cref="AiPlanDailyCapacity"/> instead, and never here.
+    /// the plan's day-total in the security board's policy (<c>BoardPolicy.PlanDayTotal</c>) instead, and never here.
     ///
     /// The AI's mission is to make at least enough to pay for itself, and half of that sentence is
     /// its own bill: turns run back to back for as long as the machine is on, so without a ceiling
@@ -615,21 +521,6 @@ public sealed class TradeAgentSettings
     /// could read must not be the event that takes the ceiling off.
     /// </summary>
     public decimal AiDailyCostCap { get; set; } = 5m;
-
-    /// <summary>
-    /// THE MOST OF THE OWNER'S AI PLAN THE AI MAY USE IN ONE LOCAL DAY (<c>U-billing-classes</c>; ORGANISATION § 10), as a LIST-PRICE
-    /// EQUIVALENT in <c>costs.json</c>'s currency — what the day's turns on his ChatGPT sign-in would cost at the vendor's list price.
-    /// It is NOT money: those turns are capacity his subscription includes. It is the ceiling of every launch billed to the plan and of
-    /// every launch whose billing nobody established; <see cref="AiDailyCostCap"/> bounds none of them.
-    ///
-    /// <para>Forty is the owner's own figure (ORGANISATION § 16, 2026-10-02: "a separate plan-capacity ceiling at the equivalent of $40
-    /// a day"). The vendor's own limit may stop turns sooner — its estimates "are not fixed message limits" — and his own Codex use
-    /// shares the plan without being counted here. RAISING it asks twice, as the money cap's raise does; lowering it saves in one.</para>
-    ///
-    /// <para><b>Zero means no plan turns at all</b>, exactly as the money cap's zero means no spending, and it is what
-    /// <see cref="Unreadable"/> falls to.</para>
-    /// </summary>
-    public decimal AiPlanDailyCapacity { get; set; } = 40m;
 
     /// <summary>
     /// THE MOST PERCEPTION MAY SPEND IN ONE LOCAL DAY — the decision models' own budget (<c>U-decision-port</c>), in
@@ -770,7 +661,6 @@ public sealed class TradeAgentSettings
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
-    ///   AiPlanDailyCapacity = 0   and use none of the owner's AI plan either
     ///   PerceptionDailyBudget = 0 no decision model is called either
     ///   Campaign*Budget = 0       a campaign opened from an unreadable row allows no attempt at all
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
@@ -794,8 +684,6 @@ public sealed class TradeAgentSettings
         // Zero is the smallest this field has and it means no spending, so a row nobody could read
         // is not the event that lifts the ceiling. The loop is not running on this row anyway.
         AiDailyCostCap = 0m,
-        // And the plan's capacity: no plan turn is taken on a row nobody could read either.
-        AiPlanDailyCapacity = 0m,
         // And perception's own budget inside it: no decision model is called on a row nobody could read.
         PerceptionDailyBudget = 0m,
         // The same reading, for the same reason: a campaign opened while the settings cannot be read
@@ -901,7 +789,7 @@ public sealed record AiSpendToday
     /// <summary>
     /// THE CEILING THIS READING IS AGAINST (<c>U-billing-classes</c>): <c>key</c> — the money cap
     /// (<see cref="TradeAgentSettings.AiDailyCostCap"/>) over the day's <c>key</c> and <c>unknown</c> rows — or <c>plan</c> — the plan's
-    /// capacity (<see cref="TradeAgentSettings.AiPlanDailyCapacity"/>), a list-price equivalent and never money, over the day's
+    /// capacity (the security board's plan day-total, <c>BoardPolicy.PlanDayTotal</c>), a list-price equivalent and never money, over the day's
     /// <c>plan</c> and <c>unknown</c> rows. <see cref="Cap"/>, <see cref="Spent"/> and <see cref="Reserved"/> are that ceiling's.
     /// </summary>
     public string Class { get; init; } = Db.BillingClasses.Key;

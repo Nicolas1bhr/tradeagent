@@ -231,13 +231,13 @@ public sealed class AppHost : IAsyncDisposable
     decimal AiCap() => Gateway.Settings.AiDailyCostCap;
 
     /// <summary>
-    /// THE OWNER'S PLAN-CAPACITY CEILING, AS ONE DELEGATE (<c>U-billing-classes</c>): what the meter admits plan and unknown launches
-    /// against — a list-price equivalent, never money. Read through <see cref="Gateway"/> at every admission, like the cap.
+    /// THE PLAN'S DAY-TOTAL, AS ONE DELEGATE (<c>U-billing-classes</c>; <c>U-board-a2</c> item 9): what the meter admits plan and unknown
+    /// launches against — a list-price equivalent, never money — read from the security board's policy in force, through
+    /// <see cref="Gateway"/> at every admission, like the cap. A policy that did not verify admits nothing (its unreadable shape's
+    /// day-total is zero, <c>U-board-a1</c> item 6), and neither does a settings row nobody could read: that row's own fail-closed
+    /// reading, zero plan turns, is kept now the figure lives in the policy.
     /// </summary>
-    decimal AiPlanCap() => Gateway.Policy.CouldNotBeRead
-        // A POLICY THAT DID NOT VERIFY ADMITS NOTHING ON THE PLAN (U-board-a1 item 6): its unreadable shape's day-total, zero.
-        ? Gateway.Policy.PlanDayTotal
-        : Gateway.Settings.AiPlanDailyCapacity;
+    decimal AiPlanCap() => Gateway.Settings.CouldNotBeRead ? 0m : Gateway.Policy.PlanDayTotal;
 
     /// <summary>The decision models built so far, one per instrument, disposed with the app.</summary>
     readonly Dictionary<string, TypeSafeWire> _decisionModels = new(StringComparer.Ordinal);
@@ -419,11 +419,10 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE APP-WIDE ALLOWANCE, read where asked (the Safety page changes it while the AI works): the seat of every position that has
-    /// none of its own, and the chair's.
+    /// THE APP-WIDE ALLOWANCE, read where asked from the security board's policy in force (<c>U-board-a2</c> item 9): the seat of every
+    /// position that has none of its own, and the chair's.
     /// </summary>
-    TurnAllowance AppAllowance => TurnAllowance.From(
-        Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens);
+    TurnAllowance AppAllowance => TurnAllowance.From(Gateway.Policy.TurnAllowanceInput, Gateway.Policy.TurnAllowanceOutput);
 
     /// <summary>
     /// ONE POSITION'S SEAT, RESOLVED (<c>U-org-seats</c>): its own seat columns when set — all four, or the launch is refused in words —
@@ -1250,8 +1249,8 @@ public sealed class AppHost : IAsyncDisposable
             runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
             owner: () => OwnerPrice.From(Gateway.Settings),
             model: () => RequestedModel,
-            // A role's slice of the owner's ceiling, read through a function because the owner changes it while the AI is working.
-            share: role => Gateway.Settings.ShareForRole(role),
+            // A role's slice of the ceiling, from the security board's policy in force (U-board-a2 item 9), read at every admission.
+            share: role => Gateway.Policy.ShareForRole(role),
             // ONE SEAT PER LAUNCH (U-org-seats): runtime, model, allowance and bound, resolved once at admission — a position's own
             // seat or today's sources; the chair's own seat for a launch nobody named. A price is looked up by (runtime, model), so a
             // role on the app-owned harness is priced against the harness's catalogue, at the model its turn will name.
@@ -1282,8 +1281,8 @@ public sealed class AppHost : IAsyncDisposable
             new MissionOptions
             {
                 TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
-                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes)),
-                Ceilings = LevelCeilings(Gateway.Settings)
+                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Policy.ReviewMinutes)),
+                Ceilings = LevelCeilings(Gateway.Policy)
             });
         Mission.Changed += () => Changed?.Invoke();
 
@@ -1316,20 +1315,20 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// EACH LEVEL'S CEILING AS THE OWNER SET IT (<see cref="TradeAgentSettings.HeadCeilingHours"/>): one value for every level until
+    /// EACH LEVEL'S CEILING AS THE POLICY IN FORCE STATES IT (<see cref="BoardPolicy.HeadCeilingHours"/>, <c>U-board-a2</c>): one value for every level until
     /// the levels' horizons are set apart; below zero reads zero, and zero raises none. The loop's ceilings and the re-wake floor's
     /// cap both read it here.
     /// </summary>
-    internal static Dictionary<string, TimeSpan> LevelCeilings(TradeAgentSettings settings) =>
-        OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, settings.HeadCeilingHours)), StringComparer.Ordinal);
+    internal static Dictionary<string, TimeSpan> LevelCeilings(BoardPolicy policy) =>
+        OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, policy.HeadCeilingHours)), StringComparer.Ordinal);
 
     /// <summary>
-    /// THE RE-WAKE FLOORS AS THE OWNER SET THEM NOW (<c>U-rewake-floor</c>; <see cref="TradeAgentSettings.RewakeFloorMinutes"/>),
+    /// THE RE-WAKE FLOORS AS THE POLICY IN FORCE STATES THEM NOW (<c>U-rewake-floor</c>; <see cref="BoardPolicy.RewakeFloorMinutes"/>, <c>U-board-a2</c>),
     /// each capped by its level's ceiling. Read on every sweep, so a change applies to the next re-wake the sweep raises and never
     /// re-dates one already pending.
     /// </summary>
-    internal static RewakeFloors RewakeFloorsOf(TradeAgentSettings settings) =>
-        RewakeFloors.From(settings.RewakeFloorMinutes, LevelCeilings(settings));
+    internal static RewakeFloors RewakeFloorsOf(BoardPolicy policy) =>
+        RewakeFloors.From(policy.RewakeFloorMinutes, LevelCeilings(policy));
 
     /// <summary>
     /// THE COMPOSITION <see cref="StartAsync"/> BUILDS, WITHOUT THE MACHINE IT RUNS ON — so a test can
@@ -2208,7 +2207,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (host._db is not { } db) return;
             // THE RE-WAKE FLOORS AS THE OWNER SET THEM NOW (U-rewake-floor) — the shipped defaults where no settings are read.
-            var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Settings) : RewakeFloors.From(null, null);
+            var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Policy) : RewakeFloors.From(null, null);
             new OrgStore(db).Sweep(now, floors, text => host.Gateway?.Log.Activity(text, "warn"));
             // AND THE FORECASTS (U-org-decisions), after the mandates, so a deadline that just passed is an event the resolver reads.
             // It wakes nobody; a forecast it will not read is said, never resolved on a guess.
@@ -2399,13 +2398,13 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public LaneProfile LaneOf(string role) => LaneOfSeat(host.DeclaredSeatClass(role));
 
-        /// <summary>The owner's lane settings, read on every tick so a press on the Safety page applies at the next one.</summary>
+        /// <summary>The lanes of the security board's policy in force (<c>U-board-a2</c> item 9), read on every tick.</summary>
         public LaneSettings Lanes
         {
             get
             {
-                var s = host.Gateway.Settings;
-                return new LaneSettings(s.AiLanes, s.AiLanesPerPool, s.AiLanesPerCellClass);
+                var p = host.Gateway.Policy;
+                return new LaneSettings(p.Lanes, p.LanesPerPool, p.LanesPerCellClass);
             }
         }
 

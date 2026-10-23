@@ -228,9 +228,11 @@ public class OrgLanesTests : IDisposable
             foreach (var word in words)
                 Assert.DoesNotContain(word, field.Name, StringComparison.OrdinalIgnoreCase);
 
+        // NO WRITER AT ALL since U-board-a2: the lanes are the security board's policy, not a setting, and the Safety page's box went
+        // with its field — so no file in src/ writes a settings lane any more.
         var root = RepoRoot();
         Assert.Equal(
-            ["src/TradeAgent.App/DashboardView.cs"],
+            [],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(f),
                     @"\.(AiLanes|AiLanesPerPool|AiLanesPerCellClass)\s*=[^=]"))
