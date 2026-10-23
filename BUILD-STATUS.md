@@ -11436,3 +11436,40 @@ ORCHESTRATION §§ 2.2, 2.5, 2.9; ORGANISATION § 4. **Protects:** ORG-001 (one 
 **Tests box:** GREEN on fix 1's code (ta-run-20261022-205316-9502491e: Unit 2143, Fault 498, Integration 733, 0 failed; his files unchanged); not re-run on fix 2.
 **Scan:** exact phrases only (model-usage wording in the brief and tests).
 **NOT VERIFIED:** the app was never launched (the observed run held this Mac): the reading line's wrap in its column unseen; the real TextBox template's ScrollViewer under the wheel (tests ran without a window); the owner's Windows laptop's culture (irrelevant by construction — culture-free).
+
+## U-security-sweep-a — the post-exploit sweep's repo changes: the Linux kit's .NET patched to runtime 10.0.13 (SDK 10.0.402), Brotli no longer accepted (CVE-2026-111497), servicing bumps
+
+**Landed** at `93d07a16` (seat A, landed singly on main `e32ba322`; builder a3321f738f99dd5d4, sonnet/high, BUILD RUN 2026-10-23). A light unit from the orchestrator's
+sweep after the PHP2Shell advisory (`fleet/tmp/SWEEP-2026-10-23/report.md` § 4; PHP2Shell itself does not reach our stack). No rung, no money path. The tape deploy
+builds the Linux kit from this landing.
+**CI:** landing run 39877703436 on 0820abf7, CARRIED to 93d07a16 (only bookkeeping paths differ). Every job succeeded: dedupe-gate, shard-plan, package, package-linux,
+test windows-latest 1–5, ubuntu-latest, macos-latest and linux-host. Every test job showed 0 Warning(s). land.sh check PASS, names removed 0 / added 1, SCAN CLEAN.
+Earlier: 39870560557 on ddbdf1d7 green on all 12 jobs. The first run used the wrong runtimeconfig name; it was cancelled and the name fixed in ddbdf1d7.
+**Tests box:** run 20261023-015154-ddbdf1d7 GREEN on the code tip: Fault 498/498; Integration 747 passed, 0 failed, 61 not run; Unit 2170 passed, 0 failed, 42 not run;
+his files unchanged.
+**Review:** Codex (gpt-6.1-sol) made one finding, a P1: the new CI step looked for `TradeAgent.App.*` while the app's AssemblyName is `TradeAgent`. CLOSED: it is the
+defect CI caught, fixed in ddbdf1d7, and both later runs are green.
+**Build:**
+1. **.NET.** `build.yml:362/368`: SDK 10.0.400 → 10.0.402, rollForward still `disable`. package-linux now prints `dotnet --version` and the published runtime; the
+   Windows package job prints its SDK. Quoted from CI:
+   - package-linux: `10.0.402`;
+   - `TradeAgent.runtimeconfig.json`: `"includedFrameworks": [ { "name": "Microsoft.NETCore.App", "version": "10.0.13" } ]`;
+   - `deps.json`: `Microsoft.NETCore.App.Runtime.linux-x64/10.0.13`;
+   - the Windows package job: `10.0.402`.
+   Deviation, accepted: the published files are `TradeAgent.*`, named by the AssemblyName, not `TradeAgent.App.*` as the brief said.
+2. **Brotli.** `GZip | Deflate` replaces `All` at `Downloader.cs:104`, `ForwardBarCollector.cs:67`, `InstrumentVerifier.cs:55` and `TapeCollector.cs:90`. The `"br"` arm of
+   `CodexSurfaceProbe` is gone, so "br" now meets the existing refusal of an unknown encoding. GUARD `NoBrotliGuardTests`: RED at base (`Failed: 1`, listing the four
+   sites). MUTANT: `All` put back on `TapeCollector.cs:90` ⇒ `Failed: 1 … TapeCollector.cs:90`; restored, green.
+   **REVERT** when a .NET 10 servicing release lists brotli ≥ 1.1.1 in `src/native/external/brotli-version.txt` on `release/10.0`, or in its release notes: restore
+   `All` and delete the guard.
+3. **Bumps, none dropped:** Microsoft.Data.Sqlite 10.0.13; System.Security.Cryptography.ProtectedData 10.0.13; Avalonia, Avalonia.Desktop and Avalonia.Themes.Fluent
+   12.1.4; Microsoft.NET.Test.Sdk 18.11.0. SQLitePCLRaw stays 2.1.13 and the codex pin stays 0.160.1.
+**Not verified:**
+- no direct unit test covers `CodexSurfaceProbe`'s refused "br"; only the guard does;
+- the guard cannot see an `Accept-Encoding` header written by hand or a computed enum value (none exists today);
+- the kit installed on a real Linux host (that is the orchestrator's deploy).
+**CARDS:**
+- pin the four GitHub Actions by commit SHA (optional, sweep § 2.5);
+- OpenCode's unpinned `releases/latest` download (`RuntimeManifest.cs:1328-1351`);
+- the ATAS box's SDK 10.0.400 → 10.0.402, by grant, when it is next used;
+- `U-tls-denylist`, the next protection unit.
