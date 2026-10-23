@@ -457,6 +457,38 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// NO COMBINATION OF A MARKET'S PRE-FEE SIGNALS CLEARS THE ROUND TRIP (fix pass 2, finding 1). A β 2 trap on the bare
+    /// signal and one on the taker-ratio-like series are each accepted alone — twice the largest move per signal is 200 ticks,
+    /// 20 bps of the starting price, below binance-spot's 24 — but a program reading both signals holds through the moves of
+    /// both on one round trip, so the market that plants both is refused in words: together they bound 40 bps, a real edge.
+    /// </summary>
+    [Fact]
+    public void Pre_fee_traps_on_two_series_are_refused_when_together_they_can_clear_the_round_trip()
+    {
+        using var scratch = TestEnv.NewScratch("pre-fee-combined");
+        IReadOnlyList<string> both = [ProvingSources.Signal, ProvingSources.TakerRatio];
+
+        using (var alone = new Proving(Path.Combine(scratch.Dir, "alone")))
+        {
+            alone.Write(new SyntheticMarketSpec(55, "SYNA", VenueCatalog.BinanceSpot, Start, 2, SyntheticEdge.PreFeeOnly(2)) { Series = both });
+            alone.Write(new SyntheticMarketSpec(55, "SYNB", VenueCatalog.BinanceSpot, Start, 2,
+                SyntheticEdge.PreFeeOnly(2, ProvingSources.TakerRatio)) { Series = both });
+        }
+
+        using var p = new Proving(Path.Combine(scratch.Dir, "combined"));
+        var spec = new SyntheticMarketSpec(55, "SYNA", VenueCatalog.BinanceSpot, Start, 2, SyntheticEdge.PreFeeOnly(2))
+        {
+            Series = both,
+            Edges = [SyntheticEdge.PreFeeOnly(2, ProvingSources.TakerRatio)]
+        };
+        var combined = Assert.Throws<ArgumentException>(() => p.Write(spec));
+        log.WriteLine(combined.Message);
+        Assert.Contains("it is a real edge, not a trap", combined.Message, StringComparison.Ordinal);
+        Assert.Contains("is 40 bps of the starting price", combined.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(SyntheticMarket.TruthFile(p.Home, spec)), "a refused market wrote its truth");
+    }
+
+    /// <summary>
     /// THE MANIFEST'S SHARPE IS THE REFERENCE TRADE'S MEAN OVER ITS TOTAL STANDARD DEVIATION (fix pass 1, finding 2). The
     /// reference trade takes every reading in the relation's direction, so its P&amp;L is |β|·|z|·w plus the horizon's noise.
     /// Enumerated here, independently of the generator's arithmetic: every reading's weight w from its move hour (the
