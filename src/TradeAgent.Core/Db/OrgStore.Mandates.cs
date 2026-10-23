@@ -331,6 +331,8 @@ public sealed partial class OrgStore
     {
         if (issue.Holder == issue.Decider)
             return ($"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.", true);
+        if (Board.BoardSeats.IsBoardId(issue.Holder))
+            return (Board.BoardSeats.NotAPosition(issue.Holder), false);
         if (IsAppPrincipal(issue.Holder))
             return ($"'{issue.Holder}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it holds no mandate.", false);
         // RULING Q4 — THE OWNER'S: operations places orders, and an order is never a mandate's to shape (no instrument, side, size or

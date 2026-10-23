@@ -54,6 +54,8 @@ public static class OrgIds
         if (CouncilRoles.IsKnown(id))
             return $"'{id}' is a legacy position's id (operations, research): they were seeded once, under those ids, and "
                    + "no new position takes one.";
+        // A SEAT OF THE SECURITY BOARD (U-board-a1; R24 § 4.1): outside the chart, minted by the app and by no verb.
+        if (Board.BoardSeats.IsBoardId(id)) return Board.BoardSeats.NotAPosition(id!);
         if (OrgStore.IsAppPrincipal(id))
             return $"'{id}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code writing "
                    + "under a name, never a position.";
@@ -385,18 +387,25 @@ public sealed partial class OrgStore(Database db)
         return (IReadOnlyList<OrgUnitRow>)rows;
     });
 
-    /// <summary>Every position, ended ones included, in the order they were created.</summary>
+    /// <summary>
+    /// Every position, ended ones included, in the order they were created — never a board seat's id, whatever a row says
+    /// (<c>U-board-a1</c>): the board is outside the chart, so a row under its id is never read as a position.
+    /// </summary>
     public IReadOnlyList<OrgPositionRow> Positions() => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT {PositionCols} FROM org_position ORDER BY created_at, id");
         using var r = c.ExecuteReader();
         var rows = new List<OrgPositionRow>();
-        while (r.Read()) rows.Add(ReadPosition(r));
+        while (r.Read())
+        {
+            var row = ReadPosition(r);
+            if (!Board.BoardSeats.IsBoardId(row.Id)) rows.Add(row);
+        }
         return (IReadOnlyList<OrgPositionRow>)rows;
     });
 
-    /// <summary>One position, or null because no position has that id — an app principal included.</summary>
-    public OrgPositionRow? Position(string id) => db.Read(_ =>
+    /// <summary>One position, or null because no position has that id — an app principal and a board seat included.</summary>
+    public OrgPositionRow? Position(string id) => Board.BoardSeats.IsBoardId(id) ? null : db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT {PositionCols} FROM org_position WHERE id=$id", ("$id", id));
         using var r = c.ExecuteReader();
@@ -412,7 +421,7 @@ public sealed partial class OrgStore(Database db)
     /// </summary>
     public PositionStanding? Standing(string id)
     {
-        if (IsAppPrincipal(id) || !CouncilRoles.IsPositionId(id)) return null;
+        if (IsOffChart(id) || !CouncilRoles.IsPositionId(id)) return null;
         return db.Read(_ =>
         {
             using var c = db.Cmd("""
@@ -471,7 +480,8 @@ public sealed partial class OrgStore(Database db)
             """, ("$active", OrgPositionStatus.Active), ("$ops", CouncilRoles.Operations), ("$research", CouncilRoles.Research));
         using var r = c.ExecuteReader();
         var ids = new List<string>();
-        while (r.Read()) ids.Add(r.GetString(0));
+        while (r.Read())
+            if (!Board.BoardSeats.IsBoardId(r.GetString(0))) ids.Add(r.GetString(0));
         return (IReadOnlyList<string>)ids;
     });
 
@@ -585,6 +595,12 @@ public sealed partial class OrgStore(Database db)
     /// a name, never a position. Exact, as every role comparison in this product is.
     /// </summary>
     public static bool IsAppPrincipal(string? role) => role is not null && Array.IndexOf(AppPrincipals.All, role) >= 0;
+
+    /// <summary>
+    /// WHETHER A NAME IS OUTSIDE THE CHART — one of the app's own principals, or a seat of the security board (<c>U-board-a1</c>;
+    /// <see cref="Board.BoardSeats.IsBoardId"/>). Neither is ever a position, a holder, a decider, a note's party or a verb's caller.
+    /// </summary>
+    public static bool IsOffChart(string? id) => IsAppPrincipal(id) || Board.BoardSeats.IsBoardId(id);
 
     static TradeAgentException Damaged(string why) =>
         new(ErrorCode.STATE_DATABASE_CORRUPT, $"the organisation chart is damaged: {why}");

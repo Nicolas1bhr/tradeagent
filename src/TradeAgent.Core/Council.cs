@@ -103,14 +103,15 @@ public static class CouncilRoles
 
     /// <summary>
     /// WHETHER AN ID CAN NAME A POSITION'S HOME: <c>[a-z0-9-]+</c>, not a device name Windows reserves (a folder
-    /// called <c>con</c> or <c>com1</c> cannot be created there), and not an app principal, which is code and never
-    /// a position. Whether a position by that id EXISTS, and is active, is the chart's question, not this one.
+    /// called <c>con</c> or <c>com1</c> cannot be created there), and not an app principal or a seat of the security board,
+    /// which are outside the chart and never a position (<c>U-board-a1</c>). Whether a position by that id EXISTS, and is
+    /// active, is the chart's question, not this one.
     /// </summary>
     public static bool IsPositionId(string? id) =>
         id is { Length: > 0 }
         && id.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
         && !IsReservedDeviceName(id)
-        && !Db.OrgStore.IsAppPrincipal(id);
+        && !Db.OrgStore.IsOffChart(id);
 
     /// <summary>Whether <paramref name="id"/> is a device name Windows reserves, in the only case a position id admits.</summary>
     public static bool IsReservedDeviceName(string? id) => id is not null && Array.IndexOf(ReservedDeviceNames, id) >= 0;

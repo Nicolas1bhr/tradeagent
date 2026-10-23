@@ -265,6 +265,7 @@ public sealed partial class OrgStore
     public DecisionRow Decide(string position, string? attempt, string kind, IReadOnlyList<string> options, string choice,
         string rationale, IReadOnlyList<OrgRef> refs, IReadOnlyList<ForecastClaim> forecasts, DateTimeOffset now) => db.Write(_ =>
     {
+        if (Board.BoardSeats.IsBoardId(position)) throw Forbidden(Board.BoardSeats.NotAPosition(position));
         if (IsAppPrincipal(position) || Position(position) is not { Status: OrgPositionStatus.Active })
             throw Forbidden($"'{position}' is no active position: a decision is recorded under the position whose launch made it.");
         if (OrgDecisionKind.IsMandatory(kind))
@@ -678,10 +679,12 @@ public sealed partial class OrgStore
     public LateralRow SendLateral(string sender, string? attempt, string to, string text, IReadOnlyList<OrgRef> refs, DateTimeOffset now) =>
         db.Write(_ =>
         {
+            if (Board.BoardSeats.IsBoardId(sender)) throw Forbidden(Board.BoardSeats.NotAPosition(sender));
             if (IsAppPrincipal(sender) || Position(sender) is not { Status: OrgPositionStatus.Active })
                 throw Forbidden($"'{sender}' is no active position: a note is sent by the position whose launch wrote it.");
             if (to == sender)
                 throw Refused("a note goes to another position, never to yourself — your own beliefs go in the research ledger.");
+            if (Board.BoardSeats.IsBoardId(to)) throw Refused(Board.BoardSeats.NotAPosition(to));
             if (IsAppPrincipal(to))
                 throw Refused($"'{to}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it reads no note.");
             if (CouncilRoles.MayPlaceOrders(to))

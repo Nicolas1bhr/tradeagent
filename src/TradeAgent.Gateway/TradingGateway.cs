@@ -414,7 +414,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public string? ActivePositionOf(string? role)
     {
-        if (role is null || OrgStore.IsAppPrincipal(role)) return null;
+        if (role is null || OrgStore.IsOffChart(role)) return null;
         try { return new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active } ? role : null; }
         catch (Exception) { return null; }
     }
