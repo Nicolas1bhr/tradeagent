@@ -53,6 +53,18 @@ public sealed record CharterFunding(string Seat, decimal Reservation, IReadOnlyL
 /// <summary>An envelope in one ceiling (<see cref="BillingClasses.Key"/> or <see cref="BillingClasses.Plan"/>).</summary>
 public sealed record CeilingEnvelope(string Ceiling, decimal Envelope);
 
+/// <summary>
+/// A HIRE AS ITS HEAD ASKS IT: the unit, whether the new position is to be that VACANT unit's head (an appointment — never a
+/// replacement), the rationale and options (claims), the app records it cites as current work, and its forecasts (at least one; a
+/// subject left empty is the unit).
+/// </summary>
+public sealed record HireRequest(
+    string Caller, string? Attempt, string UnitId, bool AsHead, string Rationale, IReadOnlyList<string> Options,
+    IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts);
+
+/// <summary>What a hire wrote: the position (dormant), its <c>hire</c> decision, the forecasts on it and the <c>hired</c> event's id.</summary>
+public sealed record Hired(OrgPositionRow Position, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId);
+
 /// <summary>What a charter wrote: the unit, its <c>charter</c> decision, the forecasts on it and the <c>chartered</c> event's id.</summary>
 public sealed record Chartered(OrgUnitRow Unit, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId);
 
@@ -171,6 +183,107 @@ public sealed partial class OrgStore
             $"unit={id} kind={r.Kind} parent={parent.Id} share={Sql.D(r.AiShare)} decision={decision.Id} {route}");
         return new Chartered(Units().Single(u => u.Id == id), decision, forecasts, eventId);
     });
+
+    /// <summary>
+    /// HIRES A POSITION INTO A UNIT (ORGANISATION § 2 :107 — only the head of the unit's PARENT hires; survey Q3): the app mints the id,
+    /// writes the <c>org_position</c> row DORMANT — home <c>org/&lt;id&gt;</c>, no seat (<c>U-org-seats</c> binds one) — and, for an
+    /// appointment, makes it the VACANT unit's head; the <c>hire</c> decision through the mandatory-kind path (rationale in the ledger),
+    /// its forecasts, and one <c>hired</c> event decided by the caller — in ONE write. DORMANT, so nothing activates (survey Q2): an
+    /// active position beyond the legacy pair would refuse the legacy pair's unconfined launches (<see cref="PositionActivation"/>), and
+    /// activation is not an organisation verb's. Refused in words, nothing written: the rights matrix; a head's REPLACEMENT (a different
+    /// operation); a unit that is not there or is closed; more than <see cref="OrgBounds.MaxPositions"/> positions; more than
+    /// <see cref="OrgBounds.MaxMembers"/> members in the unit; the earning test (current work cited, or the unit's first position, or a
+    /// unit chartered as a bounded experiment before its collapse date); no forecast.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public Hired Hire(HireRequest r, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
+            throw Forbidden($"'{r.Caller}' is no active position: a position is hired by the head whose launch asks it.");
+        var unit = Units().FirstOrDefault(u => u.Id == r.UnitId) ?? throw Refused($"'{r.UnitId}' is no unit on the chart.");
+        var line = Ancestors(unit.Id);
+
+        // AN APPOINTMENT FILLS A VACANT HEAD; A FILLED ONE IS A REPLACEMENT — a different operation, no verb's in this build.
+        if (r.AsHead && unit.HeadPositionId is { } sitting)
+        {
+            var replace = OrgRights.Answer(OrgOperation.Replace, OrgRights.ReservedOf(OrgOperation.Replace, unit, line, sitting),
+                OrgRights.RelationOf(OrgOperation.Replace, r.Caller, unit, line));
+            throw Forbidden($"{OrgEnvelopes.NameOf(unit.Id)} is headed by {sitting}: replacing a head is a different operation from an "
+                            + "appointment, and "
+                            + (OrgRights.Refusal(replace, "it") is { } words ? words : "no verb performs it in this build.")
+                            + " A hire with its head flag only fills a vacant head.");
+        }
+        var op = r.AsHead ? OrgOperation.Appoint : OrgOperation.Hire;
+        var right = OrgRights.Answer(op, OrgRights.ReservedOf(op, unit, line), OrgRights.RelationOf(op, r.Caller, unit, line));
+        var what = r.AsHead ? $"appointing the head of {OrgEnvelopes.NameOf(unit.Id)}" : $"hiring into {OrgEnvelopes.NameOf(unit.Id)}";
+        if (OrgRights.Refusal(right, what) is { } notYours) throw Forbidden(notYours);
+
+        if (unit.Status == OrgUnitStatus.Closed)
+            throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} is closed: nobody is hired into a closed unit.");
+        var open = Positions().Where(p => p.Status != OrgPositionStatus.Ended).ToList();
+        if (open.Count >= OrgBounds.MaxPositions)
+            throw Refused($"the organisation holds {open.Count.ToString(CultureInfo.InvariantCulture)} positions that have not ended, the most "
+                          + $"it carries ({OrgBounds.MaxPositions.ToString(CultureInfo.InvariantCulture)}); a dormant one counts until it ends.");
+        var inUnit = open.Where(p => p.UnitId == unit.Id).ToList();
+        var members = inUnit.Count(p => p.Id != unit.HeadPositionId);
+        if (!r.AsHead && members >= OrgBounds.MaxMembers)
+            throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} has {members.ToString(CultureInfo.InvariantCulture)} members, the most one head "
+                          + $"leads ({OrgBounds.MaxMembers.ToString(CultureInfo.InvariantCulture)}).");
+
+        // THE EARNING TEST: a unit's first position needs no more than its charter did; a unit chartered as a bounded experiment hires
+        // inside it until its collapse date; anything else cites current work of the caller's subtree.
+        string route;
+        var subtree = SubtreeOf(r.Caller).Select(u => u.Id).ToList();
+        var current = r.Refs.Where(x => Earns(x, subtree, now)).ToList();
+        if (inUnit.Count == 0) route = "first";
+        else if (ExperimentUntil(unit.Id) is { } collapse && collapse > now) route = $"experiment collapse_by={Sql.T(collapse)}";
+        else if (current.Count > 0) route = "evidence " + string.Join(",", current.Select(x => $"{x.Kind}:{x.Id}"));
+        else throw Refused(EarningWords($"a hire into {OrgEnvelopes.NameOf(unit.Id)}, which has positions already,", subtree));
+
+        if (r.Forecasts.Count is 0 or > DecisionLimits.MaxForecasts)
+            throw Refused($"a hire carries 1 to {DecisionLimits.MaxForecasts.ToString(CultureInfo.InvariantCulture)} forecasts — such as "
+                          + $"'{ForecastVocabulary.UnitAdmissible}' on the unit, its subject left empty: a structural act is a decision with a forecast.");
+
+        var id = OrgIds.MintPosition();
+        if (OrgIds.PositionIdRefusal(id) is { } badId) throw Refused(badId);
+        var choice = $"hire {id} into {unit.Id} as {(r.AsHead ? "its head" : "a member")}";
+        var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.Hire, r.Options.Count > 0 ? r.Options : [choice], choice,
+            r.Rationale, r.Refs, now);
+        var home = CouncilRoles.HomeDir(id);
+        using (var c = db.Cmd("""
+            INSERT INTO org_position(id, unit_id, home_dir, status, created_at, ended_at) VALUES($id, $unit, $home, $status, $at, NULL)
+            """, ("$id", id), ("$unit", unit.Id), ("$home", home), ("$status", OrgPositionStatus.Dormant), ("$at", Sql.T(now))))
+            c.ExecuteNonQuery();
+        if (r.AsHead)
+        {
+            using var h = db.Cmd("UPDATE org_unit SET head_position_id = $id WHERE id = $unit AND head_position_id IS NULL",
+                ("$id", id), ("$unit", unit.Id));
+            if (h.ExecuteNonQuery() != 1)
+                throw Refused($"{OrgEnvelopes.NameOf(unit.Id)}'s head was filled while this hire was written: an appointment fills a vacant head only.");
+        }
+        var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: unit.Id)).ToList();
+        var eventId = Event(now, unit.Id, id, OrgEventKind.Hired, r.Caller,
+            $"position={id} unit={unit.Id} as={(r.AsHead ? "head" : "member")} status={OrgPositionStatus.Dormant} home={home} "
+            + $"decision={decision.Id} {route}");
+        return new Hired(Position(id)!, decision, forecasts, eventId);
+    });
+
+    /// <summary>
+    /// THE COLLAPSE DATE OF A UNIT CHARTERED AS A BOUNDED EXPERIMENT, read from its <c>chartered</c> event — whose detail the app
+    /// composed from ids and fixed words (<see cref="Charter"/>) — or null: chartered on cited work, seeded, or a detail this build did
+    /// not write, which is never read on a guess.
+    /// </summary>
+    DateTimeOffset? ExperimentUntil(string unitId)
+    {
+        const string marker = " experiment collapse_by=";
+        using var c = db.Cmd("SELECT detail FROM org_event WHERE unit_id = $u AND kind = $k AND position_id IS NULL ORDER BY id LIMIT 1",
+            ("$u", unitId), ("$k", OrgEventKind.Chartered));
+        if (c.ExecuteScalar() is not string detail) return null;
+        var at = detail.IndexOf(marker, StringComparison.Ordinal);
+        return at >= 0 && DateTimeOffset.TryParse(detail[(at + marker.Length)..], CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var collapse)
+            ? collapse : null;
+    }
 
     /// <summary>Why a unit of <paramref name="kind"/> cannot hang from <paramref name="parent"/>, or null: a division under the root, a subdivision under a division, a team under either.</summary>
     static string? KindRefusal(string kind, OrgUnitRow parent) => kind switch

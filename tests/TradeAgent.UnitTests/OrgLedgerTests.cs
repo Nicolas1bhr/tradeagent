@@ -380,6 +380,11 @@ public class OrgLedgerTests
         // bounds, the weekly throttle and the earning test. OrgStore.Verbs.cs joins the writers of org_unit and org_event below. It
         // writes no seat, activates nothing, and reaches neither `operations` nor its division (the matrix answers a board act).
         mandate = [.. mandate, "Charter"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-c: Hire — writes org_position (one row, DORMANT, no seat column named), and for an
+        // appointment org_unit's head_position_id where it is vacant, and org_event (one `hired` event), with its mandatory `hire`
+        // decision, forecasts and ledger entry, in one write, behind OrgVerbCaller and the same checks as Charter. It activates
+        // nothing (dormant), seats nothing, and reaches neither `operations` nor its division (a board act).
+        mandate = [.. mandate, "Hire"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
