@@ -6,7 +6,7 @@ namespace TradeAgent.Core.Board;
 /// <summary>
 /// THE ONE WRITER OF THE BOARD'S TABLES (<c>U-board-a1</c>; R24 § 4.1), and their one reader. <c>board_seat</c>, <c>board_policy</c>
 /// and <c>board_event</c> are written here and nowhere else (a source guard holds that): the founding record, once, by the app at
-/// rung 47 (<see cref="Found"/>), and the record of an earlier live setting set aside by the owner's press
+/// rung 49 (<see cref="Found"/>), and the record of an earlier live setting set aside by the owner's press
 /// (<see cref="RecordEarlierLiveSetAside"/>). Nothing here writes a policy version from a caller's value: there is no public writer of
 /// a policy, a mode or an activation at all, and the board's acts (<c>U-board-b</c>) are not in this build.
 ///
@@ -22,7 +22,7 @@ public sealed class BoardStore(Database db)
     /// THE FOUNDING WRITE, ONCE (<c>U-board-a1</c> item 2): version 1 of the policy (<see cref="BoardFounding.V1"/>), the three seats
     /// of the founding composition and the <c>founded</c> event naming the schema the home was at and the board's budget share — in
     /// ONE transaction, and only while no policy row exists, so a rung re-run after a crash before its stamp writes nothing twice.
-    /// Called by rung 47 alone; nothing is read from the settings row.
+    /// Called by rung 49 alone; nothing is read from the settings row.
     /// </summary>
     internal static void Found(Database db, int homeSchema, DateTimeOffset at)
     {
@@ -83,7 +83,7 @@ public sealed class BoardStore(Database db)
         return c.ExecuteNonQuery();
     });
 
-    /// <summary>The schema stamp the home had when rung 47 founded the board — 0 for a home this build made — or null for none recorded.</summary>
+    /// <summary>The schema stamp the home had when rung 49 founded the board — 0 for a home this build made — or null for none recorded.</summary>
     public int? FoundingHomeSchema() => _db.Read(_ =>
     {
         using var c = _db.Cmd("SELECT home_schema FROM board_event WHERE kind='founded' ORDER BY id LIMIT 1");

@@ -34,7 +34,7 @@ public static class BoardSeats
         $"'{id}' is a seat of the security board: outside the organisation's chart, never a position, and no organisation verb reaches it.";
 }
 
-/// <summary>A BOARD SEAT'S LIFE. Only <see cref="Dormant"/> is storable at rung 47: nothing launches a board seat yet (ORCHESTRATION § 2.3).</summary>
+/// <summary>A BOARD SEAT'S LIFE. Only <see cref="Dormant"/> is storable at rung 49: nothing launches a board seat yet (ORCHESTRATION § 2.3).</summary>
 public static class BoardSeatStatus
 {
     /// <summary>Founded and never launched: no turn, no act, no reach.</summary>

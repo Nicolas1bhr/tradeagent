@@ -22,7 +22,7 @@ namespace TradeAgent.Tests.Unit;
 [Collection(VendorOverrideFiles.Name)]
 public class BoardTests(ITestOutputHelper log)
 {
-    const int BoardRung = 47;
+    const int BoardRung = 49;
 
     static string? Scalar(Database db, string sql, params (string, object?)[] ps) => db.Read(_ =>
     {
@@ -62,7 +62,7 @@ public class BoardTests(ITestOutputHelper log)
     /// <summary>
     /// A FRESH HOME OPENS WITH ONE POLICY ROW, VERSION 1, DECIDED BY THE APP ON THE FOUNDING BASIS — its body the founding policy's
     /// canonical text and its hash that body's — and the gateway's status shows the mode, the activation and the limits it states.
-    /// RED before rung 47: no <c>board_policy</c> table.
+    /// RED before rung 49: no <c>board_policy</c> table.
     /// </summary>
     [Fact]
     public async Task Founding_policy_is_one_app_record_and_the_gateway_reads_it()
@@ -121,7 +121,7 @@ public class BoardTests(ITestOutputHelper log)
 
     /// <summary>
     /// LIVE IS CLOSED BY CONSTRUCTION: the schema itself refuses a policy row in either real-money mode or with real money switched
-    /// on, and refuses every UPDATE and DELETE of the board's tables. RED before rung 47: no table to refuse anything.
+    /// on, and refuses every UPDATE and DELETE of the board's tables. RED before rung 49: no table to refuse anything.
     /// </summary>
     [Fact]
     public void No_row_of_the_board_store_holds_a_live_mode_or_an_activation()
@@ -161,7 +161,7 @@ public class BoardTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// NO BOARD ROW IS REWRITTEN BY A REPLACE (fix pass 1 of <c>U-board-a1</c>, the review's finding on rung 47): <c>INSERT OR REPLACE</c>
+    /// NO BOARD ROW IS REWRITTEN BY A REPLACE (fix pass 1 of <c>U-board-a1</c>, the review's finding on rung 49, then numbered 47): <c>INSERT OR REPLACE</c>
     /// deletes the row it collides with without firing a DELETE trigger while recursive triggers are off — every connection's default —
     /// so the update and delete seals alone let a seat's model class, a policy version or an event be rewritten. Each table refuses an
     /// insert over a key it already holds, whatever the statement's conflict clause, and the rows are unchanged. RED before the fix:
@@ -223,7 +223,7 @@ public class BoardTests(ITestOutputHelper log)
     /// <summary>
     /// THE FOUNDING COMPOSITION: three seats, <c>board-1..3</c>, on at least two model classes, each broker, cell or harness and none a
     /// <c>cli</c>, each with its vendor family, all dormant — and the schema refuses a <c>cli</c> seat and an active one. Nothing
-    /// launches one: no board seat is a position the supervisor builds a home for. RED before rung 47: no <c>board_seat</c> table.
+    /// launches one: no board seat is a position the supervisor builds a home for. RED before rung 49: no <c>board_seat</c> table.
     /// </summary>
     [Fact]
     public void Founding_composition_is_three_dormant_seats_on_two_model_classes()
@@ -338,7 +338,7 @@ public class BoardTests(ITestOutputHelper log)
     /// <summary>
     /// A HOME AN EARLIER BUILD ARMED FOR REAL MONEY PLACES NOTHING AND KEEPS ITS ROW: a settings row at schema 46 saying
     /// <c>LIVE_AUTONOMOUS</c> with real money switched on refuses every order under <c>HOME_ARMED_BEFORE_THE_BOARD</c> in words naming 46,
-    /// 47 and the press, leaves the raw row byte for byte — a kill-switch press included — and pauses execution. The owner's one press
+    /// 49 and the press, leaves the raw row byte for byte — a kill-switch press included — and pauses execution. The owner's one press
     /// keeps the row under <c>settings_before_board</c> and writes the current shape; the refusal lifts, the mode is PAPER from the
     /// founding policy, and no policy row was made of it. RED at the shape commit: the row's mode governed.
     /// </summary>
@@ -468,7 +468,7 @@ public class BoardTests(ITestOutputHelper log)
     /// <summary>
     /// A POLICY THAT FAILS TO VERIFY FAILS CLOSED: a body changed under its hash, or a hash changed under its body — written with the
     /// seal removed, as a damaged file would be — reads as the unreadable policy: OBSERVE, so nothing is dispatched; a plan day-total of
-    /// zero, so nothing is admitted on the plan; execution paused; and the row is kept as it was. RED before rung 47.
+    /// zero, so nothing is admitted on the plan; execution paused; and the row is kept as it was. RED before rung 49.
     /// </summary>
     [Theory]
     [InlineData("body")]
@@ -510,8 +510,8 @@ public class BoardTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// RUNG 47 RE-RUN AFTER A CRASH BEFORE ITS STAMP WRITES NOTHING TWICE: the tables and the founding record in place, the stamp one
-    /// lower — the rung runs again and leaves one policy row, three seats and one founding event, stamped 47. RED before rung 47.
+    /// RUNG 49 RE-RUN AFTER A CRASH BEFORE ITS STAMP WRITES NOTHING TWICE: the tables and the founding record in place, the stamp one
+    /// lower — the rung runs again and leaves one policy row, three seats and one founding event, stamped 49. RED before rung 49.
     /// </summary>
     [Fact]
     public void Rung_47_rerun_after_a_crash_before_its_stamp_writes_nothing_twice()

@@ -3,7 +3,7 @@ using TradeAgent.Core.Db;
 namespace TradeAgent.Core.Board;
 
 /// <summary>
-/// THE FOUNDING RECORD THE APP WRITES ONCE, at rung 47 (<c>U-board-a1</c>; R24 § 4.5): the policy that governs until the board
+/// THE FOUNDING RECORD THE APP WRITES ONCE, at rung 49 (<c>U-board-a1</c>; R24 § 4.5): the policy that governs until the board
 /// decides, the board's founding composition and its founding budget share. Its decider is <see cref="BoardDecider.App"/> and its
 /// basis <see cref="BoardBasis.Founding"/> — never attributed to the owner, and never written from what an older settings row held.
 ///
@@ -89,13 +89,13 @@ public static class BoardModelClass
     public static readonly string[] All = [Strong, Standard];
 }
 
-/// <summary>Who decided a policy version. Only <see cref="App"/> is storable at rung 47; <c>U-board-b</c> widens it to the board's acts.</summary>
+/// <summary>Who decided a policy version. Only <see cref="App"/> is storable at rung 49; <c>U-board-b</c> widens it to the board's acts.</summary>
 public static class BoardDecider
 {
     public const string App = "app";
 }
 
-/// <summary>On what basis a policy version stands. Only <see cref="Founding"/> is storable at rung 47.</summary>
+/// <summary>On what basis a policy version stands. Only <see cref="Founding"/> is storable at rung 49.</summary>
 public static class BoardBasis
 {
     public const string Founding = "founding";
