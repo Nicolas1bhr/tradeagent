@@ -1,3 +1,4 @@
+using System.Globalization;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core;
@@ -53,6 +54,30 @@ public static partial class Labels
         SeatAssurance.Confined => "confined: started in a cell whose confinement was proved on this machine",
         _ => "not a boundary this build knows"
     };
+
+    /// <summary>
+    /// ONE POSITION'S CALIBRATION IN WORDS (<c>U-org-scorecards-a</c> a5): the app's own score of its resolved, scored forecasts — how many,
+    /// their mean Brier score against the base rate's over the same forecasts, and the skill between them — summed over every manager
+    /// version, with the forecasts kept apart (open, void, not scored) and those the app could not score. A measurement, never a claim.
+    /// </summary>
+    public static string CalibrationWords(PositionScorecard card)
+    {
+        var t = card.Total;
+        var apart = string.Join(", ", new[] { (t.Open, "open"), (t.Void, "void"), (t.Unscored, "not scored") }
+            .Where(x => x.Item1 > 0).Select(x => $"{x.Item1.ToString(CultureInfo.InvariantCulture)} {x.Item2}"));
+        var refused = card.Refused.Count == 0 ? ""
+            : $" {card.Refused.Count.ToString(CultureInfo.InvariantCulture)} of its forecasts could not be scored.";
+        if (t.Scored == 0)
+            return $"Calibration: no scored forecast of its has resolved yet{(apart.Length > 0 ? $" ({apart})" : "")}.{refused}";
+        var versions = card.Versions.Count(v => v.Scored > 0);
+        return $"Calibration: {t.Scored.ToString(CultureInfo.InvariantCulture)} scored {(t.Scored == 1 ? "forecast" : "forecasts")} resolved"
+               + $" — Brier {Three(t.Brier!.Value)} against the base rate's {Three(t.BaseBrier!.Value)}, skill {Signed(t.Skill!.Value)}"
+               + (versions > 1 ? $", over {versions.ToString(CultureInfo.InvariantCulture)} manager versions" : "")
+               + (apart.Length > 0 ? $"; {apart}" : "") + "." + refused;
+
+        static string Three(double d) => d.ToString("0.000", CultureInfo.InvariantCulture);
+        static string Signed(double d) => Math.Round(d, 3) == 0 ? "0.000" : d.ToString("+0.000;-0.000", CultureInfo.InvariantCulture);
+    }
 
     // ---- Work ------------------------------------------------------------------------------------
 
