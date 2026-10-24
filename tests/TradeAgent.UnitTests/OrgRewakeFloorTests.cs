@@ -529,6 +529,45 @@ public partial class OrgAssignmentTests
     }
 
     /// <summary>
+    /// (d, U-rewake-followups item 1, fix pass) A REQUESTED WAKE ANOTHER MANDATE ALREADY REACHES AT ITS FLOOR BRINGS NOTHING FORWARD.
+    /// A member holds two owed mandates whose re-raises wait their floors, the older's at T + 15 and the newer's at T + 16; the turn
+    /// that served the newer asks for a wake at T + 15.5. The older is due first, so the launch that takes the requested wake takes
+    /// the older mandate with it (<c>MissionLoop.OneMandate</c>): bringing the newer to T + 15.5 would leave it due half a minute
+    /// before its floor with nothing asked for it, an extra turn (BUDGET-001). The newer keeps T + 16.
+    ///
+    /// <para>RED at a13cbcf1: item 1 had replaced the "another wake due by the request" guard instead of adding to it, and the newer
+    /// was brought to T + 15.5.</para>
+    /// </summary>
+    [Fact]
+    public void A_requested_wake_another_mandate_reaches_at_its_floor_brings_nothing_forward()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m1 = org.Assign(Issue(), t);
+        var m2 = org.Assign(Issue(), t.AddMinutes(1));
+        var a = TurnOn(db, Member, m1, t);
+        var b = TurnOn(db, Member, m2, t.AddMinutes(1));
+        Assert.Equal(2, org.Sweep(t.AddMinutes(1), Shipped));
+        Assert.True(events.RaiseDue(MissionEventIds.Self(b), MissionEventKind.Self, t.AddMinutes(1), t.AddMinutes(15.5), role: Member));
+        Assert.Equal(0, org.Sweep(t.AddMinutes(2), Shipped));
+        Assert.Equal((t.AddMinutes(15), t.AddMinutes(16)), (Reraise(db, org, m1, a)!.DueAt, Reraise(db, org, m2, b)!.DueAt));
+
+        var at = t.AddMinutes(15.75);
+        var taken = TradeAgent.AgentRuntime.MissionLoop.OneMandate(events.DueFor(Member, at));
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = at, Role = Member, ReservedCost = 0.01m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.Name(SeatAssurance.Brokered)
+        }, [.. taken.Select(e => e.Id)]).Admitted);
+        Assert.DoesNotContain(events.DueFor(Member, at), e => e.Kind is MissionEventKind.Mandate or MissionEventKind.Self);
+        var left = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => !e.Consumed && e.Role == Member);
+        Assert.Equal((m2.Id, t.AddMinutes(16)), (left.Payload, left.DueAt));
+    }
+
+    /// <summary>
     /// (h, U-rewake-followups item 2) A FLOOR OF <see cref="int.MaxValue"/> MINUTES READS ITS CEILING, AND THE SWEEP CONTINUES. The
     /// board's policy accepts any non-negative whole number of minutes; one that large must not overflow the doubling or the sweep's
     /// dates: under the 24 h ceiling every re-wake waits exactly 24 h, with no ceiling the interval saturates rather than throwing, and
