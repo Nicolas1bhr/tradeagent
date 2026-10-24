@@ -6,4 +6,8 @@
          instead of growing a second, divergent copy of that knowledge. -->
     <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- U-tls-denylist fix pass: the downloader's client-taking overloads, so a test proves a TLS refusal keeps its words. -->
+    <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+  </ItemGroup>
 </Project>

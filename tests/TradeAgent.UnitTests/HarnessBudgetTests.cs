@@ -388,6 +388,30 @@ public class HarnessBudgetTests : IDisposable
     }
 
     /// <summary>
+    /// A TURN WHOSE CONNECTION THE TLS POLICY REFUSED SHOWS THE REFUSAL'S WORDS (U-tls-denylist fix pass, the review's P2): the
+    /// conversation said "could not be reached: The SSL connection could not be established, see inner exception", and the inner
+    /// exception — which authority, which source — never reached the owner.
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_whose_connection_the_tls_policy_refused_shows_the_refusals_words()
+    {
+        var allowance = TurnAllowance.From(1_200_000, 20_000);
+        var meter = Meter(50m, allowance);
+
+        using var provider = new FakeProvider();
+        var transport = new TlsRefusalWordsTests.RefusingTransport();
+        using var runtime = new ApiAgentRuntime(Manifest(provider), provider.Holding(Pretend),
+            allowance: _ => allowance, requestTimeout: TimeSpan.FromSeconds(10), transport: transport);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+
+        await conversation.SendAsync("what is the plan?");
+
+        Assert.Equal(1, transport.Sent);
+        Assert.Contains(conversation.History, t => t.Role == ChatRole.System && t.Text.Contains("EM DV TLS CA - G3B", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// AND THE ZERO READS THE MARKER, NOT THE EXIT CODE: A CANCELLED TURN KEEPS ITS RESERVATION. It ends
     /// with the same -1 and no usage as the no-key turn above, but it held a key and built its request,
     /// and the app cannot know whether that request reached the provider — so its cost is unknown, and
