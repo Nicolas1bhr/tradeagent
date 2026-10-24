@@ -34,6 +34,30 @@ public static class Sha256Hex
     public static string Of(Stream stream) =>
         Convert.ToHexStringLower(SHA256.HashData(stream));
 
+    /// <summary>
+    /// THE HASH OF AT MOST <paramref name="max"/> BYTES, cancellable between reads (<c>U-exec-env-fix</c> item 1): null when the stream
+    /// holds more — read no further than one buffer past the bound, so a file a cell grew, or a sparse terabyte, costs a bounded read
+    /// and never one of its whole length.
+    /// </summary>
+    public static string? OfAtMost(Stream stream, long max, CancellationToken ct)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[81_920];
+        long total = 0;
+        int n;
+        while ((n = stream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            total += n;
+            if (total > max) return null;
+            hash.AppendData(buffer, 0, n);
+        }
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
+
+    /// <summary>The hash of the whole stream, cancellable between reads — <see cref="OfAtMost"/> with no bound.</summary>
+    public static string Of(Stream stream, CancellationToken ct) => OfAtMost(stream, long.MaxValue, ct)!;
+
     /// <summary>The same, without holding a thread while a large file is read.</summary>
     public static async Task<string> OfAsync(Stream stream, CancellationToken ct = default) =>
         Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));

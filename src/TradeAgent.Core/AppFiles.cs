@@ -85,6 +85,13 @@ public sealed class AppFileManifest
         Put(Key(home, relPath), Sha256Hex.Of(bytes));
 
     /// <summary>
+    /// THE MOST OF A FILE IN A HOME THAT CAN BE MEASURED AS THE APP'S (<c>U-exec-env-fix</c> item 1): far past anything the app writes
+    /// into one — a canon it refuses to read past 1 MiB, a delivery bounded at 32 KiB, a reference and programs of a few KiB — so only a
+    /// file a cell grew or swapped in is past it, and that file is the agent's without a byte of it read.
+    /// </summary>
+    public const long MaxMeasuredBytes = 4 * 1024 * 1024;
+
+    /// <summary>
     /// Is this a path the app ever wrote? Asked FIRST by the scanner, because the answer is a
     /// dictionary lookup and the question after it costs a read of the file's bytes — and hashing
     /// everything on every pass is the budget this ledger is built around not spending.
