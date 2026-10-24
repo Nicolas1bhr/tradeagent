@@ -1,0 +1,132 @@
+using System.Globalization;
+using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
+using Xunit;
+
+namespace TradeAgent.Tests.Unit;
+
+/// <summary>
+/// EVERY UNIT'S ENVELOPE IN THREE DIMENSIONS (<c>U-org-verbs-e</c>, O6 part e; ORCHESTRATION § 2.4; ORGANISATION § 3): beside its AI
+/// share, a unit's TRIAL and VERDICT shares — fractions of a campaign's own budgets — are charged at the call that spends them
+/// (<see cref="CampaignStore.RegisterTrial"/>, <see cref="CampaignStore.ChargeVerdict"/>), against the chain the launch was RECORDED
+/// under (<c>strategy_run.attempt</c> / <c>strategy_verdict.attempt_id</c> ⋈ <c>ai_attempt_funding</c>), AFTER the campaign's own
+/// gates, which run first and unchanged (EVID-001). Store-level: real ledger rows, no model, no pipe.
+/// </summary>
+public class OrgEvidenceSharesTests
+{
+    static readonly DateTimeOffset At = new(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);
+    static readonly DateTimeOffset Cutoff = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>A team under <c>div-research</c>, as the charter verb would leave it, with the shares given.</summary>
+    const string Team = "unit-evidence-team";
+
+    static void GivenTeam(Database db, string? trialShare, string? verdictShare) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at, trial_share, verdict_share)
+            VALUES($id, $parent, 'team', NULL, 'active', '0.5', $at, $t, $v)
+            """, ("$id", Team), ("$parent", OrgIds.Research), ("$at", Sql.T(At)), ("$t", trialShare), ("$v", verdictShare));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>A launch admitted under <paramref name="funding"/> — its chain recorded with it, as admission records it.</summary>
+    static string Attempt(Database db, params string[] funding)
+    {
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id, StartedAt = At, Role = CouncilRoles.Research, ReservedCost = 0m, SeatClass = SeatClasses.Harness,
+            BillingClass = BillingClasses.Key, Funding = funding
+        }).Admitted);
+        return id;
+    }
+
+    static DatasetRecord Held(Database db)
+    {
+        var store = new DatasetStore(db);
+        var id = store.Record(new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 1000,
+            Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [], false, 0, 0, 0, At,
+            DatasetState.ACCEPTED, null, []));
+        Assert.True(store.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
+        return store.ById(id)!;
+    }
+
+    static CampaignRow Opened(Database db, DatasetRecord set, int trials, int verdicts)
+    {
+        var opened = new CampaignStore(db).Open("BTCUSDT 1m v1", set, trials, verdicts, At);
+        Assert.True(opened.Ok, opened.Why);
+        return opened.Campaign!;
+    }
+
+    static string Version(Database db, string id)
+    {
+        new StrategyStore(db).RecordVersion(new StrategyVersionRow(
+            id, "instrument BTCUSDT\n", "canonical", "{}", StrategyStore.InterpreterBuild,
+            ParseVerdict.Accepted, 0, At, CouncilRoles.Research, "attempt-version"));
+        return id;
+    }
+
+    /// <summary>A run of <paramref name="version"/> made by the launch <paramref name="attempt"/> — the run row carries it.</summary>
+    static string Run(Database db, DatasetRecord set, string version, string runId, string attempt)
+    {
+        new StrategyStore(db).RecordRun(new StrategyRunRow(
+            runId, version, set.Id, set.NormalisedSha256, Cutoff.AddDays(-10), Cutoff,
+            "frictionless", BacktestOutcome.COMPLETED.ToString(), null,
+            10, 1, 1, 1, 1, 1, 0, 0, 1m, 0m, 1m, 0m, "sha", At, CouncilRoles.Research, attempt), []);
+        return runId;
+    }
+
+    // ---- item 2: trials --------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A UNIT'S TRIALS RUN OUT BEFORE THE CAMPAIGN'S, AND THE CAMPAIGN'S GATE RUNS FIRST. The team holds 0.5 of a 4-trial campaign:
+    /// its launches' third run is refused in words naming the team, its share, its use and the campaign's budget while the campaign
+    /// still has room, and a launch funded outside the team is not touched by it. Once the CAMPAIGN is spent, the team's next run is
+    /// refused in the campaign's own words — its gate ran first, unchanged. RED at base: the third run was registered. The watched
+    /// mutant (the unit gate before the campaign's) answers the last refusal in the unit's words.
+    /// </summary>
+    [Fact]
+    public void A_units_trials_run_out_before_the_campaigns_and_the_campaign_gate_runs_first()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var set = Held(db);
+        var campaign = Opened(db, set, trials: 4, verdicts: 2);
+        GivenTeam(db, trialShare: "0.5", verdictShare: null);
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+        var outside = Attempt(db, OrgIds.Research, OrgIds.Root);
+        var version = Version(db, "version-trials");
+
+        TrialRegistered Register(string runId, string attempt) =>
+            campaigns.RegisterTrial(campaign.Id, version, Run(db, set, version, runId, attempt), EvaluationClass.Research, At);
+
+        Assert.True(Register("run-t0", team).Ok);
+        Assert.True(Register("run-t1", team).Ok);
+
+        // THE TEAM'S SHARE IS SPENT, THE CAMPAIGN'S IS NOT.
+        var spent = Register("run-t2", team);
+        Assert.False(spent.Ok, "a third trial was registered past the team's half of a 4-trial campaign");
+        foreach (var words in new[] { Team, "0.5", "2 of", $"{campaign.TrialBudget}" })
+            Assert.Contains(words, spent.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.Registered(campaign.Id, version, "run-t2"));
+        Assert.Equal(2, campaigns.TrialsCharged(campaign.Id));
+
+        // A LAUNCH FUNDED OUTSIDE THE TEAM SPENDS THE CAMPAIGN'S ROOM, AND NOTHING OF THE TEAM'S.
+        Assert.True(Register("run-o0", outside).Ok);
+        Assert.True(Register("run-o1", outside).Ok);
+        Assert.Equal(4, campaigns.TrialsCharged(campaign.Id));
+
+        // THE CAMPAIGN IS SPENT: ITS OWN GATE ANSWERS FIRST, in its own words, never the unit's.
+        var full = Register("run-t3", team);
+        Assert.False(full.Ok);
+        Assert.Contains($"has registered all {campaign.TrialBudget} of its research trials", full.Why, StringComparison.Ordinal);
+        Assert.DoesNotContain(Team, full.Why, StringComparison.Ordinal);
+
+        // A FIXTURE RUN IS STILL FREE, the team's included.
+        Assert.True(campaigns.RegisterTrial(campaign.Id, version, Run(db, set, version, "run-f0", team), EvaluationClass.Fixture, At).Ok);
+    }
+}
