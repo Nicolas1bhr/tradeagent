@@ -148,11 +148,23 @@ public static class OrgEventKind
     public const string Hired = "hired";
 
     /// <summary>
+    /// A position retired, a unit closed, a unit merged into a sibling (<c>U-org-verbs-d</c>: <see cref="OrgStore.Retire"/>,
+    /// <c>OrgStore.Close</c>, <c>OrgStore.Merge</c>) — each decided by the head of the target's parent.
+    /// </summary>
+    public const string Retired = "retired", Closed = "closed", Merged = "merged";
+
+    /// <summary>
+    /// The owner's narrowing veto of one structural event, and his activation of a dormant position (<c>U-org-verbs-d</c>:
+    /// <c>OrgStore.Veto</c>, <c>OrgStore.Activate</c>) — in-process only, decided by <see cref="OrgDecider.Owner"/>.
+    /// </summary>
+    public const string Vetoed = "vetoed", Activated = "activated";
+
+    /// <summary>
     /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
     /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
-    /// positions instead. <c>closed</c> and <c>merged</c> arrive with their verbs (part d); they are named so the count needs no edit.
+    /// positions instead.
     /// </summary>
-    public static readonly string[] Structural = [Chartered, "closed", "merged"];
+    public static readonly string[] Structural = [Chartered, Closed, Merged];
 }
 
 /// <summary>

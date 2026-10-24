@@ -582,6 +582,71 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// A division under the organisation, headed by <paramref name="divisionHead"/>, and a team under it headed by
+    /// <paramref name="teamHead"/> with <paramref name="member"/> — each active, as only a test may write the chart.
+    /// </summary>
+    static Action<Database> SeedDivision(string division, string divisionHead, string team, string teamHead, string member) => db => db.Write(_ =>
+    {
+        const string at = "2026-10-01T12:00:00.0000000Z";
+        foreach (var line in new[]
+                 {
+                     $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{division}', '{OrgIds.Root}', 'division', NULL, 'active', '{at}')",
+                     $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('{team}', '{division}', 'team', NULL, 'active', '{at}')",
+                     $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{divisionHead}', '{division}', 'org/{divisionHead}', 'active', '{at}')",
+                     $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{teamHead}', '{team}', 'org/{teamHead}', 'active', '{at}')",
+                     $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{member}', '{team}', 'org/{member}', 'active', '{at}')",
+                     $"UPDATE org_unit SET head_position_id='{divisionHead}' WHERE id='{division}'",
+                     $"UPDATE org_unit SET head_position_id='{teamHead}' WHERE id='{team}'"
+                 })
+        {
+            using var c = db.Cmd(line);
+            c.ExecuteNonQuery();
+        }
+        return 0;
+    });
+
+    /// <summary>
+    /// (g4) A RETIREMENT MID-TURN ENDS THE RETIRED POSITION'S TURN AND TREE, ON THE REAL KERNEL (<c>U-org-verbs-d</c> item 2;
+    /// ORCHESTRATION § 2.9 "restructuring is a transaction"): a team member's puppet is mid-turn on a mandate its division head issued
+    /// and would never end on its own (<c>hang</c>); the division head — the head of the member's unit's parent — retires it; the
+    /// retirement's write cancels the mandate with the app's reason and fences the position, and its signal ends the member's turn and
+    /// process tree: the attempt closes ENDED with its reservation as its cost (BUDGET-001), read as fenced, and the position reads
+    /// ended. No model. RED at base: no <c>OrgStore.Retire</c>.
+    /// </summary>
+    [Fact]
+    public async Task Retiring_a_position_mid_turn_ends_its_turn()
+    {
+        const string divisionHead = "pos-4e7149000001", teamHead = "pos-4e7149000002", member = "pos-4e7149000003";
+        const string division = "div-4e714900", team = "team-4e714900";
+        await using var life = await PuppetLife.Begin("retire", seed: SeedDivision(division, divisionHead, team, teamHead, member));
+        var org = new OrgStore(life.Host.Db);
+        var m = org.Assign(new MandateIssue(divisionHead, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
+            null, MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        life.Script(member, ["signal turning", "hang"], ["usage 10 0 5", "final Told."]);
+        await life.RunUntil(() => life.Reached("turning"), "the member's puppet is mid-turn on the mandate");
+        var running = Assert.Single(life.AttemptsOf(member));
+        Assert.Equal((AiAttemptState.LAUNCHED, m.Id), (running.State, running.MandateId));
+
+        var since = System.Diagnostics.Stopwatch.StartNew();
+        var retired = org.Retire(new RetireRequest(divisionHead, null, member, "the question is answered elsewhere", ["retire", "keep"], [],
+            [new(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, DateTimeOffset.UtcNow.AddDays(45), 0.4m)]), DateTimeOffset.UtcNow);
+        life.Host.Gateway.Fenced();
+
+        await life.RunUntil(() => life.AttemptsOf(member).Single().State != AiAttemptState.LAUNCHED && life.Presence.Live == 0,
+            "the retired member's turn ended with its process tree");
+        since.Stop();
+        var closed = life.AttemptsOf(member).Single();
+        Assert.Equal(AiAttemptState.ENDED, closed.State);
+        Assert.Equal(closed.ReservedCost, closed.Cost);
+        Assert.NotNull(org.FencedSince(closed.Id));
+        Assert.Equal([m.Id], retired.Cancelled);
+        Assert.Contains($"{member} was retired by {divisionHead}", org.MandateEvents(m.Id)[^1].Reason, StringComparison.Ordinal);
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(member)!.Status);
+        Assert.Equal(1, life.Turns(member));
+        output.WriteLine($"life (retire): the retired member's turn ended {since.Elapsed.TotalSeconds:F1} s after the retirement; {life.Counts()}");
+    }
+
+    /// <summary>
     /// (g3) A FENCE NEVER CANCELS ANOTHER TURN (<c>U-org-verbs-b</c> fix pass 1, Codex P1-2): the member's turn under M is the one
     /// running when the fence checks it; in that instant, before the fence ends it, the turn finishes on its own and the member is
     /// woken for its next turn, under no mandate. The fence must end the launch it found and nothing else: the successor runs to its
