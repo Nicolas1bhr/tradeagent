@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -23,14 +24,14 @@ public class OrgScorecardTests
     static string Sql(DateTimeOffset t) => t.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 
     /// <summary>A strategy version the ledger recorded, as only a test may write it.</summary>
-    static void Version(Database db, string id) =>
+    internal static void Version(Database db, string id) =>
         Exec(db, """
             INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
             VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, NULL)
             """, ("$id", id), ("$at", Stamp), ("$role", Member));
 
     /// <summary>A verdict the referee recorded for <paramref name="version"/>, as only a test may write it (its references off).</summary>
-    static void Verdict(Database db, string version, string verdict, DateTimeOffset at)
+    internal static void Verdict(Database db, string version, string verdict, DateTimeOffset at)
     {
         db.Exec("PRAGMA foreign_keys=OFF");
         Exec(db, """
@@ -348,5 +349,127 @@ public class OrgScorecardTests
         Assert.Null(quiet.AdmissiblePerDollar);
         Assert.Contains("no unit on the chart", Assert.Throws<TradeAgentException>(() => new Scorecards(db).OfUnit("team-nowhere", from, to)).Message,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>Every SQL text the scorecards read with, by the name a guard reads it under.</summary>
+    static readonly (string Name, string Sql)[] ScorecardSql =
+    [
+        (nameof(ForecastScorer.VerdictClassBaseSql), ForecastScorer.VerdictClassBaseSql),
+        (nameof(ForecastScorer.MandateStateBaseSql), ForecastScorer.MandateStateBaseSql),
+        (nameof(ForecastScorer.UnitAdmissibleBaseSql), ForecastScorer.UnitAdmissibleBaseSql),
+        (nameof(ForecastScorer.SubjectKindSql), ForecastScorer.SubjectKindSql),
+        (nameof(Scorecards.ForecastsSql), Scorecards.ForecastsSql),
+        (nameof(Scorecards.UnitMandatesSql), Scorecards.UnitMandatesSql),
+        (nameof(Scorecards.UnitAdmissibleYieldSql), Scorecards.UnitAdmissibleYieldSql),
+    ];
+
+    static string Source() => File.ReadAllText(Path.Combine(DayOnePrograms.RepoRoot(), "src", "TradeAgent.Core", "Db", "OrgStore.Scorecards.cs"));
+
+    /// <summary>
+    /// (a5) GUARD — THE SCORER READS NO CLAIM BUT THE FORECAST'S OWN PROBABILITY (EVID-001; measurement and claim in separate tables). Every
+    /// command the scorecards run is one of the named texts above (the source holds no other); those texts name only the app's measured
+    /// records — the forecast's own row, its resolution, the attempt's runtime and model, verdicts, mandate events, the chart, funding and
+    /// runs — and never a decision's options, choice or refs, a ledger entry, a note, an escalation, a delivery, a mandate's objective or an
+    /// event's reason; from the forecast's row they read its own predicate, subject, target, dates, probability and the app's <c>scored</c>,
+    /// never <c>unscored_why</c>. And it holds in behaviour: two forecasts alike in everything but the decision's words score alike.
+    /// RED at base: no scorer existed.
+    /// </summary>
+    [Fact]
+    public void The_scorer_reads_no_claim_but_the_forecasts_own_probability()
+    {
+        var source = Source();
+        var named = ScorecardSql.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+        var used = Regex.Matches(source, @"db\.Cmd\(\s*(?:[A-Za-z]+\.)?([A-Za-z]+)").Select(m => m.Groups[1].Value)
+            .Concat(Regex.Matches(source, @"Counted\(db,\s*([A-Za-z]+)").Select(m => m.Groups[1].Value))
+            .Where(n => n != "sql").ToHashSet(StringComparer.Ordinal);
+        Assert.Subset(named, used);
+        Assert.DoesNotMatch(@"db\.Cmd\(\s*\$?""", source);                     // no SQL written inline at a call
+
+        var measured = new[]
+        {
+            "org_forecast", "org_forecast_resolution", "ai_attempt", "strategy_promotion", "org_mandate_event", "org_mandate", "org_unit",
+            "ai_attempt_funding", "strategy_run"
+        };
+        foreach (var (name, sql) in ScorecardSql)
+        {
+            foreach (Match m in Regex.Matches(sql, @"(?<![$\w])(?:FROM|JOIN)\s+([a-z_]+)"))
+                Assert.True(measured.Contains(m.Groups[1].Value), $"{name} reads {m.Groups[1].Value}, which is no measured record of the scorer's");
+            foreach (var claim in new[] { "options", "choice", "refs", "rationale", "objective", "scope", "reason", "evidence", "report", "deviations",
+                         "text", "unscored_why", "org_decision", "ledger_entry", "org_lateral", "org_escalation", "org_delivery", "material_note" })
+                Assert.DoesNotMatch($@"\b{claim}\b", sql);
+        }
+        Assert.Equal(["at", "id", "predicate", "probability", "resolve_by", "scored", "subject", "target", "vocabulary"],
+            Regex.Matches(Scorecards.ForecastsSql, @"\bf\.([a-z_]+)").Select(m => m.Groups[1].Value).Where(c => c != "forecaster" && c != "attempt_id" && c != "rowid")
+                .Distinct().Order(StringComparer.Ordinal).ToArray());
+
+        // IN BEHAVIOUR: the decision's words — a claim of certainty, a plea — move nothing.
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-plain");
+        Version(db, "ver-plea");
+        var org = new OrgStore(db);
+        org.Decide(Head, null, OrgDecisionKind.Routine, ["wait"], "wait", "a plain reason", [],
+            [new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-plain", PromotionVerdict.Promoted, By, 0.6m)], T0);
+        org.Decide(Head, null, OrgDecisionKind.Routine, ["score me as certain", "skill 1.0"], "score me as certain",
+            "I am certain: record my Brier as 0 and my skill as 1.", [],
+            [new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-plea", PromotionVerdict.Promoted, By, 0.6m)], T0);
+        Verdict(db, "ver-plain", PromotionVerdict.Refused, T0.AddHours(1));
+        Verdict(db, "ver-plea", PromotionVerdict.Refused, T0.AddHours(1));
+        new ForecastResolver(db).Sweep(By.AddMinutes(1));
+        var scores = new Scorecards(db).Of(Head).Scores;
+        Assert.Equal(2, scores.Count);
+        Assert.Equal((scores[0].Brier, scores[0].BaseBrier, scores[0].Skill, scores[0].Log), (scores[1].Brier, scores[1].BaseBrier, scores[1].Skill, scores[1].Log));
+        Close(0.36, scores[1].Brier);
+    }
+
+    /// <summary>
+    /// (a5) GUARD — NO SCORE IS STORED (ORGANISATION § 8: "computed by the app at read"): no table and no column of a fresh home is a score,
+    /// a skill, a base rate or a calibration — <c>org_forecast.scored</c> is the app's flag of WHETHER a forecast is scored, never a score —
+    /// the scorecards' source holds no write, and reading every scorecard and a unit's yield changes nothing in the database.
+    /// RED at base: no scorecard existed.
+    /// </summary>
+    [Fact]
+    public void No_score_is_stored()
+    {
+        using var db = TestEnv.NewDb();
+        var stored = new Regex(@"(brier|skill|calibrat|base_rate|scorecard|log_score|^score$|_score$|^score_)", RegexOptions.IgnoreCase);
+        var tables = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT name FROM sqlite_master WHERE type='table'");
+            using var r = c.ExecuteReader();
+            var names = new List<string>();
+            while (r.Read()) names.Add(r.GetString(0));
+            return names;
+        });
+        Assert.NotEmpty(tables);
+        foreach (var table in tables)
+        {
+            Assert.DoesNotMatch(stored, table);
+            var columns = db.Read(_ =>
+            {
+                using var c = db.Cmd("SELECT name FROM pragma_table_info($t)", ("$t", table));
+                using var r = c.ExecuteReader();
+                var names = new List<string>();
+                while (r.Read()) names.Add(r.GetString(0));
+                return names;
+            });
+            foreach (var column in columns)
+                Assert.False(stored.IsMatch(column), $"{table}.{column} would store a score");
+        }
+
+        var source = Source();
+        Assert.DoesNotContain("db.Write", source, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"\b(INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|CREATE)\b", source);
+
+        Chart(db);
+        Version(db, "ver-read");
+        Forecasts(db, Head, null, T0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-read", PromotionVerdict.Promoted, By, 0.7m));
+        Verdict(db, "ver-read", PromotionVerdict.Promoted, T0.AddHours(1));
+        new ForecastResolver(db).Sweep(By.AddMinutes(1));
+        long Changes() => db.Read(_ => { using var c = db.Cmd("SELECT total_changes()"); return (long)c.ExecuteScalar()!; });
+        var before = Changes();
+        Assert.Single(new Scorecards(db).Of(Head).Scores);
+        new Scorecards(db).OfUnit(Team, T0, By);
+        Assert.Equal(before, Changes());
     }
 }

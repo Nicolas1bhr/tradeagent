@@ -19,6 +19,7 @@ public class OrganisationPageTests
     {
         Org = () => new OrgStore(db),
         Attempts = () => new AiAttemptStore(db),
+        Scorecards = () => new Scorecards(db),
         ProofHeld = () => proof,
         Currency = () => "USD",
     };
@@ -210,5 +211,46 @@ public class OrganisationPageTests
         Assert.Contains("pos-5ac0ffee0009", AllText(team), StringComparison.Ordinal);
         // THE OTHER UNITS' CARDS ARE THE SAME INSTANCES, IN THE SAME ORDER.
         Assert.Equal(cardsBefore, page.UnitCards.Children.ToList());
+    }
+
+    /// <summary>
+    /// (d) EACH POSITION SHOWS ITS CALIBRATION IN WORDS, WITHOUT A REBUILD (<c>U-org-scorecards-a</c> a5): before any forecast resolves the head's
+    /// row says none has; after the head's forecast resolves — 0.8 on a verdict that came, against a base rate of one half over nothing
+    /// measured — the same row, in the same card and the same text blocks, says one scored forecast, its Brier, the base rate's and the
+    /// skill, and the forecast still open apart. The other head, which forecast nothing, still says it has none. The line is the app's
+    /// measurement: no probability, which is the forecaster's claim, is printed in it.
+    /// RED at base: the page drew no calibration.
+    /// </summary>
+    [Fact]
+    public void Each_position_shows_its_calibration_in_words_without_a_rebuild()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var page = new OrganisationPage(Sources(db));
+        page.Update();
+        var team = page.CardOf(Team) ?? throw new Xunit.Sdk.XunitException("the team's card was not made");
+        var before = Texts(team).ToList();
+        Assert.Contains("Calibration: no scored forecast of its has resolved yet.", AllText(team), StringComparison.Ordinal);
+
+        var at = DateTimeOffset.UtcNow.AddDays(-10);
+        OrgScorecardTests.Version(db, "ver-cal");
+        OrgScorecardTests.Version(db, "ver-later");
+        new OrgStore(db).Decide(Head, null, OrgDecisionKind.Routine, ["forecast it"], "forecast it", "a reason", [],
+            [
+                new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-cal", PromotionVerdict.Promoted, at.AddDays(2), 0.8m),
+                new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-later", PromotionVerdict.Promoted, at.AddDays(300), 0.35m)
+            ], at);
+        OrgScorecardTests.Verdict(db, "ver-cal", PromotionVerdict.Promoted, at.AddDays(1));
+        new ForecastResolver(db).Sweep(DateTimeOffset.UtcNow);
+        page.Update();
+
+        Assert.Same(team, page.CardOf(Team));
+        Assert.Equal(before, Texts(team).Take(before.Count).ToList());   // the same text blocks, in the same places
+        var words = AllText(team);
+        Assert.Contains("Calibration: 1 scored forecast resolved — Brier 0.040 against the base rate's 0.250, skill +0.210; 1 open.", words,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("0.8", words, StringComparison.Ordinal);
+        Assert.DoesNotContain("0.35", words, StringComparison.Ordinal);
+        Assert.Contains("Calibration: no scored forecast of its has resolved yet.", AllText(page.CardOf(Elsewhere)!), StringComparison.Ordinal);
     }
 }

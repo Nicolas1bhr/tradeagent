@@ -14,25 +14,33 @@ sealed record OrganisationRead(
     IReadOnlyList<OrgPositionRow> Positions,
     IReadOnlyDictionary<string, RecordedSeat> Seats,
     bool ProofHeld,
-    IReadOnlyDictionary<string, ResolvedSeat>? Resolved = null)
+    IReadOnlyDictionary<string, ResolvedSeat>? Resolved = null,
+    IReadOnlyDictionary<string, PositionScorecard>? Calibration = null)
 {
     /// <summary>
     /// <paramref name="seatOf"/> resolves an ACTIVE position that has no seat of its own the way its launch would; null resolves none, and the
     /// page says so instead of naming a runtime.
     /// </summary>
-    public static OrganisationRead From(OrgStore org, AiAttemptStore attempts, bool proofHeld, Func<string, ResolvedSeat>? seatOf = null)
+    /// <para><paramref name="scorecards"/> computes each position's scorecard at read (<c>U-org-scorecards-a</c>); null computes none, and no
+    /// calibration line is drawn.</para>
+    public static OrganisationRead From(OrgStore org, AiAttemptStore attempts, bool proofHeld, Func<string, ResolvedSeat>? seatOf = null,
+        Scorecards? scorecards = null)
     {
         var positions = org.Positions();
         var resolved = seatOf is null
             ? null
             : positions.Where(p => p.SeatRuntime is null && p.Status == OrgPositionStatus.Active)
                 .ToDictionary(p => p.Id, p => seatOf(p.Id), StringComparer.Ordinal);
-        return new OrganisationRead(org.Units(), positions, attempts.RecordedSeats(), proofHeld, resolved);
+        var calibration = scorecards is null ? null : positions.ToDictionary(p => p.Id, p => scorecards.Of(p.Id), StringComparer.Ordinal);
+        return new OrganisationRead(org.Units(), positions, attempts.RecordedSeats(), proofHeld, resolved, calibration);
     }
 }
 
-/// <summary>One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on and who paid.</summary>
-sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing);
+/// <summary>
+/// One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on, who paid, and its
+/// calibration as the app scores it at read (empty where no scorecard was read).
+/// </summary>
+sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "");
 
 /// <summary>One unit as the page says it, with the depth it is indented to and the positions in it.</summary>
 sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions);
@@ -58,7 +66,10 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         var units = tree.Select(t =>
         {
             var (unit, depth) = t;
-            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved)).ToList();
+            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved) with
+            {
+                Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : ""
+            }).ToList();
             return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions);
         }).ToList();
 
@@ -167,7 +178,7 @@ sealed class OrganisationPage
         {
             if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf), null);
+                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf, _src.Scorecards()), null);
                 read = true;
             }
             else words = OrganisationWords.Of(null, null);
@@ -212,9 +223,10 @@ sealed class OrganisationPage
         var seat = Small();
         var cell = Small();
         var billing = Small();
+        var calibration = Small();
         var head = Ui.Row(Theme.S3, id, status);
         head.VerticalAlignment = VerticalAlignment.Center;
-        var row = Ui.Col(Theme.S1, head, role, seat, cell, billing);
+        var row = Ui.Col(Theme.S1, head, role, seat, cell, billing, calibration);
         row.Margin = new Thickness(Theme.S3, 0, 0, 0);
 
         return (row, p =>
@@ -227,6 +239,8 @@ sealed class OrganisationPage
             OrgText.Set(seat, p.Seat);
             OrgText.Set(cell, p.Cell);
             OrgText.Set(billing, p.Billing);
+            OrgText.Set(calibration, p.Calibration);
+            if (calibration.IsVisible != p.Calibration.Length > 0) calibration.IsVisible = p.Calibration.Length > 0;
         });
 
         static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);

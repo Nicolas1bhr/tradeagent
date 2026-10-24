@@ -24,6 +24,9 @@ sealed record OrgSurfaceSources
     /// <summary>The launch ledger, or null while the database is not open.</summary>
     public required Func<AiAttemptStore?> Attempts { get; init; }
 
+    /// <summary>The scorecards, computed at read (<c>U-org-scorecards-a</c>), or null while the database is not open or where none is read.</summary>
+    public Func<Scorecards?> Scorecards { get; init; } = () => null;
+
     /// <summary>Whether a cell proof is recorded for this machine and build.</summary>
     public Func<bool> ProofHeld { get; init; } = () => false;
 
@@ -45,6 +48,7 @@ sealed record OrgSurfaceSources
         SeatOf = host.ResolvedSeatOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
+        Scorecards = () => host.ScorecardLedger,
         ProofHeld = () => host.CellProofHeld,
         Currency = () => host.SpendToday.Currency,
     };

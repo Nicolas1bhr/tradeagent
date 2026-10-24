@@ -67,6 +67,9 @@ public sealed class AppHost : IAsyncDisposable
 
     internal AiAttemptStore? AttemptLedger => _db is { } d ? new AiAttemptStore(d) : null;
 
+    /// <summary>The scorecards, computed at read over the app's database (<c>U-org-scorecards-a</c>); null while it is not open.</summary>
+    internal Scorecards? ScorecardLedger => _db is { } d ? new Scorecards(d) : null;
+
     /// <summary>
     /// WHERE <paramref name="role"/> RUNS, as its next launch resolves it (<see cref="SeatFor"/>) — read only, for the chart page. A seat that cannot
     /// be read or served answers with the reason in words, never a guess.
