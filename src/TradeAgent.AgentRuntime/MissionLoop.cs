@@ -1373,7 +1373,7 @@ public sealed record MissionSituation
 
         // A CHECK'S REASON NAMES THE DELIVERY'S OWN RECORD IDS AS THE EXECUTOR WROTE THEM (fix pass 1): quoted under its check,
         // line by line, so an id carrying a line break and words of its own stays inside the quote — never a line of the app's.
-        if (v.Latest is { } d && v.LatestChecks?.Where(c => !c.Passed).ToList() is { Count: > 0 } failed)
+        if (FailedShown(v) is var (d, failed))
         {
             b.AppendLine($"- Delivery `{d.Id}` failed TradeAgent's checks — each reason is TradeAgent's, quoted because it names "
                          + "the delivery's records as the delivery wrote them:");
@@ -1391,6 +1391,30 @@ public sealed record MissionSituation
                          + $"(event {rejected.Id}), in its own words:");
             Quote(b, rejected.Reason ?? "");
         }
+    }
+
+    /// <summary>
+    /// THE DELIVERY THE MANDATE BLOCK SHOWS AS FAILED, with the checks it failed, or null — the one test both the render and the
+    /// lineage read (<c>U-packets-followups</c>).
+    /// </summary>
+    static (DeliveryRow Delivery, List<CheckRow> Failed)? FailedShown(MandateView v) =>
+        v.Latest is { } d && v.LatestChecks?.Where(c => !c.Passed).ToList() is { Count: > 0 } failed ? (d, failed) : null;
+
+    /// <summary>
+    /// WHAT THIS PACKET SHOWS, BY REFERENCE (<c>U-packets-followups</c>; ORCHESTRATION § 2.6, EVID-001): the organisation block's
+    /// records as its composer cut them, the delivery the mandate block shows as failed and the rejection it quotes, and every
+    /// ledger entry "What you believe" renders — each read through the same cut its block renders by, so the attempt's
+    /// <c>ai_attempt_input</c> names everything the prompt showed, no more and no less.
+    /// </summary>
+    public static IReadOnlyList<PacketInput> Lineage(PositionPacket? org, MandateView? mandate, IReadOnlyList<LedgerListed>? believed)
+    {
+        var inputs = new List<PacketInput>(org?.Shown ?? []);
+        if (mandate?.SentBack is { Kind: MandateEventKind.Rejected } sentBack)
+            inputs.Add(new PacketInput(PacketInputKind.MandateEvent, sentBack.Id.ToString(CultureInfo.InvariantCulture)));
+        if (believed is not null)
+            foreach (var (entry, _) in BeliefLines(believed))
+                inputs.Add(new PacketInput(PacketInputKind.Ledger, entry.Entry.Id.ToString(CultureInfo.InvariantCulture)));
+        return [.. inputs.Distinct()];
     }
 
     /// <summary>
@@ -1424,21 +1448,10 @@ public sealed record MissionSituation
 
         b.AppendLine("- What you believe — your open entries in the research ledger, newest first; each one is "
                      + "your claim, never a measurement:");
-        var left = BeliefBytes;
         var shown = 0;
-        foreach (var e in believed.Take(BeliefLimit))
+        foreach (var (_, line) in BeliefLines(believed))
         {
-            var confidence = e.Latest.Confidence is { } c ? c.ToString("0.##", CultureInfo.InvariantCulture) : "unknown";
-            var head = $"  - {ClaimMark}, entry {e.Entry.Id} ({e.Entry.Kind}, held as {e.Latest.Mark}, confidence "
-                       + $"{confidence}): ";
-            const string cut = " … (cut here; the ledger holds the whole entry)";
-            var text = e.Latest.Text.ReplaceLineEndings(" ").Trim();
-            var room = left - Encoding.UTF8.GetByteCount(head) - Encoding.UTF8.GetByteCount(Environment.NewLine);
-            if (room < Encoding.UTF8.GetByteCount(cut) + 16) break;
-            if (Encoding.UTF8.GetByteCount(text) > room) text = Fit(text, room - Encoding.UTF8.GetByteCount(cut)) + cut;
-            var line = head + text;
             b.AppendLine(line);
-            left -= Encoding.UTF8.GetByteCount(line) + Encoding.UTF8.GetByteCount(Environment.NewLine);
             shown++;
         }
 
@@ -1447,6 +1460,29 @@ public sealed record MissionSituation
             b.AppendLine(believed.Count > BeliefLimit
                 ? $"  - and more open entries of yours than are shown here ({shown} shown); the research ledger lists them."
                 : $"  - and {unshown} more open entr{(unshown == 1 ? "y" : "ies")} of yours; the research ledger lists them.");
+    }
+
+    /// <summary>
+    /// THE BELIEF LINES THE PACKET SHOWS, each with its entry, inside <see cref="BeliefLimit"/> and <see cref="BeliefBytes"/> — the one
+    /// cut both the render and the lineage read (<c>U-packets-followups</c>), so an entry is recorded as shown exactly when its line is.
+    /// </summary>
+    static IEnumerable<(LedgerListed Entry, string Line)> BeliefLines(IReadOnlyList<LedgerListed> believed)
+    {
+        var left = BeliefBytes;
+        foreach (var e in believed.Take(BeliefLimit))
+        {
+            var confidence = e.Latest.Confidence is { } c ? c.ToString("0.##", CultureInfo.InvariantCulture) : "unknown";
+            var head = $"  - {ClaimMark}, entry {e.Entry.Id} ({e.Entry.Kind}, held as {e.Latest.Mark}, confidence "
+                       + $"{confidence}): ";
+            const string cut = " … (cut here; the ledger holds the whole entry)";
+            var text = e.Latest.Text.ReplaceLineEndings(" ").Trim();
+            var room = left - Encoding.UTF8.GetByteCount(head) - Encoding.UTF8.GetByteCount(Environment.NewLine);
+            if (room < Encoding.UTF8.GetByteCount(cut) + 16) yield break;
+            if (Encoding.UTF8.GetByteCount(text) > room) text = Fit(text, room - Encoding.UTF8.GetByteCount(cut)) + cut;
+            var line = head + text;
+            left -= Encoding.UTF8.GetByteCount(line) + Encoding.UTF8.GetByteCount(Environment.NewLine);
+            yield return (e, line);
+        }
     }
 
     /// <summary>The longest start of <paramref name="text"/> whose UTF-8 bytes fit in <paramref name="bytes"/>, never split inside a character.</summary>
@@ -3084,6 +3120,7 @@ public sealed class MissionLoop
         }
 
         var org = PacketOf(role);
+        var believed = BeliefsOf(role);
         var situation = known with
         {
             Role = role,
@@ -3103,15 +3140,13 @@ public sealed class MissionLoop
             // THE POSITION'S ORGANISATION BLOCK AND WHAT IT SHOWED (U-org-packets-b): recorded as the attempt's input only with the
             // turn's committed outcome — with the rejection part a's mandate block quotes, by its event id.
             Org = org,
-            Inputs = [.. org?.Shown ?? [],
-                      .. mandateView?.SentBack is { Kind: MandateEventKind.Rejected } sentBack
-                          ? [new PacketInput(PacketInputKind.MandateEvent, sentBack.Id.ToString(CultureInfo.InvariantCulture))]
-                          : Array.Empty<PacketInput>()],
+            // AND EVERY LEDGER ENTRY AND FAILED DELIVERY IT SHOWS BESIDE THEM (U-packets-followups): read through the cuts the blocks render by.
+            Inputs = MissionSituation.Lineage(org, mandateView, believed),
             // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
             // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
             // the attempt keeps the prompt's hash and the wakes name their attempt.
             WhatChanged = Observations(wake, windows ?? []),
-            Believed = BeliefsOf(role),
+            Believed = believed,
             Wanted = OpenObjectives(role)
         };
         var prompt = situation.Text(out var packet);

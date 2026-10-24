@@ -258,4 +258,32 @@ public partial class CouncilLoopTests
             new AiAttemptStore(db).RecordInputs("turn-nobody-launched", [new PacketInput(PacketInputKind.Lateral, note.Id)]));
         Assert.Equal([$"lateral:{note.Id}"], InputsOf(db, attempt));
     }
+
+    /// <summary>
+    /// A TURN SHOWN ONE BELIEF RECORDS IT AS AN INPUT (<c>U-packets-followups</c> item 2; the Codex second pass of
+    /// <c>U-org-packets-b</c>, its first P1; ORCHESTRATION § 2.6, EVID-001): the executor holds one open ledger entry and no
+    /// organisation record is owed it. Its packet shows the entry under "What you believe", and the attempt its committed outcome
+    /// records names that entry — no more: the empty org block adds nothing.
+    ///
+    /// <para>RED at base bb4f177e: "Expected: ["ledger:1"] Actual: []". MUTANT, the inputs built from <c>org.Shown</c> alone again
+    /// (the beliefs' lines dropped from <c>Lineage</c>): the same failure.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_turn_shown_one_belief_records_it_as_an_input()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = SessionChart(db, root);
+        host.Owns = true;
+        var loop = new MissionLoop(host, NoHeartbeat);
+        var entry = new ResearchLedger(db).Add(Executor, null, LedgerKind.Hypothesis, "Funding below -0.05% mean-reverts within 8h.",
+            LedgerMark.Hypothesis, 0.6m, null, null);
+        host.Conversations[Executor].Session = TurnSession.Resumed;
+        SelfWake(host, Executor, "belief-1");
+        await TurnsUntil(loop, host, Executor, 1);
+
+        Assert.Contains($"entry {entry.Id} (hypothesis", host.Conversations[Executor].Sent[0], StringComparison.Ordinal);
+        var attempt = Assert.Single(LaunchesOf(db, Executor));
+        Assert.Equal([$"ledger:{entry.Id}"], InputsOf(db, attempt));
+    }
 }
