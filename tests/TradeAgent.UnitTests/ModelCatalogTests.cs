@@ -159,4 +159,27 @@ public class ModelCatalogTests
         Assert.Contains(path, ex.Message);
         Assert.Equal("not the catalog", File.ReadAllText(target));
     }
+
+    /// <summary>
+    /// THE NEW GUARD (the re-brief of 2026-10-25): code mode's <c>exec</c> — model-written JavaScript in the process that holds the sign-in
+    /// — is NEVER offered to a broker or a cell seat, whatever a class's expected set says. Every captured spelling refuses, for both
+    /// classes, even against an expected set that names it; and no compiled expected set names it. RED before the guard: the cell
+    /// class exempted whatever its expected set named, so an <c>exec</c> listed there passed.
+    /// </summary>
+    [Fact]
+    public void Exec_is_never_offered_to_a_broker_or_a_cell_seat_whatever_the_expected_set_says()
+    {
+        foreach (var seatClass in new[] { SeatPlan.BrokerClass, SeatPlan.CellClass })
+        {
+            var expected = BrokerSeat.ExpectedFor(seatClass, BrokerSeat.Model)!;
+            Assert.DoesNotContain("exec", expected);
+            foreach (var spelling in new[] { "exec", "functions.exec", "(additional_tools) functions.exec[custom]" })
+            {
+                var refusal = BrokerSeat.SurfaceRefusal(BrokerSeat.Model, [.. expected, spelling], "Codex", seatClass, [.. expected, "exec"]);
+                Assert.True(refusal is not null && refusal.Contains("'exec'", StringComparison.Ordinal),
+                    $"{seatClass} offered {spelling} against an expected set naming exec was not refused: {refusal}");
+            }
+            Assert.Null(BrokerSeat.SurfaceRefusal(BrokerSeat.Model, expected, "Codex", seatClass));
+        }
+    }
 }
