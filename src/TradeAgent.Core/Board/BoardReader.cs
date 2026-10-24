@@ -42,6 +42,16 @@ public sealed class BoardReader(Database db)
     /// <summary>The board's seats, in founding order.</summary>
     public IReadOnlyList<BoardSeat> Seats() => _store.Seats();
 
-    /// <summary>True only while a board seat is ACTIVE. No build stores an active seat before <c>U-board-b</c>.</summary>
-    public bool AnyActive => Seats().Any(s => s.Status == BoardSeatStatus.Active);
+    /// <summary>True only while a board seat is ACTIVE — its latest state row says so (<c>board_seat_state</c>). No product path writes one in this build.</summary>
+    public bool AnyActive => _store.AnyActive();
+
+    /// <summary>
+    /// EVERY ACT OF THE BOARD, NEWEST FIRST, WHOLE (<c>U-board-b1</c>; the seam with <c>U-org-surface-b</c>): each act with its status,
+    /// its events and every seat's rationale — shown to the owner always, never to a seat (the blind read is the pipe's) — its forecasts
+    /// and their resolutions.
+    /// </summary>
+    public IReadOnlyList<BoardActRecord> Acts() => _store.Acts();
+
+    /// <summary>One act whole, or null.</summary>
+    public BoardActRecord? Act(string id) => _store.Act(id);
 }
