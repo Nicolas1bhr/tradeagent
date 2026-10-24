@@ -8,6 +8,7 @@ using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.Diagnostics;
 
@@ -117,7 +118,7 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                using var http = TlsClients.Client(timeout: TimeSpan.FromSeconds(8)); // the app's TLS policy (U-tls-denylist)
                 using var resp = await http.GetAsync("https://api.nuget.org/v3/index.json",
                     HttpCompletionOption.ResponseHeadersRead, ct);
                 r.Add(resp.IsSuccessStatusCode
@@ -127,7 +128,8 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             }
             catch (Exception ex)
             {
-                r.Add(CheckResult.Bad("Internet and secure connections", ex.Message,
+                // A connection the TLS policy refused says why in its own words, not .NET's "see inner exception".
+                r.Add(CheckResult.Bad("Internet and secure connections", TlsRefusedException.In(ex)?.Message ?? ex.Message,
                     "TradeAgent could not reach the internet. Check your connection, firewall or VPN."));
             }
         }
