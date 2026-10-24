@@ -767,21 +767,33 @@ public sealed class AiAttemptStore(Database db)
     /// <c>plan</c> is the plan's rows alone and <c>unknown</c> is the rows nobody established — NOT the "or unknown" of a ceiling
     /// (<c>ceiling</c> counts an unknown row in both), so the three classes of a unit add up to its whole day and none is counted
     /// twice. A turn with no cost is in <see cref="AiAttemptTotals.Unpriced"/> and contributes nothing to <c>Spent</c>; it is never added as
-    /// a zero price.
+    /// a zero price. <b>A unit's day carries every unit merged into it</b> (<c>U-org-verbs-d</c> fix pass 2), exactly as
+    /// <see cref="Totals"/> carries it for admission — through the merge's successor link (<see cref="OrgStore.CarriedPairs"/>), each row
+    /// counted once per unit and <c>ai_attempt_funding</c> never rewritten — so the page and the envelope read the same day.
     /// </summary>
     public IReadOnlyList<UnitClassTotals> UnitTotalsByClass(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
     {
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
+        var pairs = OrgStore.CarriedPairs(db);
+        var carry = pairs.Select((p, i) => ($"$carrier{i.ToString(CultureInfo.InvariantCulture)}", $"$member{i.ToString(CultureInfo.InvariantCulture)}", p))
+            .ToArray();
+        // EACH ROW UNDER EVERY UNIT ITS CHAIN HOLDS, AND UNDER EVERY SUCCESSOR OF ONE; UNION counts a row once per unit.
+        var carried = string.Concat(carry.Select(k => $"""
+
+                     UNION SELECT f.attempt_id, {k.Item1} FROM ai_attempt_funding f WHERE f.unit_id = {k.Item2}
+            """));
         using var c = db.Cmd($"""
             SELECT unit_id, billing_class,
             {TotalsColumns}
-            FROM (SELECT a.*, f.unit_id AS unit_id,
+            FROM (SELECT a.*, k.unit_id AS unit_id,
                          CASE WHEN a.role IN ({string.Join(",", principals.Select(p => p.Item1))}) THEN 0 ELSE 1 END AS counted
-                    FROM ai_attempt a JOIN ai_attempt_funding f ON f.attempt_id = a.id
+                    FROM ai_attempt a
+                    JOIN (SELECT f.attempt_id, f.unit_id FROM ai_attempt_funding f{carried}) k ON k.attempt_id = a.id
                    WHERE a.started_at >= $from AND a.started_at < $to)
             GROUP BY unit_id, billing_class
             ORDER BY unit_id, billing_class
-            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), .. principals]);
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), .. principals,
+            .. carry.SelectMany(k => new[] { (k.Item1, (object?)k.p.Carrier), (k.Item2, (object?)k.p.Member) })]);
         using var r = c.ExecuteReader();
         var rows = new List<UnitClassTotals>();
         while (r.Read())

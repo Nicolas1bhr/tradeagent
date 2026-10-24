@@ -584,6 +584,42 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
+    /// (fix pass 2, item A) THE COSTS PAGE READS B'S DAY AS ADMISSION DOES: after A — one launch spent, one still holding its
+    /// reservation — merges into B, which has a launch of its own, the sum of B's per-class totals
+    /// (<see cref="AiAttemptStore.UnitTotalsByClass"/>, the Costs page's read) equals B's day (<see cref="AiAttemptStore.UnitTotalsBetween"/>,
+    /// admission's), A's carried through the merge's successor link; A's own class totals read as before and no funding row is
+    /// rewritten (BUDGET-001). RED before the fix: B's class totals held only B's own launch.
+    /// </summary>
+    [Fact]
+    public void After_a_merge_the_successors_class_totals_sum_to_its_day_totals()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Siblings(db);
+        Funded(db, AMember, SubA, Div, OrgIds.Root);
+        var spent = Funded(db, AHead, SubA, Div, OrgIds.Root);
+        var ledger = new AiAttemptStore(db);
+        Assert.True(ledger.End(spent, 0, Now, 10, 0, 5, 5, 0, null, 0.04m, null, null));
+        Funded(db, BHead, SubB, Div, OrgIds.Root);
+        var (from, to) = (Now.AddDays(-1), Now.AddDays(1));
+        AiAttemptTotals[] ClassesOf(string unit) => [.. ledger.UnitTotalsByClass(from, to).Where(r => r.UnitId == unit).Select(r => r.Totals)];
+        var aClasses = ClassesOf(SubA);
+        var charged = ChargedTo(db, SubA);
+
+        org.Merge(MergeAsk(SubA, SubB), Now);
+
+        var day = ledger.UnitTotalsBetween(from, to, SubB);
+        var mine = ClassesOf(SubB);
+        Assert.Equal((0.04m, 0.20m), (day.Spent, day.Reserved));
+        Assert.Equal((day.Spent, day.Reserved), (mine.Sum(m => m.Spent), mine.Sum(m => m.Reserved)));
+        Assert.Equal((day.Turns, day.Open, day.Unpriced, day.Estimated, day.Unreported),
+            (mine.Sum(m => m.Turns), mine.Sum(m => m.Open), mine.Sum(m => m.Unpriced), mine.Sum(m => m.Estimated), mine.Sum(m => m.Unreported)));
+        Assert.Equal(aClasses, ClassesOf(SubA));
+        Assert.Equal(charged, ChargedTo(db, SubA));
+        Assert.Single(ChargedTo(db, SubB));
+    }
+
+    /// <summary>
     /// (F3) A MERGE WHOSE MOVED CHILDREN WOULD SPLIT MORE THAN B'S WHOLE IS REFUSED, NOTHING WRITTEN: A's team holds 0.6 of A and B's
     /// team 0.6 of B; under B the two would hold 1.2. RED before the fix: the merge was written.
     /// </summary>
