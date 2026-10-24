@@ -6,6 +6,11 @@
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
   </ItemGroup>
   <ItemGroup>
+    <!-- U-tls-denylist: the certificate authorities every secure connection is checked against. DATA, shipped beside the
+         binaries like a vendor file, so a later change to the list is a data change; read by TlsDenylist.ShippedPath. -->
+    <Content Include="Tls/tls-denylist.json" Link="tls-denylist.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
     <!-- The Linux cell rows (U-cell-linux-d) grant ephemeral ports through CellEgress.ForTests, a table no product code can name. -->
     <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />

@@ -1,0 +1,62 @@
+{
+  "note": "Certificate authorities whose private keys are compromised. Every secure connection TradeAgent makes is refused when any certificate in its chain has one of these public keys (SHA-256 of the DER SubjectPublicKeyInfo, lower-case hex), even when the platform trusts the chain. A later change to this list is a data change. 'date' is the day Mozilla received the report of the compromise.",
+  "fetched": "2026-10-24",
+  "entries": [
+    {
+      "subject": "EM EV TLS CA - G3B",
+      "spkiSha256": "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record 5856b9af-5c14-46e7-b660-04d1cc3f2819 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM OV TLS CA - G3B",
+      "spkiSha256": "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record 3f07ab6b-0d52-41a3-9a7b-de945502a3b8 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM DV TLS CA - G3B",
+      "spkiSha256": "ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record 5ed2b441-a5bf-4f8e-89af-d01fa292a9b8 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM EV TLS CA - G3C",
+      "spkiSha256": "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record adaa1e8d-57cb-4cfb-b647-305aa20f1b04 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM OV TLS CA - G3C",
+      "spkiSha256": "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record f67aff65-7a13-42ef-b818-74bb69053273 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM DV TLS CA - G3C",
+      "spkiSha256": "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f",
+      "purpose": "tls",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); Mozilla bug 2083449 and its OneCRL record fb4be101-8280-4d4e-866e-fd0213bc3a02 (bug 2083382)",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM OV CS CA - G3B",
+      "spkiSha256": "ec4ffa1ad0ac88081314b7aaffef6a91f97cd57291bb5ba686c5415f5eb4f6b6",
+      "purpose": "code-signing",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); computed from the certificate Mozilla bug 2083449 comment 0 names (SHA-256 9E39DE2881273ACC225A149C72BA3E0F51424963669AB633EE1DC7DF5DB067B4); not in OneCRL",
+      "date": "2026-10-17"
+    },
+    {
+      "subject": "EM OV CS CA - G3C",
+      "spkiSha256": "92c063d67e8f14db71d288e11266ffdaf69cbf115f7bab14f3bc2f68d25e0e30",
+      "purpose": "code-signing",
+      "source": "Go CL 851047 (https://go.dev/cl/851047); computed from the certificate Mozilla bug 2083449 comment 0 names (SHA-256 4B2460A466F95FD40113BCDCCA2CEB29B3B093921DE45474DA7DF48874C630B1); not in OneCRL",
+      "date": "2026-10-17"
+    }
+  ]
+}

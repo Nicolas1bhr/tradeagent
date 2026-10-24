@@ -105,6 +105,7 @@ tradeagent-gateway|1048576|yes|the headless gateway used by diagnostics
 TradeAgent.Provisioning.dll|4096|no|installs the AI tool per-user, with no terminal
 TradeAgent.AgentRuntime.dll|4096|no|runs the AI and hosts the in-app conversation
 TradeAgent.Gateway.dll|4096|no|the execution authority: risk, idempotency, reconciliation
+tls-denylist.json|1024|no|the distrusted certificate authorities every secure connection is checked against
 libSkiaSharp.so|1048576|no|draws the window (Avalonia's renderer)
 libHarfBuzzSharp.so|262144|no|shapes the window's text
 libe_sqlite3.so|262144|no|every ledger and the tape
@@ -134,7 +135,7 @@ while IFS='|' read -r path floor runs what; do
    NOT RUNNABLE $path has no execute bit  -  $what"
     fi
     case "$path" in
-        *.dll) ;;
+        *.dll|*.json) ;;
         *)
             # Read the ELF header rather than trusting the switch: bytes 0-3 are the magic and
             # bytes 18-19 the machine, little-endian. A binary for another processor is a host
