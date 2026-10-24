@@ -32,6 +32,12 @@ public static class OrgBounds
 
     /// <summary>… and a collapse date at most this far ahead.</summary>
     public static readonly TimeSpan ExperimentHorizon = TimeSpan.FromDays(90);
+
+    /// <summary>A tilt moves a unit's share in one currency by at most this much in <see cref="TiltWindow"/> (ORGANISATION § 8: 20 points a week).</summary>
+    public const decimal TiltPerWeek = 0.20m;
+
+    /// <summary>The trailing window <see cref="TiltPerWeek"/> is summed over.</summary>
+    public static readonly TimeSpan TiltWindow = TimeSpan.FromDays(7);
 }
 
 /// <summary>
@@ -39,9 +45,12 @@ public static class OrgBounds
 /// (claims), the app records it cites as evidence of current work, its forecasts (at least one <c>unit-admissible</c>, whose subject
 /// left empty is the unit chartered), and — for a funded, bounded experiment instead of cited work — its collapse date.
 /// </summary>
+/// <para><paramref name="TrialShare"/> and <paramref name="VerdictShare"/> (<c>U-org-verbs-e</c>): the new unit's fractions of a campaign's
+/// own trial and verdict budgets; null is no own cap.</para>
 public sealed record CharterRequest(
     string Caller, string? Attempt, string Kind, decimal AiShare, string Rationale, IReadOnlyList<string> Options,
-    IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts, DateTimeOffset? CollapseBy);
+    IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts, DateTimeOffset? CollapseBy,
+    decimal? TrialShare = null, decimal? VerdictShare = null);
 
 /// <summary>
 /// WHAT THE HOST THAT METERS LAUNCHES READS FOR A CHARTER'S SHARE: the seat whose one turn the new unit must be able to fund (the
@@ -161,6 +170,17 @@ public sealed partial class OrgStore
             if (Unfundable(funding.Seat, id, r.AiShare * parentEnvelope.Envelope, funding.Reservation) is { } never)
                 throw Refused($"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)})");
 
+        // ITS TRIAL AND VERDICT SHARES, WHEN ASKED (U-org-verbs-e): fractions of a campaign's own budgets, the siblings' with each at
+        // most the whole, each worth at least one of every open campaign's — the checks a tilt makes (OrgStore.Tilt).
+        foreach (var (currency, asked) in new[] { (OrgCurrency.Trials, r.TrialShare), (OrgCurrency.Verdicts, r.VerdictShare) })
+        {
+            if (asked is not { } evidence) continue;
+            if (evidence is < 0m or > 1m)
+                throw Refused($"{evidence.ToString(CultureInfo.InvariantCulture)} is no {currency} share: a fraction, at least 0 and at most 1.");
+            if (SiblingsRefusal(currency, parent.Id, null, evidence) is { } past) throw Refused(past);
+            if (WorthRefusal(currency, evidence) is { } worthless) throw Refused(worthless);
+        }
+
         if (ThrottleRefusal(now) is { } throttled) throw Refused(throttled);
 
         // THE EARNING TEST: current work, cited and checked — or a funded, bounded experiment with its collapse date.
@@ -195,10 +215,12 @@ public sealed partial class OrgStore
         var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.Charter, r.Options.Count > 0 ? r.Options : [choice], choice,
             r.Rationale, r.Refs, now);
         using (var c = db.Cmd("""
-            INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id, created_at, closed_at)
-            VALUES($id, $parent, $kind, NULL, $status, $share, $decision, $at, NULL)
+            INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id, created_at, closed_at,
+                                 trial_share, verdict_share)
+            VALUES($id, $parent, $kind, NULL, $status, $share, $decision, $at, NULL, $trials, $verdicts)
             """, ("$id", id), ("$parent", parent.Id), ("$kind", r.Kind), ("$status", OrgUnitStatus.Active),
-            ("$share", Sql.D(r.AiShare)), ("$decision", decision.Id), ("$at", Sql.T(now))))
+            ("$share", Sql.D(r.AiShare)), ("$decision", decision.Id), ("$at", Sql.T(now)),
+            ("$trials", r.TrialShare is { } t ? Sql.D(t) : null), ("$verdicts", r.VerdictShare is { } v ? Sql.D(v) : null)))
             c.ExecuteNonQuery();
         var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: id)).ToList();
         var eventId = Event(now, id, null, OrgEventKind.Chartered, r.Caller,

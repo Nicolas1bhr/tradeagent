@@ -65,11 +65,14 @@ public static class OrgDecisionKind
     public const string Routine = "routine";
 
     public static readonly string[] Mandatory =
-        [Charter, "merge", "close", "dormancy", "envelope-tilt", "family-kill", "family-branch", "verdict-request",
+        [Charter, "merge", "close", "dormancy", EnvelopeTilt, "family-kill", "family-branch", "verdict-request",
          "paper-nomination", "worker-replacement", "owner-proposal", Hire];
 
     /// <summary>A unit chartered (<see cref="OrgStore.Charter"/>); a position hired (<see cref="OrgStore.Hire"/>; <c>U-org-verbs-c</c>).</summary>
     public const string Charter = "charter", Hire = "hire";
+
+    /// <summary>One currency of a child unit's share re-split by its parent's head (<see cref="OrgStore.Tilt"/>; <c>U-org-verbs-e</c>).</summary>
+    public const string EnvelopeTilt = "envelope-tilt";
 
     public static readonly string[] All = [Routine, .. Mandatory];
 

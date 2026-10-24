@@ -146,6 +146,9 @@ public static class OrgEventKind
     /// <summary>A position hired, DORMANT, by the head of its unit's parent (<c>U-org-verbs-c</c>, <see cref="OrgStore.Hire"/>).</summary>
     public const string Hired = "hired";
 
+    /// <summary>One currency of a unit's share re-split by the head of its parent (<c>U-org-verbs-e</c>, <see cref="OrgStore.Tilt"/>).</summary>
+    public const string Tilted = "tilted";
+
     /// <summary>
     /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
     /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
