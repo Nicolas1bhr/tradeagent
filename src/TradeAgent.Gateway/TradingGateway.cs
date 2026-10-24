@@ -17,7 +17,7 @@ namespace TradeAgent.Gateway;
 /// supplied request id. That write is the duplicate-order defence: a repeated request id can never
 /// produce a second dispatch, no matter how the caller retries.
 /// </summary>
-public sealed class TradingGateway : IAsyncDisposable
+public sealed partial class TradingGateway : IAsyncDisposable
 {
     readonly Database _db;
     readonly ExecutionRequestStore _requests;

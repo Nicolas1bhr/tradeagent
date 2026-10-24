@@ -69,6 +69,20 @@ public sealed class ForecastResolver(Database db)
             }
             if (Decide(f, now) is { } r && org.RecordResolution(f.Id, r.Outcome, r.Kind, r.Id, r.Why, now)) resolved++;
         }
+        // AND THE SECURITY BOARD'S (U-board-b1): a board act's forecasts are held to the same vocabulary and resolved by the same three
+        // measurement reads, each into the board's own resolution table.
+        var board = new Board.BoardStore(db);
+        var boardOpen = board.OpenForecasts();
+        refused.AddRange(boardOpen.Refused);
+        foreach (var f in boardOpen.Rows)
+        {
+            if (!ForecastVocabulary.IsKnown(f.Vocabulary, f.Predicate))
+            {
+                refused.Add(OrgStore.UnknownVocabulary(f.Id, f.Vocabulary) + " It is left unresolved.");
+                continue;
+            }
+            if (Decide(f, now) is { } r && board.RecordResolution(f.Id, r.Outcome, r.Kind, r.Id, r.Why, now)) resolved++;
+        }
         return new ForecastSweep(resolved, refused);
     }
 
