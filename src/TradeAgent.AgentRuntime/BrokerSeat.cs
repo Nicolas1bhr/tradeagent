@@ -14,15 +14,16 @@ namespace TradeAgent.AgentRuntime;
 /// OFFERED code mode's <c>exec</c> with the code-mode host disabled; at codex 0.160.1 every such call fails closed ("code-mode host is
 /// disabled" — attempt 4's transcript, <c>fleet/tmp/M4-regression/report.md</c>), and with the host on, the model-written JavaScript
 /// runs in a <c>codex-code-mode-host</c> child of the codex that holds the sign-in (Law 2, § 2.8). So the class keeps the host disabled,
-/// pins a classic-tools model and refuses any surface offering <c>exec</c>; the CLI class runs the host (<c>U-cli-code-mode</c>).
+/// pins a model it runs with classic tools — gpt-6-luna on the app's catalog without its <c>code_mode_only</c> (<c>U-cell-model-catalog</c>) —
+/// and refuses any surface offering <c>exec</c> (<see cref="NeverOffered"/>); the CLI class runs the host (<c>U-cli-code-mode</c>).
 /// <b>Why a verified surface.</b> codex lists no offered tools itself, and a runtime update or the account's
 /// default model changes them, so before every launch the app reads them from a dry run against its own loopback mock
 /// (<see cref="CodexSurfaceProbe"/>), cached by binary, argument template and model, and refuses anything but the expected set.</para>
 ///
 /// <para><b>What it is not.</b> MEDIATED, not hard: no model-reachable tool crosses, but the codex process itself holds the login and
 /// could. The model's metadata is PINNED by the app's catalog (<c>U-cell-model-catalog</c>, <see cref="SeatPlan.ModelCatalog"/>): the dry
-/// run and a live turn read the same bytes, so they agree on the tools offered; whether the owner's plan serves gpt-5.5 at all stays
-/// UNKNOWN until one real turn, on his word. A per-request inspecting proxy is the later hardening.</para>
+/// run and a live turn read the same bytes, so they agree on the tools offered; whether the owner's plan serves gpt-6-luna on that
+/// edited metadata stays UNKNOWN until one real turn, on his word. A per-request inspecting proxy is the later hardening.</para>
 /// </summary>
 public static class BrokerSeat
 {
