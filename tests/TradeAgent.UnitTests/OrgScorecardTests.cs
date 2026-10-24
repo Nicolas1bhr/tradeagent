@@ -262,4 +262,91 @@ public class OrgScorecardTests
         Assert.Empty(none.Versions);
         Assert.Null(none.Total.Brier);
     }
+
+    /// <summary>A mandate of <paramref name="unit"/> opened at <paramref name="at"/>, as the ledger would write it, with its issued event.</summary>
+    static void MandateOf(Database db, string id, string unit, string decider, string holder, DateTimeOffset at)
+    {
+        Exec(db, """
+            INSERT INTO org_mandate(id, unit_id, decider, holder, kind, objective, scope, checks, latitude, deadline, allocation_ai, retry_limit, created_at)
+            VALUES($id,$u,$d,$h,'research','find something',NULL,'[]','exact','2026-12-01T00:00:00.0000000Z','1.00',3,$at)
+            """, ("$id", id), ("$u", unit), ("$d", decider), ("$h", holder), ("$at", Sql(at)));
+        Event(db, id, MandateEventKind.Issued, at);
+    }
+
+    /// <summary>
+    /// (a3) A UNIT'S YIELD READS ONLY ITS RECORDED FUNDING CHAIN: over one day, <see cref="OrgSurfaceSeed.Team"/>'s cost is the turn its member
+    /// launched under the team's funding — not the other team's turn, not a turn before the window, and still the team's after the chart moves
+    /// that member elsewhere. Its mandates opened, accepted and expired in the window are counted from its own mandates; its admissible
+    /// candidates are the versions made admissible in the window that a launch it funded had run by then (not a version only the other team
+    /// ran, not one whose run came after its verdict) — 1 per 0.40, so 2.5 per AI dollar; its contribution has no forward record. A turn that
+    /// reported no cost makes the cost unknown, said, and the per-dollar figure goes with it — never a zero. A unit not on the chart is refused.
+    /// RED at base: no <c>OfUnit</c> existed.
+    /// </summary>
+    [Fact]
+    public void A_units_yield_reads_only_its_recorded_funding_chain()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var (from, to) = (T0, T0.AddDays(1));
+
+        var mine = Launch(db, Member, T0.AddHours(1), unit: Team);
+        Priced(db, mine, 0.40m);
+        Priced(db, Launch(db, Other, T0.AddHours(1), unit: Elsewhere), 1.00m);
+        Priced(db, Launch(db, Member, T0.AddHours(-1), unit: Team), 5.00m);       // before the window
+
+        MandateOf(db, "man-y1", Team, Head, Member, T0.AddHours(1));
+        Event(db, "man-y1", MandateEventKind.Accepted, T0.AddHours(2));
+        MandateOf(db, "man-y2", Team, Head, Member, T0.AddHours(1));
+        Event(db, "man-y2", MandateEventKind.Expired, T0.AddHours(3));
+        MandateOf(db, "man-y3", Team, Head, Member, T0.AddHours(1));
+        MandateOf(db, "man-before", Team, Head, Member, T0.AddDays(-3));
+        Event(db, "man-before", MandateEventKind.Accepted, T0.AddHours(2));
+        MandateOf(db, "man-z", Elsewhere, Other, Head, T0.AddHours(1));
+        Event(db, "man-z", MandateEventKind.Accepted, T0.AddHours(2));
+
+        Version(db, "ver-y");
+        Run(db, "run-y", "ver-y", mine, T0.AddHours(1.5));
+        Verdict(db, "ver-y", PromotionVerdict.PaperEligible, T0.AddHours(4));
+        Version(db, "ver-z");
+        Run(db, "run-z", "ver-z", Launch(db, Other, T0.AddHours(2), unit: Elsewhere), T0.AddHours(2));
+        Verdict(db, "ver-z", PromotionVerdict.Promoted, T0.AddHours(4));
+        Version(db, "ver-late-run");
+        Verdict(db, "ver-late-run", PromotionVerdict.Promoted, T0.AddHours(4));
+        Run(db, "run-late", "ver-late-run", mine, T0.AddHours(5));
+
+        // THE CHART MOVES THE MEMBER ELSEWHERE: what the team funded stays the team's.
+        Exec(db, "UPDATE org_position SET unit_id=$u WHERE id=$p", ("$u", Elsewhere), ("$p", Member));
+
+        var team = new Scorecards(db).OfUnit(Team, from, to);
+        Assert.Equal(0.40m, team.Cost);
+        Assert.Equal("0.4", team.CostWords);
+        Assert.Equal((3, 2, 1), (team.MandatesOpened, team.MandatesAccepted, team.MandatesExpired));
+        Assert.Equal(1, team.Admissible);
+        Assert.Equal(2.5m, team.AdmissiblePerDollar);
+        Assert.Equal(Scorecards.NoForwardRecord, team.Contribution);
+
+        var elsewhere = new Scorecards(db).OfUnit(Elsewhere, from, to);
+        Assert.Equal((1.00m, 1, 1), (elsewhere.Cost, elsewhere.Admissible, elsewhere.MandatesOpened));
+
+        // A TURN THAT REPORTED NO COST: the cost is unknown and said; the per-dollar figure is not computed on a guess.
+        // A turn whose usage was never reported is charged its reservation, and the words say it is not a bill.
+        Unreported(db, Launch(db, Head, T0.AddHours(6), unit: Team));
+        var reserved = new Scorecards(db).OfUnit(Team, from, to);
+        Assert.Equal(0.50m, reserved.Cost);
+        Assert.Contains("1 turn charged at its reservation", reserved.CostWords, StringComparison.Ordinal);
+        Assert.True(new AiAttemptStore(db).End(Launch(db, Head, T0.AddHours(7), unit: Team), 0, T0.AddHours(7), 10, 0, 0, 10, 0, null, null,
+            "no price is known for the model", null));
+        var unknown = new Scorecards(db).OfUnit(Team, from, to);
+        Assert.Null(unknown.Cost);
+        Assert.Contains("unknown: 1 turn funded by this unit reported no cost", unknown.CostWords, StringComparison.Ordinal);
+        Assert.Null(unknown.AdmissiblePerDollar);
+        Assert.Contains("not known", unknown.PerDollarWords, StringComparison.Ordinal);
+
+        // A WINDOW WITH NOTHING FUNDED SAYS SO, AND A UNIT NOT ON THE CHART IS REFUSED.
+        var quiet = new Scorecards(db).OfUnit(Team, T0.AddDays(5), T0.AddDays(6));
+        Assert.Equal((0m, "no AI turn was funded by this unit in the window"), (quiet.Cost!.Value, quiet.CostWords));
+        Assert.Null(quiet.AdmissiblePerDollar);
+        Assert.Contains("no unit on the chart", Assert.Throws<TradeAgentException>(() => new Scorecards(db).OfUnit("team-nowhere", from, to)).Message,
+            StringComparison.Ordinal);
+    }
 }

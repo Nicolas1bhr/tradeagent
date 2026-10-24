@@ -205,6 +205,19 @@ public sealed record PositionScorecard(
     IReadOnlyList<string> Refused);
 
 /// <summary>
+/// ONE UNIT'S YIELD OVER A WINDOW (<c>U-org-scorecards-a</c> a3; ORGANISATION § 8), computed at read from its RECORDED funding chain — never
+/// today's chart: <see cref="Spend"/> is every attempt started in the window whose admission recorded the unit in its chain;
+/// <see cref="Cost"/> is its spend, or null when a turn reported no cost (<see cref="CostWords"/> says so — an unknown cost is never a zero);
+/// the mandates the unit opened, and those accepted and expired, in the window; the distinct versions given an admissible verdict class in
+/// the window that a launch the unit funded had run by then; those per AI dollar, or null with the reason; and its contribution, which
+/// needs a forward record no unit has yet.
+/// </summary>
+public sealed record UnitYield(
+    string Unit, DateTimeOffset From, DateTimeOffset To, AiAttemptTotals Spend, decimal? Cost, string CostWords,
+    int MandatesOpened, int MandatesAccepted, int MandatesExpired, int Admissible, decimal? AdmissiblePerDollar, string PerDollarWords,
+    string Contribution);
+
+/// <summary>
 /// THE SCORECARDS (<c>U-org-scorecards-a</c>, O8; ORGANISATION § 8): computed by the app at read from its own resolutions and
 /// measurements, NEVER STORED — this class writes nothing, so nothing a position writes can move its own score. It reads the forecast's
 /// own row, the app's resolution of it, the manager version its attempt recorded, and the base rates (<see cref="ForecastScorer"/>).
@@ -272,4 +285,64 @@ public sealed class Scorecards(Database db)
         var total = versions.Aggregate(ManagerVersionScore.Empty(null, null, "every manager version"), (t, v) => t.Plus(v));
         return new PositionScorecard(position, versions, total, scores, refused);
     });
+
+    /// <summary>The mandates a unit opened in the window, and the accepted and expired events on its mandates in the window.</summary>
+    public const string UnitMandatesSql =
+        "SELECT (SELECT COUNT(*) FROM org_mandate m WHERE m.unit_id = $unit AND m.created_at >= $from AND m.created_at < $to), "
+        + "(SELECT COUNT(*) FROM org_mandate_event e JOIN org_mandate m ON m.id = e.mandate_id WHERE m.unit_id = $unit AND e.kind = $accepted "
+        + "AND e.at >= $from AND e.at < $to), "
+        + "(SELECT COUNT(*) FROM org_mandate_event e JOIN org_mandate m ON m.id = e.mandate_id WHERE m.unit_id = $unit AND e.kind = $expired "
+        + "AND e.at >= $from AND e.at < $to)";
+
+    /// <summary>
+    /// The distinct versions given an admissible verdict class in the window that a launch whose RECORDED funding chain holds the unit had
+    /// run by the verdict — <see cref="ForecastResolver.UnitAdmissibleSql"/>'s joins: the run's version and attempt, never a figure.
+    /// </summary>
+    public const string UnitAdmissibleYieldSql =
+        "SELECT COUNT(DISTINCT p.version_id) FROM strategy_promotion p WHERE p.verdict IN ($promoted, $paper) AND p.at >= $from AND p.at < $to "
+        + "AND EXISTS (SELECT 1 FROM strategy_run r JOIN ai_attempt_funding f ON f.attempt_id = r.attempt WHERE r.version_id = p.version_id "
+        + "AND f.unit_id = $unit AND r.created_at <= p.at)";
+
+    /// <summary>What a unit's contribution says until a forward record exists to measure it (ORGANISATION § 8: from ≥ 90 forward days).</summary>
+    public const string NoForwardRecord =
+        "no forward record: a contribution to the book is measured from 90 forward days, and none is recorded for this unit";
+
+    /// <summary>The yield of <paramref name="unit"/> over [<paramref name="from"/>, <paramref name="to"/>), computed now; refused in words for a unit not on the chart.</summary>
+    /// <exception cref="TradeAgentException">The unit is not on the chart.</exception>
+    public UnitYield OfUnit(string unit, DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
+    {
+        using (var k = db.Cmd(ForecastScorer.SubjectKindSql, ("$subject", unit)))
+            if (k.ExecuteScalar() is not string)
+                throw new TradeAgentException(ErrorCode.INVALID_REQUEST, $"'{unit}' is no unit on the chart: it has no yield to read.");
+
+        var spend = new AiAttemptStore(db).UnitTotalsBetween(from, to, unit);
+        decimal? cost = spend.Unpriced > 0 ? null : spend.Spent;
+        var costWords = spend.Unpriced > 0
+            ? $"unknown: {Count(spend.Unpriced, "turn")} funded by this unit reported no cost"
+            : spend.Turns == 0 && spend.Open == 0
+                ? "no AI turn was funded by this unit in the window"
+                : spend.Spent.ToString("0.####", CultureInfo.InvariantCulture)
+                  + (spend.Unreported > 0 ? $", with {Count(spend.Unreported, "turn")} charged at its reservation because its usage was never reported" : "")
+                  + (spend.Open > 0 ? $", with {Count(spend.Open, "turn")} still in flight and not in it" : "");
+
+        int opened, accepted, expired, admissible;
+        using (var m = db.Cmd(UnitMandatesSql, ("$unit", unit), ("$from", Sql.T(from)), ("$to", Sql.T(to)),
+                   ("$accepted", MandateEventKind.Accepted), ("$expired", MandateEventKind.Expired)))
+        using (var r = m.ExecuteReader())
+        {
+            r.Read();
+            (opened, accepted, expired) = (r.GetInt32(0), r.GetInt32(1), r.GetInt32(2));
+        }
+        using (var a = db.Cmd(UnitAdmissibleYieldSql, ("$unit", unit), ("$from", Sql.T(from)), ("$to", Sql.T(to)),
+                   ("$promoted", PromotionVerdict.Promoted), ("$paper", PromotionVerdict.PaperEligible)))
+            admissible = Convert.ToInt32(a.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+        decimal? perDollar = cost is > 0m ? admissible / cost.Value : null;
+        var perDollarWords = cost is null ? "not known: the unit's cost is not known"
+            : cost == 0m ? "not measured: no AI dollar was spent"
+            : perDollar!.Value.ToString("0.####", CultureInfo.InvariantCulture);
+        return new UnitYield(unit, from, to, spend, cost, costWords, opened, accepted, expired, admissible, perDollar, perDollarWords, NoForwardRecord);
+    });
+
+    static string Count(int n, string noun) => $"{n.ToString(CultureInfo.InvariantCulture)} {noun}{(n == 1 ? "" : "s")}";
 }
