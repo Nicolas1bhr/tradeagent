@@ -136,6 +136,24 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>
+    /// A SEAT PROPOSES A CHANGE OF THE BOARD'S OWN POWER (<see cref="BoardStore.ProposePower"/>; CHANGE-001): one record, shown to the
+    /// owner, applied by nothing. The board's composition, its budget and the audit line's are the owner's alone, in process.
+    /// </summary>
+    object BoardPowerPropose(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, BoardArgsWhy);
+        var seat = BoardVerbCaller(ctx);
+        var row = Gateway.BoardProposePower(seat, ctx.AttemptId, Require(req, "target"), Require(req, "text"));
+        return new
+        {
+            proposal = row.Id,
+            target = row.Target,
+            note = "Recorded and shown to the owner. It changes nothing: the board's own power — its seats, its budget, the audit line's "
+                   + "budget, a connection, the founding policy's shape, the kernel — is changed by the owner in TradeAgent, or by no one."
+        };
+    }
+
+    /// <summary>
     /// ONE ACT, BLIND UNTIL THE CALLER'S OWN WORD ON IT IS SEALED (<see cref="TradingGateway.BoardShow"/>): before, the intent, its hash and
     /// direction, the refs, TradeAgent's figures in force and the expiry; after, everything, every seat's rationale included.
     /// </summary>

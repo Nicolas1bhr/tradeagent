@@ -298,8 +298,14 @@ public static class Ops
     public const string BoardNarrow = "board-narrow", BoardPropose = "board-propose", BoardDecide = "board-decide", BoardList = "board-list",
         BoardShow = "board-show";
 
+    /// <summary>
+    /// A SEAT'S PROPOSAL OF THE BOARD'S OWN POWER (CHANGE-001; R24 § 4.4): a record shown to the owner, applied by nothing. The board
+    /// proposes its composition, its budget, a connection or a kernel change; only the owner, in process, makes one.
+    /// </summary>
+    public const string BoardPowerPropose = "board-power-propose";
+
     /// <summary>Every board verb this build serves.</summary>
-    public static readonly string[] Board = [BoardNarrow, BoardPropose, BoardDecide, BoardList, BoardShow];
+    public static readonly string[] Board = [BoardNarrow, BoardPropose, BoardDecide, BoardList, BoardShow, BoardPowerPropose];
 
     public static bool IsBoard(string op) => Board.Contains(op);
 

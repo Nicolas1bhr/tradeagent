@@ -84,7 +84,9 @@ public static partial class Labels
     public static string BoardDecider(string decider) => decider switch
     {
         "app" => "the app — TradeAgent's founding policy, not you",
-        _ => $"the board ({decider})"
+        "board" => "the security board — an act of its seats",
+        "owner" => "you — your veto of a board act, which only takes away",
+        _ => $"a decider this version has no words for (“{decider}”)"
     };
 
     /// <summary>What a field's value rests on: the founding record, or the board's version that set it.</summary>
@@ -138,8 +140,51 @@ public static partial class Labels
     {
         "dormant" => "dormant — founded and never started; it takes no turn and decides nothing",
         "active" => "active",
+        "retired" => "retired — by you; it acts no more",
         _ => $"a status this version has no words for (“{status}”)"
     };
+
+    // ---- the board's acts, as the owner reads them (U-board-b1; the seam with U-org-surface-b) ----------------------------------
+
+    /// <summary>An act's status, in words.</summary>
+    public static string BoardActStatus(string status) => status switch
+    {
+        "open" => "waiting for a second seat",
+        "applied" => "applied at once — it narrowed",
+        "confirmed" => "confirmed by a second seat and applied",
+        "expired" => "expired — no second seat confirmed it, and it applied nothing",
+        "stale" => "closed — what it changed had moved, and it applied nothing",
+        "vetoed" => "vetoed by you",
+        _ => $"a status this version has no words for (“{status}”)"
+    };
+
+    /// <summary>What a seat may propose of the board's own power, in words (CHANGE-001: the owner decides, or no one does).</summary>
+    public static string BoardPowerTarget(string target) => target switch
+    {
+        "composition" => "the board's seats",
+        "board-budget" => "the board's budget",
+        "audit-budget" => "the audit line's budget",
+        "connection" => "a connection, key, runtime or vendor",
+        "founding-policy-shape" => "the founding policy's shape",
+        "kernel" => "a change to TradeAgent's kernel",
+        _ => $"a target this version has no words for (“{target}”)"
+    };
+
+    /// <summary>The owner's veto: press one shows what returns; press two vetoes. It only ever takes away (R24 Q2).</summary>
+    public const string VetoBoardActPress = "Veto this act";
+
+    /// <summary>The veto's second press, after the first has shown what returns.</summary>
+    public const string VetoBoardActConfirm = "Veto it — nothing is widened";
+
+    /// <summary>Under the veto's first press: what a veto does, and what it never does.</summary>
+    public const string VetoBoardActWhat =
+        "A veto closes a proposal, or sets every field the act changed back to the narrower of now and before. It never widens a "
+        + "limit or puts anything to work, and an act that only narrowed cannot be vetoed — undoing it would widen.";
+
+    /// <summary>The owner's presses over the board's own power (CHANGE-001), each two presses in his UI.</summary>
+    public const string SetBoardBudgetSharePress = "Set the board's share of the day",
+        FoundBoardSeatPress = "Found a board seat",
+        RetireBoardSeatPress = "Retire this seat";
 
     /// <summary>The line under the seats while none of them is active.</summary>
     public const string BoardSeatsDormant =
