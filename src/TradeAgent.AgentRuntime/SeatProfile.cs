@@ -77,6 +77,7 @@ public static class SeatProfile
             var bytes = ConfigBytes(seat);
             if (!SameBytes(path, bytes)) OwnerOnlyFile.Write(path, bytes);
         }
+
     }
 
     /// <summary>
@@ -666,6 +667,34 @@ public static class SeatProfile
             }
         }
         return new UTF8Encoding(false).GetBytes(string.Join("\n", lines) + "\n");
+    }
+
+    /// <summary>The shipped catalog's full path (<see cref="SeatPlan.ModelCatalogSource"/> under the app's own folder), or null for none.</summary>
+    public static string? CatalogSourcePath(SeatPlan seat) =>
+        seat.ModelCatalogSource is { Length: > 0 } rel
+            ? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, rel.Replace('/', Path.DirectorySeparatorChar)))
+            : null;
+
+    /// <summary>
+    /// THE SHIPPED MODEL CATALOG, HELD TO ITS PIN (<c>U-cell-model-catalog</c>): its bytes, or the refusal in words naming the file and —
+    /// for one that hashes otherwise — both hashes. A plan with no catalog has neither. Never a guess: a missing, unreadable or altered
+    /// file is not written into any seat home and no verified seat starts on it.
+    /// </summary>
+    public static (byte[]? Bytes, string? Refusal) ShippedCatalog(SeatPlan seat)
+    {
+        if (CatalogSourcePath(seat) is not { } source) return (null, null);
+        byte[] bytes;
+        try { bytes = File.ReadAllBytes(source); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, $"TradeAgent will not start the AI: the model catalog it ships, {source}, could not be read ({ex.Message}). " +
+                          "Reinstall TradeAgent to put it back. Nothing was started.");
+        }
+        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+        if (!string.Equals(sha, seat.ModelCatalogSha256.Trim(), StringComparison.OrdinalIgnoreCase))
+            return (null, $"TradeAgent will not start the AI: the model catalog it ships, {source}, hashes to {sha}, and this build " +
+                          $"({Versions.App}) pins it as {seat.ModelCatalogSha256}. Reinstall TradeAgent to put the shipped file back. Nothing was started.");
+        return (bytes, null);
     }
 
     // ---- verified at every launch ------------------------------------------------------------------

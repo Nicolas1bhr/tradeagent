@@ -187,6 +187,29 @@ public sealed class SeatPlan
     public string ConfigFile { get; set; } = "";
 
     /// <summary>
+    /// THE MODEL CATALOG A VERIFIED CLASS'S CLI READS (<c>U-cell-model-catalog</c>), relative to <see cref="Home"/> — or empty for none.
+    /// The app writes it before every start, from <see cref="ModelCatalogSource"/>, and the broker and cell classes' deny sets name it in
+    /// <see cref="CatalogSlot"/>: the model's metadata — which decides the tools it is offered — is then the app's bytes in the dry run
+    /// and in a live turn alike, never the account's model list or the CLI's fallback. The CLI class never names it.
+    /// </summary>
+    public string ModelCatalog { get; set; } = "";
+
+    /// <summary>
+    /// THE SHIPPED CATALOG <see cref="ModelCatalog"/> IS WRITTEN FROM, relative to the app's own folder: a DATA file, measured from the
+    /// vendor's own bundled metadata (CLAUDE.md, "vendor commands are data"), held to <see cref="ModelCatalogSha256"/>.
+    /// </summary>
+    public string ModelCatalogSource { get; set; } = "";
+
+    /// <summary>THE SHIPPED CATALOG'S PIN: its SHA-256, lower-case hex. A file that hashes otherwise is refused, never written.</summary>
+    public string ModelCatalogSha256 { get; set; } = "";
+
+    /// <summary>
+    /// WHERE THE CATALOG'S PATH GOES in a class's deny set: replaced at every start by the written catalog's absolute path as a TOML
+    /// string (<see cref="ArgsFor(string, Uri?)"/>), never by a guess.
+    /// </summary>
+    public const string CatalogSlot = "{modelCatalog}";
+
+    /// <summary>
     /// Paths under <see cref="Home"/> that must NOT exist when a seat starts: what the CLI would read as instructions, skills,
     /// plugins, rules or hooks if a seat wrote it there — the home is shared by every seat and writable by each.
     /// </summary>
@@ -1051,6 +1074,13 @@ public static class RuntimeCatalog
                     [SeatPlan.BrokerClass] = new(StringComparer.Ordinal) { ["CODEX_EXEC_SERVER_URL"] = "none" }
                 },
                 ConfigFile = "codex/config.toml",
+                // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog): gpt-5.5's one entry copied unedited from codex
+                // rust-v0.160.1's bundled models-manager/models.json. A live turn otherwise resolves the model from the signed-in
+                // account's list — the owner's has no gpt-5.5, so codex takes FALLBACK metadata (search tool off) — while the dry run
+                // reads the bundled entry; with model_catalog_json both read these bytes (the static models manager, no account refresh).
+                ModelCatalog = "codex/model-catalog.json",
+                ModelCatalogSource = "SeatData/codex-model-catalog.json",
+                ModelCatalogSha256 = "4cdacddb3077c7dc585d22baaff0f3a5ddff809cf8b388831012ed27d1486d84",
                 // WHERE CODEX 0.160.1 KEEPS A SECRET IN A FILE, read in its source at rust-v0.160.1: the sign-in in
                 // `codex_home.join("auth.json")` (login/src/auth/storage.rs:155) and MCP OAuth tokens in
                 // `FALLBACK_FILENAME: &str = ".credentials.json"` under CODEX_HOME (rmcp-client/src/oauth.rs:819, :1062) — both stores
