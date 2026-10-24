@@ -163,6 +163,8 @@ public static class BrokerSeat
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(seatClass)));
         yield return ("seat environment", Pairs(seat.Environment));
         yield return ("feature allowlist", Seq(seat.FeaturesFor(seatClass)));
+        // THE PINNED MODEL'S CATALOG (U-cell-model-catalog): where the seat home keeps it, the shipped file and its pin.
+        yield return ("model catalog", Seq([seat.ModelCatalog, seat.ModelCatalogSource, seat.ModelCatalogSha256]));
         yield return ("tool-server allowlist", Seq(seat.ServersFor(seatClass)));
         yield return ("feature report command", Seq(seat.FeaturesArgs));
         yield return ("tool-server report command", Seq(seat.McpArgs));
@@ -220,7 +222,8 @@ public static class BrokerSeat
 
     /// <summary>
     /// THE ARGUMENT TEMPLATE A SURFACE IS KEYED BY: the stream flag, the unattended flags, the turn command, the class's deny set as
-    /// written (its door slot unfilled), the model flag and the class's environment — what decides which tools a binary offers a model.
+    /// written (its door slot unfilled), the model flag, the class's environment and its model catalog's pin — what decides which tools a
+    /// binary offers a model.
     /// </summary>
     public static string TemplateHash(RuntimeManifest manifest, string seatClass)
     {
@@ -230,7 +233,9 @@ public static class BrokerSeat
             manifest.JsonFlag ?? "", string.Join('\0', manifest.UnattendedArgs), string.Join('\0', manifest.ExecArgs),
             string.Join('\0', seat?.ArgsFor(seatClass) ?? []), string.Join('\0', manifest.ModelArgs),
             string.Join('\0', (seat?.ClassEnvironment.GetValueOrDefault(seatClass) ?? new Dictionary<string, string>())
-                .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))
+                .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value)),
+            // THE MODEL'S METADATA, by the catalog's pin (U-cell-model-catalog): another catalog is another surface.
+            seat is null ? "" : SeatProfile.CatalogPin(seat, seatClass)
         };
         return Sha256Hex.Of(string.Join('\u001e', parts));
     }

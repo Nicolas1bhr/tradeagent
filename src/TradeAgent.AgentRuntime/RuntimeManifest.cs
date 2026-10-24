@@ -303,11 +303,30 @@ public sealed class SeatPlan
     /// <summary>
     /// The deny set of <paramref name="seatClass"/> AS IT STARTS: <see cref="DoorSlot"/> replaced by <paramref name="door"/>, and left
     /// as it is where there is no door — which no CLI accepts as an address, so the start fails rather than reaching another server.
-    /// Callers refuse a class that needs a door before they get here (<see cref="NeedsDoor"/>).
+    /// Callers refuse a class that needs a door before they get here (<see cref="NeedsDoor"/>). <see cref="CatalogSlot"/> is the seat
+    /// home's catalog (<see cref="CatalogPath"/>), the file the app writes before every start (<c>U-cell-model-catalog</c>).
     /// </summary>
-    public string[] ArgsFor(string seatClass, Uri? door) =>
-        door is null ? ArgsFor(seatClass)
-            : [.. ArgsFor(seatClass).Select(a => a.Replace(DoorSlot, door.AbsoluteUri, StringComparison.Ordinal))];
+    public string[] ArgsFor(string seatClass, Uri? door) => ArgsFor(seatClass, door, CatalogPath);
+
+    /// <summary>
+    /// The same with <paramref name="catalog"/> in <see cref="CatalogSlot"/> as a TOML string — the dry run's throwaway copy
+    /// (<see cref="CodexSurfaceProbe"/>) — or the slot left as written where there is none, which no CLI reads as a file.
+    /// </summary>
+    public string[] ArgsFor(string seatClass, Uri? door, string? catalog) =>
+        [.. ArgsFor(seatClass).Select(a =>
+        {
+            if (door is not null) a = a.Replace(DoorSlot, door.AbsoluteUri, StringComparison.Ordinal);
+            if (catalog is not null) a = a.Replace(CatalogSlot, TomlString(catalog), StringComparison.Ordinal);
+            return a;
+        })];
+
+    /// <summary>The seat home's model catalog, resolved: <see cref="ModelCatalog"/> under <see cref="Root"/>, or null for none.</summary>
+    public string? CatalogPath =>
+        ModelCatalog is { Length: > 0 } rel ? Path.GetFullPath(Path.Combine(Root, rel.Replace('/', Path.DirectorySeparatorChar))) : null;
+
+    /// <summary>A TOML basic string of <paramref name="value"/>: a Windows path's backslashes escaped, never read as escapes.</summary>
+    static string TomlString(string value) =>
+        "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
 
     /// <summary>Whether <paramref name="seatClass"/>'s deny set names the app's door, and so cannot start while it is not open.</summary>
     public bool NeedsDoor(string seatClass) => ArgsFor(seatClass).Any(a => a.Contains(DoorSlot, StringComparison.Ordinal));
@@ -873,6 +892,8 @@ public static class RuntimeCatalog
         "--disable", "code_mode_host",
         "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "view_image", "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
+        // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog): the catalog the app writes into the seat home.
+        "-c", $"model_catalog_json={SeatPlan.CatalogSlot}",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
@@ -901,6 +922,8 @@ public static class RuntimeCatalog
         "--disable", "code_mode_host",
         "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
+        // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog), read by the harness from the seat home — never the cell's.
+        "-c", $"model_catalog_json={SeatPlan.CatalogSlot}",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
