@@ -213,7 +213,15 @@ public sealed partial class OrgStore
     /// WHY <paramref name="refs"/> CANNOT BE CITED, in words, or null: more than the bound, a kind outside <see cref="OrgRefKind"/>,
     /// an id empty or too long, or a record that is not in the app's ledgers. Read inside the writer's own write.
     /// </summary>
-    string? RefsRefusal(IReadOnlyList<OrgRef> refs)
+    string? RefsRefusal(IReadOnlyList<OrgRef> refs) => RefsRefusal(db, refs);
+
+    bool RefExists(OrgRef r) => RefExists(db, r);
+
+    /// <summary>
+    /// THE ONE REF CHECK, SHARED (<c>U-board-b1</c>): the organisation's writers and the security board's (<c>BoardStore</c>) cite the
+    /// app's records by the same rule — read on <paramref name="store"/>, inside the caller's own write.
+    /// </summary>
+    internal static string? RefsRefusal(Database store, IReadOnlyList<OrgRef> refs)
     {
         if (refs.Count > DecisionLimits.MaxRefs)
             return $"at most {DecisionLimits.MaxRefs} refs are cited at once.";
@@ -223,13 +231,14 @@ public sealed partial class OrgStore
                 return $"'{r.Kind}' is no kind of app record a ref names: {string.Join(" | ", OrgRefKind.All)}.";
             if (string.IsNullOrWhiteSpace(r.Id) || r.Id.Length > DecisionLimits.MaxRefIdChars)
                 return $"a ref names its record's id, in at most {DecisionLimits.MaxRefIdChars} characters.";
-            if (!RefExists(r))
+            if (!RefExists(store, r))
                 return $"{r.Kind} '{r.Id}' is not in the app's ledgers: a ref cites a record that is there.";
         }
         return null;
     }
 
-    bool RefExists(OrgRef r)
+    /// <summary>Whether the record <paramref name="r"/> names is in the app's ledgers on <paramref name="store"/>.</summary>
+    internal static bool RefExists(Database store, OrgRef r)
     {
         var (table, column) = r.Kind switch
         {
@@ -250,7 +259,7 @@ public sealed partial class OrgStore
             if (!long.TryParse(r.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var entry)) return false;
             id = entry;
         }
-        using var c = db.Cmd($"SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} = $id)", ("$id", id));
+        using var c = store.Cmd($"SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} = $id)", ("$id", id));
         return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
     }
 
@@ -344,6 +353,33 @@ public sealed partial class OrgStore
     ForecastRow AddForecast(string forecaster, string? attempt, string? decisionId, string? mandateId, ForecastClaim claim, DateTimeOffset now,
         string? subjectByDefault = null)
     {
+        var (subject, unscored) = CheckForecast(forecaster, claim, now, mandateId ?? subjectByDefault);
+
+        var on = decisionId ?? mandateId!;
+        if (ForecastsOn(on).Count >= DecisionLimits.MaxForecasts)
+            throw Refused($"{on} carries {DecisionLimits.MaxForecasts} forecasts already, the most one record holds.");
+
+        var row = new ForecastRow(Mint(ForecastPrefix), decisionId, mandateId, forecaster, attempt, ForecastVocabulary.Version,
+            claim.Predicate, subject, claim.Target, claim.By, claim.Probability, unscored is null, unscored, now);
+        using var c = db.Cmd($"""
+            INSERT INTO org_forecast({ForecastCols})
+            VALUES($id,$d,$m,$f,$attempt,$vocabulary,$predicate,$subject,$target,$by,$probability,$scored,$why,$at)
+            """,
+            ("$id", row.Id), ("$d", decisionId), ("$m", mandateId), ("$f", forecaster), ("$attempt", attempt),
+            ("$vocabulary", row.Vocabulary), ("$predicate", row.Predicate), ("$subject", subject), ("$target", row.Target),
+            ("$by", Sql.T(row.ResolveBy)), ("$probability", Sql.D(row.Probability)), ("$scored", row.Scored ? 1 : 0),
+            ("$why", unscored), ("$at", Sql.T(now)));
+        c.ExecuteNonQuery();
+        return row;
+    }
+
+    /// <summary>
+    /// ONE FORECAST'S VALIDATION, AND WHETHER IT IS SCORED — <see cref="AddForecast"/>'s, and the security board's (<c>U-board-b1</c>:
+    /// a board act's forecasts are held to the same closed vocabulary and the same precommitment): the subject it names (or
+    /// <paramref name="subjectByDefault"/>), and why it is not scored, or null. Throws the refusal; writes nothing.
+    /// </summary>
+    internal (string Subject, string? Unscored) CheckForecast(string forecaster, ForecastClaim claim, DateTimeOffset now, string? subjectByDefault = null)
+    {
         if (!ForecastVocabulary.IsKnown(claim.Predicate))
             throw Refused($"'{claim.Predicate}' is no predicate of the forecast vocabulary v{ForecastVocabulary.Version}: "
                           + $"{string.Join(" | ", ForecastVocabulary.Predicates)}. A prediction outside it stays a claim — write it in your rationale.");
@@ -356,7 +392,7 @@ public sealed partial class OrgStore
             throw Refused($"the forecast's date {claim.By:u} is beyond the {DecisionLimits.ForecastHorizon.TotalDays:N0}-day horizon.");
         if (claim.Probability is < 0m or > 1m || !ForecastVocabulary.IsProbabilityText(Sql.D(claim.Probability)))
             throw Refused($"{claim.Probability.ToString(CultureInfo.InvariantCulture)} is no probability: a number from 0 to 1.");
-        var subject = claim.Subject ?? mandateId ?? subjectByDefault
+        var subject = claim.Subject ?? subjectByDefault
             ?? throw Refused("a forecast names its subject: the version, the mandate or the unit it is about.");
         if (subject.Length > DecisionLimits.MaxRefIdChars)
             throw Refused($"a forecast's subject is an id of at most {DecisionLimits.MaxRefIdChars} characters.");
@@ -387,23 +423,7 @@ public sealed partial class OrgStore
                 throw Refused($"mandate {m.Id} has already been {claim.Target}: a forecast on an outcome already measured is no forecast.");
             unscored = Unscored(forecaster, m);
         }
-
-        var on = decisionId ?? mandateId!;
-        if (ForecastsOn(on).Count >= DecisionLimits.MaxForecasts)
-            throw Refused($"{on} carries {DecisionLimits.MaxForecasts} forecasts already, the most one record holds.");
-
-        var row = new ForecastRow(Mint(ForecastPrefix), decisionId, mandateId, forecaster, attempt, ForecastVocabulary.Version,
-            claim.Predicate, subject, claim.Target, claim.By, claim.Probability, unscored is null, unscored, now);
-        using var c = db.Cmd($"""
-            INSERT INTO org_forecast({ForecastCols})
-            VALUES($id,$d,$m,$f,$attempt,$vocabulary,$predicate,$subject,$target,$by,$probability,$scored,$why,$at)
-            """,
-            ("$id", row.Id), ("$d", decisionId), ("$m", mandateId), ("$f", forecaster), ("$attempt", attempt),
-            ("$vocabulary", row.Vocabulary), ("$predicate", row.Predicate), ("$subject", subject), ("$target", row.Target),
-            ("$by", Sql.T(row.ResolveBy)), ("$probability", Sql.D(row.Probability)), ("$scored", row.Scored ? 1 : 0),
-            ("$why", unscored), ("$at", Sql.T(now)));
-        c.ExecuteNonQuery();
-        return row;
+        return (subject, unscored);
     }
 
     /// <summary>

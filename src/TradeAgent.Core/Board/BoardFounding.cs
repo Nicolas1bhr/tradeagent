@@ -96,15 +96,3 @@ public static class BoardModelClass
     public const string Standard = "standard";
     public static readonly string[] All = [Strong, Standard];
 }
-
-/// <summary>Who decided a policy version. Only <see cref="App"/> is storable at rung 49; <c>U-board-b</c> widens it to the board's acts.</summary>
-public static class BoardDecider
-{
-    public const string App = "app";
-}
-
-/// <summary>On what basis a policy version stands. Only <see cref="Founding"/> is storable at rung 49.</summary>
-public static class BoardBasis
-{
-    public const string Founding = "founding";
-}
