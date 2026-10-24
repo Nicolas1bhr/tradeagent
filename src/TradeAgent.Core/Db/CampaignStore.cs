@@ -1087,23 +1087,35 @@ public sealed class CampaignStore(Database db)
         if (shares.Count == 0) return null;
 
         var budget = trials ? campaign.TrialBudget : campaign.VerdictBudget;
-        var lineage = trials ? "" : Ids(Lineage(campaign.Id));
+        // A UNIT'S JUDGEMENTS ARE COUNTED AS THE CAMPAIGN COUNTS ITS OWN (the fix pass, the Codex review's P1): every judgement over the
+        // same held-back months, its renewal lineage's and any other campaign's (`JudgementsSpent`) — so a second campaign over those
+        // months never replenishes a delegated count.
+        var counted = trials ? null : JudgedOverTheSameMonths(campaign);
         foreach (var (unit, text) in shares)
         {
             var share = OrgEnvelopes.Fraction(unit, text);
-            using var u = db.Cmd(trials
-                ? """
-                  SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
-                    JOIN strategy_run r ON r.id = t.run_id
-                    JOIN ai_attempt_funding f ON f.attempt_id = r.attempt AND f.unit_id = $unit
-                   WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $launch
-                  """
-                : $"""
-                  SELECT COUNT(*) FROM strategy_verdict v
-                    JOIN ai_attempt_funding f ON f.attempt_id = v.attempt_id AND f.unit_id = $unit
-                   WHERE v.campaign_id IN ({lineage})
-                  """, ("$unit", unit), ("$id", campaign.Id), ("$launch", launch));
-            var used = Convert.ToInt32(u.ExecuteScalar(), CultureInfo.InvariantCulture);
+            int used;
+            if (trials)
+            {
+                using var u = db.Cmd("""
+                    SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
+                      JOIN strategy_run r ON r.id = t.run_id
+                      JOIN ai_attempt_funding f ON f.attempt_id = r.attempt AND f.unit_id = $unit
+                     WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $launch
+                    """, ("$unit", unit), ("$id", campaign.Id), ("$launch", launch));
+                used = Convert.ToInt32(u.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                using var u = db.Cmd("""
+                    SELECT v.campaign_id, v.version_id FROM strategy_verdict v
+                      JOIN ai_attempt_funding f ON f.attempt_id = v.attempt_id AND f.unit_id = $unit
+                    """, ("$unit", unit));
+                using var rows = u.ExecuteReader();
+                used = 0;
+                while (rows.Read())
+                    if (counted!.Contains((rows.GetInt64(0), rows.GetString(1)))) used++;
+            }
             if (used + 1 <= share * budget) continue;
 
             var what = trials ? "research trials" : "final judgements";
@@ -1119,6 +1131,19 @@ public sealed class CampaignStore(Database db)
                    + "so a restart, a fresh attempt or a move on the chart resets none of it.";
         }
         return null;
+    }
+
+    /// <summary>
+    /// THE JUDGEMENTS <see cref="JudgementsSpent"/> COUNTS FOR <paramref name="campaign"/>, by campaign and version: its renewal lineage's
+    /// and every other campaign's over months its own judgements read. One predicate with <see cref="JudgementsSpent"/>'s.
+    /// </summary>
+    HashSet<(long, string)> JudgedOverTheSameMonths(CampaignRow campaign)
+    {
+        var lineage = Lineage(campaign.Id).ToHashSet();
+        var closes = new Dictionary<long, DateTimeOffset?>();
+        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+        return [.. JudgementSpans(closes).Where(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until))
+            .Select(v => (v.CampaignId, v.VersionId))];
     }
 
     /// <summary>Whether this exact trial is already on the table. Read inside the caller's transaction.</summary>
