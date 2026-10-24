@@ -4,7 +4,8 @@ using TradeAgent.Core.Db;
 namespace TradeAgent.Gateway;
 
 /// <summary>
-/// THE STRUCTURAL VERBS ON THE PIPE (<c>U-org-verbs-c</c>, O6 part c; ORCHESTRATION § 2.9): <c>org-charter</c> and <c>org-hire</c>.
+/// THE STRUCTURAL VERBS ON THE PIPE (<c>U-org-verbs-c</c>, O6 part c; ORCHESTRATION § 2.9): <c>org-charter</c> and <c>org-hire</c>;
+/// and the restructuring verbs (<c>U-org-verbs-d</c>): <c>org-retire</c>, <c>org-close</c>, <c>org-merge</c>.
 /// Each proves its caller with O5a's ONE helper (<see cref="OrgVerbCaller"/>: the active position its launch grant proved, on a seat
 /// whose RECORDED assurance carries the organisation's verbs — never headship) before anything is read or written, and hands the act
 /// to <see cref="OrgStore"/>, whose writers read the rights matrix, the bounds, the throttle and the earning test. Neither places an
@@ -70,6 +71,80 @@ public sealed partial class GatewayPipeServer
             note = "Hired DORMANT: the position's id and home are TradeAgent's, it has no seat, and it runs nothing — no wake reaches "
                    + "it and no launch starts for it until it is seated and activated, neither of which is an organisation verb's. "
                    + "The hire is your 'hire' decision, the rationale your own ledger entry, marked claim."
+        };
+    }
+
+    /// <summary>
+    /// RETIRES A POSITION IN A UNIT WHOSE PARENT THE CALLER HEADS (<see cref="OrgStore.Retire"/>; <c>U-org-verbs-d</c>): the position
+    /// ends, its open mandates are cancelled with the app's reason, and its running turn is fenced — so the app ends it now.
+    /// </summary>
+    object OrgRetire(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var retired = Gateway.Org.Retire(new RetireRequest(caller, ctx.AttemptId, Require(req, "position"), Require(req, "rationale"),
+            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+        // THE RETIREMENT IS A FENCE (U-org-verbs-d), committed above: the app ends the retired position's running turn now.
+        Gateway.Fenced();
+        return new
+        {
+            position = retired.Position.Id,
+            status = retired.Position.Status,
+            cancelled = retired.Cancelled,
+            decision = DecisionReply(retired.Decision),
+            note = "Retired: the position has ended, every open mandate it held or decided is cancelled with TradeAgent's reason, and its "
+                   + "running turn is fenced. Its launches, spend and records stay as they ran. The retirement is your 'retire' decision, the "
+                   + "rationale your own ledger entry, marked claim; the owner can veto it."
+        };
+    }
+
+    /// <summary>
+    /// CLOSES A UNIT WHOSE PARENT THE CALLER HEADS (<see cref="OrgStore.Close"/>; <c>U-org-verbs-d</c>): the unit and its positions end,
+    /// its open mandates are cancelled, its running turns fenced — so the app ends them now.
+    /// </summary>
+    object OrgClose(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var closed = Gateway.Org.Close(new CloseRequest(caller, ctx.AttemptId, Require(req, "unit"), Require(req, "rationale"),
+            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+        Gateway.Fenced();
+        return new
+        {
+            unit = closed.Unit.Id,
+            status = closed.Unit.Status,
+            ended = closed.Ended,
+            cancelled = closed.Cancelled,
+            decision = DecisionReply(closed.Decision),
+            note = "Closed: the unit and every position in it have ended, every open mandate held, decided or issued in it is cancelled "
+                   + "with TradeAgent's reason, and their running turns are fenced. Nothing is deleted: its records and the spend its chain "
+                   + "funded stay as they ran. It counts toward the organisation's two structural changes a week; the owner can veto it."
+        };
+    }
+
+    /// <summary>
+    /// MERGES A UNIT INTO ITS SIBLING, UNDER A PARENT THE CALLER HEADS (<see cref="OrgStore.Merge"/>; <c>U-org-verbs-d</c>): the first
+    /// closes naming the second, which takes its positions and open child units; both units' running turns are fenced.
+    /// </summary>
+    object OrgMerge(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var merged = Gateway.Org.Merge(new MergeRequest(caller, ctx.AttemptId, Require(req, "unit"), Require(req, "into"),
+            Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+        Gateway.Fenced();
+        return new
+        {
+            unit = merged.Closed.Id,
+            into = merged.Successor.Id,
+            moved = merged.MovedPositions,
+            children = merged.MovedUnits,
+            cancelled = merged.Cancelled,
+            decision = DecisionReply(merged.Decision),
+            note = "Merged: the first unit is closed naming the second, which now holds its positions and open child units; every open "
+                   + "mandate held, decided or issued in the first is cancelled with TradeAgent's reason, and both units' running turns are "
+                   + "fenced. Past spend stays on the chain that funded it; launches from now are funded through the second. It counts "
+                   + "toward the organisation's two structural changes a week."
         };
     }
 

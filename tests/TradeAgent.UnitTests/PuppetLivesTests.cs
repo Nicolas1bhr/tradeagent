@@ -647,6 +647,46 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (g5) O6 PART D ON THE REAL KERNEL, THROUGH <c>trade org retire</c> (<c>U-org-verbs-d</c> item 6): a division head's puppet retires
+    /// a member of a team under its division through the CLI, on its own launch's grant and its MEDIATED seat (the puppet's class); the
+    /// member reads ended, the retirement is the head's <c>retire</c> decision and <c>retired</c> event, and the position is fenced. No
+    /// model. RED at base: no <c>org-retire</c> op.
+    /// </summary>
+    [Fact]
+    public async Task A_puppet_division_head_retires_a_member_through_trade_org_retire()
+    {
+        const string divisionHead = "pos-4e7149000004", teamHead = "pos-4e7149000005", member = "pos-4e7149000006";
+        const string division = "div-4e714901", team = "team-4e714901";
+        await using var life = await PuppetLife.Begin("org-retire", seed: SeedDivision(division, divisionHead, team, teamHead, member));
+        var org = new OrgStore(life.Host.Db);
+        var forecasts = JsonSerializer.Serialize(new[]
+        {
+            new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted, by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m }
+        }).Replace("\"", "\\\"", StringComparison.Ordinal);
+        life.Script(divisionHead, [$"trade org retire {member} \"the line of work is answered\" --forecasts {forecasts}",
+            "usage 100 0 10", "final Retired."]);
+        life.Wake(divisionHead);
+        await life.RunUntil(() => life.AttemptsOf(divisionHead).Any(a => a.State == AiAttemptState.ENDED), "the division head's turn ended");
+
+        var retire = TradeSteps(life, divisionHead, 1);
+        Assert.True((int?)retire[0]["exit"] == 0, $"the retirement was refused: {Said(retire[0])}");
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(member)!.Status);
+        var decision = Assert.Single(org.DecisionsOf(divisionHead), d => d.Kind == OrgDecisionKind.Retire);
+        Assert.Equal(1, life.Host.Db.Read(_ =>
+        {
+            using var c = life.Host.Db.Cmd("SELECT COUNT(*) FROM org_event WHERE kind = 'retired' AND position_id = $p AND decider = $d",
+                ("$p", member), ("$d", divisionHead));
+            return (long)c.ExecuteScalar()!;
+        }));
+        Assert.Equal(1, life.Host.Db.Read(_ =>
+        {
+            using var c = life.Host.Db.Cmd("SELECT COUNT(*) FROM org_event WHERE kind = 'fenced' AND position_id = $p", ("$p", member));
+            return (long)c.ExecuteScalar()!;
+        }));
+        output.WriteLine($"life (org-retire): {Said(retire[0]).Trim()}; decision {decision.Id}; {life.Counts()}");
+    }
+
+    /// <summary>
     /// (g3) A FENCE NEVER CANCELS ANOTHER TURN (<c>U-org-verbs-b</c> fix pass 1, Codex P1-2): the member's turn under M is the one
     /// running when the fence checks it; in that instant, before the fence ends it, the turn finishes on its own and the member is
     /// woken for its next turn, under no mandate. The fence must end the launch it found and nothing else: the successor runs to its

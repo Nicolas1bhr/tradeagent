@@ -770,6 +770,53 @@ public static class GatewaySchema
                 new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
             ]),
 
+        // THE RESTRUCTURING VERBS (U-org-verbs-d, O6 part d; ORCHESTRATION § 2.9): each by the head of the target's parent, one write that
+        // disposes every open mandate inside what ends and fences what it touches.
+        new(Core.Ops.OrgRetire, "trade org retire <position> <rationale> --forecasts JSON [--refs JSON] [--options JSON]", false,
+            "RETIRE A POSITION in a unit whose PARENT you head: it ends, every open mandate it holds or decides is cancelled with "
+            + "TradeAgent's reason, and its running turn is fenced (it does nothing more). Your 'rationale' and 'options' are claims; "
+            + "'forecasts' carries at least one. One write — or refused in words with nothing written: never yourself, never `operations` "
+            + "or the chief (a two-seat act of the security board), never the legacy `research` or a division head (an app trigger or a "
+            + "board act). Its launches and spend stay as they ran; the owner can veto it. It places no order and moves no money.",
+            [
+                new("position", "string", true, "The position to retire: one in a unit whose parent you head."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one."),
+                new("refs", "string", false, "A JSON list of {\"kind\", \"id\"}: app records the retirement rests on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
+            ]),
+
+        new(Core.Ops.OrgClose, "trade org close <unit> <rationale> --forecasts JSON [--refs JSON] [--options JSON]", false,
+            "CLOSE A UNIT whose PARENT you head: the unit and every position in it end, every open mandate held, decided or issued in it is "
+            + "cancelled with TradeAgent's reason, and their running turns are fenced. Nothing is deleted. One write — or refused in words "
+            + "with nothing written: never the organisation itself or `operations`' division (a two-seat act of the security board), "
+            + "never `div-research` (an app trigger or a board act), never a unit with open units under it, never one younger than 14 days "
+            + "unless a forecast on its charter resolved, and at most two structural changes happen in the organisation a week. The owner "
+            + "can veto it. It places no order and moves no money.",
+            [
+                new("unit", "string", true, "The unit to close: one whose parent you head."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one; a subject left empty is the parent that carries on."),
+                new("refs", "string", false, "A JSON list of {\"kind\", \"id\"}: app records the close rests on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
+            ]),
+
+        new(Core.Ops.OrgMerge, "trade org merge <unit> <into> <rationale> --forecasts JSON [--refs JSON] [--options JSON]", false,
+            "MERGE A UNIT INTO ITS SIBLING, both under a parent you head and of one kind: the first closes naming the second, which takes "
+            + "its positions and open child units; every open mandate held, decided or issued in the first is cancelled with TradeAgent's "
+            + "reason, and both units' running turns are fenced. Past spend stays on the chain that funded it. One write — or refused in "
+            + "words with nothing written: nothing about `operations`' division or `div-research`, never the organisation itself, never a "
+            + "unit younger than 14 days unless a forecast on its charter resolved, never past 5 members in the second, and at most two "
+            + "structural changes happen in the organisation a week. It places no order and moves no money.",
+            [
+                new("unit", "string", true, "The unit that closes into its sibling."),
+                new("into", "string", true, "Its sibling, which takes its positions and open child units."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one; a subject left empty is the sibling that carries on."),
+                new("refs", "string", false, "A JSON list of {\"kind\", \"id\"}: app records the merge rests on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
+            ]),
+
         // THE ORGANISATION'S DECISION RECORDS (U-org-decisions, O5b; ORGANISATION § 5): a routine decision recorded with its rationale
         // as the author's own ledger entry, and its own read back. Served only to a launch whose recorded seat assurance carries the
         // organisation's verbs.

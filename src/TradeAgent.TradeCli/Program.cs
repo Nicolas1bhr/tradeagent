@@ -425,6 +425,17 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "hire":
                     Fill(a, rest, "unit", "rationale");
                     return (Ops.OrgHire, a);
+                // `trade org retire <position> <rationale>`, `trade org close <unit> <rationale>` and `trade org merge <unit> <into>
+                // <rationale>` (U-org-verbs-d), each with --forecasts JSON.
+                case "retire":
+                    Fill(a, rest, "position", "rationale");
+                    return (Ops.OrgRetire, a);
+                case "close":
+                    Fill(a, rest, "unit", "rationale");
+                    return (Ops.OrgClose, a);
+                case "merge":
+                    Fill(a, rest, "unit", "into", "rationale");
+                    return (Ops.OrgMerge, a);
                 default:
                     return (null, a);
             }

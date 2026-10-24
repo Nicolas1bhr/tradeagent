@@ -8,8 +8,9 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
-/// THE MATRIX ON THE PIPE (<c>U-org-verbs-c</c>, items 2 and 6): every row the structural verbs of this build can reach — charter,
-/// hire, appointment, and a replacement asked through a hire's head flag — is called through <see cref="GatewayPipeServer"/> under
+/// THE MATRIX ON THE PIPE (<c>U-org-verbs-c</c>, items 2 and 6; extended by <c>U-org-verbs-d</c> item 6): every row the structural
+/// verbs of this build can reach — charter, hire, appointment, a replacement asked through a hire's head flag, and retire, close and
+/// merge — is called through <see cref="GatewayPipeServer"/> under
 /// launches the TEST seeded in the ledger on each assurance class (unconfined CLI, mediated broker, brokered harness, confined cell; the
 /// <c>OrgRightsTests</c> pattern), by each kind of position the row can name (a head of the parent, a head of the target or of a unit
 /// elsewhere, a member). Below the organisation's minimum the GATE refuses whatever the row says; at or above it the ROW decides:
@@ -18,11 +19,16 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public partial class OrgRightsConformanceTests
 {
-    const string Head = "pos-c0f0c0f00001", Member = "pos-c0f0c0f00002", TeamHead = "pos-c0f0c0f00003", OpsHead = "pos-c0f0c0f00004";
+    const string Head = "pos-c0f0c0f00001", Member = "pos-c0f0c0f00002", TeamHead = "pos-c0f0c0f00003", OpsHead = "pos-c0f0c0f00004",
+        TeamMember = "pos-c0f0c0f00005";
 
     const string Div = "div-c0f0c0f0", Vacant = "team-c0f0c0f1", Headed = "team-c0f0c0f2", OpsTeam = "team-c0f0c0f3", OpsVacant = "team-c0f0c0f4";
 
-    const string Stamp = "2026-10-11T12:00:00.0000000Z";
+    /// <summary>
+    /// When the chart was written: long enough ago that every unit has lived the fourteen days a close or a merge asks
+    /// (CHANGED BY U-org-verbs-d, declared: it was 2026-10-11, which a close on 2026-10-24 reads as thirteen days).
+    /// </summary>
+    const string Stamp = "2026-09-01T12:00:00.0000000Z";
 
     /// <summary>The seat classes whose launches the test records, one per assurance class.</summary>
     static readonly string[] Seats = [SeatClasses.Cli, SeatClasses.Broker, SeatClasses.Harness, SeatClasses.Cell];
@@ -57,6 +63,7 @@ public partial class OrgRightsConformanceTests
         Position(db, Member, Div);
         Unit(db, Vacant, Div, OrgUnitKind.Team, null);
         Unit(db, Headed, Div, OrgUnitKind.Team, TeamHead);
+        Position(db, TeamMember, Headed);
         Unit(db, OpsTeam, OrgIds.Operations, OrgUnitKind.Team, OpsHead);
         Unit(db, OpsVacant, OrgIds.Operations, OrgUnitKind.Team, null);
         // THE HOST'S METER, AS ADMISSION WOULD READ IT: each unit of the caller's chain with an envelope in the plan's ceiling.
@@ -95,6 +102,15 @@ public partial class OrgRightsConformanceTests
     static IpcRequest HireFrame(string unit, bool head) => Frame(Ops.OrgHire, ("unit", unit), ("rationale", "an executor"),
         ("forecasts", Forecasts), ("head", head ? "true" : "false"));
 
+    static IpcRequest RetireFrame(string position) => Frame(Ops.OrgRetire, ("position", position), ("rationale", "the line of work is answered"),
+        ("forecasts", Forecasts));
+
+    static IpcRequest CloseFrame(string unit) => Frame(Ops.OrgClose, ("unit", unit), ("rationale", "the team's question is answered"),
+        ("forecasts", Forecasts));
+
+    static IpcRequest MergeFrame(string unit, string into) => Frame(Ops.OrgMerge, ("unit", unit), ("into", into),
+        ("rationale", "two teams chase one question"), ("forecasts", Forecasts));
+
     /// <summary>One call a row is exercised by: the row, who calls, and the frame.</summary>
     sealed record Case(OrgRightsRow Row, string Caller, IpcRequest Frame);
 
@@ -128,6 +144,28 @@ public partial class OrgRightsConformanceTests
             new(R(OrgOperation.Replace, OrgReserved.DivisionHead, OrgRelation.Other), Head, HireFrame(Div, true)),
             new(R(OrgOperation.Replace, OrgReserved.DivisionHead, OrgRelation.Other), Member, HireFrame(Div, true)),
             new(R(OrgOperation.Replace, OrgReserved.Research, OrgRelation.Other), Head, HireFrame(OrgIds.Research, true)),
+
+            // U-org-verbs-d: the restructuring verbs' rows.
+            new(R(OrgOperation.Retire, OrgReserved.None, OrgRelation.HeadOfParent), Head, RetireFrame(TeamHead)),
+            new(R(OrgOperation.Retire, OrgReserved.None, OrgRelation.HeadOfTarget), TeamHead, RetireFrame(TeamMember)),
+            new(R(OrgOperation.Retire, OrgReserved.None, OrgRelation.Other), Member, RetireFrame(TeamMember)),
+            new(R(OrgOperation.Retire, OrgReserved.DivOperations, OrgRelation.Any), Head, RetireFrame(OpsHead)),
+            new(R(OrgOperation.Retire, OrgReserved.Research, OrgRelation.Any), Head, RetireFrame(CouncilRoles.Research)),
+            new(R(OrgOperation.Retire, OrgReserved.DivisionHead, OrgRelation.Any), Member, RetireFrame(Head)),
+
+            new(R(OrgOperation.Close, OrgReserved.None, OrgRelation.HeadOfParent), Head, CloseFrame(Vacant)),
+            new(R(OrgOperation.Close, OrgReserved.None, OrgRelation.HeadOfTarget), TeamHead, CloseFrame(Headed)),
+            new(R(OrgOperation.Close, OrgReserved.None, OrgRelation.Other), Member, CloseFrame(Vacant)),
+            new(R(OrgOperation.Close, OrgReserved.DivOperations, OrgRelation.Any), Head, CloseFrame(OpsTeam)),
+            new(R(OrgOperation.Close, OrgReserved.DivResearch, OrgRelation.Any), Head, CloseFrame(OrgIds.Research)),
+            new(R(OrgOperation.Close, OrgReserved.Root, OrgRelation.Any), Head, CloseFrame(OrgIds.Root)),
+
+            new(R(OrgOperation.Merge, OrgReserved.None, OrgRelation.HeadOfParent), Head, MergeFrame(Vacant, Headed)),
+            new(R(OrgOperation.Merge, OrgReserved.None, OrgRelation.HeadOfTarget), TeamHead, MergeFrame(Headed, Vacant)),
+            new(R(OrgOperation.Merge, OrgReserved.None, OrgRelation.Other), Member, MergeFrame(Vacant, Headed)),
+            new(R(OrgOperation.Merge, OrgReserved.DivOperations, OrgRelation.Any), Head, MergeFrame(OpsTeam, OpsVacant)),
+            new(R(OrgOperation.Merge, OrgReserved.DivResearch, OrgRelation.Any), Head, MergeFrame(OrgIds.Research, Div)),
+            new(R(OrgOperation.Merge, OrgReserved.Root, OrgRelation.Any), Head, MergeFrame(OrgIds.Root, Div)),
         ];
     }
 
@@ -186,16 +224,18 @@ public partial class OrgRightsConformanceTests
         {
             var why = row.Operation switch
             {
-                OrgOperation.Retire or OrgOperation.Close or OrgOperation.Merge or OrgOperation.Tilt => "its verb arrives with part d or e",
+                OrgOperation.Tilt => "its verb arrives with part e",
                 _ when OrgOperation.Mandate.Contains(row.Operation) => "a mandate verb: the row decides, never the chart",
                 OrgOperation.Charter when row.Relation == OrgRelation.HeadOfTarget => "a unit not yet chartered has no head",
                 OrgOperation.Appoint when row.Relation == OrgRelation.HeadOfTarget => "a vacant unit has no head",
-                OrgOperation.Replace when row.Reserved is OrgReserved.Operations or OrgReserved.Chief =>
+                OrgOperation.Replace or OrgOperation.Retire when row.Reserved is OrgReserved.Operations or OrgReserved.Chief =>
                     "operations' unit is div-operations' (its row answers first), and the root's head is the owner today",
                 _ => null
             };
             Assert.True(why is not null, $"row {row.Operation}/{row.Reserved}/{row.Relation} is neither exercised nor named");
-            if (row.Operation is OrgOperation.Retire or OrgOperation.Close or OrgOperation.Merge or OrgOperation.Tilt or OrgOperation.Replace)
+            // REVISITED BY U-org-verbs-d (declared): retire, close and merge have ops now, and their every reachable row is exercised
+            // above; the two retire rows named here are reached by no target (the reasons above). Tilt and replace still have none.
+            if (row.Operation is OrgOperation.Tilt or OrgOperation.Replace)
                 Assert.DoesNotContain(Ops.Organisation, op => op.EndsWith("-" + row.Operation, StringComparison.Ordinal));
         }
     }
