@@ -82,6 +82,15 @@ public abstract class OversightDetector
     protected static string N(decimal d) => d.ToString(CultureInfo.InvariantCulture);
     protected static string N(long n) => n.ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// A STRING A CALLER CHOSE, AS A FINDING HOLDS IT: its digest and its length, never its text (<c>U-watcher-b-fix</c>, INBOX-001). A
+    /// finding is the owner's page, and every measured value is shown there verbatim; a session a peer named or a tool name a model asked
+    /// for is the observed party's own words, so it reaches the page only as a value the app computed. Null is <c>none</c>.
+    /// </summary>
+    protected static string Opaque(string? callerText) => callerText is null
+        ? "none"
+        : $"sha256 {Sha256Hex.Of(callerText)[..12]} of {N(callerText.Length)} chars";
+
     /// <summary>The one publication kind each legacy head hands off — the only publication that counts as its division's accepted work.</summary>
     protected static readonly IReadOnlyDictionary<string, string> LegacyHandoff = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -301,7 +310,7 @@ public sealed class RefusalsDetector : OversightDetector
             yield return new Candidate(unit, group.Key, "tool_call:" + N(group.Min(t => t.Id)), [.. cites],
                 new Dictionary<string, string>
                 {
-                    ["refused"] = N(group.Count()), ["tools"] = string.Join(",", group.Select(t => t.Tool).Distinct().Order(StringComparer.Ordinal)),
+                    ["refused"] = N(group.Count()), ["tools"] = string.Join("; ", group.Select(t => Opaque(t.Tool)).Distinct().Order(StringComparer.Ordinal)),
                     ["role"] = first.Role ?? CouncilRoles.Default,
                 });
         }
@@ -320,7 +329,7 @@ public sealed class RefusalsDetector : OversightDetector
         }
         foreach (var p in s.PipeRefusals.Where(p => p.Event != RefusalMark.Event))
             yield return new Candidate(OrgIds.Root, "log:" + N(p.Id), "-", [new OversightCite("log", N(p.Id))],
-                new Dictionary<string, string> { ["event"] = p.Event, ["at"] = T(p.At), ["session"] = p.Session ?? "none" },
+                new Dictionary<string, string> { ["event"] = p.Event, ["at"] = T(p.At), ["session"] = Opaque(p.Session) },
                 Array.IndexOf(SevereEvents, p.Event) >= 0 ? OversightSeverity.Severe : null);
     }
 }
