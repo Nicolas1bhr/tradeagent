@@ -341,7 +341,8 @@ public sealed record ChartPosition(string Id, string Kind, int Depth, string Lev
 
 /// <summary>
 /// One unit of the chart, as <c>org_unit</c> holds it. <see cref="CharterDecisionId"/> is the <c>charter</c> decision the verb that
-/// chartered it wrote (rung 48), null on a unit the rung seeded.
+/// chartered it wrote (rung 48), null on a unit the rung seeded. <see cref="TrialShare"/> and <see cref="VerdictShare"/> are its
+/// fractions of a campaign's own trial and verdict budgets (<c>U-org-verbs-e</c>, rung 50) — null is no own cap.
 /// </summary>
 public sealed record OrgUnitRow(
     string Id,
@@ -352,7 +353,9 @@ public sealed record OrgUnitRow(
     string? EnvelopeShare,
     string? CharterDecisionId,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? ClosedAt)
+    DateTimeOffset? ClosedAt,
+    string? TrialShare = null,
+    string? VerdictShare = null)
 {
     /// <summary>The root: the one unit with no parent. Its head is the owner, whom no row names.</summary>
     public bool IsRoot => ParentId is null;
@@ -393,7 +396,7 @@ public sealed record OrgPositionRow(
 public sealed partial class OrgStore(Database db)
 {
     const string UnitCols =
-        "id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id, created_at, closed_at";
+        "id, parent_id, kind, head_position_id, status, envelope_share, charter_decision_id, created_at, closed_at, trial_share, verdict_share";
 
     const string PositionCols =
         "id, unit_id, home_dir, status, seat_runtime, seat_model, seat_allow_in, seat_allow_out, created_at, ended_at";
@@ -511,7 +514,7 @@ public sealed partial class OrgStore(Database db)
     {
         using var c = db.Cmd("""
             SELECT u.id, u.parent_id, u.kind, u.head_position_id, u.status, u.envelope_share,
-                   u.charter_decision_id, u.created_at, u.closed_at
+                   u.charter_decision_id, u.created_at, u.closed_at, u.trial_share, u.verdict_share
               FROM org_position p JOIN org_unit u ON u.id = p.unit_id
              WHERE p.id = $id
             """, ("$id", positionId));
@@ -628,7 +631,8 @@ public sealed partial class OrgStore(Database db)
 
     static OrgUnitRow ReadUnit(SqliteDataReader r) => new(
         r.GetString(0), Sql.S(r.GetValue(1)), r.GetString(2), Sql.S(r.GetValue(3)), r.GetString(4),
-        Sql.S(r.GetValue(5)), Sql.S(r.GetValue(6)), Sql.Time(r.GetValue(7)), Sql.TimeN(r.GetValue(8)));
+        Sql.S(r.GetValue(5)), Sql.S(r.GetValue(6)), Sql.Time(r.GetValue(7)), Sql.TimeN(r.GetValue(8)),
+        Sql.S(r.GetValue(9)), Sql.S(r.GetValue(10)));
 
     static OrgPositionRow ReadPosition(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.S(r.GetValue(4)),

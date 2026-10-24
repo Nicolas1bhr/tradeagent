@@ -670,7 +670,9 @@ public class CampaignLedgerTests
             return names;
         });
 
-        Assert.Equal(["campaign_id", "version_id", "requested_at", "holdout_from"], columns);
+        // `attempt_id` (rung 50, `U-org-verbs-e`, declared): the launch that ASKED the judgement, so its recorded funding chain is
+        // the unit it is charged to — provenance, never an outcome; the table still carries nothing about what the verdict found.
+        Assert.Equal(["campaign_id", "version_id", "requested_at", "holdout_from", "attempt_id"], columns);
     }
     // ---- U-council-concurrent-2, item 5: the trial budget charged in ONE transaction ---------------
 
