@@ -450,30 +450,40 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE FOUNDING PAPER ENVELOPE (<c>U-board-a2</c> item 10; R24 § 4.5): while the founding policy governs — decided by
-    /// <c>app</c>, basis <c>founding</c> — the app grants the standing envelope its terms state, through <see cref="GrantEnvelopeOn"/>
-    /// (PAPER, both witnesses), on the app's own paper venue and its one account ONLY, and only when none stands there. Its reason and
-    /// its Activity line name the founding policy and its version, never the owner.
+    /// THE POLICY'S STANDING PAPER ENVELOPE (<c>U-board-a2</c> item 10, generalised by <c>U-board-b1</c> item 5; R24 § 4.5): while the
+    /// version that SET the envelope's terms was decided by the app (founding) or by the security board (an act), the app grants the
+    /// standing envelope those terms state, through <see cref="GrantEnvelopeOn"/> (PAPER, both witnesses), on the terms' own venue and
+    /// account ONLY, and only when none stands there. Its reason and its Activity line name the founding policy or the security board
+    /// and that version — never the owner. A version decided by the owner's VETO grants nothing: a veto only ever takes away (R24 Q2).
     ///
-    /// <para><b>Once per policy version.</b> An envelope this version already granted on that pair — standing, or withdrawn by the
-    /// owner's press (his, permanently: the orchestrator's Q5) — is never granted again by it: a withdrawal the next pass undid
-    /// would be no withdrawal. A new policy version is a new decision, and grants its own.</para>
+    /// <para><b>Once per decision of the terms.</b> The reason names the version that last SET the envelope's terms — not the version in
+    /// force — so an act that moves another field is no new grant: an envelope that decision already granted on that pair — standing,
+    /// or withdrawn by the owner's press (his, permanently: the orchestrator's Q5) — is never granted again by it. A version that sets
+    /// new terms is a new decision, and grants its own (an act that changes the terms withdraws the old one in its own write).</para>
     ///
     /// <para><b>No expiry while no board seat is active</b> (the orchestrator's Q3): terms with no days are granted to the end of
     /// time, which the first active board shortens. It never throws: a pass that could not grant leaves the ledger alone.</para>
     /// </summary>
-    internal void GrantFoundingEnvelopeIfDue(AccountInfo account)
+    internal void GrantPolicyEnvelopeIfDue(AccountInfo account)
     {
         try
         {
-            if (_inForce is not { CouldNotBeRead: false, Decider: BoardDecider.App, Basis: BoardBasis.Founding } inForce) return;
+            if (_inForce is not { CouldNotBeRead: false } inForce) return;
             // NOT ON A HOME THAT CANNOT TRADE: an earlier armed row, or a settings row or policy nobody could read, grants nothing new.
             if (!ReadableForExecution) return;
             if (Policy.CouldNotBeRead || Policy.PaperEnvelope is not { } terms) return;
             if (!string.Equals(Connector.Id, terms.Connector, StringComparison.Ordinal)
                 || !string.Equals(account.Id, terms.Account, StringComparison.Ordinal)) return;
 
-            var reason = FoundingEnvelopeReason(inForce.Version);
+            // WHO SET THESE TERMS: the version that last changed any of them, and its decider.
+            var setBy = inForce.Fields.Where(f => f.Name == "paper_envelope" || f.Name.StartsWith("paper_envelope.", StringComparison.Ordinal))
+                .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max();
+            var decider = setBy == inForce.Version ? inForce.Decider : _board.History().FirstOrDefault(v => v.Version == setBy)?.Decider;
+            string reason;
+            if (decider == BoardDecider.App) reason = FoundingEnvelopeReason(setBy);
+            else if (decider == BoardDecider.Board) reason = BoardEnvelopeReason(setBy);
+            else return;
+
             // THE LOOK AND THE GRANT ARE ONE TRANSACTION (fix pass 1, the review's P2): two health passes at once — the timer's and the
             // owner's refresh — would otherwise both find none and both grant, at two instants and so under two ids, and the owner's
             // one withdrawal would leave the other standing. A nested write joins this one, so the grant path is unchanged.
@@ -493,17 +503,20 @@ public sealed partial class TradingGateway : IAsyncDisposable
             if (result is null) return;
             if (!result.Ok)
             {
-                _log.TryEngineering("Gateway", "founding_envelope_not_granted", "warn",
-                    metadataJson: Json.Write(new { version = inForce.Version, why = result.Why }));
+                _log.TryEngineering("Gateway", "policy_envelope_not_granted", "warn",
+                    metadataJson: Json.Write(new { version = setBy, why = result.Why }));
                 return;
             }
-            _log.Activity($"The security board's founding policy (version {inForce.Version}, set by the app) lets TradeAgent run paper "
-                          + $"experiments on its own practice account {account.Id} in {terms.Instrument}, up to "
+            var by = decider == BoardDecider.App
+                ? $"The security board's founding policy (version {setBy}, set by the app)"
+                : $"The security board's version {setBy}";
+            _log.Activity($"{by} lets TradeAgent run paper experiments "
+                          + $"on its own practice account {account.Id} in {terms.Instrument}, up to "
                           + $"{AllocationRow.Num(terms.MaxQuantity)} at a time and worth at most {Labels.Money(terms.MaxNotional, account.Currency)}"
                           + (terms.Days is { } d ? $", for {d} days" : ", with no end date while no board seat is active")
                           + ". No capital and no live authority came with it.");
         }
-        catch (Exception ex) { _log.TryEngineering("Gateway", "founding_envelope_failed", "error", ex: ex); }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "policy_envelope_failed", "error", ex: ex); }
     }
 
     /// <summary>
@@ -537,9 +550,22 @@ public sealed partial class TradingGateway : IAsyncDisposable
     static string GrantedBy(PaperEnvelopeRow envelope) =>
         envelope.Reason.StartsWith(FoundingEnvelopeReasonPrefix, StringComparison.Ordinal)
             ? "the security board's founding policy granted"
-            : "you granted";
+            : envelope.Reason.StartsWith(BoardEnvelopeReasonPrefix, StringComparison.Ordinal)
+                ? "the security board granted"
+                : "you granted";
 
     const string FoundingEnvelopeReasonPrefix = "granted by the app under the security board's founding policy";
+
+    /// <summary>What an envelope granted under a board act's version says it was granted under (<c>U-board-b1</c>).</summary>
+    const string BoardEnvelopeReasonPrefix = "granted by the app under the security board's act, version";
+
+    /// <summary>What the envelope's row says when a board act's version set its terms: the version, and that the app granted it.</summary>
+    internal static string BoardEnvelopeReason(int version) => $"{BoardEnvelopeReasonPrefix} {version}";
+
+    /// <summary>Whether <paramref name="envelope"/> is the policy's own standing envelope — founding or a board act's — never one the owner granted.</summary>
+    static bool PolicyGranted(PaperEnvelopeRow envelope) =>
+        envelope.Reason.StartsWith(FoundingEnvelopeReasonPrefix, StringComparison.Ordinal)
+        || envelope.Reason.StartsWith(BoardEnvelopeReasonPrefix, StringComparison.Ordinal);
 
     /// <summary>What the founding envelope's row says it was granted under: the policy's version, and that the app set it.</summary>
     internal static string FoundingEnvelopeReason(int version) =>
@@ -13793,8 +13819,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
             // see SettleStaleOrdersInFlightAsync.
             if (account is not null) await SettleStaleOrdersInFlightAsync(account.Id, ct);
 
-            // THE FOUNDING PAPER ENVELOPE (U-board-a2 item 10), on the paper venue only and once per policy version. It never throws.
-            if (account is not null) GrantFoundingEnvelopeIfDue(account);
+            // THE POLICY'S PAPER ENVELOPE (U-board-a2 item 10, U-board-b1 item 5), on its terms' venue only and once per decision of its terms. It never throws.
+            if (account is not null) GrantPolicyEnvelopeIfDue(account);
 
             // ON THE APP'S OWN PAPER VENUES, AN INSTRUMENT THE VENUE LISTS (the orchestrator's ruling): the allowlist's own first if it
             // is listed there, else the venue's first — never a symbol the venue does not list, which the simulator would price anyway.
