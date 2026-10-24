@@ -373,8 +373,14 @@ public sealed class BoardStore(Database db)
             if (confirm && other is not null)
                 throw Forbidden($"{other.Id} is active on the vendor family '{other.VendorFamily}': a widening proposed on "
                                 + $"'{proposer.VendorFamily}' is confirmed by a seat of another family when one is active (R24 § 4.2).");
-            familyWords = $"both seats are on the vendor family '{proposer.VendorFamily}', and no active seat of another family could "
-                          + "decide it: the record says so (R24 § 4.2)";
+            // THE APP'S WORDS ARE A FACT ABOUT THE SEATS, never about the decision (review P2): a refusal from the proposer's family while
+            // a seat of another family is active names that seat, and only with none active does the record say none could decide it.
+            familyWords = other is null
+                ? $"both seats are on the vendor family '{proposer.VendorFamily}', and no active seat of another family could decide it: "
+                  + "the record says so (R24 § 4.2)"
+                : $"both seats are on the vendor family '{proposer.VendorFamily}'; {other.Id}, active on the vendor family "
+                  + $"'{other.VendorFamily}', could decide it too — a confirmation needs it, a refusal from the proposer's family is "
+                  + "recorded as one";
         }
 
         if (!confirm)
