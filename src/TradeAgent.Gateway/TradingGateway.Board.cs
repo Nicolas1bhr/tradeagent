@@ -13,10 +13,27 @@ namespace TradeAgent.Gateway;
 /// </summary>
 public sealed partial class TradingGateway
 {
-    /// <summary>The policy in force, read again from the store: what every act and veto does the moment it commits.</summary>
+    /// <summary>A TEST SEAM: called between a refresh's read of the store and its publish. Null in the app.</summary>
+    internal Action? PolicyReadForRefresh { get; set; }
+
+    /// <summary>Makes "is this read newer than the one held" and "hold it" one decision.</summary>
+    readonly Lock _policyGate = new();
+
+    /// <summary>
+    /// The policy in force, read again from the store: what every act and veto does the moment it commits. AN OLDER READ NEVER REPLACES
+    /// A NEWER ONE (the review's P1): two refreshes at once — an act's and another's — may read in one order and publish in the other, and
+    /// publishing the older would leave the gateway enforcing a wider limit after a narrowing completed. Versions only grow, so a
+    /// readable read below the version held is dropped; an unreadable one always publishes, failing closed.
+    /// </summary>
     void RefreshPolicy()
     {
-        _policy = PolicyInForce();
+        var read = _board.InForce();
+        PolicyReadForRefresh?.Invoke();
+        lock (_policyGate)
+        {
+            if (!read.CouldNotBeRead && _inForce is { CouldNotBeRead: false } held && read.Version < held.Version) return;
+            _policy = Published(read);
+        }
         StateChanged?.Invoke();
     }
 
