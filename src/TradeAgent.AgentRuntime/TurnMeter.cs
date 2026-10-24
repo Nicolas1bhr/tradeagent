@@ -1615,6 +1615,30 @@ public sealed class TurnMeter
     }
 
     /// <summary>
+    /// EACH UNIT OF <paramref name="role"/>'S FUNDING CHAIN IN ONE NAMED <paramref name="ceiling"/> — <c>key</c> (the money cap's) or
+    /// <c>plan</c> (the plan capacity's) — whatever class the role's own seat bills (<c>U-org-verbs-e</c> item 7): resolved and totalled
+    /// exactly as <see cref="EnvelopesFor"/> resolves each ceiling, from one reading of the caps and the split. For a reading ABOUT
+    /// another seat's spending — a charter sizing a legacy sibling's share in the ceiling the charter draws on — never for admitting a
+    /// launch. Null for any other ceiling, or where the chain or a total cannot be read: unknown, never zero.
+    /// </summary>
+    public IReadOnlyList<UnitDay>? EnvelopesIn(string role, string ceiling)
+    {
+        if (ceiling is not (BillingClasses.Key or BillingClasses.Plan)) return null;
+        try
+        {
+            var (from, to) = OwnerDay.Window(_now());
+            var cap = Cap();
+            var (money, plan) = FundingOf(role, cap, PlanCap(cap));
+            return [.. (ceiling == BillingClasses.Plan ? plan : money).Select(u =>
+            {
+                var day = _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling);
+                return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved, day.Unpriced);
+            })];
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix passes 1 and 2), never from an admission: a role
     /// the app declares on its harness is <c>key</c> — code, the harness's own verdict; otherwise the class the app's latest reading of the
     /// seat home's sign-in found (<see cref="_signIn"/>) — the sign-in the seat holds now, read on the app's cadence whether or not the role

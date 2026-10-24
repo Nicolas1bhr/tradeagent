@@ -2332,6 +2332,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Func<string, IReadOnlyList<UnitDay>?>? AiEnvelopes { get; set; }
 
+    /// <summary>
+    /// A POSITION'S FUNDING CHAIN IN ONE NAMED CEILING (<c>key</c> or <c>plan</c>), whatever class its own seat bills — the host's
+    /// reading <see cref="AiEnvelopes"/> is, for one ceiling (<c>U-org-verbs-e</c> item 7): what a charter or a tilt sizes a legacy
+    /// sibling's share in when it draws on a ceiling that sibling's seat does not bill. Null, or a null answer, is unread — refused by
+    /// the verb that asked, never guessed.
+    /// </summary>
+    public Func<string, string, IReadOnlyList<UnitDay>?>? AiEnvelopesIn { get; set; }
+
     public event Action? StateChanged;
 
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>
