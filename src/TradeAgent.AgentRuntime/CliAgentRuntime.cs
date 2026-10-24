@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
+using TradeAgent.Core.Tls;
 using TradeAgent.Core.Db;
 using TradeAgent.Provisioning;
 
@@ -285,6 +286,16 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     internal string ReleaseApi { get; init; } = Downloader.GitHubApi;
 
+    /// <summary>
+    /// HOW THE ARCHIVE IS FETCHED AND UNPACKED, and whether TradeAgent's private Node can be provided. The product never sets them;
+    /// a test makes the download fail a given way on a computer where the package road is open, and sees which road is taken.
+    /// </summary>
+    internal Func<string, string, Integrity, IProgress<ProvisionProgress>?, CancellationToken, Task<string>> Download { get; init; } =
+        Downloader.DownloadAndUnpackAsync;
+
+    /// <inheritdoc cref="Download"/>
+    internal Func<bool> NodeCanProvide { get; init; } = () => NodeRuntime.CanProvide;
+
     /// <summary>How long the version probe waits for the program's answer — what the product uses.</summary>
     internal static readonly TimeSpan DefaultVersionDeadline = TimeSpan.FromSeconds(20);
 
@@ -365,7 +376,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         switch (manifest.Install.Kind)
         {
             case InstallKind.Download:
-                await InstallByDownloadAsync(target, progress, relay, ct);
+                // A RELEASE LOOKUP THE TLS POLICY REFUSED is the same refusal as the download's, said the same way.
+                try { await InstallByDownloadAsync(target, progress, relay, ct); }
+                catch (TlsRefusedException refused) { throw Refused(refused); }
                 break;
 
             case InstallKind.Npm:
@@ -427,7 +440,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
         if (url is null)
         {
-            if (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide)
+            if (plan.NpmPackage is { Length: > 0 } && NodeCanProvide())
             {
                 progress?.Report($"No download is available for {manifest.DisplayName} — installing it as a package instead");
                 await InstallByNpmAsync(target, progress, relay, ct);
@@ -440,13 +453,16 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         try
         {
             progress?.Report($"Downloading {manifest.DisplayName}");
-            await Downloader.DownloadAndUnpackAsync(url, target,
+            await Download(url, target,
                 Integrity.PinnedOr(plan.Sha256,
                     $"{manifest.DisplayName}'s manifest pins no checksum for the file it downloads"),
                 relay, ct);
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } && NodeRuntime.CanProvide && !plan.Pinned)
+        // A REFUSED CONNECTION IS NEVER A REASON TO TAKE ANOTHER ROAD (U-tls-denylist fix pass): the package fallback runs npm, whose
+        // connections never meet the app's TLS policy — the very check that refused this one. So it refuses, in the policy's words.
+        catch (Exception ex) when (TlsRefusedException.In(ex) is { } refused) { throw Refused(refused, ex); }
+        catch (Exception ex) when (plan.NpmPackage is { Length: > 0 } && NodeCanProvide() && !plan.Pinned)
         {
             // Declared fallback: the vendor also publishes this as an npm package, and TradeAgent
             // has its own Node, so a broken or moved archive is not the end of the road.
@@ -463,6 +479,12 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 "way to install it on this computer.", ex);
         }
     }
+
+    /// <summary>The install's refusal for a connection the app's TLS policy refused: its words, and that nothing else was tried.</summary>
+    TradeAgentException Refused(TlsRefusedException refused, Exception? cause = null) =>
+        new(ErrorCode.AI_INSTALL_FAILED,
+            $"{manifest.DisplayName} could not be downloaded: {refused.Message} Nothing was installed, and no other way was tried.",
+            cause ?? refused);
 
     async Task InstallByNpmAsync(string target, IProgress<string>? progress, IProgress<ProvisionProgress> relay, CancellationToken ct)
     {
