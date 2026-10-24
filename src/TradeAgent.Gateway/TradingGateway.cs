@@ -2346,6 +2346,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Func<string, decimal?>? AiReservation { get; set; }
 
+    /// <summary>
+    /// THE BILLING CLASS A POSITION'S SEAT IS HELD TO NOW (<c>plan</c>, <c>key</c> or <c>unknown</c>), as the host's meter reads it
+    /// (<c>U-org-verbs-e</c>, fix pass 2): which ceilings an AI tilt judges that seated position in (<see cref="BillingClasses.CeilingsOf"/>)
+    /// — its own, never the calling head's. Null, or a null answer, is unread — the tilt is refused, never guessed.
+    /// </summary>
+    public Func<string, string?>? AiClassOf { get; set; }
+
     public event Action? StateChanged;
 
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>

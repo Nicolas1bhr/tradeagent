@@ -231,8 +231,15 @@ public class OrgTiltTests
 
     // ---- the fix pass --------------------------------------------------------------------------------------------
 
-    /// <summary>One turn of each seat, as the host's meter prices it: the team's head 1.5, every other 0.1.</summary>
-    static decimal? Seats(string position) => position == TeamHead ? 1.5m : 0.1m;
+    /// <summary>
+    /// One turn of each seat, as the host's meter prices it — the team's head 1.5, every other 0.1 — each held to the money cap, where
+    /// the division's envelope is 10 (as <see cref="Metered"/>'s).
+    /// </summary>
+    static SeatTurn? Seats(string position) => new(position == TeamHead ? 1.5m : 0.1m, [new(BillingClasses.Key, 10m)]);
+
+    /// <summary>The team's head bills the plan, reserving 0.3, where the division's envelope is <paramref name="plan"/>; every other seat as <see cref="Seats"/>.</summary>
+    static Func<string, SeatTurn?> PlanTeamHead(decimal plan) =>
+        position => position == TeamHead ? new SeatTurn(0.3m, [new(BillingClasses.Plan, plan)]) : Seats(position);
 
     /// <summary>
     /// FIX PASS (the Codex review's P2, its settling check): AN AI TILT THAT WOULD STRAND A SEATED CHILD IS REFUSED. The head's own turn
@@ -255,6 +262,43 @@ public class OrgTiltTests
 
         // A TILT THAT LEAVES IT ITS TURN IS WRITTEN: 0.2 → 0.35, an envelope of 3.5.
         Assert.Equal("0.35", org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now, Seats).To);
+    }
+
+    /// <summary>
+    /// FIX PASS 2 (the Codex re-review's P2): EACH SEATED CHILD IS JUDGED IN ITS OWN CEILINGS, NOT THE CALLING HEAD'S. The head bills a key,
+    /// its division's envelope 10 in the money cap; the team's head bills the plan and reserves 0.3, where the division's envelope is 2.
+    /// 0.2 → 0.1 leaves the team 1 in the money cap but 0.2 in the plan's — less than the child's turn: refused, naming the seat and the
+    /// plan, nothing written. RED before the fix: the child was judged against the head's 10, and the tilt was written.
+    /// </summary>
+    [Fact]
+    public void A_tilt_that_strands_a_plan_billed_child_under_a_key_billed_head_is_refused()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var before = Written(db);
+
+        var refused = Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Ai, 0.1m), Metered, Now, PlanTeamHead(plan: 2m)));
+        Assert.Contains(TeamHead, refused.Message, StringComparison.Ordinal);
+        Assert.Contains(BillingClasses.Words(BillingClasses.Plan), refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        Assert.Equal("0.2", ShareOf(db, Team, OrgCurrency.Ai));
+    }
+
+    /// <summary>
+    /// ITS TWIN: A FUNDABLE CHILD IS NOT REFUSED BECAUSE OF THE HEAD'S SMALLER CEILING. The head bills a key, its division's envelope 2 in
+    /// the money cap; the team's head bills the plan and reserves 0.3, where the division's envelope is 10. 0.2 → 0.1 leaves the team 1 in
+    /// the plan's ceiling — the child's turn fits — and the head's own turn (0.1) fits the 0.2 the key ceiling leaves: written. RED
+    /// before the fix: the child was judged against the head's 2, and a fundable tilt was refused.
+    /// </summary>
+    [Fact]
+    public void A_fundable_plan_billed_child_is_not_refused_for_a_key_billed_heads_smaller_ceiling()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var smallKey = Metered with { Parent = [new(BillingClasses.Key, 2m)] };
+
+        Assert.Equal("0.1", org.Tilt(Ask(OrgCurrency.Ai, 0.1m), smallKey, Now, PlanTeamHead(plan: 10m)).To);
+        Assert.Equal("0.1", ShareOf(db, Team, OrgCurrency.Ai));
     }
 
     /// <summary>

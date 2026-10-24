@@ -1491,6 +1491,8 @@ public sealed class AppHost : IAsyncDisposable
         // AND ONE TURN OF A POSITION'S SEAT (the fix pass): an AI tilt holds every seated position of the affected subtree to it. A rate
         // nobody can supply reserves nothing, as admission reads it.
         Gateway.AiReservation = role => Meter is { } meter ? meter.Reservation(role).Cost ?? 0m : null;
+        // AND THE CLASS ITS SEAT BILLS NOW (fix pass 2): each seated position is judged in its own ceilings, never its head's.
+        Gateway.AiClassOf = role => Meter?.ClassOf(role);
         ReportAiActivity();
     }
 

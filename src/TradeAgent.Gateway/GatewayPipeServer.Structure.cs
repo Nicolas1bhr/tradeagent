@@ -92,7 +92,7 @@ public sealed partial class GatewayPipeServer
         var currency = Require(req, "currency");
         var made = Gateway.Org.Tilt(new TiltRequest(caller, ctx.AttemptId, Require(req, "unit"), currency, share, Require(req, "rationale"),
             TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")),
-            currency == OrgCurrency.Ai ? FundingOf(caller, ctx.AttemptId) : null, DateTimeOffset.UtcNow, Gateway.AiReservation);
+            currency == OrgCurrency.Ai ? FundingOf(caller, ctx.AttemptId) : null, DateTimeOffset.UtcNow, SeatTurns(caller));
         return new
         {
             unit = made.Unit.Id,
@@ -124,14 +124,45 @@ public sealed partial class GatewayPipeServer
         foreach (var ceiling in days.Select(d => d.Ceiling).Distinct(StringComparer.Ordinal))
         {
             // THE CHAIN IS NEAREST FIRST (the caller's unit, then each above it): the first envelope in this ceiling binds.
-            var chain = days.Where(d => d.Ceiling == ceiling).ToList();
-            var start = chain.FindIndex(d => d.UnitId == unit.Id);
-            if (start < 0) return null;
-            if (chain.Skip(start).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } envelope) return null;
+            if (Nearest([.. days.Where(d => d.Ceiling == ceiling)], unit.Id) is not { } envelope) return null;
             parent.Add(new CeilingEnvelope(ceiling, envelope));
         }
         return parent.Count == 0 ? null
             : new CharterFunding(caller, attempt.ReservedCost, parent, LegacyShares([.. parent.Select(p => p.Ceiling)]));
+    }
+
+    /// <summary>THE FIRST ENVELOPE AT OR ABOVE <paramref name="unitId"/> in a chain read nearest first, or null where the chain holds no reading of it.</summary>
+    static decimal? Nearest(IReadOnlyList<UnitDay> chain, string unitId)
+    {
+        var start = chain.ToList().FindIndex(d => d.UnitId == unitId);
+        return start < 0 ? null : chain.Skip(start).FirstOrDefault(d => d.Envelope is not null)?.Envelope;
+    }
+
+    /// <summary>
+    /// ONE TURN OF EACH SEATED POSITION AN AI TILT REACHES, AS THE HOST READS IT (<c>U-org-verbs-e</c>, fix pass 2): what it reserves
+    /// (<see cref="TradingGateway.AiReservation"/>), and the caller's unit's envelope — the one the tilted share is a fraction of — in
+    /// EACH ceiling that position's own seat is held to (<see cref="TradingGateway.AiClassOf"/>, <see cref="BillingClasses.CeilingsOf"/>),
+    /// read in that named ceiling (<see cref="EnvelopesIn"/>), nearest envelope at or above the caller's unit. Never the caller's own
+    /// ceilings. Null — no price, no class or no reading of a ceiling it needs — is refused by the tilt, never guessed.
+    /// </summary>
+    Func<string, SeatTurn?>? SeatTurns(string caller)
+    {
+        if (Gateway.AiReservation is not { } priced || Gateway.AiClassOf is not { } classOf) return null;
+        var unit = Gateway.Org.UnitOf(caller);
+        return position =>
+        {
+            if (unit is null || priced(position) is not { } reserves || classOf(position) is not { } billing) return null;
+            var parent = new List<CeilingEnvelope>();
+            foreach (var ceiling in BillingClasses.CeilingsOf(billing))
+            {
+                IReadOnlyList<UnitDay>? chain;
+                try { chain = EnvelopesIn(caller, ceiling); }
+                catch (Exception) { chain = null; }
+                if (chain is null || Nearest(chain, unit.Id) is not { } envelope) return null;
+                parent.Add(new CeilingEnvelope(ceiling, envelope));
+            }
+            return new SeatTurn(reserves, parent);
+        };
     }
 
     /// <summary>
