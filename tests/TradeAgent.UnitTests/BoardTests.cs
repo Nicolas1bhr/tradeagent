@@ -122,7 +122,10 @@ public class BoardTests(ITestOutputHelper log)
 
     /// <summary>
     /// LIVE IS CLOSED BY CONSTRUCTION: the schema itself refuses a policy row in either real-money mode or with real money switched
-    /// on, and refuses every UPDATE and DELETE of the board's tables. RED before rung 49: no table to refuse anything.
+    /// on, and refuses every UPDATE and DELETE of the board's tables. RED before rung 49: no table to refuse anything. RE-RUN AFTER
+    /// RUNG 50's REBUILD (<c>U-board-b1</c>): the row offered is a board act's version — decider <c>board</c>, basis <c>act</c>, a real
+    /// act behind it — right in every column but its mode or activation, and the same row in PAPER with real money off IS stored, so
+    /// the refusal is the mode's and the activation's CHECK and nothing else's. Watched red with the rebuilt table's mode CHECK removed.
     /// </summary>
     [Fact]
     public void No_row_of_the_board_store_holds_a_live_mode_or_an_activation()
@@ -130,8 +133,11 @@ public class BoardTests(ITestOutputHelper log)
         using var db = TestEnv.NewDb();
         Assert.Equal("1", Scalar(db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='board_policy'"));
         var body = BoardPolicyBody.Canonical(BoardFounding.V1);
-        const string insert = "INSERT INTO board_policy(version, decider, basis, written_at, mode, live_activated, body, body_sha256, supersedes) "
-                              + "VALUES(2, 'app', 'founding', '2026-10-23T00:00:00.0000000Z', $mode, $live, $body, $sha, 1)";
+        Exec(db, "INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
+                 + "VALUES('bact-livetest', 'narrow', 'board-1', NULL, '[]', $sha, 1, 'a claim', '[]', NULL, NULL, '2026-10-24T00:00:00.0000000Z')",
+            ("$sha", Sha256Hex.Of("[]")));
+        const string insert = "INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, supersedes) "
+                              + "VALUES(2, 'board', 'act', 'bact-livetest', '2026-10-24T00:00:00.0000000Z', $mode, $live, $body, $sha, 1)";
 
         foreach (var (mode, live) in new[] { ("LIVE_CONFIRM", 0), ("LIVE_AUTONOMOUS", 0), ("PAPER", 1), ("LIVE_AUTONOMOUS", 1) })
         {
@@ -159,6 +165,11 @@ public class BoardTests(ITestOutputHelper log)
 
         Assert.Equal("1", Scalar(db, "SELECT COUNT(*) FROM board_policy"));
         Assert.Equal("PAPER|0", Scalar(db, "SELECT mode || '|' || live_activated FROM board_policy WHERE version=1"));
+
+        // THE CONTROL: the very row, in PAPER with real money off, is one the store takes — so each refusal above was the mode's or
+        // the activation's, never another column's.
+        Exec(db, insert, ("$mode", "PAPER"), ("$live", 0), ("$body", body), ("$sha", Sha256Hex.Of(body)));
+        Assert.Equal("2", Scalar(db, "SELECT COUNT(*) FROM board_policy"));
     }
 
     /// <summary>
@@ -369,7 +380,7 @@ public class BoardTests(ITestOutputHelper log)
         log.WriteLine($"{denied.Code}: {denied.Message}");
         Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, denied.Code);
         Assert.Contains("schema 46", denied.Message, StringComparison.Ordinal);
-        Assert.Contains($"schema {BoardRung}", denied.Message, StringComparison.Ordinal);
+        Assert.Contains($"schema {Versions.DatabaseSchemaVersion}", denied.Message, StringComparison.Ordinal);
         Assert.Contains(Labels.SetAsideEarlierLiveSetting, denied.Message, StringComparison.Ordinal);
         Assert.Empty(conn.Broker.Orders);
         Assert.Equal(HealthState.PAUSED, gw.Health.Snapshot().Single(h => h.Component == Components.ExecutionCapability).State);

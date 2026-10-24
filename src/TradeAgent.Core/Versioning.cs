@@ -457,11 +457,28 @@ public static class Versions
     /// its SHA-256) and <c>board_event</c> (the founding, an earlier live setting set aside) — each refusing UPDATE and DELETE by trigger,
     /// one writer, <c>BoardStore</c>. The rung writes the founding record once — version 1, three seats and the founding event, in one
     /// transaction — and nothing from the settings row: the owner-set values of the fields the board now holds simply go.</para>
+    ///
+    /// <para><b>50 — the board's acts</b> (<c>U-board-b1</c>, rung <see cref="BoardActsRung"/>, after <c>U-board-a1</c>'s 49; R24 §§ 4.2–4.4):
+    /// <c>board_act</c> (one act: <c>narrow</c> by one seat or <c>propose</c> for two, its exact intent and the intent's SHA-256, the
+    /// version it was made against, the rationale — a CLAIM — the refs the app checked, an <c>evidence_class</c> held NULL by CHECK
+    /// until <c>U-board-live</c>, the expiry of a proposal), <c>board_act_event</c> (proposed, applied, confirmed, refused, expired,
+    /// stale, vetoed — the seat, its own sealed rationale, the vendor families and <c>same_family</c>, the version written; one
+    /// decision per seat per act and one close per act by unique index), <c>board_forecast</c> and <c>board_forecast_resolution</c>
+    /// (<c>org_forecast</c>'s shape, the forecaster a board seat), <c>board_power_proposal</c> (CHANGE-001: a proposal of the board's
+    /// own power, applied by nothing) and <c>board_seat_state</c> (a seat's state — dormant, active, retired — by <c>app</c> or
+    /// <c>owner</c>, since a seat's row is sealed). <c>board_policy</c> and <c>board_event</c> are REBUILT in one transaction, every
+    /// row copied byte for byte: the policy's decider <c>app</c>, <c>board</c> or <c>owner</c> on the basis <c>founding</c>,
+    /// <c>act</c> or <c>veto</c>, <c>act_id</c> NULL iff founding — its mode and activation CHECKs UNCHANGED, so a live mode or an
+    /// activation is still unstorable — and the event kinds widened by the owner's budget share and his seat founding and retiring.
+    /// Every table refuses UPDATE, DELETE and an insert over its key by trigger. One writer, <c>BoardStore</c>.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 49;
+    public const int DatabaseSchemaVersion = 50;
 
     /// <summary>The security board's rung, spelled once (<c>U-board-a1</c>); a unit overtaken renumbers it here.</summary>
     public const int BoardRung = 49;
+
+    /// <summary>The board's acts' rung, spelled once (<c>U-board-b1</c>); a unit overtaken renumbers it here and nowhere else.</summary>
+    public const int BoardActsRung = 50;
 
     /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
     public const int InputLineageRung = 45;
