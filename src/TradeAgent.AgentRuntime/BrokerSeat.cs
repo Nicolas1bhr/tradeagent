@@ -20,8 +20,9 @@ namespace TradeAgent.AgentRuntime;
 /// (<see cref="CodexSurfaceProbe"/>), cached by binary, argument template and model, and refuses anything but the expected set.</para>
 ///
 /// <para><b>What it is not.</b> MEDIATED, not hard: no model-reachable tool crosses, but the codex process itself holds the login and
-/// could. The dry run sees the binary's BUNDLED model metadata; whether the real provider's metadata equals it is UNKNOWN until the first
-/// observed run, on the owner's word. A per-request inspecting proxy is the later hardening.</para>
+/// could. The model's metadata is PINNED by the app's catalog (<c>U-cell-model-catalog</c>, <see cref="SeatPlan.ModelCatalog"/>): the dry
+/// run and a live turn read the same bytes, so they agree on the tools offered; whether the owner's plan serves gpt-5.5 at all stays
+/// UNKNOWN until one real turn, on his word. A per-request inspecting proxy is the later hardening.</para>
 /// </summary>
 public static class BrokerSeat
 {
