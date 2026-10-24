@@ -47,16 +47,36 @@ public static partial class DigestComposer
     public static string Sentence(OversightFinding f, Func<OversightCite, bool> stillThere)
     {
         ArgumentNullException.ThrowIfNull(stillThere);
-        if (!Templates.TryGetValue(TemplateKey(f), out var template))
-            throw new InvalidOperationException($"no digest template tells a '{f.Detector}' finding");
-        var text = Placeholder().Replace(template, m => m.Groups[1].Value == "unit" ? f.UnitId
-            : f.Measured.TryGetValue(m.Groups[1].Value, out var v) ? Plain(v) : "?");
+        var text = Filled(f);
         var gone = f.Cites.Where(c => !stillThere(c)).ToList();
         if (gone.Count > 0)
             text += $" {string.Join(", ", gone)} {(gone.Count == 1 ? "is" : "are")} no longer in the app's database; the finding keeps what was measured.";
         var cites = new StringBuilder($" [{f.Id}]");
         foreach (var c in f.Cites.Except(gone)) cites.Append(" [").Append(c).Append(']');
         return text + cites;
+    }
+
+    /// <summary>
+    /// One finding's sentence when its cited records COULD NOT BE CHECKED — the app's database is missing or would not be read
+    /// (<c>U-watcher-b-fix</c>, EVID-001): its template filled, then, in words of this closed list, which cited records are NOT VERIFIED, and
+    /// only the finding's own id bracketed, which resolves in the oversight file the finding was just read from. A cite is bracketed only
+    /// when a check RAN and found it; a check that did not run neither brackets it nor says it is gone.
+    /// </summary>
+    public static string Unchecked(OversightFinding f)
+    {
+        var text = Filled(f);
+        if (f.Cites.Count > 0)
+            text += $" {string.Join(", ", f.Cites)} {(f.Cites.Count == 1 ? "is" : "are")} NOT VERIFIED: the app's database could not be read "
+                    + $"to check {(f.Cites.Count == 1 ? "it" : "them")}.";
+        return text + $" [{f.Id}]";
+    }
+
+    static string Filled(OversightFinding f)
+    {
+        if (!Templates.TryGetValue(TemplateKey(f), out var template))
+            throw new InvalidOperationException($"no digest template tells a '{f.Detector}' finding");
+        return Placeholder().Replace(template, m => m.Groups[1].Value == "unit" ? f.UnitId
+            : f.Measured.TryGetValue(m.Groups[1].Value, out var v) ? Plain(v) : "?");
     }
 
     /// <summary>
