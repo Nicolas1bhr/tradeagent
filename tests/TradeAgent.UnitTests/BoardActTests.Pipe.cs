@@ -145,3 +145,76 @@ public partial class BoardActTests
         Assert.True(status.Ok, TradeAgent.Core.Json.Write(status.Error));
     }
 }
+
+public partial class BoardActTests
+{
+    static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new InvalidOperationException("the repository root was not found");
+    }
+
+    /// <summary>
+    /// BOARD VERB NAMES ARE DISJOINT FROM PIPE OPS AND ORGANISATION VERBS (GUARD; ORCHESTRATION § 2.9): three families, read off
+    /// <see cref="Ops"/>'s own fields — every <c>Board*</c> constant is a <c>board-*</c> name, <see cref="Ops.Board"/> is exactly them, and
+    /// none is an organisation verb or any other op of the pipe; every one is in the op table's schema and is `trade board …` in the
+    /// CLI. RED before item 7's CLI: no <c>board</c> command.
+    /// </summary>
+    [Fact]
+    public void Board_verb_names_are_disjoint_from_pipe_ops_and_org_verbs()
+    {
+        var fields = typeof(Ops).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string)).ToList();
+        var board = fields.Where(f => f.Name.StartsWith("Board", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
+        var rest = fields.Where(f => !f.Name.StartsWith("Board", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(board.Order(StringComparer.Ordinal), Ops.Board.Order(StringComparer.Ordinal));
+        Assert.All(board, op => Assert.StartsWith("board-", op, StringComparison.Ordinal));
+        Assert.Empty(board.Intersect(rest));
+        Assert.Empty(board.Intersect(Ops.Organisation));
+        Assert.DoesNotContain(rest, op => op.StartsWith("board-", StringComparison.Ordinal));
+
+        var cli = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.TradeCli", "Program.cs"));
+        Assert.Contains("case \"board\":", cli, StringComparison.Ordinal);
+        foreach (var f in fields.Where(f => f.Name.StartsWith("Board", StringComparison.Ordinal)))
+        {
+            Assert.Single(GatewaySchema.Ops(), o => o.Op == (string)f.GetRawConstantValue()!);
+            Assert.StartsWith("trade board ", GatewaySchema.Ops().Single(o => o.Op == (string)f.GetRawConstantValue()!).Cli, StringComparison.Ordinal);
+            Assert.Contains($"return (Ops.{f.Name}, a);", cli, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// NO BOARD VERB IS MUTATING AND NONE NAMES AN ORDER FIELD (ORDER-001, SIGNAL-001): none is in <see cref="Ops.Mutating"/> or described
+    /// mutating, no board verb's name or argument names a side, a price, a stop, a fill, a time in force or a client order id, and no
+    /// field an intent may change names one of those — the quantity and notional fields are CEILINGS (<c>max_*</c>), never the size of
+    /// an order. Watched red with a <c>price</c> argument given to <c>board-narrow</c>.
+    /// </summary>
+    [Fact]
+    public void No_board_verb_is_mutating_and_none_names_an_order_field()
+    {
+        string[] order = ["buy", "sell", "side", "price", "limit_price", "stop", "fill", "tif", "time_in_force", "client_order", "order_id", "symbol",
+            "schedule", "deadline", "when", "place", "modify", "cancel", "close"];
+        Assert.NotEmpty(Ops.Board);
+        foreach (var op in Ops.Board)
+        {
+            Assert.False(Ops.IsMutating(op), $"{op} is mutating");
+            var spec = Assert.Single(GatewaySchema.Ops(), o => o.Op == op);
+            Assert.False(spec.Mutating, $"{op} is described mutating");
+            var words = op.Split('-').Concat(spec.Args.SelectMany(a => a.Name.Split('_'))).ToList();
+            foreach (var word in order)
+                Assert.DoesNotContain(words, w => string.Equals(w, word, StringComparison.OrdinalIgnoreCase));
+        }
+        foreach (var field in BoardDirection.Fields.Select(f => f.Path))
+        {
+            var leaf = field.Split('.')[^1];
+            foreach (var word in order)
+                Assert.DoesNotContain(word, leaf.Split('_'), StringComparer.OrdinalIgnoreCase);
+            if (leaf.Contains("quantity", StringComparison.Ordinal) || leaf.Contains("notional", StringComparison.Ordinal))
+                Assert.StartsWith("max_", leaf, StringComparison.Ordinal);
+        }
+    }
+}
