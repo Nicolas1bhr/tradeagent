@@ -35,7 +35,13 @@ Items, one commit each, one-sentence messages:
    0.20 within 7 days (summed per unit and currency), Σ active siblings > 1, `Unfundable` (AI), a share worth < 1 trial or verdict of the open campaign, the matrix.
    Charter (part c) accepts trial and verdict shares too. Check: one test per refusal; `org-show` shows all three dimensions.
 6. **Names, door, CLI:** `OrgTilt`; schema; `trade org tilt`; one `PuppetLife` act; the conformance rows extended.
-Red-first (quote each red at base): items 2–5's checks.
+7. **Folded in at dispatch (seat B's card U-verbs-c-followups, 2026-10-24 — the same charter path item 5 extends):** the Codex re-review of U-org-verbs-c fix 1
+   (`fleet/tmp/B-scratch/u-org-verbs-c-fix1/rereview.md`): a ZERO cap in one billing ceiling makes `LegacyShares` (`GatewayPipeServer.Structure.cs:108-128`) drop a legacy
+   division's share that another ceiling sizes, and a funded charter is refused. Read each legacy share from the ceiling the charter's funding is judged in; a zero cap
+   in a ceiling the charter does not draw on drops nothing (a zero cap in the one it draws on still refuses, fail-closed). Check (the re-review's setting):
+   `A_zero_cap_in_one_ceiling_keeps_the_legacy_share_the_other_ceiling_sizes` — real meter, legacy CLI seats on plan, plan cap 0, chief on key with money cap 10,
+   split 0.3/0.6, a valid 0.1 experiment division chartered; plus its fail-closed twin.
+Red-first (quote each red at base): items 2–5's and 7's checks.
 **The watched mutant:** item 2's unit gate placed BEFORE the campaign's (or reading today's chart instead of the recorded chain) ⇒ item 2's test red. Quote, restore, green.
 **Read first:** CLAUDE.md; ORCHESTRATION §§ 2.4, 2.9, 8; ORGANISATION §§ 2, 3, 8, 13; the survey § 3; O4 and U-holdout-campaign records; `CampaignStore.cs`,
 `Referee.cs:170-260`, `Backtests.cs:280-330, 640-700`, `VerdictFor`.
