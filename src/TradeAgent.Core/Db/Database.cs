@@ -3026,6 +3026,219 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{sharesRung}') ON CONFLICT(key) DO UPDATE SET value='{sharesRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-board-b1): a unit overtaken renumbers it in Versions, nothing else.
+        const int actsRung = Versions.BoardActsRung;
+        if (have < actsRung)
+        {
+            // THE BOARD'S ACTS — `U-board-b1` (R24 §§ 4.2–4.4). `board_policy` and `board_event` are REBUILT (no backward compatibility
+            // is owed, CLAUDE.md): the policy's decider widens to `board` (an act of active seats) and `owner` (his veto, which only
+            // narrows) on the bases `act` and `veto`, `act_id` naming the act behind every version but the founding one — its mode and
+            // activation CHECKs UNCHANGED, so a live mode or an activation stays unstorable until `U-board-live`'s own rung — and the
+            // event's kinds widen by the owner's in-process presses over the board's own power: its budget share and a seat founded or
+            // retired (CHANGE-001). EVERY ROW IS COPIED BYTE FOR BYTE, the body and its hash unchanged, so the record of the founding
+            // stays true about what was founded.
+            //
+            // ONE TRANSACTION for the rebuild, the stamp after everything: the two tables are renamed aside together (a rename moves a
+            // child's reference with it, so the child moves too), made again under their names, every row copied, the old ones dropped
+            // — which drops their seals — and the seals made again, then COMMIT. A crash before the commit leaves rung 49's tables as
+            // they were; one after it finds `act_id` on `board_policy` and rebuilds nothing again. Foreign keys are off only for the
+            // rebuild (SQLite's own procedure for changing a table), and checked over the board's tables before the commit.
+            if (ReadInt("SELECT COUNT(*) FROM pragma_table_info('board_policy') WHERE name='act_id'") is not > 0)
+            {
+                Exec("PRAGMA foreign_keys=OFF;");
+                try
+                {
+                    Exec("BEGIN IMMEDIATE;");
+                    try
+                    {
+                        Exec("""
+                            ALTER TABLE board_event RENAME TO board_event_49;
+                            ALTER TABLE board_policy RENAME TO board_policy_49;
+                            CREATE TABLE board_policy(
+                              version        INTEGER PRIMARY KEY CHECK (version >= 1),
+                              decider        TEXT NOT NULL CHECK (decider IN ('app','board','owner')),
+                              basis          TEXT NOT NULL CHECK (basis IN ('founding','act','veto')),
+                              act_id         TEXT REFERENCES board_act(id),
+                              written_at     TEXT NOT NULL,
+                              mode           TEXT NOT NULL CHECK (mode IN ('OBSERVE','PAPER')),
+                              live_activated INTEGER NOT NULL CHECK (live_activated = 0),
+                              body           TEXT NOT NULL CHECK (length(body) BETWEEN 2 AND 65536),
+                              body_sha256    TEXT NOT NULL CHECK (length(body_sha256) = 64),
+                              supersedes     INTEGER REFERENCES board_policy(version),
+                              CHECK ((version = 1 AND supersedes IS NULL) OR supersedes = version - 1),
+                              CHECK ((decider = 'app' AND basis = 'founding') OR (decider = 'board' AND basis = 'act')
+                                     OR (decider = 'owner' AND basis = 'veto')),
+                              CHECK ((basis = 'founding') = (act_id IS NULL)),
+                              CHECK ((basis = 'founding') = (version = 1))
+                            );
+                            CREATE TABLE board_event(
+                              id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                              at             TEXT NOT NULL,
+                              kind           TEXT NOT NULL CHECK (kind IN ('founded','earlier-live-set-aside','budget-share','seat-founded','seat-retired')),
+                              policy_version INTEGER REFERENCES board_policy(version),
+                              home_schema    INTEGER CHECK (home_schema IS NULL OR home_schema >= 0),
+                              budget_share   TEXT,
+                              seat_id        TEXT REFERENCES board_seat(id),
+                              detail         TEXT NOT NULL CHECK (length(detail) BETWEEN 1 AND 2000),
+                              CHECK (kind <> 'founded' OR (policy_version = 1 AND home_schema IS NOT NULL AND budget_share IS NOT NULL)),
+                              CHECK (kind <> 'budget-share' OR budget_share IS NOT NULL),
+                              CHECK ((kind IN ('seat-founded','seat-retired')) = (seat_id IS NOT NULL))
+                            );
+                            """);
+                        // THE ROWS ARE COPIED BY THE BOARD'S ONE WRITER (a guard holds that no other file writes a board row), inside
+                        // this transaction, byte for byte.
+                        Board.BoardStore.CopyForActsRung(this);
+                        Exec("""
+                            DROP TABLE board_event_49;
+                            DROP TABLE board_policy_49;
+                            CREATE TRIGGER board_policy_sealed_u BEFORE UPDATE ON board_policy
+                            BEGIN SELECT RAISE(ABORT, 'a policy version is written once and never updated: a new version supersedes it'); END;
+                            CREATE TRIGGER board_policy_sealed_d BEFORE DELETE ON board_policy
+                            BEGIN SELECT RAISE(ABORT, 'a policy version is never deleted'); END;
+                            CREATE TRIGGER board_policy_sealed_i BEFORE INSERT ON board_policy
+                            WHEN EXISTS (SELECT 1 FROM board_policy WHERE version = NEW.version)
+                            BEGIN SELECT RAISE(ABORT, 'a policy version is written once: an insert over it, a replace included, is refused'); END;
+                            CREATE TRIGGER board_event_sealed_u BEFORE UPDATE ON board_event
+                            BEGIN SELECT RAISE(ABORT, 'a board event is written once and never updated'); END;
+                            CREATE TRIGGER board_event_sealed_d BEFORE DELETE ON board_event
+                            BEGIN SELECT RAISE(ABORT, 'a board event is never deleted'); END;
+                            CREATE TRIGGER board_event_sealed_i BEFORE INSERT ON board_event
+                            WHEN NEW.id IS NOT NULL AND EXISTS (SELECT 1 FROM board_event WHERE id = NEW.id)
+                            BEGIN SELECT RAISE(ABORT, 'a board event is written once: an insert over it, a replace included, is refused'); END;
+                            """);
+                        if (ReadInt("SELECT COUNT(*) FROM pragma_foreign_key_check('board_event')") is > 0
+                            || ReadInt("SELECT COUNT(*) FROM pragma_foreign_key_check('board_policy')") is > 0)
+                            throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                                $"the board's records name a policy version or a seat that is not there, so rung {actsRung} was not applied");
+                        Exec("COMMIT;");
+                    }
+                    catch
+                    {
+                        Exec("ROLLBACK;");
+                        throw;
+                    }
+                }
+                finally
+                {
+                    Exec("PRAGMA foreign_keys=ON;");
+                }
+            }
+
+            // THE ACTS AND WHAT HANGS FROM THEM — each made where missing, so a crash before the stamp runs this again over what it made.
+            // `board_act`: one act of one seat — `narrow` (applied at once) or `propose` (applied only on another seat's confirmation, so it
+            // carries its expiry) — its exact intent and that text's hash, the version it was made against, the rationale (a CLAIM,
+            // verbatim, never in the research ledger every role reads), the refs the app checked, and `evidence_class` held NULL by CHECK:
+            // no act of this rung allocates to a version (`U-board-live` adds the allocation kind and writes it). `board_act_event`: what
+            // happened to an act, each with the seat or principal that did it and its own sealed rationale; ONE DECISION PER SEAT PER ACT
+            // and ONE CLOSE PER ACT by unique index, and at most one veto. `board_forecast` and its resolution: `org_forecast`'s shape, the
+            // forecaster a board seat. `board_power_proposal`: a proposal of the board's own power (CHANGE-001), shown to the owner and
+            // applied by nothing. `board_seat_state`: a seat's state, since its row is sealed — `active` written by the app alone and
+            // nothing after `retired`. Every table refuses UPDATE, DELETE and an insert over its key; the text-keyed ones are WITHOUT
+            // ROWID, so that key is the only one an insert can collide with.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS board_act(
+                  id             TEXT PRIMARY KEY CHECK (substr(id, 1, 5) = 'bact-' AND length(id) BETWEEN 6 AND 40),
+                  kind           TEXT NOT NULL CHECK (kind IN ('narrow','propose')),
+                  seat           TEXT NOT NULL REFERENCES board_seat(id),
+                  attempt_id     TEXT,
+                  intent         TEXT NOT NULL CHECK (length(intent) BETWEEN 2 AND 65536),
+                  intent_sha256  TEXT NOT NULL CHECK (length(intent_sha256) = 64),
+                  policy_version INTEGER NOT NULL REFERENCES board_policy(version),
+                  rationale      TEXT NOT NULL CHECK (length(rationale) BETWEEN 1 AND 4000),
+                  refs           TEXT NOT NULL,
+                  evidence_class TEXT CHECK (evidence_class IS NULL),
+                  expires_at     TEXT,
+                  at             TEXT NOT NULL,
+                  CHECK ((kind = 'propose') = (expires_at IS NOT NULL))
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS board_act_event(
+                  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                  act_id          TEXT NOT NULL REFERENCES board_act(id),
+                  kind            TEXT NOT NULL CHECK (kind IN ('proposed','applied','confirmed','refused','expired','stale','vetoed')),
+                  seat            TEXT NOT NULL CHECK (seat IN ('app','owner') OR (substr(seat, 1, 6) = 'board-' AND length(seat) BETWEEN 7 AND 40)),
+                  attempt_id      TEXT,
+                  rationale       TEXT CHECK (rationale IS NULL OR length(rationale) BETWEEN 1 AND 4000),
+                  proposer_family TEXT,
+                  decider_family  TEXT,
+                  same_family     INTEGER CHECK (same_family IS NULL OR same_family IN (0, 1)),
+                  policy_version  INTEGER REFERENCES board_policy(version),
+                  detail          TEXT,
+                  at              TEXT NOT NULL,
+                  CHECK ((kind IN ('confirmed','refused')) = (same_family IS NOT NULL)),
+                  CHECK (kind NOT IN ('confirmed','refused') OR (rationale IS NOT NULL AND substr(seat, 1, 6) = 'board-')),
+                  CHECK (kind NOT IN ('applied','confirmed') OR policy_version IS NOT NULL),
+                  CHECK (kind IN ('applied','confirmed','vetoed') OR policy_version IS NULL),
+                  CHECK (kind <> 'vetoed' OR seat = 'owner')
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_board_act_decision ON board_act_event(act_id, seat) WHERE kind IN ('confirmed','refused');
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_board_act_close ON board_act_event(act_id) WHERE kind IN ('applied','confirmed','expired','stale');
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_board_act_veto ON board_act_event(act_id) WHERE kind = 'vetoed';
+                CREATE TABLE IF NOT EXISTS board_forecast(
+                  id            TEXT PRIMARY KEY CHECK (substr(id, 1, 4) = 'bfc-' AND length(id) BETWEEN 5 AND 40),
+                  act_id        TEXT NOT NULL REFERENCES board_act(id),
+                  forecaster    TEXT NOT NULL REFERENCES board_seat(id),
+                  attempt_id    TEXT,
+                  vocabulary    INTEGER NOT NULL,
+                  predicate     TEXT NOT NULL,
+                  subject       TEXT NOT NULL,
+                  target        TEXT NOT NULL,
+                  resolve_by    TEXT NOT NULL,
+                  probability   TEXT NOT NULL CHECK (typeof(probability) = 'text' AND length(probability) <= 30
+                                                     AND (probability IN ('0', '1')
+                                                          OR (probability GLOB '0.?*' AND substr(probability, 3) NOT GLOB '*[^0-9]*')
+                                                          OR (probability GLOB '1.?*' AND substr(probability, 3) NOT GLOB '*[^0]*'))),
+                  scored        INTEGER NOT NULL CHECK (scored IN (0, 1)),
+                  unscored_why  TEXT,
+                  at            TEXT NOT NULL,
+                  CHECK ((scored = 1) = (unscored_why IS NULL))
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS board_forecast_resolution(
+                  forecast_id  TEXT PRIMARY KEY REFERENCES board_forecast(id),
+                  outcome      TEXT NOT NULL CHECK (outcome IN ('yes', 'no', 'void')),
+                  record_kind  TEXT NOT NULL,
+                  record_id    TEXT NOT NULL,
+                  why          TEXT NOT NULL,
+                  at           TEXT NOT NULL
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS board_power_proposal(
+                  id         TEXT PRIMARY KEY CHECK (substr(id, 1, 5) = 'bpow-' AND length(id) BETWEEN 6 AND 40),
+                  seat       TEXT NOT NULL REFERENCES board_seat(id),
+                  attempt_id TEXT,
+                  target     TEXT NOT NULL CHECK (target IN ('composition','board-budget','audit-budget','connection','founding-policy-shape','kernel')),
+                  text       TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 4000),
+                  at         TEXT NOT NULL
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS board_seat_state(
+                  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                  seat  TEXT NOT NULL REFERENCES board_seat(id),
+                  state TEXT NOT NULL CHECK (state IN ('dormant','active','retired')),
+                  by    TEXT NOT NULL CHECK (by IN ('app','owner')),
+                  at    TEXT NOT NULL,
+                  CHECK (state <> 'active' OR by = 'app')
+                );
+                CREATE INDEX IF NOT EXISTS ix_board_seat_state ON board_seat_state(seat, id);
+                CREATE TRIGGER IF NOT EXISTS board_seat_state_after_retired BEFORE INSERT ON board_seat_state
+                WHEN (SELECT state FROM board_seat_state WHERE seat = NEW.seat ORDER BY id DESC LIMIT 1) = 'retired'
+                BEGIN SELECT RAISE(ABORT, 'a retired board seat stays retired: nothing changes its state again'); END;
+                """);
+            foreach (var (table, key) in new[]
+                     {
+                         ("board_act", "id"), ("board_act_event", "id"), ("board_forecast", "id"), ("board_forecast_resolution", "forecast_id"),
+                         ("board_power_proposal", "id"), ("board_seat_state", "id")
+                     })
+                Exec($"""
+                    CREATE TRIGGER IF NOT EXISTS {table}_sealed_u BEFORE UPDATE ON {table}
+                    BEGIN SELECT RAISE(ABORT, 'a row of {table} is written once and never updated'); END;
+                    CREATE TRIGGER IF NOT EXISTS {table}_sealed_d BEFORE DELETE ON {table}
+                    BEGIN SELECT RAISE(ABORT, 'a row of {table} is never deleted'); END;
+                    CREATE TRIGGER IF NOT EXISTS {table}_sealed_i BEFORE INSERT ON {table}
+                    WHEN NEW.{key} IS NOT NULL AND EXISTS (SELECT 1 FROM {table} WHERE {key} = NEW.{key})
+                    BEGIN SELECT RAISE(ABORT, 'a row of {table} is written once: an insert over it, a replace included, is refused'); END;
+                    """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{actsRung}') ON CONFLICT(key) DO UPDATE SET value='{actsRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

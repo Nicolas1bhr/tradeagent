@@ -71,6 +71,27 @@ public sealed class BoardStore(Database db)
     }
 
     /// <summary>
+    /// RUNG 50's COPY (<c>U-board-b1</c>): every row of rung 49's <c>board_policy</c> and <c>board_event</c>, set aside by the rung as
+    /// <c>board_policy_49</c> and <c>board_event_49</c>, into the rebuilt tables BYTE FOR BYTE — the body, its hash, the time and every
+    /// event's id as they were; no version names an act, no event a seat. Run inside the rung's own transaction, on its connection,
+    /// and by nothing else.
+    /// </summary>
+    internal static void CopyForActsRung(Database db)
+    {
+        using (var p = db.Cmd("""
+            INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, supersedes)
+              SELECT version, decider, basis, NULL, written_at, mode, live_activated, body, body_sha256, supersedes
+                FROM board_policy_49 ORDER BY version
+            """))
+            p.ExecuteNonQuery();
+        using var e = db.Cmd("""
+            INSERT INTO board_event(id, at, kind, policy_version, home_schema, budget_share, seat_id, detail)
+              SELECT id, at, kind, policy_version, home_schema, budget_share, NULL, detail FROM board_event_49 ORDER BY id
+            """);
+        e.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// THE RECORD OF THE OWNER'S PRESS OVER AN EARLIER ARMED HOME (<c>U-board-a1</c> item 5), written in the caller's own transaction
     /// beside the settings rows it moves. A record, not a decision: it names no policy version and changes none.
     /// </summary>
