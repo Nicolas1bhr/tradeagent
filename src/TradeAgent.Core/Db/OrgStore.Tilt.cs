@@ -92,10 +92,14 @@ public sealed partial class OrgStore
         if (from is not null && before == r.Share)
             throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} already holds a {r.Currency} share of {from}: there is nothing to tilt.");
 
-        // AT MOST TWENTY POINTS A WEEK (ORGANISATION § 8), every move of this unit's share in this currency counted, either way.
+        // AT MOST TWENTY POINTS A WEEK (ORGANISATION § 8), every move of this unit's share in this currency counted, either way — but
+        // a FIRST DELEGATION of a trial or verdict share (none → a value) is a delegation, not a tilt (seat B's ruling on the Codex
+        // review's P2): not bounded by the week, and not counted in it; still bounded by the siblings' whole and one trial's or
+        // judgement's worth below, and still an `envelope-tilt` decision with a forecast. Every later change is a tilt.
         var move = Math.Abs(r.Share - before);
+        var delegation = IsDelegation(r.Currency, from);
         var moved = MovedThisWeek(unit.Id, r.Currency, now);
-        if (moved + move > OrgBounds.TiltPerWeek)
+        if (!delegation && moved + move > OrgBounds.TiltPerWeek)
             throw Refused($"{OrgEnvelopes.NameOf(unit.Id)}'s {r.Currency} share has moved {moved.ToString(CultureInfo.InvariantCulture)} in the "
                           + $"last seven days, and {move.ToString(CultureInfo.InvariantCulture)} more would move it past the "
                           + $"{OrgBounds.TiltPerWeek.ToString(CultureInfo.InvariantCulture)} a tilt moves a share in a week (ORGANISATION § 8).");
@@ -188,15 +192,19 @@ public sealed partial class OrgStore
         {
             var detail = r.GetString(0);
             var m = TiltDetail().Match(detail);
-            if (!m.Success || !decimal.TryParse(m.Groups[2].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var by))
+            if (!m.Success || !decimal.TryParse(m.Groups[3].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var by))
                 throw Damaged($"a 'tilted' event of unit {unitId} reads '{detail}', which this build did not write");
-            if (m.Groups[1].Value == currency) moved += by;
+            var from = m.Groups[2].Value == "none" ? null : m.Groups[2].Value;
+            if (m.Groups[1].Value == currency && !IsDelegation(currency, from)) moved += by;
         }
         return moved;
     }
 
-    [GeneratedRegex(@"^unit=\S+ currency=(\S+) from=\S+ to=\S+ move=([0-9.]+) decision=\S+$")]
+    [GeneratedRegex(@"^unit=\S+ currency=(\S+) from=(\S+) to=\S+ move=([0-9.]+) decision=\S+$")]
     private static partial Regex TiltDetail();
+
+    /// <summary>A trial or verdict share set where the unit held none: a first delegation, never a weekly tilt.</summary>
+    static bool IsDelegation(string currency, string? from) => from is null && currency is OrgCurrency.Trials or OrgCurrency.Verdicts;
 
     /// <summary>
     /// WHY <paramref name="share"/> IN <paramref name="currency"/> WOULD TAKE THE ACTIVE UNITS UNDER <paramref name="parentId"/> PAST THE
