@@ -53,9 +53,13 @@ public sealed partial class TradingGateway
         {
             var withdrawn = _envelopes.Withdraw(envelope.Id, now);
             if (!withdrawn.Ok) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, withdrawn.Why + " Nothing was written.");
-            _log.Activity($"The security board's version {version} changed the standing paper envelope's terms, so the envelope on account "
-                          + $"{envelope.AccountId} granted under the earlier terms is withdrawn: nothing new starts under it, and what was "
-                          + "allocated under it may trade nothing. The new terms, if any, are granted on the next pass.");
+            _log.Activity(after.Decider == BoardDecider.Owner
+                ? $"Your veto (version {version}) narrowed the standing paper envelope's terms, so the envelope on account "
+                  + $"{envelope.AccountId} is withdrawn: nothing new starts under it, and what was allocated under it may trade nothing. "
+                  + "A veto grants nothing in its place."
+                : $"The security board's version {version} changed the standing paper envelope's terms, so the envelope on account "
+                  + $"{envelope.AccountId} granted under the earlier terms is withdrawn: nothing new starts under it, and what was "
+                  + "allocated under it may trade nothing. The new terms, if any, are granted on the next pass.");
         }
     }
 
@@ -89,6 +93,25 @@ public sealed partial class TradingGateway
         _board.ProposePower(seat, attempt, target, text, Now);
 
     // ---- the owner's in-process seams over the board's own power (AUTH-001, CHANGE-001) ----------------------------------------------
+
+    /// <summary>
+    /// THE OWNER'S VETO, PRESS ONE (R24 Q2): what vetoing the act would restore, field by field, or why it cannot be vetoed. Reads only;
+    /// IN PROCESS ONLY — no pipe op, no verb and no <c>trade</c> command reaches it (a guard reads their sources).
+    /// </summary>
+    public BoardVetoPreview PreviewBoardVeto(string actId) => _board.PreviewBoardVeto(actId);
+
+    /// <summary>
+    /// THE OWNER'S VETO, PRESS TWO (R24 Q2, AUTH-001): it ONLY NARROWS — an open proposal closed, a confirmed widening set back field by
+    /// field to the narrower of now and before, the envelope following it and nothing granted in its place; an act that only narrowed is
+    /// refused. In process only. Nothing waits on him: the board never asks for it.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardActResult VetoBoardAct(string actId)
+    {
+        var result = Followed(() => _board.VetoBoardAct(actId, Now));
+        _log.Activity($"You vetoed the security board's act {result.Act.Id}. {result.Words}");
+        return result;
+    }
 
     /// <summary>
     /// THE OWNER SETS THE BOARD'S BUDGET SHARE (R24 Q7) — his press, two presses in his UI; IN PROCESS ONLY: no pipe op, no verb and no
