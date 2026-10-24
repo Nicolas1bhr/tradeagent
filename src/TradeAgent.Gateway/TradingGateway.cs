@@ -3401,9 +3401,14 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// that does not verify is <see cref="BoardPolicy.Unreadable"/> — OBSERVE, nothing admitted on the plan — with execution paused and
     /// the owner told; its row is kept as it is, and the founding defaults are never re-derived in its place.
     /// </summary>
-    BoardPolicy PolicyInForce()
+    BoardPolicy PolicyInForce() => Published(_board.InForce());
+
+    /// <summary>
+    /// THE RECORD A READ FOUND, MADE THE ONE THIS GATEWAY STANDS ON: its version and decider held, and — when it did not verify — Watch
+    /// only, the plan admitting nothing, execution paused and the owner told. Answers the policy to enforce.
+    /// </summary>
+    BoardPolicy Published(BoardPolicyInForce inForce)
     {
-        var inForce = _board.InForce();
         _inForce = inForce;
         if (!inForce.CouldNotBeRead) return inForce.Policy;
         try
