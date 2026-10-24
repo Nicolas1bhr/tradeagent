@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.Provisioning;
 
@@ -97,13 +98,13 @@ public static class Downloader
 
     static HttpClient CreateClient()
     {
-        var handler = new SocketsHttpHandler
+        // THROUGH THE APP'S TLS POLICY (U-tls-denylist): the platform's validation and the denylist, on every hop of a redirect too.
+        var http = TlsClients.Client(handler =>
         {
-            AllowAutoRedirect = true,          // GitHub redirects release assets to its object store,
-            MaxAutomaticRedirections = 10,     // and redirects the API itself when a repo is renamed.
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-        };
-        var http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(30) };
+            handler.AllowAutoRedirect = true;          // GitHub redirects release assets to its object store,
+            handler.MaxAutomaticRedirections = 10;     // and redirects the API itself when a repo is renamed.
+            handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        }, TimeSpan.FromMinutes(30));
         http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
         return http;
     }

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.Provisioning;
 
@@ -95,12 +96,12 @@ public sealed class GdeltRecorder : IAsyncDisposable
     public const string BackfillSeries = "gkg-backfill";
 
     // ONE CLIENT: NO TIMEOUT OF ITS OWN (the leash is per request), NO REDIRECTS AND NO DECOMPRESSION — see the summary.
-    static readonly HttpClient Http = new(new SocketsHttpHandler
+    // THROUGH THE APP'S TLS POLICY (U-tls-denylist).
+    static readonly HttpClient Http = TlsClients.Client(handler =>
     {
-        AllowAutoRedirect = false,
-        AutomaticDecompression = DecompressionMethods.None
-    })
-    { Timeout = Timeout.InfiniteTimeSpan };
+        handler.AllowAutoRedirect = false;
+        handler.AutomaticDecompression = DecompressionMethods.None;
+    }, Timeout.InfiniteTimeSpan);
 
     readonly TapeStore _store;
     readonly Func<bool> _enabled;

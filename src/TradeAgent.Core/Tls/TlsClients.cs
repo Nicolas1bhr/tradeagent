@@ -12,6 +12,13 @@ namespace TradeAgent.Core.Tls;
 /// <para>The list is read once, at the first secure connection, never at construction: a client held in a static field is built at class
 /// load, and a missing list must refuse connections in words, not fail a type initializer. A list that cannot be read stays refused for
 /// the life of the process — the repair is a reinstall, which restarts it.</para>
+///
+/// <para><b>Built here:</b> the AI conversation and decision wires (<c>ApiConversation</c>, <c>TypeSafeWire</c>), the downloader and the
+/// four data collectors in Provisioning (<c>Downloader</c>, <c>TapeCollector</c>, <c>GdeltRecorder</c>, <c>InstrumentVerifier</c>,
+/// <c>ForwardBarCollector</c>), and the doctor's internet check. <b>Not TLS, so not here:</b> the codex surface probe's mock
+/// (<c>CodexSurfaceProbe</c>), the cell's broker door (<c>BrokerDoor</c>) and the cell benchmark's sockets (<c>CellBenchmark</c>) are
+/// loopback listeners the app serves plain to its own children; the gateway's pipe (<c>PipeClient</c>, the doctor's pipe check) and the
+/// bridge's (<c>BridgeServer</c>) are local named pipes. None leaves the machine, and none carries a certificate.</para>
 /// </summary>
 public static class TlsClients
 {
