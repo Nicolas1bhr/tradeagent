@@ -381,6 +381,11 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.EscalationList, TimeSpan.Zero, "the organisation's escalation records, the caller's own, newest first, in process"),
         new(Core.Ops.LateralSend, TimeSpan.Zero, "the organisation's lateral notes: the recipient and the refs checked, one insert, in process"),
         new(Core.Ops.LateralList, TimeSpan.Zero, "the organisation's lateral notes, the caller's own, newest first, in process"),
+        new(Core.Ops.BoardNarrow, TimeSpan.Zero, "the security board's records: the intent checked against the policy in force, one act, its version, event and forecasts, the envelope's withdrawal in the same write, in process"),
+        new(Core.Ops.BoardPropose, TimeSpan.Zero, "the security board's records: the intent checked against the policy in force, one act, its event and forecasts, in process"),
+        new(Core.Ops.BoardDecide, TimeSpan.Zero, "the security board's records: one act and its events read, one event — and on a confirmation its version and the envelope's withdrawal — written, in process"),
+        new(Core.Ops.BoardList, TimeSpan.Zero, "the security board's acts, newest first, without a rationale, in process"),
+        new(Core.Ops.BoardShow, TimeSpan.Zero, "one act of the security board, blind until the caller's own word on it is sealed, and the policy in force, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1326,6 +1331,20 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             }
         }
 
+        // A BOARD SEAT WRITES NOTHING BUT ITS OWN ACTS (U-board-b1 item 6; INBOX-001, CHANGE-001, the blind read): a caller whose grant
+        // proved a seat of the security board is served the board's verbs and the reads named in BoardSeatReads — and REFUSED every other
+        // op, before anything is read or written: no ledger entry, no lens, no material note, no organisation verb, no order. A side
+        // channel around the blind read would be one seat writing what another reads, and text the organisation reads would be the board
+        // acting through words (R24 § 4.1: "anything through text"). An allowlist, so an op added later is refused until it is named here.
+        if (Core.Board.BoardSeats.IsBoardId(ctx.Role) && !Core.Ops.IsBoard(req.Op) && Array.IndexOf(BoardSeatReads, req.Op) < 0)
+        {
+            gateway.Log.Activity($"AI request refused: '{req.Op}' from {ctx.Role}, a seat of the security board, which writes nothing but its own acts", "warn");
+            if (!callerRecords) RecordRefusal(req.Op, ErrorCode.INVALID_REQUEST, ctx);
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"'{req.Op}' was refused: {ctx.Role} is a seat of the security board, which writes nothing but its own acts and reads "
+                + "what TradeAgent shows it — no ledger, lens, note, organisation verb or order. Nothing was done.");
+        }
+
         // THE ROLE DECIDES WHETHER MONEY MOVES, and this is the only line that reads it.
         //
         // Before it, every authenticated caller was the same caller: one machine token, no way to
@@ -1438,6 +1457,11 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.EscalationList => EscalationList(ctx, req),
                 Core.Ops.LateralSend   => LateralSend(ctx, req),
                 Core.Ops.LateralList   => LateralList(ctx, req),
+                Core.Ops.BoardNarrow   => BoardNarrow(ctx, req),
+                Core.Ops.BoardPropose  => BoardPropose(ctx, req),
+                Core.Ops.BoardDecide   => BoardDecide(ctx, req),
+                Core.Ops.BoardList     => BoardList(ctx, req),
+                Core.Ops.BoardShow     => BoardShow(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),

@@ -275,6 +275,21 @@ public static class Ops
     public const string LateralSend = "lateral-send", LateralList = "lateral-list";
 
     /// <summary>
+    /// THE SECURITY BOARD'S VERBS (<c>U-board-b1</c>; R24 § 4.2, ORCHESTRATION § 2.9): held by ACTIVE BOARD SEATS alone, through the
+    /// broker, each proved by its launch — never by a position, the chief included, and never by text. Named apart from every pipe op and
+    /// every organisation verb, NONE in <see cref="Mutating"/>: no board verb places, alters, times or sizes an order (ORDER-001,
+    /// SIGNAL-001) — the board allocates, the frozen runner trades. No verb, the board's included, reaches the owner's authority
+    /// (AUTH-001) or the board's own power (CHANGE-001).
+    /// </summary>
+    public const string BoardNarrow = "board-narrow", BoardPropose = "board-propose", BoardDecide = "board-decide", BoardList = "board-list",
+        BoardShow = "board-show";
+
+    /// <summary>Every board verb this build serves.</summary>
+    public static readonly string[] Board = [BoardNarrow, BoardPropose, BoardDecide, BoardList, BoardShow];
+
+    public static bool IsBoard(string op) => Board.Contains(op);
+
+    /// <summary>
     /// Every organisation verb this build serves (<see cref="MandateAssign"/>, <see cref="DecisionRecord"/>; <c>U-org-verbs-a</c>:
     /// <see cref="MandateRescope"/>, <see cref="MandatePropose"/>, <see cref="OrgShow"/>; <c>U-org-verbs-c</c>: <see cref="OrgCharter"/>,
     /// <see cref="OrgHire"/>).
