@@ -3601,6 +3601,14 @@ public sealed class MissionLoop
                     else if (woken is not null && !OnlyLooks(woken))
                         BringLookForward(events, role, now);
                 }
+                else if (_options.LiveReviewEvery is not null)
+                {
+                    // THE POLICY NOW HOLDS NO REVIEW INTERVAL — none at all (U-board-b1 fix pass 2, the re-review's P2): a narrowing
+                    // applies at once, so a look raised while there was one is closed without a turn, before the pick can buy it one.
+                    // Only where the interval is LIVE: a fixed interval of none never changes under a loop, and raised no look.
+                    WithdrawLooks(events, role, now,
+                        "the security board's policy holds no review interval (none), so TradeAgent did not pay for a look raised before it");
+                }
 
                 // A BOUNDARY'S DEADLINE IS NEAR AND THIS DIRECTOR HAS NOT ASSESSED IT (U-reconcile-packet): one
                 // reminder per boundary and director, raised here on the app's own clock and closed without a turn
@@ -3654,7 +3662,21 @@ public sealed class MissionLoop
     void Ceiling(MissionEventStore events, ChartPosition head, DateTimeOffset now)
     {
         var every = _options.CeilingFor(head.Level);
-        if (every <= TimeSpan.Zero) return;
+        if (every <= TimeSpan.Zero)
+        {
+            // THE POLICY NOW HOLDS NO CEILING FOR THIS LEVEL — none at all (U-board-b1 fix pass 2, the re-review's P2): a narrowing
+            // applies at once, so a floor raised while there was one is closed without a turn, before the pick can buy it one. Only
+            // where the ceilings are LIVE, as with the look.
+            try
+            {
+                if (_options.LiveCeilings is not null && events.HasUnconsumed(MissionEventKind.Ceiling, head.Id))
+                    events.WithdrawCeilings(head.Id, now,
+                        $"the security board's policy holds no ceiling for the {head.Level} level (none), so TradeAgent did not pay for "
+                        + "the floor raised before it");
+            }
+            catch (Exception) { /* the floor stays this pass; the next pass tries again */ }
+            return;
+        }
         try
         {
             var last = _host.LastWokenAt(head.Id);
@@ -3737,13 +3759,13 @@ public sealed class MissionLoop
     /// the store's statement refuses everything else (<see cref="MissionEventStore.WithdrawLooks"/>). Never throws: a
     /// look left pending is one look paid for, not the mission.
     /// </summary>
-    static void WithdrawLooks(MissionEventStore events, string role, DateTimeOffset now)
+    static void WithdrawLooks(MissionEventStore events, string role, DateTimeOffset now, string? why = null)
     {
         try
         {
-            events.WithdrawLooks(role, now,
-                $"{CouncilRoles.Title(role)} held no open work it owns (objectives v{RoleObjectives.Version}), so "
-                + "TradeAgent did not pay for a look");
+            events.WithdrawLooks(role, now, why
+                ?? $"{CouncilRoles.Title(role)} held no open work it owns (objectives v{RoleObjectives.Version}), so "
+                   + "TradeAgent did not pay for a look");
         }
         catch (Exception) { /* the look stays; nothing the role is owed moves */ }
     }
