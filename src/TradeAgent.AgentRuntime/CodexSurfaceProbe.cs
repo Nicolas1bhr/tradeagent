@@ -16,8 +16,10 @@ namespace TradeAgent.AgentRuntime;
 /// request carries the tools that binary, template and model offer; they are returned as captured and the codex is ended. No real model
 /// is asked anything, nothing is spent, and the throwaway home is deleted.
 ///
-/// <para>MEASURED 2026-10-17 on the dev Mac (codex-cli 0.160.1): ~1 s a run. What it cannot see: the real provider's model metadata,
-/// which the bundled metadata a custom provider reads may not equal — UNKNOWN until the first observed run.</para>
+/// <para>MEASURED 2026-10-17 on the dev Mac (codex-cli 0.160.1): ~1 s a run. THE MODEL'S METADATA IS PINNED (<c>U-cell-model-catalog</c>):
+/// the dry run and a launched seat both name the app's own catalog (<c>model_catalog_json</c>, <see cref="SeatPlan.ModelCatalog"/>), so
+/// neither reads the binary's bundled entry, the account's model list or the fallback — the dry run and a live turn agree on the tools.
+/// What it still cannot see: whether the owner's plan serves gpt-5.5 at all — UNKNOWN until one real turn, on his word.</para>
 /// </summary>
 public sealed class CodexSurfaceProbe : ISurfaceProbe
 {
