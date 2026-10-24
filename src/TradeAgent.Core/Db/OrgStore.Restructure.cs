@@ -184,8 +184,8 @@ public sealed partial class OrgStore
     /// <summary>
     /// MERGES A UNIT INTO ITS SIBLING (<c>U-org-verbs-d</c> item 3; ORGANISATION § 3): A <c>closed</c> with B named as its successor,
     /// A's positions and open child units moved to B, A's head left vacant (the position is a member of B now), the <c>merge</c>
-    /// decision, its forecasts, the restructuring's disposal (every open mandate held, decided or issued in A cancelled; A's positions
-    /// and B's fenced) and one <c>merged</c> event — in ONE write. A's history stays A's: its events, decisions and every launch its
+    /// decision, its forecasts, the restructuring's disposal (every open mandate held, decided or issued in A cancelled; A's positions,
+    /// B's and every position in the subtrees of A's moved children fenced) and one <c>merged</c> event — in ONE write. A's history stays A's: its events, decisions and every launch its
     /// chain funded (lineage is immutable, BUDGET-001); only launches after the merge are funded through B. Refused in words, nothing
     /// written: the rights matrix on either unit; the same unit; either closed; not siblings of one parent; different kinds; A younger
     /// than <see cref="OrgBounds.MinimumLife"/> unless a forecast on its charter resolved; B past <see cref="OrgBounds.MaxMembers"/>
@@ -229,9 +229,14 @@ public sealed partial class OrgStore
         var choice = $"merge {a.Id} into {b.Id}";
         var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.Merge, r.Options.Count > 0 ? r.Options : [choice], choice,
             r.Rationale, r.Refs, now);
-        // THE DISPOSAL FIRST, while A's positions are still A's: each fence names the unit its position stood in.
-        var disposal = Restructure(new Restructuring($"{a.Id} was merged into {b.Id} by {r.Caller}", r.Caller, [a.Id], [], [.. moved, .. stay]), now);
+        // THE DISPOSAL FIRST, while A's positions are still A's: each fence names the unit its position stood in. Every position in the
+        // subtrees of A's moved children is fenced too — their funding chain and the authority above them change with the merge (the
+        // Codex review of U-org-verbs-d, P1).
         var children = all.Where(u => u.ParentId == a.Id && u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToList();
+        var below = children.SelectMany(Subtree).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        var underChildren = Positions().Where(p => below.Contains(p.UnitId) && p.Status != OrgPositionStatus.Ended).Select(p => p.Id).ToList();
+        var disposal = Restructure(new Restructuring($"{a.Id} was merged into {b.Id} by {r.Caller}", r.Caller, [a.Id], [],
+            [.. moved, .. stay, .. underChildren]), now);
         using (var c = db.Cmd("UPDATE org_unit SET status = $closed, closed_at = $at, head_position_id = NULL WHERE id = $a AND status <> $closed",
                    ("$closed", OrgUnitStatus.Closed), ("$at", Sql.T(now)), ("$a", a.Id)))
             if (c.ExecuteNonQuery() != 1) throw Refused($"{a.Id} was closed while this merge was written.");
