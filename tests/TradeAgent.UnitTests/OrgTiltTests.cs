@@ -59,7 +59,7 @@ public class OrgTiltTests
     /// <see cref="Head"/> heads <see cref="Div"/> under the organisation, with a member; under it <see cref="Team"/> (AI 0.2, headed by
     /// <see cref="TeamHead"/>) and <see cref="Sibling"/> (AI 0.5, trials 0.6); one open campaign of 10 trials and 5 judgements.
     /// </summary>
-    static Database Chart(decimal siblingAi = 0.5m)
+    static Database Chart(decimal siblingAi = 0.5m, int verdicts = 5)
     {
         var db = TestEnv.NewDb();
         Unit(db, Div, OrgIds.Root, OrgUnitKind.Division, Head);
@@ -73,7 +73,7 @@ public class OrgTiltTests
             Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 1000,
             cutoff.AddDays(-300), cutoff.AddDays(60), 0, [], false, 0, 0, 0, Now, DatasetState.ACCEPTED, null, []));
         Assert.True(store.SetHoldout(id, cutoff, EvaluationClass.Research).Ok);
-        Assert.True(new CampaignStore(db).Open("BTCUSDT 1m v1", store.ById(id)!, 10, 5, Now).Ok);
+        Assert.True(new CampaignStore(db).Open("BTCUSDT 1m v1", store.ById(id)!, 10, verdicts, Now).Ok);
         return db;
     }
 
@@ -101,7 +101,7 @@ public class OrgTiltTests
         using var db = Chart();
         var org = new OrgStore(db);
 
-        var ai = org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now);
+        var ai = org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now, Seats);
         Assert.Equal(("0.2", "0.35"), (ai.From, ai.To));
         Assert.Equal("0.35", ShareOf(db, Team, OrgCurrency.Ai));
         Assert.Equal(OrgDecisionKind.EnvelopeTilt, ai.Decision.Kind);
@@ -148,7 +148,7 @@ public class OrgTiltTests
     {
         using var db = Chart(siblingAi: scenario == "siblings" ? 0.7m : 0.5m);
         var org = new OrgStore(db);
-        if (scenario == "second-tilt") org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now);
+        if (scenario == "second-tilt") org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now, Seats);
         if (scenario == "division-ai")
         {
             // THE CHIEF HEADS THE ORGANISATION, so the matrix allows it: the refusal is the board's split, never a missing right.
@@ -160,18 +160,18 @@ public class OrgTiltTests
 
         Func<Tilted> act = scenario switch
         {
-            "second-tilt" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.5m), Metered, Now),
-            "siblings" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now),
-            "unfundable" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.005m), Metered, Now),
+            "second-tilt" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.5m), Metered, Now, Seats),
+            "siblings" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now, Seats),
+            "unfundable" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.005m), Metered, Now, Seats),
             "unmetered" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m), null, Now),
             "worthless" => () => org.Tilt(Ask(OrgCurrency.Trials, 0.05m), null, Now),
-            "member" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: Member), Metered, Now),
-            "own-head" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: TeamHead), Metered, Now),
+            "member" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: Member), Metered, Now, Seats),
+            "own-head" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: TeamHead), Metered, Now, Seats),
             "root" => () => org.Tilt(Ask(OrgCurrency.Trials, 0.3m, unit: OrgIds.Root), null, Now),
-            "division-ai" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: Chief, unit: OrgIds.Research), Metered, Now),
+            "division-ai" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, caller: Chief, unit: OrgIds.Research), Metered, Now, Seats),
             "currency" => () => org.Tilt(Ask("paper-slots", 0.3m), null, Now),
-            "no-forecast" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, forecasts: []), Metered, Now),
-            "same" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.2m), Metered, Now),
+            "no-forecast" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.3m, forecasts: []), Metered, Now, Seats),
+            "same" => () => org.Tilt(Ask(OrgCurrency.Ai, 0.2m), Metered, Now, Seats),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario))
         };
         var refused = Assert.Throws<TradeAgentException>(() => act());
@@ -227,5 +227,63 @@ public class OrgTiltTests
         Assert.Equal(("0.2", "0.3", "0.25"),
             (team.GetProperty("ai").GetString(), team.GetProperty("trials").GetString(), team.GetProperty("verdicts").GetString()));
         Assert.False(chain[1].GetProperty("shares").TryGetProperty("trials", out _), "a unit with no trial share of its own was shown one");
+    }
+
+    // ---- the fix pass --------------------------------------------------------------------------------------------
+
+    /// <summary>One turn of each seat, as the host's meter prices it: the team's head 1.5, every other 0.1.</summary>
+    static decimal? Seats(string position) => position == TeamHead ? 1.5m : 0.1m;
+
+    /// <summary>
+    /// FIX PASS (the Codex review's P2, its settling check): AN AI TILT THAT WOULD STRAND A SEATED CHILD IS REFUSED. The head's own turn
+    /// reserves 0.1; the team's head, seated in the team, reserves 1.5; the team's envelope would fall from 2 (0.2 of 10) to 1 — inside
+    /// the weekly bound — so its seat could not start one turn: refused, naming the seat, nothing written. RED before the fix: only the
+    /// calling head's reservation was read, and the tilt was written.
+    /// </summary>
+    [Fact]
+    public void An_ai_tilt_that_would_strand_a_seated_child_is_refused()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var before = Written(db);
+
+        var refused = Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Ai, 0.1m), Metered, Now, Seats));
+        Assert.Contains(TeamHead, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("more than the whole", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        Assert.Equal("0.2", ShareOf(db, Team, OrgCurrency.Ai));
+
+        // A TILT THAT LEAVES IT ITS TURN IS WRITTEN: 0.2 → 0.35, an envelope of 3.5.
+        Assert.Equal("0.35", org.Tilt(Ask(OrgCurrency.Ai, 0.35m), Metered, Now, Seats).To);
+    }
+
+    /// <summary>
+    /// FIX PASS (seat B's ruling on the Codex review's P2, its settling check — budget 3, NULL start): THE FIRST DELEGATION OF A TRIAL OR
+    /// VERDICT SHARE IS A DELEGATION, NOT A TILT. From none to 0.34 of a 3-judgement campaign is written past the weekly 0.20, as an
+    /// <c>envelope-tilt</c> decision with its forecast; it is still bounded by the siblings' whole and by one judgement's worth; every
+    /// later change is a tilt under the weekly bound, which the delegation does not count. RED before the fix: from none was a move
+    /// from 0, so every share worth one of three judgements moved more than 0.20 and no first delegation could be made.
+    /// </summary>
+    [Fact]
+    public void A_first_delegation_is_not_a_weekly_tilt_and_every_later_change_is()
+    {
+        using var db = Chart(verdicts: 3);
+        var org = new OrgStore(db);
+
+        var delegated = org.Tilt(Ask(OrgCurrency.Verdicts, 0.34m), null, Now);
+        Assert.Equal(((string?)null, "0.34"), (delegated.From, delegated.To));
+        Assert.Equal(OrgDecisionKind.EnvelopeTilt, delegated.Decision.Kind);
+        Assert.Single(delegated.Forecasts);
+
+        // STILL BOUNDED: one judgement's worth, and the siblings' whole (the sibling holds 0.6 of the trials).
+        Assert.Contains("less than one", Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Verdicts, 0.2m, unit: Sibling), null, Now)).Message,
+            StringComparison.Ordinal);
+        Assert.Contains("would split more than the whole",
+            Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Trials, 0.5m), null, Now)).Message, StringComparison.Ordinal);
+
+        // EVERY LATER CHANGE IS A TILT: 0.33 more in the week is refused; 0.16 is not, the delegation uncounted.
+        Assert.Contains("in the last seven days",
+            Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Verdicts, 0.67m), null, Now)).Message, StringComparison.Ordinal);
+        Assert.Equal("0.5", org.Tilt(Ask(OrgCurrency.Verdicts, 0.5m), null, Now).To);
     }
 }

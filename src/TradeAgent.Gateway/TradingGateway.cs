@@ -2340,6 +2340,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Func<string, string, IReadOnlyList<UnitDay>?>? AiEnvelopesIn { get; set; }
 
+    /// <summary>
+    /// WHAT ONE TURN OF A POSITION'S SEAT RESERVES, as the host's meter prices it (<c>U-org-verbs-e</c>, the fix pass): what an AI tilt
+    /// holds every seated position of the affected subtree to. Null, or a null answer, is unpriced — the tilt is refused, never guessed.
+    /// </summary>
+    public Func<string, decimal?>? AiReservation { get; set; }
+
     public event Action? StateChanged;
 
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>

@@ -92,7 +92,7 @@ public sealed partial class GatewayPipeServer
         var currency = Require(req, "currency");
         var made = Gateway.Org.Tilt(new TiltRequest(caller, ctx.AttemptId, Require(req, "unit"), currency, share, Require(req, "rationale"),
             TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")),
-            currency == OrgCurrency.Ai ? FundingOf(caller, ctx.AttemptId) : null, DateTimeOffset.UtcNow);
+            currency == OrgCurrency.Ai ? FundingOf(caller, ctx.AttemptId) : null, DateTimeOffset.UtcNow, Gateway.AiReservation);
         return new
         {
             unit = made.Unit.Id,
