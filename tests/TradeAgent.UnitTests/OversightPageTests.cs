@@ -173,6 +173,7 @@ public class OversightPageTests(ITestOutputHelper log)
     /// severe one raises the chrome's banner with its digest sentence (<see cref="DigestComposer.Sentence"/>, cited); "Open" jumps to the page;
     /// "Acknowledge" appends one row per finding the banner counted and lowers it, every finding still in the file. A severe finding that
     /// arrives after the banner was drawn is not acknowledged unseen: it raises the banner again on the next refresh. RED at base: no banner existed.
+    /// These sources name no app database, so the sentence is <see cref="DigestComposer.Unchecked"/>'s: no check ran (U-watcher-b-fix item 2).
     /// </summary>
     [Fact]
     public void A_severe_finding_raises_the_banner_and_an_acknowledgement_lowers_it_without_deleting()
@@ -192,7 +193,7 @@ public class OversightPageTests(ITestOutputHelper log)
         banner.Update();
         Assert.True(banner.Root.IsVisible);
         log.WriteLine(banner.Text.Text);
-        Assert.Contains(DigestComposer.Sentence(severe, _ => true), banner.Text.Text, StringComparison.Ordinal);
+        Assert.Contains(DigestComposer.Unchecked(severe), banner.Text.Text, StringComparison.Ordinal);
 
         Press(banner.Open);
         Assert.Equal(1, opened);
@@ -207,7 +208,7 @@ public class OversightPageTests(ITestOutputHelper log)
 
         banner.Update();
         Assert.True(banner.Root.IsVisible);
-        Assert.Contains(DigestComposer.Sentence(later, _ => true), banner.Text.Text, StringComparison.Ordinal);
+        Assert.Contains(DigestComposer.Unchecked(later), banner.Text.Text, StringComparison.Ordinal);
         Press(banner.Acknowledge);
         banner.Update();
         Assert.False(banner.Root.IsVisible);
@@ -262,5 +263,47 @@ public class OversightPageTests(ITestOutputHelper log)
             foreach (var said in new[] { f.Measured, f.Cites, f.UnitPath, f.Blind, f.Id })
                 Assert.DoesNotContain(Planted, said, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(Planted, words.Digest, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- (i) a citation the app could not check is not shown as checked (U-watcher-b-fix item 2) ----------------------
+
+    /// <summary>
+    /// (i) CITATION VERIFICATION FAILS CLOSED (EVID-001; the Codex second pass on <c>U-org-watcher-b</c>, P2): a severe finding cites an
+    /// engineering-log row; the app's database cannot be read (a file that is not a database, so <see cref="OrgRecords"/> throws). The
+    /// banner never brackets that cite as a citation that resolved, and says in words, in the caution colour, that it was NOT VERIFIED;
+    /// the finding's own id, read from the owner's file, stays cited. RED before the fix: any read failure counted every cite as resolving.
+    /// </summary>
+    [Fact]
+    public void A_citation_the_app_could_not_check_is_not_shown_as_verified()
+    {
+        using var store = new OversightStore(NewFile(), Now);
+        var broken = Path.Combine(TestEnv.Home, $"not-a-database-{Guid.NewGuid():n}.db");
+        File.WriteAllText(broken, "this file is not a database, so no cite can be checked against it");
+        var banner = new OversightBanner(Sources(store) with { DatabaseFile = () => broken }, () => { });
+        var severe = Finding("refusals", "log:7", OrgIds.Root, "org", OversightSeverity.Severe, new OversightCite("log", "7"));
+        store.Commit([severe], new Dictionary<string, long>(), Now);
+
+        banner.Update();
+        log.WriteLine(banner.Text.Text);
+        Assert.True(banner.Root.IsVisible);
+        Assert.DoesNotContain("[log:7]", banner.Text.Text, StringComparison.Ordinal);
+        Assert.Contains($"[{severe.Id}]", banner.Text.Text, StringComparison.Ordinal);
+        Assert.Contains("log:7 is NOT VERIFIED", banner.Text.Text, StringComparison.Ordinal);
+        Assert.Same(Theme.Caution, banner.Unverified.Foreground);
+        Assert.True(banner.Unverified.IsVisible);
+
+        // A CHECK THAT RAN AND FOUND THE ROW brackets it, and says nothing of NOT VERIFIED.
+        using var db = TestEnv.NewDb();
+        Assert.True(new LogStore(db).TryEngineering("Ipc", "protocol_rejected"));
+        var id = db.Read(_ => { using var c = db.Cmd("SELECT MAX(id) FROM engineering_log"); return Convert.ToInt64(c.ExecuteScalar()); });
+        using var readable = new OversightStore(NewFile(), Now);
+        var found = Finding("refusals", $"log:{id}", OrgIds.Root, "org", OversightSeverity.Severe, new OversightCite("log", $"{id}"));
+        readable.Commit([found], new Dictionary<string, long>(), Now);
+        var checkedBanner = new OversightBanner(Sources(readable) with { DatabaseFile = () => db.FilePath }, () => { });
+        checkedBanner.Update();
+        log.WriteLine(checkedBanner.Text.Text);
+        Assert.Contains($"[log:{id}]", checkedBanner.Text.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOT VERIFIED", checkedBanner.Text.Text, StringComparison.Ordinal);
+        Assert.False(checkedBanner.Unverified.IsVisible);
     }
 }
