@@ -475,18 +475,21 @@ public partial class OrgStructureTests
 
     /// <summary>
     /// (5) A FOURTH UNCONFINED SEAT IS REFUSED WHATEVER THE SETTING SAYS (ORGANISATION § 10; CRED-001): with the legacy pair and one
-    /// more position active on seats that run a model below a proven cell, a fourth on a harness seat is refused at the gate — about the
-    /// host, both counts named — under a setting of 3 and under a setting of 10 (a setting never raises the code's three); a setting
-    /// of 2 refuses the third; a puppet seat and a cell are exempt; and the owner's own activation of a dormant fourth is refused in the
-    /// same words, nothing written, while a third activates. RED with the ceiling's line removed from <c>PositionActivation.Decide</c>.
+    /// more position active on seats that run a model unconfined (a CLI seat; fix pass 2: a harness seat is not counted), a fourth is
+    /// refused by the ceiling — about the host, both counts named — under a setting of 3 and under a setting of 10 (a setting never
+    /// raises the code's three); a setting of 2 refuses the third; a puppet seat and a cell are exempt at the gate; and the owner's own
+    /// activation of a dormant fourth is refused in the same words, nothing written, while a third activates. At launch a CLI seat
+    /// beyond the pair is refused earlier still, by the capability policy (its shell is code), so since the ruling no class this build
+    /// knows reaches the ceiling's line in <c>PositionActivation.Decide</c>; it stays there for a class that later would. RED with the
+    /// ceiling's line removed from <c>OrgStore.Activate</c>.
     /// </summary>
     [Fact]
     public void A_fourth_unconfined_seat_is_refused_whatever_the_setting_says()
     {
         using var db = Chart();
         var org = new OrgStore(db);
-        static string? Harness(string _) => SeatClasses.Harness;
-        var active = org.UnconfinedSeatsActive(Harness);
+        static string? Cli(string _) => SeatClasses.Cli;
+        var active = org.UnconfinedSeatsActive(Cli);
         Assert.Contains(CouncilRoles.Operations, active);
         Assert.Contains(CouncilRoles.Research, active);
 
@@ -497,28 +500,63 @@ public partial class OrgStructureTests
         string[] three = [CouncilRoles.Operations, CouncilRoles.Research, Head];
         foreach (var setting in new[] { 3, 10, int.MaxValue })
         {
-            var refused = PositionActivation.Decide(Member, org.Standing(Member), Facts(setting, SeatClasses.Harness, three));
+            var refused = UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, three, setting);
             Assert.NotNull(refused);
             Assert.Equal(RefusalKind.HostOrLaunch, refused!.Kind);
             Assert.Contains("3 such positions are active", refused.Words, StringComparison.Ordinal);
             Assert.Contains("unconfined-seat ceiling is 3", refused.Words, StringComparison.Ordinal);
+            Assert.NotNull(PositionActivation.Decide(Member, org.Standing(Member), Facts(setting, SeatClasses.Cli, three)));
         }
-        Assert.Contains("ceiling is 2", PositionActivation.Decide(Member, org.Standing(Member),
-            Facts(2, SeatClasses.Harness, CouncilRoles.Operations, CouncilRoles.Research))!.Words, StringComparison.Ordinal);
-        Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Harness, CouncilRoles.Operations, CouncilRoles.Research)));
+        Assert.Contains("ceiling is 2", UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, [CouncilRoles.Operations, CouncilRoles.Research], 2)!.Words,
+            StringComparison.Ordinal);
+        Assert.Null(UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, [CouncilRoles.Operations, CouncilRoles.Research], 3));
         Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Puppet, three)));
         Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Cell, three)));
 
-        // THE OWNER'S ACTIVATION: the chart's own count — the legacy pair and every active position here on a harness seat — is past
+        // THE OWNER'S ACTIVATION: the chart's own count — the legacy pair and every active position here on a CLI seat — is past
         // three already, so a dormant hire is refused whatever the setting; with only the pair counted, a third activates.
         Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
         var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         var before = Written(db);
-        var words = Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Harness, 99, Now)).Message;
+        var words = Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Cli, 99, Now)).Message;
         Assert.Contains("unconfined-seat ceiling is 3 (his setting 99", words, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
-        string? OnlyThePairUnconfined(string id) => CouncilRoles.IsKnown(id) || id == hired.Position.Id ? SeatClasses.Harness : SeatClasses.Puppet;
+        string? OnlyThePairUnconfined(string id) => CouncilRoles.IsKnown(id) || id == hired.Position.Id ? SeatClasses.Cli : SeatClasses.Puppet;
         Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, OnlyThePairUnconfined, 3, Now).Status);
+    }
+
+    /// <summary>
+    /// (fix pass 2, item B; seat B's ruling on ORGANISATION § 10) A HARNESS SEAT IS NOT COUNTED TOWARD THE UNCONFINED CEILING: the
+    /// ceiling counts the seats that run unconfined — the codex CLI with its sandbox bypassed, which can read the owner's login — and a
+    /// harness seat (an API key, confined by app code, broker-only) is the route ABOVE it. With the legacy pair and a third position
+    /// active on harness seats, only the pair are counted; a fourth harness or broker seat passes the gate under any setting; the
+    /// owner's activation of a dormant hire on a harness seat is not refused by the ceiling; a CLI seat, an undeclared one and an
+    /// unknown class are still counted, and a cell or a puppet is not. RED before the fix: every seat below Confined was counted.
+    /// </summary>
+    [Fact]
+    public void A_harness_seat_is_not_counted_toward_the_unconfined_ceiling()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        static string? Harness(string _) => SeatClasses.Harness;
+        Assert.Equal(new[] { CouncilRoles.Operations, CouncilRoles.Research }.Order(StringComparer.Ordinal),
+            org.UnconfinedSeatsActive(Harness).Order(StringComparer.Ordinal));
+
+        string[] three = [CouncilRoles.Operations, CouncilRoles.Research, Head];
+        foreach (var seat in new[] { SeatClasses.Harness, SeatClasses.Broker })
+            foreach (var setting in new[] { 0, 3, 99 })
+                Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), new SeatFacts
+                {
+                    DeclaredClass = seat, ProvenCell = true, UnconfinedActive = three, UnconfinedSeatSetting = setting
+                }));
+        foreach (var exempt in new[] { SeatClasses.Harness, SeatClasses.Broker, SeatClasses.Cell, SeatClasses.Puppet })
+            Assert.False(UnconfinedSeatCeiling.Counts(exempt), $"a {exempt} seat was counted");
+        foreach (var counted in new[] { SeatClasses.Cli, null, "a-class-this-build-does-not-know" })
+            Assert.True(UnconfinedSeatCeiling.Counts(counted), $"a {counted ?? "undeclared"} seat was not counted");
+
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Harness, 99, Now).Status);
     }
 
     // ---- the fix pass (the Codex review of U-org-verbs-d, triaged by seat B) -----------------------------------------------

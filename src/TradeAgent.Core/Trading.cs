@@ -487,7 +487,7 @@ public sealed class TradeAgentSettings
 
     /// <summary>
     /// THE OWNER'S UNCONFINED-SEAT CEILING, as he sets it (<c>U-org-verbs-d</c>; ORGANISATION § 10; CRED-001): how many active
-    /// positions may run a model below a proven cell, the legacy pair counted. It only LOWERS the code's three
+    /// positions may run a model unconfined, the legacy pair counted (a harness seat is not counted). It only LOWERS the code's three
     /// (<c>UnconfinedSeatCeiling.Effective</c>): a value above three reads as three, because this file lives where an unconfined seat
     /// can write it. Raising past three waits for containment.
     /// </summary>
