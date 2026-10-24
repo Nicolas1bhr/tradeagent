@@ -305,6 +305,149 @@ public sealed class BoardStore(Database db)
     });
 
     /// <summary>
+    /// ONE SEAT PROPOSES A WIDENING (<c>U-board-b1</c> item 4; R24 § 4.2): checked as every act is, and refused when every change
+    /// narrows (one seat applies that at once). It writes the act — expiring <see cref="BoardLimits.ConfirmationLife"/> after now — its
+    /// <c>proposed</c> event and its forecasts, and APPLIES NOTHING: the policy changes only when a different active seat confirms it.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardActResult Propose(BoardActRequest request, DateTimeOffset at) => _db.Write(_ =>
+    {
+        var (intent, inForce) = Checked(request, at);
+        if (intent.Narrows)
+            throw Refused("every change of this intent narrows: one seat applies it at once with 'board-narrow', and nothing waits on a second.");
+        var act = InsertAct(request, BoardActKind.Propose, intent, inForce.Version, at + BoardLimits.ConfirmationLife, at);
+        InsertEvent(act.Id, BoardActEventKind.Proposed, request.Seat, request.Attempt, null, null, null, null, null,
+            $"proposed by {request.Seat} against version {inForce.Version}; it applies nothing until another active seat confirms it, "
+            + $"naming the intent's hash, by {act.ExpiresAt:u}", at);
+        InsertForecasts(act.Id, request, at);
+        return new BoardActResult(act, BoardActStatus.Open, null,
+            $"Proposed: nothing changes until another active seat confirms {act.Id} with the intent's hash {act.IntentSha256}, "
+            + $"by {act.ExpiresAt:u}.");
+    });
+
+    /// <summary>
+    /// A DIFFERENT ACTIVE SEAT DECIDES A PROPOSAL (<c>U-board-b1</c> item 4): <paramref name="confirm"/> or refuse, naming the act and its
+    /// intent's hash, its OWN rationale sealed in the event; one decision per seat per act, and never the proposer's. A confirmation from
+    /// the proposer's vendor family is refused while an active seat of another family could give it, and recorded <c>same_family</c>
+    /// with the reason otherwise. A confirmation re-reads every <c>from</c>: a field that moved since the proposal closes the act
+    /// <c>stale</c>, applying nothing; otherwise it writes the version in the decision's own write. A refusal is a record and closes
+    /// nothing. A proposal past its expiry is closed <c>expired</c> here, lazily, and decided by no one.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardActResult Decide(string actId, string seat, string? attempt, bool confirm, string intentSha256, string rationale,
+        DateTimeOffset at) => _db.Write(_ =>
+    {
+        RequireActive(seat);
+        var act = ActRow(actId) ?? throw Refused($"'{actId}' is no act of the board.");
+        if (act.Kind != BoardActKind.Propose)
+            throw Refused($"{act.Id} is a narrowing, applied when it was made: there is nothing to decide.");
+        var status = Status(act.Id);
+        if (status != BoardActStatus.Open) throw Refused($"{act.Id} is {status}: there is nothing to decide.");
+        if (act.ExpiresAt is { } expires && at >= expires)
+        {
+            InsertEvent(act.Id, BoardActEventKind.Expired, "app", null, null, null, null, null, null,
+                $"no second seat confirmed it by {expires:u}; {seat}'s decision came after, and nothing was applied", at);
+            return new BoardActResult(act, BoardActEventKind.Expired, null,
+                $"Expired: {act.Id} waited for a confirmation until {expires:u}, so it applies nothing and no one decides it now.");
+        }
+        if (seat == act.Seat)
+            throw Forbidden($"{seat} proposed {act.Id}: a widening needs a SECOND seat, and the proposer never decides its own act.");
+        if (!string.Equals(intentSha256, act.IntentSha256, StringComparison.Ordinal))
+            throw Refused($"'{intentSha256}' is not the hash of {act.Id}'s intent: a decision binds to the exact intent it read "
+                          + "('board-show' gives it).");
+        if (Events(act.Id).Any(e => e.Seat == seat && e.Kind is BoardActEventKind.Confirmed or BoardActEventKind.Refused))
+            throw Forbidden($"{seat} has decided {act.Id} already: one decision per seat per act.");
+        RequireRationale(rationale);
+
+        var proposer = Seat(act.Seat)!;
+        var decider = Seat(seat)!;
+        var same = string.Equals(proposer.VendorFamily, decider.VendorFamily, StringComparison.Ordinal);
+        string? familyWords = null;
+        if (same)
+        {
+            var other = Seats().FirstOrDefault(s => s.Status == BoardSeatStatus.Active && s.Id != act.Seat
+                                                   && !string.Equals(s.VendorFamily, proposer.VendorFamily, StringComparison.Ordinal));
+            if (confirm && other is not null)
+                throw Forbidden($"{other.Id} is active on the vendor family '{other.VendorFamily}': a widening proposed on "
+                                + $"'{proposer.VendorFamily}' is confirmed by a seat of another family when one is active (R24 § 4.2).");
+            familyWords = $"both seats are on the vendor family '{proposer.VendorFamily}', and no active seat of another family could "
+                          + "decide it: the record says so (R24 § 4.2)";
+        }
+
+        if (!confirm)
+        {
+            InsertEvent(act.Id, BoardActEventKind.Refused, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, null,
+                familyWords, at);
+            return new BoardActResult(act, BoardActStatus.Open, null,
+                $"Refused by {seat}, and recorded: {act.Id} applies nothing on your word, and stays open for another seat until {act.ExpiresAt:u}.");
+        }
+
+        var (intent, why) = BoardIntent.Parse(act.Intent);
+        if (intent is null || intent.Sha256 != act.IntentSha256)
+            throw Refused($"{act.Id}'s stored intent does not read back as the one it was proposed with ({why ?? "its hash differs"}).");
+        var inForce = InForce();
+        if (inForce.CouldNotBeRead)
+            throw Refused($"the policy in force could not be read ({inForce.Why}), so no act can be applied over it.");
+        if (Moved(intent, BodyOf(inForce)) is { Count: > 0 } moved)
+        {
+            InsertEvent(act.Id, BoardActEventKind.Stale, seat, attempt, null, null, null, null, null,
+                $"version {inForce.Version} no longer holds what the proposal changed from: {string.Join("; ", moved)}", at);
+            return new BoardActResult(act, BoardActEventKind.Stale, null,
+                $"Stale: since {act.Id} was proposed, {string.Join("; ", moved)}. It applies nothing; propose it again against version {inForce.Version}.");
+        }
+        var version = InsertVersion(inForce, Applied(BodyOf(inForce), intent.Changes), BoardDecider.Board, BoardBasis.Act, act.Id, at);
+        InsertEvent(act.Id, BoardActEventKind.Confirmed, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, version,
+            familyWords, at);
+        return new BoardActResult(act, BoardActEventKind.Confirmed, version,
+            $"Confirmed by {seat}: version {version} of the policy, proposed by {act.Seat}, is in force now.");
+    });
+
+    /// <summary>
+    /// EVERY OPEN PROPOSAL PAST ITS EXPIRY IS CLOSED <c>expired</c>, applying nothing — on the organisation's sweep's tick, and lazily at
+    /// a decision. One write; answers how many it closed.
+    /// </summary>
+    public int Expire(DateTimeOffset at) => _db.Write(_ =>
+    {
+        var due = ActRows().Where(a => a.Kind == BoardActKind.Propose && a.ExpiresAt is { } e && e <= at && Status(a.Id) == BoardActStatus.Open).ToList();
+        foreach (var act in due)
+            InsertEvent(act.Id, BoardActEventKind.Expired, "app", null, null, null, null, null, null,
+                $"no second seat confirmed it by {act.ExpiresAt:u}, so it applies nothing", at);
+        return due.Count;
+    });
+
+    /// <summary>Whether <paramref name="seat"/> has SEALED its own word on <paramref name="act"/>: it made the act, or decided it.</summary>
+    bool Sealed(BoardActRow act, string seat) =>
+        act.Seat == seat || Events(act.Id).Any(e => e.Seat == seat && e.Kind is BoardActEventKind.Confirmed or BoardActEventKind.Refused);
+
+    /// <summary>
+    /// ONE ACT AS <paramref name="seat"/> MAY READ IT (<c>board-show</c>; R24 § 4.2, VISION § 5.4): the whole record once the seat has
+    /// sealed its own word on it — it proposed it, or decided it — and otherwise THE BLIND READ: the intent, its hash and direction, the
+    /// refs, the app's own figures in force for each field the intent names, and the expiry, with no rationale and no forecast of anyone's.
+    /// </summary>
+    public (BoardActBlindView? Blind, BoardActRecord? Whole) ShowTo(string seat, string actId)
+    {
+        var act = ActRow(actId) ?? throw Refused($"'{actId}' is no act of the board.");
+        if (Sealed(act, seat)) return (null, Whole(act));
+        var inForce = InForce();
+        var (intent, _) = BoardIntent.Parse(act.Intent);
+        var body = inForce.CouldNotBeRead ? null : BodyOf(inForce);
+        var figures = (intent?.Changes ?? []).Select(c => new BoardPolicyField(c.Field, body is null ? "unreadable" : ValueAt(body, c.Field),
+            inForce.Fields.Where(f => f.Name == c.Field || f.Name.StartsWith(c.Field + ".", StringComparison.Ordinal))
+                .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max())).ToList();
+        return (new BoardActBlindView(act.Id, act.Kind, act.Seat, Status(act.Id), act.Intent, act.IntentSha256,
+            intent?.Direction.ToString().ToLowerInvariant() ?? "unreadable", act.Refs, figures, inForce.Version, act.ExpiresAt, act.At), null);
+    }
+
+    /// <summary>
+    /// THE ACTS A SEAT LISTS (<c>board-list</c>), newest first: each act's id, kind, maker, status, hash, direction and expiry — never a
+    /// rationale or a forecast, which only <see cref="ShowTo"/> gives, and only once the seat has sealed its word.
+    /// </summary>
+    public IReadOnlyList<BoardActBlindView> ActList(int limit = 50) =>
+        [.. ActRows().Take(Math.Clamp(limit, 1, 200)).Select(a => new BoardActBlindView(a.Id, a.Kind, a.Seat, Status(a.Id), a.Intent,
+            a.IntentSha256, BoardIntent.Parse(a.Intent).Intent?.Direction.ToString().ToLowerInvariant() ?? "unreadable", a.Refs, [],
+            a.PolicyVersion, a.ExpiresAt, a.At))];
+
+    /// <summary>
     /// WHAT EVERY ACT IS CHECKED FOR, inside its write: the seat ACTIVE, the intent strict, the policy in force readable, every
     /// <c>from</c> the value in force, the rationale the seat's own words, the refs there, the forecasts at most the bound and each valid.
     /// </summary>
