@@ -24,6 +24,9 @@ public static class OrgBounds
     /// <summary>At most this many structural changes (<see cref="OrgEventKind.Structural"/>) by positions in a trailing week (R17 #14).</summary>
     public const int StructuralPerWeek = 2;
 
+    /// <summary>A unit lives at least this long before it is closed or merged away, unless a kill forecast on its charter resolved (ORGANISATION § 3).</summary>
+    public static readonly TimeSpan MinimumLife = TimeSpan.FromDays(14);
+
     /// <summary>How recent the work a charter or a hire cites must be to count as current (survey Q6).</summary>
     public static readonly TimeSpan EarningWindow = TimeSpan.FromDays(30);
 

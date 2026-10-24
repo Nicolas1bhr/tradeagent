@@ -406,6 +406,14 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-board-a1: IsOffChart — a pure check, an app principal or a seat of the security board, which the
         // chart's refusal sites ask (R24 § 4.1: the board is outside the chart). It reads nothing and writes nothing.
         mandate = [.. mandate, "IsOffChart"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-d: Retire, Close and Merge — the restructuring verbs. Each writes org_position (a
+        // position ended; a merged unit's positions moved to its sibling), org_unit (a head left vacant, a unit closed, a merged unit's
+        // open children re-parented) and org_event (its own event and a `fenced` event per position it touches), with its mandatory
+        // decision, forecasts and ledger entry, and cancels every open mandate inside what ends (OrgStore.Restructure, internal) — in
+        // one write, behind OrgVerbCaller and the store's own checks: the rights matrix (nothing about `operations`, `research`, a
+        // division head or the chief), the fourteen-day life, the weekly throttle. OrgStore.Restructure.cs joins the writers below. None
+        // writes ai_attempt or ai_attempt_funding: a past charge never moves.
+        mandate = [.. mandate, "Retire"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
@@ -419,7 +427,8 @@ public class OrgLedgerTests
             @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
             RegexOptions.IgnoreCase);
         Assert.Equal(
-            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs", "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
+            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
+             "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))
                 .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
