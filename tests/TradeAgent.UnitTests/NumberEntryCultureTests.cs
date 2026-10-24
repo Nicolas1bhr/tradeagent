@@ -314,6 +314,45 @@ public class NumberEntryCultureTests
     }
 
     /// <summary>
+    /// EVERY BOX REOPENS SHOWING TEXT ITS OWN READER ACCEPTS, UNCHANGED (<c>U-amount-precision</c>, item 3). The box was seeded with
+    /// <see cref="Amount.Exact"/>, and a saved "1.2340" is the figure 1.234, which the reader refuses as ambiguous (a thousands mark or a
+    /// decimal one): the untouched box had no figure and blocked every save until it was edited. The Oversight cap, which opens late
+    /// on the figure in force, is the box the Codex pass settled it on.
+    /// </summary>
+    [Fact]
+    public void An_untouched_box_reopened_after_1_2340_reads_1_234_without_refusal()
+    {
+        using var store = new OversightStore(Path.Combine(TestEnv.Home, $"oversight-reopen-{Guid.NewGuid():n}.db"), DateTimeOffset.UtcNow);
+        var page = new OversightPage(OversightOver(store));
+        page.Update();
+        page.CapBox.Box.Text = "1.2340";
+        Press(page.CapSave);
+        Press(page.CapSave);
+        Assert.Equal(1.234m, store.Cap()!.Amount);
+
+        // RECREATED WITH THE FILE ALREADY READABLE: the untouched box reads the figure, with no refusal.
+        var reopened = new OversightPage(OversightOver(store));
+        Assert.Equal((1.234m, (string?)null), (reopened.CapBox.Value, reopened.CapBox.Refusal));
+        Assert.Equal(Labels.AmountReads("1.234"), reopened.CapBox.Reading.Text);
+
+        // OPENED BEFORE THE FILE IS READ, THEN OPENED ON IT: the same text, the same reading.
+        OversightStore? late = null;
+        var waiting = new OversightPage(new OversightSources
+        {
+            Store = () => late, Refusal = () => null, Currency = () => "USD", Now = () => DateTimeOffset.UtcNow,
+        });
+        late = store;
+        waiting.Update();
+        Assert.Equal((1.234m, (string?)null), (waiting.CapBox.Value, waiting.CapBox.Refusal));
+
+        // WHATEVER IS DRAWN FOR A FIGURE, THE READER ACCEPTS AS THAT FIGURE — and a plain figure is drawn as it always was.
+        foreach (var v in new[] { 1.234m, 12.345m, 999.999m, 100.001m, 1.2340m, 5m, 1000m, 123456.789m, 0.123m, 0.00005m })
+            Assert.True(Amount.TryRead(Amount.Draw(v), AmountKind.Decimal, out var read, out var why) && read == v, $"{v}: {why}");
+        Assert.Equal("0.00005", Amount.Draw(0.00005m));
+        Assert.Equal("1.2340", Amount.Draw(1.234m));
+    }
+
+    /// <summary>
     /// (item 3) THE OWNER'S COMMA READS AS FIVE HUNDREDTHS IN THE REAL-MONEY CAP'S BOX — re-targeted by <c>U-settings-shed</c> from the
     /// envelope's box of his defect, which left with the board's decisions, to the money box that stays his. RED at 988c9487: "0,05" typed
     /// into the stock number box and committed with Enter read as 5.

@@ -35,7 +35,7 @@ public sealed class AmountField : StackPanel
         Spacing = Palette.S1;
         Width = Palette.FieldWidth;
         // NULL OPENS EMPTY — a figure not known yet (fix pass 2): the box reads as nothing and its press refuses, never 0.
-        Box = new TextBox { Text = value is { } v ? Amount.Exact(v) : "", FontFamily = Palette.Mono, FontSize = Palette.Base };
+        Box = new TextBox { Text = value is { } v ? Amount.Draw(v) : "", FontFamily = Palette.Mono, FontSize = Palette.Base };
         Reading = new TextBlock { FontSize = Palette.Small, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap };
         Children.Add(Box);
         Children.Add(Reading);
@@ -59,7 +59,7 @@ public sealed class AmountField : StackPanel
     internal bool OpenOn(decimal value)
     {
         if (_touched) return false;
-        Box.Text = Amount.Exact(value);
+        Box.Text = Amount.Draw(value);
         return true;
     }
 
