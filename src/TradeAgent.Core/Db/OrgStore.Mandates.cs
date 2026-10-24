@@ -1180,9 +1180,10 @@ public sealed partial class OrgStore
     /// back. Read from the records alone, so every pass and a restart see the same answer, and the second mandate keeps its floor
     /// (BUDGET-001).</para>
     ///
-    /// <para><b>A holder carries at most one brought-forward mandate</b> (<c>U-rewake-followups</c>): the wake counted above is ANY
-    /// other mandate's untaken <c>mandate</c> wake due before that mandate's own floor (<see cref="FloorDue"/>), at ANY due — not only
-    /// one due by this request. A mandate already brought to a LATER requested wake still rides it, and two requested wakes one
+    /// <para><b>A holder carries at most one brought-forward mandate</b> (<c>U-rewake-followups</c>): beside the wake counted above,
+    /// ANY other mandate's untaken <c>mandate</c> wake due before that mandate's own floor (<see cref="FloorDue"/>), at ANY due, refuses
+    /// it too — both conditions hold, never one for the other (fix pass: a wake due by the request at its floor still takes that
+    /// launch). A mandate already brought to a LATER requested wake still rides it, and two requested wakes one
     /// launch takes together pay for one turn: bringing a second mandate to the earlier one would leave the first due before its
     /// floor with nothing asked for it, an extra turn. <paramref name="level"/> is the holder's, so every mandate it holds shares it.</para>
     /// </summary>
@@ -1204,7 +1205,7 @@ public sealed partial class OrgStore
             while (r.Read())
                 if (Sql.S(r.GetValue(0)) is { } other && Sql.TimeN(r.GetValue(1)) is { } due) pending.Add((other, due));
         foreach (var (other, due) in pending)
-            if (Brought(other, due, level, floors, now)) return null;
+            if (due <= asked.Value || Brought(other, due, level, floors, now)) return null;
         return asked;
     }
 
