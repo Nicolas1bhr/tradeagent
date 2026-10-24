@@ -1315,7 +1315,10 @@ public static class RuntimeCatalog
             //    is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
             // and the turn exited 0 — the vendor's format in core/src/tools/code_mode/mod.rs:108-121 at rust-v0.160.1, its other causes
             // (a host program not found, one that would not start) in the same sentence.
-            ToolsUnavailablePattern = "Code Mode is unavailable because",
+            // AND CODEX'S FALLBACK METADATA (U-cell-model-catalog, rider (b)): "Model metadata for `<slug>` not found. Defaulting to
+            // fallback metadata; this can degrade performance and cause issues." (vendor core/src/session/turn_context.rs) — a seat whose
+            // model resolved to no catalog entry is offered tools no check has seen. The surface dry run reads the same pattern.
+            ToolsUnavailablePattern = "Code Mode is unavailable because|Defaulting to fallback metadata",
             UsageLimit = new UsageLimitPlan
             {
                 Pattern = "You['\u2019]ve hit your usage limit",
