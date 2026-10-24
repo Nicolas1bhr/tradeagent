@@ -191,6 +191,41 @@ public class OrgScorecardTests
         Assert.True(hedged.Skill < 0, $"a hedge against a 9-in-10 base rate earned {hedged.Skill}");
     }
 
+    /// <summary>
+    /// (a1, the Codex review) A <c>none</c> FORECAST IS SCORED AGAINST THE SHARE THAT ADMITTED NONE: of three teams chartered long enough before
+    /// the forecast, two had an admissible verdict within the horizon, so the base rate of <c>admitted</c> is 3/5 and of <c>none</c> 2/5. The
+    /// head's <c>none</c> forecast for its own team at 0.3 comes true and is scored against 2/5 — never against the admitted share.
+    /// RED before the fix: every <c>unit-admissible</c> base counted admissions as hits whatever the target, so <c>none</c> read 3/5.
+    /// </summary>
+    [Fact]
+    public void A_none_forecast_is_scored_against_the_share_that_admitted_none()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        HeadAUnit(db, "pos-5cc0ffee0001", "team-5cc0ffee", OrgIds.Research);
+        var charter = new DateTimeOffset(2026, 10, 11, 13, 0, 0, TimeSpan.Zero);
+        foreach (var (unit, role, version) in new[] { (Elsewhere, Other, "ver-e"), ("team-5cc0ffee", "pos-5cc0ffee0001", "ver-c") })
+        {
+            Version(db, version);
+            Run(db, "run-" + version, version, Launch(db, role, T0.AddDays(-21), unit: unit), charter);
+            Verdict(db, version, PromotionVerdict.Promoted, charter.AddHours(12));
+        }
+        var f = Forecasts(db, Head, null, T0,
+            new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.NoneAdmitted, By, 0.3m),
+            new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, By, 0.3m));
+        Assert.Empty(new ForecastResolver(db).Sweep(By.AddMinutes(1)).Refused);
+
+        var scores = new Scorecards(db).Of(Head).Scores;
+        var none = scores.Single(s => s.ForecastId == f[0].Id);
+        Assert.Equal((3, 1, true), (none.Base.Measured, none.Base.Hits, none.Outcome));
+        Close(0.4, none.Base.Probability);
+        Close(0.49, none.Brier);
+        Close(0.36, none.BaseBrier);
+        var admitted = scores.Single(s => s.ForecastId == f[1].Id);
+        Assert.Equal((3, 2, false), (admitted.Base.Measured, admitted.Base.Hits, admitted.Outcome));
+        Close(0.6, admitted.Base.Probability);
+    }
+
     /// <summary>An attempt as the ledger records it, with the runtime and effective model it ran on — written by the test, never a real model.</summary>
     static string Attempt(Database db, string? runtime, string? model)
     {
