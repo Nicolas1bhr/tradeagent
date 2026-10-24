@@ -1,3 +1,5 @@
+using TradeAgent.AgentRuntime;
+using TradeAgent.Core;
 using TradeAgent.Core.Tls;
 using TradeAgent.Provisioning;
 using Xunit;
@@ -51,5 +53,50 @@ public class TlsRefusalWordsTests
         var status = await Downloader.StatusAsync(http, Url, TimeSpan.FromSeconds(5));
         Assert.False(status.Answered);
         Assert.Contains("EM DV TLS CA - G3B", status.Because);
+    }
+
+    /// <summary>
+    /// A REFUSED DOWNLOAD NEVER FALLS BACK TO THE PACKAGE (fix pass, the review's P1). An archive the TLS policy refused sent the
+    /// install to npm through TradeAgent's private Node — a second road whose connections never meet the denylist, taken because the
+    /// first one was refused for exactly that. Here the package road is open (a plan with an npm package, not pinned, Node provided)
+    /// and the archive is refused: the install refuses in the policy's words, and no package install is started.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_download_never_falls_back_to_the_package()
+    {
+        var manifest = RuntimeCatalog.BuiltIn(HostPlatform.LinuxX64).Single(m => m.Id == "opencode");
+        Assert.Equal(InstallKind.Download, manifest.Install.Kind);
+        Assert.False(string.IsNullOrEmpty(manifest.Install.NpmPackage));
+        Assert.False(manifest.Install.Pinned);
+        manifest.Id = $"opencode-tls-{Guid.NewGuid():n}"[..24];
+        manifest.Install.GitHubRepo = null;
+        manifest.Install.Url = Url;
+
+        var downloads = 0;
+        var said = new Said();
+        var runtime = new CliAgentRuntime(manifest)
+        {
+            NodeCanProvide = () => true,
+            Download = (_, _, _, _, _) =>
+            {
+                downloads++;
+                throw new HttpRequestException("The SSL connection could not be established, see inner exception.", new TlsRefusedException(Words));
+            }
+        };
+
+        var refused = await Assert.ThrowsAsync<TradeAgentException>(() => runtime.InstallAsync(said));
+
+        Assert.Equal(1, downloads);
+        Assert.DoesNotContain(said.Lines, l => l.Contains("package", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(said.Lines, l => l.Contains("Node.js", StringComparison.Ordinal));
+        Assert.Contains("EM DV TLS CA - G3B", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(ErrorCode.AI_INSTALL_FAILED, refused.Info.Code);
+    }
+
+    /// <summary>Progress, kept in order as it is said — synchronously, unlike <see cref="Progress{T}"/>.</summary>
+    sealed class Said : IProgress<string>
+    {
+        public List<string> Lines { get; } = [];
+        public void Report(string value) => Lines.Add(value);
     }
 }
