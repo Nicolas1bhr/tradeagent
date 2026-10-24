@@ -94,7 +94,7 @@ sealed record OversightWords(
                 .OrderBy(f => f.UnitPath, StringComparer.Ordinal).ThenByDescending(f => f.Seq)
                 .Select(f => new OversightFindingWords(
                     f.Id, f.Severity, f.Detector, f.UnitPath, When(f.At),
-                    string.Join(", ", f.Measured.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => $"{m.Key}={m.Value}")),
+                    string.Join(", ", f.Measured.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => $"{m.Key}={OversightText.Shown(m.Key, m.Value)}")),
                     string.Join(", ", f.Cites.Select(c => c.ToString())),
                     f.Blind,
                     read.Acknowledged.TryGetValue(f.Id, out var at) ? $"acknowledged {When(at)}" : null))
