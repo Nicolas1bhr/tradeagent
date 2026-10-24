@@ -71,7 +71,7 @@ public static class OrgDecisionKind
     /// <summary>A unit chartered (<see cref="OrgStore.Charter"/>); a position hired (<see cref="OrgStore.Hire"/>; <c>U-org-verbs-c</c>).</summary>
     public const string Charter = "charter", Hire = "hire";
 
-    /// <summary>A unit merged or closed, a position retired (<c>OrgStore.Merge</c>, <c>OrgStore.Close</c>, <see cref="OrgStore.Retire"/>; <c>U-org-verbs-d</c>).</summary>
+    /// <summary>A unit merged or closed, a position retired (<see cref="OrgStore.Merge"/>, <see cref="OrgStore.Close"/>, <see cref="OrgStore.Retire"/>; <c>U-org-verbs-d</c>).</summary>
     public const string Merge = "merge", Close = "close", Retire = "retire";
 
     public static readonly string[] All = [Routine, .. Mandatory];

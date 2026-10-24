@@ -149,7 +149,7 @@ public static class OrgEventKind
 
     /// <summary>
     /// A position retired, a unit closed, a unit merged into a sibling (<c>U-org-verbs-d</c>: <see cref="OrgStore.Retire"/>,
-    /// <c>OrgStore.Close</c>, <c>OrgStore.Merge</c>) — each decided by the head of the target's parent.
+    /// <see cref="OrgStore.Close"/>, <see cref="OrgStore.Merge"/>) — each decided by the head of the target's parent.
     /// </summary>
     public const string Retired = "retired", Closed = "closed", Merged = "merged";
 

@@ -413,7 +413,7 @@ public class OrgLedgerTests
         // one write, behind OrgVerbCaller and the store's own checks: the rights matrix (nothing about `operations`, `research`, a
         // division head or the chief), the fourteen-day life, the weekly throttle. OrgStore.Restructure.cs joins the writers below. None
         // writes ai_attempt or ai_attempt_funding: a past charge never moves.
-        mandate = [.. mandate, "Retire"];
+        mandate = [.. mandate, "Close", "Merge", "Retire"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

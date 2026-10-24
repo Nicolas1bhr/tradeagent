@@ -151,4 +151,188 @@ public partial class OrgStructureTests
         Assert.Equal(1, Count(db, "org_event", $"kind = 'retired' AND position_id = '{SubHead}' AND decider = '{Head}' AND id = {retired.EventId}"));
         Assert.Equal(0, Count(db, "org_event", "kind IN ('chartered', 'closed', 'merged')"));
     }
+
+    // ---- item 3: org-close and org-merge ------------------------------------------------------------------------------
+
+    /// <summary>A unit under <paramref name="parent"/> created <paramref name="days"/> ago, headed by <paramref name="head"/> when one is named.</summary>
+    static void Aged(Database db, string unit, string parent, string kind, double days, string? head = null)
+    {
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,$k,NULL,'active',$at)",
+            ("$t", unit), ("$p", parent), ("$k", kind), ("$at", Now.AddDays(-days).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+        if (head is null) return;
+        Seat(db, head, unit);
+        Exec(db, "UPDATE org_unit SET head_position_id=$id WHERE id=$t", ("$id", head), ("$t", unit));
+    }
+
+    static CloseRequest CloseAsk(string unit, string caller = Head) =>
+        new(caller, null, unit, "the team's question is answered", ["close", "keep"], [], [Admissible()]);
+
+    static MergeRequest MergeAsk(string unit, string into, string caller = Head) =>
+        new(caller, null, unit, into, "two teams chase one question", ["merge", "keep both"], [], [Admissible()]);
+
+    const string Old = "team-0ld0c0ffee", Young = "team-y0un9c0ffee", OldHead = "pos-01dc0ffee001", OldMember = "pos-01dc0ffee002";
+
+    /// <summary>One refusal of a close or a merge: the act, and the words it is refused in.</summary>
+    public static TheoryData<string> CloseRefusals => new()
+    {
+        "close the organisation", "close div-operations", "close div-research", "close a unit with open children", "close a 10-day-old unit",
+        "close a third change in seven days", "close a closed unit", "close by a member", "merge into itself", "merge non-siblings",
+        "merge different kinds", "merge a 10-day-old unit", "merge into div-research", "merge past five members", "merge a third change in seven days"
+    };
+
+    /// <summary>
+    /// (3a) EACH REFUSAL OF A CLOSE OR A MERGE, IN WORDS, WITH NOTHING WRITTEN: the organisation itself and <c>div-operations</c> (two-seat
+    /// board acts), <c>div-research</c> (an app trigger or a board act), open child units, a unit younger than fourteen days whose charter
+    /// no forecast resolved, a third structural change in seven days, a unit closed already, a caller that does not head the parent; a
+    /// merge into itself, of units that are not siblings or not of one kind, of a young unit, into a reserved unit, past five members.
+    /// RED at base: no <c>OrgStore.Close</c> or <c>OrgStore.Merge</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CloseRefusals))]
+    public void Each_refusal_of_a_close_or_a_merge_is_in_words_and_writes_nothing(string refusal)
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        Aged(db, Young, Div, OrgUnitKind.Team, 10);
+        Func<object> act = () => org.Close(CloseAsk(Old), Now);
+        string words;
+        switch (refusal)
+        {
+            case "close the organisation": act = () => org.Close(CloseAsk(OrgIds.Root), Now); words = "a two-seat board act"; break;
+            case "close div-operations": act = () => org.Close(CloseAsk(OrgIds.Operations), Now); words = "a two-seat board act"; break;
+            case "close div-research": act = () => org.Close(CloseAsk(OrgIds.Research), Now); words = "app trigger or a board act"; break;
+            case "close a unit with open children":
+                Aged(db, "team-undersub0", Sub, OrgUnitKind.Team, 20);
+                Exec(db, "UPDATE org_unit SET created_at=$at WHERE id=$s", ("$at", Now.AddDays(-20).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$s", Sub));
+                act = () => org.Close(CloseAsk(Sub), Now); words = "has open units under it (team-undersub0)"; break;
+            case "close a 10-day-old unit": act = () => org.Close(CloseAsk(Young), Now); words = "a unit lives 14 days"; break;
+            case "close a third change in seven days":
+            case "merge a third change in seven days":
+                foreach (var decider in new[] { Head, SubHead })
+                    Exec(db, "INSERT INTO org_event(at, unit_id, kind, decider, detail) VALUES($at, $u, 'closed', $d, 'x')",
+                        ("$at", Now.AddDays(-2).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$u", Div), ("$d", decider));
+                if (refusal.StartsWith("merge", StringComparison.Ordinal))
+                {
+                    Aged(db, "team-twin0c0ffee", Div, OrgUnitKind.Team, 20);
+                    act = () => org.Merge(MergeAsk(Old, "team-twin0c0ffee"), Now);
+                }
+                words = "2 structural changes in the last seven days"; break;
+            case "close a closed unit":
+                Exec(db, "UPDATE org_unit SET status='closed' WHERE id=$t", ("$t", Old)); words = "is closed already"; break;
+            case "close by a member": act = () => org.Close(CloseAsk(Old, caller: Member), Now); words = "only the parent unit's head"; break;
+            case "merge into itself": act = () => org.Merge(MergeAsk(Old, Old), Now); words = "never into itself"; break;
+            case "merge non-siblings":
+                Aged(db, "team-elsewhere0", Sub, OrgUnitKind.Team, 20);
+                act = () => org.Merge(MergeAsk(Old, "team-elsewhere0"), Now); words = "a merge joins siblings of one parent"; break;
+            case "merge different kinds":
+                Exec(db, "UPDATE org_unit SET created_at=$at WHERE id=$s", ("$at", Now.AddDays(-20).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$s", Sub));
+                act = () => org.Merge(MergeAsk(Sub, Old), Now); words = "a merge joins units of one kind"; break;
+            case "merge a 10-day-old unit": act = () => org.Merge(MergeAsk(Young, Old), Now); words = "a unit lives 14 days"; break;
+            case "merge into div-research":
+                Seat(db, Chief, OrgIds.Root);
+                Exec(db, "UPDATE org_unit SET head_position_id=$c WHERE id='org'", ("$c", Chief));
+                Aged(db, "div-0th3rc0ffee", OrgIds.Root, OrgUnitKind.Division, 20);
+                act = () => org.Merge(MergeAsk("div-0th3rc0ffee", OrgIds.Research, caller: Chief), Now); words = "app trigger or a board act"; break;
+            case "merge past five members":
+                Aged(db, "team-full0c0ffee", Div, OrgUnitKind.Team, 20);
+                for (var i = 0; i < 5; i++) Seat(db, $"pos-f011c0ffee0{i}", "team-full0c0ffee");
+                Seat(db, OldMember, Old);
+                act = () => org.Merge(MergeAsk(Old, "team-full0c0ffee"), Now); words = "would have 7 members"; break;
+            default:
+                throw new InvalidOperationException(refusal);
+        }
+
+        var before = Written(db);
+        var refused = Assert.Throws<TradeAgentException>(act);
+        Assert.Contains(words, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+    }
+
+    /// <summary>
+    /// (3b) A CLOSE ENDS THE UNIT AND ITS POSITIONS AND DELETES NOTHING: the division's head closes a team chartered fifteen days ago —
+    /// the team <c>closed</c> with its time, its head and member <c>ended</c>, the mandate held in it cancelled, both fenced, the
+    /// <c>close</c> decision, one <c>closed</c> event naming what it ended; every launch the team's chain funded reads as before. A
+    /// fourteen-day-young unit closes once a forecast on its charter resolved (the kill criterion).
+    /// </summary>
+    [Fact]
+    public void A_close_ends_the_unit_and_its_positions_and_moves_no_past_charge()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        Seat(db, OldMember, Old);
+        var held = Mandate(org, OldHead, OldMember);
+        var running = Funded(db, OldMember, Old, Div, OrgIds.Root);
+        var charged = ChargedTo(db, Old);
+
+        var closed = org.Close(CloseAsk(Old), Now);
+
+        Assert.Equal((OrgUnitStatus.Closed, (DateTimeOffset?)Now), (closed.Unit.Status, closed.Unit.ClosedAt));
+        Assert.Equal(new[] { OldHead, OldMember }.Order(StringComparer.Ordinal), closed.Ended.Order(StringComparer.Ordinal));
+        Assert.All(closed.Ended, p => Assert.Equal(OrgPositionStatus.Ended, org.Position(p)!.Status));
+        Assert.Equal([held.Id], closed.Cancelled);
+        Assert.Equal(OrgDecisionKind.Close, closed.Decision.Kind);
+        Assert.NotNull(org.FencedSince(running));
+        Assert.Equal(charged, ChargedTo(db, Old));
+        Assert.Equal(1, Count(db, "org_event", $"kind = 'closed' AND unit_id = '{Old}' AND decider = '{Head}'"));
+
+        // A YOUNG UNIT WHOSE CHARTER'S FORECAST RESOLVED: the kill criterion lets it close before fourteen days (a chart of its own, so
+        // the charter and this close are its week's two structural changes).
+        using var young = Chart();
+        var youngOrg = new OrgStore(young);
+        var made = youngOrg.Charter(Ask(refs: [CurrentRun(young)]), Metered, Now.AddDays(-5));
+        Assert.Contains("a unit lives 14 days", Assert.Throws<TradeAgentException>(() => youngOrg.Close(CloseAsk(made.Unit.Id), Now)).Message,
+            StringComparison.Ordinal);
+        var forecast = youngOrg.ForecastsOn(made.Decision.Id).Single();
+        Exec(young, "INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES($f, 'no', 'verdict', 'v-1', 'x', $at)",
+            ("$f", forecast.Id), ("$at", Now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+        Assert.Equal(OrgUnitStatus.Closed, youngOrg.Close(CloseAsk(made.Unit.Id), Now).Unit.Status);
+    }
+
+    /// <summary>
+    /// (3c) A MERGE MOVES POSITIONS AND CHILDREN AND KEEPS A'S HISTORY: the division's head merges subdivision A into its sibling B —
+    /// A <c>closed</c> naming B, its head vacant; A's head and member now in B, A's team now under B; the mandate issued in A cancelled;
+    /// A's and B's positions fenced; the <c>merge</c> decision; A's past launch still charged to A's chain exactly as before, and the
+    /// member's NEXT launch funded through B. RED at base: no <c>OrgStore.Merge</c>.
+    /// </summary>
+    [Fact]
+    public void A_merge_moves_positions_and_children_and_keeps_As_history()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        const string a = "sub-aaaa0c0ffee", b = "sub-bbbb0c0ffee", aHead = "pos-aaaac0ffee01", aMember = "pos-aaaac0ffee02",
+            bHead = "pos-bbbbc0ffee01", aTeam = "team-aaaa0c0ffee";
+        Aged(db, a, Div, OrgUnitKind.Subdivision, 20, aHead);
+        Seat(db, aMember, a);
+        Aged(db, b, Div, OrgUnitKind.Subdivision, 20, bHead);
+        Aged(db, aTeam, a, OrgUnitKind.Team, 20);
+        var held = Mandate(org, aHead, aMember);
+        var past = Funded(db, aMember, a, Div, OrgIds.Root);
+        var aHistory = Count(db, "org_event", $"unit_id = '{a}'");
+        var charged = ChargedTo(db, a);
+
+        var merged = org.Merge(MergeAsk(a, b), Now);
+
+        Assert.Equal((OrgUnitStatus.Closed, (string?)null), (merged.Closed.Status, merged.Closed.HeadPositionId));
+        Assert.Equal(new[] { aHead, aMember }.Order(StringComparer.Ordinal), merged.MovedPositions.Order(StringComparer.Ordinal));
+        Assert.All(merged.MovedPositions, p => Assert.Equal((b, OrgPositionStatus.Active), (org.Position(p)!.UnitId, org.Position(p)!.Status)));
+        Assert.Equal([aTeam], merged.MovedUnits);
+        Assert.Equal(b, org.Units().Single(u => u.Id == aTeam).ParentId);
+        Assert.Equal([held.Id], merged.Cancelled);
+        Assert.Equal(OrgDecisionKind.Merge, merged.Decision.Kind);
+        Assert.NotNull(org.FencedSince(past));
+        Assert.Equal(3, Count(db, "org_event", $"kind = 'fenced' AND position_id IN ('{aHead}', '{aMember}', '{bHead}')"));
+        Assert.Contains($"into={b}", db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT detail FROM org_event WHERE kind = 'merged' AND unit_id = $a", ("$a", a));
+            return (string)c.ExecuteScalar()!;
+        }), StringComparison.Ordinal);
+
+        // A'S HISTORY STAYS A'S: its events (the merge's own and the fences of its positions added), and every past charge.
+        Assert.Equal(aHistory + 3, Count(db, "org_event", $"unit_id = '{a}'"));
+        Assert.Equal(charged, ChargedTo(db, a));
+        Assert.Equal([b, Div, OrgIds.Root], org.FundingLine(aMember).Select(u => u.Id));
+    }
 }

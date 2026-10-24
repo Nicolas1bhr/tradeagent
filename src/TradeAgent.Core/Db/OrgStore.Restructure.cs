@@ -23,6 +23,25 @@ public sealed record RetireRequest(string Caller, string? Attempt, string Positi
 public sealed record Retired(OrgPositionRow Position, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts,
     IReadOnlyList<string> Cancelled, long EventId);
 
+/// <summary>A CLOSE AS ITS HEAD ASKS IT (<c>U-org-verbs-d</c> item 3): the unit, the rationale and options, refs and forecasts.</summary>
+public sealed record CloseRequest(string Caller, string? Attempt, string UnitId, string Rationale, IReadOnlyList<string> Options,
+    IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts);
+
+/// <summary>What a close wrote: the unit (closed), its decision, forecasts, the positions it ended, the mandates cancelled, the event's id.</summary>
+public sealed record ClosedUnit(OrgUnitRow Unit, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, IReadOnlyList<string> Ended,
+    IReadOnlyList<string> Cancelled, long EventId);
+
+/// <summary>
+/// A MERGE AS ITS HEAD ASKS IT (<c>U-org-verbs-d</c> item 3): <paramref name="UnitId"/> — A, the unit that closes — into
+/// <paramref name="IntoUnitId"/> — B, its sibling of the same kind, which inherits A's positions and open child units.
+/// </summary>
+public sealed record MergeRequest(string Caller, string? Attempt, string UnitId, string IntoUnitId, string Rationale,
+    IReadOnlyList<string> Options, IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts);
+
+/// <summary>What a merge wrote: A (closed), B, the decision, forecasts, the positions and child units moved, the mandates cancelled, the event's id.</summary>
+public sealed record MergedUnit(OrgUnitRow Closed, OrgUnitRow Successor, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts,
+    IReadOnlyList<string> MovedPositions, IReadOnlyList<string> MovedUnits, IReadOnlyList<string> Cancelled, long EventId);
+
 /// <summary>What a restructuring disposed of: the mandates it cancelled and the fences it wrote (their <c>org_event</c> ids).</summary>
 internal sealed record Disposal(IReadOnlyList<string> Cancelled, IReadOnlyList<long> Fences);
 
@@ -113,6 +132,117 @@ public sealed partial class OrgStore
         return new Retired(Position(target.Id)!, decision, forecasts, disposal.Cancelled, eventId);
     });
 
+    /// <summary>
+    /// CLOSES A UNIT (<c>U-org-verbs-d</c> item 3; ORGANISATION § 3): the unit <c>closed</c> with its time, every position in it
+    /// <c>ended</c>, the <c>close</c> decision, its forecasts, the restructuring's disposal (every open mandate held, decided or issued
+    /// inside it cancelled; each position fenced) and one <c>closed</c> event — in ONE write. Nothing is deleted: its decisions, events
+    /// and the launches its chain funded stay as recorded. Refused in words, nothing written: the rights matrix (the organisation itself
+    /// and <c>div-operations</c> a two-seat board act, <c>div-research</c> an app trigger or a board act); a unit closed already; open
+    /// child units; a unit younger than <see cref="OrgBounds.MinimumLife"/> unless a forecast on its charter resolved; a third structural
+    /// change in seven days; no forecast.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ClosedUnit Close(CloseRequest r, DateTimeOffset now) => db.Write(_ =>
+    {
+        ActiveCaller(r.Caller, "a unit is closed by the head whose launch asks it");
+        var unit = Units().FirstOrDefault(u => u.Id == r.UnitId) ?? throw Refused($"'{r.UnitId}' is no unit on the chart.");
+        var line = Ancestors(unit.Id);
+        var right = OrgRights.Answer(OrgOperation.Close, OrgRights.ReservedOf(OrgOperation.Close, unit, line),
+            OrgRights.RelationOf(OrgOperation.Close, r.Caller, unit, line));
+        if (OrgRights.Refusal(right, $"closing {OrgEnvelopes.NameOf(unit.Id)}") is { } notYours) throw Forbidden(notYours);
+        if (unit.Status == OrgUnitStatus.Closed) throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} is closed already.");
+        var children = Units().Where(u => u.ParentId == unit.Id && u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToList();
+        if (children.Count > 0)
+            throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} has open units under it ({string.Join(", ", children)}): close or merge them first.");
+        LifeRefusal(unit, now, "closed");
+        if (ThrottleRefusal(now) is { } throttled) throw Refused(throttled);
+        ForecastsRefusal(r.Forecasts, "a close");
+
+        var choice = $"close {unit.Id}";
+        var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.Close, r.Options.Count > 0 ? r.Options : [choice], choice,
+            r.Rationale, r.Refs, now);
+        using (var c = db.Cmd("UPDATE org_unit SET status = $closed, closed_at = $at WHERE id = $u AND status <> $closed",
+                   ("$closed", OrgUnitStatus.Closed), ("$at", Sql.T(now)), ("$u", unit.Id)))
+            if (c.ExecuteNonQuery() != 1) throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} was closed while this close was written.");
+        var ended = Positions().Where(p => p.UnitId == unit.Id && p.Status != OrgPositionStatus.Ended).Select(p => p.Id).ToList();
+        EndPositions(ended, now);
+        var disposal = Restructure(new Restructuring($"{unit.Id} was closed by {r.Caller}", r.Caller, [unit.Id], ended, ended), now);
+        // A CLOSED UNIT ADMITS NOTHING MORE, so a forecast whose subject is left empty is about the parent that carries on.
+        var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: unit.ParentId)).ToList();
+        var eventId = Event(now, unit.Id, null, OrgEventKind.Closed, r.Caller,
+            $"unit={unit.Id} parent={unit.ParentId} ended={Ids(ended)} decision={decision.Id} cancelled={Ids(disposal.Cancelled)}");
+        return new ClosedUnit(Units().Single(u => u.Id == unit.Id), decision, forecasts, ended, disposal.Cancelled, eventId);
+    });
+
+    /// <summary>
+    /// MERGES A UNIT INTO ITS SIBLING (<c>U-org-verbs-d</c> item 3; ORGANISATION § 3): A <c>closed</c> with B named as its successor,
+    /// A's positions and open child units moved to B, A's head left vacant (the position is a member of B now), the <c>merge</c>
+    /// decision, its forecasts, the restructuring's disposal (every open mandate held, decided or issued in A cancelled; A's positions
+    /// and B's fenced) and one <c>merged</c> event — in ONE write. A's history stays A's: its events, decisions and every launch its
+    /// chain funded (lineage is immutable, BUDGET-001); only launches after the merge are funded through B. Refused in words, nothing
+    /// written: the rights matrix on either unit; the same unit; either closed; not siblings of one parent; different kinds; A younger
+    /// than <see cref="OrgBounds.MinimumLife"/> unless a forecast on its charter resolved; B past <see cref="OrgBounds.MaxMembers"/>
+    /// members; a third structural change in seven days; no forecast.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public MergedUnit Merge(MergeRequest r, DateTimeOffset now) => db.Write(_ =>
+    {
+        ActiveCaller(r.Caller, "units are merged by the head whose launch asks it");
+        var all = Units();
+        var a = all.FirstOrDefault(u => u.Id == r.UnitId) ?? throw Refused($"'{r.UnitId}' is no unit on the chart.");
+        var b = all.FirstOrDefault(u => u.Id == r.IntoUnitId) ?? throw Refused($"'{r.IntoUnitId}' is no unit on the chart.");
+        if (a.Id == b.Id) throw Refused($"{a.Id} is merged into a sibling, never into itself.");
+        // THE MATRIX ON A FIRST (the caller heads its parent); B must be its sibling, so the caller's relation to B is the same, and
+        // what is left to ask of B is its reserved identity.
+        Rights(a);
+        if (a.ParentId != b.ParentId)
+            throw Refused($"{a.Id} hangs from {a.ParentId} and {b.Id} from {b.ParentId}: a merge joins siblings of one parent.");
+        Rights(b);
+        if (a.Status == OrgUnitStatus.Closed || b.Status == OrgUnitStatus.Closed)
+            throw Refused($"{(a.Status == OrgUnitStatus.Closed ? a.Id : b.Id)} is closed: only open units merge.");
+        if (a.Kind != b.Kind) throw Refused($"{a.Id} is a {a.Kind} and {b.Id} a {b.Kind}: a merge joins units of one kind.");
+        LifeRefusal(a, now, "merged away");
+        var moved = Positions().Where(p => p.UnitId == a.Id && p.Status != OrgPositionStatus.Ended).Select(p => p.Id).ToList();
+        var stay = Positions().Where(p => p.UnitId == b.Id && p.Status != OrgPositionStatus.Ended).Select(p => p.Id).ToList();
+        var members = stay.Count(p => p != b.HeadPositionId) + moved.Count;
+        if (members > OrgBounds.MaxMembers)
+            throw Refused($"{b.Id} would have {members.ToString(CultureInfo.InvariantCulture)} members, more than one head leads "
+                          + $"({OrgBounds.MaxMembers.ToString(CultureInfo.InvariantCulture)}).");
+        if (ThrottleRefusal(now) is { } throttled) throw Refused(throttled);
+        ForecastsRefusal(r.Forecasts, "a merge");
+
+        void Rights(OrgUnitRow u)
+        {
+            var line = Ancestors(u.Id);
+            var right = OrgRights.Answer(OrgOperation.Merge, OrgRights.ReservedOf(OrgOperation.Merge, u, line),
+                OrgRights.RelationOf(OrgOperation.Merge, r.Caller, u, line));
+            if (OrgRights.Refusal(right, $"merging {OrgEnvelopes.NameOf(u.Id)}") is { } notYours) throw Forbidden(notYours);
+        }
+
+        var choice = $"merge {a.Id} into {b.Id}";
+        var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.Merge, r.Options.Count > 0 ? r.Options : [choice], choice,
+            r.Rationale, r.Refs, now);
+        // THE DISPOSAL FIRST, while A's positions are still A's: each fence names the unit its position stood in.
+        var disposal = Restructure(new Restructuring($"{a.Id} was merged into {b.Id} by {r.Caller}", r.Caller, [a.Id], [], [.. moved, .. stay]), now);
+        var children = all.Where(u => u.ParentId == a.Id && u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToList();
+        using (var c = db.Cmd("UPDATE org_unit SET status = $closed, closed_at = $at, head_position_id = NULL WHERE id = $a AND status <> $closed",
+                   ("$closed", OrgUnitStatus.Closed), ("$at", Sql.T(now)), ("$a", a.Id)))
+            if (c.ExecuteNonQuery() != 1) throw Refused($"{a.Id} was closed while this merge was written.");
+        using (var c = db.Cmd("UPDATE org_position SET unit_id = $b WHERE unit_id = $a AND status <> $ended",
+                   ("$b", b.Id), ("$a", a.Id), ("$ended", OrgPositionStatus.Ended)))
+            c.ExecuteNonQuery();
+        using (var c = db.Cmd("UPDATE org_unit SET parent_id = $b WHERE parent_id = $a AND status <> $closed",
+                   ("$b", b.Id), ("$a", a.Id), ("$closed", OrgUnitStatus.Closed)))
+            c.ExecuteNonQuery();
+        var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: b.Id)).ToList();
+        var eventId = Event(now, a.Id, null, OrgEventKind.Merged, r.Caller,
+            $"unit={a.Id} into={b.Id} head={a.HeadPositionId ?? "vacant"} moved={Ids(moved)} children={Ids(children)} decision={decision.Id} "
+            + $"cancelled={Ids(disposal.Cancelled)}");
+        var after = Units();
+        return new MergedUnit(after.Single(u => u.Id == a.Id), after.Single(u => u.Id == b.Id), decision, forecasts, moved, children,
+            disposal.Cancelled, eventId);
+    });
+
     // ---- the restructuring writers' parts ----------------------------------------------------------------------------------------
 
     /// <summary>The caller is an active position on the chart — never an app principal or a board seat — or refused in words.</summary>
@@ -128,6 +258,26 @@ public sealed partial class OrgStore
         if (forecasts.Count is 0 or > DecisionLimits.MaxForecasts)
             throw Refused($"{act} carries 1 to {DecisionLimits.MaxForecasts.ToString(CultureInfo.InvariantCulture)} forecasts — such as "
                           + $"'{ForecastVocabulary.UnitAdmissible}' on the unit, its subject left empty: a structural act is a decision with a forecast.");
+    }
+
+    /// <summary>
+    /// A UNIT LIVES <see cref="OrgBounds.MinimumLife"/> (ORGANISATION § 3) — or until a precommitted kill criterion resolves: a forecast
+    /// on its <c>charter</c> decision the app resolved yes or no. A seeded unit has no charter, and its age is the rung's.
+    /// </summary>
+    void LifeRefusal(OrgUnitRow unit, DateTimeOffset now, string act)
+    {
+        if (now - unit.CreatedAt >= OrgBounds.MinimumLife) return;
+        if (unit.CharterDecisionId is { } charter)
+        {
+            using var c = db.Cmd("""
+                SELECT EXISTS (SELECT 1 FROM org_forecast f JOIN org_forecast_resolution r ON r.forecast_id = f.id
+                                WHERE f.decision_id = $charter AND r.outcome IN ('yes', 'no'))
+                """, ("$charter", charter));
+            if (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0) return;
+        }
+        throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} was chartered {(now - unit.CreatedAt).TotalDays.ToString("0.#", CultureInfo.InvariantCulture)} "
+                      + $"days ago, and a unit lives {OrgBounds.MinimumLife.TotalDays.ToString(CultureInfo.InvariantCulture)} days before it is "
+                      + $"{act} — or until a forecast on its charter resolves, and none has (ORGANISATION § 3).");
     }
 
     /// <summary>Each of <paramref name="positions"/> <c>ended</c> at <paramref name="now"/>, inside the caller's write.</summary>
