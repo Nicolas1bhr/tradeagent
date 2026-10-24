@@ -89,14 +89,16 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
     [Fact]
     public async Task The_harness_is_never_told_of_a_shell_a_wake_file_or_the_inbox()
     {
-        var (home, _) = Built(CouncilRoles.Research);
+        // THE RUNTIME READS THE RECORD THE BUILD WROTE (U-exec-env-fix item 2): the harness sends only the canon the app wrote, so a
+        // runtime handed another record than the build's has no canon of this home to vouch for and refuses the turn.
+        var (home, files) = Built(CouncilRoles.Research);
 
         using var provider = new FakeProvider();
         provider.Answer(FakeProvider.Message("nothing to do.", input: 10, output: 2));
         var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
         manifest.BaseUrl = provider.BaseUrl;
         using var runtime = new ApiAgentRuntime(manifest, provider.Holding(Pretend), null,
-            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10));
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), appFiles: files);
         var conversation = runtime.OpenConversation(CouncilRoles.Research, () => home,
             () => new Dictionary<string, string>(), () => null);
 
