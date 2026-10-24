@@ -49,6 +49,14 @@ public sealed record TiltRequest(
 public sealed record Tilted(OrgUnitRow Unit, string Currency, string? From, string To, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts,
     long EventId);
 
+/// <summary>
+/// ONE TURN OF A SEATED POSITION, AS THE HOST'S METER READS IT (<c>U-org-verbs-e</c>, fix pass 2): what the turn reserves, and the
+/// envelope of the unit a tilt's share is a fraction of — the tilting head's — in EACH ceiling that position's OWN seat is held to
+/// (<see cref="BillingClasses.CeilingsOf"/>: a plan-billed seat the plan's, a key-billed one the money cap's, an unknown one both),
+/// nearest envelope at or above that unit, as admission resolves it. Never the calling head's ceilings.
+/// </summary>
+public sealed record SeatTurn(decimal Reservation, IReadOnlyList<CeilingEnvelope> Parent);
+
 public sealed partial class OrgStore
 {
     /// <summary>
@@ -64,7 +72,7 @@ public sealed partial class OrgStore
     /// no meter to size it; a trial or verdict share worth less than one of an open campaign's; no forecast.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public Tilted Tilt(TiltRequest r, CharterFunding? funding, DateTimeOffset now, Func<string, decimal?>? reservationOf = null) => db.Write(_ =>
+    public Tilted Tilt(TiltRequest r, CharterFunding? funding, DateTimeOffset now, Func<string, SeatTurn?>? seatOf = null) => db.Write(_ =>
     {
         if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
             throw Forbidden($"'{r.Caller}' is no active position: a share is tilted by the head whose launch asks it.");
@@ -113,7 +121,7 @@ public sealed partial class OrgStore
             foreach (var parentEnvelope in funding.Parent)
                 if (Unfundable(funding.Seat, unit.Id, r.Share * parentEnvelope.Envelope, funding.Reservation) is { } never)
                     throw Refused($"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)})");
-            if (StrandedSeat(unit, r.Share, funding, reservationOf) is { } stranded) throw Refused(stranded);
+            if (StrandedSeat(unit, r.Share, seatOf) is { } stranded) throw Refused(stranded);
         }
         else if (WorthRefusal(r.Currency, r.Share) is { } worthless) throw Refused(worthless);
 
@@ -137,33 +145,34 @@ public sealed partial class OrgStore
     /// <summary>
     /// WHY THE AI SHARE <paramref name="share"/> OF <paramref name="unit"/> WOULD STRAND A SEAT IN ITS SUBTREE, or null (the fix pass, the
     /// Codex review's P2; ORGANISATION § 3, "a split that leaves any seated position's reservation larger than its unit's whole envelope
-    /// is refused"): in each ceiling the parent's envelope is read in, every unit of the subtree is resolved under the new share — a
-    /// share of its own times the envelope above it, none being the room above it — and every position of it that is ACTIVE or SEATED
-    /// must be able to start one turn: its reservation, as the host's meter prices it (<paramref name="reservationOf"/>), at most its
-    /// unit's whole envelope (<see cref="Unfundable"/>). A seat nobody priced is refused, never guessed.
+    /// is refused"): every position of the subtree that is ACTIVE or SEATED must be able to start one turn — its reservation, as the
+    /// host's meter prices it (<paramref name="seatOf"/>), at most its unit's whole envelope (<see cref="Unfundable"/>) in EACH ceiling
+    /// ITS OWN seat is held to (fix pass 2, the re-review's P2): the subtree is resolved under the new share from the parent's envelope
+    /// in that ceiling — a share of its own times the envelope above it, none being the room above it. A seat nobody priced, or whose
+    /// ceilings nobody read, is refused, never guessed — and never judged in the calling head's ceilings instead.
     /// </summary>
-    string? StrandedSeat(OrgUnitRow unit, decimal share, CharterFunding funding, Func<string, decimal?>? reservationOf)
+    string? StrandedSeat(OrgUnitRow unit, decimal share, Func<string, SeatTurn?>? seatOf)
     {
         var subtree = Subtree(unit.Id);
         var inside = subtree.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
         var seated = Positions().Where(p => inside.Contains(p.UnitId) && p.Status != OrgPositionStatus.Ended
                                             && (p.Status == OrgPositionStatus.Active || p.SeatRuntime is not null)).ToList();
         if (seated.Count == 0) return null;
-        if (reservationOf is null)
+        if (seatOf is null)
             return $"this host prices no seat, so whether the {seated.Count.ToString(CultureInfo.InvariantCulture)} seated position(s) under "
                    + $"{OrgEnvelopes.NameOf(unit.Id)} could still start a turn cannot be checked: a tilt that might strand one is refused, never guessed.";
 
-        foreach (var parentEnvelope in funding.Parent)
+        foreach (var p in seated)
         {
-            var envelope = new Dictionary<string, decimal>(StringComparer.Ordinal) { [unit.Id] = share * parentEnvelope.Envelope };
-            foreach (var u in subtree.Skip(1))
-                envelope[u.Id] = u.EnvelopeShare is { } text ? Share(u.Id, OrgCurrency.Ai, text) * envelope[u.ParentId!] : envelope[u.ParentId!];
-            foreach (var p in seated)
+            if (seatOf(p.Id) is not { Parent.Count: > 0 } turn)
+                return $"the host could not price one turn of {p.Id}, seated under {OrgEnvelopes.NameOf(unit.Id)}, or read the ceilings its "
+                       + "seat is held to: a tilt that might strand it is refused, never guessed.";
+            foreach (var parentEnvelope in turn.Parent)
             {
-                if (reservationOf(p.Id) is not { } reserves)
-                    return $"the host could not price one turn of {p.Id}, seated under {OrgEnvelopes.NameOf(unit.Id)}: a tilt that might strand "
-                           + "it is refused, never guessed.";
-                if (Unfundable(p.Id, p.UnitId, envelope[p.UnitId], reserves) is { } never)
+                var envelope = new Dictionary<string, decimal>(StringComparer.Ordinal) { [unit.Id] = share * parentEnvelope.Envelope };
+                foreach (var u in subtree.Skip(1))
+                    envelope[u.Id] = u.EnvelopeShare is { } text ? Share(u.Id, OrgCurrency.Ai, text) * envelope[u.ParentId!] : envelope[u.ParentId!];
+                if (Unfundable(p.Id, p.UnitId, envelope[p.UnitId], turn.Reservation) is { } never)
                     return $"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)}) — the tilt would leave a seated position of "
                            + $"{OrgEnvelopes.NameOf(unit.Id)}'s unable to start one turn.";
             }
