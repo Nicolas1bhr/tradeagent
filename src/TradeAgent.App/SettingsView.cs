@@ -613,9 +613,13 @@ sealed class SettingsPage
         };
     }
 
-    /// <summary>An override as the box shows it, in percent; empty for none.</summary>
-    static string PercentText(decimal? fraction) =>
-        fraction is { } f ? (f * 100m).ToString("0.############", CultureInfo.InvariantCulture) : "";
+    /// <summary>
+    /// An override as the box shows it, in percent; empty for none. Every digit the fraction holds times 100, in the form
+    /// <see cref="Amount.Draw"/> gives the reader (<c>U-amount-precision</c>): no 12-place cut, and 1.234 reopens as 1.2340, which the
+    /// box reads back to the same fraction (a fraction's 28 places make a percentage of 26, which divides back exactly).
+    /// </summary>
+    internal static string PercentText(decimal? fraction) =>
+        fraction is { } f ? Amount.Draw(f * 100m) : "";
 
     /// <summary>
     /// One platform, as a heading, a sentence and its button. Deliberately the same shape as an

@@ -342,6 +342,24 @@ public class PaperFrictionTests(ITestOutputHelper log)
         Assert.Equal(0.00075m, ordinary);
     }
 
+    /// <summary>
+    /// A STORED FRACTION REOPENS AS TEXT THAT THE BOX'S OWN READER READS BACK TO IT (<c>U-amount-precision</c>, item 2). The redraw cut the
+    /// percentage at 12 places, so a fraction with more digits reopened as a different figure; and a figure such as 1.234 is one the reader
+    /// refuses as ambiguous, so it is drawn in a form it takes. A fraction holds at most 28 places, so its percentage holds at most 26 and
+    /// divides back exactly: the finest fractions are in the table.
+    /// </summary>
+    [Fact]
+    public void A_stored_fraction_reopens_as_text_that_reads_back_to_it()
+    {
+        Assert.Equal("", App.SettingsPage.PercentText(null));
+        foreach (var f in new[] { 0m, 0.00075m, 0.0005m, 0.0002m, 0.0000123456789012345m, 0.01234m, 0.01m, 0.0123m, 0.0000000000000000000000000001m, 0.0000000000000000000000000015m })
+        {
+            var text = App.SettingsPage.PercentText(f);
+            Assert.True(App.SettingsPage.TryPercent(text, 1m, "fee", out var back, out var why), $"{f} drawn as \"{text}\": {why}");
+            Assert.Equal(f, back);
+        }
+    }
+
     // ---- research: the same table, for a number a backtest leaves out ------------------------------
 
     static AgentContext Researcher() => AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1");

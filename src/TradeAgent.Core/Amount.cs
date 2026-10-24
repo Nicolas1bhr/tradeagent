@@ -78,7 +78,7 @@ public static class Amount
 
         // THE GROUPING-SHAPED MARK: "1.000" is one thousand where the point groups thousands and one
         // where it marks decimals, and the owner's own two spellings of 2026-10-22 show both are typed.
-        if (mark >= 0 && fraction.Length == 3 && whole.Length is >= 1 and <= 3 && whole[0] != '0')
+        if (mark >= 0 && LooksGrouped(whole, fraction))
         {
             why = Labels.AmountAmbiguous(typed, whole + fraction, Exact(Parsed(whole, fraction)));
             return false;
@@ -130,6 +130,23 @@ public static class Amount
     /// </summary>
     public static string Exact(decimal value) =>
         value.ToString("0.############################", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// A READ FIGURE AS A BOX OPENS ON IT (<c>U-amount-precision</c>): <see cref="Exact"/>'s digits, in a form <see cref="TryRead"/> accepts as
+    /// that same figure. A figure with exactly three decimals after one to three leading digits — 1.234, saved from "1.2340" — is printed back
+    /// the way a thousands separator looks, so the reader would refuse its own text as ambiguous; it is drawn with one more place, "1.2340".
+    /// Every other figure is drawn exactly as <see cref="Exact"/> draws it.
+    /// </summary>
+    public static string Draw(decimal value)
+    {
+        var text = Exact(value);
+        var mark = text.IndexOf('.');
+        return mark >= 0 && LooksGrouped(text[..mark], text[(mark + 1)..]) ? text + "0" : text;
+    }
+
+    /// <summary>One mark and exactly three digits after one to three leading digits that do not start with 0: how a thousands separator looks.</summary>
+    static bool LooksGrouped(string whole, string fraction) =>
+        fraction.Length == 3 && whole.Length is >= 1 and <= 3 && whole[0] != '0';
 
     /// <summary>A sum of money as an armed sentence or a saved note names it: exact, with its currency where one is known.</summary>
     public static string ExactMoney(decimal value, string currency) =>
