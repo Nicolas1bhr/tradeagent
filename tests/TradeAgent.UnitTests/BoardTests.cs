@@ -369,7 +369,7 @@ public class BoardTests(ITestOutputHelper log)
         log.WriteLine($"{denied.Code}: {denied.Message}");
         Assert.Equal(ErrorCode.HOME_ARMED_BEFORE_THE_BOARD, denied.Code);
         Assert.Contains("schema 46", denied.Message, StringComparison.Ordinal);
-        Assert.Contains($"schema {BoardRung}", denied.Message, StringComparison.Ordinal);
+        Assert.Contains($"schema {Versions.DatabaseSchemaVersion}", denied.Message, StringComparison.Ordinal); // THIS build's, which the words name
         Assert.Contains(Labels.SetAsideEarlierLiveSetting, denied.Message, StringComparison.Ordinal);
         Assert.Empty(conn.Broker.Orders);
         Assert.Equal(HealthState.PAUSED, gw.Health.Snapshot().Single(h => h.Component == Components.ExecutionCapability).State);

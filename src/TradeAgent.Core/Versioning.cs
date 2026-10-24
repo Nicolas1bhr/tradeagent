@@ -457,8 +457,16 @@ public static class Versions
     /// its SHA-256) and <c>board_event</c> (the founding, an earlier live setting set aside) — each refusing UPDATE and DELETE by trigger,
     /// one writer, <c>BoardStore</c>. The rung writes the founding record once — version 1, three seats and the founding event, in one
     /// transaction — and nothing from the settings row: the owner-set values of the fields the board now holds simply go.</para>
+    ///
+    /// <para><b>50 — every unit's envelope in three dimensions</b> (<c>U-org-verbs-e</c>, rung <see cref="EvidenceSharesRung"/>, after
+    /// <c>U-board-a1</c>'s 49): <c>org_unit.trial_share</c> and <c>verdict_share</c> (decimal TEXT, a fraction of the campaign's own
+    /// trial or verdict budget; NULL is no own cap, on every seeded unit) and <c>strategy_verdict.attempt_id</c> (the launch that asked
+    /// it; NULL before the rung and on an in-process ask, funded by no unit). No backfill; no budget is written.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 49;
+    public const int DatabaseSchemaVersion = EvidenceSharesRung;
+
+    /// <summary>The three-dimension envelopes' rung, spelled once (<c>U-org-verbs-e</c>); a unit overtaken renumbers it here.</summary>
+    public const int EvidenceSharesRung = 50;
 
     /// <summary>The security board's rung, spelled once (<c>U-board-a1</c>); a unit overtaken renumbers it here.</summary>
     public const int BoardRung = 49;
