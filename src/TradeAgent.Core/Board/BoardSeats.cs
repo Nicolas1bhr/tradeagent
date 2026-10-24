@@ -34,14 +34,20 @@ public static class BoardSeats
         $"'{id}' is a seat of the security board: outside the organisation's chart, never a position, and no organisation verb reaches it.";
 }
 
-/// <summary>A BOARD SEAT'S LIFE. Only <see cref="Dormant"/> is storable at rung 49: nothing launches a board seat yet (ORCHESTRATION § 2.3).</summary>
+/// <summary>
+/// A BOARD SEAT'S LIFE (<c>board_seat_state</c>, rung 50): a seat's row is sealed and says <see cref="Dormant"/> for ever, so its state
+/// now is its latest state row. Nothing in the product launches or activates a board seat yet (ORCHESTRATION § 2.3).
+/// </summary>
 public static class BoardSeatStatus
 {
     /// <summary>Founded and never launched: no turn, no act, no reach.</summary>
     public const string Dormant = "dormant";
 
-    /// <summary>Past the activation gate and acting. No build stores it yet; <c>U-board-b</c>'s rung admits it.</summary>
+    /// <summary>Past the activation gate and acting — written by the app alone (in this build, by the test host's seam only).</summary>
     public const string Active = "active";
+
+    /// <summary>Retired by the owner's press (CHANGE-001): no turn, no act, and never active again.</summary>
+    public const string Retired = "retired";
 }
 
 /// <summary>
