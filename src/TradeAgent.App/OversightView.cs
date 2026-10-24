@@ -359,6 +359,16 @@ sealed class OversightBanner
         FontSize = Theme.Small, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
     };
 
+    /// <summary>
+    /// Shown, in the caution colour, while the banner's finding cites records the app could not check (<c>U-watcher-b-fix</c>): its sentence
+    /// then brackets only the finding's own id, and says which cites are NOT VERIFIED.
+    /// </summary>
+    internal TextBlock Unverified { get; } = new()
+    {
+        FontSize = Theme.Small, Foreground = Theme.Caution, TextWrapping = TextWrapping.Wrap, IsVisible = false,
+        Text = "NOT VERIFIED — the app's database could not be read, so the records this finding cites were not checked."
+    };
+
     internal Button Open { get; }
 
     internal Button Acknowledge { get; }
@@ -375,7 +385,10 @@ sealed class OversightBanner
         var dot = Ui.With(Ui.Dot(Theme.Danger), d => d.Margin = new Thickness(0, 0, Theme.S3, 0));
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
         grid.Children.Add(dot);
-        grid.Children.Add(Ui.With(Text, t => t[Grid.ColumnProperty] = 1));
+        var words = new StackPanel { Spacing = Theme.S1, VerticalAlignment = VerticalAlignment.Center };
+        words.Children.Add(Text);
+        words.Children.Add(Unverified);
+        grid.Children.Add(Ui.With(words, w => w[Grid.ColumnProperty] = 1));
         grid.Children.Add(actions);
         Root.Child = grid;
     }
@@ -401,21 +414,33 @@ sealed class OversightBanner
         if (shown != _shown)
         {
             _shown = shown;
-            Text.Text = $"Severe finding{(waiting.Count == 1 ? "" : $" ({waiting.Count} unacknowledged, newest first)")}: {Sentence(newest)}";
+            var sentence = Sentence(newest, out var verified);
+            Text.Text = $"Severe finding{(waiting.Count == 1 ? "" : $" ({waiting.Count} unacknowledged, newest first)")}: {sentence}";
+            Unverified.IsVisible = !verified;
         }
         Root.IsVisible = true;
     }
 
-    /// <summary>The digest's sentence for <paramref name="f"/>, its cites checked against the app's database where there is one.</summary>
-    string Sentence(OversightFinding f)
+    /// <summary>
+    /// The digest's sentence for <paramref name="f"/>, its cites checked against the app's database. FAILS CLOSED (<c>U-watcher-b-fix</c>,
+    /// EVID-001): where there is no database, or it will not be read, no cite is bracketed as one that resolved — the sentence is
+    /// <see cref="DigestComposer.Unchecked"/>'s, and <paramref name="verified"/> is false unless the finding cites nothing to check.
+    /// </summary>
+    string Sentence(OversightFinding f, out bool verified)
     {
-        if (_src.DatabaseFile() is not { } file || !File.Exists(file)) return DigestComposer.Sentence(f, _ => true);
         try
         {
-            using var records = new OrgRecords(file);
-            return DigestComposer.Sentence(f, records.Resolves);
+            if (_src.DatabaseFile() is { } file && File.Exists(file))
+            {
+                using var records = new OrgRecords(file);
+                var sentence = DigestComposer.Sentence(f, records.Resolves);
+                verified = true;
+                return sentence;
+            }
         }
-        catch (Exception) { return DigestComposer.Sentence(f, _ => true); }
+        catch (Exception) { /* the check did not run to its end: nothing it would have said is claimed */ }
+        verified = f.Cites.Count == 0;
+        return DigestComposer.Unchecked(f);
     }
 
     void AcknowledgeCounted()
