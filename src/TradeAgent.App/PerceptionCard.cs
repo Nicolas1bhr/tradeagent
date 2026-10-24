@@ -618,6 +618,7 @@ sealed class PerceptionCard
                                      + $"({a.ErrorClass}).",
             _ => $"UNANSWERED — {a.ErrorClass}."
         });
+        if (a.Problem is { Length: > 0 } problem) lines.Add(problem);
 
         if (a.Answers.TryGetValue(TestQuestion, out var d) && d.Noul is { } p)
             lines.Add($"The probability it gave that this is a test message: {p.ToString("R", CultureInfo.InvariantCulture)}.");

@@ -96,6 +96,11 @@ public static class Downloader
 
     static readonly HttpClient Http = CreateClient();
 
+    // NEVER FOLDED (U-tls-denylist fix pass): a connection the app's TLS policy refused is a definite refusal, not "could not be
+    // read". The paths below that turn a failure into null rethrow it instead — the TlsRefusedException itself, so its message is
+    // the policy's words (the authority and its source, or the missing list and the repair) and not HttpClient's "see inner
+    // exception" — and no caller falls back on a null to a second road that would meet the same refusal unsaid.
+
     static HttpClient CreateClient()
     {
         // THROUGH THE APP'S TLS POLICY (U-tls-denylist): the platform's validation and the denylist, on every hop of a redirect too.
@@ -427,10 +432,14 @@ public static class Downloader
     /// The release API's base address. Null is GitHub's own, which is what the product passes; a test passes
     /// its loopback stand-in, so an install is proven end to end without a request leaving the machine.
     /// </param>
-    public static async Task<string?> ResolveGitHubAssetAsync(string ownerRepo, string assetNameRegex, CancellationToken ct = default,
-        string? api = null)
+    public static Task<string?> ResolveGitHubAssetAsync(string ownerRepo, string assetNameRegex, CancellationToken ct = default,
+        string? api = null) => ResolveGitHubAssetAsync(Http, ownerRepo, assetNameRegex, ct, api);
+
+    /// <summary><see cref="ResolveGitHubAssetAsync(string, string, CancellationToken, string?)"/> over a client a test brings.</summary>
+    internal static async Task<string?> ResolveGitHubAssetAsync(HttpClient http, string ownerRepo, string assetNameRegex,
+        CancellationToken ct = default, string? api = null)
     {
-        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct, api);
+        using var release = await GitHubLatestReleaseAsync(http, ownerRepo, ct, api);
         if (release is null) return null;
         try
         {
@@ -451,7 +460,7 @@ public static class Downloader
     /// <param name="api">See <see cref="ResolveGitHubAssetAsync"/>.</param>
     public static async Task<string?> ResolveGitHubTagAsync(string ownerRepo, CancellationToken ct = default, string? api = null)
     {
-        using var release = await GitHubLatestReleaseAsync(ownerRepo, ct, api);
+        using var release = await GitHubLatestReleaseAsync(Http, ownerRepo, ct, api);
         if (release is null) return null;
         try { return release.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() : null; }
         catch (Exception) { return null; }
@@ -460,17 +469,18 @@ public static class Downloader
     /// <summary>GitHub's release API, where every release lookup goes unless a test says otherwise.</summary>
     public const string GitHubApi = "https://api.github.com";
 
-    static async Task<JsonDocument?> GitHubLatestReleaseAsync(string ownerRepo, CancellationToken ct, string? api)
+    static async Task<JsonDocument?> GitHubLatestReleaseAsync(HttpClient http, string ownerRepo, CancellationToken ct, string? api)
     {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 $"{(api ?? GitHubApi).TrimEnd('/')}/repos/{ownerRepo}/releases/latest");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
-            using var response = await Http.SendAsync(request, ct);
+            using var response = await http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return null;
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         }
+        catch (Exception ex) when (TlsRefusedException.In(ex) is { } refused) { throw refused; } // see NeverFolded
         catch (Exception) { return null; }
     }
 
@@ -500,7 +510,11 @@ public static class Downloader
     /// a caller that only wants to know whether a file exists should not be able to spend that. A
     /// suite that talks to a loopback server passes seconds; nothing else changes.
     /// </summary>
-    public static async Task<UrlStatus> StatusAsync(string url, TimeSpan timeout, CancellationToken ct = default)
+    public static Task<UrlStatus> StatusAsync(string url, TimeSpan timeout, CancellationToken ct = default) =>
+        StatusAsync(Http, url, timeout, ct);
+
+    /// <summary><see cref="StatusAsync(string, TimeSpan, CancellationToken)"/> over a client a test brings.</summary>
+    internal static async Task<UrlStatus> StatusAsync(HttpClient http, string url, TimeSpan timeout, CancellationToken ct = default)
     {
         using var leash = CancellationTokenSource.CreateLinkedTokenSource(ct);
         leash.CancelAfter(timeout);
@@ -508,12 +522,13 @@ public static class Downloader
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Head, url);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, leash.Token);
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, leash.Token);
             return new UrlStatus(response.StatusCode, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { return new UrlStatus(null, $"it did not answer within {Plainly(timeout)}"); }
-        catch (Exception ex) { return new UrlStatus(null, ex.Message.ReplaceLineEndings(" ")); }
+        // A REFUSED CONNECTION SAYS WHY IN THE POLICY'S WORDS, not the wrapper's "see inner exception" (U-tls-denylist).
+        catch (Exception ex) { return new UrlStatus(null, (TlsRefusedException.In(ex)?.Message ?? ex.Message).ReplaceLineEndings(" ")); }
     }
 
     /// <summary>A timeout as the owner would say it, for a sentence on the owner's screen.</summary>
@@ -521,13 +536,17 @@ public static class Downloader
         timeout.TotalSeconds < 90 ? $"{timeout.TotalSeconds:N0} seconds" : $"{timeout.TotalMinutes:N0} minutes";
 
     /// <summary>Fetches a text file (checksum manifests, version indexes). Null when unreachable.</summary>
-    public static async Task<string?> TryGetStringAsync(string url, CancellationToken ct = default)
+    public static Task<string?> TryGetStringAsync(string url, CancellationToken ct = default) => TryGetStringAsync(Http, url, ct);
+
+    /// <summary><see cref="TryGetStringAsync(string, CancellationToken)"/> over a client a test brings.</summary>
+    internal static async Task<string?> TryGetStringAsync(HttpClient http, string url, CancellationToken ct = default)
     {
         try
         {
-            using var response = await Http.GetAsync(url, ct);
+            using var response = await http.GetAsync(url, ct);
             return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : null;
         }
+        catch (Exception ex) when (TlsRefusedException.In(ex) is { } refused) { throw refused; } // see NeverFolded
         catch (Exception) { return null; }
     }
 
@@ -550,15 +569,19 @@ public static class Downloader
     /// that did nothing. The leash expiring stays null — a server that stopped answering really is a
     /// file that could not be read.
     /// </summary>
-    public static async Task<string?> TryGetSmallTextAsync(
-        string url, int maxBytes, TimeSpan timeout, CancellationToken ct = default)
+    public static Task<string?> TryGetSmallTextAsync(
+        string url, int maxBytes, TimeSpan timeout, CancellationToken ct = default) => TryGetSmallTextAsync(Http, url, maxBytes, timeout, ct);
+
+    /// <summary><see cref="TryGetSmallTextAsync(string, int, TimeSpan, CancellationToken)"/> over a client a test brings.</summary>
+    internal static async Task<string?> TryGetSmallTextAsync(
+        HttpClient http, string url, int maxBytes, TimeSpan timeout, CancellationToken ct = default)
     {
         using var leash = CancellationTokenSource.CreateLinkedTokenSource(ct);
         leash.CancelAfter(timeout);
 
         try
         {
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, leash.Token);
+            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, leash.Token);
             if (!response.IsSuccessStatusCode) return null;
 
             // The server said how big it is and it is too big. Nothing needs to be read at all.
@@ -568,6 +591,7 @@ public static class Downloader
             return await ReadLimitedAsync(body, maxBytes, leash.Token);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (TlsRefusedException.In(ex) is { } refused) { throw refused; } // see NeverFolded
         catch (Exception) { return null; }
     }
 

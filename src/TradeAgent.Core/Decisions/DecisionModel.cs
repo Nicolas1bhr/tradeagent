@@ -158,6 +158,12 @@ public sealed record DecisionAnswer
     /// <summary>What went wrong, as one word a reader can group by: <c>http-429</c>, <c>timeout</c>, <c>transport</c> …</summary>
     public string? ErrorClass { get; init; }
 
+    /// <summary>
+    /// What went wrong IN WORDS, where the app knows more than <see cref="ErrorClass"/> says: a connection the TLS policy refused
+    /// (<c>tls-refused</c>) names the distrusted authority and its source. Shown to the owner; the tape keeps the class.
+    /// </summary>
+    public string? Problem { get; init; }
+
     /// <summary>The launch-ledger row this call was reserved and settled on. Null when it was refused.</summary>
     public string? AttemptId { get; init; }
 

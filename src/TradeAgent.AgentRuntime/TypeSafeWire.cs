@@ -422,6 +422,12 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
             // HttpClient's own timeout, or the exchange's deadline, arrives as a cancellation nobody asked for.
             return Lost("timeout", null);
         }
+        catch (Exception ex) when (TlsRefusedException.In(ex) is { } refused)
+        {
+            // THE APP'S TLS POLICY REFUSED THE CONNECTION (U-tls-denylist): its own class, and its words for the card. Settled like any
+            // lost answer — the reservation stands — because the class says what happened, not whether a byte left.
+            return Lost("tls-refused", null, refused.Message);
+        }
         catch (HttpRequestException)
         {
             return Lost("transport", null);
@@ -495,8 +501,8 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         };
         return new Sent(answer, requestedAt, endedAt, read.AnswersJson);
 
-        Sent Lost(string why, int? code) =>
-            new(Answer(DecisionStatus.UNANSWERED) with { ErrorClass = why, HttpStatus = code, Latency = clock.Elapsed },
+        Sent Lost(string why, int? code, string? problem = null) =>
+            new(Answer(DecisionStatus.UNANSWERED) with { ErrorClass = why, Problem = problem, HttpStatus = code, Latency = clock.Elapsed },
                 requestedAt, _now(), null);
     }
 
