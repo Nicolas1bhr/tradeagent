@@ -1025,7 +1025,8 @@ public sealed partial class OrgStore
                     if (HasUntakenWake(m.Id))
                         // THE HOLDER ASKED FOR ITS OWN WAKE AFTER A PASS WROTE THIS RE-WAKE (its turn's end and its request are two
                         // writes, and a pass can run between them): the re-wake still pending is brought to that time, once.
-                        return proposal + (last is not null && HolderAsked(m, now) is { } asked && events.BringMandateWakeForward(key, asked) ? 1 : 0);
+                        return proposal + (last is not null && HolderAsked(m, now, LevelOf(m.Holder) ?? floors.Largest, floors) is { } asked
+                                                       && events.BringMandateWakeForward(key, asked) ? 1 : 0);
 
                     var level = LevelOf(m.Holder);
                     var due = last is null ? now : RewakeDue(m, latest, last, level ?? floors.Largest, floors, now);
@@ -1111,17 +1112,29 @@ public sealed partial class OrgStore
     /// </summary>
     DateTimeOffset RewakeDue(MandateRow m, MandateEventRow latest, string last, string level, RewakeFloors floors, DateTimeOffset now)
     {
+        if (FloorDue(m, latest, last, level, floors, now) is not { } due) return now;
+        if (HolderAsked(m, now, level, floors) is { } asked && asked < due) due = asked;
+        return due < now ? now : due;
+    }
+
+    /// <summary>
+    /// WHEN THE HOLDER'S RE-WAKE OF <paramref name="m"/> IS DUE BY ITS FLOOR ALONE after <paramref name="last"/>: that launch's end
+    /// (<paramref name="now"/> when it has none) plus <see cref="RewakeFloors.After"/> for the k-th launch since
+    /// <paramref name="latest"/>, no later than the deadline less one floor — or null when no floor applies (a zero floor, or no
+    /// launch of this owing). <see cref="RewakeDue"/> clamps it to the holder's requested wake; <see cref="HolderAsked"/> reads it
+    /// to tell a wake brought forward from one waiting its floor. A function of the records, so every pass and a restart agree.
+    /// </summary>
+    DateTimeOffset? FloorDue(MandateRow m, MandateEventRow latest, string last, string level, RewakeFloors floors, DateTimeOffset now)
+    {
         var floor = floors.Floor(level);
         var k = LaunchesOwing(m.Id, latest.Id);
-        if (floor <= TimeSpan.Zero || k == 0) return now;
+        if (floor <= TimeSpan.Zero || k == 0) return null;
 
         DateTimeOffset? ended;
         using (var c = db.Cmd("SELECT ended_at FROM ai_attempt WHERE id=$a", ("$a", last)))
             ended = Sql.TimeN(c.ExecuteScalar());
         var due = (ended ?? now) + floors.After(level, k);
-        if (HolderAsked(m, now) is { } asked && asked < due) due = asked;
-        if (m.Deadline - floor < due) due = m.Deadline - floor;
-        return due < now ? now : due;
+        return m.Deadline - floor < due ? m.Deadline - floor : due;
     }
 
     /// <summary>
@@ -1149,10 +1162,16 @@ public sealed partial class OrgStore
     /// <para><b>A requested wake is spoken for once</b> (fix pass 2): null, too, while ANOTHER mandate of the holder has an untaken
     /// <c>mandate</c> wake due at or before it — that launch already carries a mandate, and the choice above is made again each
     /// pass against the holder's LATEST launch, which an owner-woken turn changes, while a wake brought forward is never moved
-    /// back. Read from the wakes alone, so every pass and a restart see the same answer, and the second mandate keeps its floor
+    /// back. Read from the records alone, so every pass and a restart see the same answer, and the second mandate keeps its floor
     /// (BUDGET-001).</para>
+    ///
+    /// <para><b>A holder carries at most one brought-forward mandate</b> (<c>U-rewake-followups</c>): the wake counted above is ANY
+    /// other mandate's untaken <c>mandate</c> wake due before that mandate's own floor (<see cref="FloorDue"/>), at ANY due — not only
+    /// one due by this request. A mandate already brought to a LATER requested wake still rides it, and two requested wakes one
+    /// launch takes together pay for one turn: bringing a second mandate to the earlier one would leave the first due before its
+    /// floor with nothing asked for it, an extra turn. <paramref name="level"/> is the holder's, so every mandate it holds shares it.</para>
     /// </summary>
-    DateTimeOffset? HolderAsked(MandateRow m, DateTimeOffset now)
+    DateTimeOffset? HolderAsked(MandateRow m, DateTimeOffset now, string level, RewakeFloors floors)
     {
         if (AskedFor(m.Holder, now) != m.Id) return null;
         DateTimeOffset? asked;
@@ -1160,11 +1179,31 @@ public sealed partial class OrgStore
                    ("$self", MissionEventKind.Self), ("$h", m.Holder)))
             asked = Sql.TimeN(c.ExecuteScalar());
         if (asked is null) return null;
-        using var taken = db.Cmd("""
-            SELECT EXISTS (SELECT 1 FROM mission_event
-                            WHERE kind=$mandate AND role=$h AND payload<>$m AND consumed_at IS NULL AND due_at<=$asked)
-            """, ("$mandate", MissionEventKind.Mandate), ("$h", m.Holder), ("$m", m.Id), ("$asked", Sql.T(asked.Value)));
-        return Convert.ToInt64(taken.ExecuteScalar(), CultureInfo.InvariantCulture) != 0 ? null : asked;
+        var pending = new List<(string Mandate, DateTimeOffset Due)>();
+        using (var c = db.Cmd("""
+                   SELECT payload, MIN(due_at) FROM mission_event
+                    WHERE kind=$mandate AND role=$h AND payload<>$m AND consumed_at IS NULL
+                    GROUP BY payload
+                   """, ("$mandate", MissionEventKind.Mandate), ("$h", m.Holder), ("$m", m.Id)))
+        using (var r = c.ExecuteReader())
+            while (r.Read())
+                if (Sql.S(r.GetValue(0)) is { } other && Sql.TimeN(r.GetValue(1)) is { } due) pending.Add((other, due));
+        foreach (var (other, due) in pending)
+            if (Brought(other, due, level, floors, now)) return null;
+        return asked;
+    }
+
+    /// <summary>
+    /// WHETHER <paramref name="mandateId"/>'S UNTAKEN WAKE DUE AT <paramref name="due"/> RIDES A REQUESTED WAKE — due before the
+    /// mandate's own floor (<see cref="FloorDue"/>). A wake no floor applies to (the issued wake, a retry, a rejection, a zero floor)
+    /// never does. A mandate the store cannot read counts as brought: refused a guess, the saving direction keeps the floor.
+    /// </summary>
+    bool Brought(string mandateId, DateTimeOffset due, string level, RewakeFloors floors, DateTimeOffset now)
+    {
+        if (Mandate(mandateId) is not { } m) return true;
+        var latest = MandateEvents(m.Id).LastOrDefault(e => MandateEventKind.IsStatus(e.Kind));
+        if (latest is null || LastLaunch(m.Id) is not { } last) return latest is null;
+        return FloorDue(m, latest, last, level, floors, now) is { } floorDue && due < floorDue;
     }
 
     /// <summary>
