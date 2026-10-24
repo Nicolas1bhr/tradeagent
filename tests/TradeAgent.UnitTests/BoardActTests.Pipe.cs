@@ -218,3 +218,33 @@ public partial class BoardActTests
         }
     }
 }
+
+public partial class BoardActTests
+{
+    /// <summary>
+    /// THE UNIT'S OBSERVABLE RESULT, END TO END: a launch the ledger recorded for an active board seat sends <c>board-narrow</c> over the
+    /// pipe, and the gateway refuses the next order above the new limit — one seat, a new version decided by the board, in force at once;
+    /// an order that passed the moment before is refused the moment after.
+    /// </summary>
+    [Fact]
+    public async Task A_narrowing_sent_over_the_pipe_refuses_the_next_order_above_it()
+    {
+        using var db = TestEnv.NewDb();
+        SeedVersion(db, Tradable);
+        Activate(db, "board-1");
+        var (gw, _) = await Gateway(db);
+        await using var _gw = gw;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        await gw.PlaceAsync(new AgentContext("a"), "pipe-before", TestEnv.Buy("ES", 3m));
+
+        var reply = await server.CallAsync(Frame(Ops.BoardNarrow, ("intent", Change("risk.max_order_quantity", 10, 2)),
+            ("rationale", "three at once is more than this book should carry")), "board-1", Launch(db, "board-1"));
+        Assert.True(reply.Ok, TradeAgent.Core.Json.Write(reply.Error));
+        Assert.Equal(BoardActEventKind.Applied, Body(reply).GetProperty("status").GetString());
+
+        var refused = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.PlaceAsync(new AgentContext("a"), "pipe-after", TestEnv.Buy("ES", 3m)));
+        Assert.Equal(ErrorCode.RISK_LIMIT_EXCEEDED, refused.Code);
+        var inForce = new BoardReader(db).InForce();
+        Assert.Equal((BoardDecider.Board, BoardBasis.Act, 2m), (inForce.Decider, inForce.Basis, inForce.Policy.Risk.MaxOrderQuantity));
+    }
+}
