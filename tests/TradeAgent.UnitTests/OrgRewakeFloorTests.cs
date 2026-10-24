@@ -463,4 +463,69 @@ public partial class OrgAssignmentTests
         Assert.Equal(0, org.Sweep(t, Shipped, said.Add));
         Assert.Single(said);
     }
+
+    /// <summary>
+    /// (d, U-rewake-followups item 1) A HOLDER CARRIES AT MOST ONE BROUGHT-FORWARD MANDATE AT ANY TIME, ACROSS TWO REQUESTED WAKES.
+    /// The re-review's sequence: a member holds two owed mandates; a launch that served the newer (m2) asked for a wake at T + 3, and
+    /// the pass brings m2's re-raise to it while the older (m1) waits its floor at T + 15. The owner's words then wake the member at
+    /// T + 2 (a turn serving no mandate) and that turn asks for a wake at T + 2.75: the next pass must NOT bring m1 to it, because m2
+    /// already rides a requested wake before its floor. Other words wake the member at T + 2.5 and that launch runs to T + 3.5, so
+    /// one launch at T + 3.5 takes BOTH requested wakes and, of the mandates, only one (<c>MissionLoop.OneMandate</c>). Whatever it
+    /// takes, no mandate wake may be left due before its floor with no requested wake pending to pay for it: that would be a launch
+    /// about eleven minutes early that nobody asked for (BUDGET-001).
+    ///
+    /// <para>RED at base: m1 came forward to T + 2.75, the launch kept m1, and m2's wake was left due at T + 3.</para>
+    /// </summary>
+    [Fact]
+    public void A_holder_carries_at_most_one_brought_mandate_across_two_self_wakes()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var events = new MissionEventStore(db);
+        var attempts = new AiAttemptStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m1 = org.Assign(Issue(), t);
+        var m2 = org.Assign(Issue(), t.AddSeconds(1));
+        var a = TurnOn(db, Member, m1, t);
+        var b = TurnOn(db, Member, m2, t.AddSeconds(1));
+        Assert.Equal(2, org.Sweep(t.AddSeconds(1), Shipped));
+        Assert.True(events.RaiseDue(MissionEventIds.Self(b), MissionEventKind.Self, t.AddSeconds(1), t.AddMinutes(3), role: Member));
+        Assert.Equal(1, org.Sweep(t.AddMinutes(2), Shipped));
+        Assert.Equal((t.AddMinutes(15), t.AddMinutes(3)), (Reraise(db, org, m1, a)!.DueAt, Reraise(db, org, m2, b)!.DueAt));
+
+        // L4: the owner's words at T + 2; the turn asks for its own wake at T + 2.75. The passes after it bring nothing.
+        OwnerTurnAsking(db, Member, t.AddMinutes(2), t.AddMinutes(2.75), 4245);
+        Assert.Equal(0, org.Sweep(t.AddMinutes(2), Shipped));
+        Assert.Equal(0, new OrgStore(db).Sweep(t.AddMinutes(2.25), Shipped));
+        Assert.Equal((t.AddMinutes(15), t.AddMinutes(3)), (Reraise(db, org, m1, a)!.DueAt, Reraise(db, org, m2, b)!.DueAt));
+
+        // L5: other words wake the member at T + 2.5, and that launch runs until T + 3.5, spanning both requested wakes.
+        var words = MissionEventIds.ForRole(MissionEventIds.Owner(4246), Member);
+        Assert.True(events.Raise(words, MissionEventKind.Owner, t.AddMinutes(2.5), payload: "{}", role: Member));
+        var l5 = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(attempts.Begin(new AiAttempt
+        {
+            Id = l5, StartedAt = t.AddMinutes(2.5), Role = Member, ReservedCost = 0.01m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.Name(SeatAssurance.Brokered)
+        }, [words]).Admitted);
+        Assert.Equal(0, org.Sweep(t.AddMinutes(3), Shipped));
+        Assert.True(attempts.End(l5, 0, t.AddMinutes(3.5), 10, null, null, 10, null, "model-x", 0.01m, null, null));
+        Assert.Equal(0, org.Sweep(t.AddMinutes(3.5), Shipped));
+
+        // L6 at T + 3.5: the loop's own choice of wakes — both requested wakes, and one mandate's.
+        var at = t.AddMinutes(3.5);
+        var taken = TradeAgent.AgentRuntime.MissionLoop.OneMandate(events.DueFor(Member, at));
+        Assert.Equal(2, taken.Count(e => e.Kind == MissionEventKind.Self));
+        Assert.True(attempts.Begin(new AiAttempt
+        {
+            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = at, Role = Member, ReservedCost = 0.01m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.Name(SeatAssurance.Brokered)
+        }, [.. taken.Select(e => e.Id)]).Admitted);
+
+        Assert.DoesNotContain(events.DueFor(Member, at), e => e.Kind is MissionEventKind.Mandate or MissionEventKind.Self);
+        var left = Assert.Single(events.OfKind(MissionEventKind.Mandate), e => !e.Consumed && e.Role == Member);
+        Assert.Equal((m1.Id, t.AddMinutes(15)), (left.Payload, left.DueAt));
+    }
+
 }
