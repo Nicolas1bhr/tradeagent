@@ -1,5 +1,8 @@
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -108,5 +111,42 @@ public class RepairHomeTests
         Assert.Equal(["kept.txt"], Directory.GetFileSystemEntries(aside).Select(Path.GetFileName));
         Assert.True(Directory.Exists(Path.Combine(home, Canon.CliFile)), "the refused home was changed");
         Assert.NotNull(WorkspaceBuilder.RefusalFor(home));
+    }
+    /// <summary>A position beyond the legacy pair in the app's own tree whose folder the last start could not rebuild, by a fresh id.</summary>
+    static (string Pos, string Home) RefusedInTheAppsTree(AppHost host)
+    {
+        var pos = $"pos-rh{Guid.NewGuid():n}"[..14];
+        var files = new AppFileManifest(Path.Combine(TestEnv.Home, $"files-{Guid.NewGuid():n}.tsv"));
+        var home = WorkspaceBuilder.BuildAll(host.WorkspaceContext(), null, files, positions: [pos])[pos];
+        var planted = Path.Combine(home, Canon.CliFile);
+        File.Delete(planted);
+        Directory.CreateDirectory(planted);
+        WorkspaceBuilder.BuildAll(host.WorkspaceContext(), null, files, positions: [pos]);
+        return (pos, home);
+    }
+
+    /// <summary>
+    /// A FOLDER IS NEVER MOVED FROM UNDER A RUNNING SEAT (item 2): while the position has an open launch the host's repair refuses in words,
+    /// and the folder and the refusal are as they were.
+    /// </summary>
+    [Fact]
+    public async Task A_repair_while_the_position_has_an_open_launch_is_refused_in_words()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var (pos, home) = RefusedInTheAppsTree(host);
+            var open = host.Meter!.Mint(pos);
+
+            var words = host.RepairHome(pos);
+
+            Assert.Contains("launch of it is open", words, StringComparison.Ordinal);
+            Assert.Contains(open, words, StringComparison.Ordinal);
+            Assert.True(Directory.Exists(Path.Combine(home, Canon.CliFile)), "the folder was moved from under an open launch");
+            Assert.NotNull(host.HomeRefusalFor(pos));
+            host.Meter.Forget(open);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 }
