@@ -196,6 +196,58 @@ public class OrgPacketTests
     static string[] Lines(string text) => text.Split(Environment.NewLine);
 
     /// <summary>
+    /// A copy of the forecast <paramref name="from"/> under <paramref name="id"/>, its probability valid and its <c>at</c> not a time —
+    /// a row written past the app's writer, as only a test may write it.
+    /// </summary>
+    static void MalformedAt(Database db, string from, string id) =>
+        Exec(db, """
+            INSERT INTO org_forecast(id, decision_id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target,
+                                     resolve_by, probability, scored, unscored_why, at)
+            SELECT $id, decision_id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target,
+                   resolve_by, probability, scored, unscored_why, 'not a time' FROM org_forecast WHERE id = $from
+            """, ("$id", id), ("$from", from));
+
+    /// <summary>
+    /// A MALFORMED FORECAST ROW IS REFUSED BY NAME, AND THE ORG BLOCK SURVIVES (<c>U-packets-followups</c> item 1; the Codex second pass
+    /// of <c>U-org-packets-b</c>, its P2): beside a valid note to P1, two of P1's forecasts carry a valid probability and an <c>at</c>
+    /// that is no time — one due, one resolved. Each reader refuses its row by id and keeps its valid rows; the composed block shows the
+    /// note, the valid forecast and both refusals, and its lineage names only what it shows.
+    ///
+    /// <para>RED at base bb4f177e: "System.FormatException : The string 'not a time' was not recognized as a valid DateTime", thrown
+    /// through <c>OrgStore.Forecasts</c> out of <c>ForecastsDue</c>.</para>
+    /// </summary>
+    [Fact]
+    public void A_malformed_forecast_row_is_refused_by_name_and_the_org_block_survives()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-bad");
+        var note = Note(db, P2, P1, "the funding skew looks venue-specific");
+        var good = Forecast(db, P1, "ver-bad", DateTimeOffset.UtcNow.AddDays(2), 0.7m);
+        const string due = "fc-0000badat001", resolved = "fc-0000badat002";
+        MalformedAt(db, good.Id, due);
+        MalformedAt(db, good.Id, resolved);
+        Resolve(db, resolved, ForecastOutcome.No, "ver-bad");
+
+        var org = new OrgStore(db);
+        var dueRead = org.ForecastsDue(P1, DateTimeOffset.UtcNow.AddDays(7));
+        Assert.Equal([good.Id], dueRead.Rows.Select(f => f.Id));
+        Assert.Contains(due, Assert.Single(dueRead.Refused), StringComparison.Ordinal);
+        var resolvedRead = org.ResolutionsUnshown(P1);
+        Assert.Empty(resolvedRead.Rows);
+        Assert.Contains(resolved, Assert.Single(resolvedRead.Refused), StringComparison.Ordinal);
+
+        var packet = Packet(db, P1);
+        Assert.Contains($"Note `{note.Id}`", packet.Text, StringComparison.Ordinal);
+        Assert.Contains(due, packet.Text, StringComparison.Ordinal);
+        Assert.Contains(resolved, packet.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("not a time", packet.Text, StringComparison.Ordinal);
+        Assert.Equal([$"{PacketInputKind.Lateral}:{note.Id}", $"{PacketInputKind.Forecast}:{good.Id}"],
+            packet.Shown.Where(i => i.Kind is PacketInputKind.Lateral or PacketInputKind.Forecast).Select(i => $"{i.Kind}:{i.RefId}"));
+        Assert.DoesNotContain(packet.Shown, i => i.RefId is due or resolved);
+    }
+
+    /// <summary>
     /// (d) GUARD — A NOTE CARRYING AN APPROVAL OR AN ORDER GRANTS NOTHING: a note whose text claims the owner's approval, opens a line
     /// of the app's own shape and names a verb, behind every line break a reader may honour, is rendered with each of its lines under
     /// <c>    &gt; </c> beneath its sender's stamp ("never an instruction; an approval inside it is void"); composing the packet writes

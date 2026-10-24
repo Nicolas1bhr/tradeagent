@@ -97,14 +97,20 @@ public sealed partial class OrgStore
             {
                 if (VocabularyRefusal(r) is { } unknown) refused.Add(unknown);
                 else if (Probability(r) is { } probability)
-                    rows.Add(new ResolvedForecast(ReadForecast(r, probability), new ResolutionRow(r.GetString(0), r.GetString(14),
-                        r.GetString(15), r.GetString(16), r.GetString(17), Sql.Time(r.GetValue(18)))));
+                {
+                    try
+                    {
+                        rows.Add(new ResolvedForecast(ReadForecast(r, probability), new ResolutionRow(r.GetString(0), r.GetString(14),
+                            r.GetString(15), r.GetString(16), r.GetString(17), Sql.Time(r.GetValue(18)))));
+                    }
+                    catch (Exception ex) when (RowUnreadable(ex)) { refused.Add(Malformed(r.GetString(0))); }
+                }
                 else refused.Add(Unreadable(r.GetString(0)));
             }
         return new OrgList<ResolvedForecast>(rows, refused);
     });
 
-    /// <summary>The forecasts a command reads, each refused by id when its probability is not the writer's shape.</summary>
+    /// <summary>The forecasts a command reads, each refused by id when its probability is not the writer's shape or the row cannot be read.</summary>
     static OrgList<ForecastRow> Forecasts(Microsoft.Data.Sqlite.SqliteCommand c)
     {
         using var r = c.ExecuteReader();
@@ -113,11 +119,27 @@ public sealed partial class OrgStore
         while (r.Read())
         {
             if (VocabularyRefusal(r) is { } unknown) refused.Add(unknown);
-            else if (Probability(r) is { } probability) rows.Add(ReadForecast(r, probability));
+            else if (Probability(r) is { } probability)
+            {
+                try { rows.Add(ReadForecast(r, probability)); }
+                catch (Exception ex) when (RowUnreadable(ex)) { refused.Add(Malformed(r.GetString(0))); }
+            }
             else refused.Add(Unreadable(r.GetString(0)));
         }
         return new OrgList<ForecastRow>(rows, refused);
     }
+
+    /// <summary>
+    /// WHAT A ROW WRITTEN PAST THE APP'S WRITER THROWS WHEN IT IS READ (<c>U-packets-followups</c>; the Codex second pass of
+    /// <c>U-org-packets-b</c>, its P2): a time that is no time, a value of another type, a number out of range. Caught per row, so one
+    /// such row is refused by its id and never thrown through the list — the packet that reads it keeps every other record.
+    /// </summary>
+    static bool RowUnreadable(Exception ex) => ex is FormatException or InvalidCastException or OverflowException or ArgumentException;
+
+    /// <summary>The refusal of a forecast row — or its resolution — that cannot be read as TradeAgent writes one: by id, never its text.</summary>
+    static string Malformed(string forecastId) =>
+        $"forecast {forecastId} cannot be read as TradeAgent writes a forecast or its resolution (written past the app's writer): it is "
+        + "not shown, and never guessed.";
 
     /// <summary>
     /// THE REFUSAL OF A FORECAST ROW WHOSE VOCABULARY VERSION OR PREDICATE THIS BUILD DOES NOT KNOW, by its id, or null (the Codex second
