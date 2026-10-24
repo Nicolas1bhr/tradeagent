@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -329,5 +330,104 @@ public class OrgEvidenceSharesTests
         Assert.True(asked.Error is null || !asked.Error.Message.Contains("verdict share", StringComparison.Ordinal), asked.Error?.Message);
         Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
         Assert.Equal(launch, AskedBy(db, campaign.Id, version));
+    }
+    // ---- item 7: a zero cap in a ceiling the charter does not draw on drops nothing ----------------------------------
+
+    /// <summary>The chief: the root's head, as only a test may seat it.</summary>
+    const string Chief = "pos-c41ef0c41ef0";
+
+    static void SeatTheChief(Database db) => db.Write(_ =>
+    {
+        using (var p = db.Cmd("""
+            INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id, $root, $home, 'active', $at)
+            """, ("$id", Chief), ("$root", OrgIds.Root), ("$home", $"org/{Chief}"), ("$at", Sql.T(At))))
+            p.ExecuteNonQuery();
+        using var h = db.Cmd("UPDATE org_unit SET head_position_id=$p WHERE id=$root", ("$p", Chief), ("$root", OrgIds.Root));
+        return h.ExecuteNonQuery();
+    });
+
+    /// <summary>A launch of <paramref name="role"/> on <paramref name="seatClass"/>, its assurance recorded with it.</summary>
+    static string LaunchOn(Database db, string role, string seatClass)
+    {
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        var admission = new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role, ReservedCost = 0.10m, SeatClass = seatClass,
+            Assurance = SeatClasses.AssuranceOf(seatClass) is { } a ? SeatClasses.Name(a) : null
+        });
+        Assert.True(admission.Admitted, admission.Refusal);
+        return id;
+    }
+
+    static IpcRequest Frame(string op, params (string Key, object Value)[] args) => new()
+    {
+        Op = op, Session = "evidence", RequestId = "evidence-" + Guid.NewGuid().ToString("n")[..12],
+        Args = args.ToDictionary(a => a.Key, a => JsonSerializer.SerializeToElement(a.Value))
+    };
+
+    static string UnitAdmissible() => JsonSerializer.Serialize(new[]
+    {
+        new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted, by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m }
+    });
+
+    static IpcRequest ExperimentDivision() => Frame(Ops.OrgCharter, ("kind", OrgUnitKind.Division), ("ai_share", 0.1m),
+        ("rationale", "a bounded experiment division"), ("forecasts", UnitAdmissible()), ("collapse_by", DateTimeOffset.UtcNow.AddDays(60).ToString("O")));
+
+    /// <summary>
+    /// The re-review's setting, through the REAL meter: the legacy pair's CLI seats bill the PLAN, whose capacity is 0; the chief's seat
+    /// is the app's harness, billed to the KEY under a money cap of 10; the split is 0.3 to operations and 0.6 to research.
+    /// </summary>
+    static async Task<(TradingGateway Gw, Database Db, GatewayPipeServer Server)> ZeroPlan(bool chiefOnKey)
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        SeatTheChief(db);
+        var meter = new TurnMeter(db, () => 10m, runtimeId: () => "codex", live: new LiveAttempts(),
+            share: role => role == CouncilRoles.Research ? 0.6m : 0.3m,
+            declaredSeat: role => chiefOnKey && role == Chief ? SeatClasses.Harness : SeatClasses.Cli,
+            planCap: () => 0m, signIn: () => BillingClasses.Plan);
+        gw.AiEnvelopes = meter.EnvelopesFor;
+        gw.AiEnvelopesIn = meter.EnvelopesIn;
+        return (gw, db, new GatewayPipeServer(gw, IpcToken.Ensure()));
+    }
+
+    static int Divisions(Database db) => new OrgStore(db).Units().Count(u => u.Kind == OrgUnitKind.Division);
+
+    /// <summary>
+    /// A ZERO CAP IN ONE CEILING KEEPS THE LEGACY SHARE THE OTHER CEILING SIZES (the Codex re-review of <c>U-org-verbs-c</c> fix 1, P2):
+    /// the chief's charter draws on the KEY, where the split sizes the legacy divisions at 0.3 and 0.6, so a valid 0.1 experiment
+    /// division is chartered — the zero plan capacity the legacy seats bill drops nothing. RED at base: the legacy shares were read in
+    /// the plan's ceiling alone, where a zero cap sizes nothing, and the charter was refused.
+    /// </summary>
+    [Fact]
+    public async Task A_zero_cap_in_one_ceiling_keeps_the_legacy_share_the_other_ceiling_sizes()
+    {
+        var (gw, db, server) = await ZeroPlan(chiefOnKey: true);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var before = Divisions(db);
+
+        var made = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.True(made.Ok, made.Error?.Message);
+        Assert.Equal(before + 1, Divisions(db));
+    }
+
+    /// <summary>
+    /// ITS FAIL-CLOSED TWIN: a charter that draws on the PLAN — the chief's seat billed there too — where the zero cap sizes no legacy
+    /// division, is refused in words naming the Safety page's split, nothing written.
+    /// </summary>
+    [Fact]
+    public async Task A_zero_cap_in_the_ceiling_a_charter_draws_on_still_refuses_it()
+    {
+        var (gw, db, server) = await ZeroPlan(chiefOnKey: false);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var before = Divisions(db);
+
+        var refused = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.False(refused.Ok, "a charter was written that its own ceiling could not size");
+        Assert.Contains("the split on the Safety page", refused.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Divisions(db));
     }
 }

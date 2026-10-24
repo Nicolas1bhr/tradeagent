@@ -1491,6 +1491,8 @@ public sealed class AppHost : IAsyncDisposable
     {
         // EACH UNIT'S ENVELOPE AND TODAY'S SPEND, for a position's own org-show (U-org-verbs-a): the meter's reading, a read only.
         Gateway.AiEnvelopes = role => Meter?.EnvelopesFor(role);
+        // AND IN ONE NAMED CEILING (U-org-verbs-e item 7): a charter sizes a legacy sibling's share where the charter draws, a read only.
+        Gateway.AiEnvelopesIn = (role, ceiling) => Meter?.EnvelopesIn(role, ceiling);
         ReportAiActivity();
     }
 

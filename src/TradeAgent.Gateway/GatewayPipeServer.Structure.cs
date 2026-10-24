@@ -172,31 +172,50 @@ public sealed partial class GatewayPipeServer
             if (chain.Skip(start).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } envelope) return null;
             parent.Add(new CeilingEnvelope(ceiling, envelope));
         }
-        return parent.Count == 0 ? null : new CharterFunding(caller, attempt.ReservedCost, parent, LegacyShares());
+        return parent.Count == 0 ? null
+            : new CharterFunding(caller, attempt.ReservedCost, parent, LegacyShares([.. parent.Select(p => p.Ceiling)]));
     }
 
     /// <summary>
     /// EACH LEGACY DIVISION'S SHARE OF ITS PARENT, as admission resolves its NULL <c>envelope_share</c> (the split on the Safety page):
-    /// its envelope over the nearest envelope above it, in a ceiling the meter reads for its role. A division the reading does not
-    /// size is left out, and a charter it is a sibling of is refused (<see cref="OrgStore.Charter"/>) — never counted as nothing.
+    /// its envelope over the nearest envelope above it, read IN EACH CEILING THE CHARTER DRAWS ON (<paramref name="ceilings"/> — the
+    /// re-review of <c>U-org-verbs-c</c> fix 1, folded into <c>U-org-verbs-e</c> as item 7), whatever class the legacy seat itself bills.
+    /// A ceiling the charter does not draw on is not read, so a zero cap there drops nothing; a division one of the charter's own
+    /// ceilings cannot size — a zero cap in it, or no reading — is left out, and a charter it is a sibling of is refused
+    /// (<see cref="OrgStore.Charter"/>) — never counted as nothing. The split is one fraction in every ceiling; should two readings
+    /// differ, the larger is taken, the one that leaves the charter less room.
     /// </summary>
-    Dictionary<string, decimal> LegacyShares()
+    Dictionary<string, decimal> LegacyShares(IReadOnlyList<string> ceilings)
     {
         var shares = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var unit in new[] { OrgIds.Operations, OrgIds.Research })
         {
-            IReadOnlyList<UnitDay>? days;
-            try { days = Gateway.AiEnvelopes?.Invoke(OrgEnvelopes.LegacyRoleOf(unit)!); }
-            catch (Exception) { days = null; }
-            foreach (var chain in (days ?? []).GroupBy(d => d.Ceiling, StringComparer.Ordinal).Select(g => g.ToList()))
+            decimal? found = null;
+            foreach (var ceiling in ceilings.Distinct(StringComparer.Ordinal))
             {
-                var at = chain.FindIndex(d => d.UnitId == unit);
-                if (at < 0 || chain[at].Envelope is not { } own) continue;
-                if (chain.Skip(at + 1).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } above || above <= 0m) continue;
-                shares[unit] = own / above;
-                break;
+                IReadOnlyList<UnitDay>? chain;
+                try { chain = EnvelopesIn(OrgEnvelopes.LegacyRoleOf(unit)!, ceiling); }
+                catch (Exception) { chain = null; }
+                var at = chain?.ToList().FindIndex(d => d.UnitId == unit) ?? -1;
+                if (at < 0 || chain![at].Envelope is not { } own
+                    || chain.Skip(at + 1).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } above || above <= 0m)
+                {
+                    found = null;
+                    break;
+                }
+                found = Math.Max(found ?? 0m, own / above);
             }
+            if (found is { } share) shares[unit] = share;
         }
         return shares;
     }
+
+    /// <summary>
+    /// <paramref name="role"/>'s chain in one <paramref name="ceiling"/>: the host's reading for that ceiling, or — from a host that wires
+    /// only the class reading — that reading's rows in the ceiling, which are the same figures. Null where neither says.
+    /// </summary>
+    IReadOnlyList<UnitDay>? EnvelopesIn(string role, string ceiling) =>
+        Gateway.AiEnvelopesIn is { } named
+            ? named(role, ceiling)
+            : Gateway.AiEnvelopes?.Invoke(role) is { } days ? [.. days.Where(d => d.Ceiling == ceiling)] : null;
 }
