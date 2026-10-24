@@ -1,18 +1,22 @@
 # U-org-verbs-e — every unit's envelope has three dimensions — AI spend, trials and verdicts — each reserved against its parent's at the call that spends it; a head tilts its children's shares inside the weekly bound; and only a division head, or a unit it delegated a verdict share to, spends verdicts
 **Arrow closed:** `docs/ORCHESTRATION.md` § 2.4 (:185-191 currencies v1 = AI spend, trials, verdicts; "trials and verdicts are reserved atomically at the broker call
-that spends them"; lineage immutable; `envelope_share` a fraction), § 2.9 (:318-321 `tilt` ≤ 20 points a week, a decision record with a forecast); ORGANISATION § 2
-:101 and :107 ("only division heads spend verdicts"; a team "unless the division delegates a count"), § 3 :121-123 (three dimensions; re-splitting is the head's
-record; a split that cannot fund its seat is refused), § 8 :254-259 (tilt); § 15 O6 (:427), part e of 5. Survey: `fleet/tmp/B-scratch/org-verbs/survey.md` § 3 (main `25bae9bc`).
+that spends them"; lineage immutable; `envelope_share` a fraction), § 2.9 (:321-322 `tilt` ≤ 20 points a week, a decision record with a forecast); ORGANISATION § 2
+:101 and :108 ("only division heads spend verdicts"; a team "unless the division delegates a count"), § 3 :121-123 (three dimensions; re-splitting is the head's
+record; a split that cannot fund its seat is refused), § 8 :254-261 (tilt); § 15 O6 (:427), part e of 5. Survey: `fleet/tmp/B-scratch/org-verbs/survey.md` § 3 (main `25bae9bc`). Pointers re-checked against 6fd6c4aa, 2026-10-24.
 **Protections — EVID-001 (the campaign's own trial and verdict gates run FIRST and UNCHANGED; unit gates only add refusals; trial and verdict keys unchanged and
 role-free; the verdict narrows who may SPEND, never what is judged or seen), BUDGET-001 (O4's AI admission unchanged; `Unfundable` and Σ ≤ 1 before a split is
 written; no verb raises the root's or a parent's envelope), ORG-001 (headship only narrows, it grants nothing), refuse never guess: red-first and ONE watched mutant.**
-Seat B; **opus/high** (the evidence path: verdicts, trials). **A rung (the next free at dispatch).**
+Seat B; **opus/high** (the evidence path: verdicts, trials). **A rung: the LOWEST FREE at its LANDING (the rule since 2026-10-23; 50 today) — the number spelled once
+(const + `Versions`) and renumbered at the rebase if another rung lands first; 47 stays unused.**
 **Depends:** part c LANDED (`unit-admissible`, decision kinds, the rights matrix). May run beside part d (shared: the `Ops.Organisation` line only).
-**Today:** one dimension — `envelope_share` "IS THE AI-SPEND ENVELOPE" (`Database.cs:1712-1715, 1723`; `OrgEnvelopes.Resolve` `OrgStore.cs:199-214`); trials charged in
-`CampaignStore.RegisterTrial` (`:996`, called inside the run's write `Backtests.cs:664`) — the run carries its attempt (`StrategyStore.cs:290`), so a trial's chain is
+**R24-checked at dispatch (seat B, 2026-10-24):** the board sets the plan's AI day-total and its TOP division (R24 § 4.1, read from `BoardPolicy` since U-board-a2);
+a head's tilt only re-splits INSIDE its own unit's envelope and no verb raises a parent's; the campaigns' evidence budgets stay the owner's (§ 4.3, EVID-001) and are
+read, never written, here.
+**Today:** one dimension — `envelope_share` "IS THE AI-SPEND ENVELOPE" (`Database.cs:1789-1790, 1799`; `OrgEnvelopes.Resolve` `OrgStore.cs:247-261`); trials charged in
+`CampaignStore.RegisterTrial` (`:996`, called inside the run's write `Backtests.cs:688`) — the run carries its attempt (`StrategyStore.cs:290`), so a trial's chain is
 `strategy_run.attempt` ⋈ `ai_attempt_funding`; verdicts charged by `ChargeVerdict(campaign, version, at)` (`CampaignStore.cs:1296`, insert `:1326`) inside the referee's
-write (`Strategy/Referee.cs:225-236`) into `strategy_verdict` with NO attempt (`Database.cs:886-892`); any ACTIVE position may ask a verdict
-(`Backtests.cs:298-320`; `VerdictFor` `GatewayPipeServer.cs:2821-2826`), asserted for a TEAM head by `OrgRightsTests.cs:154-157` (rewritten here, named in the report).
+write (`Strategy/Referee.cs:225-236`) into `strategy_verdict` with NO attempt (`Database.cs:962-968`); any ACTIVE position may ask a verdict
+(`Backtests.cs:319-342`; `VerdictFor` `GatewayPipeServer.cs:2913-2918`), asserted for a TEAM head by `OrgRightsTests.cs:154-157` (rewritten here, named in the report).
 **Observable result:** a puppet division head tilts its team's AI share by 0.15 and sets its trial and verdict shares; the team's executor's backtests are refused
 in words naming the team, its share, its use and the campaign budget once the team's trials are spent, while the campaign still has room; the team head's verdict is
 refused until its unit holds a verdict share, then served and charged to the team's chain; `research` and `operations` (division heads, NULL shares) are unchanged;
