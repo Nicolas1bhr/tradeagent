@@ -104,3 +104,57 @@ public partial class BoardActTests
         Assert.Empty(Standing(gw));
     }
 }
+
+public partial class BoardActTests
+{
+    /// <summary>A clock the test moves.</summary>
+    sealed class Settable(DateTimeOffset start) : TimeProvider
+    {
+        public DateTimeOffset Now = start;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    /// <summary>
+    /// A NARROWING NEVER LENGTHENS AN ENVELOPE'S LIFE (review P1, TradingGateway.cs:499): an envelope granted for ten days, narrowed by one
+    /// seat nine days in — a lower quantity, the same ten days — is replaced by one that ends when the first would have, never ten days
+    /// from the narrowing: one seat cannot widen its life. A two-seat widening of the days still gives its full new life. RED before
+    /// the fix: the replacement ran to day nineteen. Watched red with the cap applied to no envelope.
+    /// </summary>
+    [Fact]
+    public async Task A_narrowing_never_lengthens_an_envelopes_life()
+    {
+        using var db = TestEnv.NewDb();
+        SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
+        Activate(db, "board-1", "board-2");
+        var clock = new Settable(DateTimeOffset.UtcNow);
+        var inner = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker
+            { AccountId = BoardFounding.PaperAccount, IsSimulated = true }) { QuoteClock = clock };
+        var conn = new RecordingConnector(inner, BoardFounding.PaperVenue);
+        await using var gw = new TradeAgent.Gateway.TradingGateway(db, conn, new HealthRegistry(), new TradeAgent.Gateway.GatewayOptions { Clock = clock });
+        gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now);
+        var first = Assert.Single(gw.Envelopes.All(), Stands);
+        Assert.Equal(clock.Now.AddDays(10), first.ExpiresAt);
+
+        clock.Now = clock.Now.AddDays(9);
+        var ten = EnvelopeWith("days", "10");
+        var lower = System.Text.Json.Nodes.JsonNode.Parse(ten)!.AsObject();
+        lower["max_quantity"] = 0.01m;
+        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(ten), Json(lower.ToJsonString()))));
+        await gw.RefreshHealthAsync();
+        var replaced = Assert.Single(gw.Envelopes.All(), Stands);
+        log.WriteLine($"first until {first.ExpiresAt:O}; replacement {replaced.MaxQuantity} until {replaced.ExpiresAt:O}");
+        Assert.Equal(0.01m, replaced.MaxQuantity);
+        Assert.True(replaced.ExpiresAt <= first.ExpiresAt, $"the narrowing ran the envelope to {replaced.ExpiresAt:O}, past {first.ExpiresAt:O}");
+
+        // A TWO-SEAT WIDENING OF THE DAYS gives its full new life.
+        var twenty = System.Text.Json.Nodes.JsonNode.Parse(lower.ToJsonString())!.AsObject();
+        twenty["days"] = 20;
+        var proposed = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(lower.ToJsonString()), Json(twenty.ToJsonString()))));
+        gw.BoardDecide(proposed.Act.Id, "board-2", null, true, proposed.Act.IntentSha256, "a longer run is earned");
+        await gw.RefreshHealthAsync();
+        Assert.Equal(clock.Now.AddDays(20), Assert.Single(gw.Envelopes.All(), Stands).ExpiresAt);
+    }
+}

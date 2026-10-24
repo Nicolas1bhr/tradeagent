@@ -506,6 +506,22 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 FoundingEnvelopeFoundNone?.Invoke();
 
                 var until = stated.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
+
+                // A NARROWING NEVER LENGTHENS A LIFE (U-board-b1 fix pass, the review's P1): terms one seat narrowed — a lower ceiling,
+                // the same days — replace the policy's last envelope on this pair, and a fresh life from now would be a longer one,
+                // which only two seats may grant. So unless the terms WIDEN the ones that last envelope was granted under, the
+                // replacement ends no later than it did — and an envelope whose life is over is not revived by a narrowing.
+                var previous = _envelopes.All(int.MaxValue)
+                    .Where(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
+                                && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal) && PolicyGranted(e))
+                    .OrderByDescending(e => e.GrantedAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).FirstOrDefault();
+                if (previous is not null && previous.ExpiresAt < until && ReasonVersion(previous.Reason) is { } was
+                    && _board.EnvelopeTermsAt(was) is { } before && _board.EnvelopeTermsAt(inForce.Version) is { } current
+                    && BoardDirection.Of("paper_envelope", before, current) != BoardDirectionKind.Widens)
+                {
+                    until = previous.ExpiresAt;
+                    if (until <= now) return null;
+                }
                 terms = stated;
                 return GrantEnvelopeOn(account, stated.Instrument, stated.MaxQuantity, stated.MaxNotional, now, until, reason,
                     stated.Deployments);
@@ -574,6 +590,11 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
     /// <summary>What the envelope's row says when a board act's version set its terms: the version, and that the app granted it.</summary>
     internal static string BoardEnvelopeReason(int version) => $"{BoardEnvelopeReasonPrefix} {version}";
+
+    /// <summary>The policy version a policy envelope's reason names (its last word), or null for a reason that names none.</summary>
+    static int? ReasonVersion(string reason) =>
+        int.TryParse(reason.AsSpan(reason.LastIndexOf(' ') + 1), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
 
     /// <summary>Whether <paramref name="envelope"/> is the policy's own standing envelope — founding or a board act's — never one the owner granted.</summary>
     static bool PolicyGranted(PaperEnvelopeRow envelope) =>
