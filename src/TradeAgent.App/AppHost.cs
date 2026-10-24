@@ -588,6 +588,7 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public string? HomeRefusalFor(string role)
     {
+        if (!CouncilRoles.IsKnown(role) && !CouncilRoles.IsPositionId(role)) return null;   // no home, so nothing the last start could refuse
         try { return WorkspaceBuilder.RefusalFor(HomeFor(role)); }
         catch (Exception ex) { return $"TradeAgent could not tell whether the folder of {role} was rebuilt ({ex.Message})."; }
     }

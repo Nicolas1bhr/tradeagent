@@ -62,7 +62,8 @@ public class OrgSurfaceShellTests
 
     /// <summary>
     /// (b) THE ORGANISATION PAGES HOLD NO PRESS: a walk of each built tree — populated, not just its skeleton — finds no button, no editable box and
-    /// no choice; and the sources of the three pages name none either. Pins an absence: watched red with a button added to the Work page.
+    /// no choice; and the sources of the three pages name none either, but for the owner's repair of a refused position's folder
+    /// (<c>U-repair-position-home</c>; <c>RepairHomeTests</c> holds its row). Pins an absence: watched red with a button added to the Work page.
     /// </summary>
     [Fact]
     public void The_organisation_pages_hold_no_press()
@@ -95,6 +96,15 @@ public class OrgSurfaceShellTests
         foreach (var file in new[] { "OrganisationView.cs", "WorkView.cs", "CostsView.cs", "OrgSurface.cs" })
         {
             var text = Source(file);
+            // THE ONE PRESS THESE PAGES HOLD (U-repair-position-home, the brief's item 4): the owner's two-press repair of a refused position's
+            // folder, on the Organisation page, drawn only on a row whose folder the last start could not rebuild — so the populated walk above,
+            // with no refused folder, still finds none. Exactly one, by its own labels; any other press in these sources stays red.
+            if (file == "OrganisationView.cs")
+            {
+                const string repair = "Ui.Confirm(Labels.RepairHome, Labels.RepairHomeConfirm,";
+                Assert.Single(Regex.Matches(text, Regex.Escape(repair)));
+                text = text.Replace(repair, "", StringComparison.Ordinal);
+            }
             foreach (var press in new[] { "new Button", "Ui.Button", "Ui.Primary", "Ui.Secondary", "Ui.Ghost", "Ui.Danger", "Ui.Confirm", "ConfirmIf",
                          "TextField", "AmountField", "new TextBox", ".Click +=", "Ui.KillSwitch", "ModeButton" })
                 Assert.DoesNotContain(press, text, StringComparison.Ordinal);

@@ -39,6 +39,12 @@ sealed record OrgSurfaceSources
     /// </summary>
     public Func<string, ResolvedSeat>? SeatOf { get; init; }
 
+    /// <summary>Why a position's folder refuses its launches because the last start could not rebuild it, or null (<see cref="AppHost.HomeRefusalFor"/>).</summary>
+    public Func<string, string?> HomeRefusal { get; init; } = _ => null;
+
+    /// <summary>The owner's repair of a position's folder, returning its words (<see cref="AppHost.RepairHome"/>); null where there is no host, and no press is drawn.</summary>
+    public Func<string, string>? RepairHome { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
@@ -47,6 +53,8 @@ sealed record OrgSurfaceSources
         Attempts = () => host.AttemptLedger,
         ProofHeld = () => host.CellProofHeld,
         Currency = () => host.SpendToday.Currency,
+        HomeRefusal = host.HomeRefusalFor,
+        RepairHome = host.RepairHome,
     };
 }
 
