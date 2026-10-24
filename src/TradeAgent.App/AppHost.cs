@@ -2211,6 +2211,8 @@ public sealed class AppHost : IAsyncDisposable
             new OrgStore(db).Sweep(now, floors, text => host.Gateway?.Log.Activity(text, "warn"));
             // AND THE FORECASTS (U-org-decisions), after the mandates, so a deadline that just passed is an event the resolver reads.
             // It wakes nobody; a forecast it will not read is said, never resolved on a guess.
+            // AND THE BOARD'S PROPOSALS PAST THEIR EXPIRY (U-board-b1): closed `expired`, applying nothing. A record, never a policy change.
+            new TradeAgent.Core.Board.BoardStore(db).Expire(now);
             var forecasts = new ForecastResolver(db).Sweep(now);
             if (forecasts.Refused.Count > 0)
                 host.Gateway?.Log.Activity($"Forecasts left unresolved: {string.Join(" ", forecasts.Refused)}", "warn");

@@ -26,4 +26,26 @@ public sealed partial class TradingGateway
         RefreshPolicy();
         return result;
     }
+
+    /// <summary>ONE ACTIVE SEAT PROPOSES A WIDENING (<see cref="BoardStore.Propose"/>): a record; nothing changes.</summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    internal BoardActResult BoardPropose(BoardActRequest request) => _board.Propose(request, Now);
+
+    /// <summary>
+    /// ANOTHER ACTIVE SEAT DECIDES A PROPOSAL (<see cref="BoardStore.Decide"/>) — a confirmation writes the version in the decision's own
+    /// write, and the gateway holds the next order to it.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    internal BoardActResult BoardDecide(string actId, string seat, string? attempt, bool confirm, string intentSha256, string rationale)
+    {
+        var result = _board.Decide(actId, seat, attempt, confirm, intentSha256, rationale, Now);
+        RefreshPolicy();
+        return result;
+    }
+
+    /// <summary>One act as <paramref name="seat"/> may read it — blind until its own word on it is sealed (<see cref="BoardStore.ShowTo"/>).</summary>
+    internal (BoardActBlindView? Blind, BoardActRecord? Whole) BoardShow(string seat, string actId) => _board.ShowTo(seat, actId);
+
+    /// <summary>The acts, newest first, with no rationale or forecast (<see cref="BoardStore.ActList"/>).</summary>
+    internal IReadOnlyList<BoardActBlindView> BoardList(int limit) => _board.ActList(limit);
 }
