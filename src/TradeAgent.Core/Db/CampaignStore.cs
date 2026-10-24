@@ -1025,6 +1025,12 @@ public sealed class CampaignStore(Database db)
         if (Refusal(rule, spent, made: true, through) is { } why)
             return new TrialRegistered(false, why, false, spent.Run, campaign.TrialBudget);
 
+        // AND EVERY UNIT'S OWN SHARE, AFTER THE CAMPAIGN'S GATES AND IN THE SAME WRITE (`U-org-verbs-e`; ORCHESTRATION § 2.4 — "trials
+        // and verdicts are reserved atomically at the broker call that spends them"). It only ADDS a refusal: the campaign's gates above
+        // ran first and unchanged, and the row below is keyed as it always was, by nothing about who asked (EVID-001).
+        if (charged && UnitShareRefusal(ShareKind.Trials, campaign, runId, versionId) is { } unit)
+            return new TrialRegistered(false, unit, false, spent.Run, campaign.TrialBudget);
+
         using var c = db.Cmd("""
             INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at,
                                        charged_to, exploration)
@@ -1043,6 +1049,73 @@ public sealed class CampaignStore(Database db)
 
         return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
     });
+
+    /// <summary>The two evidence currencies a unit's share is a fraction of (<c>U-org-verbs-e</c>).</summary>
+    enum ShareKind { Trials, Verdicts }
+
+    /// <summary>
+    /// WHY A UNIT OF THE LAUNCH'S RECORDED CHAIN HAS NO ROOM FOR ONE MORE TRIAL OR VERDICT OF <paramref name="campaign"/>, in words — or
+    /// null because each has (<c>U-org-verbs-e</c>; ORCHESTRATION § 2.4; ORGANISATION § 3). The chain is the one the launch was ADMITTED
+    /// under (<c>ai_attempt_funding</c>), never today's chart: a later move re-parents no past charge. A unit with no share of its own
+    /// (NULL — every seeded unit, the legacy divisions included) is no ceiling. A unit's use is every charged trial (distinct run,
+    /// counted as the campaign counts its own) or every verdict of the campaign's lineage whose launch's recorded chain holds it; one
+    /// more must fit inside its share of the campaign's budget. Read inside the caller's write, so the count and the row are one
+    /// transaction. A share that is not a fraction is damage, refused (<see cref="OrgEnvelopes"/>), never guessed.
+    /// </summary>
+    string? UnitShareRefusal(ShareKind kind, CampaignRow campaign, string launch, string versionId)
+    {
+        var trials = kind == ShareKind.Trials;
+        var shares = new List<(string Unit, string Share)>();
+        using (var c = db.Cmd(trials
+                   ? """
+                     SELECT f.unit_id, u.trial_share FROM strategy_run r
+                       JOIN ai_attempt_funding f ON f.attempt_id = r.attempt
+                       JOIN org_unit u ON u.id = f.unit_id
+                      WHERE r.id = $launch AND u.trial_share IS NOT NULL ORDER BY f.depth
+                     """
+                   : """
+                     SELECT f.unit_id, u.verdict_share FROM ai_attempt_funding f
+                       JOIN org_unit u ON u.id = f.unit_id
+                      WHERE f.attempt_id = $launch AND u.verdict_share IS NOT NULL ORDER BY f.depth
+                     """, ("$launch", launch)))
+        using (var r = c.ExecuteReader())
+            while (r.Read()) shares.Add((r.GetString(0), r.GetString(1)));
+        if (shares.Count == 0) return null;
+
+        var budget = trials ? campaign.TrialBudget : campaign.VerdictBudget;
+        var lineage = trials ? "" : Ids(Lineage(campaign.Id));
+        foreach (var (unit, text) in shares)
+        {
+            var share = OrgEnvelopes.Fraction(unit, text);
+            using var u = db.Cmd(trials
+                ? """
+                  SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
+                    JOIN strategy_run r ON r.id = t.run_id
+                    JOIN ai_attempt_funding f ON f.attempt_id = r.attempt AND f.unit_id = $unit
+                   WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $launch
+                  """
+                : $"""
+                  SELECT COUNT(*) FROM strategy_verdict v
+                    JOIN ai_attempt_funding f ON f.attempt_id = v.attempt_id AND f.unit_id = $unit
+                   WHERE v.campaign_id IN ({lineage})
+                  """, ("$unit", unit), ("$id", campaign.Id), ("$launch", launch));
+            var used = Convert.ToInt32(u.ExecuteScalar(), CultureInfo.InvariantCulture);
+            if (used + 1 <= share * budget) continue;
+
+            var what = trials ? "research trials" : "final judgements";
+            return $"{OrgEnvelopes.NameOf(unit)} holds a {(trials ? "trial" : "verdict")} share of {text} of campaign {campaign.Id}'s "
+                   + $"{budget.ToString(CultureInfo.InvariantCulture)} {what} — {(share * budget).ToString("0.##", CultureInfo.InvariantCulture)} "
+                   + $"of them — and the launches it funds have used {used.ToString(CultureInfo.InvariantCulture)} of "
+                   + $"{(share * budget).ToString("0.##", CultureInfo.InvariantCulture)}, so "
+                   + (trials
+                       ? "this run is not recorded and its result is not served"
+                       : $"no judgement of version {Short(versionId)} is charged and nothing is computed over the held-back bars")
+                   + ". The campaign's own budget still has room; a unit's share is its parent head's to re-split with 'org-tilt', inside "
+                   + "the parent's own, and nothing raises it past that. The count is charged to the chain each launch was admitted under, "
+                   + "so a restart, a fresh attempt or a move on the chart resets none of it.";
+        }
+        return null;
+    }
 
     /// <summary>Whether this exact trial is already on the table. Read inside the caller's transaction.</summary>
     public bool Registered(long campaignId, string versionId, string runId) => db.Read(_ =>

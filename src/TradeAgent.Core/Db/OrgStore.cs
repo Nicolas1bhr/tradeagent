@@ -273,7 +273,7 @@ public static class OrgEnvelopes
         _ => $"unit {unitId}"
     };
 
-    static decimal Fraction(string unitId, string text) =>
+    internal static decimal Fraction(string unitId, string text) =>
         decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var share) && share is >= 0m and <= 1m
             ? share
             : throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
