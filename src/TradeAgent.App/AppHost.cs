@@ -1493,6 +1493,9 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.AiEnvelopes = role => Meter?.EnvelopesFor(role);
         // AND IN ONE NAMED CEILING (U-org-verbs-e item 7): a charter sizes a legacy sibling's share where the charter draws, a read only.
         Gateway.AiEnvelopesIn = (role, ceiling) => Meter?.EnvelopesIn(role, ceiling);
+        // AND ONE TURN OF A POSITION'S SEAT (the fix pass): an AI tilt holds every seated position of the affected subtree to it. A rate
+        // nobody can supply reserves nothing, as admission reads it.
+        Gateway.AiReservation = role => Meter is { } meter ? meter.Reservation(role).Cost ?? 0m : null;
         ReportAiActivity();
     }
 
