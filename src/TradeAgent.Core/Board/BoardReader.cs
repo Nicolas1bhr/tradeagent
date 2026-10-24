@@ -54,4 +54,10 @@ public sealed class BoardReader(Database db)
 
     /// <summary>One act whole, or null.</summary>
     public BoardActRecord? Act(string id) => _store.Act(id);
+
+    /// <summary>Every proposal a seat made of the board's own power (CHANGE-001), newest first: the owner's to read and act on — nothing applies one.</summary>
+    public IReadOnlyList<BoardPowerProposalRow> PowerProposals() => _store.PowerProposals();
+
+    /// <summary>The board's share of the plan's AI day-total: the owner's latest press, else the founding share.</summary>
+    public decimal? BudgetShare() => _store.BudgetShare();
 }

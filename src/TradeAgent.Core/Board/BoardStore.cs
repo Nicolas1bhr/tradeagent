@@ -118,10 +118,13 @@ public sealed class BoardStore(Database db)
         return c.ExecuteScalar() is long v ? (int?)v : null;
     });
 
-    /// <summary>The board's founding budget share of the plan's day-total, as the founding event records it, or null for none.</summary>
+    /// <summary>
+    /// The board's share of the plan's day-total: the owner's latest <c>budget-share</c> press, else the founding share the founding event
+    /// records, or null for none.
+    /// </summary>
     public decimal? BudgetShare() => _db.Read(_ =>
     {
-        using var c = _db.Cmd("SELECT budget_share FROM board_event WHERE kind='founded' ORDER BY id LIMIT 1");
+        using var c = _db.Cmd("SELECT budget_share FROM board_event WHERE kind IN ('founded','budget-share') ORDER BY id DESC LIMIT 1");
         return c.ExecuteScalar() is string s
                && decimal.TryParse(s, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var d)
             ? d : (decimal?)null;
@@ -597,6 +600,123 @@ public sealed class BoardStore(Database db)
                 ("$at", Sql.T(at)));
             c.ExecuteNonQuery();
         }
+    }
+
+    // ---- the board's own power: proposable by a seat, changed only by the owner (CHANGE-001) --------------------------------------
+
+    /// <summary>
+    /// A SEAT PROPOSES A CHANGE OF THE BOARD'S OWN POWER (<c>U-board-b1</c> item 8; R24 § 4.4, CHANGE-001): a target from the closed list —
+    /// its composition, its budget, the audit line's budget, a connection or key, the founding policy's shape, a kernel change — and the
+    /// seat's text, a CLAIM. One row, shown to the owner (<c>BoardReader.PowerProposals</c>) and APPLIED BY NOTHING: no code reads it to
+    /// change anything, and the owner acts on it in-process, or no one does.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardPowerProposalRow ProposePower(string seat, string? attempt, string target, string text, DateTimeOffset at) => _db.Write(_ =>
+    {
+        RequireActive(seat);
+        if (!BoardPowerTarget.IsKnown(target))
+            throw Refused($"'{target}' is nothing a seat may propose of the board's power: {string.Join(" | ", BoardPowerTarget.All)}.");
+        if (string.IsNullOrWhiteSpace(text) || text.Length > BoardLimits.MaxPowerTextChars)
+            throw Refused($"a proposal says what and why, in the seat's own words: 1 to {BoardLimits.MaxPowerTextChars} characters.");
+        var row = new BoardPowerProposalRow(Mint(PowerPrefix), seat, attempt, target, text, at);
+        using var c = _db.Cmd("INSERT INTO board_power_proposal(id, seat, attempt_id, target, text, at) VALUES($id, $seat, $attempt, $target, $text, $at)",
+            ("$id", row.Id), ("$seat", seat), ("$attempt", attempt), ("$target", target), ("$text", text), ("$at", Sql.T(at)));
+        c.ExecuteNonQuery();
+        return row;
+    });
+
+    /// <summary>Every proposal of the board's own power, newest first — the owner's to read; nothing applies them.</summary>
+    public IReadOnlyList<BoardPowerProposalRow> PowerProposals() => _db.Read(_ =>
+    {
+        using var c = _db.Cmd("SELECT id, seat, attempt_id, target, text, at FROM board_power_proposal ORDER BY at DESC, id DESC");
+        using var r = c.ExecuteReader();
+        var rows = new List<BoardPowerProposalRow>();
+        while (r.Read())
+            rows.Add(new BoardPowerProposalRow(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), r.GetString(4), Sql.Time(r.GetValue(5))));
+        return (IReadOnlyList<BoardPowerProposalRow>)rows;
+    });
+
+    /// <summary>
+    /// THE OWNER SETS THE BOARD'S SHARE OF THE PLAN'S AI DAY-TOTAL (<c>U-board-b1</c> item 8; R24 Q7, CHANGE-001) — his in-process press,
+    /// two presses in his UI, reached by no pipe op and no verb (a guard says so). A <c>budget-share</c> event, which the readers take over
+    /// the founding share (<see cref="BudgetShare"/>). A share is a fraction above 0 and at most 1.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public decimal SetBoardBudgetShare(decimal share, DateTimeOffset at) => _db.Write(_ =>
+    {
+        if (share <= 0m || share > 1m) throw Refused($"{share.ToString(CultureInfo.InvariantCulture)} is no share: a fraction above 0 and at most 1.");
+        var was = BudgetShare();
+        using var c = _db.Cmd("""
+            INSERT INTO board_event(at, kind, policy_version, home_schema, budget_share, seat_id, detail)
+            VALUES($at, 'budget-share', NULL, NULL, $share, NULL, $detail)
+            """, ("$at", Sql.T(at)), ("$share", share.ToString(CultureInfo.InvariantCulture)),
+            ("$detail", $"the owner set the board's share of the plan's AI day-total to {share.ToString(CultureInfo.InvariantCulture)}"
+                        + (was is { } w ? $", from {w.ToString(CultureInfo.InvariantCulture)}" : "")));
+        c.ExecuteNonQuery();
+        return share;
+    });
+
+    /// <summary>
+    /// THE OWNER FOUNDS A BOARD SEAT (<c>U-board-b1</c> item 8; R24 § 4.1, Q6, CHANGE-001) — his in-process press: the app mints the id
+    /// (<c>board-N</c>), writes the seat DORMANT and a <c>seat-founded</c> event, and re-checks the composition rule the founding kept:
+    /// every seat broker, cell or harness — never <c>cli</c> — a model class of <see cref="BoardModelClass.All"/>, and the seats not
+    /// retired on at least two model classes. Founding activates nothing.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat FoundBoardSeat(string seatClass, string modelClass, string vendorFamily, DateTimeOffset at) => _db.Write(_ =>
+    {
+        if (Array.IndexOf(BoardSeats.SeatClasses, seatClass) < 0)
+            throw Refused($"'{seatClass}' is no class a board seat may have: {string.Join(", ", BoardSeats.SeatClasses)} — never one with a shell.");
+        if (Array.IndexOf(BoardModelClass.All, modelClass) < 0)
+            throw Refused($"'{modelClass}' is no model class: {string.Join(", ", BoardModelClass.All)}.");
+        if (string.IsNullOrWhiteSpace(vendorFamily) || vendorFamily.Length > 40)
+            throw Refused("a seat names its vendor family in 1 to 40 characters.");
+        var seats = Seats();
+        var next = seats.Select(s => int.TryParse(s.Id.AsSpan(BoardSeats.Prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0)
+            .DefaultIfEmpty(0).Max() + 1;
+        var id = BoardSeats.Prefix + next.ToString(CultureInfo.InvariantCulture);
+        RequireComposition(seats.Where(s => s.Status != BoardSeatStatus.Retired).Select(s => s.ModelClass).Append(modelClass), "founding it");
+        using (var c = _db.Cmd("""
+            INSERT INTO board_seat(id, seat_class, model_class, vendor_family, status, founded_at)
+            VALUES($id, $class, $model, $vendor, 'dormant', $at)
+            """, ("$id", id), ("$class", seatClass), ("$model", modelClass), ("$vendor", vendorFamily), ("$at", Sql.T(at))))
+            c.ExecuteNonQuery();
+        using (var e = _db.Cmd("""
+            INSERT INTO board_event(at, kind, policy_version, home_schema, budget_share, seat_id, detail)
+            VALUES($at, 'seat-founded', NULL, NULL, NULL, $id, $detail)
+            """, ("$at", Sql.T(at)), ("$id", id),
+            ("$detail", $"the owner founded {id}: {seatClass}, {modelClass}, vendor family {vendorFamily}; dormant until the app activates it")))
+            e.ExecuteNonQuery();
+        return Seat(id)!;
+    });
+
+    /// <summary>
+    /// THE OWNER RETIRES A BOARD SEAT (<c>U-board-b1</c> item 8; CHANGE-001) — his in-process press: a <c>retired</c> state by
+    /// <c>owner</c> and a <c>seat-retired</c> event. Refused when the seats left would stand on fewer than two model classes, and for a
+    /// seat already retired. A retired seat never acts again (the store refuses a state after it).
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat RetireBoardSeat(string id, DateTimeOffset at) => _db.Write(_ =>
+    {
+        var seats = Seats();
+        var seat = seats.FirstOrDefault(s => s.Id == id) ?? throw Refused($"'{id}' is no seat of the security board.");
+        if (seat.Status == BoardSeatStatus.Retired) throw Refused($"{id} is retired already.");
+        RequireComposition(seats.Where(s => s.Status != BoardSeatStatus.Retired && s.Id != id).Select(s => s.ModelClass), $"retiring {id}");
+        using (var c = _db.Cmd("INSERT INTO board_seat_state(seat, state, by, at) VALUES($id, 'retired', 'owner', $at)", ("$id", id), ("$at", Sql.T(at))))
+            c.ExecuteNonQuery();
+        using (var e = _db.Cmd("""
+            INSERT INTO board_event(at, kind, policy_version, home_schema, budget_share, seat_id, detail)
+            VALUES($at, 'seat-retired', NULL, NULL, NULL, $id, $detail)
+            """, ("$at", Sql.T(at)), ("$id", id), ("$detail", $"the owner retired {id}, which was {seat.Status}")))
+            e.ExecuteNonQuery();
+        return Seat(id)!;
+    });
+
+    /// <summary>The composition rule (R24 § 4.1): the seats not retired stand on at least two model classes.</summary>
+    static void RequireComposition(IEnumerable<string> modelClasses, string doing)
+    {
+        if (modelClasses.Distinct(StringComparer.Ordinal).Count() < 2)
+            throw Refused($"{doing} would leave the board on fewer than two model classes (R24 § 4.1).");
     }
 
     // ---- reads of the acts ------------------------------------------------------------------------------------------------------

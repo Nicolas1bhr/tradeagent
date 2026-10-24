@@ -536,6 +536,9 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "show":
                     Fill(a, rest, "act");
                     return (Ops.BoardShow, a);
+                case "power-propose":
+                    Fill(a, rest, "target", "text");
+                    return (Ops.BoardPowerPropose, a);
                 default:
                     return (null, a);
             }
