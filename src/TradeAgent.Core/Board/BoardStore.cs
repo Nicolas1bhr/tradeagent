@@ -602,6 +602,73 @@ public sealed class BoardStore(Database db)
         }
     }
 
+    // ---- the owner's veto: it only ever takes away (AUTH-001; R24 Q2) ------------------------------------------------------------------
+
+    /// <summary>What a veto of one act would do, computed and never written: the shape <see cref="PreviewBoardVeto"/> shows and <see cref="VetoBoardAct"/> writes.</summary>
+    sealed record VetoPlan(BoardActRow Act, bool Allowed, string Words, IReadOnlyList<BoardVetoField> Fields, string? Body, BoardPolicyInForce? InForce);
+
+    VetoPlan PlanVeto(string actId)
+    {
+        var act = ActRow(actId) ?? throw Refused($"'{actId}' is no act of the board.");
+        var status = Status(act.Id);
+        if (status == BoardActEventKind.Vetoed) return new(act, false, $"{act.Id} is vetoed already.", [], null, null);
+        if (act.Kind == BoardActKind.Narrow)
+            return new(act, false, $"{act.Id} only narrowed: undoing it would WIDEN what is in force, and a veto never widens. To widen "
+                                    + "again is the board's act — a proposal and a second seat's confirmation.", [], null, null);
+        if (status == BoardActStatus.Open)
+            return new(act, true, $"Vetoing closes the proposal {act.Id}: it applied nothing, and nothing will be applied.", [], null, null);
+        if (status != BoardActEventKind.Confirmed)
+            return new(act, false, $"{act.Id} is {status}: it applied nothing, so there is nothing to veto.", [], null, null);
+
+        var (intent, why) = BoardIntent.Parse(act.Intent);
+        if (intent is null) throw Refused($"{act.Id}'s stored intent cannot be read ({why}), so no veto can be weighed against it.");
+        var inForce = InForce();
+        if (inForce.CouldNotBeRead) throw Refused($"the policy in force could not be read ({inForce.Why}), so no veto can be weighed against it.");
+        var body = BodyOf(inForce);
+        var fields = intent.Changes.Select(c =>
+        {
+            var now = ValueAt(body, c.Field);
+            return new BoardVetoField(c.Field, now, c.From, BoardDirection.NarrowerOf(c.Field, now, c.From));
+        }).ToList();
+        var restores = fields.Where(f => !BoardDirection.SameValue(f.Now, f.Restored)).ToList();
+        if (restores.Count == 0)
+            return new(act, true, $"Vetoing {act.Id} is recorded, and nothing is restored: every field it changed is already as narrow "
+                                  + "as before it, or narrower.", fields, null, inForce);
+        var next = Applied(body, restores.Select(f => new BoardChange(f.Field, f.Now, f.Restored)));
+        return new(act, true, $"Vetoing {act.Id} sets {string.Join("; ", restores.Select(f => $"{f.Field} from {f.Now} to {f.Restored}"))} "
+                              + "— each the narrower of now and before it. Nothing is widened.", fields, next, inForce);
+    }
+
+    /// <summary>
+    /// THE OWNER'S VETO, PRESS ONE (<c>U-board-b1</c> item 9; R24 Q2, AUTH-001): what a veto of <paramref name="actId"/> would do, field
+    /// by field — the value now, the act's <c>from</c>, and the narrower of the two that would be restored — or the words refusing it.
+    /// Reads only; reached by no pipe op and no verb (a guard reads their sources).
+    /// </summary>
+    /// <exception cref="TradeAgentException">No such act, or a policy that cannot be read.</exception>
+    public BoardVetoPreview PreviewBoardVeto(string actId)
+    {
+        var plan = PlanVeto(actId);
+        return new BoardVetoPreview(plan.Act.Id, plan.Allowed, plan.Words, plan.Fields);
+    }
+
+    /// <summary>
+    /// THE OWNER'S VETO, PRESS TWO (<c>U-board-b1</c> item 9; R24 Q2, AUTH-001) — in-process only, and it ONLY NARROWS: an open proposal is
+    /// closed <c>vetoed</c>; a confirmed widening gets a version decided by <c>owner</c> on the basis <c>veto</c> whose every field the act
+    /// changed is the NARROWER of its value now and its <c>from</c> (<see cref="BoardDirection.NarrowerOf"/>) — or, with nothing narrower to
+    /// restore, a <c>vetoed</c> event and no version; an act that only narrowed is refused, since undoing it would widen. Never a new
+    /// limit or envelope above now. One write.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardActResult VetoBoardAct(string actId, DateTimeOffset at) => _db.Write(_ =>
+    {
+        var plan = PlanVeto(actId);
+        if (!plan.Allowed) throw Refused(plan.Words);
+        int? version = null;
+        if (plan.Body is { } body) version = InsertVersion(plan.InForce!, body, BoardDecider.Owner, BoardBasis.Veto, plan.Act.Id, at);
+        InsertEvent(plan.Act.Id, BoardActEventKind.Vetoed, BoardDecider.Owner, null, null, null, null, null, version, plan.Words, at);
+        return new BoardActResult(plan.Act, BoardActEventKind.Vetoed, version, plan.Words);
+    });
+
     // ---- the board's own power: proposable by a seat, changed only by the owner (CHANGE-001) --------------------------------------
 
     /// <summary>
