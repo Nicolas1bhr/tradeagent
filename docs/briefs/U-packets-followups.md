@@ -22,3 +22,19 @@ Red-first (quote each red at base): items 1–3's checks.
 **NOT in scope:** the packet's size bounds and rendering; ApiConversation; forecast resolution semantics.
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; branch CI on three platforms; Codex review; names vs
 `main` 0 removed; tests box line). `## Report` ≤ 20 lines appended here.
+
+## Report
+Code tip 28c35980 on base bb4f177e (rebase: up to date); no rung; no deviation from the brief.
+- Build: `dotnet build TradeAgent.sln -c Release --no-incremental` → "0 Warning(s)", "0 Error(s)".
+- Touched classes 3× in Release (suite lock): OrgPacketTests "Passed! - Failed: 0, Passed: 12" ×3; CouncilLoopTests "Passed! - Failed: 0, Passed: 78" ×3 (PuppetLivesTests, which reads lineage too: "Passed: 17").
+- CI 40113759887 on 28c35980: conclusion success, 12 of 12 jobs green.
+- Codex review (gpt-6.1-sol, read-only): `fleet/tmp/B-scratch/u-packets-followups/U-packets-followups-review.md` — "No defects found".
+- names.sh main u-packets-followups: "sets: base 3341 tip 3344", "removed: 0", "added: 3".
+- tests box: NOT RUN — the machine does not answer
+- Item 1 (b7274253): `ForecastsDue`/`ResolutionsUnshown` catch a row's read failure (Format/InvalidCast/Overflow/Argument) into `refused` by forecast id, never its text; check `A_malformed_forecast_row_is_refused_by_name_and_the_org_block_survives`.
+- Item 2 (f57fbee7): `MissionSituation.Lineage` adds a `ledger` input for every entry "What you believe" renders, through `BeliefLines` — the one cut the render also uses; check `A_turn_shown_one_belief_records_it_as_an_input`.
+- Item 3 (28c35980): `Lineage` adds a `delivery` input for the delivery the mandate block shows as failed, through `FailedShown` — the render's own test; check `A_failed_delivery_shown_in_the_mandate_block_is_recorded`.
+- RED at base: item 1 "System.FormatException : The string 'not a time' was not recognized as a valid DateTime" (thrown out of `ForecastsDue`); item 2 "Expected: ["ledger:1"] Actual: []"; item 3 "Expected: ["delivery:666548bf…"] Actual: []".
+- MUTANT (item 2's beliefs dropped from `Lineage`, inputs from `org.Shown` alone again): "Expected: ["ledger:1"] Actual: []" — red; restored → "Passed: 1".
+- Forecast-vocabulary refusal on main: yes — `OrgStore.VocabularyRefusal` (`src/TradeAgent.Core/Db/OrgStore.Packets.cs`), called first in both readers.
+- NOT done/verified: no full local suite; the other forecast readers (`OrgStore.Surface.cs`, `OrgStore.Decisions.cs`) are out of scope and unchanged; a rejected delivery named only by id in the rejection line is recorded through its mandate event, as before, not as a `delivery` input.
