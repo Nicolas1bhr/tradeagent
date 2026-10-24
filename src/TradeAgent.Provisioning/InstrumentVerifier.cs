@@ -5,6 +5,7 @@ using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.Provisioning;
 
@@ -49,12 +50,12 @@ public sealed class InstrumentVerifier
     public const int MaxBodyBytes = 4 * 1024 * 1024;
 
     // ONE CLIENT, NO TIMEOUT OF ITS OWN (the leash is per request) AND NO REDIRECTS: see the type summary.
-    static readonly HttpClient Http = new(new SocketsHttpHandler
+    // THROUGH THE APP'S TLS POLICY (U-tls-denylist).
+    static readonly HttpClient Http = TlsClients.Client(handler =>
     {
-        AllowAutoRedirect = false,
-        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-    })
-    { Timeout = Timeout.InfiniteTimeSpan };
+        handler.AllowAutoRedirect = false;
+        handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+    }, Timeout.InfiniteTimeSpan);
 
     readonly InstrumentCheckStore _store;
     readonly VenueCatalogRead _catalogue;

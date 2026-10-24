@@ -4,6 +4,7 @@ using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Security;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -212,13 +213,12 @@ public sealed class ApiConversation(
     readonly List<string> _typedMeanwhile = [];
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
-    readonly HttpClient _http = new(new Handing(transport ?? new SocketsHttpHandler()), disposeHandler: true)
-    {
-        // SECONDS, NOT MINUTES, AND INJECTABLE. A never-answering endpoint must fail fast: the
-        // failure that costs most here is the one that looks like thinking, which this codebase has
-        // already measured once on Windows (see AgentSession's stdin comment).
-        Timeout = requestTimeout ?? ApiAgentRuntime.DefaultRequestTimeout
-    };
+    // THROUGH THE APP'S TLS POLICY (U-tls-denylist): the key-carrying request goes over the factory's handler; a test brings its loopback.
+    // SECONDS, NOT MINUTES, AND INJECTABLE. A never-answering endpoint must fail fast: the
+    // failure that costs most here is the one that looks like thinking, which this codebase has
+    // already measured once on Windows (see AgentSession's stdin comment).
+    readonly HttpClient _http = TlsClients.Client(new Handing(transport ?? TlsClients.Handler()),
+        requestTimeout ?? ApiAgentRuntime.DefaultRequestTimeout);
 
     CancellationTokenSource? _cts;
     bool _busy;

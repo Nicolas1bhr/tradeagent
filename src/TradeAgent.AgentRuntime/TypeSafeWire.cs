@@ -9,6 +9,7 @@ using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Decisions;
 using TradeAgent.Security;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -116,10 +117,8 @@ public sealed class TypeSafeWire : IDecisionModel, IDisposable
         _gate = gate ?? DecisionRateGate.Shared;
         // The answer's bound is MaxAnswerBytes, applied where the body is read (SendAsync): the headers come first, so the
         // client's own buffer limit would never be reached.
-        _http = new HttpClient(transport ?? new SocketsHttpHandler { AllowAutoRedirect = false }, disposeHandler: true)
-        {
-            Timeout = requestTimeout ?? DefaultRequestTimeout
-        };
+        // THROUGH THE APP'S TLS POLICY (U-tls-denylist): the key-carrying request goes over the factory's handler; a test brings its loopback.
+        _http = TlsClients.Client(transport ?? TlsClients.Handler(h => h.AllowAutoRedirect = false), requestTimeout ?? DefaultRequestTimeout);
     }
 
     public DecisionInstrument Instrument { get; }

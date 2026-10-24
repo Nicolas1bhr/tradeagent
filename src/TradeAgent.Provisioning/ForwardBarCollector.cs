@@ -5,6 +5,7 @@ using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Tls;
 
 namespace TradeAgent.Provisioning;
 
@@ -60,13 +61,13 @@ public sealed class ForwardBarCollector : IAsyncDisposable
     // ONE CLIENT WITH NO TIMEOUT OF ITS OWN: the leash is a per-request CancellationTokenSource, so
     // the ten seconds is a value a caller chose and a test can shorten, rather than a property of a
     // client that was built once at class load.
-    static readonly HttpClient Http = new(new SocketsHttpHandler
+    // THROUGH THE APP'S TLS POLICY (U-tls-denylist), on every hop of a redirect too.
+    static readonly HttpClient Http = TlsClients.Client(handler =>
     {
-        AllowAutoRedirect = true,
-        MaxAutomaticRedirections = 5,
-        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-    })
-    { Timeout = Timeout.InfiniteTimeSpan };
+        handler.AllowAutoRedirect = true;
+        handler.MaxAutomaticRedirections = 5;
+        handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+    }, Timeout.InfiniteTimeSpan);
 
     readonly ForwardBarStore _store;
     readonly Func<string?> _symbol;
