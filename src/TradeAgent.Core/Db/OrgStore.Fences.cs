@@ -105,33 +105,58 @@ public sealed partial class OrgStore
     /// THE LAUNCHES <paramref name="mandateId"/>'S OWN CANCELLATION OR RE-SCOPE FENCED (<c>U-org-verbs-b</c> item 5): those under it
     /// that had not ended when the transition was written — the ones it took authority from mid-turn, oldest first. Every launch row
     /// under the mandate committed before the transition (<see cref="FencedSince"/>: admission refuses a closed mandate in the row's own
-    /// write), so none is left out for a start stamped after the transition's (<c>U-org-verbs-d</c> item 1: commit order, never stamps).
-    /// Whether one had already ended is its own row's end stamp against the transition's — the end write carries no commit mark.
+    /// write), and whether one had ended is read in the transition's own write (<see cref="RecordMandateFence"/>) — commit order on both
+    /// sides, never stamps (<c>U-org-verbs-d</c> item 1 and its fix pass). A cancelled or re-scoped mandate with no such record is damage.
     /// Empty while the mandate is open, or closed any other way. A launch that ended before the transition did nothing under a stale
     /// authority, and is not named. Each says whether its row is closed yet (<see cref="FencedLaunch.Ended"/>).
     /// </summary>
     public IReadOnlyList<FencedLaunch> FencedBy(string mandateId) => db.Read(_ =>
     {
-        DateTimeOffset at;
-        using (var c = db.Cmd("SELECT kind, at FROM org_mandate_event WHERE mandate_id=$m AND kind <> $claim ORDER BY id DESC LIMIT 1",
+        using (var c = db.Cmd("SELECT kind FROM org_mandate_event WHERE mandate_id=$m AND kind <> $claim ORDER BY id DESC LIMIT 1",
                    ("$m", mandateId), ("$claim", MandateEventKind.Proposed)))
+            if (c.ExecuteScalar() is not (MandateEventKind.Cancelled or MandateEventKind.Rescoped)) return (IReadOnlyList<FencedLaunch>)[];
+
+        // THE LAUNCHES OPEN AT THE TRANSITION'S COMMIT, as its own write recorded them (RecordMandateFence).
+        string detail;
+        using (var c = db.Cmd("SELECT id, detail FROM org_event WHERE kind = $kind AND detail LIKE $mark ORDER BY id DESC LIMIT 1",
+                   ("$kind", OrgEventKind.MandateFenced), ("$mark", $"mandate={mandateId} %")))
         using (var r = c.ExecuteReader())
         {
-            if (!r.Read() || r.GetString(0) is not (MandateEventKind.Cancelled or MandateEventKind.Rescoped)) return (IReadOnlyList<FencedLaunch>)[];
-            at = Sql.Time(r.GetValue(1));
+            if (!r.Read()) throw Damaged($"mandate {mandateId} was closed by its decider's act and holds no record of the launches it fenced");
+            detail = r.GetString(1);
         }
+        var fenced = new List<FencedLaunch>();
+        foreach (var id in IdsOf(DetailValue(detail, "open"), $"mandate {mandateId}'s fence record"))
+        {
+            using var c = db.Cmd("SELECT ended_at, role FROM ai_attempt WHERE id=$id", ("$id", id));
+            using var r = c.ExecuteReader();
+            if (!r.Read()) throw Damaged($"mandate {mandateId}'s fence record names launch {id}, which the ledger does not hold");
+            if (NeverFenced(Sql.S(r.GetValue(1)))) continue;
+            fenced.Add(new FencedLaunch(id, Sql.TimeN(r.GetValue(0)) is not null));
+        }
+        return (IReadOnlyList<FencedLaunch>)fenced;
+    });
 
-        var fenced = new List<(long Row, FencedLaunch Launch)>();
-        using (var c = db.Cmd("SELECT id, rowid, ended_at, role FROM ai_attempt WHERE mandate_id=$m", ("$m", mandateId)))
+    /// <summary>
+    /// THE LAUNCHES A MANDATE'S CANCELLATION OR RE-SCOPE TAKES AUTHORITY FROM, recorded inside that transition's own write
+    /// (<c>U-org-verbs-d</c> fix pass): every launch under <paramref name="mandateId"/> whose row is still open — read under the same
+    /// lock as the transition, so an end committed before it is ended and one committed after it is not — named, in commit order, in
+    /// one <see cref="OrgEventKind.MandateFenced"/> event on the mandate's unit and holder, decided by the app.
+    /// </summary>
+    void RecordMandateFence(string mandateId, DateTimeOffset now) => db.Write(_ =>
+    {
+        string unit, holder;
+        using (var c = db.Cmd("SELECT unit_id, holder FROM org_mandate WHERE id=$m", ("$m", mandateId)))
         using (var r = c.ExecuteReader())
-            while (r.Read())
-            {
-                var row = r.GetInt64(1);
-                var ended = Sql.TimeN(r.GetValue(2));
-                if (NeverFenced(Sql.S(r.GetValue(3))) || ended < at) continue;
-                fenced.Add((row, new FencedLaunch(r.GetString(0), ended is not null)));
-            }
-        return (IReadOnlyList<FencedLaunch>)[.. fenced.OrderBy(f => f.Row).Select(f => f.Launch)];
+        {
+            if (!r.Read()) throw Damaged($"mandate {mandateId} is not there to record what it fenced");
+            (unit, holder) = (r.GetString(0), r.GetString(1));
+        }
+        var open = new List<string>();
+        using (var c = db.Cmd("SELECT id FROM ai_attempt WHERE mandate_id=$m AND ended_at IS NULL ORDER BY rowid", ("$m", mandateId)))
+        using (var r = c.ExecuteReader())
+            while (r.Read()) open.Add(r.GetString(0));
+        return Event(now, unit, holder, OrgEventKind.MandateFenced, OrgDecider.App, $"mandate={mandateId} open={Ids(open)}");
     });
 
     /// <summary>The words an app-written position-wide fence ends with: the last launch row committed before it.</summary>

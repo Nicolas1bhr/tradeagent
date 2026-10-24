@@ -432,6 +432,7 @@ public sealed partial class OrgStore
         if (string.IsNullOrWhiteSpace(why) || why.Length > MandateLimits.MaxClaimChars)
             throw Refused($"a cancellation says why, in at most {MandateLimits.MaxClaimChars} characters.");
         var cancelled = AppendMandateEvent(m.Id, now, MandateEventKind.Cancelled, caller, attempt, why, []);
+        RecordMandateFence(m.Id, now);
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, $"the mandate was cancelled: {why}");
         ProposalJudged(m, now, $"its decider cancelled the mandate: {why}");
         return cancelled;
@@ -463,6 +464,7 @@ public sealed partial class OrgStore
 
         var successor = InsertMandate(issue, now);
         var rescoped = AppendMandateEvent(m.Id, now, MandateEventKind.Rescoped, caller, attempt, why, [successor.Id]);
+        RecordMandateFence(m.Id, now);
         new MissionEventStore(db).CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn,
             $"the mandate was re-scoped into {successor.Id}: {why}");
         ProposalJudged(m, now, $"its decider re-scoped the mandate into {successor.Id}");

@@ -135,6 +135,34 @@ public partial class OrgAssignmentTests
         Assert.Equal(OrgEventKind.Fenced, org.FencedSince(running)?.Cause);
         Assert.Null(org.FencedSince(next));
     }
+
+    /// <summary>
+    /// (1c) <c>FencedBy</c> NAMES THE LAUNCHES OPEN AT THE TRANSITION'S COMMIT, never what two stamps say (the Codex review of
+    /// <c>U-org-verbs-d</c>, P2): a launch whose end — stamped later — committed before the cancel is not named; a launch still open
+    /// when the cancel committed is named, though its end is then stamped before the cancel's. RED before the fix: the end stamps
+    /// decided both.
+    /// </summary>
+    [Fact]
+    public void FencedBy_names_the_launches_open_at_the_transitions_commit()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t0 = DateTimeOffset.UtcNow;
+        var ledger = new AiAttemptStore(db);
+
+        var m = org.Assign(Issue(), t0);
+        var endedFirst = LaunchedAt(db, Member, t0.AddSeconds(1), m.Id);
+        Assert.True(ledger.End(endedFirst, 0, t0.AddSeconds(5), 10, 0, 5, 5, 0, null, 0.01m, null, null));
+        org.Cancel(m.Id, Head, null, CancelWhy, t0.AddSeconds(3));
+        Assert.Empty(org.FencedBy(m.Id));
+
+        var other = org.Assign(Issue(), t0);
+        var openAtCommit = LaunchedAt(db, Member, t0.AddSeconds(1), other.Id);
+        org.Cancel(other.Id, Head, null, CancelWhy, t0.AddSeconds(5));
+        Assert.True(ledger.End(openAtCommit, 0, t0.AddSeconds(3), 10, 0, 5, 5, 0, null, 0.01m, null, null));
+        Assert.Equal([new FencedLaunch(openAtCommit, true)], org.FencedBy(other.Id));
+    }
     // ---- item 2: the broker refuses ------------------------------------------------------------------------------
 
     /// <summary>

@@ -330,8 +330,9 @@ public partial class OrgStructureTests
             return (string)c.ExecuteScalar()!;
         }), StringComparison.Ordinal);
 
-        // A'S HISTORY STAYS A'S: its events (the merge's own and the fences of its positions added), and every past charge.
-        Assert.Equal(aHistory + 3, Count(db, "org_event", $"unit_id = '{a}'"));
+        // A'S HISTORY STAYS A'S: its events (the merge's own, the fences of its positions and the record of what the cancelled
+        // mandate's fence cut — U-org-verbs-d's fix pass — added), and every past charge.
+        Assert.Equal(aHistory + 4, Count(db, "org_event", $"unit_id = '{a}'"));
         Assert.Equal(charged, ChargedTo(db, a));
         Assert.Equal([b, Div, OrgIds.Root], org.FundingLine(aMember).Select(u => u.Id));
     }
