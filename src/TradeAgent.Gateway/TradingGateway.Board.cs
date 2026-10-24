@@ -78,6 +78,9 @@ public sealed partial class TradingGateway
     /// <summary>One act as <paramref name="seat"/> may read it — blind until its own word on it is sealed (<see cref="BoardStore.ShowTo"/>).</summary>
     internal (BoardActBlindView? Blind, BoardActRecord? Whole) BoardShow(string seat, string actId) => _board.ShowTo(seat, actId);
 
+    /// <summary>A board seat's state now — dormant, active or retired — or null for an id that is no seat of the board.</summary>
+    internal string? BoardSeatState(string seat) => _board.Seat(seat)?.Status;
+
     /// <summary>The acts, newest first, with no rationale or forecast (<see cref="BoardStore.ActList"/>).</summary>
     internal IReadOnlyList<BoardActBlindView> BoardList(int limit) => _board.ActList(limit);
 }
