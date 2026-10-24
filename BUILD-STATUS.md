@@ -11701,3 +11701,14 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Review:** Codex (gpt-6.1-sol): no defects.
 **Tests box:** NOT VERIFIED — started on this tree, the wait cut by the Mac restart; no result for this tree.
 **NOT VERIFIED:** no app launch or screenshot (the owner held the screen; the Mac UI check is owed); no full local suite (CI's).
+
+## U-packets-followups — a malformed forecast row is refused by its id instead of dropping the org block, and an attempt's input lineage records every belief and failed delivery its packet showed
+
+**Landed** (`land.sh`, seat B) on `main`; builder (shas as first pushed) `b7274253` per-row refusal · `f57fbee7` beliefs as inputs · `28c35980` failed deliveries as inputs · report `aa1115e1`. No rung.
+**Source:** seat B's card from the Codex second pass on U-org-packets-b (its P2 + first P1); the forecast-vocabulary P1 was already on main (`OrgStore.VocabularyRefusal`, folded into U-org-verbs-c); its ApiConversation P1 was triaged not kept (2026-10-23).
+**Protects:** EVID-001 (`ai_attempt_input` names what the prompt showed — beliefs through the render's own cut `BeliefLines`, failed deliveries through `FailedShown`); refuse never guess (one unreadable row refused by id, the rest still shown).
+**RED / mutant:** item 1 threw FormatException ('not a time') at base; items 2 and 3 recorded nothing ("Actual: []"). MUTANT item 2's beliefs dropped from the lineage ⇒ "Expected: ["ledger:1"] Actual: []"; restored, green.
+**Gate:** Release 0 warnings; OrgPacketTests 12/12 ×3, CouncilLoopTests 78/78 ×3, PuppetLivesTests 17; branch CI 40113759887 12/12; names 3341 → 3344, removed 0.
+**Review:** Codex (gpt-6.1-sol): no defects.
+**Tests box:** NOT RUN — the machine does not answer.
+**NOT VERIFIED:** the other forecast readers (Surface, Decisions) are out of scope; no full local suite (CI's); no real model turn.
