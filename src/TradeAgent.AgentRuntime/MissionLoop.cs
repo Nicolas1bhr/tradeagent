@@ -248,8 +248,21 @@ public sealed record MissionOptions
     public IReadOnlyDictionary<string, TimeSpan> Ceilings { get; init; } =
         OrgLevel.All.ToDictionary(l => l, _ => DefaultCeiling, StringComparer.Ordinal);
 
-    /// <summary>The ceiling of <paramref name="level"/>, or <see cref="DefaultCeiling"/> where none is set.</summary>
-    public TimeSpan CeilingFor(string level) => Ceilings.TryGetValue(level, out var every) ? every : DefaultCeiling;
+    /// <summary>
+    /// THE REVIEW INTERVAL AS THE POLICY STATES IT NOW, or null to keep <see cref="ReviewEvery"/> (<c>U-board-b1</c> fix pass, the review's
+    /// P2): the security board's acts change <c>review_minutes</c> while the loop runs, and a value copied once at start would leave a
+    /// recorded act governing nothing until a restart. Read at every scheduling, never cached.
+    /// </summary>
+    public Func<TimeSpan>? LiveReviewEvery { get; init; }
+
+    /// <summary>The ceilings as the policy states them now, or null to keep <see cref="Ceilings"/> — read at every scheduling, for the same reason.</summary>
+    public Func<IReadOnlyDictionary<string, TimeSpan>>? LiveCeilings { get; init; }
+
+    /// <summary>The review interval in force at this instant: the live source's, else <see cref="ReviewEvery"/>.</summary>
+    public TimeSpan ReviewInterval() => LiveReviewEvery?.Invoke() ?? ReviewEvery;
+
+    /// <summary>The ceiling of <paramref name="level"/> in force at this instant, or <see cref="DefaultCeiling"/> where none is set.</summary>
+    public TimeSpan CeilingFor(string level) => (LiveCeilings?.Invoke() ?? Ceilings).TryGetValue(level, out var every) ? every : DefaultCeiling;
 }
 
 /// <summary>
@@ -3577,11 +3590,11 @@ public sealed class MissionLoop
                 {
                     WithdrawLooks(events, role, now);
                 }
-                else if (_options.ReviewEvery > TimeSpan.Zero)
+                else if (_options.ReviewInterval() > TimeSpan.Zero)
                 {
                     if (!events.HasUnconsumed(MissionEventKind.Review, role))
                     {
-                        var due = now + (woken is null ? _options.ReviewEvery : NextLook(woken));
+                        var due = now + (woken is null ? _options.ReviewInterval() : NextLook(woken));
                         events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(due), role),
                             MissionEventKind.Review, now, due, role: role);
                     }
@@ -3762,7 +3775,7 @@ public sealed class MissionLoop
     /// </summary>
     TimeSpan NextLook(IReadOnlyList<MissionEvent> woke)
     {
-        var every = _options.ReviewEvery;
+        var every = _options.ReviewInterval();
         if (!OnlyLooks(woke)) return every;
 
         var ceiling = TimeSpan.FromTicks(every.Ticks * QuietLookCeiling);
@@ -3788,7 +3801,7 @@ public sealed class MissionLoop
     /// </summary>
     void BringLookForward(MissionEventStore events, string role, DateTimeOffset now)
     {
-        var due = now + _options.ReviewEvery;
+        var due = now + _options.ReviewInterval();
         try { events.BringLookForward(role, MissionEventIds.ForRole(MissionEventIds.Review(due), role), now, due); }
         catch (Exception) { /* the look stays where it was; nothing the role is owed moves */ }
     }
