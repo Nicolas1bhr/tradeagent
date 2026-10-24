@@ -95,6 +95,7 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("SeatProfile.Below", "Directory.EnumerateDirectories", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
         ("SeatProfile.Below", "Directory.EnumerateFileSystemEntries", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
         ("SeatProfile.Below", "Directory.Exists", 2, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home"),
+        ("SeatProfile.CatalogRefusal", "File.ReadAllBytes", 1, "the seat's own home (seat-home/codex/model-catalog.json, U-cell-model-catalog), which every cell grant refuses (Cell.Guarded); never a position's home"),
         ("SeatProfile.CompanionRefusal", "File.Exists", 1, "the pinned AI program's own real folder and its package's codex-resources (U-cli-code-mode's code-mode host pin): the program's install, never a position's home"),
         ("SeatProfile.FinalPathWindows", "File.OpenHandle", 1, "the pinned AI program's own real folder and its package's codex-resources (U-cli-code-mode's code-mode host pin): the program's install, never a position's home (Windows: the program's path with every folder's link resolved, read-only)"),
         ("SeatProfile.Foreign", "Directory.Exists", 1, "the seat's own home (seat-home/), which every cell grant refuses (Cell.Guarded); never a position's home — the position's home is looked at through HomeFiles (ForeignInHome)"),
@@ -127,6 +128,7 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("SeatProfile.Sha256Of", "File.OpenRead", 1, "the runtime's executable (tools/<id>/ or the manifest's path), never a home"),
         ("SeatProfile.ProbeFolder", "Directory.CreateDirectory", 1, "state/seat-probe, the app's own empty folder the CLI's reports run in (G2)"),
         ("SeatProfile.ProbeFolder", "FileSystemInfo.get_FullName", 1, "a path string, no disk access"),
+        ("SeatProfile.ShippedCatalog", "File.ReadAllBytes", 1, "the app's own install folder (AppContext.BaseDirectory/SeatData, U-cell-model-catalog): the shipped catalog, never a position's home"),
 
         // ---- pre-existing, not this unit's ---------------------------------------------------------------------------------------
         ("CouncilRelay.Deliver", "Directory.CreateDirectory", 1, "the legacy pair claims no containment — CARD"),
