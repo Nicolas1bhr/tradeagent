@@ -286,4 +286,32 @@ public partial class CouncilLoopTests
         var attempt = Assert.Single(LaunchesOf(db, Executor));
         Assert.Equal([$"ledger:{entry.Id}"], InputsOf(db, attempt));
     }
+
+    /// <summary>
+    /// A FAILED DELIVERY SHOWN IN THE MANDATE BLOCK IS RECORDED (<c>U-packets-followups</c> item 3; the Codex second pass of
+    /// <c>U-org-packets-b</c>, its first P1): the executor's delivery fails TradeAgent's checks and code retries the mandate; the
+    /// executor's next packet names that delivery and quotes its failed check, and the attempt its committed outcome records names
+    /// the delivery.
+    ///
+    /// <para>RED at base bb4f177e: "Expected: ["delivery:…"] Actual: []" — the mandate block quoted the failed check and the
+    /// lineage held nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_failed_delivery_shown_in_the_mandate_block_is_recorded()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = SessionChart(db, root);
+        var loop = new MissionLoop(host, NoHeartbeat);
+        var m = Give(db, "find out whether the funding skew predicts the next hour");
+        var failed = new OrgStore(db).Deliver(m.Id, Executor, null, OverLong, [], [], DateTimeOffset.UtcNow);
+        Assert.Equal(MandateEventKind.Retry, failed.Status);
+        host.Conversations[Executor].Session = TurnSession.Resumed;
+        await TurnsUntil(loop, host, Executor, 1);
+
+        Assert.Contains($"- Delivery `{failed.Delivery.Id}` failed TradeAgent's checks", host.Conversations[Executor].Sent[0],
+            StringComparison.Ordinal);
+        var attempt = Assert.Single(LaunchesOf(db, Executor));
+        Assert.Equal([$"delivery:{failed.Delivery.Id}"], InputsOf(db, attempt));
+    }
 }

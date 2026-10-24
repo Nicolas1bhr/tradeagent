@@ -1409,6 +1409,8 @@ public sealed record MissionSituation
     public static IReadOnlyList<PacketInput> Lineage(PositionPacket? org, MandateView? mandate, IReadOnlyList<LedgerListed>? believed)
     {
         var inputs = new List<PacketInput>(org?.Shown ?? []);
+        if (mandate is not null && FailedShown(mandate) is var (delivery, _))
+            inputs.Add(new PacketInput(PacketInputKind.Delivery, delivery.Id));
         if (mandate?.SentBack is { Kind: MandateEventKind.Rejected } sentBack)
             inputs.Add(new PacketInput(PacketInputKind.MandateEvent, sentBack.Id.ToString(CultureInfo.InvariantCulture)));
         if (believed is not null)
