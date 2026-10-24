@@ -50,3 +50,5 @@
 
 # Vendor material stays byte-for-byte as the vendor shipped it: no normalisation, no diff noise.
 docs/atas-api-*.txt -text
+# The seats' vendor data is pinned by its SHA-256 (U-cell-model-catalog): one byte normalised is a refused seat.
+src/TradeAgent.AgentRuntime/SeatData/*.json -text

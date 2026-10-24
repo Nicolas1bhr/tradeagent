@@ -18,6 +18,9 @@
     <Content Include="../../docs/STRATEGY-LANGUAGE.md" Link="STRATEGY-LANGUAGE.md"
              CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Strategies/*.strategy" CopyToOutputDirectory="PreserveNewest" />
+    <!-- THE SEATS' VENDOR DATA (U-cell-model-catalog): the model catalog a verified codex seat reads, written into its seat home
+         before every start and held to its pin (`SeatPlan.ModelCatalogSha256`). Data, not code: a vendor change is a new file. -->
+    <Content Include="SeatData/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <!-- The relay's crash boundaries are an internal seam: the property this unit is built on is
