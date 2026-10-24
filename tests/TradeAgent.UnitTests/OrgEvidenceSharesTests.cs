@@ -129,4 +129,59 @@ public class OrgEvidenceSharesTests
         // A FIXTURE RUN IS STILL FREE, the team's included.
         Assert.True(campaigns.RegisterTrial(campaign.Id, version, Run(db, set, version, "run-f0", team), EvaluationClass.Fixture, At).Ok);
     }
+    // ---- item 3: verdicts ------------------------------------------------------------------------------------------
+
+    static string? AskedBy(Database db, long campaign, string version) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT attempt_id FROM strategy_verdict WHERE campaign_id=$c AND version_id=$v", ("$c", campaign), ("$v", version));
+        return c.ExecuteScalar() is string s ? s : null;
+    });
+
+    /// <summary>
+    /// A VERDICT IS CHARGED TO THE ASKER'S CHAIN AND REFUSED PAST ITS UNIT'S SHARE. The team holds 0.25 of a 4-judgement campaign — one
+    /// judgement: its first is charged and the row records the launch that asked it; its second is refused in words naming the team,
+    /// its share, its use and the campaign's budget, nothing written; the version already judged still answers Ok and spends nothing
+    /// (unchanged); a launch funded outside the team, and an in-process ask with no launch (NULL, funded by no unit), are charged as
+    /// before; once the campaign is spent its own words answer first. RED at base: <c>ChargeVerdict</c> took no launch.
+    /// </summary>
+    [Fact]
+    public void A_verdict_is_charged_to_the_askers_chain_and_refused_past_its_units_share()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var set = Held(db);
+        var campaign = Opened(db, set, trials: 10, verdicts: 4);
+        GivenTeam(db, trialShare: null, verdictShare: "0.25");
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+        var outside = Attempt(db, OrgIds.Research, OrgIds.Root);
+        var v = Enumerable.Range(0, 6).Select(i => Version(db, $"version-verdict-{i}")).ToArray();
+
+        var first = campaigns.ChargeVerdict(campaign.Id, v[0], At, team);
+        Assert.True(first.Ok, first.Why);
+        Assert.Equal(team, AskedBy(db, campaign.Id, v[0]));
+
+        var second = campaigns.ChargeVerdict(campaign.Id, v[1], At, team);
+        Assert.False(second.Ok, "a second judgement was charged past the team's quarter of a 4-judgement campaign");
+        foreach (var words in new[] { Team, "0.25", "1 of", $"{campaign.VerdictBudget}" })
+            Assert.Contains(words, second.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.VerdictCharged(campaign.Id, v[1]));
+
+        // ALREADY JUDGED: answered Ok and free, as before — the charge was taken before the computation.
+        var again = campaigns.ChargeVerdict(campaign.Id, v[0], At, team);
+        Assert.True(again.Ok, again.Why);
+        Assert.Equal(1, again.Spent);
+
+        // OUTSIDE THE TEAM, AND NO LAUNCH AT ALL: charged as before; the row says who asked, or nobody.
+        Assert.True(campaigns.ChargeVerdict(campaign.Id, v[1], At, outside).Ok);
+        Assert.Equal(outside, AskedBy(db, campaign.Id, v[1]));
+        Assert.True(campaigns.ChargeVerdict(campaign.Id, v[2], At).Ok);
+        Assert.Null(AskedBy(db, campaign.Id, v[2]));
+        Assert.True(campaigns.ChargeVerdict(campaign.Id, v[3], At, outside).Ok);
+
+        // THE CAMPAIGN IS SPENT: ITS OWN GATE ANSWERS FIRST.
+        var full = campaigns.ChargeVerdict(campaign.Id, v[4], At, team);
+        Assert.False(full.Ok);
+        Assert.Contains($"has spent all {campaign.VerdictBudget} of its final judgements", full.Why, StringComparison.Ordinal);
+        Assert.DoesNotContain(Team, full.Why, StringComparison.Ordinal);
+    }
 }
