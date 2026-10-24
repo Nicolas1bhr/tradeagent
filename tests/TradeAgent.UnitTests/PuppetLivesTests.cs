@@ -15,7 +15,7 @@ namespace TradeAgent.Tests.Unit;
 /// summary says how later units add theirs.
 /// </summary>
 [Collection(VendorOverrideFiles.Name)]
-public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
+public partial class PuppetLivesTests(ITestOutputHelper output) : IDisposable
 {
     const string Chair = CouncilRoles.Operations;
     const string Research = CouncilRoles.Research;

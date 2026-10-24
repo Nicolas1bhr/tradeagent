@@ -436,6 +436,10 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "merge":
                     Fill(a, rest, "unit", "into", "rationale");
                     return (Ops.OrgMerge, a);
+                // `trade org tilt <unit> <currency> <share> <rationale> --forecasts JSON …` (U-org-verbs-e).
+                case "tilt":
+                    Fill(a, rest, "unit", "currency", "share", "rationale");
+                    return (Ops.OrgTilt, a);
                 default:
                     return (null, a);
             }

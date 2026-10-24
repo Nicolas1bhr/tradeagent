@@ -728,7 +728,7 @@ public static class GatewaySchema
         // THE STRUCTURAL VERBS (U-org-verbs-c, O6 part c; ORCHESTRATION § 2.9): a head charters a unit under its own and hires a
         // position into its subtree, each a decision record with a forecast, inside the rights matrix, the chart's bounds, the weekly
         // throttle and the earning test. Served only to a launch whose recorded seat assurance carries the organisation's verbs.
-        new(Core.Ops.OrgCharter, "trade org charter <kind> <ai_share> <rationale> --forecasts JSON [--refs JSON] [--options JSON] [--collapse-by T]", false,
+        new(Core.Ops.OrgCharter, "trade org charter <kind> <ai_share> <rationale> --forecasts JSON [--refs JSON] [--options JSON] [--collapse-by T] [--trial-share F] [--verdict-share F]", false,
             "CHARTER A UNIT UNDER YOUR OWN — a team (under a division or a subdivision), a subdivision (under a division) or a division "
             + "(under the organisation) — with a fraction of your unit's AI envelope ('ai_share', above 0 and at most 1; your units' "
             + "shares together at most 1, and enough to fund one turn of your seat), your 'rationale' and the 'options' you weighed "
@@ -748,7 +748,30 @@ public static class GatewaySchema
                 new("forecasts", "string", true, ForecastsArg + " At least one 'unit-admissible', its subject left empty."),
                 new("refs", "string", false, "A JSON list of {\"kind\": run | promotion | delivery | …, \"id\"}: the current work the charter earns its place on."),
                 new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted."),
-                new("collapse_by", "string", false, "For a bounded experiment instead of cited work: the ISO-8601 date it collapses unless its forecast holds, within 90 days.")
+                new("collapse_by", "string", false, "For a bounded experiment instead of cited work: the ISO-8601 date it collapses unless its forecast holds, within 90 days."),
+                new("trial_share", "number", false, "The new unit's fraction of a campaign's own research-trial budget its launches may spend (at most 1 with its siblings', worth at least one trial of every open campaign); none when omitted: no own cap."),
+                new("verdict_share", "number", false, "The new unit's fraction of a campaign's final-judgement budget — the count its division delegates, without which only a division's head spends verdicts; none when omitted.")
+            ]),
+
+        new(Core.Ops.OrgTilt, "trade org tilt <unit> <currency> <share> <rationale> --forecasts JSON [--refs JSON] [--options JSON]", false,
+            "RE-SPLIT ONE CURRENCY OF A CHILD UNIT'S SHARE — a unit whose PARENT you head: its AI share ('ai', a fraction of your unit's "
+            + "AI envelope), its trial share ('trials') or its verdict share ('verdicts', fractions of a campaign's own budgets; a verdict "
+            + "share is the count your division delegates, without which only a division's head spends verdicts). One currency per "
+            + "call, set to 'share'. Your 'rationale' and 'options' are claims; 'forecasts' carries at least one (a 'unit-admissible' "
+            + "with its subject left empty is the unit). TradeAgent writes the share, your 'envelope-tilt' decision, its forecasts and "
+            + "one event in ONE write — or refuses in words and writes nothing: a share moves at most 0.20 in seven days, the units "
+            + "under your unit hold at most the whole, an AI share must fund one turn of your seat and a trial or verdict share must be "
+            + "worth at least one of every open campaign's. It never raises your own unit's envelope or the organisation's, never "
+            + "re-splits the organisation's AI day among its divisions (the security board's), and reaches nothing of `operations`' "
+            + "division (a two-seat board act). It places no order and moves no money.",
+            [
+                new("unit", "string", true, "The child unit: one whose parent you head."),
+                new("currency", "string", true, $"{Core.Db.OrgCurrency.Ai} | {Core.Db.OrgCurrency.Trials} | {Core.Db.OrgCurrency.Verdicts} — one per call."),
+                new("share", "number", true, "The unit's new share in that currency: a fraction, at least 0 and at most 1."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one."),
+                new("refs", "string", false, "A JSON list of {\"kind\": run | promotion | delivery | …, \"id\"}: the records the tilt rests on."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
             ]),
 
         new(Core.Ops.OrgHire, "trade org hire <unit> <rationale> --forecasts JSON [--head true] [--refs JSON] [--options JSON]", false,

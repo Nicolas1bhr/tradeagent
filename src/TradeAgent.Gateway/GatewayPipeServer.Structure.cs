@@ -33,7 +33,8 @@ public sealed partial class GatewayPipeServer
                 "'ai_share' is required: the fraction of your unit's AI envelope the new unit is given, above 0 and at most 1. Nothing was written.");
         var collapse = req.Str("collapse_by") is { } raw ? When(raw, "collapse_by") : (DateTimeOffset?)null;
         var made = Gateway.Org.Charter(new CharterRequest(caller, ctx.AttemptId, Require(req, "kind"), share, Require(req, "rationale"),
-            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts"), collapse), FundingOf(caller, ctx.AttemptId), DateTimeOffset.UtcNow);
+            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts"), collapse, req.Dec("trial_share"), req.Dec("verdict_share")),
+            FundingOf(caller, ctx.AttemptId), DateTimeOffset.UtcNow);
         return new
         {
             unit = made.Unit.Id,
@@ -42,6 +43,8 @@ public sealed partial class GatewayPipeServer
             head = "vacant",
             status = made.Unit.Status,
             ai_share = made.Unit.EnvelopeShare,
+            trial_share = made.Unit.TrialShare,
+            verdict_share = made.Unit.VerdictShare,
             decision = DecisionReply(made.Decision),
             note = "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
                    + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
@@ -145,6 +148,36 @@ public sealed partial class GatewayPipeServer
                    + "mandate held, decided or issued in the first is cancelled with TradeAgent's reason, and both units' running turns are "
                    + "fenced. Past spend stays on the chain that funded it; launches from now are funded through the second. It counts "
                    + "toward the organisation's two structural changes a week."
+        };
+    }
+
+    /// <summary>
+    /// RE-SPLITS ONE CURRENCY OF A CHILD UNIT'S SHARE (<see cref="OrgStore.Tilt"/>; <c>U-org-verbs-e</c>): the unit, the currency, the new
+    /// share, the rationale and options, the refs and the forecasts. An AI share is sized as a charter's is — against the caller's own
+    /// unit's envelope as the host that meters launches resolves it, and one turn of the caller's own recorded seat; a trial or verdict
+    /// share against the open campaigns' budgets, which are read and never written.
+    /// </summary>
+    object OrgTilt(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var share = req.Dec("share")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'share' is required: the unit's new share in that currency, a fraction at least 0 and at most 1. Nothing was written.");
+        var currency = Require(req, "currency");
+        var made = Gateway.Org.Tilt(new TiltRequest(caller, ctx.AttemptId, Require(req, "unit"), currency, share, Require(req, "rationale"),
+            TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")),
+            currency == OrgCurrency.Ai ? FundingOf(caller, ctx.AttemptId) : null, DateTimeOffset.UtcNow);
+        return new
+        {
+            unit = made.Unit.Id,
+            currency = made.Currency,
+            from = made.From ?? "none",
+            to = made.To,
+            decision = DecisionReply(made.Decision),
+            note = "Tilted: the share is a fraction — of your unit's AI envelope, or of a campaign's own trial or verdict budget — and the "
+                   + "tilt is your 'envelope-tilt' decision, the rationale your own ledger entry, marked claim. A share moves at most 0.20 "
+                   + "in seven days. Each trial and verdict is charged to the chain the launch that spent it was admitted under."
         };
     }
 
