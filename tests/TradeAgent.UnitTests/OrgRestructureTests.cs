@@ -519,4 +519,37 @@ public partial class OrgStructureTests
         string? OnlyThePairUnconfined(string id) => CouncilRoles.IsKnown(id) || id == hired.Position.Id ? SeatClasses.Harness : SeatClasses.Puppet;
         Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, OnlyThePairUnconfined, 3, Now).Status);
     }
+
+    // ---- the fix pass (the Codex review of U-org-verbs-d, triaged by seat B) -----------------------------------------------
+
+    const string SubA = "sub-aaaa0c0ffee", SubB = "sub-bbbb0c0ffee", AHead = "pos-aaaac0ffee01", AMember = "pos-aaaac0ffee02",
+        BHead = "pos-bbbbc0ffee01", ATeam = "team-aaaa0c0ffee", ATeamHead = "pos-aaaac0ffee03", BTeam = "team-bbbb0c0ffee";
+
+    /// <summary>Two sibling subdivisions under <see cref="Div"/>, twenty days old: A with a head, a member and a headed team; B with a head.</summary>
+    static void Siblings(Database db)
+    {
+        Aged(db, SubA, Div, OrgUnitKind.Subdivision, 20, AHead);
+        Seat(db, AMember, SubA);
+        Aged(db, SubB, Div, OrgUnitKind.Subdivision, 20, BHead);
+        Aged(db, ATeam, SubA, OrgUnitKind.Team, 20, ATeamHead);
+    }
+
+    /// <summary>
+    /// (F1) A MERGE FENCES EVERY POSITION IN THE CHILDREN IT MOVES: the head of A's team is mid-turn when A merges into B; its unit's
+    /// parent — its funding chain and the authority above it — changed, so its running launch is fenced. RED before the fix: only A's
+    /// and B's own positions were fenced.
+    /// </summary>
+    [Fact]
+    public void A_merge_fences_every_position_in_the_children_it_moves()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Siblings(db);
+        var running = Funded(db, ATeamHead, ATeam, SubA, Div, OrgIds.Root);
+
+        org.Merge(MergeAsk(SubA, SubB), Now);
+
+        Assert.Equal(OrgEventKind.Fenced, org.FencedSince(running)?.Cause);
+    }
+
 }
