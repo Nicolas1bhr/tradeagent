@@ -45,6 +45,7 @@ public static class SeatProfile
         // list — changed before its folder was looked at. The owner's own files are never touched.
         foreach (var rel in seat.PrivateFiles) Inside(root, rel, "private_files");
         Inside(root, seat.ConfigFile, "config_file");
+        Inside(root, seat.ModelCatalog, "model_catalog");
         // EVERY COMPONENT OF EVERY PATH THE SEAT NAMES — its folders, and the folders of its credential and settings files — LOOKED AT
         // BEFORE ANY CHANGE (the re-review's P2, U-seat-acl): a link on the way is refused while the root's mode, the walk and every list
         // are still as they were. The root looked at first, its owner read, never changed: a walk never reads a tree another account owns.
@@ -78,6 +79,15 @@ public static class SeatProfile
             if (!SameBytes(path, bytes)) OwnerOnlyFile.Write(path, bytes);
         }
 
+        // THE PINNED MODEL'S CATALOG, WRITTEN BY THE APP BEFORE EVERY START (U-cell-model-catalog) exactly as the config is: the shipped
+        // bytes, only when they hash to the pin. A missing or altered shipped file writes nothing here — the CLI class never reads the
+        // catalog — and every verified seat refuses on it in words (VerifyAsync).
+        if (seat.CatalogPath is { } catalog && ShippedCatalog(seat).Bytes is { } shipped)
+        {
+            RealFolder(root, Path.GetDirectoryName(catalog)!);
+            NotALink(catalog);
+            if (!SameBytes(catalog, shipped)) OwnerOnlyFile.Write(catalog, shipped);
+        }
     }
 
     /// <summary>
@@ -201,9 +211,9 @@ public static class SeatProfile
         return read;
     }
 
-    /// <summary>The seat's credential files and its settings file, each with the manifest key that names it.</summary>
+    /// <summary>The seat's credential files, its settings file and its model catalog, each with the manifest key that names it.</summary>
     static IEnumerable<(string Rel, string Key)> SeatFileEntries(SeatPlan seat) =>
-        seat.PrivateFiles.Select(rel => (rel, "private_files")).Append((seat.ConfigFile, "config_file"))
+        seat.PrivateFiles.Select(rel => (rel, "private_files")).Append((seat.ConfigFile, "config_file")).Append((seat.ModelCatalog, "model_catalog"))
             .Where(e => !string.IsNullOrEmpty(e.Item1));
 
     /// <summary>Those files' full paths below <paramref name="root"/> (each already checked by <see cref="Inside"/>).</summary>
@@ -331,7 +341,7 @@ public static class SeatProfile
             && !below.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             return path;
         throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED,
-            $"TradeAgent will not use {rel} for the AI's {(key == "config_file" ? "settings" : "sign-in")}: the AI runtime's {key} entry " +
+            $"TradeAgent will not use {rel} for the AI's {(key switch { "config_file" => "settings", "model_catalog" => "model catalog", _ => "sign-in" })}: the AI runtime's {key} entry " +
             $"must name a file inside the AI's own home {root}, and this one does not. This is TradeAgent's own settings at fault — " +
             $"correct {key} in runtimes.json. Nothing was written or started, and nothing outside the AI's own home was touched.");
     }
@@ -697,6 +707,39 @@ public static class SeatProfile
         return (bytes, null);
     }
 
+    /// <summary>
+    /// NULL WHEN <paramref name="seatClass"/> NAMES NO MODEL CATALOG, OR THE SEAT HOME'S IS THE SHIPPED ONE BYTE FOR BYTE — or the refusal
+    /// in words: a class whose command names a catalog the plan has none for, a shipped file missing or off its pin, or a seat-home copy
+    /// that is missing or differs, named by its path and both hashes.
+    /// </summary>
+    public static string? CatalogRefusal(SeatPlan seat, string seatClass)
+    {
+        if (!seat.ArgsFor(seatClass).Any(a => a.Contains(SeatPlan.CatalogSlot, StringComparison.Ordinal))) return null;
+        if (seat.CatalogPath is not { } path)
+            return "TradeAgent will not start the AI: its command names a model catalog, and this build gives the seat none to write. " +
+                   "This is TradeAgent's own fault, not the AI's; nothing was started.";
+        var (shipped, refusal) = ShippedCatalog(seat);
+        if (refusal is not null) return refusal;
+        if (shipped is null)
+            return "TradeAgent will not start the AI: its command names a model catalog, and this build ships none. Nothing was started.";
+        byte[] written;
+        try { written = File.ReadAllBytes(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"TradeAgent will not start the AI: its model catalog {path} could not be read ({ex.Message}). Nothing was started; " +
+                   "the next turn writes it again.";
+        }
+        if (written.AsSpan().SequenceEqual(shipped)) return null;
+        return $"TradeAgent will not start the AI: its model catalog {path} hashes to {Convert.ToHexStringLower(SHA256.HashData(written))}, " +
+               $"not {Convert.ToHexStringLower(SHA256.HashData(shipped))}, the catalog TradeAgent just wrote — so the AI would be offered tools " +
+               "its check never saw. Something is changing it as it is written; close whatever else uses that folder. Nothing was started.";
+    }
+
+    /// <summary>The pin of the catalog <paramref name="seatClass"/>'s command names, lower-case; empty for a class that names none.</summary>
+    public static string CatalogPin(SeatPlan seat, string seatClass) =>
+        seat.ArgsFor(seatClass).Any(a => a.Contains(SeatPlan.CatalogSlot, StringComparison.Ordinal))
+            ? seat.ModelCatalogSha256.Trim().ToLowerInvariant() : "";
+
     // ---- verified at every launch ------------------------------------------------------------------
 
     /// <summary>
@@ -785,6 +828,11 @@ public static class SeatProfile
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                 $"TradeAgent will not start the AI: its settings file {config} is not the one TradeAgent just wrote. " +
                 "Something is changing it as it is written; close whatever else uses that folder.");
+
+        // THE MODEL CATALOG THE CLASS'S COMMAND NAMES IS THE APP'S, BYTE FOR BYTE (U-cell-model-catalog): the dry run read these bytes,
+        // so a live turn on any other metadata — a missing file, an altered one, the account's list — is refused before admission.
+        if (CatalogRefusal(seat, seatClass) is { } catalogRefused)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, catalogRefused);
 
         if (Foreign(seat.Root, seat.Forbidden) is { } inHome)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
@@ -959,6 +1007,8 @@ public static class SeatProfile
                 (seat?.ClassEnvironment.GetValueOrDefault(seatClass) ?? new Dictionary<string, string>())
                 .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))));
             Part("offered", Encoding.UTF8.GetBytes(string.Join('\0', (offered ?? []).Order(StringComparer.Ordinal))));
+            // THE MODEL CATALOG ITS COMMAND NAMES, BY ITS PIN (U-cell-model-catalog): verified equal to the seat home's copy before this.
+            Part("model-catalog", Encoding.UTF8.GetBytes(seat is null ? "" : CatalogPin(seat, seatClass)));
         }
         return Convert.ToHexStringLower(sha.GetHashAndReset());
     }
