@@ -176,7 +176,7 @@ public class BoardReadersTests(ITestOutputHelper log)
         using var both = new Barrier(2);
         var metThere = 0;
         gw.FoundingEnvelopeFoundNone = () => { if (both.SignalAndWait(TimeSpan.FromSeconds(2))) Interlocked.Increment(ref metThere); };
-        await Task.WhenAll(Task.Run(() => gw.GrantFoundingEnvelopeIfDue(account!)), Task.Run(() => gw.GrantFoundingEnvelopeIfDue(account!)));
+        await Task.WhenAll(Task.Run(() => gw.GrantPolicyEnvelopeIfDue(account!)), Task.Run(() => gw.GrantPolicyEnvelopeIfDue(account!)));
 
         var all = gw.Envelopes.All();
         foreach (var e in all) log.WriteLine($"envelope {e.Id[..12]} granted {e.GrantedAt:O} — {e.Reason}");
