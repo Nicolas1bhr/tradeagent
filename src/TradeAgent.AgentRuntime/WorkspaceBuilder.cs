@@ -21,6 +21,12 @@ public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPape
     string? Kind = null);
 
 /// <summary>
+/// What the owner's repair of a home did (<see cref="WorkspaceBuilder.RepairHome"/>): whether the home was rebuilt, the words, and where the
+/// old folder is kept — set whenever it was moved, rebuilt or not.
+/// </summary>
+public sealed record HomeRepair(bool Repaired, string Words, string? Aside);
+
+/// <summary>
 /// Creates and maintains the agent's home. The agent is broadly free inside that directory — shell,
 /// subprocesses, packages, internet, its own code — and has no authority outside it. The instruction
 /// file below is regenerated on every start so it can never describe a stale world.
@@ -182,6 +188,58 @@ public static class WorkspaceBuilder
     /// <see cref="BuildAll"/>), or null. Asked by its session before every launch.
     /// </summary>
     public static string? RefusalFor(string home) => Unbuilt.TryGetValue(Key(home), out var why) ? why : null;
+
+    /// <summary>Where a repaired home's old folder is kept, under the recorded tree: <c>workspace/.refused</c>. No home, walk or listing names it.</summary>
+    public const string RefusedDir = ".refused";
+
+    /// <summary>
+    /// THE OWNER'S REPAIR OF A HOME THE LAST START COULD NOT REBUILD (<c>U-repair-position-home</c>): the refused folder is MOVED WHOLE to
+    /// <c>workspace/.refused/&lt;home-name&gt;-&lt;UTC stamp&gt;</c> and the home is built afresh from the app's templates (<see cref="Build"/>).
+    /// <b>Nothing is deleted.</b> The move is one rename on the same volume of the folder by its own name — never a copy and a delete, and a
+    /// link inside it stays a link that is never followed. If the rename cannot be made nothing changes and the refusal stands; if the
+    /// rebuild fails again the refusal is recorded again, in words, and the old folder stays where it was moved. Whether a launch of the
+    /// position is open is the caller's question (the host's), asked before this.
+    /// </summary>
+    /// <remarks>Linux and macOS only: on Windows, where no cell runs, it refuses in words and changes nothing.</remarks>
+    public static HomeRepair RepairHome(WorkspaceContext ctx, string role, string? root, AppFileManifest? files, Func<DateTimeOffset> now)
+    {
+        var ws = root ?? Paths.Workspace;
+        var home = HomeOf(ws, role);
+        if (RefusalFor(home) is null)
+            return new HomeRepair(false, $"The folder of {role} has nothing to repair: the last start rebuilt it. Nothing was changed.", null);
+        if (OperatingSystem.IsWindows())
+            return new HomeRepair(false, $"TradeAgent did not repair the folder of {role}: a repair moves the folder aside by renaming it, which this "
+                                         + "build does on Linux and macOS only, and this computer runs Windows. Nothing was changed; the position stays refused.", null);
+
+        var aside = Path.Combine(ws, RefusedDir, $"{Path.GetFileName(Key(home))}-{now().UtcDateTime:yyyyMMdd'T'HHmmss'Z'}");
+        if (File.Exists(aside) || Directory.Exists(aside) || new FileInfo(aside).LinkTarget is not null)
+            return new HomeRepair(false, $"TradeAgent did not repair the folder of {role}: a kept folder named {aside} already exists, and a repair "
+                                         + "never writes over one. Nothing was changed; press again in a second.", null);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(ws, RefusedDir));
+            Directory.Move(home, aside);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new HomeRepair(false, $"TradeAgent did not repair the folder of {role}: it could not move {home} aside to {aside} ({ex.Message}). "
+                                         + "Nothing was changed; the position stays refused.", null);
+        }
+
+        try
+        {
+            Build(ctx with { Role = role }, root, files);
+            Unbuilt.TryRemove(Key(home), out _);
+            return new HomeRepair(true, $"The folder of {role} was repaired; the old one is kept at {aside}.", aside);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var why = $"TradeAgent did not start the position {role}: its folder was moved aside to {aside}, and the fresh one could not be built "
+                      + $"({ex.Message}). Nothing was deleted. This position stays refused until a start or a repair can build its folder.";
+            Unbuilt[Key(home)] = why;
+            return new HomeRepair(false, why, aside);
+        }
+    }
 
     /// <summary>The homes the last start of this process could not rebuild, by full path, with the words their positions are refused in.</summary>
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Unbuilt = new(StringComparer.Ordinal);
