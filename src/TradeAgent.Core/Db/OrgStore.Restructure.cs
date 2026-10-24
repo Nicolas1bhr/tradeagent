@@ -215,6 +215,14 @@ public sealed partial class OrgStore
         if (members > OrgBounds.MaxMembers)
             throw Refused($"{b.Id} would have {members.ToString(CultureInfo.InvariantCulture)} members, more than one head leads "
                           + $"({OrgBounds.MaxMembers.ToString(CultureInfo.InvariantCulture)}).");
+        // B'S CHILDREN AND A'S MOVED ONES SPLIT B'S ENVELOPE TOGETHER: never more than its whole (the Codex review of U-org-verbs-d,
+        // P2). A share left NULL is no separate cap and splits nothing.
+        var bSplit = all.Where(u => u.ParentId == b.Id && u.Status != OrgUnitStatus.Closed && u.EnvelopeShare is not null).Sum(ShareOf);
+        var aSplit = all.Where(u => u.ParentId == a.Id && u.Status != OrgUnitStatus.Closed && u.EnvelopeShare is not null).Sum(ShareOf);
+        if (bSplit + aSplit > 1m)
+            throw Refused($"the units under {b.Id} hold {bSplit.ToString(CultureInfo.InvariantCulture)} of its envelope and the units "
+                          + $"{a.Id} would bring hold {aSplit.ToString(CultureInfo.InvariantCulture)} of theirs: under {b.Id} they would split "
+                          + "more than the whole.");
         if (ThrottleRefusal(now) is { } throttled) throw Refused(throttled);
         ForecastsRefusal(r.Forecasts, "a merge");
 

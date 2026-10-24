@@ -582,4 +582,24 @@ public partial class OrgStructureTests
         Assert.Empty(ChargedTo(db, SubB));
     }
 
+    /// <summary>
+    /// (F3) A MERGE WHOSE MOVED CHILDREN WOULD SPLIT MORE THAN B'S WHOLE IS REFUSED, NOTHING WRITTEN: A's team holds 0.6 of A and B's
+    /// team 0.6 of B; under B the two would hold 1.2. RED before the fix: the merge was written.
+    /// </summary>
+    [Fact]
+    public void A_merge_whose_children_would_split_more_than_Bs_whole_is_refused()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Siblings(db);
+        Aged(db, BTeam, SubB, OrgUnitKind.Team, 20);
+        Exec(db, "UPDATE org_unit SET envelope_share='0.6' WHERE id IN ($a, $b)", ("$a", ATeam), ("$b", BTeam));
+        var before = Written(db);
+
+        var refused = Assert.Throws<TradeAgentException>(() => org.Merge(MergeAsk(SubA, SubB), Now));
+
+        Assert.Contains("more than the whole", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+    }
+
 }
