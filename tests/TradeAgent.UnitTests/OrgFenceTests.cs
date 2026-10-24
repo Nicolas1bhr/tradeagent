@@ -26,10 +26,15 @@ public partial class OrgAssignmentTests
         return id;
     }
 
-    /// <summary>A position-wide fence, as parts c–d will write it in their transitions' own writes.</summary>
+    /// <summary>
+    /// A position-wide fence, as part d writes it in its transitions' own writes: its detail carries the app's commit mark — the last
+    /// launch row committed before it (<c>U-org-verbs-d</c> item 1), read in this same write.
+    /// </summary>
     static void FencePosition(Database db, string position, string unit, DateTimeOffset at, string detail) =>
-        Exec(db, "INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES($at, $u, $p, 'fenced', 'app', $d)",
-            ("$at", at.UtcDateTime.ToString("O")), ("$u", unit), ("$p", position), ("$d", detail));
+        Exec(db, """
+            INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail)
+            VALUES($at, $u, $p, 'fenced', 'app', $d || ' (launches recorded through #' || (SELECT COALESCE(MAX(rowid), 0) FROM ai_attempt) || ')')
+            """, ("$at", at.UtcDateTime.ToString("O")), ("$u", unit), ("$p", position), ("$d", detail));
 
     // ---- item 1: the fence read ------------------------------------------------------------------------------------
 
@@ -59,9 +64,15 @@ public partial class OrgAssignmentTests
         Assert.Contains(m.Id, fence.Words, StringComparison.Ordinal);
         Assert.Contains("cancelled", fence.Words, StringComparison.Ordinal);
 
-        // ... and a launch that started AFTER it is not fenced by it.
-        var after = LaunchedAt(db, Member, t0.AddSeconds(3), m.Id);
-        Assert.Null(org.FencedSince(after));
+        // ... and no launch is admitted under it after it (REWRITTEN BY U-org-verbs-d, declared: a launch row stamped after the cancel
+        // was the old "not fenced" case, read off two stamps; commit order makes it a row admission never writes — Begin refuses a
+        // closed mandate in the row's own write — so that is what is asserted).
+        var after = new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = t0.AddSeconds(3), Role = Member, ReservedCost = 0.10m, MandateId = m.Id,
+            SeatClass = SeatClasses.Harness, Assurance = SeatClasses.Name(SeatClasses.AssuranceOf(SeatClasses.Harness)!.Value)
+        });
+        Assert.False(after.Admitted, "a launch was admitted under a cancelled mandate");
 
         // A RE-SCOPE fences the old mandate's launch as re-scoped, and not the successor's.
         var old = org.Assign(Issue(), t0);
@@ -71,13 +82,19 @@ public partial class OrgAssignmentTests
         Assert.Equal(MandateEventKind.Rescoped, org.FencedSince(underOld)?.Cause);
         Assert.Null(org.FencedSince(LaunchedAt(db, Member, t0.AddSeconds(1), successor.Id)));
 
-        // A POSITION-WIDE FENCE: the launch that started before it is fenced, the one after it is not.
-        var early = LaunchedAt(db, Other, t0.AddSeconds(1));
-        var late = LaunchedAt(db, Other, t0.AddSeconds(5));
+        // A POSITION-WIDE FENCE: the launch committed before it is fenced, the one committed after it is not (REWRITTEN BY
+        // U-org-verbs-d, declared: commit order, never the stamps — each launch here is stamped on the other side of the fence's stamp).
+        var early = LaunchedAt(db, Other, t0.AddSeconds(5));
         FencePosition(db, Other, Team, t0.AddSeconds(4), "the position was retired");
+        var late = LaunchedAt(db, Other, t0.AddSeconds(1));
         Assert.Equal((OrgEventKind.Fenced, (string?)null, "the position was retired"),
             (org.FencedSince(early)?.Cause, org.FencedSince(early)?.Mandate, org.FencedSince(early)?.Detail));
         Assert.Null(org.FencedSince(late));
+
+        // A FENCE ROW WITHOUT THE APP'S COMMIT MARK IS DAMAGE: refused, never read on a guess.
+        Exec(db, "INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES($at, $u, $p, 'fenced', 'app', 'no mark')",
+            ("$at", t0.UtcDateTime.ToString("O")), ("$u", Team), ("$p", Other));
+        Assert.Equal(ErrorCode.STATE_DATABASE_CORRUPT, Assert.Throws<TradeAgentException>(() => org.FencedSince(late)).Code);
 
         // THE LEGACY PAIR ARE NEVER READ AS FENCED; nor is a launch no row records.
         foreach (var (legacy, unit) in new[] { (CouncilRoles.Operations, OrgIds.Operations), (CouncilRoles.Research, OrgIds.Research) })
@@ -87,6 +104,36 @@ public partial class OrgAssignmentTests
             Assert.Null(org.FencedSince(turn));
         }
         Assert.Null(org.FencedSince("turn-never-recorded"));
+    }
+
+    /// <summary>
+    /// (1b) A FENCE IS ORDERED BY COMMIT ORDER, NEVER BY STAMPS TAKEN BEFORE THE WRITES (<c>U-org-verbs-d</c> item 1; seat B's card on
+    /// U-org-verbs-b's fixer's finding): the decider's cancel took its stamp first, the holder's admission — stamped later — committed
+    /// first, and the cancel committed after it. The launch ran under the authority the cancel took away, so it is fenced, and
+    /// <c>FencedBy</c> names it. RED at base: <c>at &gt;= started</c> on the two stamps read it as unfenced.
+    /// </summary>
+    [Fact]
+    public void A_cancel_stamped_before_a_concurrent_admission_but_committed_after_it_still_fences_it()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t0 = DateTimeOffset.UtcNow;
+
+        // THE RACE, SERIALISED AS THE DATABASE SERIALISED IT: the admission committed, then the cancel stamped a second before it.
+        var m = org.Assign(Issue(), t0);
+        var admitted = LaunchedAt(db, Member, t0.AddSeconds(2), m.Id);
+        org.Cancel(m.Id, Head, null, CancelWhy, t0.AddSeconds(1));
+        Assert.Equal((MandateEventKind.Cancelled, m.Id), (org.FencedSince(admitted)?.Cause, org.FencedSince(admitted)?.Mandate));
+        Assert.Equal([admitted], org.FencedBy(m.Id).Select(f => f.Attempt));
+
+        // THE SAME RACE ON A POSITION-WIDE FENCE: the restructuring's write stamped a second before the launch it fences, and committed
+        // after it; a launch committed after the fence — stamped before it — is not the fence's.
+        var running = LaunchedAt(db, Other, t0.AddSeconds(6));
+        org.Restructure(new Restructuring("retiring the position", Head, [], [Other], [Other]), t0.AddSeconds(5));
+        var next = LaunchedAt(db, Other, t0.AddSeconds(4));
+        Assert.Equal(OrgEventKind.Fenced, org.FencedSince(running)?.Cause);
+        Assert.Null(org.FencedSince(next));
     }
     // ---- item 2: the broker refuses ------------------------------------------------------------------------------
 
