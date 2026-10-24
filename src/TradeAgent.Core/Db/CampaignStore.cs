@@ -1028,8 +1028,12 @@ public sealed class CampaignStore(Database db)
         // AND EVERY UNIT'S OWN SHARE, AFTER THE CAMPAIGN'S GATES AND IN THE SAME WRITE (`U-org-verbs-e`; ORCHESTRATION § 2.4 — "trials
         // and verdicts are reserved atomically at the broker call that spends them"). It only ADDS a refusal: the campaign's gates above
         // ran first and unchanged, and the row below is keyed as it always was, by nothing about who asked (EVID-001).
-        if (charged && UnitShareRefusal(ShareKind.Trials, campaign, runId, versionId) is { } unit)
-            return new TrialRegistered(false, unit, false, spent.Run, campaign.TrialBudget);
+        // EVERY CAMPAIGN THE INSERT CHARGES (the fix pass, the Codex review's P1): the run's own, and the family's home campaign it is
+        // charged to as well — so a run over another dataset never spends a unit's share of the home past it.
+        if (charged)
+            foreach (var each in rule.HomeCampaign is { } home && home.Id != campaign.Id ? [campaign, home] : new[] { campaign })
+                if (UnitShareRefusal(ShareKind.Trials, each, runId, versionId) is { } unit)
+                    return new TrialRegistered(false, unit, false, spent.Run, campaign.TrialBudget);
 
         using var c = db.Cmd("""
             INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at,
