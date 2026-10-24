@@ -64,7 +64,7 @@ public class HarnessBudgetTests : IDisposable
             requestTimeout: TimeSpan.FromSeconds(10));
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>
-        runtime.OpenConversation(CouncilRoles.Research, () => _home,
+        runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research),
             () => new Dictionary<string, string>(), () => null);
 
     /// <summary>
@@ -169,7 +169,7 @@ public class HarnessBudgetTests : IDisposable
         provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/big.txt" }, input: 1, output: 1));
 
         using var runtime = Runtime(provider, TurnAllowance.From(100_000_000, 100_000_000),
-            tools: role => new GrantedWorkerTools(role, () => _home, () => null));
+            tools: role => new GrantedWorkerTools(role, () => AppCanon.Keep(_home, CouncilRoles.Research), () => null));
         var conversation = Research(runtime);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
@@ -200,7 +200,7 @@ public class HarnessBudgetTests : IDisposable
 
         // Millions, so no request's body can reach the allowance before the provider's reported totals do (U-org-seats).
         using var runtime = Runtime(provider, TurnAllowance.From(3_000_000, 20_000),
-            tools: role => new GrantedWorkerTools(role, () => _home, () => null));
+            tools: role => new GrantedWorkerTools(role, () => AppCanon.Keep(_home, CouncilRoles.Research), () => null));
         var conversation = Research(runtime);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;

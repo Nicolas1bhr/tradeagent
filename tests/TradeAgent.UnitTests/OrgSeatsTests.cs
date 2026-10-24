@@ -112,7 +112,7 @@ public class OrgSeatsTests : IDisposable
         Assert.Equal(Priced(Small), meter.Reservation(CouncilRoles.Research).Cost);
 
         using var runtime = HarnessOn(provider, TurnAllowance.Default);
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
         using var metering = meter.Attach(conversation, CouncilRoles.Research);
@@ -167,7 +167,7 @@ public class OrgSeatsTests : IDisposable
         provider.Answer(FakeProvider.Message("done", input: 10, output: 5));
         var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5-nano", TurnAllowance.Default));
         using var runtime = HarnessOn(provider, TurnAllowance.Default);
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(),
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(),
             () => "gpt-5.6-luna");
         using (meter.Attach(conversation, CouncilRoles.Research)) await conversation.SendAsync("go on then");
         Assert.Equal("gpt-5-nano", OnlyRow().RequestedModel);
@@ -211,13 +211,13 @@ public class OrgSeatsTests : IDisposable
         using var probe = new FakeProvider();
         probe.Answer(FakeProvider.Message("done", input: 10, output: 5));
         using (var sizing = HarnessOn(probe, TurnAllowance.Default))
-            await sizing.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null)
+            await sizing.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null)
                 .SendMissionAsync("## Situation");
         var first = System.Text.Encoding.UTF8.GetByteCount(Assert.Single(probe.Requests));
 
         // Room for the first body and its reported input, and not for a second body of at least the same size.
         using var runtime = HarnessOn(provider, new TurnAllowance(first + 10 + first / 2, 20_000));
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
         await conversation.SendMissionAsync("## Situation");
@@ -445,7 +445,7 @@ public class OrgSeatsTests : IDisposable
             .Answer(FakeProvider.Message("done", input: 10, output: 5));
         var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", Small));
         using var runtime = HarnessOn(provider, TurnAllowance.Default);
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
         using var metering = meter.Attach(conversation, CouncilRoles.Research);
@@ -477,7 +477,7 @@ public class OrgSeatsTests : IDisposable
             .Answer(FakeProvider.WithoutUsage("done"));
         var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", Small));
         using var runtime = HarnessOn(provider, TurnAllowance.Default);
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
         using var metering = meter.Attach(conversation, CouncilRoles.Research);
@@ -508,7 +508,7 @@ public class OrgSeatsTests : IDisposable
         var tiny = new TurnAllowance(100, 8_000);
         var meter = Meter(role => SeatResolver.Of(role, Harness, "gpt-5.6-luna", tiny));
         using var runtime = HarnessOn(provider, TurnAllowance.Default);
-        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => _home, () => new Dictionary<string, string>(), () => null);
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research), () => new Dictionary<string, string>(), () => null);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;
         using var metering = meter.Attach(conversation, CouncilRoles.Research);

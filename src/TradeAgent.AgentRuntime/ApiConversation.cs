@@ -493,10 +493,10 @@ public sealed class ApiConversation(
         }
         // THE APP'S CANON OR NO TURN (U-exec-env-fix item 2): a home built cleanly whose canon a cell rewrote afterwards is not caught by
         // the look above, so the text sent is the app's own (Mission), and one the app cannot vouch for is refused here, nothing sent.
-        if (Mission() is not { } mission)
+        if (Mission(out var unvouched) is not { } mission)
         {
-            var refused = $"TradeAgent did not start the position {role}: the canon in its folder is not the one TradeAgent wrote, so it "
-                + "was not sent as its instructions. The next start writes the app's canon again.";
+            var refused = $"TradeAgent did not start the position {role}: {unvouched}, so nothing was sent as its instructions. "
+                + "The next start writes the app's canon again.";
             Append(new ChatTurn(ChatRole.System, refused, _now()));
             transcript.Note(refused);
             return (NotStarted, null, EndedNotStarted, null, null, refused);
@@ -704,10 +704,12 @@ public sealed class ApiConversation(
     /// <para><b>So the text sent is the app's, never the file's</b> (<c>U-exec-env-fix</c> item 2, the Codex second pass on
     /// <c>U-execution-environment</c>): the canon the app rendered into this home at this process's last start (<see cref="AppFileManifest.Kept"/>),
     /// whatever lies on disk now. With nothing kept — no start in this process wrote it — the file is sent only when its bytes are
-    /// exactly what the app recorded writing there (<see cref="AppFileManifest.Wrote"/>); anything else is null, and the turn is refused
-    /// in words. A canon that cannot be read at all still falls back to the role's title, which is the app's own text.</para>
+    /// exactly what the app recorded writing there (<see cref="AppFileManifest.Wrote"/>). Anything else — a canon gone, a link, one grown
+    /// past <see cref="Canon.MaxReadBytes"/>, one that does not hash to the app's — is null with <paramref name="why"/>, and the turn is
+    /// refused in those words, nothing sent. <b>There is no fallback text</b> (the review's P1/P2): a harness seat never runs without the
+    /// canon that carries its authority, inbox and evidence rules; a home with none yet gets one by the app's start writing it.</para>
     /// </summary>
-    string? Mission()
+    string? Mission(out string? why)
     {
         var files = appFiles ?? AppFileManifest.Shared;
         var key = AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.HarnessFile);
@@ -715,16 +717,21 @@ public sealed class ApiConversation(
         try
         {
             var home = workspace();
+            why = null;
             if (files.Kept(key, home) is { } kept) return Bounded(kept);
             // NEVER THROUGH A LINK (U-execution-environment fix pass 4): an executor's cell writes its whole home, so the name may be a link
             // to a login outside — refused by HomeFiles, never sent as a system text.
-            // AND NEVER PAST Canon.MaxReadBytes (fix pass 5, P1): one the cell grew past it is refused unread, and the turn falls back below.
+            // AND NEVER PAST Canon.MaxReadBytes (fix pass 5, P1): one the cell grew past it is refused unread.
             text = HomeFiles.ReadAllText(home, Canon.HarnessFile, Canon.MaxReadBytes);
         }
-        // A mission file that cannot be read must not stop the turn: the Situation the app composed
-        // still describes the world, and a role with no mission text is a worse turn rather than none.
-        catch (Exception) { return $"You are the {CouncilRoles.Title(role)}."; }
-        return files.Wrote(key, Sha256Hex.Of(text)) ? Bounded(text) : null;
+        catch (Exception ex)
+        {
+            why = $"its canon could not be read ({ex.Message})";
+            return null;
+        }
+        if (files.Wrote(key, Sha256Hex.Of(text))) return Bounded(text);
+        why = "the canon in its folder is not the one TradeAgent wrote";
+        return null;
 
         static string Bounded(string t) => t.Length <= MaxMissionChars ? t : t[..MaxMissionChars];
     }

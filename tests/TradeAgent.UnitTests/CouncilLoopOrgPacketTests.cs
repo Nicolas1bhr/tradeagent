@@ -121,7 +121,7 @@ public partial class CouncilLoopTests
         var endings = new List<AgentTurnEnded>();
         foreach (var (runtime, tag) in new[] { (withheld, "harness-withheld"), (threw, "harness-threw") })
         {
-            var conversation = runtime.OpenConversation(Executor, () => host.HomeFor(Executor),
+            var conversation = runtime.OpenConversation(Executor, () => AppCanon.Keep(host.HomeFor(Executor), Executor),
                 () => new Dictionary<string, string>(), () => null);
             conversation.TurnEnded += endings.Add;
             host.Harnessed[Executor] = conversation;
@@ -194,7 +194,7 @@ public partial class CouncilLoopTests
                 provider.AlwaysAnswer = null;
                 provider.Answer(FakeProvider.Message("Noted: the second venue has gaps."));
             }
-            var conversation = runtime.OpenConversation(Executor, () => host.HomeFor(Executor),
+            var conversation = runtime.OpenConversation(Executor, () => AppCanon.Keep(host.HomeFor(Executor), Executor),
                 () => new Dictionary<string, string>(), () => null);
             conversation.TurnEnded += endings.Add;
             host.Harnessed[Executor] = conversation;

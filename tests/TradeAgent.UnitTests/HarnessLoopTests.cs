@@ -112,7 +112,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
                 allowance: _ => allowance, requestTimeout: TimeSpan.FromSeconds(10));
 
             Research = _runtime.OpenConversation(CouncilRoles.Research,
-                workspace: () => HomeFor(CouncilRoles.Research),
+                workspace: () => AppCanon.Keep(HomeFor(CouncilRoles.Research), CouncilRoles.Research),
                 environment: () => new Dictionary<string, string>(),
                 model: () => null);
 

@@ -392,7 +392,7 @@ public class ThinkingSeatsTests : IDisposable
             tools: role => new GrantedWorkerTools(role, home: () => HomeFor(role), attempt: () => meter.OpenAttemptIdFor(role)),
             attemptId: role => meter.OpenAttemptIdFor(role),
             allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
-        var chair = runtime.OpenConversation(CouncilRoles.Operations, () => HomeFor(CouncilRoles.Operations),
+        var chair = runtime.OpenConversation(CouncilRoles.Operations, () => AppCanon.Keep(HomeFor(CouncilRoles.Operations), CouncilRoles.Operations),
             () => new Dictionary<string, string>(), () => null);
         using var metering = meter.Attach(chair, CouncilRoles.Operations);
         AgentTurnEnded? ended = null;
@@ -833,7 +833,7 @@ public class ThinkingSeatsTests : IDisposable
             allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: seats);
         var home = Path.Combine(TestEnv.Home, $"thinking-seats-{Guid.NewGuid():n}");
         Directory.CreateDirectory(home);
-        return runtime.OpenConversation(role, () => home, () => new Dictionary<string, string>(), () => null);
+        return runtime.OpenConversation(role, () => AppCanon.Keep(home, role), () => new Dictionary<string, string>(), () => null);
     }
 
     /// <summary>A position written straight into the chart, as only a test may: under Research's division.</summary>
