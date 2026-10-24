@@ -48,6 +48,30 @@ public partial class CliCodeModeTests
     }
 
     /// <summary>
+    /// (U-cell-model-catalog, rider (b)) A TURN ON FALLBACK METADATA IS A TURN WHOSE TOOLS NO CHECK HAS SEEN: codex's own warning
+    /// ("Defaulting to fallback metadata", vendor <c>core/src/session/turn_context.rs</c>) ends the turn carrying it and the same seat's
+    /// next launch is refused in those words before admission. RED at base: <see cref="RuntimeManifest.ToolsUnavailablePattern"/> named
+    /// only code mode's sentence, so the warning was shown and the next launch admitted.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_on_fallback_metadata_refuses_the_seats_next_launch_in_the_vendors_words()
+    {
+        const string fallback = "Model metadata for `gpt-6-luna` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.";
+        var stream = DeadTurn.Replace(Warning, fallback, StringComparison.Ordinal);
+        var session = AgentRuntimeProbe.SessionOverStream(stream, manifest: VendorLimitTests.Codex,
+            name: nameof(A_turn_on_fallback_metadata_refuses_the_seats_next_launch_in_the_vendors_words));
+        AgentTurnEnded? ended = null;
+        session.TurnEnded += e => ended = e;
+        await session.SendAsync("continue");
+
+        Assert.NotNull(ended);
+        Assert.Contains(fallback, ended!.ToolsUnavailable ?? "", StringComparison.Ordinal);
+        var next = session.CheckSeat();
+        Assert.True(next.Refused, "a seat whose turn ran on fallback metadata was admitted again unchanged");
+        Assert.Contains("fallback metadata", next.Refusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (C) A TURN WHOSE TOOLS COULD NOT RUN GIVES BACK THE WAKES IT TOOK, as the gate's refusal does: the owner's words stay owed, shown
     /// with the app's sentence. At base the turn ended clean and settled them as answered.
     /// </summary>

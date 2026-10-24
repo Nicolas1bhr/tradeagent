@@ -51,4 +51,40 @@ public class ModelCatalogProbeTests(Xunit.Abstractions.ITestOutputHelper output)
                 $"{seatClass}: the altered catalog's surface was not refused naming tool_search: {refused}");
         }
     }
+
+    /// <summary>
+    /// (rider (b)) A DRY RUN ON FALLBACK METADATA REFUSES THE SEAT BEFORE ADMISSION, in words: a catalog that does not hold the pinned
+    /// model makes codex take its fallback metadata and say so; the probe reads codex's own output and refuses, quoting it — whatever
+    /// tools that run happened to be offered. RED at base: the probe never read codex's output and returned the fallback's tools.
+    /// </summary>
+    [PinnedCodexFact]
+    public async Task A_dry_run_on_fallback_metadata_is_refused_in_words()
+    {
+        var exe = CliCodeModeHostTests.PinnedCodex();
+        var codex = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
+        var (shipped, _) = SeatProfile.ShippedCatalog(codex.Seat!);
+        var other = JsonNode.Parse(shipped!)!;
+        other["models"]![0]!["slug"] = "tradeagent-not-the-pinned-model";
+        var withoutModel = Encoding.UTF8.GetBytes(other.ToJsonString());
+
+        foreach (var seatClass in new[] { SeatPlan.BrokerClass, SeatPlan.CellClass })
+        {
+            var ask = new SurfaceAsk(codex, exe, codex.Install.ExecutableSha256!, seatClass, BrokerSeat.Model);
+            IReadOnlyList<string>? offered = null;
+            var ex = await Record.ExceptionAsync(async () => offered = await CodexSurfaceProbe.Instance.OfferedAsync(ask, withoutModel, default));
+            output.WriteLine($"{seatClass} without the model :: {ex?.Message ?? string.Join(" ", offered ?? [])}");
+            Assert.True(ex is not null && ex.Message.Contains("fallback metadata", StringComparison.Ordinal),
+                $"{seatClass}: a dry run on fallback metadata was not refused (offered {string.Join(", ", offered ?? [])})");
+
+            var verdict = await BrokerSeat.VerifySurfaceAsync(ask with { ExeSha256 = "fallback-" + seatClass },
+                new CatalogProbe(withoutModel), default);
+            Assert.True(verdict.Refusal is not null && verdict.Refusal.Contains("fallback metadata", StringComparison.Ordinal), verdict.Refusal);
+        }
+    }
+
+    /// <summary>The real dry run on a given catalog: what the admission's surface check would call.</summary>
+    sealed class CatalogProbe(byte[] catalog) : ISurfaceProbe
+    {
+        public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct) => CodexSurfaceProbe.Instance.OfferedAsync(ask, catalog, ct);
+    }
 }
