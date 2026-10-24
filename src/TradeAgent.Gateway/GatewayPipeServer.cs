@@ -2910,6 +2910,36 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// parameter: it is the judge's default, because a submitter that chose the friction its evidence
     /// was scored under would be choosing the standard.</para>
     /// </summary>
+    /// <summary>
+    /// WHY <paramref name="position"/> MAY NOT SPEND A FINAL JUDGEMENT, in words naming who may — or null because it may
+    /// (<c>U-org-verbs-e</c>; ORGANISATION § 2 :101, "only division heads spend verdicts", and :108, a team "unless the division
+    /// delegates a count"). It may when it HEADS a unit of kind <c>division</c> — the legacy pair head theirs — or when its own unit, or
+    /// a unit above it below its division, holds a verdict share above zero, which only that unit's parent head sets (<c>org-tilt</c>).
+    /// Read off the chart as it stands: it decides who may ASK, and the charge itself is held to the launch's RECORDED chain
+    /// (<see cref="CampaignStore.ChargeVerdict"/>). A share that does not read as a fraction delegates nothing.
+    /// </summary>
+    string? VerdictSpenderRefusal(string position)
+    {
+        var org = gateway.Org;
+        if (org.UnitOf(position) is not { } unit)
+            return $"{position} belongs to no unit on the chart, so no division delegated it a verdict share: only a division's head spends "
+                   + "final judgements (ORGANISATION § 2). Nothing was charged.";
+        if (unit.Kind == OrgUnitKind.Division && unit.HeadPositionId == position) return null;
+
+        foreach (var u in new[] { unit }.Concat(org.Ancestors(unit.Id)))
+        {
+            if (u.Kind is OrgUnitKind.Division or OrgUnitKind.Root) break;
+            if (u.VerdictShare is { } text
+                && decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var share) && share is > 0m and <= 1m)
+                return null;
+        }
+        return $"{position} may not spend a final judgement: only a division's head spends verdicts, or a position whose unit — or a unit "
+               + $"above it, below its division — holds a verdict share its parent's head delegated with 'org-tilt' (ORGANISATION § 2). "
+               + $"{OrgEnvelopes.NameOf(unit.Id)} holds no verdict share, and neither does any unit between it and its division. Every "
+               + "judgement leaks something about the held-back months, so the count is spent where a division decides it is. Ask your "
+               + "division's head for a verdict share, or for the verdict. Nothing was charged and nothing was computed.";
+    }
+
     object VerdictFor(AgentContext ctx, IpcRequest req, CancellationToken ct)
     {
         // THE ROLE FIRST, and it is `Backtests`' own answer rather than a second reading of the same
@@ -2967,6 +2997,11 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             }
             return Answered(campaign, version, judged, Withdrawn(version, campaign.Id, judged));
         }
+
+        // WHO MAY SPEND ONE (U-org-verbs-e; ORGANISATION § 2 :101, :108): asked here — after the answer of a version already judged,
+        // which spends nothing and is seen as before, and before anything is charged. It narrows who SPENDS, never what is judged.
+        if (VerdictSpenderRefusal(role) is { } notYours)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, notYours);
 
         if (!_judging.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,

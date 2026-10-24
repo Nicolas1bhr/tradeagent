@@ -1,8 +1,12 @@
 using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
+using TradeAgent.Gateway;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -183,5 +187,147 @@ public class OrgEvidenceSharesTests
         Assert.False(full.Ok);
         Assert.Contains($"has spent all {campaign.VerdictBudget} of its final judgements", full.Why, StringComparison.Ordinal);
         Assert.DoesNotContain(Team, full.Why, StringComparison.Ordinal);
+    }
+    // ---- item 4: who spends verdicts -------------------------------------------------------------------------------
+
+    static readonly DateTimeOffset Bar0 = new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+    const int HoldoutAtBar = 60;
+    /// <summary>A program the referee will judge: it declares its three execution bounds (<c>RefereeVerdictTests</c>' losing one).</summary>
+    const string ProgramText = "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+                               + "exit when close < 97\nentry when close > 103\n";
+
+    /// <summary>The team head: an id shaped as the app mints one.</summary>
+    const string TeamHead = "pos-e1a2b3c4d5e6";
+
+    /// <summary>A gateway with real bars on disk, a real cutoff and a real campaign, as <c>CampaignLedgerTests</c> builds it.</summary>
+    static async Task<(TradingGateway Gw, Database Db, DatasetRecord Set, CampaignRow Campaign)> Campaigning(int verdicts)
+    {
+        var (gw, _, db) = await TestEnv.Ready(s => { s.CampaignTrialBudget = 10; s.CampaignVerdictBudget = verdicts; });
+        var dir = BinanceArchive.DatasetDir("BTCUSDT");
+        Directory.CreateDirectory(Path.Combine(dir, "raw"));
+        var raw = Path.Combine(dir, "raw", $"BTCUSDT-{Guid.NewGuid():n}.zip");
+        File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
+        var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
+        var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
+        for (var i = 0; i < 120; i++)
+        {
+            var close = 96m + i % 10;
+            text.Append(CultureInfo.InvariantCulture,
+                $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
+        }
+        File.WriteAllText(csv, text.ToString());
+        var id = gw.Datasets.Record(new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            csv, DatasetStore.Sha256(csv)!, 120, Bar0, Bar0.AddMinutes(119), 0, [], false,
+            0, 0, 0, Bar0, DatasetState.ACCEPTED, null,
+            [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
+                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)]));
+        var (held, campaign) = gw.SetHoldout(id, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        return (gw, db, gw.Datasets.ById(id)!, campaign!);
+    }
+
+    /// <summary>A team under <c>div-research</c> headed by <see cref="TeamHead"/>, active, with no verdict share.</summary>
+    static void HeadTheTeam(Database db) => db.Write(_ =>
+    {
+        using (var u = db.Cmd("""
+            INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at)
+            VALUES($id, $parent, 'team', NULL, 'active', '0.5', $at)
+            """, ("$id", Team), ("$parent", OrgIds.Research), ("$at", Sql.T(At))))
+            u.ExecuteNonQuery();
+        using (var p = db.Cmd("""
+            INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id, $unit, $home, 'active', $at)
+            """, ("$id", TeamHead), ("$unit", Team), ("$home", $"org/{TeamHead}"), ("$at", Sql.T(At))))
+            p.ExecuteNonQuery();
+        using var h = db.Cmd("UPDATE org_unit SET head_position_id=$p WHERE id=$id", ("$p", TeamHead), ("$id", Team));
+        return h.ExecuteNonQuery();
+    });
+
+    /// <summary>A launch of <paramref name="role"/> admitted under its chain as the chart reads it now.</summary>
+    static string LaunchOf(Database db, string role) => AttemptAs(db, role, [.. new OrgStore(db).FundingLine(role).Select(u => u.Id)]);
+
+    static string AttemptAs(Database db, string role, string[] funding)
+    {
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role, ReservedCost = 0m, SeatClass = SeatClasses.Harness,
+            BillingClass = BillingClasses.Key, Funding = funding
+        }).Admitted);
+        return id;
+    }
+
+    /// <summary>A completed run of the one program, by <paramref name="role"/> under <paramref name="attempt"/>: its version id.</summary>
+    static string Measured(TradingGateway gw, DatasetRecord set, string role, string attempt)
+    {
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "evidence.strategy"), ProgramText);
+        return gw.Backtests.Run(AgentContext.ForAgent("agent", role, attempt),
+            new BacktestAsk("strategies/evidence.strategy", set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1), 0.001m, Increment: 1m)).Result.VersionId;
+    }
+
+    static IpcRequest VerdictFrame(string version, long dataset) => new()
+    {
+        Op = Ops.Verdict, Session = "evidence", RequestId = "evidence-" + Guid.NewGuid().ToString("n")[..12],
+        Args = new Dictionary<string, JsonElement>
+        {
+            ["version"] = JsonSerializer.SerializeToElement(version), ["dataset"] = JsonSerializer.SerializeToElement(dataset)
+        }
+    };
+
+    /// <summary>
+    /// A TEAM HEAD WITHOUT A DELEGATED SHARE IS REFUSED A VERDICT (ORGANISATION § 2 :101, :108 — "only division heads spend verdicts";
+    /// a team "unless the division delegates a count"): refused in words naming who may, with nothing charged; once its division
+    /// gives the team a verdict share, the same ask is no longer refused for who it is, and the charge is the team head's launch's —
+    /// its recorded chain. RED at base: the team head's ask was charged at once.
+    /// </summary>
+    [Fact]
+    public async Task A_team_head_without_a_delegated_share_is_refused_a_verdict()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 4);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        HeadTheTeam(db);
+        var launch = LaunchOf(db, TeamHead);
+        var version = Measured(gw, set, TeamHead, launch);
+
+        var refused = await server.CallAsync(VerdictFrame(version, set.Id), TeamHead, launch);
+        Assert.False(refused.Ok, "a team head with no delegated verdict share was charged a judgement");
+        foreach (var words in new[] { "division", "verdict share", Team })
+            Assert.Contains(words, refused.Error!.Message, StringComparison.Ordinal);
+        Assert.False(gw.Campaigns.VerdictCharged(campaign.Id, version));
+
+        // ITS DIVISION DELEGATES A COUNT: no longer refused for who it is, and charged to the launch that asked.
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("UPDATE org_unit SET verdict_share='0.25' WHERE id=$id", ("$id", Team));
+            return c.ExecuteNonQuery();
+        });
+        var served = await server.CallAsync(VerdictFrame(version, set.Id), TeamHead, launch);
+        Assert.True(served.Error is null || !served.Error.Message.Contains("verdict share", StringComparison.Ordinal), served.Error?.Message);
+        Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
+        Assert.Equal(launch, AskedBy(db, campaign.Id, version));
+    }
+
+    /// <summary>
+    /// GUARD: THE LEGACY PAIR ASK VERDICTS AS BEFORE — <c>research</c> heads <c>div-research</c>, a division, and its NULL verdict share
+    /// is no cap: its ask is charged to the launch that asked, never refused for who it is.
+    /// </summary>
+    [Fact]
+    public async Task The_legacy_pair_ask_verdicts_as_before()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 2);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        var launch = LaunchOf(db, CouncilRoles.Research);
+        var version = Measured(gw, set, CouncilRoles.Research, launch);
+
+        var asked = await server.CallAsync(VerdictFrame(version, set.Id), CouncilRoles.Research, launch);
+        Assert.True(asked.Error is null || !asked.Error.Message.Contains("verdict share", StringComparison.Ordinal), asked.Error?.Message);
+        Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
+        Assert.Equal(launch, AskedBy(db, campaign.Id, version));
     }
 }
