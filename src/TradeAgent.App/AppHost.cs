@@ -583,6 +583,43 @@ public sealed class AppHost : IAsyncDisposable
         Agent?.Workspaces.TryGetValue(role, out var w) == true && w.Length > 0 ? w : Paths.RoleHome(role);
 
     /// <summary>
+    /// WHY <paramref name="role"/>'S FOLDER REFUSES ITS LAUNCHES — the last start could not rebuild it (<see cref="WorkspaceBuilder.RefusalFor"/>)
+    /// — or null. What the chart page shows beside the owner's repair press.
+    /// </summary>
+    public string? HomeRefusalFor(string role)
+    {
+        try { return WorkspaceBuilder.RefusalFor(HomeFor(role)); }
+        catch (Exception ex) { return $"TradeAgent could not tell whether the folder of {role} was rebuilt ({ex.Message})."; }
+    }
+
+    /// <summary>
+    /// THE OWNER'S REPAIR OF A REFUSED POSITION'S FOLDER (<c>U-repair-position-home</c>): in-process only — no pipe op, verb or board act
+    /// reaches it — and it moves no money and widens no limit. Refused in words while a launch of that position is open, because a folder is
+    /// never moved from under a running seat; otherwise the folder is moved aside whole and rebuilt (<see cref="WorkspaceBuilder.RepairHome"/>)
+    /// with the context the supervisor builds with, and a repair is one Activity line and one engineering-log line. Returns the words.
+    /// </summary>
+    public string RepairHome(string role)
+    {
+        if (Meter?.OpenAttemptIdFor(role) is { } open)
+            return $"TradeAgent did not repair the folder of {role}: a launch of it is open (attempt {open}), and a folder is never moved from "
+                   + "under a running seat. Nothing was changed; press again once it has ended.";
+        HomeRepair result;
+        try { result = WorkspaceBuilder.RepairHome(WorkspaceContext() with { Kind = _seats.KindOf(role) }, role, null, null, () => DateTimeOffset.UtcNow); }
+        catch (Exception ex) when (ex is TradeAgentException or IOException or UnauthorizedAccessException)
+        {
+            return $"TradeAgent did not repair the folder of {role} ({ex.Message}). Nothing was changed.";
+        }
+        if (result.Aside is not null)
+        {
+            try { Gateway.Log.Activity(result.Words, result.Repaired ? "info" : "warn"); }
+            catch (Exception) { /* the line is a record of the act, which has happened; the words reach the owner on the page */ }
+            Gateway.Log.TryEngineering("Workspace", result.Repaired ? "home_repaired" : "home_repair_failed", result.Repaired ? "info" : "warn",
+                metadataJson: Json.Write(new { role, aside = result.Aside, words = result.Words }));
+        }
+        return result.Words;
+    }
+
+    /// <summary>
     /// THE MODEL THE NEXT TURN OF ONE ROLE WILL RUN ON. The same fallback as
     /// <see cref="RequestedModel"/> — the prepared runtime first, the chosen runtime's manifest
     /// before one is prepared — over that role's own choice rather than the app-wide one, so the
