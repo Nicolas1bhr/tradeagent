@@ -406,6 +406,32 @@ public sealed partial class OrgStore
                                                          && (CouncilRoles.IsKnown(p.Id) || UnconfinedSeatCeiling.Counts(declaredClass(p.Id))))
                                     .Select(p => p.Id)]);
 
+    /// <summary>
+    /// THE UNITS WHOSE DAY <paramref name="unitId"/> CARRIES (<c>U-org-verbs-d</c>; ORCHESTRATION § 2.9: a merge "carries reservations,
+    /// debts and history to the successor"): the unit itself and every unit merged into it, transitively — read from each
+    /// <c>merged</c> event's app-composed successor link, never by rewriting <c>ai_attempt_funding</c>, so a launch A's chain funded
+    /// stays A's on its row and counts in B's day as well. Read inside the caller's own read or write (admission's). A <c>merged</c>
+    /// event whose link this build did not write is damage, refused, never read on a guess.
+    /// </summary>
+    internal static IReadOnlyList<string> CarriedBy(Database db, string unitId)
+    {
+        var links = new List<(string From, string Into)>();
+        using (var c = db.Cmd("SELECT id, detail FROM org_event WHERE kind = $merged ORDER BY id", ("$merged", OrgEventKind.Merged)))
+        using (var r = c.ExecuteReader())
+            while (r.Read())
+            {
+                var detail = r.GetString(1);
+                var what = $"merge event {r.GetInt64(0).ToString(CultureInfo.InvariantCulture)}";
+                links.Add((DetailValue(detail, "unit") ?? throw Damaged($"{what} names no unit"),
+                    DetailValue(detail, "into") ?? throw Damaged($"{what} names no successor")));
+            }
+        var carried = new List<string> { unitId };
+        for (var i = 0; i < carried.Count; i++)
+            foreach (var link in links.Where(l => l.Into == carried[i] && !carried.Contains(l.From, StringComparer.Ordinal)))
+                carried.Add(link.From);
+        return carried;
+    }
+
     /// <summary>An ended position back to DORMANT, its end cleared, inside the caller's write.</summary>
     void Restore(string position)
     {

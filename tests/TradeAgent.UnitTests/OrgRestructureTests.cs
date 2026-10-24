@@ -552,4 +552,34 @@ public partial class OrgStructureTests
         Assert.Equal(OrgEventKind.Fenced, org.FencedSince(running)?.Cause);
     }
 
+    /// <summary>
+    /// (F2) A MERGE CARRIES A'S RESERVATIONS, DEBTS AND HISTORY TO B (ORCHESTRATION § 2.9): after A merges into B, B's day — the
+    /// totals admission compares B's envelope against (<see cref="AiAttemptStore.UnitTotalsBetween"/>, the same query
+    /// <see cref="AiAttemptStore.Begin"/> runs) — holds A's outstanding reservation and its spend, read through the recorded chain and
+    /// the merge's successor link; A's own day and every funding row read as before (never rewritten). RED before the fix: B's day
+    /// was empty.
+    /// </summary>
+    [Fact]
+    public void A_merge_carries_As_reservations_and_spend_to_Bs_day()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Siblings(db);
+        Funded(db, AMember, SubA, Div, OrgIds.Root);
+        var spent = Funded(db, AHead, SubA, Div, OrgIds.Root);
+        Assert.True(new AiAttemptStore(db).End(spent, 0, Now, 10, 0, 5, 5, 0, null, 0.04m, null, null));
+        var ledger = new AiAttemptStore(db);
+        AiAttemptTotals Day(string unit) => ledger.UnitTotalsBetween(Now.AddDays(-1), Now.AddDays(1), unit);
+        var aDay = Day(SubA);
+        var charged = ChargedTo(db, SubA);
+        Assert.Equal((0m, 0m), (Day(SubB).Spent, Day(SubB).Reserved));
+
+        org.Merge(MergeAsk(SubA, SubB), Now);
+
+        Assert.Equal((0.04m, 0.10m), (Day(SubB).Spent, Day(SubB).Reserved));
+        Assert.Equal((aDay.Spent, aDay.Reserved), (Day(SubA).Spent, Day(SubA).Reserved));
+        Assert.Equal(charged, ChargedTo(db, SubA));
+        Assert.Empty(ChargedTo(db, SubB));
+    }
+
 }

@@ -824,12 +824,21 @@ public sealed class AiAttemptStore(Database db)
     /// counts and all — perception's own reading is whole, because its budget is compared against it.</para>
     /// </summary>
     /// <para><b>A UNIT named</b> (<c>U-org-envelopes</c>) is every row whose recorded funding chain holds it — the subtree's spend as
-    /// it was admitted, never as today's chart would re-file it; its counts follow the role-less rule above.</para>
+    /// it was admitted, never as today's chart would re-file it; its counts follow the role-less rule above. A unit's day also carries
+    /// every unit merged into it (<c>U-org-verbs-d</c>; <see cref="OrgStore.CarriedBy"/>), read through the same recorded chains.</para>
     /// <para><b>A CEILING named</b> (<c>U-billing-classes</c>) is the rows that ceiling counts: its own class's and every <c>unknown</c>
     /// row — an unknown row is counted in both, never in neither.</para>
     AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role, string? unit = null, string? ceiling = null)
     {
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
+        // A UNIT'S DAY CARRIES EVERY UNIT MERGED INTO IT (U-org-verbs-d; OrgStore.CarriedBy): each row stays on the chain it was
+        // admitted under, and counts in its successor's day too.
+        IReadOnlyList<string> carried = unit is null ? [] : OrgStore.CarriedBy(db, unit);
+        var units = carried.Select((u, i) => ($"$unit{i.ToString(CultureInfo.InvariantCulture)}", (object?)u)).ToArray();
+        var unitClause = unit is null ? "" : $"""
+             AND EXISTS (SELECT 1 FROM ai_attempt_funding f
+                          WHERE f.unit_id IN ({string.Join(",", units.Select(u => u.Item1))}) AND f.attempt_id = ai_attempt.id)
+            """;
         using var c = db.Cmd($"""
             SELECT
             {TotalsColumns}
@@ -838,11 +847,10 @@ public sealed class AiAttemptStore(Database db)
                               THEN 0 ELSE 1 END AS counted
                     FROM ai_attempt WHERE started_at >= $from AND started_at < $to
                      AND ($role IS NULL OR COALESCE(role,$chair) = $role)
-                     AND ($unit IS NULL OR EXISTS (SELECT 1 FROM ai_attempt_funding f
-                                                    WHERE f.unit_id = $unit AND f.attempt_id = ai_attempt.id))
+                     {unitClause}
                      AND ($ceiling IS NULL OR billing_class = $ceiling OR billing_class = 'unknown'))
-            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$unit", unit), ("$ceiling", ceiling),
-            ("$chair", CouncilRoles.Default), .. principals]);
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$ceiling", ceiling),
+            ("$chair", CouncilRoles.Default), .. principals, .. units]);
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
 
