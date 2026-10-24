@@ -52,7 +52,7 @@ public class ApiWorkerTests : IDisposable
             requestTimeout: timeout ?? TimeSpan.FromSeconds(10), appFiles: files);
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>
-        runtime.OpenConversation(CouncilRoles.Research, () => _home,
+        runtime.OpenConversation(CouncilRoles.Research, () => AppCanon.Keep(_home, CouncilRoles.Research),
             () => new Dictionary<string, string>(), () => null);
 
     // ---- the turn ---------------------------------------------------------------------------------

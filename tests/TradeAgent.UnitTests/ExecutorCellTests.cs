@@ -473,9 +473,11 @@ public class ExecutorCellTests : IDisposable
 
         var seen = Canon.SeenByCli(home, Member, new AppFileManifest(Path.Combine(home, "..", $"files-{Guid.NewGuid():n}.tsv")));
         var harness = new ApiConversation(Codex, Member, () => home, new HarnessKey(), () => null, () => null!, () => null);
-        var mission = (string)typeof(ApiConversation).GetMethod("Mission", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(harness, null)!;
+        var args = new object?[] { null };
+        var mission = (string?)typeof(ApiConversation).GetMethod("Mission", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(harness, args);
 
-        var sent = mission.Contains("sk-FAKE-relay-0000", StringComparison.Ordinal);
+        // NOTHING AT ALL IS SENT for a canon read through a link (U-exec-env-fix item 2): null is the refusal, never a fallback text.
+        var sent = mission?.Contains("sk-FAKE-relay-0000", StringComparison.Ordinal) ?? false;
         Assert.True(seen is null && !sent,
             $"hashed through the link: {seen is not null} ({seen?.Sha256}); the harness's system text carries the login: {sent}");
     }
@@ -581,6 +583,35 @@ public class ExecutorCellTests : IDisposable
 
         var said = conversation.History.LastOrDefault(t => t.Role == ChatRole.System)?.Text ?? "";
         Assert.True(provider.Requests.Count == 0 && said.Contains("not the one TradeAgent wrote", StringComparison.Ordinal),
+            $"{provider.Requests.Count} request(s) sent; the conversation said: '{said}'");
+    }
+    /// <summary>
+    /// A HARNESS CANON THAT CANNOT BE READ IS REFUSED IN WORDS, NEVER REPLACED BY THE ROLE'S TITLE (<c>U-exec-env-fix</c> item 2, the
+    /// Codex review's P1/P2): with nothing kept in this process, a cell that grows the canon past <see cref="Canon.MaxReadBytes"/> made the
+    /// read throw, and the turn started on "You are the …" alone — no authority, inbox or evidence rules. Now nothing is sent.
+    /// </summary>
+    [Fact]
+    public async Task An_oversized_harness_canon_no_start_of_this_process_kept_is_refused_in_words()
+    {
+        var root = Path.Combine(TestEnv.Home, "oversized-harness", Guid.NewGuid().ToString("n"));
+        var ctx = new WorkspaceContext("Simulator (built in)", ConnectorIsPaper: true, "SIM-001", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] });
+        var record = Path.Combine(root, "..", $"files-{Guid.NewGuid():n}.tsv");
+        var home = WorkspaceBuilder.BuildAll(ctx, root, new AppFileManifest(record))[CouncilRoles.Research];
+        var harnessCanon = Path.Combine(home, Canon.HarnessFile.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(harnessCanon, new string('x', Canon.MaxReadBytes + 1));          // the cell grows it past the bound
+
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("nothing to do.", input: 10, output: 2));
+        var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        manifest.BaseUrl = provider.BaseUrl;
+        using var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"), null,
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), appFiles: new AppFileManifest(record));
+        var conversation = runtime.OpenConversation(CouncilRoles.Research, () => home, () => new Dictionary<string, string>(), () => null);
+        await conversation.SendMissionAsync("## Situation\nnothing has happened.");
+
+        var said = conversation.History.LastOrDefault(t => t.Role == ChatRole.System)?.Text ?? "";
+        Assert.True(provider.Requests.Count == 0 && said.Contains("did not start the position", StringComparison.Ordinal),
             $"{provider.Requests.Count} request(s) sent; the conversation said: '{said}'");
     }
 }
