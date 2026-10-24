@@ -115,7 +115,8 @@ public sealed class TlsDenylist
         }
     }
 
-    static readonly Regex Hex64 = new("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    // \z, NOT $: .NET's $ also matches before a final newline, and "hash\n" kept as a key would match no certificate.
+    static readonly Regex Hex64 = new(@"\A[0-9a-f]{64}\z", RegexOptions.CultureInvariant);
 
     static string Text(JsonElement item, string name, int n) =>
         item.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } s

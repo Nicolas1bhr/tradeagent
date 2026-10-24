@@ -90,6 +90,21 @@ public class TlsDenylistTests
         Assert.Null(list.Find(GoCl851047[0]));
     }
 
+    /// <summary>
+    /// A HASH WITH A TRAILING NEWLINE IS REFUSED, NEVER KEPT AS A KEY THAT MATCHES NOTHING (fix pass, the review's P1): .NET's <c>$</c>
+    /// also matches before a final newline, so <c>^[0-9a-f]{64}$</c> took "hash\n" — and the entry, stored with its newline, could never
+    /// equal a computed hash, so that authority was silently not on the list.
+    /// </summary>
+    [Fact]
+    public void A_hash_with_a_trailing_newline_is_refused()
+    {
+        foreach (var spki in new[] { GoCl851047[0] + "\\n", GoCl851047[0] + "\\r\\n", "\\n" + GoCl851047[0] })
+        {
+            var refused = Assert.Throws<TlsDenylistUnreadableException>(() => TlsDenylist.Parse(File(Entry(spki: spki))));
+            Assert.Contains("not a SHA-256", refused.Message);
+        }
+    }
+
     [Fact]
     public void The_shipped_list_holds_the_eight_entries_with_their_sources()
     {
