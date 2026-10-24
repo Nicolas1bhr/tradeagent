@@ -19,7 +19,8 @@ namespace TradeAgent.AgentRuntime;
 /// <para>MEASURED 2026-10-17 on the dev Mac (codex-cli 0.160.1): ~1 s a run. THE MODEL'S METADATA IS PINNED (<c>U-cell-model-catalog</c>):
 /// the dry run and a launched seat both name the app's own catalog (<c>model_catalog_json</c>, <see cref="SeatPlan.ModelCatalog"/>), so
 /// neither reads the binary's bundled entry, the account's model list or the fallback — the dry run and a live turn agree on the tools.
-/// What it still cannot see: whether the owner's plan serves gpt-5.5 at all — UNKNOWN until one real turn, on his word.</para>
+/// What it still cannot see: whether the owner's plan serves gpt-6-luna on the app's edited metadata (classic tools, no code mode) —
+/// no 4xx, the door called as a function and served, the offered set the expected one — UNKNOWN until one real turn, on his word.</para>
 /// </summary>
 public sealed class CodexSurfaceProbe : ISurfaceProbe
 {
