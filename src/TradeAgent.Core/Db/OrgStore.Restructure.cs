@@ -367,10 +367,13 @@ public sealed partial class OrgStore
     /// decider stays his until then (R24; the orchestrator's generalised ruling), and once a seat is active it is the board's, refused
     /// here in words naming it. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>. It starts
     /// nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
-    /// Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit.
+    /// <paramref name="declaredClass"/> is the host's declared seat class per position, and <paramref name="seatSetting"/> the owner's
+    /// unconfined-seat setting: a position on a counted seat is refused while the ceiling is reached (<see cref="UnconfinedSeatCeiling"/>,
+    /// item 5). Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit; the
+    /// unconfined-seat ceiling reached.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public OrgPositionRow Activate(string positionId, DateTimeOffset now) => db.Write(_ =>
+    public OrgPositionRow Activate(string positionId, Func<string, string?> declaredClass, int seatSetting, DateTimeOffset now) => db.Write(_ =>
     {
         if (new Board.BoardReader(db).AnyActive)
             throw Refused($"activating {positionId} is the security board's now that a board seat is active (R24): it is a board act on the "
@@ -379,12 +382,24 @@ public sealed partial class OrgStore
         if (row.Status != OrgPositionStatus.Dormant) throw Refused($"{positionId} is {row.Status}: only a dormant position is activated.");
         if (Units().FirstOrDefault(u => u.Id == row.UnitId) is not { Status: not OrgUnitStatus.Closed } unit)
             throw Refused($"{positionId}'s unit {row.UnitId} is closed: nothing is activated in a closed unit.");
+        if (UnconfinedSeatCeiling.Refusal(positionId, declaredClass(positionId), UnconfinedSeatsActive(declaredClass), seatSetting) is { } over)
+            throw Refused(over.Words);
         using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
                    ("$active", OrgPositionStatus.Active), ("$p", positionId), ("$dormant", OrgPositionStatus.Dormant)))
             if (c.ExecuteNonQuery() != 1) throw Refused($"{positionId} changed while this activation was written.");
         Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
         return Position(positionId)!;
     });
+
+    /// <summary>
+    /// THE ACTIVE POSITIONS ON SEATS THE OWNER'S UNCONFINED-SEAT CEILING COUNTS (<c>U-org-verbs-d</c> item 5): the legacy pair whenever
+    /// they are active, and every other active position whose declared seat (<paramref name="declaredClass"/>, the host's answer) runs a
+    /// model below a proven cell or was declared by nobody. One read.
+    /// </summary>
+    public IReadOnlyList<string> UnconfinedSeatsActive(Func<string, string?> declaredClass) => db.Read(_ =>
+        (IReadOnlyList<string>)[.. Positions().Where(p => p.Status == OrgPositionStatus.Active
+                                                         && (CouncilRoles.IsKnown(p.Id) || UnconfinedSeatCeiling.Counts(declaredClass(p.Id))))
+                                    .Select(p => p.Id)]);
 
     /// <summary>An ended position back to DORMANT, its end cleared, inside the caller's write.</summary>
     void Restore(string position)

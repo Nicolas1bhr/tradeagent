@@ -486,6 +486,14 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
+    /// THE OWNER'S UNCONFINED-SEAT CEILING, as he sets it (<c>U-org-verbs-d</c>; ORGANISATION § 10; CRED-001): how many active
+    /// positions may run a model below a proven cell, the legacy pair counted. It only LOWERS the code's three
+    /// (<c>UnconfinedSeatCeiling.Effective</c>): a value above three reads as three, because this file lives where an unconfined seat
+    /// can write it. Raising past three waits for containment.
+    /// </summary>
+    public int UnconfinedSeats { get; set; } = Db.UnconfinedSeatCeiling.Ceiling;
+
+    /// <summary>
     /// HOW LONG A MESSAGE THE OWNER TYPED MAY GO WITHOUT AN OUTCOME BEFORE THE DAILY REPORT CALLS IT
     /// OVERDUE (<c>docs/COUNCIL.md</c> round 4: "Owner text enters Operations' agenda first, with
     /// receipt, disposition and deadline").
