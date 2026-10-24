@@ -32,7 +32,7 @@ public sealed class PinnedCodexFactAttribute : FactAttribute
 [Trait("Category", "Cell")]
 public class CliCodeModeHostTests
 {
-    static string PinnedCodex()
+    internal static string PinnedCodex()
     {
         var path = Environment.GetEnvironmentVariable("TA_CELL_CODEX");
         Assert.True(!string.IsNullOrEmpty(path) && File.Exists(path), $"missing prerequisite: the pinned codex named by TA_CELL_CODEX (got '{path}')");

@@ -28,7 +28,21 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
 
     static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
-    public async Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
+    public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
+    {
+        var seat = ask.Manifest.Seat ?? throw new InvalidOperationException($"{ask.Manifest.DisplayName} has no seat profile");
+        // THE SHIPPED CATALOG, HELD TO ITS PIN (U-cell-model-catalog): the bytes a launched seat's home holds, or no dry run at all.
+        var (catalog, refusal) = SeatProfile.ShippedCatalog(seat);
+        if (refusal is not null) throw new InvalidOperationException(refusal);
+        return OfferedAsync(ask, catalog, ct);
+    }
+
+    /// <summary>
+    /// THE DRY RUN ON <paramref name="catalog"/>'s METADATA: the bytes are written into the throwaway codex home and the class's argv names
+    /// that copy in <see cref="SeatPlan.CatalogSlot"/>, as a launch names the seat home's. Internal for the row that proves codex reads
+    /// the catalog and not its bundled or fallback metadata (an altered entry changes what is offered).
+    /// </summary>
+    internal async Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, byte[]? catalog, CancellationToken ct)
     {
         var manifest = ask.Manifest;
         var seat = manifest.Seat ?? throw new InvalidOperationException($"{manifest.DisplayName} has no seat profile");
@@ -45,6 +59,13 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
         Directory.CreateDirectory(work);
         try
         {
+            // THE CATALOG IN THE THROWAWAY HOME, where the seat home keeps its own (U-cell-model-catalog).
+            string? catalogPath = null;
+            if (catalog is not null)
+            {
+                catalogPath = Path.Combine(root, "codex", Path.GetFileName(seat.ModelCatalog is { Length: > 0 } c ? c : "model-catalog.json"));
+                File.WriteAllBytes(catalogPath, catalog);
+            }
             // THE CLASS'S OWN ARGV, as a turn builds it — the stub door in the door's slot — and the mock pinned as the provider.
             string[] provider =
             [
@@ -55,7 +76,7 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
             ];
             var args = AgentArgs.Build(manifest.ExecArgs, "probe", manifest.JsonFlag, manifest.UnattendedArgs,
                 [.. manifest.ModelArgs.Select(a => a.Replace("{model}", ask.Model, StringComparison.Ordinal))],
-                [.. seat.ArgsFor(ask.SeatClass, new Uri(door.Url, BrokerDoor.Route)), .. provider],
+                [.. seat.ArgsFor(ask.SeatClass, new Uri(door.Url, BrokerDoor.Route), catalogPath), .. provider],
                 manifest.PromptOnStdin, manifest.StdinMarker, out var promptInArgv);
 
             var psi = new ProcessStartInfo
