@@ -111,6 +111,10 @@ public partial class OrgRightsConformanceTests
     static IpcRequest MergeFrame(string unit, string into) => Frame(Ops.OrgMerge, ("unit", unit), ("into", into),
         ("rationale", "two teams chase one question"), ("forecasts", Forecasts));
 
+    /// <summary>A tilt of <paramref name="unit"/>'s trial share to 0.2 (<c>U-org-verbs-e</c>): one currency, no meter needed.</summary>
+    static IpcRequest TiltFrame(string unit) => Frame(Ops.OrgTilt, ("unit", unit), ("currency", OrgCurrency.Trials), ("share", 0.2m),
+        ("rationale", "the team's runs earn a fifth of the trials"), ("forecasts", Forecasts));
+
     /// <summary>One call a row is exercised by: the row, who calls, and the frame.</summary>
     sealed record Case(OrgRightsRow Row, string Caller, IpcRequest Frame);
 
@@ -166,6 +170,14 @@ public partial class OrgRightsConformanceTests
             new(R(OrgOperation.Merge, OrgReserved.DivOperations, OrgRelation.Any), Head, MergeFrame(OpsTeam, OpsVacant)),
             new(R(OrgOperation.Merge, OrgReserved.DivResearch, OrgRelation.Any), Head, MergeFrame(OrgIds.Research, Div)),
             new(R(OrgOperation.Merge, OrgReserved.Root, OrgRelation.Any), Head, MergeFrame(OrgIds.Root, Div)),
+
+            // U-org-verbs-e: org-tilt reaches every Tilt row.
+            new(R(OrgOperation.Tilt, OrgReserved.None, OrgRelation.HeadOfParent), Head, TiltFrame(Headed)),
+            new(R(OrgOperation.Tilt, OrgReserved.None, OrgRelation.HeadOfTarget), TeamHead, TiltFrame(Headed)),
+            new(R(OrgOperation.Tilt, OrgReserved.None, OrgRelation.Other), Member, TiltFrame(Headed)),
+            new(R(OrgOperation.Tilt, OrgReserved.DivOperations, OrgRelation.Any), OpsHead, TiltFrame(OpsTeam)),
+            new(R(OrgOperation.Tilt, OrgReserved.DivOperations, OrgRelation.Any), Head, TiltFrame(OpsVacant)),
+            new(R(OrgOperation.Tilt, OrgReserved.Root, OrgRelation.Any), Head, TiltFrame(OrgIds.Root)),
         ];
     }
 
@@ -224,7 +236,6 @@ public partial class OrgRightsConformanceTests
         {
             var why = row.Operation switch
             {
-                OrgOperation.Tilt => "its verb arrives with part e",
                 _ when OrgOperation.Mandate.Contains(row.Operation) => "a mandate verb: the row decides, never the chart",
                 OrgOperation.Charter when row.Relation == OrgRelation.HeadOfTarget => "a unit not yet chartered has no head",
                 OrgOperation.Appoint when row.Relation == OrgRelation.HeadOfTarget => "a vacant unit has no head",
@@ -233,9 +244,10 @@ public partial class OrgRightsConformanceTests
                 _ => null
             };
             Assert.True(why is not null, $"row {row.Operation}/{row.Reserved}/{row.Relation} is neither exercised nor named");
-            // REVISITED BY U-org-verbs-d (declared): retire, close and merge have ops now, and their every reachable row is exercised
-            // above; the two retire rows named here are reached by no target (the reasons above). Tilt and replace still have none.
-            if (row.Operation is OrgOperation.Tilt or OrgOperation.Replace)
+            // REVISITED BY U-org-verbs-d and U-org-verbs-e (declared): retire, close, merge and tilt have ops now, and their every
+            // reachable row is exercised above; the two retire rows named here are reached by no target (the reasons above). Replace
+            // still has none.
+            if (row.Operation is OrgOperation.Replace)
                 Assert.DoesNotContain(Ops.Organisation, op => op.EndsWith("-" + row.Operation, StringComparison.Ordinal));
         }
     }
