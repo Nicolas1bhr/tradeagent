@@ -188,8 +188,8 @@ public sealed partial class OrgStore
     /// B's and every position in the subtrees of A's moved children fenced) and one <c>merged</c> event — in ONE write. A's history stays A's: its events, decisions and every launch its
     /// chain funded (lineage is immutable, BUDGET-001); only launches after the merge are funded through B. Refused in words, nothing
     /// written: the rights matrix on either unit; the same unit; either closed; not siblings of one parent; different kinds; A younger
-    /// than <see cref="OrgBounds.MinimumLife"/> unless a forecast on its charter resolved; B past <see cref="OrgBounds.MaxMembers"/>
-    /// members; a third structural change in seven days; no forecast.
+    /// than <see cref="OrgBounds.MinimumLife"/> unless its kill forecast resolved; B past <see cref="OrgBounds.MaxMembers"/>
+    /// members; B's child units and A's moved ones splitting more than B's whole; a third structural change in seven days; no forecast.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public MergedUnit Merge(MergeRequest r, DateTimeOffset now) => db.Write(_ =>
@@ -482,8 +482,10 @@ public sealed partial class OrgStore
     }
 
     /// <summary>
-    /// A UNIT LIVES <see cref="OrgBounds.MinimumLife"/> (ORGANISATION § 3) — or until a precommitted kill criterion resolves: a forecast
-    /// on its <c>charter</c> decision the app resolved yes or no. A seeded unit has no charter, and its age is the rung's.
+    /// A UNIT LIVES <see cref="OrgBounds.MinimumLife"/> (ORGANISATION § 3) — or until its PRECOMMITTED KILL CRITERION resolves: the
+    /// <c>unit-admissible</c> forecast on the unit itself that its <c>charter</c> decision carried, written in the charter's own write
+    /// (at or before the unit's creation), which the app resolved yes or no. A forecast on anything else, or one added to the charter
+    /// afterwards, waives nothing (the Codex review of <c>U-org-verbs-d</c>, P2). A seeded unit has no charter, and its age is the rung's.
     /// </summary>
     void LifeRefusal(OrgUnitRow unit, DateTimeOffset now, string act)
     {
@@ -492,13 +494,14 @@ public sealed partial class OrgStore
         {
             using var c = db.Cmd("""
                 SELECT EXISTS (SELECT 1 FROM org_forecast f JOIN org_forecast_resolution r ON r.forecast_id = f.id
-                                WHERE f.decision_id = $charter AND r.outcome IN ('yes', 'no'))
-                """, ("$charter", charter));
+                                WHERE f.decision_id = $charter AND f.predicate = $kill AND f.subject = $unit AND f.at <= $created
+                                  AND r.outcome IN ('yes', 'no'))
+                """, ("$charter", charter), ("$kill", ForecastVocabulary.UnitAdmissible), ("$unit", unit.Id), ("$created", Sql.T(unit.CreatedAt)));
             if (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0) return;
         }
         throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} was chartered {(now - unit.CreatedAt).TotalDays.ToString("0.#", CultureInfo.InvariantCulture)} "
                       + $"days ago, and a unit lives {OrgBounds.MinimumLife.TotalDays.ToString(CultureInfo.InvariantCulture)} days before it is "
-                      + $"{act} — or until a forecast on its charter resolves, and none has (ORGANISATION § 3).");
+                      + $"{act} — or until the kill forecast its charter carried on it resolves, and that has not (ORGANISATION § 3).");
     }
 
     /// <summary>Each of <paramref name="positions"/> <c>ended</c> at <paramref name="now"/>, inside the caller's write.</summary>

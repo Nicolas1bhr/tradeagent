@@ -602,4 +602,31 @@ public partial class OrgStructureTests
         Assert.Equal(before, Written(db));
     }
 
+    /// <summary>
+    /// (F4) ONLY THE UNIT'S OWN PRECOMMITTED KILL FORECAST WAIVES THE FOURTEEN DAYS: a young unit's charter decision carries, besides
+    /// its kill criterion, a forecast on something else and one added to the charter afterwards; each resolved, the close is still
+    /// refused. RED before the fix: any resolved forecast on the charter waived the life.
+    /// </summary>
+    [Fact]
+    public void Only_the_units_own_kill_forecast_waives_its_fourteen_days()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var made = org.Charter(Ask(refs: [CurrentRun(db)]), Metered, Now.AddDays(-5));
+        void Resolved(string id, string predicate, string subject, DateTimeOffset at)
+        {
+            Exec(db, """
+                INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+                VALUES($id, $d, $f, 2, $p, $s, 'admitted', $by, '0.5', 1, $at)
+                """, ("$id", id), ("$d", made.Decision.Id), ("$f", Head), ("$p", predicate), ("$s", subject),
+                ("$by", Now.AddDays(1).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$at", at.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+            Exec(db, "INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES($f, 'no', 'verdict', 'v-1', 'x', $at)",
+                ("$f", id), ("$at", Now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+        }
+        Resolved("fc-0e1a7ed00001", ForecastVocabulary.VerdictClass, "ver-elsewhere", Now.AddDays(-5));
+        Resolved("fc-1a7e00000001", ForecastVocabulary.UnitAdmissible, made.Unit.Id, Now.AddDays(-1));
+
+        Assert.Contains("a unit lives 14 days", Assert.Throws<TradeAgentException>(() => org.Close(CloseAsk(made.Unit.Id), Now)).Message,
+            StringComparison.Ordinal);
+    }
 }
