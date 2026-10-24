@@ -149,4 +149,67 @@ public class RepairHomeTests
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
+    /// <summary>
+    /// THE HOST'S REPAIR CLEARS THE POSITION'S HOME REFUSAL AND RECORDS ITSELF (item 3): after it the host reports no home refusal, the folder
+    /// the session's launch gate asks about (<see cref="WorkspaceBuilder.RefusalFor"/> of <see cref="AppHost.HomeFor"/>) is not refused, and the
+    /// act is one Activity line and one engineering-log line naming where the old folder is kept.
+    /// </summary>
+    [Fact]
+    public async Task The_hosts_repair_clears_the_refusal_and_records_one_activity_line()
+    {
+        if (OperatingSystem.IsWindows()) return;                           // the kernel refuses on Windows; its own test says so in words
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var (pos, _) = RefusedInTheAppsTree(host);
+            Assert.NotNull(host.HomeRefusalFor(pos));
+
+            var words = host.RepairHome(pos);
+
+            Assert.StartsWith($"The folder of {pos} was repaired; the old one is kept at ", words, StringComparison.Ordinal);
+            Assert.Null(host.HomeRefusalFor(pos));
+            Assert.Null(WorkspaceBuilder.RefusalFor(host.HomeFor(pos)));
+            Assert.Single(new LogStore(db).RecentActivity(), a => a.Text == words);
+            var logged = db.Read(_ =>
+            {
+                using var c = db.Cmd("SELECT COUNT(*) FROM engineering_log WHERE event = 'home_repaired' AND metadata LIKE $p", ("$p", $"%{pos}%"));
+                return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+            });
+            Assert.Equal(1, logged);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
+    /// GUARD — NO PIPE OP, VERB OR BOARD ACT REACHES THE REPAIR (CLAUDE.md, the owner's authority in-process only): no op or verb is named for
+    /// a repair or a refused folder and none takes such an argument, and no source where pipe ops, door verbs and board acts are served
+    /// names the act.
+    /// </summary>
+    [Fact]
+    public void No_pipe_op_verb_or_board_act_reaches_the_repair()
+    {
+        string[] words = ["repair", "refused-home", "home-refusal", ".refused"];
+        foreach (var op in TradeAgent.Gateway.GatewaySchema.Ops())
+            foreach (var word in words)
+            {
+                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
+                foreach (var arg in op.Args) Assert.DoesNotContain(word, arg.Name, StringComparison.OrdinalIgnoreCase);
+            }
+
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "tests"))) root = root.Parent;
+        Assert.NotNull(root);
+        string[] names = [nameof(WorkspaceBuilder.RepairHome), nameof(AppHost.HomeRefusalFor), nameof(WorkspaceBuilder.RefusedDir)];
+        var reaching = new[] { "TradeAgent.Gateway", "TradeAgent.GatewayHost", "TradeAgent.TradeCli", Path.Combine("TradeAgent.Core", "Board") }
+            .Select(d => Path.Combine(root.FullName, "src", d))
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.GetFiles(d, "*.cs", SearchOption.AllDirectories))
+            .Append(Path.Combine(root.FullName, "src", "TradeAgent.AgentRuntime", "BrokerDoor.cs"))
+            .Where(f => names.Any(n => File.ReadAllText(f).Contains(n, StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.True(reaching.Count == 0, "an agent-facing or board source names the repair: " + string.Join(", ", reaching));
+    }
 }
