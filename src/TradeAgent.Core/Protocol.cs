@@ -246,6 +246,13 @@ public static class Ops
     public const string OrgCharter = "org-charter", OrgHire = "org-hire";
 
     /// <summary>
+    /// THE RESTRUCTURING VERBS (<c>U-org-verbs-d</c>): a position retired, a unit closed, a unit merged into its sibling — each by the
+    /// head of the target's parent, one write that disposes every open mandate inside what ends and fences what it touches. NOT in
+    /// <see cref="Mutating"/>; nothing here reaches <c>operations</c> (a board act) or the owner's veto and activation (in-process only).
+    /// </summary>
+    public const string OrgRetire = "org-retire", OrgClose = "org-close", OrgMerge = "org-merge";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
@@ -281,7 +288,7 @@ public static class Ops
     /// </summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
-        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire];
+        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgRetire, OrgClose, OrgMerge];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

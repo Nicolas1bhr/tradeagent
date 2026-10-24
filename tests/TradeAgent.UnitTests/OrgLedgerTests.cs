@@ -331,7 +331,14 @@ public class OrgLedgerTests
         var structural = new Dictionary<string, (string Cli, string[] Args)>
         {
             [Ops.OrgCharter] = ("trade org charter", ["kind", "ai_share", "rationale", "forecasts", "refs", "options", "collapse_by"]),
-            [Ops.OrgHire] = ("trade org hire", ["unit", "rationale", "forecasts", "head", "refs", "options"])
+            [Ops.OrgHire] = ("trade org hire", ["unit", "rationale", "forecasts", "head", "refs", "options"]),
+            // REVISITED, OUT LOUD, BY U-org-verbs-d (declared): THREE more ops write the chart — `org-retire`, `org-close`, `org-merge`,
+            // behind OrgVerbCaller and OrgStore's own checks (the rights matrix, the fourteen-day life, the weekly throttle). None is
+            // mutating; each names only its target — a position to retire, a unit to close, a unit and its sibling — never a seat, a
+            // head's id, a parent or a share; none reaches the owner's veto or activation.
+            [Ops.OrgRetire] = ("trade org retire", ["position", "rationale", "forecasts", "refs", "options"]),
+            [Ops.OrgClose] = ("trade org close", ["unit", "rationale", "forecasts", "refs", "options"]),
+            [Ops.OrgMerge] = ("trade org merge", ["unit", "into", "rationale", "forecasts", "refs", "options"])
         };
         foreach (var (name, (cli, args)) in structural)
         {
