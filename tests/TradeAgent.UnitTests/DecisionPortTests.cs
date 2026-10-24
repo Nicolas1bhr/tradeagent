@@ -312,6 +312,29 @@ public class DecisionPortTests(ITestOutputHelper log) : IDisposable
     ///
     /// <para>Move the reservation after the send in <c>TypeSafeWire.DecideAsync</c> and the hook finds no row.</para>
     /// </summary>
+    /// <summary>
+    /// A CALL WHOSE CONNECTION THE TLS POLICY REFUSED SAYS SO IN ITS WORDS (U-tls-denylist fix pass, the review's P2): it ended
+    /// UNANSWERED "transport", and the card showed that one word — never which authority was refused, or why.
+    /// </summary>
+    [Fact]
+    public async Task A_call_whose_connection_the_tls_policy_refused_says_so_in_its_words()
+    {
+        using var rig = new Rig();
+        using var host = new FakeProvider();
+        var instrument = PointedAt(host);
+        using var wire = new TypeSafeWire(instrument, host.Holding(_pasted), rig.Db, () => rig.Tape, () => 5m, () => 1m, rig.Live,
+            () => "USD", requestTimeout: TimeSpan.FromSeconds(10), transport: new TlsRefusalWordsTests.RefusingTransport(),
+            gate: new DecisionRateGate());
+
+        var answer = await wire.DecideAsync(Ask());
+
+        Assert.Equal(DecisionStatus.UNANSWERED, answer.Status);
+        Assert.Equal("tls-refused", answer.ErrorClass);
+        var shown = string.Join("\n", TradeAgent.App.PerceptionCard.Result(answer, instrument));
+        log.WriteLine(shown);
+        Assert.Contains("EM DV TLS CA - G3B", shown, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_call_is_reserved_in_the_main_database_before_it_is_sent_and_a_lost_answer_keeps_it()
     {

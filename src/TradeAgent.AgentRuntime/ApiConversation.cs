@@ -754,10 +754,11 @@ public sealed class ApiConversation(
             throw new TradeAgentException(ErrorCode.AI_AUTH_TIMEOUT,
                 $"{manifest.DisplayName} did not answer within {_http.Timeout.TotalSeconds:N0} seconds.");
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException || TlsRefusedException.In(ex) is not null)
         {
+            // A CONNECTION THE TLS POLICY REFUSED SAYS WHY IN ITS OWN WORDS (U-tls-denylist), not HttpClient's "see inner exception".
             throw new TradeAgentException(ErrorCode.IPC_UNAVAILABLE,
-                $"{manifest.DisplayName} could not be reached: {ex.Message}");
+                $"{manifest.DisplayName} could not be reached: {TlsRefusedException.In(ex)?.Message ?? ex.Message}");
         }
 
         using (response)
