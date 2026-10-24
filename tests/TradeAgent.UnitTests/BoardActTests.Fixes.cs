@@ -70,3 +70,37 @@ public partial class BoardActTests
         Assert.Equal(3, new BoardReader(db).InForce().Version);
     }
 }
+
+public partial class BoardActTests
+{
+    /// <summary>
+    /// THE ENVELOPE'S TERMS ARE READ AGAIN INSIDE THE GRANT'S WRITE (review P1, TradingGateway.cs:490): a health pass that read version
+    /// 2's narrower terms, and was held there while another act removed the envelope altogether (version 3, none), grants NOTHING when
+    /// it resumes — it never grants terms the policy in force no longer states. RED before the fix: version 2's envelope was granted
+    /// after version 3 had removed it. Watched red with the terms taken from the read made before the write.
+    /// </summary>
+    [Fact]
+    public async Task A_grant_never_stands_on_terms_an_act_removed_meanwhile()
+    {
+        using var db = TestEnv.NewDb();
+        Activate(db, "board-1");
+        await using var gw = await PaperGateway(db);
+        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.01")))));
+        Assert.Empty(Standing(gw));
+
+        var armed = 1;
+        gw.PolicyEnvelopeTermsRead = () =>
+        {
+            if (Interlocked.Exchange(ref armed, 0) == 1)
+                gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(EnvelopeWith("max_quantity", "0.01")), Json("null"))));
+        };
+        await gw.RefreshHealthAsync();
+
+        Assert.Equal(0, armed);
+        Assert.Null(gw.Policy.PaperEnvelope);
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.Empty(Standing(gw));
+        await gw.RefreshHealthAsync();
+        Assert.Empty(Standing(gw));
+    }
+}

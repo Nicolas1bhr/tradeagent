@@ -468,39 +468,49 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         try
         {
-            if (_inForce is not { CouldNotBeRead: false } inForce) return;
             // NOT ON A HOME THAT CANNOT TRADE: an earlier armed row, or a settings row or policy nobody could read, grants nothing new.
             if (!ReadableForExecution) return;
-            if (Policy.CouldNotBeRead || Policy.PaperEnvelope is not { } terms) return;
-            if (!string.Equals(Connector.Id, terms.Connector, StringComparison.Ordinal)
-                || !string.Equals(account.Id, terms.Account, StringComparison.Ordinal)) return;
+            if (Policy.CouldNotBeRead || Policy.PaperEnvelope is null) return;
+            PolicyEnvelopeTermsRead?.Invoke();
 
-            // WHO SET THESE TERMS: the version that last changed any of them, and its decider.
-            var setBy = inForce.Fields.Where(f => f.Name == "paper_envelope" || f.Name.StartsWith("paper_envelope.", StringComparison.Ordinal))
-                .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max();
-            var decider = setBy == inForce.Version ? inForce.Decider : _board.History().FirstOrDefault(v => v.Version == setBy)?.Decider;
-            string reason;
-            if (decider == BoardDecider.App) reason = FoundingEnvelopeReason(setBy);
-            else if (decider == BoardDecider.Board) reason = BoardEnvelopeReason(setBy);
-            else return;
-
-            // THE LOOK AND THE GRANT ARE ONE TRANSACTION (fix pass 1, the review's P2): two health passes at once — the timer's and the
-            // owner's refresh — would otherwise both find none and both grant, at two instants and so under two ids, and the owner's
-            // one withdrawal would leave the other standing. A nested write joins this one, so the grant path is unchanged.
+            // THE TERMS, WHO SET THEM, THE LOOK AND THE GRANT ARE ONE TRANSACTION. The look and the grant (fix pass 1 of U-board-a2, the
+            // review's P2): two health passes at once would otherwise both find none and both grant. The TERMS (U-board-b1 fix pass,
+            // the review's P1): read AGAIN from the store inside this write, never taken from a read made before it — an act that
+            // removed or changed them meanwhile commits before this write begins or after it ends, never inside it, so what is granted
+            // is what the policy in force states, and an act after it withdraws it in its own write. A nested write joins this one.
+            PaperEnvelopeTerms? terms = null;
+            var setBy = 0;
+            string? decider = null;
             var result = _db.Write(_ =>
             {
+                var inForce = _board.InForce();
+                if (inForce.CouldNotBeRead || inForce.Policy.PaperEnvelope is not { } stated) return null;
+                if (!string.Equals(Connector.Id, stated.Connector, StringComparison.Ordinal)
+                    || !string.Equals(account.Id, stated.Account, StringComparison.Ordinal)) return null;
+
+                // WHO SET THESE TERMS: the version that last changed any of them, and its decider.
+                setBy = inForce.Fields.Where(f => f.Name == "paper_envelope" || f.Name.StartsWith("paper_envelope.", StringComparison.Ordinal))
+                    .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max();
+                var setter = setBy;
+                decider = setBy == inForce.Version ? inForce.Decider : _board.History().FirstOrDefault(v => v.Version == setter)?.Decider;
+                string reason;
+                if (decider == BoardDecider.App) reason = FoundingEnvelopeReason(setBy);
+                else if (decider == BoardDecider.Board) reason = BoardEnvelopeReason(setBy);
+                else return null;
+
                 var now = Now;
-                if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, terms.Connector, StringComparison.Ordinal)
-                                                          && string.Equals(e.AccountId, terms.Account, StringComparison.Ordinal)
+                if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
+                                                          && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal)
                                                           && (e.StandsAt(now) || string.Equals(e.Reason, reason, StringComparison.Ordinal))))
                     return null;
                 FoundingEnvelopeFoundNone?.Invoke();
 
-                var until = terms.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
-                return GrantEnvelopeOn(account, terms.Instrument, terms.MaxQuantity, terms.MaxNotional, now, until, reason,
-                    terms.Deployments);
+                var until = stated.Days is { } days ? now.AddDays(days) : DateTimeOffset.MaxValue;
+                terms = stated;
+                return GrantEnvelopeOn(account, stated.Instrument, stated.MaxQuantity, stated.MaxNotional, now, until, reason,
+                    stated.Deployments);
             });
-            if (result is null) return;
+            if (result is null || terms is null) return;
             if (!result.Ok)
             {
                 _log.TryEngineering("Gateway", "policy_envelope_not_granted", "warn",
@@ -539,6 +549,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     internal bool InstrumentAllowedHere(string symbol) =>
         Policy.Risk.InstrumentAllowed(symbol)
         || (FoundingCoversThisVenue && _instrumentCache.Any(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>A TEST SEAM: called after a pass's first look at the policy's envelope and before its write. Null in the app.</summary>
+    internal Action? PolicyEnvelopeTermsRead { get; set; }
 
     /// <summary>A TEST SEAM: called once a pass has found no founding envelope to stand on, before it grants one. Null in the app.</summary>
     internal Action? FoundingEnvelopeFoundNone { get; set; }
