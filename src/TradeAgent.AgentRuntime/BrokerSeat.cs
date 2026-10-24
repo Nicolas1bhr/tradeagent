@@ -86,6 +86,13 @@ public static class BrokerSeat
         "js_repl", "spawn_agent", "send_input", "image_generation", "web_search"
     ];
 
+    /// <summary>
+    /// TOOLS NO VERIFIED CLASS IS EVER OFFERED, whatever its expected set says (<c>U-cell-model-catalog</c>, option C): code mode's
+    /// <c>exec</c>. The broker and cell seats run gpt-6-luna on a catalog without its <c>tool_mode</c> and with code mode's host off; an
+    /// <c>exec</c> offered means that edit stopped holding, and the seat is refused before admission.
+    /// </summary>
+    public static readonly string[] NeverOffered = ["exec"];
+
     /// <summary>Whether this build has a broker class for the built-in runtime <paramref name="runtimeId"/> — code, read once.</summary>
     public static bool Offers(string runtimeId) => Offers(runtimeId, SeatPlan.BrokerClass);
 
@@ -283,11 +290,18 @@ public static class BrokerSeat
     /// The same check for <paramref name="seatClass"/>: for route (a)'s cell class the shell, patch and image tools are EXPECTED — they run
     /// in the cell — and any other host tool (code mode's <c>exec</c> above all: model-written code in the harness, beside the login) refuses.
     /// </summary>
-    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who, string seatClass)
+    public static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who, string seatClass) =>
+        SurfaceRefusal(model, offered, who, seatClass, ExpectedFor(seatClass, model));
+
+    /// <summary>The same check against <paramref name="expectedSet"/> — the class's compiled set, or a test's.</summary>
+    internal static string? SurfaceRefusal(string model, IReadOnlyList<string> offered, string who, string seatClass, string[]? expectedSet)
     {
         var names = offered.Select(ToolName).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
-        var inCell = seatClass == SeatPlan.CellClass ? ExpectedFor(seatClass, model) ?? [] : [];
-        var host = names.Where(n => HostTools.Contains(BareName(n), StringComparer.Ordinal) && !inCell.Contains(n, StringComparer.Ordinal)).ToList();
+        var inCell = seatClass == SeatPlan.CellClass ? expectedSet ?? [] : [];
+        // CODE MODE'S EXEC IS NEVER EXEMPTED (U-cell-model-catalog, option C): its JavaScript runs in the process that holds the sign-in,
+        // so no class's expected set — compiled or a test's — lets it through.
+        var host = names.Where(n => HostTools.Contains(BareName(n), StringComparer.Ordinal)
+                                    && (NeverOffered.Contains(BareName(n), StringComparer.Ordinal) || !inCell.Contains(n, StringComparer.Ordinal))).ToList();
         var kind = Kind(seatClass);
         if (host.Count > 0)
             return $"TradeAgent will not start {who} as {kind}: on {model} it would offer {Words(host)}, which runs on this " +
@@ -295,7 +309,7 @@ public static class BrokerSeat
                    (seatClass == SeatPlan.CellClass
                        ? "A route (a) cell seat is offered TradeAgent's tools and the tools that run in its cell, nothing else. "
                        : "A broker-only seat is offered TradeAgent's tools and nothing that reaches the computer. ") + "Nothing was started.";
-        if (ExpectedFor(seatClass, model) is not { } expected)
+        if (expectedSet is not { } expected)
             return $"TradeAgent will not start {who} as {kind} on {model}: this build knows no offered surface for that model. " +
                    "Nothing was started.";
         var extra = names.Except(expected, StringComparer.Ordinal).ToList();
