@@ -560,4 +560,32 @@ public partial class OrgAssignmentTests
             (Reraise(db, org, first, a)!.DueAt, Reraise(db, org, next, b)!.DueAt));
     }
 
+    /// <summary>
+    /// (g, U-rewake-followups item 3) AN UNPLACEABLE HOLDER IS NAMED EVEN WHEN THE DEADLINE CLAMP MAKES ITS RE-WAKE DUE NOW. A member's
+    /// launch ends undelivered, its position goes dormant, and the mandate's deadline is ten minutes away — less than the largest
+    /// floor, so the last-chance clamp brings the re-raise due at once. The holder still could not be placed: the sweep says so in
+    /// words naming it, once, with the re-raise.
+    ///
+    /// <para>RED at base: the warning was raised only for a re-raise due later than now, and nothing was said.</para>
+    /// </summary>
+    [Fact]
+    public void An_unplaceable_holder_is_named_even_when_the_deadline_clamp_makes_it_due_now()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var m = org.Assign(Issue() with { Deadline = t.AddMinutes(10) }, t);
+        var launch = TurnOn(db, Member, m, t);
+        Exec(db, "UPDATE org_position SET status=$s WHERE id=$id", ("$s", OrgPositionStatus.Dormant), ("$id", Member));
+
+        var said = new List<string>();
+        Assert.Equal(1, org.Sweep(t, Shipped, said.Add));
+        Assert.Equal(t, Reraise(db, org, m, launch)!.DueAt);
+        var line = Assert.Single(said);
+        Assert.Contains(Member, line, StringComparison.Ordinal);
+        Assert.Contains(m.Id, line, StringComparison.Ordinal);
+        Assert.Equal(0, org.Sweep(t, Shipped, said.Add));
+        Assert.Single(said);
+    }
 }
