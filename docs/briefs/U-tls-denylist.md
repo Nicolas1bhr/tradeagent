@@ -51,3 +51,19 @@ NOT in scope:
 - the host trust stores (the owner's machines, sweep § 5).
 Evidence beyond CI: none needed. NOT claimed: that the eight are the only compromised keys. The list is what the sources name on the date it was fetched.
 Gate and report per `fleet/BUILDER-PROMPT-v2.md`. `## Report` ≤ 20 lines appended here.
+
+## Report
+Code tip 13c37624 (u-tls-denylist on main 3dacac76; the report commit follows). Build pass CI 40113336192 green; fix-pass CI 40126826449 green.
+1. `dotnet build TradeAgent.sln -c Release --no-incremental` → "0 Warning(s) 0 Error(s)".
+2. 3× Release, suite lock, each run green: TlsClientGuardTests 2/2, TlsPolicyTests 5/5, TlsDenylistTests 4/4, TlsRefusalWordsTests 2/2, HarnessBudgetTests 16/16, DecisionPortTests 9/9.
+3. CI 40126826449 (Windows ×5, ubuntu, macos, linux-host, packages): "success". Scan exclusion: exact phrase `leash.Token` (a cancellation token's name, no secret). Reviews: fleet/tmp/A-org/tls-denylist/U-tls-denylist-review.md (four findings, all fixed below); re-review U-tls-denylist-rereview.md: "No defects found … all four prior findings are closed".
+4. names.sh main u-tls-denylist → "removed: 0", added 16; "[Fact]/[Theory] base: 3153  tip: 3168".
+5. tests box: RUN at 426a37ca — run 20261024-185011-426a37ca, --filter Tls, GREEN, UnitTests 10/10, his files unchanged. Fix pass: NOT RUN — `ready` exit 4, another run in progress.
+Item 1 done 428b88fc — all eight hashes, two sources each, re-fetched: Go CL 851047 verify.go `distrustedSPKIHashes` equals the shipped set; the six TLS hashes equal OneCRL's pubKeyHash with matching subjects; the two code-signing hashes recomputed with openssl from the crt.sh certificates that Mozilla 2083449 names. Item 2 done 0aad837d. Item 3 done 87f9c536 (eight sites; the loopback listeners and named pipes are named in TlsClients with the reason). Item 4 done 426a37ca.
+Fix 1 (P1, npm fallback) 13c37624: a refused download or release lookup refuses in the policy's words. RED: progress "Installing Node.js first — TradeAgent keeps its own…" (the fallback was taken).
+Fix 2 (P1, `$` anchor) 69c71407: `\A…\z`. RED: "Assert.Throws() Failure: No exception was thrown".
+Fix 3 (P2, words lost) f7c1aed5: ApiConversation, TypeSafeWire (`tls-refused` + new DecisionAnswer.Problem, shown on the card; not on the tape), Downloader (rethrows instead of null; StatusAsync's Because). RED: "No exception was thrown" / "Filter not matched in collection" / Expected "tls-refused" Actual "transport".
+Fix 4 (P2, guard) 557ef492: scans whole files and matches qualified names. RED: "Assert.Single() Failure: The collection was empty". MUTANT (qualified-name group dropped): the same failure; restored, green.
+RED before (a)–(d),(f): at base, "error CS0234: The type or namespace name 'Tls' does not exist in the namespace 'TradeAgent.Core'". Guard (e) on base-shaped src: failed, nine sites listed. MUTANT (denylist loop dropped from Validate): "A_chain_through_a_denylisted_intermediate… Assert.False() Failure"; restored, green.
+Deviations: the Connectors have no HTTP client, so there was nothing to route. Provisioning gains InternalsVisibleTo(UnitTests) and CliAgentRuntime gains init-only Download/NodeCanProvide seams, both for the tests.
+NOT done/verified: no live handshake against a real eMudhra-chained server; the full local suite was not run (CI ran it); other collectors still fold a refusal into their own "unreachable" notes (outside the four findings).
