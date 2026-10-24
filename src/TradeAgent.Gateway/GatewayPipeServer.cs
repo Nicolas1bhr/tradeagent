@@ -2979,8 +2979,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             // holdout feed, the scoring policy, the promotion row and the delivery are all its own.
             // AND THE LINK, WHEN IT WAS ASKED UNDER AN ENTRY, IN THE PROMOTION'S OWN WRITE (U-research-ledger) — through the
             // referee's one callback, so a verdict not recorded links nothing and a `refused` one is linked like any other.
+            // CHARGED TO THE LAUNCH THAT ASKED (U-org-verbs-e): its recorded chain's verdict shares bound it, after the campaign's own.
             var verdict = gateway.Referee.Verdict(version, campaign.Id, stop: ct,
-                recorded: under is null ? null : promotion => gateway.Links.Link(under, LedgerRecord.Promotion, promotion.Id, ctx.AttemptId));
+                recorded: under is null ? null : promotion => gateway.Links.Link(under, LedgerRecord.Promotion, promotion.Id, ctx.AttemptId),
+                attemptId: ctx.AttemptId);
 
             // A VERDICT THE APP STOPPED IS NOT ANSWERED AS ONE (U-verdict-stopped): refused IPC_UNAVAILABLE, as
             // `Backtests.Run` refuses a run it stopped, and BEFORE the paper sweep below, because a stop writes
