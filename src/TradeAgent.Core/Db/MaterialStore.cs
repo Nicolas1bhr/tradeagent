@@ -43,6 +43,20 @@ public sealed class MaterialStore(Database db)
         Observe(relPath, () => origin, size, modifiedAt, runnable, now);
 
     /// <summary>
+    /// IS THERE A LIVE ROW AT THIS TUPLE — the one <see cref="Observe(string, Func{MaterialOrigin}, long, DateTimeOffset, bool, DateTimeOffset)"/>
+    /// would only touch? Asked by the scanner BEFORE it measures a file's origin (<c>U-exec-env-fix</c> item 1), so the bytes are read
+    /// outside the write lock and only for a sighting that will become a row; a row that appears or goes in between costs at most a read
+    /// whose word is not used, or the weaker word.
+    /// </summary>
+    public bool IsLive(string relPath, long size, DateTimeOffset modifiedAt) => db.Read(_ =>
+    {
+        using var find = db.Cmd(
+            "SELECT 1 FROM material WHERE rel_path=$p AND size_bytes=$s AND modified_at=$m AND removed_at IS NULL LIMIT 1",
+            ("$p", relPath), ("$s", size), ("$m", Sql.T(modifiedAt)));
+        return find.ExecuteScalar() is not null and not DBNull;
+    });
+
+    /// <summary>
     /// The same, with the origin decided only if a row is actually written.
     ///
     /// <para><b>This is what keeps "open only what changed" true.</b> Deciding whether the app wrote

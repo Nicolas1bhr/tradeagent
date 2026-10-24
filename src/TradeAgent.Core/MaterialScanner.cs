@@ -238,9 +238,18 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // bytes both match that record is the app's. Anything else in there is the
                     // agent's, which is what this used to say about all of it — including the
                     // language reference the app writes and the briefs the relay delivers.
+                    //
+                    // AND IT IS MEASURED HERE, OUTSIDE THE DATABASE LOCK (U-exec-env-fix item 1): an executor's cell writes its whole
+                    // home, so the bytes at a name the app wrote may be a sparse terabyte, and a read inside Observe's write lock held
+                    // every reader and writer of the database for its length. Only for a sighting no live row has — the one Observe
+                    // would write — and bounded and cancellable (WeWroteIt); a word left unmeasured is the agent's.
+                    MaterialOrigin? measured = !isInbox && _appFiles.Names(rel)
+                        && !_store.IsLive(rel, size, new DateTimeOffset(modifiedUtc, TimeSpan.Zero))
+                            ? WeWroteIt(rel, size, ct) ? MaterialOrigin.App : MaterialOrigin.Agent
+                            : null;
                     Func<MaterialOrigin> origin = isInbox
                         ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
-                        : () => WeWroteIt(rel) ? MaterialOrigin.App : MaterialOrigin.Agent;
+                        : () => measured ?? MaterialOrigin.Agent;
 
                     // THE WORD THE NEW ROW WENT IN WITH, kept as the store is answered so the pass
                     // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
@@ -373,14 +382,21 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// re-review's D2): it is only ever asked of a position's home, which an executor's cell writes, and a name the walk described as a
     /// file may be a link by now. Opened link-free and as a file with one name, a link — to a copy of the app's bytes outside the home,
     /// to <c>/dev/zero</c>, to a FIFO — is refused before a byte is read, and the name is the agent's.</para>
+    ///
+    /// <para><b>Bounded, cancellable, and never under the database lock</b> (<c>U-exec-env-fix</c> item 1, the Codex second pass): the
+    /// cell can put a sparse terabyte at the app's name. A size past <see cref="AppFileManifest.MaxMeasuredBytes"/> — as the walk saw it or
+    /// as the open file says — is not the app's and is not read; one the open file disagrees with the walk on is not the file the row will
+    /// describe; and the read stops at the bound and at <paramref name="ct"/>. The caller asks it before <see cref="MaterialStore.Observe(string, Func{MaterialOrigin}, long, DateTimeOffset, bool, DateTimeOffset)"/>,
+    /// never inside it.</para>
     /// </summary>
-    bool WeWroteIt(string rel)
+    bool WeWroteIt(string rel, long size, CancellationToken ct)
     {
-        if (!_appFiles.Names(rel)) return false;
+        if (!_appFiles.Names(rel) || size > AppFileManifest.MaxMeasuredBytes) return false;
         try
         {
             using var fs = new FileStream(HomeFiles.OpenRead(_root, rel), FileAccess.Read);
-            return _appFiles.Wrote(rel, Sha256Hex.Of(fs));
+            if (fs.Length != size) return false;
+            return _appFiles.Wrote(rel, Sha256Hex.OfAtMost(fs, AppFileManifest.MaxMeasuredBytes, ct));
         }
         catch (IOException) { return false; }               // refused, gone or being written: not measured as the app's
         catch (UnauthorizedAccessException) { return false; }
@@ -423,7 +439,9 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     : new FileStream(HomeFiles.OpenRead(_root, m.RelPath, oneName: false), FileAccess.Read);
                 if (!IsStill(fs, m)) continue;
 
-                var digest = Sha256Hex.Of(fs);
+                // CANCELLABLE BETWEEN READS (U-exec-env-fix item 1): a cell can leave a sparse terabyte at any name in its home, and a
+                // pass that is asked to stop stops here too rather than at the end of the file.
+                var digest = Sha256Hex.Of(fs, ct);
                 if (!IsStill(fs, m)) continue;
 
                 _store.SetHash(m.Id, digest);
