@@ -1277,13 +1277,7 @@ public sealed class AppHost : IAsyncDisposable
         };
         Relay.Revisions.Rejected = text => Gateway.Log.Activity(text, "warn");
 
-        Mission = new MissionLoop(new MissionHost(this),
-            new MissionOptions
-            {
-                TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
-                ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Policy.ReviewMinutes)),
-                Ceilings = LevelCeilings(Gateway.Policy)
-            });
+        Mission = new MissionLoop(new MissionHost(this), LoopOptions(() => Gateway.Policy, Gateway.Settings.MissionTurnsPerSession));
         Mission.Changed += () => Changed?.Invoke();
 
         // A TURN THAT WAS NOT STARTED, WRITTEN DOWN. The engineering log rather than the
@@ -1313,6 +1307,20 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.FenceWritten = FenceWritten;
         ReportAiToTheGateway();
     }
+
+    /// <summary>
+    /// THE LOOP'S OPTIONS, the review interval and the levels' ceilings READ LIVE from the policy in force (<c>U-board-b1</c> fix pass, the
+    /// review's P2): <paramref name="policy"/> is asked at every scheduling, so an act of the security board — or the owner's veto —
+    /// governs the next look and the next ceiling wake the moment the gateway holds it, never after a restart.
+    /// </summary>
+    internal static MissionOptions LoopOptions(Func<BoardPolicy> policy, int turnsPerSession) => new()
+    {
+        TurnsPerSession = Math.Max(1, turnsPerSession),
+        ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, policy().ReviewMinutes)),
+        Ceilings = LevelCeilings(policy()),
+        LiveReviewEvery = () => TimeSpan.FromMinutes(Math.Max(0, policy().ReviewMinutes)),
+        LiveCeilings = () => LevelCeilings(policy())
+    };
 
     /// <summary>
     /// EACH LEVEL'S CEILING AS THE POLICY IN FORCE STATES IT (<see cref="BoardPolicy.HeadCeilingHours"/>, <c>U-board-a2</c>): one value for every level until
