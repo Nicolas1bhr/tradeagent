@@ -511,6 +511,51 @@ public class OrgLedgerTests
         }
     }
 
+    /// <summary>
+    /// THE THREE-DIMENSION RUNG (<c>U-org-verbs-e</c>): a fresh home's <c>org_unit</c> carries <c>trial_share</c> and
+    /// <c>verdict_share</c>, NULL on every seeded unit (no own cap — the legacy divisions admit as before), and <c>strategy_verdict</c>
+    /// carries <c>attempt_id</c> — and the rung re-runs cleanly after a crash before its stamp: with one column added and the others
+    /// not, and with everything made but the stamp, the next open arrives at the same columns and a share written before the crash
+    /// stands.
+    /// </summary>
+    [Fact]
+    public void The_shares_rung_adds_trial_and_verdict_shares_and_the_verdicts_attempt_and_reruns_after_a_crash_before_its_stamp()
+    {
+        Assert.True(Versions.DatabaseSchemaVersion >= Versions.EvidenceSharesRung,
+            $"the columns arrive at rung {Versions.EvidenceSharesRung}; this build says {Versions.DatabaseSchemaVersion}");
+        var file = NewFile("shares-rung");
+        using (var db = new Database(file))
+        {
+            Assert.Equal(["trial_share", "verdict_share"], ShareColumns(db));
+            Assert.Equal(["attempt_id"], Rows(db, "SELECT name FROM pragma_table_info('strategy_verdict') WHERE name='attempt_id'"));
+            Assert.Equal(["0"], Rows(db, "SELECT COUNT(*) FROM org_unit WHERE trial_share IS NOT NULL OR verdict_share IS NOT NULL"));
+            Exec(db, "UPDATE org_unit SET trial_share='0.25', verdict_share='0.5' WHERE id='div-research'");
+        }
+
+        foreach (var crash in new[]
+                 {
+                     "ALTER TABLE org_unit DROP COLUMN verdict_share; ALTER TABLE strategy_verdict DROP COLUMN attempt_id; ", // one added
+                     ""                                                                                                   // all but the stamp
+                 })
+        {
+            using (var raw = Raw(file))
+            {
+                using var c = raw.CreateCommand();
+                c.CommandText = crash + $"UPDATE meta SET value='{Versions.EvidenceSharesRung - 1}' WHERE key='schema_version';";
+                c.ExecuteNonQuery();
+            }
+            using var rerun = new Database(file);
+            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture), Stamp(rerun));
+            Assert.Equal(["trial_share", "verdict_share"], ShareColumns(rerun));
+            Assert.Equal(["attempt_id"], Rows(rerun, "SELECT name FROM pragma_table_info('strategy_verdict') WHERE name='attempt_id'"));
+            Assert.Equal(["0.25"], Rows(rerun, "SELECT trial_share FROM org_unit WHERE id='div-research'"));
+            Exec(rerun, "UPDATE org_unit SET verdict_share='0.5' WHERE id='div-research'");
+        }
+
+        static List<string> ShareColumns(Database db) =>
+            Rows(db, "SELECT name FROM pragma_table_info('org_unit') WHERE name LIKE '%\\_share' ESCAPE '\\' AND name <> 'envelope_share' ORDER BY name");
+    }
+
     // ---- the shape is SQL's, the vocabulary the store's ----------------------------------------------
 
     /// <summary>

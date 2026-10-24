@@ -3006,6 +3006,26 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{boardRung}') ON CONFLICT(key) DO UPDATE SET value='{boardRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-org-verbs-e): a unit overtaken renumbers it in Versions, nothing else.
+        const int sharesRung = Versions.EvidenceSharesRung;
+        if (have < sharesRung)
+        {
+            // EVERY UNIT'S ENVELOPE HAS THREE DIMENSIONS — `U-org-verbs-e` (docs/ORCHESTRATION.md § 2.4; ORGANISATION § 3). Beside
+            // `envelope_share` (AI spend), `org_unit.trial_share` and `org_unit.verdict_share`: decimal TEXT, each a FRACTION of the
+            // campaign's own trial or verdict budget the unit's launches may spend — NULL is no own cap (every seeded unit, the legacy
+            // divisions included, so the legacy pair admits exactly as before). `strategy_verdict.attempt_id`: the launch that asked
+            // the verdict, so its chain (`ai_attempt_funding`) is the unit it is charged to — NULL on a row before the rung and on an
+            // in-process ask: funded by no unit, as rung 38 read the app's principals. Plain TEXT, as every attempt column is. The
+            // campaigns' budgets are untouched: this rung writes no budget and no verdict. Each column added only where missing and
+            // the stamp last: the rungs run in autocommit, and a crash between any statement here and the stamp runs this again
+            // over what it made, each statement a no-op the second time.
+            AddColumnIfMissing("org_unit", "trial_share", "TEXT");
+            AddColumnIfMissing("org_unit", "verdict_share", "TEXT");
+            AddColumnIfMissing("strategy_verdict", "attempt_id", "TEXT");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{sharesRung}') ON CONFLICT(key) DO UPDATE SET value='{sharesRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
