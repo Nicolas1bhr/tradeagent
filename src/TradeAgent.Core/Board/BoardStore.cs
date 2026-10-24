@@ -480,6 +480,10 @@ public sealed class BoardStore(Database db)
         return (intent, inForce);
     }
 
+    /// <summary>The standing paper envelope's terms <paramref name="version"/> states, as canonical JSON (<c>null</c> for none), or null for no such version.</summary>
+    public string? EnvelopeTermsAt(int version) =>
+        Rows().FirstOrDefault(r => r.Version == version) is { } row ? ValueAt(row.Body, "paper_envelope") : null;
+
     /// <summary>The canonical body of the version in force, as stored.</summary>
     string BodyOf(BoardPolicyInForce inForce) => Rows().Single(r => r.Version == inForce.Version).Body;
 
