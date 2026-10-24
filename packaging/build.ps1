@@ -162,6 +162,7 @@ $expected = @(
     [pscustomobject]@{ Path = 'TradeAgent.Provisioning.dll';      Min = 4KB;  What = 'installs Node and the AI tool per-user, with no terminal' }
     [pscustomobject]@{ Path = 'TradeAgent.AgentRuntime.dll';      Min = 4KB;  What = 'runs the AI and hosts the in-app conversation' }
     [pscustomobject]@{ Path = 'TradeAgent.Gateway.dll';           Min = 4KB;  What = 'the execution authority: risk, idempotency, reconciliation' }
+    [pscustomobject]@{ Path = 'tls-denylist.json';                Min = 1KB;  What = 'the distrusted certificate authorities every secure connection is checked against' }
     # Forward slash on purpose: Windows accepts it, and it keeps this table checkable on the
     # macOS/Linux dev hosts, where a backslash is an ordinary filename character.
     [pscustomobject]@{ Path = 'bridge/TradeAgent.AtasBridge.dll'; Min = 8KB;  What = 'the assembly that is loaded into ATAS' }
