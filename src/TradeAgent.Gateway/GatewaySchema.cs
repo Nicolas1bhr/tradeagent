@@ -964,6 +964,14 @@ public static class GatewaySchema
             + "TradeAgent's figures in force for each field it names and its expiry, and NO seat's rationale or forecast; after, all of "
             + "it. It reads; it writes nothing.",
             [new("act", "string", true, "The act's id.")]),
+        new(Core.Ops.BoardPowerPropose, "trade board power-propose <target> <text>", false,
+            "PROPOSE A CHANGE OF THE BOARD'S OWN POWER TO THE OWNER: its composition, its budget, the audit line's budget, a connection or "
+            + "a vendor, the founding policy's shape, a kernel change. A record he reads; NOTHING applies it — the board never changes its "
+            + "own power, and no verb reaches what is his. It places no order and moves no money.",
+            [
+                new("target", "string", true, $"{string.Join(" | ", Core.Board.BoardPowerTarget.All)}"),
+                new("text", "string", true, $"What you propose and why, in your words: at most {Core.Board.BoardLimits.MaxPowerTextChars:N0} characters.")
+            ]),
         new(Core.Ops.DecisionList, "trade decision list [--before ID]", false,
             "YOUR DECISION RECORDS, NEWEST FIRST — never another position's: each with its kind, your choice as you wrote it, its "
             + $"ledger entry and how many forecasts it carries. At most {GatewayPipeServer.OrgListMax} and "
