@@ -498,6 +498,16 @@ jobs:
           mkdir -p "$ev"
           sudo chown -R "$USER" "$ev"   # prove.sh ran as root and made it: the tool's outputs are written as the runner
 
+          # ONE CLOCK: every dated word below comes from the tool's own clock (word_ok's: zoneinfo in the env file's zone), never from
+          # `date -d` — on the runner `TZ=Europe/Brussels date -d tomorrow` answered UTC's day between 22:00 and 24:00Z. Each date is
+          # computed right before the call that uses it; clocks.txt puts the three clocks side by side so a refusal names its cause.
+          zone="$(sed -n 's/^TA_LINUX_ZONE=//p' ~/.tradeagent/linux.env)"; zone="${zone:-Europe/Brussels}"
+          dayof() { python3 -I -c 'import datetime, sys, zoneinfo; print((datetime.datetime.now(zoneinfo.ZoneInfo(sys.argv[1])).date() + datetime.timedelta(days=int(sys.argv[2]))).isoformat())' "$zone" "$1"; }
+          clocks() {
+            { echo "== $1"; echo "TZ=Europe/Brussels date: $(TZ=Europe/Brussels date '+%F %T')"; echo "date -u: $(date -u '+%F %T')"; echo "zoneinfo $zone today: $(dayof 0)"; } >> "$ev/clocks.txt"
+          }
+          clocks "start"
+
           tools/linux-host.sh recon | tee "$ev/tool-recon.txt"
           grep -q ' x86_64$' "$ev/tool-recon.txt" || { echo "recon read no x86_64 kernel line"; exit 1; }
           grep -q 'cgroup2fs' "$ev/tool-recon.txt" || { echo "recon read no cgroup2fs"; exit 1; }
@@ -515,13 +525,12 @@ jobs:
           grep -q "dated word" "$ev/tool-refusal.txt" || { echo "the refusal does not name the dated word"; cat "$ev/tool-refusal.txt"; exit 1; }
           if tools/linux-host.sh stop "2020-01-01 an old word" > /dev/null 2>&1; then echo "stop ran on an old word"; exit 1; fi
           # ... and only TODAY'S, in the host's zone (the env file's): yesterday's and tomorrow's words are refused too.
-          for d in yesterday tomorrow; do
-            if tools/linux-host.sh stop "$(TZ=Europe/Brussels date -d "$d" +%F) a $d word" > "$ev/tool-refusal-$d.txt" 2>&1; then echo "stop ran on $d's word"; exit 1; fi
-            grep -q "dated TODAY" "$ev/tool-refusal-$d.txt" || { echo "the $d refusal does not say why"; cat "$ev/tool-refusal-$d.txt"; exit 1; }
+          for d in yesterday:-1 tomorrow:1; do
+            if tools/linux-host.sh stop "$(dayof "${d#*:}") a ${d%:*} word" > "$ev/tool-refusal-${d%:*}.txt" 2>&1; then echo "stop ran on ${d%:*}'s word"; clocks "refused-${d%:*}-ran"; exit 1; fi
+            grep -q "dated TODAY" "$ev/tool-refusal-${d%:*}.txt" || { echo "the ${d%:*} refusal does not say why"; cat "$ev/tool-refusal-${d%:*}.txt"; clocks "refused-${d%:*}-reason"; exit 1; }
           done
 
-          word="$(TZ=Europe/Brussels date +%F) CI throwaway host"
-          tools/linux-host.sh install linux-artifact/TradeAgent-*-linux-x64.tar.gz "$word" | tee "$ev/tool-install.txt"
+          tools/linux-host.sh install linux-artifact/TradeAgent-*-linux-x64.tar.gz "$(dayof 0) CI throwaway host" | tee "$ev/tool-install.txt"
           grep -q '== backed up [0-9]* files to /var/backups/tradeagent/' "$ev/tool-install.txt" || { echo "install backed nothing up"; exit 1; }
           backup="$(sudo find /var/backups/tradeagent -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
           sudo ls -l "$backup" | tee "$ev/tool-backup-listing.txt"
@@ -534,7 +543,9 @@ jobs:
           tools/linux-host.sh health | tee "$ev/tool-health-after.txt"
           grep -q '^service|tradeagent.service|active=active|' "$ev/tool-health-after.txt" || { echo "health reads the service as not active"; exit 1; }
 
-          tools/linux-host.sh stop "$word" | tee "$ev/tool-stop.txt"
+          # the word is dated AFTER the sleep: a midnight inside it must not refuse the stop
+          clocks "before-stop"
+          tools/linux-host.sh stop "$(dayof 0) CI throwaway host" | tee "$ev/tool-stop.txt"
           grep -q '^state: inactive' "$ev/tool-stop.txt" || { echo "stop left the service running"; exit 1; }
           rm -f ~/.tradeagent/linux.env
 
