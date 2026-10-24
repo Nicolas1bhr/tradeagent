@@ -177,14 +177,14 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// build cannot read back is refused the same way, and never replaced by another model.</para>
     /// </summary>
     public VerdictCharge RequestVerdict(string versionId, long campaignId) =>
-        RequestVerdict(versionId, campaignId, _tape());
+        RequestVerdict(versionId, campaignId, _tape(), null);
 
     /// <summary>
     /// <see cref="RequestVerdict(string, long)"/> against the tape <see cref="Verdict"/> will run on, read ONCE by it: a
     /// host that closed its tape between the charge and the run would otherwise spend a verdict on a run refused for want
     /// of its values.
     /// </summary>
-    VerdictCharge RequestVerdict(string versionId, long campaignId, TapeReader? tape)
+    VerdictCharge RequestVerdict(string versionId, long campaignId, TapeReader? tape, string? attemptId)
     {
         if (string.IsNullOrWhiteSpace(versionId))
             return VerdictCharge.No(campaignId, versionId ?? "",
@@ -232,7 +232,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 return (new VerdictCharged(false, pinned.Why, _campaigns.JudgementsSpent(campaignId),
                     current.VerdictBudget), null);
 
-            var result = _campaigns.ChargeVerdict(campaignId, versionId, _now());
+            var result = _campaigns.ChargeVerdict(campaignId, versionId, _now(), attemptId);
             if (!result.Ok) return (result, null);
 
             if (current.CostModelCanonical is null) _campaigns.PinCostModel(campaignId, model);
@@ -336,9 +336,12 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// verdict or not at all — the research ledger's link from the entry a verdict was asked under. It is never invoked
     /// where no promotion is written, and it is told nothing the promotion row does not hold. It decides nothing: the
     /// charge, the run, the clauses and the answer are all above it.</para>
+    ///
+    /// <para><paramref name="attemptId"/> is the launch that asked (<c>U-org-verbs-e</c>): the charge records it and is held to each
+    /// unit's verdict share of its recorded chain (<see cref="CampaignStore.ChargeVerdict"/>); null is an in-process ask.</para>
     /// </summary>
     public RefereeVerdict Verdict(string versionId, long campaignId, ExecutionModel? model = null,
-        CancellationToken stop = default, Action<PromotionRow>? recorded = null)
+        CancellationToken stop = default, Action<PromotionRow>? recorded = null, string? attemptId = null)
     {
         // NO EXECUTION BOUNDS, NO PROMOTION — asked before anything else, and answered off the text
         // this installation already holds. See `BoundsRefusal`.
@@ -356,7 +359,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
         // held-back bar without it, because the audience is on the charge and is internal to Core. The tape is read
         // once, here, so the charge's check and the run are about one tape.
         var tape = _tape();
-        var charge = RequestVerdict(versionId, campaignId, tape);
+        var charge = RequestVerdict(versionId, campaignId, tape, attemptId);
         if (charge.Audience is not { } audience || charge.Judge is not { } pinned)
             return RefereeVerdict.No($"no verdict was authorised, so nothing was computed: {charge.Why}");
 

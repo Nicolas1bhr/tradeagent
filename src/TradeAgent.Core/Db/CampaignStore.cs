@@ -1365,8 +1365,13 @@ public sealed class CampaignStore(Database db)
     ///
     /// <para>The whole of this runs in one write transaction, so the count and the insert cannot be
     /// separated by another charge.</para>
+    ///
+    /// <para><b>The launch that asked</b> (<c>U-org-verbs-e</c>): <paramref name="attemptId"/> is recorded on the row, and each unit of
+    /// its RECORDED chain with a verdict share must have room for one more judgement of this campaign's lineage — read AFTER the
+    /// campaign's own gates, which run first and unchanged, so it only adds a refusal (EVID-001). Null is an in-process ask: funded by
+    /// no unit, recorded NULL, as a row before rung 50 is.</para>
     /// </summary>
-    public VerdictCharged ChargeVerdict(long campaignId, string versionId, DateTimeOffset at) => db.Write(_ =>
+    public VerdictCharged ChargeVerdict(long campaignId, string versionId, DateTimeOffset at, string? attemptId = null) => db.Write(_ =>
     {
         if (ById(campaignId) is not { } campaign)
             return new VerdictCharged(false, $"there is no campaign {campaignId}.", 0, 0);
@@ -1395,12 +1400,16 @@ public sealed class CampaignStore(Database db)
             return new VerdictCharged(false, JudgementsGone(campaign, OverTheSameMonths(campaignId)),
                 spent, campaign.VerdictBudget);
 
+        // AND EVERY UNIT'S OWN SHARE OF THEM, AFTER THE CAMPAIGN'S GATES AND IN THE SAME WRITE (`U-org-verbs-e`). See the summary.
+        if (attemptId is not null && UnitShareRefusal(ShareKind.Verdicts, campaign, attemptId, versionId) is { } unit)
+            return new VerdictCharged(false, unit, spent, campaign.VerdictBudget);
+
         using var c = db.Cmd("""
-            INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from)
-            VALUES($id,$ver,$at,$cut)
+            INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from, attempt_id)
+            VALUES($id,$ver,$at,$cut,$attempt)
             """,
             ("$id", campaignId), ("$ver", versionId), ("$at", Sql.T(at)),
-            ("$cut", Sql.T(campaign.HoldoutFrom)));
+            ("$cut", Sql.T(campaign.HoldoutFrom)), ("$attempt", attemptId));
         c.ExecuteNonQuery();
 
         return new VerdictCharged(true, "", spent + 1, campaign.VerdictBudget);
