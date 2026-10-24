@@ -155,11 +155,54 @@ public static class ForecastScorer
 }
 
 /// <summary>
-/// ONE POSITION'S SCORECARD, AS COMPUTED AT READ: each resolved, scored forecast's score (<see cref="Scores"/>), and in words each forecast
-/// the app could not score (<see cref="Refused"/>) — a vocabulary this build does not read, a probability that is not one, a reference
-/// class it cannot measure.
+/// ONE MANAGER VERSION'S CALIBRATION (<c>U-org-scorecards-a</c> a2; ORGANISATION § 5, "per manager version"): the runtime and effective
+/// model the forecasts' attempts recorded (<see cref="Name"/>), the number of resolved, scored forecasts and the SUMS of their scores —
+/// every mean is a sum over <see cref="Scored"/>, never a mean of means — and, apart and never in a score, the forecasts resolved void,
+/// written unscored, or still open.
 /// </summary>
-public sealed record PositionScorecard(string Position, IReadOnlyList<ForecastScore> Scores, IReadOnlyList<string> Refused);
+public sealed record ManagerVersionScore(
+    string? Runtime, string? Model, string Name, int Scored, double BrierSum, double BaseBrierSum, double LogSum, double BaseLogSum,
+    int Void, int Unscored, int Open)
+{
+    /// <summary>The mean Brier score, or null with nothing scored (never a zero).</summary>
+    public double? Brier => Scored == 0 ? null : BrierSum / Scored;
+
+    /// <summary>The base rate's mean Brier score over the same forecasts, or null.</summary>
+    public double? BaseBrier => Scored == 0 ? null : BaseBrierSum / Scored;
+
+    /// <summary>The mean skill: base Brier less Brier, or null.</summary>
+    public double? Skill => Scored == 0 ? null : (BaseBrierSum - BrierSum) / Scored;
+
+    /// <summary>The mean log score, or null.</summary>
+    public double? Log => Scored == 0 ? null : LogSum / Scored;
+
+    /// <summary>The base rate's mean log score, or null.</summary>
+    public double? BaseLog => Scored == 0 ? null : BaseLogSum / Scored;
+
+    internal static ManagerVersionScore Empty(string? runtime, string? model, string name) => new(runtime, model, name, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    internal ManagerVersionScore Add(ForecastScore s) => this with
+    {
+        Scored = Scored + 1, BrierSum = BrierSum + s.Brier, BaseBrierSum = BaseBrierSum + s.BaseBrier, LogSum = LogSum + s.Log,
+        BaseLogSum = BaseLogSum + s.BaseLog
+    };
+
+    internal ManagerVersionScore Plus(ManagerVersionScore o) => this with
+    {
+        Scored = Scored + o.Scored, BrierSum = BrierSum + o.BrierSum, BaseBrierSum = BaseBrierSum + o.BaseBrierSum, LogSum = LogSum + o.LogSum,
+        BaseLogSum = BaseLogSum + o.BaseLogSum, Void = Void + o.Void, Unscored = Unscored + o.Unscored, Open = Open + o.Open
+    };
+}
+
+/// <summary>
+/// ONE POSITION'S SCORECARD, AS COMPUTED AT READ: a row per manager version (<see cref="Versions"/>, in the order each first forecast),
+/// the position's <see cref="Total"/> summed over every row's forecasts, each resolved, scored forecast's score (<see cref="Scores"/>), and
+/// in words each forecast the app could not score (<see cref="Refused"/>) — a vocabulary this build does not read, a probability that is
+/// not one, a reference class it cannot measure.
+/// </summary>
+public sealed record PositionScorecard(
+    string Position, IReadOnlyList<ManagerVersionScore> Versions, ManagerVersionScore Total, IReadOnlyList<ForecastScore> Scores,
+    IReadOnlyList<string> Refused);
 
 /// <summary>
 /// THE SCORECARDS (<c>U-org-scorecards-a</c>, O8; ORGANISATION § 8): computed by the app at read from its own resolutions and
@@ -177,11 +220,15 @@ public sealed class Scorecards(Database db)
         + "r.outcome FROM org_forecast f LEFT JOIN ai_attempt a ON a.id = f.attempt_id LEFT JOIN org_forecast_resolution r ON r.forecast_id = f.id "
         + "WHERE f.forecaster = $position ORDER BY f.at, f.rowid";
 
-    /// <summary>The scorecard of <paramref name="position"/>, computed now from the records.</summary>
+    /// <summary>
+    /// The scorecard of <paramref name="position"/>, computed now from the records. A forecast enters a score only when the app wrote it
+    /// scored and resolved it yes or no; one written unscored, resolved void or still open is counted apart in its version's row.
+    /// </summary>
     public PositionScorecard Of(string position) => db.Read(_ =>
     {
         var scores = new List<ForecastScore>();
         var refused = new List<string>();
+        var versions = new List<ManagerVersionScore>();
         using var c = db.Cmd(ForecastsSql, ("$position", position));
         using var r = c.ExecuteReader();
         while (r.Read())
@@ -189,13 +236,23 @@ public sealed class Scorecards(Database db)
             var id = r.GetString(0);
             var vocabulary = r.GetInt32(1);
             var predicate = r.GetString(2);
-            var outcome = Sql.S(r.GetValue(11));
-            if (r.GetInt64(7) == 0 || outcome is null or ForecastOutcome.Void) continue;
+            var (runtime, model) = (Sql.S(r.GetValue(9)), Sql.S(r.GetValue(10)));
+            var name = ForecastScorer.VersionName(runtime, model);
+            var row = versions.FindIndex(v => v.Name == name);
+            if (row < 0)
+            {
+                versions.Add(ManagerVersionScore.Empty(runtime, model, name));
+                row = versions.Count - 1;
+            }
             if (!ForecastVocabulary.IsKnown(vocabulary, predicate))
             {
                 refused.Add(OrgStore.UnknownVocabulary(id, vocabulary) + " It is not scored.");
                 continue;
             }
+            var outcome = Sql.S(r.GetValue(11));
+            if (r.GetInt64(7) == 0) { versions[row] = versions[row] with { Unscored = versions[row].Unscored + 1 }; continue; }
+            if (outcome is null) { versions[row] = versions[row] with { Open = versions[row].Open + 1 }; continue; }
+            if (outcome == ForecastOutcome.Void) { versions[row] = versions[row] with { Void = versions[row].Void + 1 }; continue; }
             if (r.GetValue(6) is not string text || !ForecastVocabulary.IsProbabilityText(text)
                 || !decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var probability))
             {
@@ -208,9 +265,11 @@ public sealed class Scorecards(Database db)
                 refused.Add($"forecast {id} is not scored: {why}");
                 continue;
             }
-            scores.Add(ForecastScorer.Score(id, ForecastScorer.VersionName(Sql.S(r.GetValue(9)), Sql.S(r.GetValue(10))), predicate,
-                (double)probability, outcome == ForecastOutcome.Yes, baseRate));
+            var score = ForecastScorer.Score(id, name, predicate, (double)probability, outcome == ForecastOutcome.Yes, baseRate);
+            scores.Add(score);
+            versions[row] = versions[row].Add(score);
         }
-        return new PositionScorecard(position, scores, refused);
+        var total = versions.Aggregate(ManagerVersionScore.Empty(null, null, "every manager version"), (t, v) => t.Plus(v));
+        return new PositionScorecard(position, versions, total, scores, refused);
     });
 }

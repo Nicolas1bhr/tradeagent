@@ -189,4 +189,77 @@ public class OrgScorecardTests
         var hedged = scores.Single(s => s.Probability == 0.5);
         Assert.True(hedged.Skill < 0, $"a hedge against a 9-in-10 base rate earned {hedged.Skill}");
     }
+
+    /// <summary>An attempt as the ledger records it, with the runtime and effective model it ran on — written by the test, never a real model.</summary>
+    static string Attempt(Database db, string? runtime, string? model)
+    {
+        var id = $"turn-{Guid.NewGuid():n}"[..17];
+        Exec(db, "INSERT INTO ai_attempt(id, started_at, runtime, state, effective_model) VALUES($id, $at, $rt, 'COMPLETED', $m)",
+            ("$id", id), ("$at", Sql(T0.AddMinutes(-1))), ("$rt", runtime), ("$m", model));
+        return id;
+    }
+
+    /// <summary>
+    /// (a2) SCORES ARE KEPT PER MANAGER VERSION, AND A VOID OR UNSCORED FORECAST NEVER ENTERS ONE: the head forecasts under three attempts
+    /// — <c>codex</c> on <c>model-1</c>, <c>codex</c> on <c>model-2</c>, <c>codex</c> naming no model — and under none. Each is its own row,
+    /// named; the forecasts with no attempt are the row "no manager version recorded". On the first row, a forecast whose version got no
+    /// verdict by its date (void), one on a mandate the head itself decides (written unscored, though it resolved) and one not yet due
+    /// (open) are counted apart and enter no score. The position's total is summed over its forecasts, never a mean of the rows' means.
+    /// RED at base: no scorecard existed.
+    /// </summary>
+    [Fact]
+    public void Scores_are_kept_per_manager_version_and_void_or_unscored_never_enter()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        foreach (var v in new[] { "ver-1", "ver-2", "ver-3", "ver-4", "ver-5", "ver-6", "ver-7" }) Version(db, v);
+        Mandate(db, "man-own", Head, Member, MandateEventKind.Issued);
+        ForecastClaim On(string version, decimal p, DateTimeOffset? by = null) =>
+            new(ForecastVocabulary.VerdictClass, version, PromotionVerdict.Promoted, by ?? By, p);
+
+        var one = Attempt(db, "codex", "model-1");
+        Forecasts(db, Head, one, T0, On("ver-1", 0.8m), On("ver-2", 0.7m), On("ver-5", 0.4m), On("ver-6", 0.4m, T0.AddDays(30)),
+            new ForecastClaim(ForecastVocabulary.MandateState, "man-own", MandateEventKind.Accepted, By, 0.9m));
+        Forecasts(db, Head, Attempt(db, "codex", "model-2"), T0, On("ver-3", 0.6m));
+        Forecasts(db, Head, Attempt(db, "codex", null), T0, On("ver-7", 0.5m));
+        Forecasts(db, Head, null, T0, On("ver-4", 0.9m));
+
+        foreach (var v in new[] { "ver-1", "ver-3", "ver-4", "ver-7" }) Verdict(db, v, PromotionVerdict.Promoted, T0.AddHours(1));
+        Verdict(db, "ver-2", PromotionVerdict.Refused, T0.AddHours(1));
+        Event(db, "man-own", MandateEventKind.Accepted, T0.AddHours(1));
+        Assert.Empty(new ForecastResolver(db).Sweep(By.AddMinutes(1)).Refused);
+
+        var card = new Scorecards(db).Of(Head);
+        Assert.Empty(card.Refused);
+        Assert.Equal(["codex, model model-1", "codex, model model-2", "codex, no model named", ForecastScorer.NoVersion],
+            card.Versions.Select(v => v.Name).ToArray());
+
+        // NO VERDICT BEFORE THE FORECASTS: every base rate is Laplace's 1/2 over nothing measured, its Brier 0.25.
+        Assert.All(card.Scores, s => Assert.Equal((0, 0.5, 0.25), (s.Base.Measured, s.Base.Probability, s.BaseBrier)));
+
+        var first = card.Versions[0];
+        Assert.Equal(("codex", "model-1"), (first.Runtime, first.Model));
+        Assert.Equal((2, 1, 1, 1), (first.Scored, first.Void, first.Unscored, first.Open));
+        Close(0.04 + 0.49, first.BrierSum);
+        Close((0.04 + 0.49) / 2, first.Brier!.Value);
+        Close(0.25 - (0.04 + 0.49) / 2, first.Skill!.Value);
+        Close((Math.Log(0.8) + Math.Log(0.3)) / 2, first.Log!.Value);
+
+        Assert.Equal((1, 0, 0, 0), (card.Versions[1].Scored, card.Versions[1].Void, card.Versions[1].Unscored, card.Versions[1].Open));
+        Close(0.16, card.Versions[1].Brier!.Value);
+        Close(0.25, card.Versions[2].Brier!.Value);
+        Assert.Equal((null, null, 1), (card.Versions[3].Runtime, card.Versions[3].Model, card.Versions[3].Scored));
+        Close(0.01, card.Versions[3].Brier!.Value);
+
+        // THE TOTAL IS SUMMED OVER THE FIVE SCORED FORECASTS — never the mean of the four rows' means.
+        Assert.Equal((5, 1, 1, 1), (card.Total.Scored, card.Total.Void, card.Total.Unscored, card.Total.Open));
+        Close((0.04 + 0.49 + 0.16 + 0.25 + 0.01) / 5, card.Total.Brier!.Value);
+        Assert.NotEqual(Math.Round(card.Versions.Average(v => v.Brier!.Value), 9), Math.Round(card.Total.Brier!.Value, 9));
+        Assert.Equal(5, card.Scores.Count);
+
+        // A POSITION WITH NO FORECAST HAS NO ROW AND NO SCORE — never a zero.
+        var none = new Scorecards(db).Of(Member);
+        Assert.Empty(none.Versions);
+        Assert.Null(none.Total.Brier);
+    }
 }
