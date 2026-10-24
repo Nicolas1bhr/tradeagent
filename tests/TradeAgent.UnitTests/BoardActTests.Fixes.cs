@@ -158,3 +158,27 @@ public partial class BoardActTests
         Assert.Equal(clock.Now.AddDays(20), Assert.Single(gw.Envelopes.All(), Stands).ExpiresAt);
     }
 }
+
+public partial class BoardActTests
+{
+    /// <summary>
+    /// THE LOOP'S REVIEW INTERVAL AND CEILINGS FOLLOW AN ACT AT ONCE (review P2, AppHost.cs:1284): the options the app gives its loop ask the
+    /// gateway's policy at every scheduling, so one seat raising <c>review_minutes</c> and <c>head_ceiling_hours</c> (both narrowings) is
+    /// what the loop's next look and next ceiling wake are measured by, with no restart. RED before the fix: 30 minutes and 24 hours,
+    /// copied at start. Watched red with the options composed without their live sources.
+    /// </summary>
+    [Fact]
+    public async Task The_loops_review_and_ceilings_follow_an_act_at_once()
+    {
+        using var db = TestEnv.NewDb();
+        Activate(db, "board-1");
+        var (gw, _) = await Gateway(db);
+        await using var _gw = gw;
+        var options = TradeAgent.App.AppHost.LoopOptions(() => gw.Policy, 1);
+        Assert.Equal((TimeSpan.FromMinutes(30), TimeSpan.FromHours(24)), (options.ReviewInterval(), options.CeilingFor(OrgLevel.Department)));
+
+        gw.BoardNarrow(Act("board-1", "[{\"field\":\"review_minutes\",\"from\":30,\"to\":90},{\"field\":\"head_ceiling_hours\",\"from\":24,\"to\":72}]"));
+        Assert.Equal((TimeSpan.FromMinutes(90), TimeSpan.FromHours(72)), (options.ReviewInterval(), options.CeilingFor(OrgLevel.Department)));
+        Assert.Equal(TimeSpan.FromHours(72), options.CeilingFor(OrgLevel.Team));
+    }
+}
