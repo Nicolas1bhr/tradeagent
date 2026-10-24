@@ -155,7 +155,7 @@ public static class OrgEventKind
 
     /// <summary>
     /// The owner's narrowing veto of one structural event, and his activation of a dormant position (<c>U-org-verbs-d</c>:
-    /// <c>OrgStore.Veto</c>, <c>OrgStore.Activate</c>) — in-process only, decided by <see cref="OrgDecider.Owner"/>.
+    /// <see cref="OrgStore.Veto"/>, <see cref="OrgStore.Activate"/>) — in-process only, decided by <see cref="OrgDecider.Owner"/>.
     /// </summary>
     public const string Vetoed = "vetoed", Activated = "activated";
 
