@@ -1031,11 +1031,14 @@ public sealed partial class OrgStore
                     var level = LevelOf(m.Holder);
                     var due = last is null ? now : RewakeDue(m, latest, last, level ?? floors.Largest, floors, now);
                     if (!events.RaiseDue(key, MissionEventKind.Mandate, now, due, payload: m.Id, role: m.Holder)) return proposal;
-                    if (level is null && due > now)
+                    // AN UNPLACEABLE HOLDER IS NAMED WHATEVER ITS RE-WAKE'S DUE (U-rewake-followups): the deadline's last-chance clamp
+                    // can make it due now, and the holder is no more placeable for that.
+                    if (level is null)
                         said?.Invoke($"The organisation's chart cannot place {m.Holder}"
                                      + (unread is null ? "" : $" (it could not be read: {unread})")
-                                     + $", so its re-wake for mandate {m.Id} waits the largest floor there is, "
-                                     + $"{floors.Floor(floors.Largest).TotalMinutes:0} minutes, rather than a guess: due {due:u}.");
+                                     + $", so its re-wake for mandate {m.Id} is held to the largest floor there is, "
+                                     + $"{floors.Floor(floors.Largest).TotalMinutes:0} minutes, rather than a guess: "
+                                     + (due > now ? $"due {due:u}." : $"due now ({due:u}): no floor delays it here."));
                     return proposal + 1;
                 }
 
