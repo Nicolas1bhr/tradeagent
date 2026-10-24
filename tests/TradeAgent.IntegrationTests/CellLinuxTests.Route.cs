@@ -461,8 +461,11 @@ public partial class CellLinuxTests
             plant?.Invoke(layout);
 
             var cli = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
+            // THE CLASS'S MODEL ON THE APP'S CATALOG (U-cell-model-catalog): the shipped bytes, named as a launch names the seat home's.
+            var catalog = Path.Combine(dir, "model-catalog.json");
+            File.WriteAllBytes(catalog, SeatProfile.ShippedCatalog(cli.Seat!).Bytes ?? throw new InvalidOperationException("no shipped model catalog"));
             var psi = Plain(r.Codex, ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check",
-                .. WithoutDoor(cli.Seat!.ArgsFor(SeatPlan.CellClass)), "-m", "gpt-5.5",
+                .. WithoutDoor(cli.Seat!.ArgsFor(SeatPlan.CellClass, null, catalog)), "-m", BrokerSeat.Model,
                 "-c", "model_provider=\"mock\"", "-c", "model_providers.mock.name=\"mock\"",
                 "-c", $"model_providers.mock.base_url=\"http://127.0.0.1:{port}/v1\"", "-c", "model_providers.mock.wire_api=\"responses\"", "go"]);
             psi.WorkingDirectory = r.W.Ws;

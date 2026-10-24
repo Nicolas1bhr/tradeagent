@@ -74,10 +74,10 @@ public class ExecutorCellTests : IDisposable
             role: role, seatProbe: BrokerSeatTests.BrokerProbe(), seats: register, door: () => new Uri("http://127.0.0.1:1/mcp"),
             surfaceProbe: new BrokerSeatTests.FakeSurface(CellSurface), cells: cells);
 
-    /// <summary>The cell class's offered surface for gpt-5.5, as -c's verifier expects it (RouteATests).</summary>
+    /// <summary>The cell class's offered surface for the pinned model (gpt-6-luna on the app's catalog), as -c's verifier expects it (RouteATests).</summary>
     internal static readonly string[] CellSurface =
         ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input",
-         "apply_patch", "view_image", "tool_search"];
+         "request_user_input_async", "clock.curr_time", "apply_patch", "view_image", "tool_search"];
 
     // ---- (a) the class rule ------------------------------------------------------------------------------------------
 

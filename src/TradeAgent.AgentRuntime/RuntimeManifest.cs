@@ -1097,13 +1097,14 @@ public static class RuntimeCatalog
                     [SeatPlan.BrokerClass] = new(StringComparer.Ordinal) { ["CODEX_EXEC_SERVER_URL"] = "none" }
                 },
                 ConfigFile = "codex/config.toml",
-                // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog): gpt-5.5's one entry copied unedited from codex
-                // rust-v0.160.1's bundled models-manager/models.json. A live turn otherwise resolves the model from the signed-in
-                // account's list — the owner's has no gpt-5.5, so codex takes FALLBACK metadata (search tool off) — while the dry run
-                // reads the bundled entry; with model_catalog_json both read these bytes (the static models manager, no account refresh).
+                // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog, option C of 2026-10-25): gpt-6-luna's entry from the
+                // pinned 0.160.1's BUNDLED catalog (`codex debug models --bundled`, a throwaway home), with two deliberate edits the file
+                // labels — no tool_mode (the vendor's code_mode_only) and use_responses_lite false — so the seat is offered classic tools,
+                // never code mode's exec. A live turn otherwise resolves the model from the signed-in account's list; with
+                // model_catalog_json the dry run and the live turn read these bytes (the static models manager, no account refresh).
                 ModelCatalog = "codex/model-catalog.json",
                 ModelCatalogSource = "SeatData/codex-model-catalog.json",
-                ModelCatalogSha256 = "4cdacddb3077c7dc585d22baaff0f3a5ddff809cf8b388831012ed27d1486d84",
+                ModelCatalogSha256 = "088568a342fe92b0421f31aadedc3a43dfac969873a03c54bcddc8e4a755760d",
                 // WHERE CODEX 0.160.1 KEEPS A SECRET IN A FILE, read in its source at rust-v0.160.1: the sign-in in
                 // `codex_home.join("auth.json")` (login/src/auth/storage.rs:155) and MCP OAuth tokens in
                 // `FALLBACK_FILENAME: &str = ".credentials.json"` under CODEX_HOME (rmcp-client/src/oauth.rs:819, :1062) — both stores

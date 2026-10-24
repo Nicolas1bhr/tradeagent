@@ -24,9 +24,14 @@ public class BrokerSeatTests : IDisposable
 
     static readonly Uri DoorAt = new("http://127.0.0.1:1/mcp");
 
-    /// <summary>What the real dry run captured for gpt-5.5 under the broker class (RUN 2026-10-17, broker.sh x-gpt-5.5).</summary>
+    /// <summary>
+    /// What the real dry run captured for the pinned model under the broker class: gpt-6-luna on the app's catalog, RE-MEASURED
+    /// 2026-10-25 on codex-cli 0.160.1 and the loopback mock (ModelCatalogProbeTests; gpt-5.5's 2026-10-17 set plus clock.curr_time and
+    /// request_user_input_async).
+    /// </summary>
     internal static readonly string[] Classic =
-        ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input", "tool_search[tool_search]"];
+        ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input", "request_user_input_async",
+         "clock.curr_time", "tool_search[tool_search]"];
 
     /// <summary>What it captured for gpt-6-astra under the same argv (x-gpt-6-astra): code mode's exec, inside the codex process.</summary>
     internal static readonly string[] CodeMode =
@@ -47,7 +52,7 @@ public class BrokerSeatTests : IDisposable
     /// host with a proven cell and the register declaring it broker: its verdict is class <c>broker</c>, MEDIATED; the attempt row records
     /// both; and the process that starts carries <c>CODEX_EXEC_SERVER_URL=none</c> and the grant in its environment, the door as
     /// <c>mcp_servers.tradeagent</c> with <c>required=true</c> and the grant's variable as bearer, the shell, exec, image and sleep tools
-    /// and sub-agents off, no empty server table, and <c>-m gpt-5.5</c>.
+    /// and sub-agents off, no empty server table, and <c>-m</c> the pinned model.
     ///
     /// <para>RED at base: it did not compile — no <c>door</c> or <c>surfaceProbe</c> on <see cref="AgentSession"/>, no
     /// <c>SeatPlan.BrokerClass</c>; every position ran as class <c>cli</c> with <c>-c mcp_servers={}</c>.</para>
@@ -81,7 +86,7 @@ public class BrokerSeatTests : IDisposable
                      "mcp_servers.tradeagent.bearer_token_env_var=\"TRADEAGENT_GRANT\"",
                      "mcp_servers.tradeagent.default_tools_approval_mode=\"approve\"", "agents.enabled=false",
                      "--disable shell_tool", "--disable unified_exec", "--disable view_image", "--disable sleep_tool",
-                     "--disable code_mode_host", "--ignore-user-config", "-m gpt-5.5"
+                     "--disable code_mode_host", "--ignore-user-config", "-m gpt-6-luna"
                  })
             Assert.True(exec.Contains(carried, StringComparison.Ordinal), $"the broker turn's argv lacks '{carried}': {exec}");
         Assert.DoesNotContain("mcp_servers={}", exec, StringComparison.Ordinal);
@@ -183,7 +188,7 @@ public class BrokerSeatTests : IDisposable
         }
 
         // NO CLASS PINS A MODEL BUT THE VERIFIED ONES (BROKER, CELL), AND A RUNTIME THAT CANNOT NAME ONE CANNOT RUN AS ONE.
-        // The cell class pins gpt-5.5 since U-cell-linux-c (L2); the harness class still pins none.
+        // The cell class pins the broker's model since U-cell-linux-c (L2); the harness class still pins none.
         Assert.Contains("pins no model", BrokerSeat.ModelRefusal(SeatClasses.Harness, null, codex));
         var mute = RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex");
         mute.ModelArgs = [];

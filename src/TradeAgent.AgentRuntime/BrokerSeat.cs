@@ -30,10 +30,13 @@ public static class BrokerSeat
     public const string DoorServer = "tradeagent";
 
     /// <summary>
-    /// THE CLASSIC-TOOLS MODEL A BROKER SEAT RUNS ON. RUN 2026-10-17 (codex-cli 0.160.1, the loopback mock, a throwaway home): offered
-    /// exactly <see cref="Expected"/>'s set; gpt-6-astra under the same argv was offered <c>exec</c> and refused.
+    /// THE MODEL A BROKER OR CELL SEAT RUNS ON, WITH CLASSIC TOOLS (<c>U-cell-model-catalog</c>, option C of 2026-10-25): gpt-5.5 retired
+    /// from Codex with ChatGPT sign-in on 2026-10-14 and every model on the owner's plan is <c>code_mode_only</c>, so the seat runs
+    /// gpt-6-luna on the app's own catalog — the vendor's bundled entry without <c>tool_mode</c> (<see cref="SeatPlan.ModelCatalog"/>).
+    /// Offered exactly <see cref="Expected"/>'s set on the loopback mock; under the bundled metadata the same argv is offered code
+    /// mode's <c>exec</c> and refused.
     /// </summary>
-    public const string Model = "gpt-5.5";
+    public const string Model = "gpt-6-luna";
 
     /// <summary>The model <paramref name="seatClass"/> is pinned to, or null for a class that pins none.</summary>
     public static string? ModelOf(string seatClass) => IsVerified(seatClass) ? Model : null;
@@ -54,18 +57,19 @@ public static class BrokerSeat
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
-        [Model] = ["list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input", "tool_search"]
+        [Model] = ["clock.curr_time", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input",
+                   "request_user_input_async", "tool_search"]
     };
 
     /// <summary>
-    /// ROUTE (a)'S CELL CLASS'S EXPECTED SURFACE (<c>U-cell-linux-c</c> L2), RUN 2026-10-22 on codex-cli 0.160.1 and gpt-5.5 (the
-    /// classic-tools model: no <c>exec</c>): the shell, patch and image tools — which run in the cell — and the door's. Code mode's
+    /// ROUTE (a)'S CELL CLASS'S EXPECTED SURFACE (<c>U-cell-linux-c</c> L2), RUN on codex-cli 0.160.1 and the pinned model on the app's
+    /// catalog (classic tools: no <c>exec</c>; gpt-5.5 on 2026-10-22, gpt-6-luna under <c>U-cell-model-catalog</c>): the shell, patch and image tools — which run in the cell — and the door's. Code mode's
     /// <c>exec</c>, sub-agents and anything else would run in the harness beside the login and are refused before admission.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> ExpectedInCell = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
-        [Model] = ["apply_patch", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
-                   "request_user_input", "tool_search", "view_image", "write_stdin"]
+        [Model] = ["apply_patch", "clock.curr_time", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
+                   "request_user_input", "request_user_input_async", "tool_search", "view_image", "write_stdin"]
     };
 
     /// <summary>The expected surface of <paramref name="seatClass"/> on <paramref name="model"/>, or null for none this build knows.</summary>
@@ -283,7 +287,7 @@ public static class BrokerSeat
     {
         var names = offered.Select(ToolName).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
         var inCell = seatClass == SeatPlan.CellClass ? ExpectedFor(seatClass, model) ?? [] : [];
-        var host = names.Where(n => HostTools.Contains(n, StringComparer.Ordinal) && !inCell.Contains(n, StringComparer.Ordinal)).ToList();
+        var host = names.Where(n => HostTools.Contains(BareName(n), StringComparer.Ordinal) && !inCell.Contains(n, StringComparer.Ordinal)).ToList();
         var kind = Kind(seatClass);
         if (host.Count > 0)
             return $"TradeAgent will not start {who} as {kind}: on {model} it would offer {Words(host)}, which runs on this " +
@@ -304,17 +308,21 @@ public static class BrokerSeat
     }
 
     /// <summary>
-    /// A captured tool's bare name: the namespace before its last dot, a <c>[kind]</c> after it and an <c>(additional_tools)</c> mark
-    /// dropped — <c>(additional_tools) functions.exec[custom]</c> is <c>exec</c>, <c>tool_search[tool_search]</c> is <c>tool_search</c>.
+    /// A captured tool's name: a <c>[kind]</c> after it, an <c>(additional_tools)</c> mark and codex's own <c>functions.</c> namespace
+    /// dropped — <c>(additional_tools) functions.exec[custom]</c> is <c>exec</c>, <c>tool_search[tool_search]</c> is <c>tool_search</c> —
+    /// and any other namespace KEPT: <c>clock.curr_time</c> stays itself, so a tool of that name in another namespace is a new tool.
     /// </summary>
     public static string ToolName(string captured)
     {
         var name = captured.Trim();
         if (name.StartsWith('(') && name.IndexOf(')') is var close and > 0) name = name[(close + 1)..].Trim();
         if (name.IndexOf('[') is var bracket and >= 0) name = name[..bracket];
-        if (name.LastIndexOf('.') is var dot and >= 0) name = name[(dot + 1)..];
-        return name.Trim();
+        name = name.Trim();
+        return name.StartsWith("functions.", StringComparison.Ordinal) ? name["functions.".Length..] : name;
     }
+
+    /// <summary>A tool name's last segment, whatever its namespace: what <see cref="HostTools"/> is matched against.</summary>
+    static string BareName(string name) => name.LastIndexOf('.') is var dot and >= 0 ? name[(dot + 1)..] : name;
 
     static string Words(IReadOnlyList<string> names) => string.Join(", ", names.Select(n => $"'{n}'"));
 }
