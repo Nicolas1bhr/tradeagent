@@ -527,6 +527,38 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade board narrow <intent> <rationale>`, `propose <intent> <rationale>`, `decide <act> <answer> <intent_sha256> <rationale>`,
+        // `list` and `show <act>` (U-board-b1): the security board's verbs, served to an active board seat alone. Every flag is sent on
+        // under its own name and the gateway refuses one the verb does not take. No `board` verb reaches the owner's veto, the board's
+        // composition or its budget — those are the owner's, in process, and no verb names them.
+        case "board":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "narrow":
+                    Fill(a, rest, "intent", "rationale");
+                    return (Ops.BoardNarrow, a);
+                case "propose":
+                    Fill(a, rest, "intent", "rationale");
+                    return (Ops.BoardPropose, a);
+                case "decide":
+                    Fill(a, rest, "act", "answer", "intent_sha256", "rationale");
+                    return (Ops.BoardDecide, a);
+                case "list" or "ls":
+                    return (Ops.BoardList, a);
+                case "show":
+                    Fill(a, rest, "act");
+                    return (Ops.BoardShow, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade forecast add <on> <predicate> <target> <by> <probability> [--subject ID]` (U-org-decisions).
         case "forecast":
         {
