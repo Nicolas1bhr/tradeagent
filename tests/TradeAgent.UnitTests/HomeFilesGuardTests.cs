@@ -60,6 +60,14 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("CliAgentRuntime.CreateEnvironmentAsync", "Directory.CreateDirectory", 1, "the chair's home folder itself, whose ancestry no cell can write"),
         ("WorkspaceBuilder.Build", "Directory.CreateDirectory", 3, "the workspace, the owner's inbox and the home folder itself — none below a home"),
 
+        // ---- the owner's repair of a refused home (U-repair-position-home): the home folder renamed by its own name, and workspace/.refused ----
+        ("WorkspaceBuilder.RepairHome", "File.Exists", 1, "the kept folder's name under workspace/.refused, which is beside the homes, never in one"),
+        ("WorkspaceBuilder.RepairHome", "Directory.Exists", 1, "the kept folder's name under workspace/.refused, which is beside the homes, never in one"),
+        ("WorkspaceBuilder.RepairHome", "FileInfo..ctor", 1, "the kept folder's name under workspace/.refused, asked whether a link holds it, never followed"),
+        ("WorkspaceBuilder.RepairHome", "FileSystemInfo.get_LinkTarget", 1, "the kept folder's name under workspace/.refused: a link there refuses, never followed"),
+        ("WorkspaceBuilder.RepairHome", "Directory.CreateDirectory", 1, "workspace/.refused itself, whose ancestry is the app's and no cell writes"),
+        ("WorkspaceBuilder.RepairHome", "Directory.Move", 1, "the home folder itself renamed by its own name (one rename; nothing below it is opened or followed)"),
+
         // ---- the app's install, never a home ------------------------------------------------------------------------------------
         ("CliAgentRuntime.Candidates", "File.Exists", 4, "the runtime's executable: the manifest's absolute path, tools/<id>/ and PATH"),
         ("CliAgentRuntime.InstallAsync", "Directory.CreateDirectory", 1, "tools/<id>/, the app's own install folder"),
