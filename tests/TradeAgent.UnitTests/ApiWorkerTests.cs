@@ -46,10 +46,10 @@ public class ApiWorkerTests : IDisposable
 
     ApiAgentRuntime Runtime(FakeProvider provider, string? key = Pretend,
         Func<string, IWorkerTools>? tools = null, TurnAllowance? allowance = null,
-        TimeSpan? timeout = null) =>
+        TimeSpan? timeout = null, AppFileManifest? files = null) =>
         new(Manifest(provider), provider.Holding(key), tools,
             allowance: _ => allowance ?? TurnAllowance.Default,
-            requestTimeout: timeout ?? TimeSpan.FromSeconds(10));
+            requestTimeout: timeout ?? TimeSpan.FromSeconds(10), appFiles: files);
 
     IAgentConversation Research(ApiAgentRuntime runtime) =>
         runtime.OpenConversation(CouncilRoles.Research, () => _home,
@@ -74,8 +74,11 @@ public class ApiWorkerTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(canon)!);
         File.WriteAllText(canon, "You are the Research Director. Do research.");
         File.WriteAllText(Path.Combine(_home, Canon.CliFile), "You may use the shell.");
+        // ON THE APP'S RECORD AS ITS OWN (U-exec-env-fix item 2): the harness sends a canon only the app wrote, never one it cannot vouch for.
+        var files = new AppFileManifest(Path.Combine(_home, "..", $"files-{Guid.NewGuid():n}.tsv"));
+        files.Record(CouncilRoles.HomeDir(CouncilRoles.Research), Canon.HarnessFile, "You are the Research Director. Do research.");
 
-        using var runtime = Runtime(provider);
+        using var runtime = Runtime(provider, files: files);
         var conversation = Research(runtime);
         AgentTurnEnded? ended = null;
         conversation.TurnEnded += e => ended = e;

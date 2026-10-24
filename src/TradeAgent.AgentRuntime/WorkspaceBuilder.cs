@@ -134,7 +134,7 @@ public static class WorkspaceBuilder
         // THE CLI'S CANON IS KEPT AS WELL AS RECORDED (U-execution-environment item 3): an executor's cell writes its whole home, so
         // its session puts the app's canon back before every turn (AgentSession.RestoreCanon), from this text. THE HARNESS'S TOO
         // (U-exec-env-fix item 2): its turn sends this text as its system message, never what the cell left at its name.
-        if (relPath is Canon.CliFile or Canon.HarnessFile) files.Keep(homeDir, relPath, text);
+        if (relPath is Canon.CliFile or Canon.HarnessFile) files.Keep(homeDir, relPath, text, home);
         else files.Record(homeDir, relPath, text);
     }
 

@@ -702,7 +702,7 @@ public sealed class ApiConversation(
     /// not have (<c>U-canon</c>). A worker's <c>write_file</c> reaches only <c>out/</c> and <c>trading/</c> — but an executor's cell
     /// writes its whole home, this file included.
     /// <para><b>So the text sent is the app's, never the file's</b> (<c>U-exec-env-fix</c> item 2, the Codex second pass on
-    /// <c>U-execution-environment</c>): the canon the app rendered at this process's last start (<see cref="AppFileManifest.Kept"/>),
+    /// <c>U-execution-environment</c>): the canon the app rendered into this home at this process's last start (<see cref="AppFileManifest.Kept"/>),
     /// whatever lies on disk now. With nothing kept — no start in this process wrote it — the file is sent only when its bytes are
     /// exactly what the app recorded writing there (<see cref="AppFileManifest.Wrote"/>); anything else is null, and the turn is refused
     /// in words. A canon that cannot be read at all still falls back to the role's title, which is the app's own text.</para>
@@ -711,15 +711,15 @@ public sealed class ApiConversation(
     {
         var files = appFiles ?? AppFileManifest.Shared;
         var key = AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.HarnessFile);
-        if (files.Kept(key) is { } kept) return Bounded(kept);
-
         string text;
         try
         {
+            var home = workspace();
+            if (files.Kept(key, home) is { } kept) return Bounded(kept);
             // NEVER THROUGH A LINK (U-execution-environment fix pass 4): an executor's cell writes its whole home, so the name may be a link
             // to a login outside — refused by HomeFiles, never sent as a system text.
             // AND NEVER PAST Canon.MaxReadBytes (fix pass 5, P1): one the cell grew past it is refused unread, and the turn falls back below.
-            text = HomeFiles.ReadAllText(workspace(), Canon.HarnessFile, Canon.MaxReadBytes);
+            text = HomeFiles.ReadAllText(home, Canon.HarnessFile, Canon.MaxReadBytes);
         }
         // A mission file that cannot be read must not stop the turn: the Situation the app composed
         // still describes the world, and a role with no mission text is a worse turn rather than none.

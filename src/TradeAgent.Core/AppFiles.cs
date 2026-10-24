@@ -68,17 +68,25 @@ public sealed class AppFileManifest
     /// turn — an executor's canon, which its cell can rewrite in its own home — is written from what the app last wrote, never from
     /// what the cell left there. Kept in memory only: every start writes the canon again, and nothing is read back from a file a seat
     /// could reach.
+    /// <para><b>Kept FOR THE FOLDER IT WAS WRITTEN INTO</b> (<c>U-exec-env-fix</c> item 2): <paramref name="folder"/> is the home on disk,
+    /// and <see cref="Kept"/> answers only for that same folder — a canon the app wrote into one home is never handed out as another's.</para>
     /// </summary>
-    public void Keep(string home, string relPath, string text)
+    public void Keep(string home, string relPath, string text, string folder)
     {
         Record(home, relPath, text);
-        _kept[Key(home, relPath)] = text;
+        _kept[Key(home, relPath)] = (Folder(folder), text);
     }
 
-    /// <summary>The text the app last kept at <paramref name="key"/> (<see cref="Key"/>) in this process, or null.</summary>
-    public string? Kept(string key) => _kept.TryGetValue(key, out var text) ? text : null;
+    /// <summary>
+    /// The text the app last kept at <paramref name="key"/> (<see cref="Key"/>) in this process, when it wrote it into
+    /// <paramref name="folder"/>; otherwise null.
+    /// </summary>
+    public string? Kept(string key, string folder) =>
+        _kept.TryGetValue(key, out var kept) && kept.Folder == Folder(folder) ? kept.Text : null;
 
-    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _kept = new(StringComparer.Ordinal);
+    static string Folder(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Folder, string Text)> _kept = new(StringComparer.Ordinal);
 
     /// <summary>Records that the app wrote these bytes at this path inside this home.</summary>
     public void Record(string home, string relPath, ReadOnlySpan<byte> bytes) =>
