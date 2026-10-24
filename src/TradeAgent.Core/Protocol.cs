@@ -246,6 +246,13 @@ public static class Ops
     public const string OrgCharter = "org-charter", OrgHire = "org-hire";
 
     /// <summary>
+    /// A PARENT'S HEAD RE-SPLITS ONE CURRENCY OF A CHILD UNIT'S SHARE (<c>U-org-verbs-e</c>; ORCHESTRATION § 2.9; ORGANISATION § 8): its
+    /// AI, trial or verdict share, an <c>envelope-tilt</c> decision with a forecast, at most twenty points a week, inside the parent's
+    /// own. NOT in <see cref="Mutating"/>: it places no order, moves no money and raises no parent's envelope.
+    /// </summary>
+    public const string OrgTilt = "org-tilt";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
@@ -281,7 +288,7 @@ public static class Ops
     /// </summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
-        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire];
+        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgTilt];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

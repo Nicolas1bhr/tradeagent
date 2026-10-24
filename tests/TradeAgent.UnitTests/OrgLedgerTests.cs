@@ -330,8 +330,12 @@ public class OrgLedgerTests
         // the new position, the id is minted, and the position is dormant. Every other op keeps the whole check below.
         var structural = new Dictionary<string, (string Cli, string[] Args)>
         {
-            [Ops.OrgCharter] = ("trade org charter", ["kind", "ai_share", "rationale", "forecasts", "refs", "options", "collapse_by"]),
-            [Ops.OrgHire] = ("trade org hire", ["unit", "rationale", "forecasts", "head", "refs", "options"])
+            // REVISITED, OUT LOUD, BY U-org-verbs-e (declared): a charter also takes the new unit's own trial and verdict shares, and
+            // `org-tilt` (`trade org tilt`) re-splits ONE currency of a child unit's share — a unit whose parent the caller heads — behind
+            // OrgVerbCaller and OrgStore.Tilt's checks. Neither names a seat, a head, a parent or a position.
+            [Ops.OrgCharter] = ("trade org charter", ["kind", "ai_share", "rationale", "forecasts", "refs", "options", "collapse_by", "trial_share", "verdict_share"]),
+            [Ops.OrgHire] = ("trade org hire", ["unit", "rationale", "forecasts", "head", "refs", "options"]),
+            [Ops.OrgTilt] = ("trade org tilt", ["unit", "currency", "share", "rationale", "forecasts", "refs", "options"])
         };
         foreach (var (name, (cli, args)) in structural)
         {
