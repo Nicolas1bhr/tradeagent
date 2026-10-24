@@ -567,9 +567,21 @@ sealed class SettingsPage
             return false;
         }
 
-        fraction = percent / 100m;
+        // THE FRACTION MUST BE EXACTLY THE FIGURE TYPED (U-amount-precision): the reader checked precision before this division, and the
+        // division rounds at 28 places — 0.0000000000000000000000000001% became the fraction 0, a declared cost silently none (EVID-001).
+        var kept = percent / 100m;
+        if (kept * 100m != percent)
+        {
+            why = Labels.PercentTooPrecise(name, typed, Amount.Exact(SmallestPercent));
+            return false;
+        }
+
+        fraction = kept;
         return true;
     }
+
+    /// <summary>The smallest percentage a fraction of 28 places holds exactly: 26 places after the mark.</summary>
+    const decimal SmallestPercent = 0.00000000000000000000000001m;
 
     /// <summary>The reading line's look: the amount field's (<c>AmountField</c>), from the theme.</summary>
     static TextBlock ReadingLine() =>

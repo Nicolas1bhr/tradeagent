@@ -832,6 +832,14 @@ public static partial class Labels
     public static string AmountTooPrecise(string typed) =>
         $"\u201c{typed}\u201d has more digits than TradeAgent can keep exactly: write at most 28 after the decimal mark and 29 in all.";
 
+    /// <summary>
+    /// A percentage the box would have to round when it is turned into the fraction the setting keeps (<c>U-amount-precision</c>): refused,
+    /// never saved as a cost that is not the one typed — 28 places hold at most 26 after the percent mark.
+    /// </summary>
+    public static string PercentTooPrecise(string name, string typed, string smallest) =>
+        $"A {name} of {typed}% has more digits than TradeAgent can keep exactly: the smallest figure it holds is {smallest}%. "
+        + "Write a figure with fewer places, or leave the box empty.";
+
     /// <summary>Below what the box takes.</summary>
     public static string AmountBelow(string typed, string min) =>
         $"\u201c{typed}\u201d is less than this box takes: at least {min}.";
