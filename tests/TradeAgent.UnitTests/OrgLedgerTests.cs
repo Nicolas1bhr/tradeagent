@@ -414,6 +414,11 @@ public class OrgLedgerTests
         // division head or the chief), the fourteen-day life, the weekly throttle. OrgStore.Restructure.cs joins the writers below. None
         // writes ai_attempt or ai_attempt_funding: a past charge never moves.
         mandate = [.. mandate, "Close", "Merge", "Retire"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-d: Veto and Activate — the OWNER's in-process writers (AUTH-001). Veto undoes one
+        // structural event (org_unit, org_position, org_event; decider of record `owner`), Activate turns a dormant position active
+        // while no board seat is (org_position, org_event). No op, door verb or trade verb reaches either:
+        // OrgStructureTests.No_pipe_op_or_door_verb_reaches_veto_or_activation holds that.
+        mandate = [.. mandate, "Activate", "Veto"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

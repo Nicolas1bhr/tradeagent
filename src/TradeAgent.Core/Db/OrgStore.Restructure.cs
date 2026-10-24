@@ -42,6 +42,13 @@ public sealed record MergeRequest(string Caller, string? Attempt, string UnitId,
 public sealed record MergedUnit(OrgUnitRow Closed, OrgUnitRow Successor, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts,
     IReadOnlyList<string> MovedPositions, IReadOnlyList<string> MovedUnits, IReadOnlyList<string> Cancelled, long EventId);
 
+/// <summary>
+/// What the owner's veto did (<c>U-org-verbs-d</c> item 4): the event vetoed and its kind, the units and positions it restored DORMANT,
+/// the units it closed and the positions it ended, the mandates its disposal cancelled, and the <c>vetoed</c> event's id.
+/// </summary>
+public sealed record Vetoed(long EventId, string Kind, IReadOnlyList<string> Restored, IReadOnlyList<string> Ended,
+    IReadOnlyList<string> Cancelled, long VetoEventId);
+
 /// <summary>What a restructuring disposed of: the mandates it cancelled and the fences it wrote (their <c>org_event</c> ids).</summary>
 internal sealed record Disposal(IReadOnlyList<string> Cancelled, IReadOnlyList<long> Fences);
 
@@ -242,6 +249,166 @@ public sealed partial class OrgStore
         return new MergedUnit(after.Single(u => u.Id == a.Id), after.Single(u => u.Id == b.Id), decision, forecasts, moved, children,
             disposal.Cancelled, eventId);
     });
+
+    // ---- the owner's writers, in-process (item 4) ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE OWNER'S NARROWING VETO OF ONE STRUCTURAL EVENT (<c>U-org-verbs-d</c> item 4; ORGANISATION § 3; R24 § 4.3: it cancels an act
+    /// and restores the state before it, never widens a limit or puts money to work) — IN-PROCESS ONLY: no pipe op, door verb,
+    /// <c>trade</c> verb or setting reaches it (AUTH-001), and a guard test holds that. A <c>chartered</c> unit is closed (its positions
+    /// ended); a <c>closed</c> unit is restored DORMANT with the positions that close ended, each DORMANT; a <c>retired</c> position is
+    /// restored DORMANT — its unit's head again where it headed it and the head is still vacant; a <c>hired</c> position is ended. Each
+    /// runs the restructuring's disposal (<see cref="Restructure"/>) over what it ends and fences every position it touches, with the
+    /// owner as decider of record; and one <c>vetoed</c> event, decided by <see cref="OrgDecider.Owner"/> — never a structural change
+    /// the weekly throttle counts. It restores STRUCTURE, never work: a mandate the act cancelled stays cancelled, a launch stays as it
+    /// ran, a decision stays recorded. Refused in words, nothing written: no such event; one not decided by a position (the app's or the
+    /// owner's own); one vetoed already; a merge (undoing it would move positions back across what has run since — not this build's);
+    /// any other kind; a state the event no longer describes.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public Vetoed Veto(long eventId, DateTimeOffset now) => db.Write(_ =>
+    {
+        string unitId, kind, decider, detail;
+        string? positionId;
+        using (var c = db.Cmd("SELECT unit_id, position_id, kind, decider, detail FROM org_event WHERE id = $id", ("$id", eventId)))
+        using (var rd = c.ExecuteReader())
+        {
+            if (!rd.Read()) throw Refused($"event {eventId.ToString(CultureInfo.InvariantCulture)} is not on the chart's record.");
+            (unitId, positionId, kind, decider, detail) = (rd.GetString(0), Sql.S(rd.GetValue(1)), rd.GetString(2), rd.GetString(3), rd.GetString(4));
+        }
+        var what = $"event {eventId.ToString(CultureInfo.InvariantCulture)} ({kind})";
+        if (decider is OrgDecider.App or OrgDecider.Owner)
+            throw Refused($"{what} was decided by {decider}: the veto undoes what the organisation decided, never the app's or your own act.");
+        using (var c = db.Cmd("SELECT COUNT(*) FROM org_event WHERE kind = $vetoed AND detail LIKE $mark",
+                   ("$vetoed", OrgEventKind.Vetoed), ("$mark", $"event={eventId.ToString(CultureInfo.InvariantCulture)} %")))
+            if (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0) throw Refused($"{what} is vetoed already.");
+
+        var unit = Units().FirstOrDefault(u => u.Id == unitId) ?? throw Damaged($"{what} names {unitId}, which is not a unit");
+        var act = $"the owner vetoed {what}";
+        var restored = new List<string>();
+        var ended = new List<string>();
+        IReadOnlyList<string> cancelled = [];
+        switch (kind)
+        {
+            case OrgEventKind.Chartered:
+            {
+                if (unit.Status == OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is closed already.");
+                var children = Units().Where(u => u.ParentId == unit.Id && u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToList();
+                if (children.Count > 0)
+                    throw Refused($"{what}: {unit.Id} has open units under it ({string.Join(", ", children)}); veto or close those first.");
+                using (var c = db.Cmd("UPDATE org_unit SET status = $closed, closed_at = $at WHERE id = $u",
+                           ("$closed", OrgUnitStatus.Closed), ("$at", Sql.T(now)), ("$u", unit.Id)))
+                    c.ExecuteNonQuery();
+                ended.AddRange(Positions().Where(p => p.UnitId == unit.Id && p.Status != OrgPositionStatus.Ended).Select(p => p.Id));
+                EndPositions(ended, now);
+                cancelled = Restructure(new Restructuring(act, OrgDecider.Owner, [unit.Id], ended, ended), now).Cancelled;
+                ended.Insert(0, unit.Id);
+                break;
+            }
+            case OrgEventKind.Closed:
+            {
+                if (unit.Status != OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is not closed any more.");
+                if (unit.ParentId is { } parent && Units().Single(u => u.Id == parent).Status == OrgUnitStatus.Closed)
+                    throw Refused($"{what}: {unit.Id}'s parent {parent} is closed, so there is nothing to restore it under.");
+                using (var c = db.Cmd("UPDATE org_unit SET status = $dormant, closed_at = NULL WHERE id = $u",
+                           ("$dormant", OrgUnitStatus.Dormant), ("$u", unit.Id)))
+                    c.ExecuteNonQuery();
+                restored.Add(unit.Id);
+                foreach (var p in IdsOf(DetailValue(detail, "ended"), what))
+                    if (Position(p) is { Status: OrgPositionStatus.Ended } row && row.UnitId == unit.Id)
+                    {
+                        Restore(p);
+                        restored.Add(p);
+                    }
+                Restructure(new Restructuring(act, OrgDecider.Owner, [], [], restored.Skip(1).ToList()), now);
+                break;
+            }
+            case OrgEventKind.Retired:
+            {
+                var p = positionId ?? throw Damaged($"{what} names no position");
+                if (Position(p) is not { Status: OrgPositionStatus.Ended } row || row.UnitId != unit.Id)
+                    throw Refused($"{what}: {p} is not the ended member of {unit.Id} the retirement left.");
+                if (unit.Status == OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is closed, so there is nothing to restore {p} into.");
+                Restore(p);
+                if (DetailValue(detail, "head") == "yes")
+                {
+                    using var c = db.Cmd("UPDATE org_unit SET head_position_id = $p WHERE id = $u AND head_position_id IS NULL", ("$p", p), ("$u", unit.Id));
+                    c.ExecuteNonQuery();
+                }
+                restored.Add(p);
+                Restructure(new Restructuring(act, OrgDecider.Owner, [], [], [p]), now);
+                break;
+            }
+            case OrgEventKind.Hired:
+            {
+                var p = positionId ?? throw Damaged($"{what} names no position");
+                if (Position(p) is not { } row || row.Status == OrgPositionStatus.Ended) throw Refused($"{what}: {p} has ended already.");
+                EndPositions([p], now);
+                if (unit.HeadPositionId == p) VacateHead(unit.Id, p);
+                cancelled = Restructure(new Restructuring(act, OrgDecider.Owner, [], [p], [p]), now).Cancelled;
+                ended.Add(p);
+                break;
+            }
+            case OrgEventKind.Merged:
+                throw Refused($"{what}: a merge is not undone by a veto in this build — its positions have run in their new unit since, and "
+                              + "moving them back is a restructuring of its own.");
+            default:
+                throw Refused($"{what} is no structural act a veto undoes: a charter, a close, a retirement or a hire.");
+        }
+
+        var vetoId = Event(now, unit.Id, positionId, OrgEventKind.Vetoed, OrgDecider.Owner,
+            $"event={eventId.ToString(CultureInfo.InvariantCulture)} kind={kind} restored={Ids(restored)} ended={Ids(ended)} cancelled={Ids(cancelled)}");
+        return new Vetoed(eventId, kind, restored, ended, cancelled, vetoId);
+    });
+
+    /// <summary>
+    /// THE OWNER ACTIVATES A DORMANT POSITION (<c>U-org-verbs-d</c> item 4; survey Q2) — IN-PROCESS ONLY (AUTH-001: no pipe op, door
+    /// verb, <c>trade</c> verb or setting reaches it) and only while no board seat is ACTIVE: a board act on plan capacity with no other
+    /// decider stays his until then (R24; the orchestrator's generalised ruling), and once a seat is active it is the board's, refused
+    /// here in words naming it. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>. It starts
+    /// nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
+    /// Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public OrgPositionRow Activate(string positionId, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (new Board.BoardReader(db).AnyActive)
+            throw Refused($"activating {positionId} is the security board's now that a board seat is active (R24): it is a board act on the "
+                          + "organisation's plan capacity, made by board seats — no longer yours in the app.");
+        var row = Position(positionId) ?? throw Refused($"'{positionId}' is no position on the chart.");
+        if (row.Status != OrgPositionStatus.Dormant) throw Refused($"{positionId} is {row.Status}: only a dormant position is activated.");
+        if (Units().FirstOrDefault(u => u.Id == row.UnitId) is not { Status: not OrgUnitStatus.Closed } unit)
+            throw Refused($"{positionId}'s unit {row.UnitId} is closed: nothing is activated in a closed unit.");
+        using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
+                   ("$active", OrgPositionStatus.Active), ("$p", positionId), ("$dormant", OrgPositionStatus.Dormant)))
+            if (c.ExecuteNonQuery() != 1) throw Refused($"{positionId} changed while this activation was written.");
+        Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
+        return Position(positionId)!;
+    });
+
+    /// <summary>An ended position back to DORMANT, its end cleared, inside the caller's write.</summary>
+    void Restore(string position)
+    {
+        using var c = db.Cmd("UPDATE org_position SET status = $dormant, ended_at = NULL WHERE id = $p AND status = $ended",
+            ("$dormant", OrgPositionStatus.Dormant), ("$p", position), ("$ended", OrgPositionStatus.Ended));
+        c.ExecuteNonQuery();
+    }
+
+    /// <summary>One <c>name=value</c> part of an app-composed event detail, or null.</summary>
+    static string? DetailValue(string detail, string name)
+    {
+        foreach (var part in detail.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            if (part.StartsWith(name + "=", StringComparison.Ordinal)) return part[(name.Length + 1)..];
+        return null;
+    }
+
+    /// <summary>A listed value's ids (<see cref="Ids"/>'s form); one this build did not write is damage, never read on a guess.</summary>
+    static IReadOnlyList<string> IdsOf(string? listed, string what) => listed switch
+    {
+        null => throw Damaged($"{what} carries no list this build wrote"),
+        "none" => [],
+        _ => listed.Split(',')
+    };
 
     // ---- the restructuring writers' parts ----------------------------------------------------------------------------------------
 

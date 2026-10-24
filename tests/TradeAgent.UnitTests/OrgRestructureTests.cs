@@ -335,4 +335,135 @@ public partial class OrgStructureTests
         Assert.Equal(charged, ChargedTo(db, a));
         Assert.Equal([b, Div, OrgIds.Root], org.FundingLine(aMember).Select(u => u.Id));
     }
+
+    // ---- item 4: the owner's veto and activation, in-process -----------------------------------------------------------
+
+    /// <summary>
+    /// (4a) THE VETO RESTORES STRUCTURE, NEVER WORK: the division's head closes a team (its head and member ended, the mandate held in
+    /// it cancelled); the owner's veto restores the team DORMANT with both positions DORMANT, decided by the owner of record, and fences
+    /// them — while the cancelled mandate stays cancelled, the close's decision stays recorded and every launch the team's chain funded
+    /// reads as before. Vetoing it twice is refused. A charter's veto closes the unit; a hire's ends the position; a retirement's
+    /// restores it DORMANT as its unit's head; a merge's veto, the app's own events and the owner's are refused in words. No veto is a
+    /// structural change the weekly throttle counts. RED at base: no <c>OrgStore.Veto</c>.
+    /// </summary>
+    [Fact]
+    public void The_veto_restores_structure_never_work()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        Seat(db, OldMember, Old);
+        var held = Mandate(org, OldHead, OldMember);
+        var past = Funded(db, OldMember, Old, Div, OrgIds.Root);
+        var closed = org.Close(CloseAsk(Old), Now);
+        var charged = ChargedTo(db, Old);
+        var ledger = Count(db, "ledger_entry");
+
+        var vetoed = org.Veto(closed.EventId, Now.AddMinutes(1));
+
+        Assert.Equal(OrgEventKind.Closed, vetoed.Kind);
+        Assert.Equal(new[] { Old, OldHead, OldMember }.Order(StringComparer.Ordinal), vetoed.Restored.Order(StringComparer.Ordinal));
+        var unit = org.Units().Single(u => u.Id == Old);
+        Assert.Equal((OrgUnitStatus.Dormant, (DateTimeOffset?)null, (string?)OldHead), (unit.Status, unit.ClosedAt, unit.HeadPositionId));
+        Assert.All(new[] { OldHead, OldMember }, p => Assert.Equal((OrgPositionStatus.Dormant, (DateTimeOffset?)null),
+            (org.Position(p)!.Status, org.Position(p)!.EndedAt)));
+        Assert.Equal(1, Count(db, "org_event", $"id = {vetoed.VetoEventId} AND kind = 'vetoed' AND decider = '{OrgDecider.Owner}'"));
+        Assert.Equal(2, Count(db, "org_event", $"kind = 'fenced' AND decider = '{OrgDecider.Owner}'"));
+        // ... NEVER WORK: the mandate stays cancelled, the decision stays, the launches stay.
+        Assert.Equal(MandateEventKind.Cancelled, org.MandateStatus(held.Id));
+        Assert.NotNull(org.Decision(closed.Decision.Id));
+        Assert.Equal(ledger, Count(db, "ledger_entry"));
+        Assert.Equal(charged, ChargedTo(db, Old));
+        Assert.Equal(AiAttemptState.LAUNCHED, new AiAttemptStore(db).Get(past)!.State);
+        Assert.Contains("vetoed already", Assert.Throws<TradeAgentException>(() => org.Veto(closed.EventId, Now)).Message, StringComparison.Ordinal);
+
+        // A CHARTER'S VETO CLOSES THE UNIT; A HIRE'S ENDS THE POSITION; A RETIREMENT'S RESTORES IT AS ITS UNIT'S HEAD.
+        var made = org.Charter(Ask(refs: [CurrentRun(db)]), Metered, Now);
+        Assert.Equal([made.Unit.Id], org.Veto(made.EventId, Now).Ended);
+        Assert.Equal(OrgUnitStatus.Closed, org.Units().Single(u => u.Id == made.Unit.Id).Status);
+        var hired = org.Hire(new HireRequest(Head, null, Old, false, "one more pair of hands", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        Assert.Equal([hired.Position.Id], org.Veto(hired.EventId, Now).Ended);
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(hired.Position.Id)!.Status);
+        var retired = org.Retire(RetireAsk(SubHead), Now);
+        Assert.Equal([SubHead], org.Veto(retired.EventId, Now).Restored);
+        Assert.Equal((OrgPositionStatus.Dormant, (string?)SubHead), (org.Position(SubHead)!.Status, org.Units().Single(u => u.Id == Sub).HeadPositionId));
+
+        // REFUSED IN WORDS: the app's own seed, a merge, an event that is not there.
+        var seeded = db.Read(_ => { using var c = db.Cmd("SELECT id FROM org_event WHERE kind = 'seeded' LIMIT 1"); return (long)c.ExecuteScalar()!; });
+        Assert.Contains("never the app's or your own act", Assert.Throws<TradeAgentException>(() => org.Veto(seeded, Now)).Message, StringComparison.Ordinal);
+        Aged(db, "team-twin0c0ffee", Div, OrgUnitKind.Team, 20);
+        Exec(db, "DELETE FROM org_event WHERE kind IN ('chartered', 'closed') AND decider = $h", ("$h", Head));
+        var merged = org.Merge(MergeAsk(Old, "team-twin0c0ffee"), Now);
+        Assert.Contains("a merge is not undone", Assert.Throws<TradeAgentException>(() => org.Veto(merged.EventId, Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("is not on the chart's record", Assert.Throws<TradeAgentException>(() => org.Veto(999_999, Now)).Message, StringComparison.Ordinal);
+        Assert.Equal(0, Count(db, "org_event", $"kind IN ('chartered', 'closed', 'merged') AND decider = '{OrgDecider.Owner}'"));
+        Assert.DoesNotContain(OrgEventKind.Vetoed, OrgEventKind.Structural);
+    }
+
+    /// <summary>
+    /// (4b) THE OWNER'S ACTIVATION IS HIS ONLY WHILE NO BOARD SEAT IS ACTIVE: a dormant hire turns active, one <c>activated</c> event
+    /// decided by the owner; an active, ended or unknown position is refused; and once a board seat is active the activation is refused
+    /// in words naming the board, nothing written (R24; the orchestrator's generalised ruling).
+    /// </summary>
+    [Fact]
+    public void The_owners_activation_is_his_only_while_no_board_seat_is_active()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var dormant = org.Hire(new HireRequest(Head, null, Old, false, "a second member", ["hire"], [CurrentRun(db)],
+            [Admissible()]), Now);
+
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Now).Status);
+        Assert.Equal(1, Count(db, "org_event", $"kind = 'activated' AND position_id = '{hired.Position.Id}' AND decider = '{OrgDecider.Owner}'"));
+        Assert.Contains("only a dormant position", Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("no position", Assert.Throws<TradeAgentException>(() => org.Activate("pos-000000000000", Now)).Message, StringComparison.Ordinal);
+
+        // A BOARD SEAT ACTIVE (U-board-b's rung admits it; the test rebuilds the table to store one).
+        db.Exec("DROP TRIGGER board_seat_sealed_u");
+        db.Exec("ALTER TABLE board_seat RENAME TO board_seat_49");
+        db.Exec("CREATE TABLE board_seat(id TEXT PRIMARY KEY, seat_class TEXT, model_class TEXT, vendor_family TEXT, status TEXT, founded_at TEXT) WITHOUT ROWID");
+        Exec(db, "INSERT INTO board_seat VALUES('board-1', 'harness', 'strong', 'anthropic', 'active', $at)", ("$at", Stamp));
+        var before = Written(db);
+        var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Now));
+        Assert.Contains("the security board's now that a board seat is active", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        Assert.Equal(OrgPositionStatus.Dormant, org.Position(dormant.Position.Id)!.Status);
+    }
+
+    /// <summary>
+    /// (4c) GUARD — NO PIPE OP, DOOR VERB OR <c>trade</c> VERB REACHES THE VETO OR THE ACTIVATION (AUTH-001): no op the gateway serves —
+    /// and so no door verb, which serves every organisation op — and no CLI form names either, and no source file outside the store and
+    /// the app's own process calls them. RED with an op added (an <c>org-veto</c> or <c>org-activate</c> in <c>Ops</c>).
+    /// </summary>
+    [Fact]
+    public void No_pipe_op_or_door_verb_reaches_veto_or_activation()
+    {
+        string[] words = ["veto", "activat"];
+        var constants = typeof(Ops).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string)).Select(f => (string)f.GetRawConstantValue()!).ToList();
+        Assert.NotEmpty(constants);
+        foreach (var op in constants.Concat(Ops.Organisation))
+            foreach (var word in words)
+                Assert.DoesNotContain(word, op, StringComparison.OrdinalIgnoreCase);
+        foreach (var op in TradeAgent.Gateway.GatewaySchema.Ops())
+            foreach (var word in words)
+            {
+                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
+                Assert.All(op.Args, a => Assert.DoesNotContain(word, a.Name, StringComparison.OrdinalIgnoreCase));
+            }
+
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !Directory.Exists(Path.Combine(d.FullName, "src"))) d = d.Parent;
+        var root = d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
+        var callers = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
+            .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.StartsWith("src/TradeAgent.App/", StringComparison.Ordinal)
+                        && !f.StartsWith("src/TradeAgent.Core/Db/OrgStore", StringComparison.Ordinal))
+            .Where(f => System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(Path.Combine(root, f)), @"\.(Veto|Activate)\s*\("))
+            .ToList();
+        Assert.Empty(callers);
+    }
 }
