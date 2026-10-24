@@ -537,7 +537,9 @@ public sealed class AppHost : IAsyncDisposable
         DeclaredClass = DeclaredSeatClass(role),
         ProvenCell = new CellProofStore(_db!).HoldsProof(),
         ActiveBeyondLegacy = ActiveBeyondLegacy(),
-        OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? []
+        OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? [],
+        UnconfinedActive = new OrgStore(_db!).UnconfinedSeatsActive(DeclaredSeatClass).Where(p => p != role).ToList(),
+        UnconfinedSeatSetting = Gateway.Settings.UnconfinedSeats
     };
 
     /// <summary>

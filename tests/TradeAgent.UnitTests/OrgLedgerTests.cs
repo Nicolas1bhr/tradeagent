@@ -419,6 +419,9 @@ public class OrgLedgerTests
         // while no board seat is (org_position, org_event). No op, door verb or trade verb reaches either:
         // OrgStructureTests.No_pipe_op_or_door_verb_reaches_veto_or_activation holds that.
         mandate = [.. mandate, "Activate", "Veto"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-d item 5: UnconfinedSeatsActive — the owner's unconfined-seat ceiling's one read of the
+        // chart (the active positions on counted seats). A read; it writes nothing.
+        mandate = [.. mandate, "UnconfinedSeatsActive"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

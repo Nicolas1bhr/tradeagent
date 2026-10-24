@@ -338,6 +338,9 @@ public partial class OrgStructureTests
 
     // ---- item 4: the owner's veto and activation, in-process -----------------------------------------------------------
 
+    /// <summary>Every position declared on a puppet seat: no model, so the unconfined-seat ceiling never counts it.</summary>
+    static string? Puppets(string _) => SeatClasses.Puppet;
+
     /// <summary>
     /// (4a) THE VETO RESTORES STRUCTURE, NEVER WORK: the division's head closes a team (its head and member ended, the mandate held in
     /// it cancelled); the owner's veto restores the team DORMANT with both positions DORMANT, decided by the owner of record, and fences
@@ -415,10 +418,10 @@ public partial class OrgStructureTests
         var dormant = org.Hire(new HireRequest(Head, null, Old, false, "a second member", ["hire"], [CurrentRun(db)],
             [Admissible()]), Now);
 
-        Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Now).Status);
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Puppets, 3, Now).Status);
         Assert.Equal(1, Count(db, "org_event", $"kind = 'activated' AND position_id = '{hired.Position.Id}' AND decider = '{OrgDecider.Owner}'"));
-        Assert.Contains("only a dormant position", Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Now)).Message, StringComparison.Ordinal);
-        Assert.Contains("no position", Assert.Throws<TradeAgentException>(() => org.Activate("pos-000000000000", Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("only a dormant position", Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Puppets, 3, Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("no position", Assert.Throws<TradeAgentException>(() => org.Activate("pos-000000000000", Puppets, 3, Now)).Message, StringComparison.Ordinal);
 
         // A BOARD SEAT ACTIVE (U-board-b's rung admits it; the test rebuilds the table to store one).
         db.Exec("DROP TRIGGER board_seat_sealed_u");
@@ -426,7 +429,7 @@ public partial class OrgStructureTests
         db.Exec("CREATE TABLE board_seat(id TEXT PRIMARY KEY, seat_class TEXT, model_class TEXT, vendor_family TEXT, status TEXT, founded_at TEXT) WITHOUT ROWID");
         Exec(db, "INSERT INTO board_seat VALUES('board-1', 'harness', 'strong', 'anthropic', 'active', $at)", ("$at", Stamp));
         var before = Written(db);
-        var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Now));
+        var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Puppets, 3, Now));
         Assert.Contains("the security board's now that a board seat is active", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(dormant.Position.Id)!.Status);
@@ -465,5 +468,55 @@ public partial class OrgStructureTests
             .Where(f => System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(Path.Combine(root, f)), @"\.(Veto|Activate)\s*\("))
             .ToList();
         Assert.Empty(callers);
+    }
+
+    // ---- item 5: the owner's unconfined-seat ceiling -------------------------------------------------------------------
+
+    /// <summary>
+    /// (5) A FOURTH UNCONFINED SEAT IS REFUSED WHATEVER THE SETTING SAYS (ORGANISATION § 10; CRED-001): with the legacy pair and one
+    /// more position active on seats that run a model below a proven cell, a fourth on a harness seat is refused at the gate — about the
+    /// host, both counts named — under a setting of 3 and under a setting of 10 (a setting never raises the code's three); a setting
+    /// of 2 refuses the third; a puppet seat and a cell are exempt; and the owner's own activation of a dormant fourth is refused in the
+    /// same words, nothing written, while a third activates. RED with the ceiling's line removed from <c>PositionActivation.Decide</c>.
+    /// </summary>
+    [Fact]
+    public void A_fourth_unconfined_seat_is_refused_whatever_the_setting_says()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        static string? Harness(string _) => SeatClasses.Harness;
+        var active = org.UnconfinedSeatsActive(Harness);
+        Assert.Contains(CouncilRoles.Operations, active);
+        Assert.Contains(CouncilRoles.Research, active);
+
+        SeatFacts Facts(int setting, string seat, params string[] others) => new()
+        {
+            Standing = org.Standing(Member), DeclaredClass = seat, ProvenCell = true, UnconfinedActive = others, UnconfinedSeatSetting = setting
+        };
+        string[] three = [CouncilRoles.Operations, CouncilRoles.Research, Head];
+        foreach (var setting in new[] { 3, 10, int.MaxValue })
+        {
+            var refused = PositionActivation.Decide(Member, org.Standing(Member), Facts(setting, SeatClasses.Harness, three));
+            Assert.NotNull(refused);
+            Assert.Equal(RefusalKind.HostOrLaunch, refused!.Kind);
+            Assert.Contains("3 such positions are active", refused.Words, StringComparison.Ordinal);
+            Assert.Contains("unconfined-seat ceiling is 3", refused.Words, StringComparison.Ordinal);
+        }
+        Assert.Contains("ceiling is 2", PositionActivation.Decide(Member, org.Standing(Member),
+            Facts(2, SeatClasses.Harness, CouncilRoles.Operations, CouncilRoles.Research))!.Words, StringComparison.Ordinal);
+        Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Harness, CouncilRoles.Operations, CouncilRoles.Research)));
+        Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Puppet, three)));
+        Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Cell, three)));
+
+        // THE OWNER'S ACTIVATION: the chart's own count — the legacy pair and every active position here on a harness seat — is past
+        // three already, so a dormant hire is refused whatever the setting; with only the pair counted, a third activates.
+        Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
+        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var before = Written(db);
+        var words = Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Harness, 99, Now)).Message;
+        Assert.Contains("unconfined-seat ceiling is 3 (his setting 99", words, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        string? OnlyThePairUnconfined(string id) => CouncilRoles.IsKnown(id) || id == hired.Position.Id ? SeatClasses.Harness : SeatClasses.Puppet;
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, OnlyThePairUnconfined, 3, Now).Status);
     }
 }
