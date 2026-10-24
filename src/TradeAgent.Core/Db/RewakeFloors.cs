@@ -60,15 +60,19 @@ public sealed record RewakeFloors(IReadOnlyDictionary<string, TimeSpan> Floors, 
     /// HOW LONG AFTER THE <paramref name="k"/>-TH UNDELIVERED LAUNCH ENDED THE NEXT RE-WAKE IS DUE: the floor, doubled for each
     /// launch after the first, never more than <see cref="Cap"/> floors and never past the level's ceiling. Zero for a zero floor
     /// and for no launch.
+    ///
+    /// <para><b>Never an overflow</b> (<c>U-rewake-followups</c>): the policy accepts any whole number of minutes, so the cap is
+    /// computed saturating at <see cref="TimeSpan.MaxValue"/> and each doubling is compared with the cap before it is made — a floor
+    /// of <see cref="int.MaxValue"/> minutes reads its ceiling, never an exception that would end the sweep for every later mandate.</para>
     /// </summary>
     public TimeSpan After(string level, int k)
     {
         var floor = Floor(level);
         if (floor <= TimeSpan.Zero || k <= 0) return TimeSpan.Zero;
-        var cap = floor * Cap;
+        var cap = floor.Ticks > TimeSpan.MaxValue.Ticks / Cap ? TimeSpan.MaxValue : floor * Cap;
         if (Ceilings.TryGetValue(level, out var ceiling) && ceiling > TimeSpan.Zero && ceiling < cap) cap = ceiling;
-        var step = floor;
-        for (var i = 1; i < k && step < cap; i++) step *= 2;
-        return step < cap ? step : cap;
+        var step = floor < cap ? floor : cap;
+        for (var i = 1; i < k && step < cap; i++) step = step.Ticks > cap.Ticks / 2 ? cap : step * 2;
+        return step;
     }
 }

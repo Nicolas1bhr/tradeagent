@@ -528,4 +528,36 @@ public partial class OrgAssignmentTests
         Assert.Equal((m1.Id, t.AddMinutes(15)), (left.Payload, left.DueAt));
     }
 
+    /// <summary>
+    /// (h, U-rewake-followups item 2) A FLOOR OF <see cref="int.MaxValue"/> MINUTES READS ITS CEILING, AND THE SWEEP CONTINUES. The
+    /// board's policy accepts any non-negative whole number of minutes; one that large must not overflow the doubling or the sweep's
+    /// dates: under the 24 h ceiling every re-wake waits exactly 24 h, with no ceiling the interval saturates rather than throwing, and
+    /// a sweep over two mandates writes BOTH re-raises — the first does not abort the pass for the next.
+    ///
+    /// <para>RED at base: <c>floor * 8</c> overflowed, and the sweep threw on the first mandate.</para>
+    /// </summary>
+    [Fact]
+    public void A_floor_of_int_max_minutes_reads_its_ceiling_and_the_sweep_continues()
+    {
+        var huge = new Dictionary<string, int> { [OrgLevel.Executor] = int.MaxValue };
+        var floors = RewakeFloors.From(huge, OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(24)));
+        foreach (var k in new[] { 1, 2, 4, 40 })
+            Assert.Equal(TimeSpan.FromHours(24), floors.After(OrgLevel.Executor, k));
+        var open = RewakeFloors.From(huge, null);
+        Assert.Equal(TimeSpan.FromMinutes(int.MaxValue), open.After(OrgLevel.Executor, 1));
+        Assert.Equal(TimeSpan.MaxValue, open.After(OrgLevel.Executor, 40));
+
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var org = new OrgStore(db);
+        var t = DateTimeOffset.UtcNow;
+        var first = org.Assign(Issue(), t);
+        var next = org.Assign(Issue(holder: Other), t.AddSeconds(1));
+        var a = TurnOn(db, Member, first, t);
+        var b = TurnOn(db, Other, next, t.AddSeconds(1));
+        Assert.Equal(2, org.Sweep(t.AddSeconds(1), floors));
+        Assert.Equal((t.AddHours(24), t.AddSeconds(1).AddHours(24)),
+            (Reraise(db, org, first, a)!.DueAt, Reraise(db, org, next, b)!.DueAt));
+    }
+
 }
