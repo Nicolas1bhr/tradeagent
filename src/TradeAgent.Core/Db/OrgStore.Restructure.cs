@@ -422,18 +422,39 @@ public sealed partial class OrgStore
     /// stays A's on its row and counts in B's day as well. Read inside the caller's own read or write (admission's). A <c>merged</c>
     /// event whose link this build did not write is damage, refused, never read on a guess.
     /// </summary>
-    internal static IReadOnlyList<string> CarriedBy(Database db, string unitId)
+    internal static IReadOnlyList<string> CarriedBy(Database db, string unitId) => Carried(MergeLinks(db), unitId);
+
+    /// <summary>
+    /// EVERY CARRIED PAIR AT ONCE (<c>U-org-verbs-d</c> fix pass 2; for the per-class read, <see cref="AiAttemptStore.UnitTotalsByClass"/>):
+    /// each successor with every unit merged into it, transitively — <see cref="CarriedBy"/>'s answer for every successor, read from the
+    /// same links, the unit's own identity left out. Read inside the caller's own read.
+    /// </summary>
+    internal static IReadOnlyList<(string Carrier, string Member)> CarriedPairs(Database db)
+    {
+        var links = MergeLinks(db);
+        return [.. links.Select(l => l.Into).Distinct(StringComparer.Ordinal)
+            .SelectMany(into => Carried(links, into).Skip(1).Select(member => (into, member)))];
+    }
+
+    /// <summary>Every <c>merged</c> event's link, A into B; a link this build did not write is damage, never read on a guess.</summary>
+    static List<(string From, string Into)> MergeLinks(Database db)
     {
         var links = new List<(string From, string Into)>();
-        using (var c = db.Cmd("SELECT id, detail FROM org_event WHERE kind = $merged ORDER BY id", ("$merged", OrgEventKind.Merged)))
-        using (var r = c.ExecuteReader())
-            while (r.Read())
-            {
-                var detail = r.GetString(1);
-                var what = $"merge event {r.GetInt64(0).ToString(CultureInfo.InvariantCulture)}";
-                links.Add((DetailValue(detail, "unit") ?? throw Damaged($"{what} names no unit"),
-                    DetailValue(detail, "into") ?? throw Damaged($"{what} names no successor")));
-            }
+        using var c = db.Cmd("SELECT id, detail FROM org_event WHERE kind = $merged ORDER BY id", ("$merged", OrgEventKind.Merged));
+        using var r = c.ExecuteReader();
+        while (r.Read())
+        {
+            var detail = r.GetString(1);
+            var what = $"merge event {r.GetInt64(0).ToString(CultureInfo.InvariantCulture)}";
+            links.Add((DetailValue(detail, "unit") ?? throw Damaged($"{what} names no unit"),
+                DetailValue(detail, "into") ?? throw Damaged($"{what} names no successor")));
+        }
+        return links;
+    }
+
+    /// <summary><paramref name="unitId"/> first, then every unit merged into it, transitively, over <paramref name="links"/>.</summary>
+    static List<string> Carried(List<(string From, string Into)> links, string unitId)
+    {
         var carried = new List<string> { unitId };
         for (var i = 0; i < carried.Count; i++)
             foreach (var link in links.Where(l => l.Into == carried[i] && !carried.Contains(l.From, StringComparer.Ordinal)))
