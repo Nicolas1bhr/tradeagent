@@ -1123,19 +1123,31 @@ public sealed partial class OrgStore
     /// <paramref name="latest"/>, no later than the deadline less one floor — or null when no floor applies (a zero floor, or no
     /// launch of this owing). <see cref="RewakeDue"/> clamps it to the holder's requested wake; <see cref="HolderAsked"/> reads it
     /// to tell a wake brought forward from one waiting its floor. A function of the records, so every pass and a restart agree.
+    ///
+    /// <para><b>Never an overflow</b> (<c>U-rewake-followups</c>): the floor the deadline keeps clear is the first re-wake's
+    /// interval, <c>After(level, 1)</c> — the floor itself, or the level's ceiling when the floor is longer — and both date sums
+    /// saturate at the calendar's ends, so a floor the board accepted can never throw out of the sweep.</para>
     /// </summary>
     DateTimeOffset? FloorDue(MandateRow m, MandateEventRow latest, string last, string level, RewakeFloors floors, DateTimeOffset now)
     {
-        var floor = floors.Floor(level);
         var k = LaunchesOwing(m.Id, latest.Id);
-        if (floor <= TimeSpan.Zero || k == 0) return null;
+        if (floors.Floor(level) <= TimeSpan.Zero || k == 0) return null;
 
         DateTimeOffset? ended;
         using (var c = db.Cmd("SELECT ended_at FROM ai_attempt WHERE id=$a", ("$a", last)))
             ended = Sql.TimeN(c.ExecuteScalar());
-        var due = (ended ?? now) + floors.After(level, k);
-        return m.Deadline - floor < due ? m.Deadline - floor : due;
+        var due = Plus(ended ?? now, floors.After(level, k));
+        var lastChance = Minus(m.Deadline, floors.After(level, 1));
+        return lastChance < due ? lastChance : due;
     }
+
+    /// <summary><paramref name="t"/> plus <paramref name="d"/> (non-negative), held at the calendar's last instant.</summary>
+    static DateTimeOffset Plus(DateTimeOffset t, TimeSpan d) =>
+        d > DateTimeOffset.MaxValue - t ? DateTimeOffset.MaxValue : t + d;
+
+    /// <summary><paramref name="t"/> less <paramref name="d"/> (non-negative), held at the calendar's first instant.</summary>
+    static DateTimeOffset Minus(DateTimeOffset t, TimeSpan d) =>
+        d > t - DateTimeOffset.MinValue ? DateTimeOffset.MinValue : t - d;
 
     /// <summary>
     /// HOW MANY LAUNCHES TOOK A WAKE OF <paramref name="mandateId"/> OWED BY EVENT <paramref name="eventId"/> — its own wake or a
