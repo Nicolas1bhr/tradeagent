@@ -314,6 +314,34 @@ public class PaperFrictionTests(ITestOutputHelper log)
         Assert.Contains("not a fee", words, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A FEE OR SLIPPAGE THAT WOULD READ AS ZERO, OR LOSE DIGITS, IS REFUSED IN WORDS (<c>U-amount-precision</c>, item 1). The reader checks
+    /// a typed figure's precision before the box divides it by 100, so "0.0000000000000000000000000001" (28 places) was accepted as the
+    /// fraction 0 — a declared cost silently becoming no cost, which changes what every paper result means (EVID-001). The refusal names
+    /// the smallest figure the box keeps; a figure that survives the division exactly still saves.
+    /// </summary>
+    [Fact]
+    public void A_fee_that_would_read_as_zero_is_refused_in_words()
+    {
+        foreach (var name in new[] { "fee", "slippage" })
+        {
+            Assert.False(App.SettingsPage.TryPercent("0.0000000000000000000000000001", 0.05m, name, out var fraction, out var why));
+            Assert.Null(fraction);
+            Assert.Contains("0.00000000000000000000000001%", why, StringComparison.Ordinal);
+            Assert.Contains(name, why, StringComparison.Ordinal);
+        }
+
+        // A POSITIVE FIGURE ROUNDED TO A DIFFERENT NON-ZERO FRACTION LOSES DIGITS TOO.
+        Assert.False(App.SettingsPage.TryPercent("0.000000000000000000000000015", 0.05m, "fee", out _, out var rounded));
+        Assert.Contains("0.00000000000000000000000001%", rounded, StringComparison.Ordinal);
+
+        // THE SMALLEST FIGURE THE BOX KEEPS STILL SAVES, EXACTLY.
+        Assert.True(App.SettingsPage.TryPercent("0.00000000000000000000000001", 0.05m, "fee", out var smallest, out _));
+        Assert.Equal(0.0000000000000000000000000001m, smallest);
+        Assert.True(App.SettingsPage.TryPercent("0,075", 0.05m, "fee", out var ordinary, out _));
+        Assert.Equal(0.00075m, ordinary);
+    }
+
     // ---- research: the same table, for a number a backtest leaves out ------------------------------
 
     static AgentContext Researcher() => AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1");
