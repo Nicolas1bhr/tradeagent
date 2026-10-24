@@ -128,13 +128,45 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
             }
 
             var body = await mock.FirstBody;
+            // CODEX'S OWN WORDS ABOUT THE RUN, READ BEFORE ITS TOOLS COUNT (U-cell-model-catalog, rider (b)): the mock answers the request
+            // with a finished response, so codex ends its turn on its own; its warnings — fallback metadata above all — are in what it
+            // printed. One the manifest names (ToolsUnavailablePattern) refuses the seat, quoted, whatever tools were offered.
+            try { await p.WaitForExitAsync(timer.Token).WaitAsync(TimeSpan.FromSeconds(10), timer.Token); }
+            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException && !ct.IsCancellationRequested) { /* ended below */ }
             held.Kill();
+            var said = Ansi.Strip(await Quietly(stdout) + "\n" + await Quietly(stderr));
+            if (UnavailableLine(manifest, said) is { } warned)
+                throw new InvalidOperationException(
+                    $"{Path.GetFileName(ask.Exe)} said \"{warned}\" in its dry run on {ask.Model}, so the tools it would offer are not the ones " +
+                    "a check has seen");
             return Tools(body);
         }
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch (Exception) { /* the OS temp cleaner takes it */ }
         }
+    }
+
+    /// <summary>The first line of <paramref name="said"/> the manifest's <see cref="RuntimeManifest.ToolsUnavailablePattern"/> matches, its JSON message unwrapped; null for none.</summary>
+    static string? UnavailableLine(RuntimeManifest manifest, string said)
+    {
+        if (manifest.ToolsUnavailablePattern is not { Length: > 0 } pattern) return null;
+        foreach (var raw in said.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            try { if (!System.Text.RegularExpressions.Regex.IsMatch(line, pattern, System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) continue; }
+            catch (Exception ex) when (ex is ArgumentException or System.Text.RegularExpressions.RegexMatchTimeoutException) { return null; }
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                if (doc.RootElement.TryGetProperty("item", out var item) && item.TryGetProperty("message", out var m) && m.GetString() is { } message)
+                    return message.Trim();
+            }
+            catch (JsonException) { }
+            return line.Length > 300 ? line[..300] + "…" : line;
+        }
+        return null;
     }
 
     static async Task<string> Quietly(Task<string> read)
