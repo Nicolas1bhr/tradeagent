@@ -11689,3 +11689,15 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Deviations ACCEPTED (seat B):** owner-facing "Safety page" sentences re-pointed in App/Core files the shed owns (seat A's files re-pointed in U-board-a2); fix 8 partial — a role's row still stores the CLI id, rewritten by the one switch writer → CARD `U-role-follows-setup` (AppHost is seat A's), DUE BEFORE M-org1. **Removed tests (25, the shed's controls or renamed to the Owner/Board pages) accepted under R24 and the no-backward-compatibility rule** — `fleet/tmp/B-scratch/settings-shed/judged-removed.txt`.
 **Tests box:** GREEN on items 1–4 (20261023-055427-e47f171b) and on fixes 7–8 (20261023-095450-51bcae6f); not run on fix 9 or the re-stack.
 **NOT VERIFIED:** the pages on a real window (the Mac UI check is owed); fix 9 on CI before the train run.
+
+## U-amount-precision — a fee or slippage that would read as zero or lose digits is refused in words, and every amount box reopens showing text its own reader accepts, unchanged
+
+**Landed** (`land.sh`, seat B) on `main`; builder (shas as first pushed) `9d6ab0f9` TryPercent refuses a rounded percent · `f038f640` PercentText draws every digit (`Amount.Draw`) · `dd41c6d4` AmountField/OpenOn draw unambiguously · report `02babd20`. No rung.
+**Source:** seat B's card from the Codex second pass on U-number-entry-culture (P1 TryPercent, P2 AmountField redraw) and the older card U-percent-precision.
+**Protects:** EVID-001 (paper friction, the owner's evidence setting, can no longer silently become 0 or lose digits); refuse never guess (`Amount.cs`); the owner's number-entry rules of 2026-10-22 (culture-free; no change by scrolling an unclicked box) unchanged.
+**RED / mutant:** the 28-place fee accepted at base ("Expected: False, Actual: True"); a stored fraction cut ("Expected: 0.0000123456789012345, Actual: 0.0000123456789"); a reopened box refused its own text ("'1.234' could be 1234 or 1.234…"). MUTANT item 1's guard disabled ⇒ `A_fee_that_would_read_as_zero_is_refused_in_words` red; restored, 11/11.
+**Deviation ACCEPTED (seat B):** the brief's "or the box says why it cannot" branch cannot occur — a stored fraction holds ≤ 28 places, so its percent divides back exactly; the finest fractions are in item 2's table.
+**Gate:** Release 0 warnings; PaperFrictionTests + NumberEntryCultureTests + OversightPageTests 32/32 ×3; branch CI 40113558993 every job green; names 3153 → 3156, removed 0.
+**Review:** Codex (gpt-6.1-sol): no defects.
+**Tests box:** NOT VERIFIED — started on this tree, the wait cut by the Mac restart; no result for this tree.
+**NOT VERIFIED:** no app launch or screenshot (the owner held the screen; the Mac UI check is owed); no full local suite (CI's).
