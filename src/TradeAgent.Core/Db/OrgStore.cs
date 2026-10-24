@@ -160,6 +160,14 @@ public static class OrgEventKind
     public const string Vetoed = "vetoed", Activated = "activated";
 
     /// <summary>
+    /// THE LAUNCHES A MANDATE'S CANCELLATION OR RE-SCOPE TOOK AUTHORITY FROM (<c>U-org-verbs-d</c> fix pass; the Codex review, P2): the
+    /// ones under it still open when that transition committed, read in its own write and named in app-composed detail — the record
+    /// <see cref="OrgStore.FencedBy"/> reads, so which launch was cut mid-turn is commit order and never two stamps. Decided by the app;
+    /// it fences nothing by itself (the mandate's own event is the fence).
+    /// </summary>
+    public const string MandateFenced = "mandate-fenced";
+
+    /// <summary>
     /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
     /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
     /// positions instead.

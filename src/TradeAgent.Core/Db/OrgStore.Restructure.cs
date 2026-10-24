@@ -85,6 +85,7 @@ public sealed partial class OrgStore
             if (why is null || !IsOpen(m.Id)) continue;
             var reason = $"{r.Act}: {why}, so the mandate is cancelled by the app (ORCHESTRATION § 2.9: a restructuring disposes every open mandate)";
             AppendMandateEvent(m.Id, now, MandateEventKind.Cancelled, AppActor, null, reason, []);
+            RecordMandateFence(m.Id, now);
             var wakes = new MissionEventStore(db);
             wakes.CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, reason);
             wakes.CloseMandateWakes(m.Id, now, MissionEventDisposition.Withdrawn, reason, kind: MissionEventKind.Proposal);
