@@ -63,7 +63,7 @@ public sealed record SeatFacts
     public IReadOnlyList<string> OpenUnconfined { get; init; } = [];
 
     /// <summary>
-    /// The ACTIVE positions other than this one whose declared seat runs a model below Confined — the legacy pair counted — read
+    /// The ACTIVE positions other than this one whose declared seat runs a model UNCONFINED — the legacy pair counted — read
     /// for the owner's unconfined-seat ceiling (<see cref="UnconfinedSeatCeiling"/>; <c>U-org-verbs-d</c> item 5).
     /// </summary>
     public IReadOnlyList<string> UnconfinedActive { get; init; } = [];
@@ -74,11 +74,14 @@ public sealed record SeatFacts
 
 /// <summary>
 /// THE OWNER'S UNCONFINED-SEAT CEILING (<c>U-org-verbs-d</c> item 5; ORGANISATION § 10 :319-321; VISION CRED-001: growth past three
-/// waits for containment; R24 § 4.3 keeps it his): every seat that runs a model below <see cref="SeatAssurance.Confined"/> can read
-/// what its process can — today the owner's own AI login — so a position on such a seat is refused activation and launch while that
-/// many such ACTIVE positions, the legacy pair counted, reach <c>min(setting, 3)</c>. The 3 is CODE: a setting lowers it and never
+/// waits for containment; R24 § 4.3 keeps it his): every seat that runs a model <see cref="SeatAssurance.Unconfined"/> — today the
+/// codex CLI with its sandbox bypassed — can read what its process can, the owner's own AI login among it, so a position on such a
+/// seat is refused activation and launch while that many such ACTIVE positions, the legacy pair counted, reach <c>min(setting, 3)</c>.
+/// <b>A harness seat is not counted</b> (seat B's ruling, fix pass 2): an API key, confined by the app's own code and broker-only, it
+/// is ORGANISATION § 10's route ABOVE the ceiling; nor is any other broker-only or confined class. The 3 is CODE: a setting lowers it and never
 /// raises it (a value above 3 reads as 3, as <c>LanePolicy.Clamp</c> does), because a setting lives where an unconfined neighbour can
-/// write it. A seat that runs no model (a puppet) or runs in a proven cell is exempt; a class nobody declared is counted. The legacy
+/// write it. A seat that runs no model (a puppet), a broker-only or harness seat and a proven cell are exempt; a class nobody declared
+/// or this build does not know is counted. The legacy
 /// pair are counted and never refused by it: they are the two that ran before the chart, and anything about <c>operations</c> is
 /// the security board's (R24 § 4.1), never a seat count's.
 /// </summary>
@@ -90,9 +93,12 @@ public static class UnconfinedSeatCeiling
     /// <summary>A setting's value as the ceiling: at least 0, at most <see cref="Ceiling"/>.</summary>
     public static int Effective(int setting) => Math.Clamp(setting, 0, Ceiling);
 
-    /// <summary>Whether a seat of <paramref name="seatClass"/> counts: it runs a model below Confined, or nobody declared it.</summary>
+    /// <summary>
+    /// Whether a seat of <paramref name="seatClass"/> counts: it runs a model unconfined, or nobody declared it, or this build does not
+    /// know its class — never counted on a guess the other way.
+    /// </summary>
     public static bool Counts(string? seatClass) =>
-        seatClass is null || (SeatClasses.RunsModel(seatClass) && (SeatClasses.AssuranceOf(seatClass) ?? SeatAssurance.Unconfined) < SeatAssurance.Confined);
+        seatClass is null || (SeatClasses.RunsModel(seatClass) && (SeatClasses.AssuranceOf(seatClass) ?? SeatAssurance.Unconfined) == SeatAssurance.Unconfined);
 
     /// <summary>
     /// WHY <paramref name="id"/>, on a seat of <paramref name="seatClass"/>, MAY NOT BE ACTIVATED OR STARTED beside
@@ -107,7 +113,7 @@ public static class UnconfinedSeatCeiling
         var ceiling = Effective(setting);
         if (others.Count < ceiling) return null;
         return new(RefusalKind.HostOrLaunch,
-            $"'{id}' would run a model on a {seatClass ?? "undeclared"} seat, below a proven cell, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+            $"'{id}' would run a model on an unconfined {seatClass ?? "undeclared"} seat, one that can read the owner's AI login, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
             + $"such position{(others.Count == 1 ? " is" : "s are")} active ({string.Join(", ", others.Select(o => $"'{o}'"))}) — the owner's "
             + $"unconfined-seat ceiling is {ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} (his setting "
             + $"{setting.ToString(System.Globalization.CultureInfo.InvariantCulture)}, never above {Ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
@@ -283,7 +289,7 @@ public static class PositionActivation
                 + "it has one no position beyond the legacy pair runs on a real model (the owner's answer, ORCHESTRATION § 2.3). "
                 + "Nothing is started; its wakes are kept.");
 
-        // THE OWNER'S UNCONFINED-SEAT CEILING (U-org-verbs-d item 5): a model below a proven cell counts, and three is the most.
+        // THE OWNER'S UNCONFINED-SEAT CEILING (U-org-verbs-d item 5): a model run unconfined counts, and three is the most.
         if (UnconfinedSeatCeiling.Refusal(id, seatClass, facts.UnconfinedActive, facts.UnconfinedSeatSetting) is { } over) return over;
 
         if (facts.OpenUnconfined.Count > 0)

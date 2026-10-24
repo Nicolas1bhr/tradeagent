@@ -408,7 +408,7 @@ public sealed partial class OrgStore
     /// <summary>
     /// THE ACTIVE POSITIONS ON SEATS THE OWNER'S UNCONFINED-SEAT CEILING COUNTS (<c>U-org-verbs-d</c> item 5): the legacy pair whenever
     /// they are active, and every other active position whose declared seat (<paramref name="declaredClass"/>, the host's answer) runs a
-    /// model below a proven cell or was declared by nobody. One read.
+    /// model unconfined or was declared by nobody (a harness, broker-only or confined seat is not counted). One read.
     /// </summary>
     public IReadOnlyList<string> UnconfinedSeatsActive(Func<string, string?> declaredClass) => db.Read(_ =>
         (IReadOnlyList<string>)[.. Positions().Where(p => p.Status == OrgPositionStatus.Active
