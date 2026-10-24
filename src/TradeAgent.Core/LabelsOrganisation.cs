@@ -6,7 +6,7 @@ namespace TradeAgent.Core;
 /// <summary>
 /// THE WORDS OF THE ORGANISATION-FIRST PAGES (<c>U-org-surface-a</c>; R24 § 4.7): the rail's three entries and each page's title, subtitle,
 /// section names and empty lines, and the plain words for a seat's boundary and a billing class. Spelled once, so a page, a test and a
-/// sentence cannot drift apart. These pages only read: nothing here names a control, because none of them has one.
+/// sentence cannot drift apart. These pages only read: the one control named here is the owner's repair of a refused position's folder (<c>U-repair-position-home</c>).
 /// </summary>
 public static partial class Labels
 {
@@ -39,6 +39,20 @@ public static partial class Labels
         "The organisation as it stands now: its units, the positions in them, and what each position last ran on.";
 
     public const string OrganisationNoUnits = "The chart holds no units.";
+
+    /// <summary>
+    /// The Organisation page's line under its title (<c>U-repair-position-home</c>): the chart is read as it stands, and its one press is the owner's
+    /// repair of a position's folder the last start could not rebuild.
+    /// </summary>
+    public const string OrganisationRecordsAndRepair =
+        "These are TradeAgent's own records, read as they stand. The one thing you can do here is repair the folder of a position the last start "
+        + "could not rebuild; nothing else on this page can be changed from it.";
+
+    /// <summary>The repair press at rest, on the row of a position whose folder the last start could not rebuild.</summary>
+    public const string RepairHome = "Repair its folder";
+
+    /// <summary>The repair press armed: what the second press does, in full — nothing is deleted.</summary>
+    public const string RepairHomeConfirm = "Press again: move the folder aside, kept whole, and build it afresh";
 
     public const string CellProofHeld = "A cell proof is recorded for this machine and this build.";
 
