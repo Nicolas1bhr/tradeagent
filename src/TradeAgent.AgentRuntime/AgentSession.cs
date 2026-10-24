@@ -436,7 +436,7 @@ public sealed class AgentSession(
     void RestoreCanon(string home)
     {
         var files = appFiles ?? AppFileManifest.Shared;
-        var text = files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile));
+        var text = files.Kept(AppFileManifest.Key(CouncilRoles.HomeDir(role), Canon.CliFile), home);
         // ONE BODY FOR EVERY APP-SIDE WRITE INTO A HOME A CELL WRITES (fix pass 3): HomeFiles unlinks the name itself, never what it
         // points at, and creates the canon exclusively; a folder at the name refuses, never walked into.
         try
