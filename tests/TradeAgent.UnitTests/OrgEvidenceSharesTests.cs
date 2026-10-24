@@ -48,12 +48,12 @@ public class OrgEvidenceSharesTests
         return id;
     }
 
-    static DatasetRecord Held(Database db)
+    static DatasetRecord Held(Database db, string sha = "aa11")
     {
         var store = new DatasetStore(db);
         var id = store.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
-            Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 1000,
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, sha == "aa11" ? "v1" : "v-" + sha, 12, 12, [],
+            Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), sha, 1000,
             Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [], false, 0, 0, 0, At,
             DatasetState.ACCEPTED, null, []));
         Assert.True(store.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
@@ -134,6 +134,58 @@ public class OrgEvidenceSharesTests
         // A FIXTURE RUN IS STILL FREE, the team's included.
         Assert.True(campaigns.RegisterTrial(campaign.Id, version, Run(db, set, version, "run-f0", team), EvaluationClass.Fixture, At).Ok);
     }
+    /// <summary>
+    /// FIX PASS (the Codex review's P1 on <c>RegisterTrial</c>): A UNIT'S SHARE IS GATED IN EVERY CAMPAIGN THE INSERT CHARGES. The
+    /// family was first charged to campaign A, so a run of it over campaign B's dataset is charged to A as well: once the team has
+    /// spent its half of A, that run is refused in A's words for the team, and A is charged nothing more. RED before the fix: only
+    /// B, the run's own campaign, was gated, and the run was registered — a third trial against A past the team's two.
+    /// </summary>
+    [Fact]
+    public void A_units_share_is_gated_in_the_home_campaign_the_insert_also_charges()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var (setA, setB) = (Held(db, "aa11"), Held(db, "bb22"));
+        var a = Opened(db, setA, trials: 4, verdicts: 2);
+        var b = Opened(db, setB, trials: 10, verdicts: 2);
+        GivenTeam(db, trialShare: "0.5", verdictShare: null);
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+        var version = Version(db, "version-home");
+
+        Assert.True(campaigns.RegisterTrial(a.Id, version, Run(db, setA, version, "run-h0", team), EvaluationClass.Research, At).Ok);
+        Assert.True(campaigns.RegisterTrial(a.Id, version, Run(db, setA, version, "run-h1", team), EvaluationClass.Research, At).Ok);
+
+        var elsewhere = campaigns.RegisterTrial(b.Id, version, Run(db, setB, version, "run-h2", team), EvaluationClass.Research, At);
+        Assert.False(elsewhere.Ok, "a run charged to the team's spent home campaign was registered through another campaign");
+        Assert.Contains(Team, elsewhere.Why, StringComparison.Ordinal);
+        Assert.Contains($"campaign {a.Id}'s", elsewhere.Why, StringComparison.Ordinal);
+        Assert.Equal(2, campaigns.TrialsCharged(a.Id));
+        Assert.Equal(0, campaigns.TrialsCharged(b.Id));
+    }
+
+    /// <summary>
+    /// FIX PASS (the Codex review's P1 on <c>ChargeVerdict</c>): A UNIT'S VERDICTS ARE COUNTED AS THE CAMPAIGN COUNTS ITS OWN — every
+    /// judgement over the same held-back months, any campaign's — so switching campaigns never replenishes a delegated count. Two
+    /// campaigns over the same months, 4 judgements each, the team a quarter: one judgement under A, and the second under B is refused.
+    /// RED before the fix: only A's renewal lineage was counted, and B charged it.
+    /// </summary>
+    [Fact]
+    public void A_units_verdicts_are_counted_across_campaigns_over_the_same_months()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var a = Opened(db, Held(db, "aa11"), trials: 10, verdicts: 4);
+        var b = Opened(db, Held(db, "bb22"), trials: 10, verdicts: 4);
+        GivenTeam(db, trialShare: null, verdictShare: "0.25");
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+
+        Assert.True(campaigns.ChargeVerdict(a.Id, Version(db, "version-over-a"), At, team).Ok);
+        var switched = campaigns.ChargeVerdict(b.Id, Version(db, "version-over-b"), At, team);
+        Assert.False(switched.Ok, "a second campaign over the same months replenished the team's delegated judgement");
+        Assert.Contains(Team, switched.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.VerdictCharged(b.Id, "version-over-b"));
+    }
+
     // ---- item 3: verdicts ------------------------------------------------------------------------------------------
 
     static string? AskedBy(Database db, long campaign, string version) => db.Read(_ =>
