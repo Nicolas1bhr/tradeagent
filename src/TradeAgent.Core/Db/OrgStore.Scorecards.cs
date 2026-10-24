@@ -31,9 +31,9 @@ public sealed record ForecastScore(
 /// <item><c>verdict-class</c> — the versions first judged before the forecast; a hit is a first verdict of the target class.</item>
 /// <item><c>mandate-state</c> — the mandates first closed before the forecast; a hit is one that reached the target no later than its first
 /// closing event — the resolver's own rule (<see cref="ForecastResolver"/>), so <c>rejected</c>, which closes nothing, is measured too.</item>
-/// <item><c>unit-admissible</c> — the units of the subject's kind chartered at least the forecast's horizon before it; a hit is one with an
-/// admissible verdict class on a version a launch it FUNDED ran, within the horizon after its charter (<see cref="ForecastResolver.UnitAdmissibleSql"/>'s
-/// joins: the run's version and attempt, the funding lineage written at admission, never a figure).</item>
+/// <item><c>unit-admissible</c> — the units of the subject's kind chartered at least the forecast's horizon before it; a hit, for
+/// <c>admitted</c>, is one with an admissible verdict class on a version a launch it FUNDED ran, within the horizon after its charter (<see cref="ForecastResolver.UnitAdmissibleSql"/>'s
+/// joins: the run's version and attempt, the funding lineage written at admission, never a figure); for <c>none</c>, one without.</item>
 /// </list>
 /// It reads no claim but the forecast's own (its predicate, subject, target, dates and probability) and stores nothing: a score is computed
 /// each time it is read (ORGANISATION § 8, "computed by the app at read").
@@ -120,12 +120,14 @@ public static class ForecastScorer
             using var c = db.Cmd(UnitAdmissibleBaseSql, ("$subject", subject), ("$at", Sql.T(at)), ("$chartered", Sql.T(at - horizon)),
                 ("$promoted", PromotionVerdict.Promoted), ("$paper", PromotionVerdict.PaperEligible));
             using var r = c.ExecuteReader();
-            int measured = 0, hits = 0;
+            int measured = 0, admitted = 0;
             while (r.Read())
             {
                 measured++;
-                if (Sql.TimeN(r.GetValue(1)) is { } first && first <= Sql.Time(r.GetValue(0)) + horizon) hits++;
+                if (Sql.TimeN(r.GetValue(1)) is { } first && first <= Sql.Time(r.GetValue(0)) + horizon) admitted++;
             }
+            // A HIT IS THE TARGET: an admission for `admitted`, none for `none` (the Codex review of this unit).
+            var hits = target == ForecastVocabulary.NoneAdmitted ? measured - admitted : admitted;
             return new BaseRate(measured, hits, Laplace(hits, measured));
         }
         refusal = $"'{predicate}' is no predicate whose reference class this build measures.";
