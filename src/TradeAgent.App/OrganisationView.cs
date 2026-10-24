@@ -37,10 +37,10 @@ sealed record OrganisationRead(
 }
 
 /// <summary>
-/// One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on, who paid, and its
-/// calibration as the app scores it at read (empty where no scorecard was read).
+/// One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on, who paid, its
+/// calibration as the app scores it at read (empty where no scorecard was read) and, where its home folder is refused, the refusal's sentence.
 /// </summary>
-sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "");
+sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null);
 
 /// <summary>One unit as the page says it, with the depth it is indented to and the positions in it.</summary>
 sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions);
@@ -54,7 +54,7 @@ sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IRea
 sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUnitWords> Units)
 {
     /// <summary>The words of one read, or of records that could not be read (<paramref name="read"/> null, <paramref name="unreadable"/> the reason).</summary>
-    public static OrganisationWords Of(OrganisationRead? read, string? unreadable)
+    public static OrganisationWords Of(OrganisationRead? read, string? unreadable, Func<string, string?>? homeRefusal = null)
     {
         if (read is null)
             return new OrganisationWords(unreadable is { Length: > 0 } ? Labels.SurfaceUnreadable(unreadable) : Labels.SurfaceNotRead, "", []);
@@ -68,7 +68,8 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             var (unit, depth) = t;
             var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved) with
             {
-                Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : ""
+                Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : "",
+                HomeRefusal = homeRefusal?.Invoke(p.Id)
             }).ToList();
             return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions);
         }).ToList();
@@ -124,8 +125,9 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
 
 /// <summary>
 /// THE CHART (<c>U-org-surface-a</c>; R24 § 4.7 "Organisation-first"): each unit with its positions — active or dormant, what each is set to
-/// run on, the boundary of the seat it last ran on in plain words and who paid for that launch. <b>It only reads</b>: no press, no box, no
-/// pipe op — a position's seat is changed where seats are changed, never from here.
+/// run on, the boundary of the seat it last ran on in plain words and who paid for that launch. <b>It only reads</b>: no box, no pipe op — a
+/// position's seat is changed where seats are changed, never from here — and its one press is the owner's repair of a position's folder the
+/// last start could not rebuild (<c>U-repair-position-home</c>), two-press, drawn on that row only while the refusal stands.
 ///
 /// <para><b>Built once, updated in place.</b> The page's skeleton is made in the constructor; a unit's card and a position's row are made the
 /// first time their id is seen and kept (<see cref="LiveList{T}"/>), and a refresh writes new text into the same text blocks and re-lays a
@@ -161,7 +163,7 @@ sealed class OrganisationPage
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
-        root.Children.Add(Pages.Header(Labels.NavOrganisation, Labels.OrganisationSubtitle + " " + Labels.SurfaceReadOnly));
+        root.Children.Add(Pages.Header(Labels.NavOrganisation, Labels.OrganisationSubtitle + " " + Labels.OrganisationRecordsAndRepair));
         root.Children.Add(scroll);
         Root = root;
     }
@@ -178,7 +180,7 @@ sealed class OrganisationPage
         {
             if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf, _src.Scorecards()), null);
+                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf, _src.Scorecards()), null, _src.HomeRefusal);
                 read = true;
             }
             else words = OrganisationWords.Of(null, null);
@@ -197,7 +199,7 @@ sealed class OrganisationPage
         if (read) _list.Update(words.Units);
     }
 
-    static (Control Card, Action<OrgUnitWords> Fill) MakeUnit(OrgUnitWords first)
+    (Control Card, Action<OrgUnitWords> Fill) MakeUnit(OrgUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
         var line = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
@@ -215,7 +217,7 @@ sealed class OrganisationPage
         });
     }
 
-    static (Control Card, Action<OrgPositionWords> Fill) MakePosition(OrgPositionWords first)
+    (Control Card, Action<OrgPositionWords> Fill) MakePosition(OrgPositionWords first)
     {
         var id = Ui.With(Ui.Mono(""), t => t.FontWeight = FontWeight.SemiBold);
         var status = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.FontWeight = FontWeight.SemiBold; });
@@ -226,7 +228,13 @@ sealed class OrganisationPage
         var calibration = Small();
         var head = Ui.Row(Theme.S3, id, status);
         head.VerticalAlignment = VerticalAlignment.Center;
-        var row = Ui.Col(Theme.S1, head, role, seat, cell, billing, calibration);
+        // THE OWNER'S REPAIR (U-repair-position-home): the refusal's sentence and its two-press button, made the first time this row's folder is
+        // refused and kept — hidden, and disarmed, once the refusal is gone — and the words of the last repair under them.
+        var refusal = Ui.With(Small(), t => t.Foreground = Theme.Caution);
+        var repaired = Small();
+        var repair = new StackPanel { Spacing = Theme.S1 };
+        Button? press = null;
+        var row = Ui.Col(Theme.S1, head, role, seat, cell, billing, calibration, refusal, repair, repaired);
         row.Margin = new Thickness(Theme.S3, 0, 0, 0);
 
         return (row, p =>
@@ -241,6 +249,28 @@ sealed class OrganisationPage
             OrgText.Set(billing, p.Billing);
             OrgText.Set(calibration, p.Calibration);
             if (calibration.IsVisible != p.Calibration.Length > 0) calibration.IsVisible = p.Calibration.Length > 0;
+            OrgText.Set(refusal, p.HomeRefusal ?? "");
+            refusal.IsVisible = p.HomeRefusal is not null;
+            if (p.HomeRefusal is not null && press is null && _src.RepairHome is { } act)
+            {
+                var id = p.Id;
+                press = Ui.Confirm(Labels.RepairHome, Labels.RepairHomeConfirm, () =>
+                {
+                    OrgText.Set(repaired, act(id));
+                    repaired.IsVisible = true;
+                    var still = _src.HomeRefusal(id);
+                    OrgText.Set(refusal, still ?? "");
+                    refusal.IsVisible = press!.IsVisible = still is not null;
+                });
+                press.HorizontalAlignment = HorizontalAlignment.Left;
+                repair.Children.Add(press);
+            }
+            if (press is not null && press.IsVisible != (p.HomeRefusal is not null))
+            {
+                if (p.HomeRefusal is null) Ui.DisarmConfirm(press);
+                press.IsVisible = p.HomeRefusal is not null;
+            }
+            repaired.IsVisible = repaired.Text is { Length: > 0 };
         });
 
         static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);

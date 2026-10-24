@@ -1,3 +1,6 @@
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Connectors.Fake;
@@ -211,5 +214,53 @@ public class RepairHomeTests
             .Select(Path.GetFileName)
             .ToList();
         Assert.True(reaching.Count == 0, "an agent-facing or board source names the repair: " + string.Join(", ", reaching));
+    }
+    /// <summary>
+    /// THE PRESS ON THE POSITION'S ROW (item 4): the row shows the refusal's sentence and one repair button only while its folder is refused; one
+    /// press arms it and repairs nothing, a refresh between the presses rebuilds nothing and leaves it armed, and the second press repairs —
+    /// after which the button is hidden and the row says what the repair did.
+    /// </summary>
+    [Fact]
+    public void The_rows_press_arms_once_repairs_on_the_second_and_survives_a_refresh()
+    {
+        using var db = TestEnv.NewDb();
+        OrgSurfaceSeed.Chart(db);
+        string? refused = $"TradeAgent did not start the position {OrgSurfaceSeed.Member}: the last start could not rebuild its folder.";
+        var repairs = new List<string>();
+        var page = new OrganisationPage(new OrgSurfaceSources
+        {
+            Org = () => new OrgStore(db), Attempts = () => new AiAttemptStore(db), Currency = () => "USD",
+            HomeRefusal = id => id == OrgSurfaceSeed.Member ? refused : null,
+            RepairHome = id =>
+            {
+                repairs.Add(id);
+                refused = null;
+                return $"The folder of {id} was repaired; the old one is kept at /kept.";
+            }
+        });
+        page.Update();
+        var team = page.CardOf(OrgSurfaceSeed.Team) ?? throw new Xunit.Sdk.XunitException("the team's card was not made");
+        var buttons = team.GetLogicalDescendants().OfType<Button>().ToList();
+        var press = Assert.Single(buttons);                                  // the refused row's, and no other row's
+        Assert.Equal(Labels.RepairHome, press.Content);
+        Assert.Contains(refused!, team.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text));
+
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(Ui.IsArmed(press));
+        Assert.Empty(repairs);
+
+        page.Update();                                                       // the five-second refresh between the presses
+        Assert.Same(team, page.CardOf(OrgSurfaceSeed.Team));
+        Assert.Same(press, Assert.Single(team.GetLogicalDescendants().OfType<Button>()));
+        Assert.True(Ui.IsArmed(press), "the refresh disarmed the half-pressed repair");
+
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal([OrgSurfaceSeed.Member], repairs);
+        page.Update();
+        Assert.False(press.IsVisible);
+        Assert.False(Ui.IsArmed(press));
+        var shown = team.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text).ToList();
+        Assert.Contains($"The folder of {OrgSurfaceSeed.Member} was repaired; the old one is kept at /kept.", shown);
+        Assert.DoesNotContain(shown, t => t?.StartsWith("TradeAgent did not start", StringComparison.Ordinal) == true);
     }
 }
