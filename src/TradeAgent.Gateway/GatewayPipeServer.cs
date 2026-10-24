@@ -386,6 +386,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.BoardDecide, TimeSpan.Zero, "the security board's records: one act and its events read, one event — and on a confirmation its version and the envelope's withdrawal — written, in process"),
         new(Core.Ops.BoardList, TimeSpan.Zero, "the security board's acts, newest first, without a rationale, in process"),
         new(Core.Ops.BoardShow, TimeSpan.Zero, "one act of the security board, blind until the caller's own word on it is sealed, and the policy in force, in process"),
+        new(Core.Ops.BoardPowerPropose, TimeSpan.Zero, "the security board's records: one proposal of its own power, applied by nothing, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1462,6 +1463,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.BoardDecide   => BoardDecide(ctx, req),
                 Core.Ops.BoardList     => BoardList(ctx, req),
                 Core.Ops.BoardShow     => BoardShow(ctx, req),
+                Core.Ops.BoardPowerPropose => BoardPowerPropose(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),

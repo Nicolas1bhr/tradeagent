@@ -83,4 +83,46 @@ public sealed partial class TradingGateway
 
     /// <summary>The acts, newest first, with no rationale or forecast (<see cref="BoardStore.ActList"/>).</summary>
     internal IReadOnlyList<BoardActBlindView> BoardList(int limit) => _board.ActList(limit);
+
+    /// <summary>A seat's proposal of the board's own power (<see cref="BoardStore.ProposePower"/>): a record; nothing applies it.</summary>
+    internal BoardPowerProposalRow BoardProposePower(string seat, string? attempt, string target, string text) =>
+        _board.ProposePower(seat, attempt, target, text, Now);
+
+    // ---- the owner's in-process seams over the board's own power (AUTH-001, CHANGE-001) ----------------------------------------------
+
+    /// <summary>
+    /// THE OWNER SETS THE BOARD'S BUDGET SHARE (R24 Q7) — his press, two presses in his UI; IN PROCESS ONLY: no pipe op, no verb and no
+    /// <c>trade</c> command reaches it (a guard reads their sources). Said in the Activity log as his.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public decimal SetBoardBudgetShare(decimal share)
+    {
+        var set = _board.SetBoardBudgetShare(share, Now);
+        _log.Activity($"You set the security board's share of the plan's AI day-total to {set.ToString(System.Globalization.CultureInfo.InvariantCulture)}.");
+        StateChanged?.Invoke();
+        return set;
+    }
+
+    /// <summary>
+    /// THE OWNER FOUNDS A BOARD SEAT (R24 Q6) — his press, in process only: dormant, on a class that is never a shell, the board kept on
+    /// at least two model classes. Founding activates nothing.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat FoundBoardSeat(string seatClass, string modelClass, string vendorFamily)
+    {
+        var seat = _board.FoundBoardSeat(seatClass, modelClass, vendorFamily, Now);
+        _log.Activity($"You founded the security board's seat {seat.Id} ({seat.SeatClass}, {seat.ModelClass}, {seat.VendorFamily}). It is dormant.");
+        StateChanged?.Invoke();
+        return seat;
+    }
+
+    /// <summary>THE OWNER RETIRES A BOARD SEAT — his press, in process only; the board kept on at least two model classes.</summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat RetireBoardSeat(string id)
+    {
+        var seat = _board.RetireBoardSeat(id, Now);
+        _log.Activity($"You retired the security board's seat {seat.Id}. It acts no more.");
+        StateChanged?.Invoke();
+        return seat;
+    }
 }
