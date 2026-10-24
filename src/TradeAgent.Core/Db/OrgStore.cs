@@ -147,6 +147,9 @@ public static class OrgEventKind
     /// <summary>A position hired, DORMANT, by the head of its unit's parent (<c>U-org-verbs-c</c>, <see cref="OrgStore.Hire"/>).</summary>
     public const string Hired = "hired";
 
+    /// <summary>One currency of a unit's share re-split by the head of its parent (<c>U-org-verbs-e</c>, <see cref="OrgStore.Tilt"/>).</summary>
+    public const string Tilted = "tilted";
+
     /// <summary>
     /// A position retired, a unit closed, a unit merged into a sibling (<c>U-org-verbs-d</c>: <see cref="OrgStore.Retire"/>,
     /// <see cref="OrgStore.Close"/>, <see cref="OrgStore.Merge"/>) — each decided by the head of the target's parent.

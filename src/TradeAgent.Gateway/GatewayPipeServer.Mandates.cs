@@ -271,6 +271,8 @@ public sealed partial class GatewayPipeServer
             kind = u.Kind,
             name = OrgEnvelopes.NameOf(u.Id),
             head = u.IsRoot ? "the owner" : u.HeadPositionId ?? "vacant",
+            // ALL THREE DIMENSIONS OF ITS ENVELOPE (U-org-verbs-e), as the row holds them: absent is no own cap.
+            shares = new { ai = u.EnvelopeShare, trials = u.TrialShare, verdicts = u.VerdictShare },
             ai_envelopes = byUnit is not null && byUnit.Contains(u.Id)
                 ? byUnit[u.Id].Select(d => new
                 {
@@ -286,8 +288,12 @@ public sealed partial class GatewayPipeServer
                 : null
         }).ToList();
         var note = byUnit is null
-            ? "Envelopes are not metered here: nothing gave a reading of this chain's envelopes, so each is unknown — never zero."
-            : "Each envelope is TradeAgent's, resolved as admission resolves it (none: no separate cap — the units above bind); spent "
+            ? "'shares' are each unit's own fractions, as the chart holds them (absent: no own cap): 'ai' of its parent's AI envelope, "
+              + "'trials' and 'verdicts' of a campaign's own research-trial and final-judgement budgets. Envelopes are not metered here: "
+              + "nothing gave a reading of this chain's envelopes, so each is unknown — never zero."
+            : "'shares' are each unit's own fractions, as the chart holds them (absent: no own cap): 'ai' of its parent's AI envelope, "
+              + "'trials' and 'verdicts' of a campaign's own research-trial and final-judgement budgets, charged to the chain each launch "
+              + "was admitted under. Each envelope is TradeAgent's, resolved as admission resolves it (none: no separate cap — the units above bind); spent "
               + "and reserved are today's, charged to the unit's funding chain. Each reading is counted in ONE ceiling, named: 'key' is "
               + "real money, 'plan' is your ChatGPT plan's capacity and never money; a seat whose class is not known is shown against "
               + "both, as admission holds it to both. The two are never added. spent_today is the PRICED sum of that ceiling's "

@@ -429,6 +429,13 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-org-verbs-d item 5: UnconfinedSeatsActive — the owner's unconfined-seat ceiling's one read of the
         // chart (the active positions on counted seats). A read; it writes nothing.
         mandate = [.. mandate, "UnconfinedSeatsActive"];
+        // REVISITED, OUT LOUD, BY U-org-verbs-e: Tilt — writes ONE column of one org_unit row (its envelope_share, trial_share or
+        // verdict_share: the currency's, an app constant) and org_event (one `tilted` event), with its mandatory `envelope-tilt` decision,
+        // forecasts and ledger entry, in one write, behind OrgVerbCaller and the store's own checks: the rights matrix (only the parent's
+        // head; the root and `operations`' division a board act), twenty points a week, the siblings' whole, the seat's turn, a campaign's
+        // one trial or verdict. OrgStore.Tilt.cs joins the writers of org_unit and org_event below. It raises no parent's envelope and
+        // re-splits nothing under the organisation itself (the board's split, R24 § 4.1).
+        mandate = [.. mandate, "Tilt"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
@@ -443,7 +450,7 @@ public class OrgLedgerTests
             RegexOptions.IgnoreCase);
         Assert.Equal(
             ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
-             "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
+             "src/TradeAgent.Core/Db/OrgStore.Tilt.cs", "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))
                 .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
