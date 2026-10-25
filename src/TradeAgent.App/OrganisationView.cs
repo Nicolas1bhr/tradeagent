@@ -42,8 +42,8 @@ sealed record OrganisationRead(
 /// </summary>
 sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null);
 
-/// <summary>One unit as the page says it, with the depth it is indented to and the positions in it.</summary>
-sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions);
+/// <summary>One unit as the page says it, with the depth it is indented to, the positions in it and its head's id (the root's: the chief).</summary>
+sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions, string? HeadId = null);
 
 /// <summary>
 /// THE CHART PAGE'S SENTENCES, SEPARATED FROM ITS CONTROLS so they are tested without a window (the words are what a
@@ -71,7 +71,7 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
                 Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : "",
                 HomeRefusal = homeRefusal?.Invoke(p.Id)
             }).ToList();
-            return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions);
+            return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions, unit.HeadPositionId);
         }).ToList();
 
         return new OrganisationWords(
@@ -128,8 +128,9 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
 /// <summary>
 /// THE CHART (<c>U-org-surface-a</c>; R24 § 4.7 "Organisation-first"): each unit with its positions — active or dormant, what each is set to
 /// run on, the boundary of the seat it last ran on in plain words and who paid for that launch. <b>It only reads</b>: no box, no pipe op — a
-/// position's seat is changed where seats are changed, never from here — and its one press is the owner's repair of a position's folder the
-/// last start could not rebuild (<c>U-repair-position-home</c>), two-press, drawn on that row only while the refusal stands.
+/// position's seat is changed where seats are changed, never from here — and its presses are the owner's repair of a position's folder the
+/// last start could not rebuild (<c>U-repair-position-home</c>), two-press, drawn on that row only while the refusal stands, and his presses
+/// over the chief on the organisation's card (<see cref="ChiefCard"/>, <c>U-org-chief</c> item 7).
 ///
 /// <para><b>Built once, updated in place.</b> The page's skeleton is made in the constructor; a unit's card and a position's row are made the
 /// first time their id is seen and kept (<see cref="LiveList{T}"/>), and a refresh writes new text into the same text blocks and re-lays a
@@ -201,18 +202,26 @@ sealed class OrganisationPage
         if (read) _list.Update(words.Units);
     }
 
+    /// <summary>The organisation's chief card — the same instance on every refresh — or null until the root has been read, or with no presses.</summary>
+    internal ChiefCard? Chief { get; private set; }
+
     (Control Card, Action<OrgUnitWords> Fill) MakeUnit(OrgUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
         var line = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
         var positions = new StackPanel { Spacing = Theme.S3 };
         var list = new LiveList<OrgPositionWords>(positions, Ui.Muted("No position is in this unit."), p => p.Id, MakePosition);
-        var card = Ui.Card(Ui.Col(Theme.S3, title, line, positions));
+        // THE ORGANISATION'S CARD CARRIES THE OWNER'S PRESSES OVER THE CHIEF (U-org-chief item 7), made once with the card.
+        var chief = first.Id == OrgIds.Root && _src.Chief is { } presses ? Chief = new ChiefCard(presses, Update) : null;
+        var card = chief is null
+            ? Ui.Card(Ui.Col(Theme.S3, title, line, positions))
+            : Ui.Card(Ui.Col(Theme.S3, title, line, chief.Root, positions));
 
         return (card, u =>
         {
             OrgText.Set(title, u.Title);
             OrgText.Set(line, u.Line);
+            chief?.Update(u);
             var indent = new Thickness(u.Depth * Theme.S5, 0, 0, 0);
             if (card.Margin != indent) card.Margin = indent;
             list.Update(u.Positions);
@@ -278,3 +287,115 @@ sealed class OrganisationPage
         static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
     }
 }
+
+/// <summary>
+/// THE OWNER'S PRESSES OVER THE CHIEF (<c>U-org-chief</c> item 7; the orchestrator's Q1), on the organisation's card: while no board seat is active
+/// — "yours until the security board is active" — <b>Appoint a chief</b> over a vacant root, <b>Replace the chief</b> and <b>Activate</b> a dormant
+/// one; and <b>Remove the chief</b> always. Two presses each (the app's two-step button): the first only arms and writes nothing. The seat a new chief runs on is chosen from a CLOSED list of presses, so no scroll over the page can
+/// change it (the owner, 2026-10-22). No veto press: that is <c>U-org-surface-b</c>'s. Built once; <see cref="Update"/> writes text and visibility
+/// in place, and disarms a press it hides.
+/// </summary>
+sealed class ChiefCard
+{
+    readonly ChiefPresses _presses;
+    readonly Action _refresh;
+    readonly TextBlock _sitting = Ui.Muted("");
+    readonly TextBlock _whose = Ui.Muted("");
+    readonly TextBlock _done = Ui.Muted("");
+    readonly WrapPanel _seats = new() { Orientation = Orientation.Horizontal };
+    readonly TextBlock _seatPrompt = Ui.Muted("");
+    readonly StackPanel _seatRow;
+    readonly List<(ChiefSeat Seat, Button Press)> _choices = [];
+    ChiefSeat? _chosen;
+
+    public Control Root { get; }
+    internal Button Appoint { get; }
+    internal Button Replace { get; }
+    internal Button Activate { get; }
+    internal Button Remove { get; }
+    internal IReadOnlyList<Button> SeatChoices => [.. _choices.Select(c => c.Press)];
+    internal Control SeatRow => _seatRow;
+    internal TextBlock Done => _done;
+
+    public ChiefCard(ChiefPresses presses, Action refresh)
+    {
+        _presses = presses;
+        _refresh = refresh;
+        foreach (var t in new[] { _sitting, _whose, _done, _seatPrompt }) t.FontSize = Theme.Small;
+        _done.IsVisible = false;
+        _seatRow = Ui.Col(Theme.S1, _seatPrompt, _seats);
+        Seats();
+
+        string? NoSeat() => _chosen is null ? Labels.ChiefChooseSeat : null;
+        Appoint = Ui.Confirm(Labels.ChiefAppoint, Labels.ChiefAppointConfirm, () => Said(_presses.Appoint(_chosen!)), NoSeat, Said);
+        Replace = Ui.Confirm(Labels.ChiefReplace, Labels.ChiefReplaceConfirm, () => Said(_presses.Replace(_chosen!)), NoSeat, Said);
+        Activate = Ui.Confirm(Labels.ChiefActivate, Labels.ChiefActivateConfirm, () => Said(_presses.Activate()));
+        Remove = Ui.Confirm(Labels.ChiefRemove, Labels.ChiefRemoveConfirm, () => Said(_presses.Remove()));
+
+        var title = Ui.With(Ui.Body(Labels.ChiefTitle), t => t.FontWeight = FontWeight.SemiBold);
+        var row = Ui.Wrap(Theme.S2, Appoint, Replace, Activate, Remove);
+        Root = Ui.Col(Theme.S2, title, _sitting, _whose, _seatRow, row, _done);
+    }
+
+    /// <summary>
+    /// THE CLOSED LIST, made once and REBUILT ONLY WHEN IT CHANGED (the runtime the setup prepared, or the models priced on it): a choice no
+    /// longer offered is forgotten, so a press never seats a chief on a seat the list no longer names.
+    /// </summary>
+    void Seats()
+    {
+        IReadOnlyList<ChiefSeat> seats;
+        try { seats = _presses.Seats(); }
+        catch (Exception) { seats = []; }
+        if (seats.SequenceEqual(_choices.Select(c => c.Seat))) return;
+        _seats.Children.Clear();
+        _choices.Clear();
+        foreach (var seat in seats)
+        {
+            var press = new Button { Content = Labels.ChiefSeatChoice(seat), Classes = { "secondary" }, Margin = new Thickness(0, 0, Theme.S2, Theme.S2) };
+            press.Click += (_, _) => Choose(seat);
+            _choices.Add((seat, press));
+            _seats.Children.Add(press);
+        }
+        if (_chosen is { } chosen && !seats.Contains(chosen)) _chosen = null;
+        else if (_chosen is { } kept) Choose(kept);
+        OrgText.Set(_seatPrompt, seats.Count > 0 ? Labels.ChiefSeatPrompt : Labels.ChiefNoSeats);
+    }
+
+    void Choose(ChiefSeat seat)
+    {
+        _chosen = seat;
+        foreach (var (s, b) in _choices) Ui.Emphasise(b, s == seat);
+    }
+
+    void Said(string words)
+    {
+        OrgText.Set(_done, words);
+        _done.IsVisible = true;
+        _refresh();
+    }
+
+    /// <summary>In place: who sits, whose the presses are, and which presses are drawn — a press hidden is disarmed first.</summary>
+    public void Update(OrgUnitWords root)
+    {
+        bool board;
+        try { board = _presses.BoardActive(); }
+        catch (Exception) { board = true; }
+        var chief = root.HeadId is { } id ? root.Positions.FirstOrDefault(p => p.Id == id) : null;
+        OrgText.Set(_sitting, chief is null ? Labels.ChiefNone : $"{chief.Id}, {chief.Status}. {chief.Seat}");
+        OrgText.Set(_whose, board ? Labels.ChiefIsTheBoards : Labels.ChiefYoursUntilBoard);
+        Seats();
+        Show(_seatRow, !board);
+        Show(Appoint, !board && root.HeadId is null);
+        Show(Replace, !board && root.HeadId is not null);
+        Show(Activate, !board && chief is { Status: OrgPositionStatus.Dormant });
+        Show(Remove, root.HeadId is not null);
+    }
+
+    static void Show(Control c, bool visible)
+    {
+        if (c.IsVisible == visible) return;
+        if (!visible && c is Button b) Ui.DisarmConfirm(b);
+        c.IsVisible = visible;
+    }
+}
+

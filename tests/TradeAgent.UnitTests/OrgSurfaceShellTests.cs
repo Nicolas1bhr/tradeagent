@@ -63,7 +63,8 @@ public class OrgSurfaceShellTests
     /// <summary>
     /// (b) THE ORGANISATION PAGES HOLD NO PRESS: a walk of each built tree — populated, not just its skeleton — finds no button, no editable box and
     /// no choice; and the sources of the three pages name none either, but for the owner's repair of a refused position's folder
-    /// (<c>U-repair-position-home</c>; <c>RepairHomeTests</c> holds its row). Pins an absence: watched red with a button added to the Work page.
+    /// (<c>U-repair-position-home</c>; <c>RepairHomeTests</c> holds its row) and his presses over the chief on the organisation's card
+    /// (<c>U-org-chief</c>; <c>OrgChiefTests</c> holds them). Pins an absence: watched red with a button added to the Work page.
     /// </summary>
     [Fact]
     public void The_organisation_pages_hold_no_press()
@@ -104,6 +105,18 @@ public class OrgSurfaceShellTests
                 const string repair = "Ui.Confirm(Labels.RepairHome, Labels.RepairHomeConfirm,";
                 Assert.Single(Regex.Matches(text, Regex.Escape(repair)));
                 text = text.Replace(repair, "", StringComparison.Ordinal);
+                // REVISITED, OUT LOUD, BY U-org-chief (item 7; its FILE SEAM gives it the organisation's card): the owner's presses over the
+                // chief, in their own class at the end of the file — the four two-press controls by their own labels, and the closed list of
+                // seats as plain presses — and nowhere else in the file. The walk above draws none: its sources hand the page no presses.
+                var chief = text.IndexOf("sealed class ChiefCard", StringComparison.Ordinal);
+                Assert.True(chief > 0, "the chief's card is not where this guard reads it");
+                var card = text[chief..];
+                foreach (var label in new[] { "ChiefAppoint", "ChiefReplace", "ChiefActivate", "ChiefRemove" })
+                    Assert.Single(Regex.Matches(card, Regex.Escape($"Ui.Confirm(Labels.{label}, Labels.{label}Confirm,")));
+                Assert.Equal(4, Regex.Matches(card, Regex.Escape("Ui.Confirm(")).Count);
+                Assert.Single(Regex.Matches(card, Regex.Escape("new Button")));
+                Assert.Single(Regex.Matches(card, Regex.Escape(".Click +=")));
+                text = text[..chief];
             }
             foreach (var press in new[] { "new Button", "Ui.Button", "Ui.Primary", "Ui.Secondary", "Ui.Ghost", "Ui.Danger", "Ui.Confirm", "ConfirmIf",
                          "TextField", "AmountField", "new TextBox", ".Click +=", "Ui.KillSwitch", "ModeButton" })

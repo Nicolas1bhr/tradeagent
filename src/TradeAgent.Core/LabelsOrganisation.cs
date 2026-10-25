@@ -45,14 +45,48 @@ public static partial class Labels
     /// repair of a position's folder the last start could not rebuild.
     /// </summary>
     public const string OrganisationRecordsAndRepair =
-        "These are TradeAgent's own records, read as they stand. The one thing you can do here is repair the folder of a position the last start "
-        + "could not rebuild; nothing else on this page can be changed from it.";
+        "These are TradeAgent's own records, read as they stand. What you can do here is repair the folder of a position the last start "
+        + "could not rebuild, and appoint, replace, activate or remove the chief on the organisation's card; nothing else on this page can "
+        + "be changed from it.";
 
     /// <summary>The repair press at rest, on the row of a position whose folder the last start could not rebuild.</summary>
     public const string RepairHome = "Repair its folder";
 
     /// <summary>The repair press armed: what the second press does, in full — nothing is deleted.</summary>
     public const string RepairHomeConfirm = "Press again: move the folder aside, kept whole, and build it afresh";
+
+    // ---- the chief, on the organisation's card (U-org-chief item 7) ------------------------------------------------------------------
+
+    public const string ChiefTitle = "The chief";
+
+    /// <summary>Under the chief's presses while no board seat is active: whose they are, and until when (the orchestrator's Q1).</summary>
+    public const string ChiefYoursUntilBoard =
+        "Yours until the security board is active: you appoint, replace and activate the chief here, two presses each. Once a board seat is "
+        + "active, the board does that by a two-seat act, and you can still remove the chief.";
+
+    /// <summary>In their place once a board seat is active.</summary>
+    public const string ChiefIsTheBoards =
+        "The security board appoints and replaces the chief now, by a two-seat act under your veto. You can still remove the chief.";
+
+    public const string ChiefNone = "No chief is appointed: the organisation's head is vacant, so it is yours.";
+
+    /// <summary>The chief sitting, in the app's words: its id, whether it is active, and the seat its row names.</summary>
+    public static string ChiefSitting(string id, string status, string? runtime, string? model) =>
+        $"The chief is {id}, {status}, set to run on {runtime ?? "no runtime"}{(model is null ? "" : $" with model {model}")}.";
+
+    public const string ChiefSeatPrompt = "The seat a new chief runs on:";
+    public const string ChiefNoSeats = "No seat can be offered: TradeAgent knows no runtime and model to seat a chief on yet.";
+    public const string ChiefChooseSeat = "Choose the seat the chief runs on first. Nothing was written.";
+    public static string ChiefSeatChoice(ChiefSeat seat) => $"{seat.Runtime} · {seat.Model}";
+
+    public const string ChiefAppoint = "Appoint a chief";
+    public const string ChiefAppointConfirm = "Press again: appoint a chief on the chosen seat, dormant until you activate it";
+    public const string ChiefReplace = "Replace the chief";
+    public const string ChiefReplaceConfirm = "Press again: end the chief, cancel its open mandates and appoint a new one on the chosen seat";
+    public const string ChiefActivate = "Activate";
+    public const string ChiefActivateConfirm = "Press again: activate the chief — a real-model seat needs a recorded proven cell";
+    public const string ChiefRemove = "Remove the chief";
+    public const string ChiefRemoveConfirm = "Press again: end the chief and cancel its open mandates; no one takes its place";
 
     public const string CellProofHeld = "A cell proof is recorded for this machine and this build.";
 

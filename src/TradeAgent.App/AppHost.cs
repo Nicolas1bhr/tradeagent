@@ -1536,6 +1536,70 @@ public sealed class AppHost : IAsyncDisposable
     /// The cost is null unless this installation can actually price a turn. Reporting zero would tell
     /// an AI whose mission is to pay for itself that it was free.
     /// </summary>
+    // ---- the owner's presses over the chief (U-org-chief item 7; AUTH-001: in-process only) ---------------------------------------
+
+    /// <summary>Whether a board seat is active, read through the board's one reader; unreadable reads as active, so his appointment presses hide.</summary>
+    internal bool BoardActive
+    {
+        get
+        {
+            try { return Board.AnyActive; }
+            catch (Exception) { return true; }
+        }
+    }
+
+    /// <summary>
+    /// THE CLOSED LIST OF SEATS A CHIEF MAY BE APPOINTED ON: the runtime the setup prepared, with each model this build prices on it — a list
+    /// of presses, never a box a scroll could change. Empty before a runtime is chosen.
+    /// </summary>
+    internal IReadOnlyList<ChiefSeat> ChiefSeats()
+    {
+        var runtime = Gateway.Settings.SelectedRuntimeId;
+        if (runtime is not { Length: > 0 } || !KnownRuntime(runtime)) return [];
+        return [.. ModelChoices.Where(m => m.Model.Length > 0).Select(m => new ChiefSeat(runtime, m.Model)).DistinctBy(c => c.Model)];
+    }
+
+    internal string AppointChief(ChiefSeat seat) => ChiefPress(org =>
+    {
+        var done = org.AppointChief(seat, KnownRuntime, DateTimeOffset.UtcNow);
+        return $"You appointed the chief {done.Chief} on {seat.Runtime} with model {seat.Model}. It is dormant until you activate it.";
+    });
+
+    internal string ReplaceChief(ChiefSeat seat) => ChiefPress(org =>
+    {
+        var done = org.ReplaceChief(seat, KnownRuntime, DateTimeOffset.UtcNow);
+        return $"You replaced the chief {done.Was} with {done.Chief} on {seat.Runtime} with model {seat.Model}: {done.Was} has ended and "
+               + $"{done.Cancelled.Count} of its open mandates were cancelled. The new chief is dormant until you activate it.";
+    });
+
+    internal string ActivateChief() => ChiefPress(org =>
+    {
+        var chief = org.Chief() ?? throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "No chief is appointed, so there is none to activate.");
+        org.Activate(chief, DeclaredSeatClass, Gateway.Settings.UnconfinedSeats, DateTimeOffset.UtcNow, () => CellProofHeld);
+        return $"You activated the chief {chief}. Every launch of it still passes the activation gate.";
+    });
+
+    internal string RemoveChief() => ChiefPress(org =>
+    {
+        var done = org.VacateChief(DateTimeOffset.UtcNow);
+        return $"You removed the chief {done.Was}: it has ended, {done.Cancelled.Count} of its open mandates were cancelled, and the "
+               + "organisation's head is vacant. No one was restored in its place.";
+    });
+
+    /// <summary>One press over the chief: its words, logged as his in the Activity log — or the refusal's words, nothing written.</summary>
+    string ChiefPress(Func<OrgStore, string> press)
+    {
+        if (_db is not { } db) return "The organisation's records are not open, so nothing was done.";
+        try
+        {
+            var words = press(new OrgStore(db));
+            try { Gateway.Log.Activity(words); }
+            catch (Exception) { /* the record is the chart's event; the log line is a courtesy */ }
+            return words;
+        }
+        catch (TradeAgentException ex) { return ex.Message; }
+    }
+
     /// <summary>Whether this host's runtime catalogue names <paramref name="runtime"/> — the check a chief's seat is held to (<c>U-org-chief</c>).</summary>
     internal static bool KnownRuntime(string runtime)
     {

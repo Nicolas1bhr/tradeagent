@@ -48,9 +48,16 @@ sealed record OrgSurfaceSources
     /// <summary>The owner's repair of a position's folder, returning its words (<see cref="AppHost.RepairHome"/>); null where there is no host, and no press is drawn.</summary>
     public Func<string, string>? RepairHome { get; init; }
 
+    /// <summary>
+    /// THE OWNER'S PRESSES OVER THE CHIEF (<c>U-org-chief</c> item 7), drawn on the organisation's card — in-process only, never the pipe's — or
+    /// null where there is no host, and none is drawn.
+    /// </summary>
+    public ChiefPresses? Chief { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
+        Chief = new ChiefPresses(() => host.BoardActive, host.ChiefSeats, host.AppointChief, host.ReplaceChief, host.ActivateChief, host.RemoveChief),
         SeatOf = host.ResolvedSeatOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
@@ -61,6 +68,14 @@ sealed record OrgSurfaceSources
         RepairHome = host.RepairHome,
     };
 }
+
+/// <summary>
+/// THE OWNER'S PRESSES OVER THE CHIEF (<c>U-org-chief</c> item 7; the orchestrator's Q1): whether a board seat is active (read through the board's
+/// one reader), the CLOSED list of seats a chief may be appointed on, and each press — appoint, replace, activate, remove — answering the app's
+/// words of what it did or why it was refused. Each runs in-process, in the owner's own app; none is reachable from the pipe.
+/// </summary>
+sealed record ChiefPresses(Func<bool> BoardActive, Func<IReadOnlyList<ChiefSeat>> Seats, Func<ChiefSeat, string> Appoint,
+    Func<ChiefSeat, string> Replace, Func<string> Activate, Func<string> Remove);
 
 /// <summary>
 /// THE SENTENCES THE THREE PAGES SHARE. A claim — a rationale, a report, an objective, a probability — is always printed as someone's
