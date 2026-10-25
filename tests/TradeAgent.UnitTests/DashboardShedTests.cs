@@ -62,7 +62,7 @@ public class RailOrderTests
     {
         Assert.Equal(
             ["Chat", TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts, "Dashboard",
-                TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, "Settings",
+                TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, TradeAgent.Core.Labels.NavForYou, "Settings",
                 "Activity", "Checks", "Oversight"],
             MainWindow.Rail.Select(r => r.Label));
 
