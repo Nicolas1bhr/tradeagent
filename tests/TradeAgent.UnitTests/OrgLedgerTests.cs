@@ -463,6 +463,10 @@ public class OrgLedgerTests
         // decision (the review event its first ref), forecasts and ledger entry, and its untaken `cut-review` wakes closed answered, in one
         // write. It writes no org_unit, org_position or org_event: the answer is a record, and moves no share, status or seat.
         mandate = [.. mandate, "AnswerReview"];
+        // REVISITED, OUT LOUD, BY U-org-surface-b: Vetoable — a READ for the owner's "For you" page: the structural events his veto
+        // would accept now, asked of the same one check Veto throws on (OrgStore.Vetoable.cs, which writes nothing). No op, door verb
+        // or trade verb names it (OwnerInboxTests.No_op_or_verb_reaches_the_owners_inbox_presses).
+        mandate = [.. mandate, "Vetoable"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
