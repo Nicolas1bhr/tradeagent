@@ -192,6 +192,50 @@ public class OrgReviewTests
             u => u.Contains($"{bare}'s day could not be read from the meter", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// (b2, fix pass 2 — the seam with <c>U-verbs-a-followups</c>; BUDGET-001, unknown never zero) A UNIT PAST HALF ITS ENVELOPE ONLY ONCE
+    /// ITS RESERVATION-CHARGED TURNS ARE COUNTED IS REVIEWED: the sibling team's worker had one turn priced at 0.5 and one LOST to a
+    /// restart, charged its reservation of 2 — the team is charged 2.5 of its 4 (cap 10 × 0.4) through the real meter, with nothing
+    /// accepted. <see cref="UnitDay.Spent"/> is the priced part only (0.5), so the sweep reads priced + charged and raises ONE review whose
+    /// detail carries both parts apart. A day under half whose turns nothing measured were charged nothing is not judged, never read as
+    /// zero. RED at base: the trigger compared the priced 0.5 alone, read the team as under half, and raised nothing and said nothing.
+    /// </summary>
+    [Fact]
+    public void A_unit_past_half_only_with_its_reservation_charged_turns_is_reviewed()
+    {
+        using var db = Chart();
+        var store = new AiAttemptStore(db);
+        AiAttempt Turn(string id, decimal reserved) => new()
+        {
+            Id = id, StartedAt = Now.AddHours(-2), Role = SiblingWorker, ReservedCost = reserved, SeatClass = SeatClasses.Harness,
+            BillingClass = BillingClasses.Key, Funding = [Sibling, Div, OrgIds.Root]
+        };
+        Assert.True(store.Begin(Turn("turn-4e71e0000011", 0m)).Admitted);
+        Assert.True(store.End("turn-4e71e0000011", 0, Now.AddHours(-1), 1000, 0, null, 100, null, "model-x", 0.5m, null, null));
+        Assert.True(store.Begin(Turn("turn-4e71e0000012", 2m)).Admitted);
+        Assert.Equal(1, store.LoseOpen(Now.AddMinutes(-90)));
+        var meter = new TurnMeter(db, () => 10m, runtimeId: () => "codex", now: () => Now, live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Harness);
+        var org = new OrgStore(db);
+        IReadOnlyList<UnitDay>? Read(string unit) => TradeAgent.App.AppHost.MissionHost.UnitDayOf(org, meter, store, Now, unit);
+        var key = Assert.Single(Read(Sibling)!, d => d.Ceiling == BillingClasses.Key);
+        Assert.Equal((0.5m, 1, 2m), (key.Spent, key.Unmeasured, key.UnmeasuredCharge));
+
+        var swept = org.ReviewSweep(Now, ReviewThresholds.Default, Read);
+        Assert.Equal(1, swept.Raised);
+        var review = Assert.Single(Reviews(db));
+        Assert.Equal((Sibling, OrgDecider.App), (review.Unit, review.Decider));
+        Assert.True(review.Detail.Contains("ceiling=key spent=0.5 unmeasured=1 unmeasured_charge=2 envelope=4.0 share=0.5 accepted=0",
+            StringComparison.Ordinal), review.Detail);
+
+        // UNDER HALF WITH A TURN NOTHING MEASURED AND NOTHING CHARGED: its cost is unknown — said, never judged as zero.
+        using var other = Chart();
+        var zero = new OrgStore(other).ReviewSweep(Now, ReviewThresholds.Default,
+            unit => unit == Team ? [new UnitDay(Team, BillingClasses.Key, 10m, 1m, 0m, 0, 1, 0m)] : []);
+        Assert.Equal(0, zero.Raised);
+        Assert.Contains("1 turn(s) of unknown cost", Assert.Single(zero.Unjudged), StringComparison.Ordinal);
+    }
+
     static long Count(Database db, string table) => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT COUNT(*) FROM {table}");
