@@ -719,7 +719,8 @@ public static class GatewaySchema
             + "whose head is the owner; each unit's head; each unit's AI envelope beside what was spent and is reserved today, as "
             + "TradeAgent resolves them for admission, once per ceiling your seat is held to — 'key' real money, 'plan' the plan's "
             + "capacity and never money, the two never added — with turns of unknown cost counted apart (unknown when nothing meters "
-            + "them, never zero); and your OPEN mandates, held "
+            + "them, never zero) and turns charged their reservation because nothing measured them shown apart from the priced "
+            + "spend, by count and charge; and your OPEN mandates, held "
             + $"and decided, each with its status and measured spend. At most {GatewayPipeServer.MandateListMax} mandates and "
             + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped and 'mandate-list' reads them all. "
             + "It takes no argument, and writes nothing.",

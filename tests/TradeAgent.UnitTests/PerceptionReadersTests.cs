@@ -195,7 +195,8 @@ public class PerceptionReadersTests(ITestOutputHelper log)
         Assert.Equal(Reserve, day.Reserved);
 
         // Perception's own reading is still whole: it is what its budget is compared against. And the chair's is its own.
-        Assert.Equal(new AiAttemptTotals(Answered + Reserve + Reserve, Reserve, 3, 0, 2, 1, 2),
+        // Its two unreported calls' reservations are their charge, carried apart (U-verbs-a-followups).
+        Assert.Equal(new AiAttemptTotals(Answered + Reserve + Reserve, Reserve, 3, 0, 2, 1, 2, Reserve + Reserve),
             new AiAttemptStore(db).TotalsBetween(from, to, AppPrincipals.Perception));
         Assert.Equal(1, new AiAttemptStore(db).TotalsBetween(from, to, CouncilRoles.Operations).Turns);
 
