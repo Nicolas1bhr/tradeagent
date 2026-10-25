@@ -348,8 +348,8 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
             Assert.True(host.Wakes!.Raise(wake, MissionEventKind.Board, DateTimeOffset.UtcNow.AddMinutes(-1), "bact-000000000000", "board-1"));
             await host.Mission.TurnAsync();
 
-            Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1))
-                .Where(a => BoardSeats.IsBoardId(a.Role)));
+            Assert.DoesNotContain(new AiAttemptStore(db).Between(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1)),
+                a => BoardSeats.IsBoardId(a.Role));
             var settled = host.Wakes.Get(wake)!;
             Assert.Equal((true, MissionEventDisposition.Refused), (settled.Consumed, settled.Disposition));
             output.WriteLine(settled.DispositionDetail);
