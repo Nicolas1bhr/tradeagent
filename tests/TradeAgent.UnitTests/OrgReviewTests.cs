@@ -44,9 +44,9 @@ public class OrgReviewTests
         return db;
     }
 
-    /// <summary>The meter's reading of each unit, in the key ceiling: its envelope, what it spent today and how many turns of unknown cost.</summary>
+    /// <summary>The meter's reading of each unit, in the key ceiling: its envelope, its PRICED spend today and how many turns of unknown cost — no turn charged its reservation unmeasured.</summary>
     internal static Func<string, IReadOnlyList<UnitDay>?> Day(params (string Unit, decimal Envelope, decimal Spent, int Unpriced)[] units) =>
-        unit => [.. units.Where(u => u.Unit == unit).Select(u => new UnitDay(u.Unit, BillingClasses.Key, u.Envelope, u.Spent, 0m, u.Unpriced))];
+        unit => [.. units.Where(u => u.Unit == unit).Select(u => new UnitDay(u.Unit, BillingClasses.Key, u.Envelope, u.Spent, 0m, u.Unpriced, 0, 0m))];
 
     internal static List<(long Id, string Unit, string? Position, string Decider, string Detail)> Reviews(Database db) => db.Read(_ =>
     {
