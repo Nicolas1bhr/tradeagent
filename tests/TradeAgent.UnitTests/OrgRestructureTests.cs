@@ -425,11 +425,11 @@ public partial class OrgStructureTests
         Assert.Contains("only a dormant position", Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Puppets, 3, Now)).Message, StringComparison.Ordinal);
         Assert.Contains("no position", Assert.Throws<TradeAgentException>(() => org.Activate("pos-000000000000", Puppets, 3, Now)).Message, StringComparison.Ordinal);
 
-        // A BOARD SEAT ACTIVE (U-board-b's rung admits it; the test rebuilds the table to store one).
-        db.Exec("DROP TRIGGER board_seat_sealed_u");
-        db.Exec("ALTER TABLE board_seat RENAME TO board_seat_49");
-        db.Exec("CREATE TABLE board_seat(id TEXT PRIMARY KEY, seat_class TEXT, model_class TEXT, vendor_family TEXT, status TEXT, founded_at TEXT) WITHOUT ROWID");
-        Exec(db, "INSERT INTO board_seat VALUES('board-1', 'harness', 'strong', 'anthropic', 'active', $at)", ("$at", Stamp));
+        // A BOARD SEAT ACTIVE through rung 51's own path: a founded seat's latest board_seat_state row says active, written by the
+        // test host's seam — the only writer of `active` in this build (U-board-b1 item 6); the seat's sealed row still says dormant.
+        var seat = new TradeAgent.Core.Board.BoardStore(db).Seats()[0].Id;
+        new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest(seat, TradeAgent.Core.Board.BoardSeatStatus.Active, Now);
+        Assert.True(new TradeAgent.Core.Board.BoardReader(db).AnyActive);
         var before = Written(db);
         var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Puppets, 3, Now));
         Assert.Contains("the security board's now that a board seat is active", refused.Message, StringComparison.Ordinal);
