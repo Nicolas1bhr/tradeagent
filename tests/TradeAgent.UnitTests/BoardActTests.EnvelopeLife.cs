@@ -118,4 +118,87 @@ public partial class BoardActTests
         var granted = Assert.Single(gw.Envelopes.All(), Stands);
         Assert.Equal((0.04m, day0.AddDays(10)), (granted.MaxQuantity, granted.ExpiresAt));
     }
+
+    /// <summary>A gateway on the founding paper venue with an envelope of 0.05 for ten days granted at day 0, and its clock.</summary>
+    async Task<(TradeAgent.Gateway.TradingGateway Gw, Settable Clock, DateTimeOffset Day0, RecordingConnector Conn)> TenDayEnvelope(Database db)
+    {
+        SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
+        Activate(db, "board-1", "board-2");
+        var clock = new Settable(DateTimeOffset.UtcNow);
+        var inner = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker
+            { AccountId = BoardFounding.PaperAccount, IsSimulated = true }) { QuoteClock = clock };
+        var conn = new RecordingConnector(inner, BoardFounding.PaperVenue);
+        var gw = new TradeAgent.Gateway.TradingGateway(db, conn, new HealthRegistry(), new TradeAgent.Gateway.GatewayOptions { Clock = clock });
+        gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        var day0 = clock.Now;
+        Assert.Equal(day0.AddDays(10), Assert.Single(gw.Envelopes.All(), e => e.StandsAt(day0)).ExpiresAt);
+        return (gw, clock, day0, conn);
+    }
+
+    static string Terms(decimal quantity, int days)
+    {
+        var o = System.Text.Json.Nodes.JsonNode.Parse(EnvelopeWith("days", days.ToString(System.Globalization.CultureInfo.InvariantCulture)))!.AsObject();
+        o["max_quantity"] = quantity;
+        return o.ToJsonString();
+    }
+
+    /// <summary>
+    /// A VETO THAT RESTORES NOTHING STILL TAKES BACK THE LIFE IT REVOKED (the fix pass's re-review 2): 0.05 for ten days; on day nine two
+    /// seats widen to 0.10, a pass grants it to day nineteen, one seat narrows to 0.04 and a pass grants that — keeping day nineteen — and
+    /// THEN the owner vetoes the widening. 0.04 is already narrower than 0.05, so the veto writes no version and moves no terms; the
+    /// standing envelope's life past day ten rested on the vetoed widening alone, so the veto withdraws it in its own write, and no pass
+    /// grants anything past day ten. RED before: the 0.04 envelope stood to day nineteen.
+    /// </summary>
+    [Fact]
+    public async Task A_veto_that_restores_no_terms_still_withdraws_the_life_it_revoked()
+    {
+        using var db = TestEnv.NewDb();
+        var (gw, clock, day0, _) = await TenDayEnvelope(db);
+        await using var _gw = gw;
+        clock.Now = day0.AddDays(9);
+        var widened = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Terms(0.05m, 10)), Json(Terms(0.10m, 10)))));
+        gw.BoardDecide(widened.Act.Id, "board-2", null, true, widened.Act.IntentSha256, "the book has room");
+        await gw.RefreshHealthAsync();
+        clock.Now = clock.Now.AddMinutes(1);
+        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Terms(0.10m, 10)), Json(Terms(0.04m, 10)))));
+        await gw.RefreshHealthAsync();
+        Assert.Equal(day0.AddDays(19), Assert.Single(gw.Envelopes.All(), e => e.StandsAt(clock.Now)).ExpiresAt);
+
+        var vetoed = gw.VetoBoardAct(widened.Act.Id);
+        Assert.Null(vetoed.PolicyVersion);
+        await gw.RefreshHealthAsync();
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.Now) && e.ExpiresAt > day0.AddDays(10));
+        Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(day0.AddDays(11)));
+    }
+
+    /// <summary>
+    /// A SURVIVING WIDENING NEVER CARRIES A VETOED ONE'S DURATION (the fix pass's re-review 2): 0.05 for ten days; on day nine two seats
+    /// confirm A (0.05 → 0.10) and then B (ten days → twenty) with no pass between, and the next pass grants to day twenty-nine. The owner
+    /// vetoes B; on day ten one seat narrows to 0.09. The replacement never stands past day nineteen — A's own ten days — and where the
+    /// grant's life cannot be split between A and the vetoed B it errs short. RED before: the replacement stood to day twenty.
+    /// </summary>
+    [Fact]
+    public async Task A_surviving_widening_never_carries_a_vetoed_ones_duration()
+    {
+        using var db = TestEnv.NewDb();
+        var (gw, clock, day0, _) = await TenDayEnvelope(db);
+        await using var _gw = gw;
+        clock.Now = day0.AddDays(9);
+        var a = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Terms(0.05m, 10)), Json(Terms(0.10m, 10)))));
+        gw.BoardDecide(a.Act.Id, "board-2", null, true, a.Act.IntentSha256, "the book has room");
+        var b = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Terms(0.10m, 10)), Json(Terms(0.10m, 20)))));
+        gw.BoardDecide(b.Act.Id, "board-2", null, true, b.Act.IntentSha256, "a longer run");
+        await gw.RefreshHealthAsync();
+        Assert.Equal(day0.AddDays(29), Assert.Single(gw.Envelopes.All(), e => e.StandsAt(clock.Now)).ExpiresAt);
+
+        gw.VetoBoardAct(b.Act.Id);
+        clock.Now = day0.AddDays(10);
+        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Terms(0.10m, 10)), Json(Terms(0.09m, 10)))));
+        await gw.RefreshHealthAsync();
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.Now) && e.ExpiresAt > day0.AddDays(19));
+    }
 }
