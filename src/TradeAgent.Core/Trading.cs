@@ -313,6 +313,15 @@ public sealed class TradeAgentSettings
     public Dictionary<string, string> RoleRuntime { get; set; } = [];
 
     /// <summary>
+    /// THE ROW VALUE THAT MEANS "THE AI TOOL FROM SETUP" (<c>U-role-follows-setup</c>): a role's <see cref="RoleRuntime"/> row holding this word
+    /// stores that fact, not a copy of whichever CLI the setup prepared, so the role follows the setup's CLI whichever way it was switched and
+    /// no writer has to keep rows true. It is one word this build owns and never a manifest id (a test refuses a catalogue that grows it), so
+    /// it can never be mistaken for a runtime; <c>AppHost.RuntimeForRole</c> is where it is read. It widens nothing: it names the CLI, the
+    /// less-restricted side of the harness choice, exactly as the id it replaces did.
+    /// </summary>
+    public const string SetupRuntime = "setup";
+
+    /// <summary>
     /// The runtime this role was CHOSEN to run on, or null for "the app's default for this role".
     ///
     /// Null is resolved above this type, not here, because the default depends on a fact settings

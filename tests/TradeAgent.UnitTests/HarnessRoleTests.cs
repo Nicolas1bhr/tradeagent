@@ -83,6 +83,27 @@ public class HarnessRoleTests : IDisposable
             CouncilRoles.Research, chosenForRole: "codex", appWide: "opencode", keyHeld: true));
     }
 
+    /// <summary>
+    /// A ROW THAT SAYS "THE SETUP'S TOOL" RESOLVES TO THE APP-WIDE CLI, WHATEVER IT IS AND KEY OR NO KEY (<c>U-role-follows-setup</c>): no row is
+    /// written when the setup switches, and the word is no runtime the catalogue knows.
+    ///
+    /// Take the sentinel arm out of <c>AppHost.RuntimeForRole</c> and this goes red: the row resolves to its own literal word.
+    /// </summary>
+    [Fact]
+    public void A_setup_row_follows_the_setups_cli_and_is_no_manifest_id()
+    {
+        foreach (var held in new[] { true, false })
+        {
+            Assert.Equal("opencode", AppHost.RuntimeForRole(
+                CouncilRoles.Research, TradeAgentSettings.SetupRuntime, appWide: "opencode", keyHeld: held));
+            Assert.Equal("codex", AppHost.RuntimeForRole(
+                CouncilRoles.Research, TradeAgentSettings.SetupRuntime, appWide: "codex", keyHeld: held));
+            Assert.Equal("codex", AppHost.RuntimeForRole(
+                CouncilRoles.Operations, TradeAgentSettings.SetupRuntime, appWide: "codex", keyHeld: held));
+        }
+        Assert.Null(RuntimeCatalog.Find(TradeAgentSettings.SetupRuntime));
+    }
+
     /// <summary>The settings row is what carries that choice, and absent means "the app's default".</summary>
     [Fact]
     public void The_settings_row_carries_one_runtime_per_role_and_absent_means_the_default()

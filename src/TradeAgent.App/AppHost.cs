@@ -379,7 +379,10 @@ public sealed class AppHost : IAsyncDisposable
     /// can only be exercised by starting the whole app is a rule nobody is checking.
     /// </remarks>
     public static string? RuntimeForRole(string role, string? chosenForRole, string? appWide, bool keyHeld) =>
-        !ApiAgentRuntime.Serves(role)
+        // THE SETUP'S TOOL, BY NAME (U-role-follows-setup): a row holding the sentinel stores the fact "the AI tool from setup", so it follows
+        // whichever CLI is prepared — key held or not, any role — instead of a copy of that CLI's id that a writer has to keep true.
+        chosenForRole == TradeAgentSettings.SetupRuntime ? appWide
+        : !ApiAgentRuntime.Serves(role)
             ? appWide
             : chosenForRole
               ?? (role == CouncilRoles.Research && keyHeld ? ApiAgentRuntime.RuntimeId : appWide);
