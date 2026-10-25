@@ -11749,3 +11749,14 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Reviews:** `fleet/tmp/A-org/fix2/U-exec-env-fix-review.md`, `-review2.md` (findings closed by c177a009); re-review `-rereview.md`: "No defects found … The prior finding is closed".
 **Tests box:** NOT RUN — the machine does not answer.
 **CARD:** an uncancelled pass still reads a home file of any size in full when hashing new rows (outside the database lock now). **NOT verified:** the 1-TiB sparse test on Windows ran only through CI.
+
+## U-rewake-followups — a holder carries at most one brought-forward mandate at any time, a huge re-wake floor cannot overflow the sweep, and an unplaceable holder's warning survives the deadline clamp
+
+**Landed** (`land.sh`, seat B) on `main`; builder (shas as first pushed) `4f52bc16` one brought mandate per holder · `49eac08c` saturating floor · `a13cbcf1` warning survives the clamp · fix pass 1 `35319c0e` both refusals kept · report `c92e03fb`. No rung.
+**Source:** seat B's cards U-rewake-one-brought (the residual accepted at U-rewake-floor's landing) and U-rewake-followups (the Codex second pass on U-rewake-floor: P2 overflow, P3 lost warning).
+**Protects:** BUDGET-001 (no mandate wakes a floor early — an extra turn on the owner's allowance); refuse never guess (an uncomputable floor no longer aborts the sweep for every later mandate).
+**RED / mutant:** item 1 "Expected: 0 Actual: 1" (OrgRewakeFloorTests.cs:499); item 2 `OverflowException: TimeSpan overflowed`; item 3 the holder unnamed; fix 1 `A_requested_wake_another_mandate_reaches_at_its_floor_brings_nothing_forward` "Expected 0, Actual 1" at a13cbcf1. MUTANT the guard narrowed to `due <= asked` alone ⇒ item 1 red at :499, watched before and after the fix; restored, green.
+**Review:** Codex: 1 REAL (a regression from item 1: a mandate due at its floor by the asked time could consume the wake) → fix pass 1 (same builder) keeps both refusals; Codex re-review: no defects.
+**Gate:** Release 0 warnings; OrgAssignmentTests 53/53 ×3, Sweep callers 111/111; branch CI 40126048817 12/12 on 35319c0e; names 3153 → 3157, removed 0.
+**Tests box:** NOT RUN — the machine does not answer.
+**NOT VERIFIED:** no real model turn; no full local suite (CI's).
