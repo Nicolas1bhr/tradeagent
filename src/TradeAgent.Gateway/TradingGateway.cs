@@ -514,28 +514,34 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 // ANY version after the one that granted the policy's last envelope on this pair widened the terms — so a two-seat widening
                 // followed by a one-seat narrowing with no pass between keeps the widening's authorised life. A narrowing alone still ends
                 // no later than that envelope did, and an envelope whose life is over is not revived by one.
-                // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2): an envelope granted under a version whose act
-                // the owner vetoed carries revoked authority, so the life a narrowing may keep is read from the latest envelope granted under
-                // authority that still stands — capped by every vetoed one granted after it, so where in doubt the life errs SHORT — and with
-                // none, a narrowing grants nothing. WidenedSince skips a vetoed version too.
+                // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2 and the re-review's): the life a narrowing may
+                // keep is the AUTHORISED life of the policy's last envelope on this pair, read along every grant on the pair, oldest first —
+                // a grant's life is its own when an act since the grant before it widened the terms and the owner has not vetoed that act
+                // (or it is the pair's first grant, under a version not vetoed); otherwise it is no longer than the authorised life it
+                // replaced. So an envelope that kept a vetoed widening's life — itself or through any narrowing granted after it — keeps
+                // none of it, and where in doubt the life errs SHORT. WidenedSince skips a vetoed version.
                 var granted = _envelopes.All(int.MaxValue)
                     .Where(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
                                 && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal) && PolicyGranted(e))
-                    .OrderByDescending(e => e.GrantedAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).ToList();
-                PaperEnvelopeRow? previous = null;
-                DateTimeOffset? lifeLeft = null;
-                foreach (var e in granted)
+                    .OrderBy(e => e.GrantedAt).ThenBy(e => e.Id, StringComparer.Ordinal).ToList();
+                DateTimeOffset? authorised = null;
+                int? lastGrant = null;
+                for (var i = 0; i < granted.Count; i++)
                 {
-                    lifeLeft = lifeLeft is { } l && l < e.ExpiresAt ? l : e.ExpiresAt;
-                    if (GrantedUnder(e) is { } v && _board.VetoedVersion(v)) continue;
-                    previous = e;
-                    break;
+                    var e = granted[i];
+                    var under = GrantedUnder(e);
+                    var fresh = i == 0
+                        ? !(under is { } u && _board.VetoedVersion(u))
+                        : under is { } u2 && WidenedSince(lastGrant, u2);
+                    authorised = fresh ? e.ExpiresAt
+                        : authorised is { } a ? (a < e.ExpiresAt ? a : e.ExpiresAt)
+                        : e.GrantedAt;
+                    lastGrant = under;
                 }
-                var widened = WidenedSince(previous is not null ? GrantedUnder(previous) : granted.Count > 0 ? GrantedUnder(granted[0]) : null, setBy);
-                if (!widened && previous is null && granted.Count > 0) return null;
-                if (!widened && lifeLeft is { } left && left < until)
+                var widened = WidenedSince(lastGrant, setBy);
+                if (!widened && authorised is { } life && life < until)
                 {
-                    until = left;
+                    until = life;
                     if (until <= now) return null;
                 }
                 terms = stated;
