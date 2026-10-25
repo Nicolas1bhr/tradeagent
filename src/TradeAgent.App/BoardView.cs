@@ -12,7 +12,12 @@ namespace TradeAgent.App;
 ///
 /// <para><b>It reads and nothing else.</b> The page is handed a <see cref="BoardReader"/> and nothing that writes: no gateway, no host,
 /// no store. Its one press opens the version history, which reads too. The board's acts are its own verbs (<c>U-board-b</c>), never a
-/// press on this page, and the owner's veto is his own page's (R24 § 4.3).</para>
+/// press on this page, and the owner's veto is his own "For you" page's (R24 § 4.3; <c>U-org-surface-b</c>).</para>
+///
+/// <para><b>Every act whole</b> (<c>U-org-surface-b</c> item 3; R24 § 4.7: each decision "with its history, rationale, deciders,
+/// evidence class and score"): its status, intent, every event with its seat, vendor families and whether they were one, every
+/// rationale as its seat's claim, the evidence class ("none yet" for a null — never inferred, EVID-001), its forecasts with the app's
+/// resolutions, and the audit score that is not this build's.</para>
 ///
 /// <para><b>Built once and updated in place.</b> One row per field the page has words for (<see cref="Labels.BoardFields"/>), built at
 /// construction; <see cref="Update"/> writes their text and shows or hides them. The history is built when the owner opens it, never on
@@ -41,6 +46,11 @@ sealed class BoardPage
 
     readonly StackPanel _history = new() { Spacing = Theme.S3, IsVisible = false };
     readonly Button _showHistory;
+
+    /// <summary>The board's acts, newest first, one card per act made once and refilled (<see cref="LiveList{T}"/>).</summary>
+    internal readonly StackPanel ActCards = new() { Spacing = Theme.S5 };
+    internal readonly LiveList<BoardActRecord> Acts;
+    readonly TextBlock _actsUnreadable = Ui.With(Ui.Body("", Theme.Caution), t => t.IsVisible = false);
 
     public Control Root { get; }
 
@@ -95,6 +105,9 @@ sealed class BoardPage
                      + "evidence class of anything it allocated, and the audit line's score."),
             _showHistory,
             _history)));
+
+        Acts = new LiveList<BoardActRecord>(ActCards, Ui.Muted(Labels.BoardActsNone), a => a.Act.Id, ActCard);
+        left.Children.Add(Ui.Section(Labels.BoardActs, Ui.Col(Theme.S3, _actsUnreadable, ActCards)));
 
         var seats = Ui.Section("The board's seats", Ui.Col(Theme.S3, _seats, Ui.Divider(), _seatsDormant));
         seats.Margin = new Avalonia.Thickness(Theme.S5, 0, 0, 0);
@@ -157,6 +170,7 @@ sealed class BoardPage
     /// <summary>The five-second pass: every value written into the row built for it, nothing rebuilt.</summary>
     public void Update()
     {
+        UpdateActs();
         BoardPolicyInForce inForce;
         IReadOnlyList<BoardPolicyVersion> history;
         try
@@ -205,6 +219,59 @@ sealed class BoardPage
         _unnamed.Text = unnamed.Count > 0 ? Labels.BoardFieldUnnamed(unnamed) : "";
 
         UpdateSeats();
+    }
+
+    void UpdateActs()
+    {
+        try
+        {
+            Acts.Update(_board.Acts());
+            _actsUnreadable.IsVisible = false;
+        }
+        catch (Exception ex)
+        {
+            _actsUnreadable.Text = $"The board's acts could not be read: {ex.Message}";
+            _actsUnreadable.IsVisible = true;
+        }
+    }
+
+    /// <summary>
+    /// ONE ACT'S CARD, made once and refilled: every line is the app's record but the rationales and the forecasts' claims, which are
+    /// their seats' words in quotation marks (<see cref="OrgText.Claim"/>) — a claim and a measurement are never one sentence.
+    /// </summary>
+    static (Control, Action<BoardActRecord>) ActCard(BoardActRecord first)
+    {
+        var title = Ui.With(Ui.Body(""), t => t.FontWeight = Avalonia.Media.FontWeight.SemiBold);
+        var status = Ui.Body("");
+        var intent = Ui.With(Ui.Mono(""), t => t.TextWrapping = Avalonia.Media.TextWrapping.Wrap);
+        var events = Ui.Micro("");
+        var rationales = Ui.Body("");
+        var evidence = Ui.Micro("");
+        var forecasts = Ui.Micro("");
+        var score = Ui.Micro(Labels.BoardActAuditScore);
+        void Fill(BoardActRecord a)
+        {
+            var row = a.Act;
+            OrgText.Set(title, Labels.BoardActTitle(row.Id, row.Kind, row.Seat, OrgText.When(row.At)));
+            OrgText.Set(status, Labels.BoardActStatus(a.Status));
+            OrgText.Set(intent, $"Bound to its exact intent (fingerprint {Short(row.IntentSha256)}): {row.Intent}");
+            OrgText.Set(events, string.Join("\n", a.Events.Select(e => Labels.BoardActEventLine(e.Kind, e.Seat, OrgText.When(e.At),
+                e.ProposerFamily, e.DeciderFamily, e.SameFamily, e.PolicyVersion, e.Detail))));
+            OrgText.Set(rationales, string.Join("\n", a.Events.Where(e => e.Rationale is { Length: > 0 })
+                .Select(e => OrgText.Claim(e.Seat, e.Rationale!)).Prepend(OrgText.Claim(row.Seat, row.Rationale))));
+            OrgText.Set(evidence, Labels.BoardActEvidenceClass(row.EvidenceClass));
+            OrgText.Set(forecasts, a.Forecasts.Count == 0
+                ? "No forecast."
+                : string.Join("\n", a.Forecasts.Select(f =>
+                {
+                    var resolved = a.Resolutions.FirstOrDefault(r => r.ForecastId == f.Id);
+                    return OrgText.Claim(f.Forecaster, $"{f.Predicate} of {f.Subject}: {f.Target} by {OrgText.When(f.ResolveBy)}, "
+                                                       + $"probability {f.Probability.ToString(System.Globalization.CultureInfo.InvariantCulture)}")
+                           + "\n" + Labels.BoardForecastResolution(resolved?.Outcome, resolved?.Why,
+                               resolved is null ? null : OrgText.When(resolved.At), f.Scored, f.UnscoredWhy);
+                })));
+        }
+        return (Ui.Col(Theme.S1, title, status, intent, events, rationales, evidence, forecasts, score), Fill);
     }
 
     void ShowUnreadable(string? why)

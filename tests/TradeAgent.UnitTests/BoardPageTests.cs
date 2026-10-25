@@ -165,4 +165,50 @@ public class BoardPageTests
 
     static string AllText(BoardPage page) =>
         string.Join("\n", page.Root.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+
+    static string Change(string field, object from, object to) =>
+        System.Text.Json.JsonSerializer.Serialize(new[] { new Dictionary<string, object> { ["field"] = field, ["from"] = from, ["to"] = to } });
+
+    /// <summary>
+    /// (U-org-surface-b 3) EVERY BOARD ACT SHOWS ITS HISTORY, RATIONALE, DECIDERS, CLASS AND SCORE (R24 § 4.7): a raise proposed by one
+    /// seat with a forecast, confirmed by another, its forecast resolved by the app's sweep — the Board page's card for it says its
+    /// status, the intent it is bound to, each event with its seat (proposer and confirmer), their vendor families and that they are
+    /// one, the version it wrote; both rationales as their seats' quoted words; "Evidence class: none yet"; the forecast as the
+    /// proposer's claim with the app's resolution; and an audit score not yet given. The page still holds only its history press, and
+    /// a tick keeps the card. RED at base: the page had no acts.
+    /// </summary>
+    [Fact]
+    public void Every_board_act_shows_history_rationale_deciders_class_and_score()
+    {
+        using var db = TestEnv.NewDb();
+        var board = new BoardStore(db);
+        foreach (var seat in new[] { "board-1", "board-2" }) board.SetSeatStateUnderTest(seat, BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var forecast = new ForecastClaim(ForecastVocabulary.UnitAdmissible, OrgIds.Research, ForecastVocabulary.NoneAdmitted, now.AddDays(1), 0.8m);
+        var act = board.Propose(new BoardActRequest("board-1", null, Change("plan_day_total", 40, 50), "the plan runs short by noon", [], [forecast]), now);
+        var confirmed = board.Decide(act.Act.Id, "board-2", null, true, act.Act.IntentSha256, "agreed: the noon stop costs a review", now);
+        Assert.Equal(1, new ForecastResolver(db).Sweep(now.AddDays(2)).Resolved);
+
+        var page = new BoardPage(new BoardReader(db));
+        var card = page.Acts.CardOf(act.Act.Id)!;
+        var text = string.Join("\n", card.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+
+        Assert.Contains(Labels.BoardActStatus("confirmed"), text, StringComparison.Ordinal);
+        Assert.Contains(act.Act.Intent, text, StringComparison.Ordinal);
+        Assert.Contains("Proposed by board-1", text, StringComparison.Ordinal);
+        Assert.Contains("Confirmed by board-2", text, StringComparison.Ordinal);
+        Assert.Contains("proposer's vendor family openai, decider's openai — the same family", text, StringComparison.Ordinal);
+        Assert.Contains($"it wrote the policy's version {confirmed.PolicyVersion}", text, StringComparison.Ordinal);
+        Assert.Contains("board-1 wrote: “the plan runs short by noon”", text, StringComparison.Ordinal);
+        Assert.Contains("board-2 wrote: “agreed: the noon stop costs a review”", text, StringComparison.Ordinal);
+        Assert.Contains(Labels.BoardActEvidenceClass(null), text, StringComparison.Ordinal);
+        Assert.Equal("Evidence class: none yet", Labels.BoardActEvidenceClass(null));
+        Assert.Contains($"board-1 wrote: “unit-admissible of {OrgIds.Research}: none by", text, StringComparison.Ordinal);
+        Assert.Contains("Resolved yes", text, StringComparison.Ordinal);
+        Assert.Contains(Labels.BoardActAuditScore, text, StringComparison.Ordinal);
+
+        page.Update();
+        Assert.Same(card, page.Acts.CardOf(act.Act.Id));
+        Assert.Single(page.Root.GetLogicalDescendants().OfType<Button>());
+    }
 }
