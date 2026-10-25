@@ -17,7 +17,7 @@ namespace TradeAgent.App;
 /// <para><b>Every act whole</b> (<c>U-org-surface-b</c> item 3; R24 § 4.7: each decision "with its history, rationale, deciders,
 /// evidence class and score"): its status, intent, every event with its seat, vendor families and whether they were one, every
 /// rationale as its seat's claim, the evidence class ("none yet" for a null — never inferred, EVID-001), its forecasts with the app's
-/// resolutions, and the audit score that is not this build's.</para>
+/// resolutions, and the audit score that is not this build's. And the ventures, named empty until <c>U-ventures-a</c> (R24 § 4.6).</para>
 ///
 /// <para><b>Built once and updated in place.</b> One row per field the page has words for (<see cref="Labels.BoardFields"/>), built at
 /// construction; <see cref="Update"/> writes their text and shows or hides them. The history is built when the owner opens it, never on
@@ -108,6 +108,9 @@ sealed class BoardPage
 
         Acts = new LiveList<BoardActRecord>(ActCards, Ui.Muted(Labels.BoardActsNone), a => a.Act.Id, ActCard);
         left.Children.Add(Ui.Section(Labels.BoardActs, Ui.Col(Theme.S3, _actsUnreadable, ActCards)));
+        // VENTURES (R24 § 4.6): a venture is a mandate the organisation proposes and the board approves — none exists in this build
+        // (U-ventures-a), so the section says so in words rather than drawing an empty frame.
+        left.Children.Add(Ui.Section(Labels.Ventures, Ui.Muted(Labels.VenturesNone)));
 
         var seats = Ui.Section("The board's seats", Ui.Col(Theme.S3, _seats, Ui.Divider(), _seatsDormant));
         seats.Margin = new Avalonia.Thickness(Theme.S5, 0, 0, 0);
