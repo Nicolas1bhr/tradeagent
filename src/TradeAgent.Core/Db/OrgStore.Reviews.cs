@@ -54,7 +54,11 @@ public sealed partial class OrgStore
     /// <item><see cref="ReviewRule.HalfEnvelope"/> — an active unit whose spend today, in a ceiling where it holds an envelope of its own,
     /// reached the threshold's share of it (<paramref name="dayOf"/>: the host meter's reading of that unit, as admission resolves it), with
     /// no mandate accepted today in its subtree — reviewed by the nearest active head ABOVE it (the head whose verbs reach its share). A
-    /// spend under the threshold with a turn of unknown cost is not judged and is said (<see cref="ReviewSweepResult.Unjudged"/>).</item>
+    /// spend under the threshold with a turn of unknown cost is not judged and is said (<see cref="ReviewSweepResult.Unjudged"/>). The spend
+    /// judged is what admission compares (fix pass 2; <c>U-verbs-a-followups</c>, BUDGET-001): the priced <see cref="UnitDay.Spent"/> PLUS
+    /// <see cref="UnitDay.UnmeasuredCharge"/>, the reservations charged to turns nothing measured — real charges against the envelope, so a
+    /// unit past the share only with them is reviewed, and its detail carries the two parts apart. Turns nothing measured and charged
+    /// nothing are of unknown cost like an unpriced turn: under the share they are not judged, never read as zero.</item>
     /// <item><see cref="ReviewRule.Calibration"/> — a position whose resolved, scored forecasts under ONE manager version number at least the
     /// threshold and whose mean skill against the base rate is below it (<see cref="Scorecards.Of"/>, computed at read) — reviewed by its
     /// decider: the head of its unit, or for a head, the nearest active head above. Once per such count of forecasts.</item>
@@ -91,15 +95,18 @@ public sealed partial class OrgStore
                 UnitDay? crossed = null;
                 foreach (var d in reading.Where(d => d.UnitId == unit.Id && d.Envelope is > 0m))
                 {
-                    if (d.Spent >= d.Envelope!.Value * thresholds.EnvelopeSpent) { crossed = d; break; }
-                    if (d.Unpriced > 0)
-                        unjudged.Add($"{OrgEnvelopes.NameOf(unit.Id)} spent {Sql.D(d.Spent)} of its {Sql.D(d.Envelope.Value)} today "
-                                     + $"({BillingClasses.Words(d.Ceiling)}) with {d.Unpriced.ToString(CultureInfo.InvariantCulture)} turn(s) of "
+                    if (Charged(d) >= d.Envelope!.Value * thresholds.EnvelopeSpent) { crossed = d; break; }
+                    var unknown = d.Unpriced + (d.UnmeasuredCharge == 0m ? d.Unmeasured : 0);
+                    if (unknown > 0)
+                        unjudged.Add($"{OrgEnvelopes.NameOf(unit.Id)} was charged {Sql.D(Charged(d))} of its {Sql.D(d.Envelope.Value)} today "
+                                     + $"({BillingClasses.Words(d.Ceiling)}) with {unknown.ToString(CultureInfo.InvariantCulture)} turn(s) of "
                                      + "unknown cost, so whether it passed the review's share is not known: not judged, never guessed.");
                 }
                 if (crossed is not { } c || AcceptedInSubtree(unit.Id, from, to)) continue;
                 raised += RaiseReview(ReviewRule.HalfEnvelope, unit.Id, day, unit.Id, null, reviewer, now,
                     $"rule={ReviewRule.HalfEnvelope} unit={unit.Id} period={day} ceiling={c.Ceiling} spent={Sql.D(c.Spent)} "
+                    + (c.Unmeasured > 0
+                        ? $"unmeasured={c.Unmeasured.ToString(CultureInfo.InvariantCulture)} unmeasured_charge={Sql.D(c.UnmeasuredCharge)} " : "")
                     + $"envelope={Sql.D(c.Envelope!.Value)} share={Sql.D(thresholds.EnvelopeSpent)} accepted=0");
             }
 
@@ -191,6 +198,12 @@ public sealed partial class OrgStore
     });
 
     /// <summary>The nearest ACTIVE head above <paramref name="unitId"/> that is not <paramref name="except"/>, or null (the root's head is the owner's seat).</summary>
+    /// <summary>
+    /// A UNIT'S DAY AS ADMISSION COMPARES IT (fix pass 2; BUDGET-001): the priced spend plus the reservations charged to turns nothing
+    /// measured — never the priced part alone, which would read a LOST or no-usage turn's charge as nothing.
+    /// </summary>
+    static decimal Charged(UnitDay d) => d.Spent + d.UnmeasuredCharge;
+
     string? HeadAbove(string unitId, string? except) =>
         Ancestors(unitId).Select(u => u.HeadPositionId)
             .FirstOrDefault(h => h is not null && h != except && Position(h) is { Status: OrgPositionStatus.Active });
