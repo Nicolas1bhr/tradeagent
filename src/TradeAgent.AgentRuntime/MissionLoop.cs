@@ -3237,7 +3237,10 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var admission = _host.BeginTurn(prompt, wakeIds, role, attemptId, packet);
+        // A BOARD SEAT'S PACKET IS NO SITUATION AND HAS NO BLOCKS TO MEASURE (U-board-b2 item 4): its launch carries none.
+        var admission = packet is { } blocks
+            ? _host.BeginTurn(prompt, wakeIds, role, attemptId, blocks)
+            : _host.BeginTurn(prompt, wakeIds, role, attemptId);
 
         // THE TRANSACTION'S ANSWER OUTRANKS THE LOOK TAKEN ABOVE. Between that look and this commit
         // another launch can have taken the room — the owner's own chat turn, or a second role — and
