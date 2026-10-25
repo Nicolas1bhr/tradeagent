@@ -4299,7 +4299,7 @@ public sealed class MissionLoop
     /// it names more than the id does, and the id otherwise. A tape wake says source, series, subject and count and
     /// never an item; a fill says what filled; a boundary says when TradeAgent decides it.
     /// </summary>
-    static string Observation(MissionEvent e, IReadOnlyList<TapeHoldoutWindow> windows)
+    internal static string Observation(MissionEvent e, IReadOnlyList<TapeHoldoutWindow> windows)
     {
         var id = e.Id.Split('#')[0];
         string? detail = null;
@@ -4318,6 +4318,11 @@ public sealed class MissionLoop
                 MissionEventKind.Boundary or MissionEventKind.Deadline when Json.Read<BoundaryTask>(e.Payload ?? "") is { } t =>
                     $"boundary `{t.Boundary}` ({t.Kind} of {t.Entity}), decided by TradeAgent at "
                     + $"{t.DeadlineAt.LocalDateTime:yyyy-MM-dd HH:mm}",
+                // THE REVIEW'S NUMBER, WHERE THE REVIEWER READS (U-org-scorecards-b fix pass 1): `review-answer` takes the review event's
+                // id, which is the wake's payload — the wake's own id names the rule, subject and period, never that number.
+                MissionEventKind.CutReview when long.TryParse(e.Payload, NumberStyles.None, CultureInfo.InvariantCulture, out var review) =>
+                    $"review {review.ToString(CultureInfo.InvariantCulture)} (`{id}`); answer it with "
+                    + $"`trade org review-answer {review.ToString(CultureInfo.InvariantCulture)} <choice> <rationale> --forecasts JSON`",
                 _ => null
             };
         }

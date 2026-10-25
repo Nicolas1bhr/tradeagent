@@ -1161,7 +1161,8 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     /// (i) O8 PART B ON THE REAL KERNEL, WITH A PUPPET SEAT (<c>U-org-scorecards-b</c>): the app's review sweep finds a team past half its
     /// day envelope with nothing accepted and raises ONE review and ONE <c>cut-review</c> wake to the division's head; that wake buys
     /// the head's puppet a turn, in which it answers through <c>trade org review-answer</c> — an event that is no review refused, the
-    /// review answered with a record and a forecast, and a second answer refused. The answer is a <c>review-answer</c> decision citing
+    /// review answered with a record and a forecast, and a second answer refused; the review's number is the one its wake's line in the
+    /// prompt names (fix pass 1), never read from the database by the seat. The answer is a <c>review-answer</c> decision citing
     /// the review first; the team's share, status and seats read as before. No model.
     /// </summary>
     [Fact]
@@ -1200,8 +1201,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         life.Script(head,
         [
             $"trade org review-answer 999999 \"keep it\" \"no such review\" --forecasts {forecasts}",
-            $"trade org review-answer {review} \"keep the team's share a week\" \"its spend bought runs still being judged\" --forecasts {forecasts}",
-            $"trade org review-answer {review} \"again\" \"a second answer\" --forecasts {forecasts}",
+            // THE NUMBER FROM WHAT THE SEAT WAS TOLD (fix pass 1): its wake's line in the prompt, never the database.
+            $"trade org review-answer {{prompt:`trade org review-answer (\\d+) }} \"keep the team's share a week\" \"its spend bought runs still being judged\" --forecasts {forecasts}",
+            $"trade org review-answer {{prompt:`trade org review-answer (\\d+) }} \"again\" \"a second answer\" --forecasts {forecasts}",
             "signal answered", "usage 100 0 10", "final Answered."
         ]);
         await life.RunUntil(() => life.Reached("answered") && life.AttemptsOf(head).Any(a => a.State == AiAttemptState.ENDED),

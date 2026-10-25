@@ -205,6 +205,28 @@ public class OrgReviewTests
         Assert.Equal(again, Written(db));
     }
 
+    /// <summary>
+    /// (b3, fix pass 1 — the Codex review's P1) A REVIEW WAKE NAMES THE EVENT ITS ANSWER MUST REFERENCE: <c>review-answer</c> takes the
+    /// review's number, and the reviewer reads only what its wake tells it — the observation line of its turn (<c>MissionLoop.Observation</c>),
+    /// never the database. The line names the number in the very command that answers it, and that number answers the review. RED at
+    /// base: the line named only the wake's id.
+    /// </summary>
+    [Fact]
+    public void A_review_wake_names_the_event_its_answer_must_reference()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Assert.Equal(1, org.ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 6m, 0))).Raised);
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+
+        var line = TradeAgent.AgentRuntime.MissionLoop.Observation(wake, []);
+        var named = System.Text.RegularExpressions.Regex.Match(line, @"`trade org review-answer (\d+) ");
+        Assert.True(named.Success, $"the reviewer's wake does not name the review it answers: {line}");
+        Assert.Contains(wake.Id, line, StringComparison.Ordinal);
+        var answered = org.AnswerReview(Answer(Head, long.Parse(named.Groups[1].Value, CultureInfo.InvariantCulture)), Now.AddMinutes(1));
+        Assert.Equal(Assert.Single(Reviews(db)).Id, answered.EventId);
+    }
+
     /// <summary>Every unit's shares, status and head, and every position's unit, status and seat, as the rows hold them.</summary>
     static List<string> Rows(Database db) => db.Read(_ =>
     {
