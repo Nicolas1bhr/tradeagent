@@ -1187,7 +1187,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             });
             // THE APP'S SWEEP, as the tick runs it, on a meter reading the team spent 6 of its 10 today.
             Assert.Equal(1, new OrgStore(db).ReviewSweep(DateTimeOffset.UtcNow, ReviewThresholds.Default,
-                unit => unit == team ? [new UnitDay(team, BillingClasses.Key, 10m, 6m, 0m, 0)] : []).Raised);
+                unit => unit == team ? [new UnitDay(team, BillingClasses.Key, 10m, 6m, 0m, 0, 0, 0m)] : []).Raised);
         });
         var org = new OrgStore(life.Host.Db);
         var review = life.Host.Db.Read(_ =>
