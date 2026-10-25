@@ -11961,3 +11961,27 @@ R24 §§ 4.1–4.3, 7 A2: containment, BUDGET-001, AUTH-002 (blindness), ORDER-0
 **Final re-review P2 (seat A, CARD):** a vetoed act that never touched paper_envelope also blocks renewal over its range — errs SHORT (fails closed); narrow it to versions whose envelope terms changed, later.
 - **Re-stack r2 (2026-10-25):** `u-board-b2-r2` tip 166ac676 (code 73096028) on main 416365e8 (U-org-chief); one conflict in BoardStore confirm kept both (chief: no version, event names version in force; b2: CloseWakes); seam test `A_vetoed_chief_act_neither_withdraws_an_envelope_nor_blocks_its_renewal` green, watched mutant red; ×3 "Passed: 86"+6+8, names removed 0; CI 40182134741 12/12; review `tmp/A-org/board-b/U-board-b2-r2-review.md` no defects. No rung.
 **Landing:** land.sh (seat A), alone, on run 40182134741 green 12/12 at 73096028 (u-board-b2-r2, tip 166ac676; re-stacked over U-org-chief, seam test added, Codex 'No defects found'). No rung; schema stays 51.
+
+## U-catalog-windows-path — a seat home past MAX_PATH publishes on a Windows whose long paths are off
+
+**Built** (seat A, triage-and-fix of a real-Windows red, 2026-10-25) on branch `u-catalog-windows-path`; not landed. No rung.
+**Source:** the tests box (long paths off) failed `ModelCatalogTests.The_seat_home_gets_the_catalog_and_an_edited_one_is_refused_naming_both_hashes` in
+runs 20261025-055630, -071030 and -082528 ("could not open …\seat-home\codex\model-catalog.json.<guid>.tmp to publish it: path not found", at
+`OwnerOnlyFile.ReplaceWhileReadersRead` line 97); windows-latest (long paths on) green at the same commits. The 071030 builder's "long temp path" guess was right
+about the length and wrong about whose defect it is.
+**Cause — PRODUCT, not rig:** `OwnerOnlyFile` hands the temp (the file's name + 37 characters; 263 there) to its own P/Invoke `CreateFileW` as it is; .NET adds
+`\\?\` past MAX_PATH only to its own calls. Every credential, seat config, model catalog, cell manifest and daily report the app publishes goes through it, so an
+app home placed deep enough refuses a seat start on the owner's Windows. `SeatProfile.WindowsLinkCount` already carried the rule inline for its own `CreateFileW`.
+**What it does:** `Win32Path.Verbatim` in Core is the one rule (below 260 unchanged; `\\?\C:\…`, `\\?\UNC\…`; never prefixed twice); `OwnerOnlyFile` passes the
+temp's `CreateFileW` name and the `FILE_RENAME_INFO` name through it; `SeatProfile.WindowsLinkCount` uses it instead of its copy. Past 32,767 Windows itself refuses,
+and `Win32Failure` already names the path in the OS's words.
+**Protects:** CRED-001's one publish unchanged — owner-only from the first byte, one POSIX rename, a reader not refusing it; nothing else of the rename moves.
+**RED / mutant:** RED on the real machine — box run 20261025-093539 at 28533562 (tests, no fix): the new `A_file_past_max_path_is_published_and_replaced_with_no_temp_left`
+and the ModelCatalog test red with the same "could not open … to publish it". Mutant `Verbatim` → identity: `A_name_at_max_path_or_past_it_is_handed_to_win32_verbatim`
+red on macOS (Expected "\\?\C:\ddd…", Actual "C:\ddd…").
+**Gate:** Release 0 warnings 0 errors; Unit Win32LongPath|ModelCatalog|SeatAcl|SeatProfile|DailyReport 32 passed, 2 skipped x3 (TZ=UTC); names removed 0 (added 2).
+CI 40177036771 completed success on all 12 jobs incl. linux-host and windows-latest 1-5, at 9a785f16.
+**Review:** fleet/tmp/A-org/morg1-cards/U-catalog-windows-path-review.md — "No defects found".
+**Tests box:** run 20261025-093257 at 9a785f16, filter ModelCatalog|Win32LongPath: GREEN, 8/8 Unit passed; his files unchanged.
+**NOT VERIFIED:** the full suite on the box with the fix (filtered run only); a real seat start under a deep %LOCALAPPDATA% home on the owner's machine.
+**Landing:** land.sh (seat A), alone, on run 40185232920 green on every job at 0a96bd71 (rebased onto main f4dfcc1b; src+tests patch-id identical to the tested e721c162). No rung.
