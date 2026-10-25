@@ -24,6 +24,20 @@ public sealed partial class OrgStore
     public string? Chief() => Units().FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
 
     /// <summary>
+    /// THE CHIEF A BOARD ACT SEATED (<c>U-org-chief</c> item 4): the position its <c>chief-appointed</c> or <c>chief-replaced</c> event names,
+    /// read from the app-composed detail the chart's writer wrote, or null — the act seated no one. The owner's veto reads it.
+    /// </summary>
+    internal string? ChiefSeatedBy(string actId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT detail FROM org_event WHERE kind IN ($a, $r) AND decider = $board ORDER BY id",
+            ("$a", OrgEventKind.ChiefAppointed), ("$r", OrgEventKind.ChiefReplaced), ("$board", OrgDecider.Board));
+        using var r = c.ExecuteReader();
+        while (r.Read())
+            if (DetailValue(r.GetString(0), "act") == actId) return DetailValue(r.GetString(0), "chief");
+        return null;
+    });
+
+    /// <summary>
     /// THE ONE CHART WRITER OF THE CHIEF (<c>U-org-chief</c> item 1). Inside ONE write: <paramref name="from"/> must be the chief sitting now
     /// (null: the root vacant), or the change is refused as moved; a sitting chief is ENDED through the restructuring's transaction
     /// (<see cref="Restructure"/>: every open mandate it holds or decides cancelled, the position fenced so its running turn ends, no past

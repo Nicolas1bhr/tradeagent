@@ -131,4 +131,76 @@ public partial class OrgChiefTests
         Assert.Contains("not a runtime this build knows", Assert.Throws<TradeAgentException>(() =>
             new BoardStore(db).Propose(Act("board-1", ChiefIntent(null, Puppet)), Now)).Message, StringComparison.Ordinal);
     }
+
+    // ---- item 4: the owner's veto of a chief act ---------------------------------------------------------------------------------
+
+    /// <summary>One chief act proposed by board-1 and confirmed by board-2, as the test's seats make it.</summary>
+    static BoardActResult Confirmed(BoardStore board, string? from, ChiefSeat? to)
+    {
+        var proposed = board.Propose(Act("board-1", ChiefIntent(from, to)), Now);
+        return board.Decide(proposed.Act.Id, "board-2", null, true, proposed.Act.IntentSha256, "my own reading", Now);
+    }
+
+    /// <summary>
+    /// (4) THE OWNER'S VETO REMOVES A BOARD-APPOINTED CHIEF AND RESTORES NO ONE: vetoing a confirmed appointment whose chief still sits ends
+    /// that chief through the chart's writer — decided by the owner on the basis of his veto, the act's id in the detail — and leaves the
+    /// root vacant, writing no policy version; vetoing an act whose chief has since been replaced is recorded and removes no one, the chief
+    /// now untouched; vetoing a replacement removes the replacing chief and restores NOT the one it replaced; vetoing a removal restores
+    /// no one; vetoing an open chief proposal closes it, applying nothing. Press one shows what press two will do, and writes nothing. RED
+    /// at base: no chief act.
+    /// </summary>
+    [Fact]
+    public void The_owners_veto_removes_a_board_appointed_chief_and_restores_no_one()
+    {
+        using var db = TestEnv.NewDb();
+        var org = new OrgStore(db);
+        var board = Board(db);
+        ActivateBoard(db, "board-1", "board-2");
+
+        var appointed = Confirmed(board, null, Puppet);
+        var first = org.Chief()!;
+        var before = Written(db);
+        var preview = board.PreviewBoardVeto(appointed.Act.Id);
+        log.WriteLine(preview.Words);
+        Assert.True(preview.Allowed);
+        Assert.Contains($"removes the chief {first}", preview.Words, StringComparison.Ordinal);
+        Assert.Empty(preview.Fields);
+        Assert.Equal(before, Written(db));
+        var versions = Count(db, "board_policy");
+        var vetoed = board.VetoBoardAct(appointed.Act.Id, Now);
+        Assert.Equal((BoardActEventKind.Vetoed, (int?)null), (vetoed.Status, vetoed.PolicyVersion));
+        Assert.Null(org.Chief());
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(first)!.Status);
+        Assert.Equal(versions, Count(db, "board_policy"));
+        Assert.Equal(1, Count(db, "org_event",
+            $"kind='{OrgEventKind.ChiefVacated}' AND decider='owner' AND detail LIKE '%basis=veto act={appointed.Act.Id} %'"));
+
+        // AN ACT WHOSE CHIEF NO LONGER SITS: recorded, and the chief now untouched; THE REPLACEMENT's veto restores not the one it replaced.
+        var second = Confirmed(board, null, Puppet);
+        var b = org.Chief()!;
+        var third = Confirmed(board, b, Codex);
+        var c = org.Chief()!;
+        var stale = board.VetoBoardAct(second.Act.Id, Now);
+        Assert.Contains("nothing is removed", stale.Words, StringComparison.Ordinal);
+        Assert.Equal(c, org.Chief());
+        board.VetoBoardAct(third.Act.Id, Now);
+        Assert.Null(org.Chief());
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(b)!.Status);
+        Assert.Contains("vetoed already", Assert.Throws<TradeAgentException>(() => board.VetoBoardAct(third.Act.Id, Now)).Message, StringComparison.Ordinal);
+
+        // A REMOVAL'S VETO RESTORES NO ONE; AN OPEN PROPOSAL'S VETO APPLIES NOTHING.
+        var d = Confirmed(board, null, Puppet);
+        var sitting = org.Chief()!;
+        var removal = Confirmed(board, sitting, null);
+        Assert.Null(org.Chief());
+        Assert.Contains("no one is restored", board.VetoBoardAct(removal.Act.Id, Now).Words, StringComparison.Ordinal);
+        Assert.Null(org.Chief());
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(sitting)!.Status);
+        var open = board.Propose(Act("board-1", ChiefIntent(null, Codex)), Now);
+        Assert.Equal(BoardActEventKind.Vetoed, board.VetoBoardAct(open.Act.Id, Now).Status);
+        Assert.Null(org.Chief());
+        Assert.Contains("vetoed", Assert.Throws<TradeAgentException>(() =>
+            board.Decide(open.Act.Id, "board-2", null, true, open.Act.IntentSha256, "my own reading", Now)).Message, StringComparison.Ordinal);
+        Assert.NotNull(d);
+    }
 }

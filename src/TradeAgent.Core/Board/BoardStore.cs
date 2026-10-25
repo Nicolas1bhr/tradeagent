@@ -658,7 +658,9 @@ public sealed class BoardStore(Database db)
     // ---- the owner's veto: it only ever takes away (AUTH-001; R24 Q2) ------------------------------------------------------------------
 
     /// <summary>What a veto of one act would do, computed and never written: the shape <see cref="PreviewBoardVeto"/> shows and <see cref="VetoBoardAct"/> writes.</summary>
-    sealed record VetoPlan(BoardActRow Act, bool Allowed, string Words, IReadOnlyList<BoardVetoField> Fields, string? Body, BoardPolicyInForce? InForce);
+    /// <para><paramref name="Unseat"/>: the chief a confirmed chief act appointed and who sits now, whom the veto removes (<c>U-org-chief</c> item 4).</para>
+    sealed record VetoPlan(BoardActRow Act, bool Allowed, string Words, IReadOnlyList<BoardVetoField> Fields, string? Body, BoardPolicyInForce? InForce,
+        string? Unseat = null);
 
     VetoPlan PlanVeto(string actId)
     {
@@ -675,6 +677,22 @@ public sealed class BoardStore(Database db)
 
         var (intent, why) = BoardIntent.Parse(act.Intent);
         if (intent is null) throw Refused($"{act.Id}'s stored intent cannot be read ({why}), so no veto can be weighed against it.");
+
+        // A CHIEF ACT (U-org-chief item 4; R24 Q12: "his narrowing veto removes a chief"): the chief it seated is removed while it still
+        // sits — and NOTHING is restored, ever: not a chief it replaced or removed, not a version. A veto only takes away.
+        if (ChiefOf(intent) is { } chief)
+        {
+            var org = new OrgStore(_db);
+            var seated = org.ChiefSeatedBy(act.Id);
+            if (seated is not null && seated == org.Chief())
+                return new(act, true, $"Vetoing {act.Id} removes the chief {seated} it appointed: the organisation's head is left vacant, and "
+                                      + "no earlier chief is restored.", [], null, null, seated);
+            return new(act, true, chief.To is null
+                ? $"Vetoing {act.Id} is recorded, and no one is restored: it removed a chief, and a veto only takes away."
+                : $"Vetoing {act.Id} is recorded, and nothing is removed: the chief it appointed ({seated ?? "none recorded"}) no longer sits, "
+                  + "and the one who does was not its act.", [], null, null);
+        }
+
         var inForce = InForce();
         if (inForce.CouldNotBeRead) throw Refused($"the policy in force could not be read ({inForce.Why}), so no veto can be weighed against it.");
         var body = BodyOf(inForce);
@@ -718,6 +736,7 @@ public sealed class BoardStore(Database db)
         if (!plan.Allowed) throw Refused(plan.Words);
         int? version = null;
         if (plan.Body is { } body) version = InsertVersion(plan.InForce!, body, BoardDecider.Owner, BoardBasis.Veto, plan.Act.Id, at);
+        if (plan.Unseat is { } chief) new OrgStore(_db).SeatChief(chief, null, OrgDecider.Owner, BoardBasis.Veto, plan.Act.Id, null, null, at);
         InsertEvent(plan.Act.Id, BoardActEventKind.Vetoed, BoardDecider.Owner, null, null, null, null, null, version, plan.Words, at);
         return new BoardActResult(plan.Act, BoardActEventKind.Vetoed, version, plan.Words);
     });
