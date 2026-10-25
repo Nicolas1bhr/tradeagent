@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
@@ -679,6 +680,13 @@ public interface IMissionHost
     /// loop says so and launches without it.
     /// </summary>
     PositionPacket? PacketFor(string role, DateTimeOffset now) => null;
+
+    /// <summary>
+    /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
+    /// (<c>U-board-b2</c> item 4): composed by the app from the board's records alone, or null for a host that composes none — whose
+    /// board seats then launch nothing.
+    /// </summary>
+    string? BoardPacketFor(string seat, string? attemptId, IReadOnlyList<MissionEvent> wake, DateTimeOffset now) => null;
 
     /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
@@ -3104,7 +3112,10 @@ public sealed class MissionLoop
         var attemptId = Mint(role);
         using var minted = new MintedId(_host, attemptId);
 
-        var known = await _host.SituationAsync(role, ct);
+        // A SEAT OF THE SECURITY BOARD IS SHOWN NO SITUATION (U-board-b2 item 4): its packet is the app's own board packet, composed
+        // below from the board's records alone — no ledger, no organisation block, no watcher figure, no other seat's words.
+        var board = BoardSeats.IsBoardId(role);
+        var known = board ? null : await _host.SituationAsync(role, ct);
 
         // ---- the launch's place, taken BEFORE the ledger is asked (U-grant-tree fix pass 1) -------
         // The look above is only a look: another launch can be issued between it and here — the owner's chat turn, or the
@@ -3134,37 +3145,56 @@ public sealed class MissionLoop
             if (wake.Count == 0 && typed.Count == 0) return Idle(events);
         }
 
-        var org = PacketOf(role);
-        var believed = BeliefsOf(role);
-        var situation = known with
+        string prompt;
+        PacketBytes? packet = null;
+        IReadOnlyList<PacketInput> shown = [];
+        if (board)
         {
-            Role = role,
-            Attempt = attemptId,
-            // ORDER-001 (U-grant-tree): a launch of the Operations Director that starts beside another attempt is told so in
-            // the prompt the ledger hashes — in the words of the grant it was issued above, which refuses the order the same way.
-            OrdersWithheld = withheld,
-            // WHAT TRADEAGENT DID TO THIS ROLE'S LAST TURN, if it cut it. Read here rather than
-            // removed: a turn the ledger then refuses never runs, and consuming the notice into a
-            // message nobody sent would lose it.
-            Cut = CutBefore(role),
-            OwnerMessages = [.. OwnerWords(wake), .. typed],
-            Deliveries = Delivered(wake),
-            Wakes = Reasons(wake),
-            // AN EXECUTOR'S MANDATE, WHOLE (U-org-packets-a): read once, at the rotation point that keyed its session by it.
-            Mandate = mandateView,
-            // THE POSITION'S ORGANISATION BLOCK AND WHAT IT SHOWED (U-org-packets-b): recorded as the attempt's input only with the
-            // turn's committed outcome — with the rejection part a's mandate block quotes, by its event id.
-            Org = org,
-            // AND EVERY LEDGER ENTRY AND FAILED DELIVERY IT SHOWS BESIDE THEM (U-packets-followups): read through the cuts the blocks render by.
-            Inputs = MissionSituation.Lineage(org, mandateView, believed),
-            // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
-            // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
-            // the attempt keeps the prompt's hash and the wakes name their attempt.
-            WhatChanged = Observations(wake, windows ?? []),
-            Believed = believed,
-            Wanted = OpenObjectives(role)
-        };
-        var prompt = situation.Text(out var packet);
+            // THE BOARD PACKET (U-board-b2 item 4), app-composed: for a confirmer the blind read of the act it was woken for — the
+            // intent, its hash, direction, refs, the figures in force, the expiry and the commands — and nothing of any rationale.
+            // A packet nobody could compose launches nothing: the wakes stay due and the next look tries again.
+            if (BoardPacketOf(role, attemptId, wake) is not { } boardPrompt)
+            {
+                lock (_gate) OweTyped(role, typed, first: true);
+                return _options.BusyRetry;
+            }
+            prompt = boardPrompt;
+        }
+        else
+        {
+            var org = PacketOf(role);
+            var believed = BeliefsOf(role);
+            var situation = known! with
+            {
+                Role = role,
+                Attempt = attemptId,
+                // ORDER-001 (U-grant-tree): a launch of the Operations Director that starts beside another attempt is told so in
+                // the prompt the ledger hashes — in the words of the grant it was issued above, which refuses the order the same way.
+                OrdersWithheld = withheld,
+                // WHAT TRADEAGENT DID TO THIS ROLE'S LAST TURN, if it cut it. Read here rather than
+                // removed: a turn the ledger then refuses never runs, and consuming the notice into a
+                // message nobody sent would lose it.
+                Cut = CutBefore(role),
+                OwnerMessages = [.. OwnerWords(wake), .. typed],
+                Deliveries = Delivered(wake),
+                Wakes = Reasons(wake),
+                // AN EXECUTOR'S MANDATE, WHOLE (U-org-packets-a): read once, at the rotation point that keyed its session by it.
+                Mandate = mandateView,
+                // THE POSITION'S ORGANISATION BLOCK AND WHAT IT SHOWED (U-org-packets-b): recorded as the attempt's input only with the
+                // turn's committed outcome — with the rejection part a's mandate block quotes, by its event id.
+                Org = org,
+                // AND EVERY LEDGER ENTRY AND FAILED DELIVERY IT SHOWS BESIDE THEM (U-packets-followups): read through the cuts the blocks render by.
+                Inputs = MissionSituation.Lineage(org, mandateView, believed),
+                // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
+                // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
+                // the attempt keeps the prompt's hash and the wakes name their attempt.
+                WhatChanged = Observations(wake, windows ?? []),
+                Believed = believed,
+                Wanted = OpenObjectives(role)
+            };
+            prompt = situation.Text(out packet);
+            shown = situation.Inputs;
+        }
 
         // ---- THE ROLE'S TURN LEASE ----------------------------------------------------------------
         // ONE TURN PER ROLE AT A TIME, and this line is the whole of it. Everything above is a LOOK —
@@ -3362,7 +3392,7 @@ public sealed class MissionLoop
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
             // What the packet showed is recorded against the ROW's id only: a host with no ledger has no row to record it on.
-            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : situation.Inputs, fence);
+            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : shown, fence);
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
@@ -3965,6 +3995,20 @@ public sealed class MissionLoop
         {
             Said(role, $"the organisation's records for this position could not be read ({ex.Message}), so this turn's packet carries "
                        + "no notes, forecasts, escalations or deliveries; none is marked shown");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A BOARD SEAT'S PACKET (<c>U-board-b2</c> item 4), composed by the host from the board's own records for the wakes this turn takes,
+    /// or null where the host composes none or could not. Never throws: a packet not composed is said, and nothing launches.
+    /// </summary>
+    string? BoardPacketOf(string seat, string? attemptId, IReadOnlyList<MissionEvent> wake)
+    {
+        try { return _host.BoardPacketFor(seat, attemptId, wake, _now()); }
+        catch (Exception ex)
+        {
+            Said(seat, $"the security board's records could not be read for its packet ({ex.Message}), so no turn was started; its wakes are kept");
             return null;
         }
     }

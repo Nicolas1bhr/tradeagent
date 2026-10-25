@@ -116,6 +116,8 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     public List<Restore> Snapshot(string role, string? attempt)
     {
         var restores = new List<Restore>();
+        // A SEAT OF THE SECURITY BOARD KEEPS NO VERSIONED MEMORY IN THE APP'S RECORDS (U-board-b2 item 3): its folder is read by no one.
+        if (Core.Board.BoardSeats.IsBoardId(role)) return restores;
 
         foreach (var (kind, rel, cap) in Files)
         {

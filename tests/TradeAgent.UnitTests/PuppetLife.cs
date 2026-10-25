@@ -61,7 +61,7 @@ static class Puppet
     /// A puppet manifest: the real codex event stream (<c>--json</c>), the prompt on stdin, the scripts in
     /// <paramref name="scripts"/>, and the seat class its test declares — <see cref="SeatPlan.PuppetClass"/> unless named.
     /// </summary>
-    public static RuntimeManifest Manifest(string scripts, string? seatClass = null)
+    public static RuntimeManifest Manifest(string scripts, string? seatClass = null, IReadOnlyDictionary<string, string>? seatClasses = null)
     {
         string[] turn = [Dll, "--scripts", scripts, "{prompt}"];
         return new RuntimeManifest
@@ -79,7 +79,9 @@ static class Puppet
             PromptOnStdin = true,
             StdinMarker = "",
             Puppet = true,
-            PuppetSeatClass = seatClass ?? SeatPlan.PuppetClass
+            PuppetSeatClass = seatClass ?? SeatPlan.PuppetClass,
+            // A CLASS PER ROLE where the life names one (U-board-b2): a board seat plays the class it was founded on.
+            PuppetSeatClasses = seatClasses
         };
     }
 
@@ -135,10 +137,10 @@ sealed class PuppetLife : IAsyncDisposable
     /// <summary>The life's change to the security board's policy in force, applied to every gateway it composes (<c>U-board-a2</c>).</summary>
     Func<BoardPolicy, BoardPolicy>? _policy;
 
-    PuppetLife(string scripts, string? seatClass)
+    PuppetLife(string scripts, string? seatClass, IReadOnlyDictionary<string, string>? seatClasses = null)
     {
         Scripts = scripts;
-        Manifest = Puppet.Manifest(scripts, seatClass);
+        Manifest = Puppet.Manifest(scripts, seatClass, seatClasses);
     }
 
     /// <summary>
@@ -147,7 +149,8 @@ sealed class PuppetLife : IAsyncDisposable
     /// through the supervisor's own prepare and start.
     /// </summary>
     public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null,
-        Action<TradeAgentSettings>? settings = null, Func<BoardPolicy, BoardPolicy>? policy = null)
+        Action<TradeAgentSettings>? settings = null, Func<BoardPolicy, BoardPolicy>? policy = null,
+        IReadOnlyDictionary<string, string>? seatClasses = null)
     {
         // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
         var found = ProcessWide.Note();
@@ -156,7 +159,7 @@ sealed class PuppetLife : IAsyncDisposable
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
             Environment.SetEnvironmentVariable("DOTNET_ROOT", Puppet.DotnetRoot);
 
-        var life = new PuppetLife(Puppet.NewScripts(name), seatClass) { _found = found, _policy = policy };
+        var life = new PuppetLife(Puppet.NewScripts(name), seatClass, seatClasses) { _found = found, _policy = policy };
         DeployTrade();
 
         life.DatabasePath = Path.Combine(TestEnv.Home, $"puppet-life-{Guid.NewGuid():n}.db");

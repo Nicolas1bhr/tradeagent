@@ -59,6 +59,7 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("ApiConversation.StartAsync", "Directory.CreateDirectory", 1, "the home folder itself, whose ancestry no cell can write"),
         ("CliAgentRuntime.CreateEnvironmentAsync", "Directory.CreateDirectory", 1, "the chair's home folder itself, whose ancestry no cell can write"),
         ("WorkspaceBuilder.Build", "Directory.CreateDirectory", 3, "the workspace, the owner's inbox and the home folder itself — none below a home"),
+        ("WorkspaceBuilder.BuildBoardHome", "Directory.CreateDirectory", 2, "the workspace and a board seat's home folder itself (U-board-b2) — none below a home"),
 
         // ---- the owner's repair of a refused home (U-repair-position-home): the home folder renamed by its own name, and workspace/.refused ----
         ("WorkspaceBuilder.RepairHome", "File.Exists", 1, "the kept folder's name under workspace/.refused, which is beside the homes, never in one"),

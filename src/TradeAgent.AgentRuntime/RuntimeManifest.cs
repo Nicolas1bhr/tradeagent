@@ -572,6 +572,21 @@ public sealed class RuntimeManifest
     internal string PuppetSeatClass { get; init; } = SeatPlan.PuppetClass;
 
     /// <summary>
+    /// THE CLASS A PUPPET PLAYS FOR ONE ROLE, where its test names one (<c>U-board-b2</c>): a board seat launches only on its RECORDED
+    /// class, and two seats of one life are recorded on different classes. Code only, like <see cref="PuppetSeatClass"/>; ignored on a
+    /// manifest that is not a puppet.
+    /// </summary>
+    [JsonIgnore]
+    internal IReadOnlyDictionary<string, string>? PuppetSeatClasses { get; init; }
+
+    /// <summary>
+    /// WHETHER THIS IS A TEST HOST'S PUPPET — a scripted seat that runs no model — in a process that is a test host (<c>PuppetSeats</c>).
+    /// Read-only and computed from two flags no file, setting or pipe op reaches: always false in the product.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsTestHostPuppet => Puppet && PuppetSeats.TestHost;
+
+    /// <summary>
     /// THE CLASS A TEST HOST'S REAL-RUNTIME MANIFEST DECLARES (<c>U-cell-linux-c</c> L6): how a test runs route (a)'s <c>cell</c> class
     /// while no product position is assigned it (<c>U-execution-environment</c> assigns it). Code only, honoured only in a test host.
     /// </summary>
@@ -603,7 +618,7 @@ public sealed class RuntimeManifest
     /// <c>broker</c>. <paramref name="kind"/> is the chart's, read where asked; null is a kind nobody could read, never a Member.</para>
     /// </summary>
     public string SessionSeatClassFor(string role, string? kind) =>
-        Puppet ? PuppetSeatClass
+        Puppet ? PuppetSeatClasses?.GetValueOrDefault(role) ?? PuppetSeatClass
         : DeclaredSeatClass is { } declared && PuppetSeats.TestHost ? declared
         : SeatPlan.ClassFor(role, kind, seatClass => BrokerSeat.Offers(Id, seatClass));
     public string DisplayName { get; set; } = "";
