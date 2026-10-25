@@ -399,6 +399,8 @@ public class OwnerPageTests
         Assert.True(TradeAgent.AgentRuntime.RuntimeCatalog.IsHarness(Resolved()));
         Press((Button)card.ResearchRuntimeRow.Children[0]);
         Assert.Equal("codex", Resolved());
+        // WHAT THE PRESS STORES IS THE FACT, NOT A COPY OF THE CLI'S ID (U-role-follows-setup).
+        Assert.Equal(TradeAgentSettings.SetupRuntime, host.Gateway.Settings.RuntimeForRole(CouncilRoles.Research));
         return Task.CompletedTask;
     });
 
@@ -428,7 +430,8 @@ public class OwnerPageTests
 
     /// <summary>
     /// THE RESEARCH DIRECTOR'S CLI CHOICE FOLLOWS THE SETUP'S CLI (Codex re-review 2 of <c>U-settings-shed</c>, P2): chosen under Codex,
-    /// then the setup switched to another CLI, Research resolves to the newly prepared CLI — the one its turns run on — never the old one.
+    /// then the setup switched to another CLI by a plain write of the setting, Research resolves to the newly prepared CLI — the one its turns
+    /// run on — never the old one (U-role-follows-setup: the row stores the fact, so no writer keeps rows true).
     /// </summary>
     [Fact]
     public Task The_research_cli_choice_follows_the_setups_cli_when_it_is_switched() => OnThePage((page, host) =>
@@ -437,22 +440,11 @@ public class OwnerPageTests
         var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
         Press((Button)card.ResearchRuntimeRow.Children[0]);
 
-        host.Gateway.Update(s => OwnerPage.SeatChoices.SwitchSetupCli(s, "opencode"));     // what the setup's CLI card writes
+        host.Gateway.Update(s => s.SelectedRuntimeId = "opencode");     // ANY writer of the setup's CLI: no helper, no row rewritten
 
         Assert.Equal("opencode", AppHost.RuntimeForRole(CouncilRoles.Research,
             host.Gateway.Settings.RuntimeForRole(CouncilRoles.Research), host.Gateway.Settings.SelectedRuntimeId, keyHeld: true));
         Assert.Equal("opencode", host.RuntimeForRole(CouncilRoles.Research));
-
-        // THE ONE WRITER: the setup's CLI card switches through it, and nothing else in the app writes the setup's CLI.
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TradeAgent.sln"))) root = root.Parent;
-        var app = Path.Combine(root!.FullName, "src", "TradeAgent.App");
-        Assert.Contains("OwnerPage.SeatChoices.SwitchSetupCli(s, manifest.Id)", File.ReadAllText(Path.Combine(app, "OnboardingView.cs")));
-        var writers = Directory.GetFiles(app, "*.cs", SearchOption.AllDirectories)
-            .SelectMany(f => File.ReadAllLines(f).Select(l => (f: Path.GetFileName(f), l)))
-            .Where(x => System.Text.RegularExpressions.Regex.IsMatch(x.l, @"SelectedRuntimeId\s*=[^=>]"))
-            .Select(x => x.f).ToList();
-        Assert.Equal(["OwnerView.cs"], writers);
         return Task.CompletedTask;
     });
 
