@@ -1594,8 +1594,9 @@ public sealed class TurnMeter
     /// rows, <c>plan</c> the plan capacity's over the plan and unknown rows, an unknown class both — so a plan-capacity row is never
     /// folded into a money figure. The chain is resolved from one reading of each ceiling as <see cref="Begin"/> resolves it, and each
     /// unit's totals are read off the funding chains recorded with the rows (<see cref="AiAttemptStore.UnitTotalsBetween"/>) — the
-    /// figures the gate compares, never a second computation. Nearest unit first within each ceiling. Null where the chain or a total
-    /// cannot be read: unknown, never zero.
+    /// figures the gate compares, never a second computation — its spend split into the priced part and the reservations charged
+    /// because nothing was measured (<see cref="DayOf"/>), which add up to the gate's figure. Nearest unit first within each ceiling.
+    /// Null where the chain or a total cannot be read: unknown, never zero.
     /// </summary>
     public IReadOnlyList<UnitDay>? EnvelopesFor(string role)
     {
@@ -1606,10 +1607,7 @@ public sealed class TurnMeter
             var (money, plan) = FundingOf(role, cap, PlanCap(cap));
             return [.. BillingClasses.CeilingsOf(ClassOf(role)).SelectMany(ceiling =>
                 (ceiling == BillingClasses.Plan ? plan : money).Select(u =>
-                {
-                    var day = _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling);
-                    return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved, day.Unpriced);
-                }))];
+                    DayOf(u, ceiling, _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling))))];
         }
         catch (Exception) { return null; }
     }
@@ -1630,13 +1628,19 @@ public sealed class TurnMeter
             var cap = Cap();
             var (money, plan) = FundingOf(role, cap, PlanCap(cap));
             return [.. (ceiling == BillingClasses.Plan ? plan : money).Select(u =>
-            {
-                var day = _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling);
-                return new UnitDay(u.UnitId, ceiling, u.Envelope, day.Spent, day.Reserved, day.Unpriced);
-            })];
+                DayOf(u, ceiling, _attempts.UnitTotalsBetween(from, to, u.UnitId, ceiling)))];
         }
         catch (Exception) { return null; }
     }
+
+    /// <summary>
+    /// ONE UNIT'S DAY IN ONE CEILING, MEASUREMENT AND CHARGE APART (<c>U-verbs-a-followups</c>; BUDGET-001): the priced spend is the day's
+    /// spend less what was charged a reservation because nothing measured it, and that charge and its turns are carried beside it —
+    /// so no reader shows a LOST or no-usage turn's reservation as priced spend.
+    /// </summary>
+    static UnitDay DayOf(FundedUnit unit, string ceiling, AiAttemptTotals day) =>
+        new(unit.UnitId, ceiling, unit.Envelope, day.Spent - day.UnreportedCharge, day.Reserved, day.Unpriced, day.Unreported,
+            day.UnreportedCharge);
 
     /// <summary>
     /// THE CLASS <paramref name="role"/>'S READING IS ABOUT (<c>U-billing-classes</c>, fix passes 1 and 2), never from an admission: a role

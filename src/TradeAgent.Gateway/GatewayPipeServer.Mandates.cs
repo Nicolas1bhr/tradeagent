@@ -283,6 +283,11 @@ public sealed partial class GatewayPipeServer
                     // A TURN WHOSE COST IS UNKNOWN IS NOT FREE: spent_today adds it as nothing, so it is counted beside the
                     // priced sum, as mandate-show's unknown_cost_launches is — never a bare zero (AppHost's rule).
                     unknown_cost_turns_today = d.Unpriced,
+                    // A TURN NOTHING MEASURED IS CHARGED ITS RESERVATION (U-verbs-a-followups; BUDGET-001): a turn that ended
+                    // without reporting what it used, or that a restart declared LOST — its count and its charge, apart from
+                    // spent_today and never inside it, so a reservation never reads as a priced bill.
+                    unmeasured_turns_today = d.Unmeasured,
+                    unmeasured_charge_today = d.UnmeasuredCharge.ToString(CultureInfo.InvariantCulture),
                     reserved_today = d.Reserved.ToString(CultureInfo.InvariantCulture)
                 }).ToList()
                 : null
@@ -298,7 +303,10 @@ public sealed partial class GatewayPipeServer
               + "real money, 'plan' is your ChatGPT plan's capacity and never money; a seat whose class is not known is shown against "
               + "both, as admission holds it to both. The two are never added. spent_today is the PRICED sum of that ceiling's "
               + "turns: a turn whose cost is unknown adds nothing to it and is counted in unknown_cost_turns_today, so a day with "
-              + "any is unknown, never zero.";
+              + "any is unknown, never zero. A turn that ended without reporting what it used, or that a restart declared lost, was "
+              + "charged its reservation because nothing measured it: those turns are counted in unmeasured_turns_today and their "
+              + "charge is unmeasured_charge_today — a charge, not a price, and never inside spent_today. What admission counts "
+              + "against the envelope is spent_today, unmeasured_charge_today and reserved_today together.";
 
         var held = new List<object>();
         var decided = new List<object>();
