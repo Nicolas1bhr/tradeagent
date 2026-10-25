@@ -105,20 +105,6 @@ public sealed class BoardStore(Database db)
     }
 
     /// <summary>
-    /// RUNG 52'S COPY (<c>U-org-chief</c>), inside the rung's own transaction: every act event of rung 51's table into the rebuilt one, BYTE FOR
-    /// BYTE and under its own id — the rebuilt table differs only in that a change of the chief writes no version.
-    /// </summary>
-    internal static void CopyForChiefRung(Database db)
-    {
-        using var e = db.Cmd("""
-            INSERT INTO board_act_event(id, act_id, kind, seat, attempt_id, rationale, proposer_family, decider_family, same_family, policy_version, detail, at)
-              SELECT id, act_id, kind, seat, attempt_id, rationale, proposer_family, decider_family, same_family, policy_version, detail, at
-                FROM board_act_event_51 ORDER BY id
-            """);
-        e.ExecuteNonQuery();
-    }
-
-    /// <summary>
     /// THE RECORD OF THE OWNER'S PRESS OVER AN EARLIER ARMED HOME (<c>U-board-a1</c> item 5), written in the caller's own transaction
     /// beside the settings rows it moves. A record, not a decision: it names no policy version and changes none.
     /// </summary>
@@ -318,9 +304,9 @@ public sealed class BoardStore(Database db)
                           + "and applied only when another seat confirms it.");
         var act = InsertAct(request, BoardActKind.Narrow, intent, inForce.Version, null, at);
         var (version, did) = Apply(act, intent, inForce, at);
-        InsertEvent(act.Id, BoardActEventKind.Applied, request.Seat, request.Attempt, null, null, null, null, version,
+        InsertEvent(act.Id, BoardActEventKind.Applied, request.Seat, request.Attempt, null, null, null, null, version ?? inForce.Version,
             did.Length == 0 ? $"applied at once by {request.Seat}: version {version} narrows version {inForce.Version}"
-                : $"applied at once by {request.Seat}: {did}; no policy version is written — the chief is the chart's", at);
+                : $"applied at once by {request.Seat}: {did}; decided under version {inForce.Version}; no policy version is written", at);
         InsertForecasts(act.Id, request, at);
         return new BoardActResult(act, BoardActEventKind.Applied, version, did.Length == 0
             ? $"Applied: version {version} of the policy, decided by {request.Seat} alone because every change narrows, is in force now."
@@ -425,11 +411,14 @@ public sealed class BoardStore(Database db)
                 $"Stale: since {act.Id} was proposed, {string.Join("; ", moved)}. It applies nothing; propose it again against version {inForce.Version}.");
         }
         var (version, did) = Apply(act, intent, inForce, at);
-        InsertEvent(act.Id, BoardActEventKind.Confirmed, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, version,
-            familyWords, at);
+        // A CHIEF ACT WRITES NO VERSION, AND ITS EVENT NAMES THE VERSION IN FORCE IT WAS DECIDED UNDER (the orchestrator's ruling): the record
+        // still says which policy governed the appointment.
+        InsertEvent(act.Id, BoardActEventKind.Confirmed, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same,
+            version ?? inForce.Version, version is not null ? familyWords
+                : string.Join("; ", new[] { familyWords, $"decided under version {inForce.Version}; no policy version is written" }.OfType<string>()), at);
         return new BoardActResult(act, BoardActEventKind.Confirmed, version, did.Length == 0
             ? $"Confirmed by {seat}: version {version} of the policy, proposed by {act.Seat}, is in force now."
-            : $"Confirmed by {seat}, proposed by {act.Seat}: {did}. No policy version is written: the chief is the chart's, not the policy's.");
+            : $"Confirmed by {seat}, proposed by {act.Seat}: {did}. Decided under version {inForce.Version}; no policy version is written.");
     });
 
     /// <summary>
@@ -591,8 +580,9 @@ public sealed class BoardStore(Database db)
     /// WHAT A CHECKED ACT DOES, IN ITS OWN WRITE: the next version of the policy, the act's changes applied — or, for a change of the chief,
     /// that change made through the chart's one writer (<see cref="OrgStore.SeatChief"/>, decided by <c>board</c> on the basis <c>act</c>,
     /// the act's id in its detail, seated at the policy's turn allowance) and NO version: a chief change is structure, not policy (seat B's
-    /// ruling; rung <see cref="Versions.ChiefStructureRung"/> holds that its applied or confirmed event names none). The version written —
-    /// null for a chief act — and the words of what was done.
+    /// ruling, amended by the orchestrator's): its applied or confirmed event names the version in force it was DECIDED UNDER — never none,
+    /// so the record says which policy governed the appointment — which rung 51's CHECK already accepts (it names an existing version). The
+    /// version written — null for a chief act — and the words of what was done.
     /// </summary>
     (int? Version, string Did) Apply(BoardActRow act, BoardIntent intent, BoardPolicyInForce inForce, DateTimeOffset at)
     {

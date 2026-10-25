@@ -87,66 +87,6 @@ public partial class BoardActTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// RUNG 52 — A CHANGE OF THE CHIEF IS STRUCTURE, NOT POLICY (<c>U-org-chief</c> fix pass 1), AND ITS RE-RUN WRITES NOTHING TWICE: a home
-    /// holding a policy act applied with the version it wrote and a chief act confirmed with NONE, stamped back to 51 as a crash before the
-    /// stamp leaves it, opens again with every row as it was, the rebuild not repeated, the seals held and the stamp this build's. The rule
-    /// holds both ways at the store: an applied event of a policy act without a version is refused, and so is a confirmed event of a chief act
-    /// naming one. A home stamped past this build is refused, naming both versions. RED at base: rung 51's CHECK refused the chief act's
-    /// confirmed event without a version.
-    /// </summary>
-    [Fact]
-    public void Rung_52_lets_a_chief_act_name_no_version_and_its_rerun_writes_nothing_twice()
-    {
-        var file = NewFile();
-        var body = BoardPolicyBody.Canonical(BoardFounding.V1 with { PlanDayTotal = 30m });
-        const string chief = """[{"field":"org.chief","from":null,"to":{"model":"scripted-1","runtime":"puppet"}}]""";
-        string first;
-        using (var db = new Database(file))
-        {
-            Exec(db, "INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
-                     + "VALUES('bact-policy', 'narrow', 'board-1', NULL, '[]', $sha, 1, 'a claim', '[]', NULL, NULL, $at)",
-                ("$sha", Sha256Hex.Of("[]")), ("$at", Stamp));
-            Exec(db, "INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, supersedes) "
-                     + "VALUES(2, 'board', 'act', 'bact-policy', $at, 'PAPER', 0, $body, $sha, 1)",
-                ("$at", Stamp), ("$body", body), ("$sha", Sha256Hex.Of(body)));
-            Exec(db, "INSERT INTO board_act_event(act_id, kind, seat, policy_version, at) VALUES('bact-policy', 'applied', 'board-1', 2, $at)", ("$at", Stamp));
-            Exec(db, "INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
-                     + "VALUES('bact-chief', 'propose', 'board-1', NULL, $intent, $sha, 2, 'a claim', '[]', NULL, $at, $at)",
-                ("$intent", chief), ("$sha", Sha256Hex.Of(chief)), ("$at", Stamp));
-            Exec(db, "INSERT INTO board_act_event(act_id, kind, seat, rationale, same_family, policy_version, at) "
-                     + "VALUES('bact-chief', 'confirmed', 'board-2', 'my own reading', 0, NULL, $at)", ("$at", Stamp));
-
-            // BOTH WAYS: a policy act's applied event names its version; a chief act's confirmed event names none.
-            Exec(db, "INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
-                     + "VALUES('bact-other', 'narrow', 'board-1', NULL, '[]', $sha, 2, 'a claim', '[]', NULL, NULL, $at)",
-                ("$sha", Sha256Hex.Of("[]")), ("$at", Stamp));
-            Assert.Contains("a change of the chief writes none", Assert.Throws<SqliteException>(() =>
-                Exec(db, "INSERT INTO board_act_event(act_id, kind, seat, policy_version, at) VALUES('bact-other', 'applied', 'board-1', NULL, $at)",
-                    ("$at", Stamp))).Message, StringComparison.Ordinal);
-            Assert.Contains("a change of the chief writes none", Assert.Throws<SqliteException>(() =>
-                Exec(db, "INSERT INTO board_act_event(act_id, kind, seat, rationale, same_family, policy_version, at) "
-                         + "VALUES('bact-chief', 'confirmed', 'board-3', 'mine', 0, 2, $at)", ("$at", Stamp))).Message, StringComparison.Ordinal);
-            first = Rows(db);
-            log.WriteLine(first);
-        }
-        Raw(file, $"UPDATE meta SET value='{Versions.ChiefStructureRung - 1}' WHERE key='schema_version';");
-        using (var rerun = new Database(file))
-        {
-            Assert.Equal(first, Rows(rerun));
-            Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), Scalar(rerun, "SELECT value FROM meta WHERE key='schema_version'"));
-            Assert.Equal("1", Scalar(rerun, "SELECT COUNT(*) FROM board_act_event WHERE act_id='bact-chief' AND policy_version IS NULL"));
-            Assert.Throws<SqliteException>(() => Exec(rerun, "UPDATE board_act_event SET detail='x'"));
-            Assert.Throws<SqliteException>(() => Exec(rerun, "DELETE FROM board_act_event"));
-            // THE ONE CLOSE PER ACT, made again with the table: the chief act closed by its confirmation closes no second time.
-            Assert.Throws<SqliteException>(() => Exec(rerun,
-                "INSERT INTO board_act_event(act_id, kind, seat, policy_version, at) VALUES('bact-chief', 'stale', 'app', NULL, $at)", ("$at", Stamp)));
-        }
-        Raw(file, $"UPDATE meta SET value='{Versions.ChiefStructureRung + 1}' WHERE key='schema_version';");
-        var newer = Assert.Throws<TradeAgentException>(() => new Database(file));
-        Assert.Contains($"{Versions.ChiefStructureRung + 1} is newer than this build supports ({Versions.ChiefStructureRung})", newer.Message, StringComparison.Ordinal);
-    }
-
-    /// <summary>
     /// A HOME AT RUNG 50 OPENS AND GAINS 51 WITH ITS FOUNDING RECORD BYTE FOR BYTE: rung 49's own <c>board_policy</c> and
     /// <c>board_event</c> are rebuilt with every row copied as it was — the body and its hash unchanged, the decider <c>app</c>, no act —
     /// the new tables made, every table sealed, and the founding policy still the one in force. RED before the rung: the home stays at 50. The board's tables are in the shape rung 49 wrote

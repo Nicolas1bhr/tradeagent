@@ -80,9 +80,10 @@ public partial class OrgChiefTests
     /// (3b) A CHIEF ACT BINDS TO ITS HASH, AND A MOVED CHIEF CLOSES IT STALE: one seat proposes a chief; a second seat's confirmation naming
     /// another hash is refused, nothing written; naming the act's own hash it appoints the chief in the decision's own write — DORMANT,
     /// decided by <c>board</c> on the basis of the act with the act's id in the detail, and NO policy version written — a chief change is
-    /// structure, not policy (fix pass 1, seat B's ruling; rung 52): <c>board_policy</c> holds as many rows as before, the policy in force is
-    /// the one it was, and the confirmed event names no version. RED at the builder's tip (the deviation): the act wrote an unchanged
-    /// version. THE WATCHED MUTANT: the chief act writing the unchanged version again turns this red. A proposal to replace
+    /// structure, not policy (fix pass 1, seat B's ruling as the orchestrator amended it; no rung): <c>board_policy</c> holds as many rows as
+    /// before, the policy in force is the one it was, and the confirmed event names the version IN FORCE it was decided under — never none.
+    /// RED at the builder's tip (the deviation): the act wrote an unchanged version. THE WATCHED MUTANTS: the chief act writing the unchanged
+    /// version again, or its event naming none, turns this red. A proposal to replace
     /// it, overtaken by the owner's removal, closes <c>stale</c> at its confirmation and applies nothing. A runtime this host does not know
     /// is refused at the proposal. RED at base: no <c>org.chief</c>.
     /// </summary>
@@ -114,7 +115,9 @@ public partial class OrgChiefTests
         var after = new BoardReader(db).InForce();
         Assert.Equal((versions, inForce.Version, inForce.BodySha256, inForce.Decider),
             (Count(db, "board_policy"), after.Version, after.BodySha256, after.Decider));
-        Assert.Equal(1, Count(db, "board_act_event", $"act_id='{proposed.Act.Id}' AND kind='confirmed' AND policy_version IS NULL"));
+        Assert.Equal(1, Count(db, "board_act_event",
+            $"act_id='{proposed.Act.Id}' AND kind='confirmed' AND policy_version = {inForce.Version} AND detail LIKE '%decided under version {inForce.Version}; no policy version is written%'"));
+        Assert.Contains($"Decided under version {inForce.Version}; no policy version is written", confirmed.Words, StringComparison.Ordinal);
         Assert.Contains(chief, confirmed.Words, StringComparison.Ordinal);
 
         // OVERTAKEN: the owner removes the chief while a replacement waits; its confirmation closes it stale and applies nothing.
