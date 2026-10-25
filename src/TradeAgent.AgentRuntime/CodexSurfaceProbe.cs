@@ -29,7 +29,9 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
     /// <summary>The provider id the dry run names on its command line; the mock answers it and nothing else is configured.</summary>
     public const string ProviderId = "tradeagent_probe";
 
-    static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
+    /// <summary>How long the dry run may take to make its first model request. Internal and init-only for the row that sends the
+    /// request just before it (fix pass, review-2 finding 2); the product's probe is <see cref="Instance"/>, at sixty seconds.</summary>
+    internal TimeSpan Deadline { get; init; } = TimeSpan.FromSeconds(60);
 
     public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
     {
@@ -109,8 +111,10 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
 
             using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timer.CancelAfter(Deadline);
-            var stdout = p.StandardOutput.ReadToEndAsync(timer.Token);
-            var stderr = p.StandardError.ReadToEndAsync(timer.Token);
+            // WHAT CODEX PRINTS IS KEPT AS IT ARRIVES, never cancelled by the deadline (fix pass, review-2 finding 2): a read cancelled at
+            // the deadline dropped what it had buffered, so a fallback warning printed before a request sent just in time went unread.
+            var stdout = new Printed(p.StandardOutput);
+            var stderr = new Printed(p.StandardError);
             try { await Task.WhenAny(mock.FirstBody, p.WaitForExitAsync(timer.Token)).WaitAsync(timer.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -121,7 +125,7 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
             if (!mock.FirstBody.IsCompleted)
             {
                 held.Kill();
-                var why = Ansi.Strip(await Quietly(stderr) + "\n" + await Quietly(stdout)).Split('\n')
+                var why = Ansi.Strip(await stderr.SettledAsync() + "\n" + await stdout.SettledAsync()).Split('\n')
                     .Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "no output";
                 throw new InvalidOperationException(
                     $"{Path.GetFileName(ask.Exe)} exited {(p.HasExited ? p.ExitCode.ToString(CultureInfo.InvariantCulture) : "?")} " +
@@ -131,11 +135,13 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
             var body = await mock.FirstBody;
             // CODEX'S OWN WORDS ABOUT THE RUN, READ BEFORE ITS TOOLS COUNT (U-cell-model-catalog, rider (b)): the mock answers the request
             // with a finished response, so codex ends its turn on its own; its warnings — fallback metadata above all — are in what it
-            // printed. One the manifest names (ToolsUnavailablePattern) refuses the seat, quoted, whatever tools were offered.
+            // printed. One the manifest names (ToolsUnavailablePattern) refuses the seat, quoted, whatever tools were offered. However the
+            // wait ends — codex's exit, ten seconds, or the deadline — what it printed before then is read and checked before anything is
+            // returned: the deadline ends the wait, never the reading.
             try { await p.WaitForExitAsync(timer.Token).WaitAsync(TimeSpan.FromSeconds(10), timer.Token); }
             catch (Exception ex) when (ex is TimeoutException or OperationCanceledException && !ct.IsCancellationRequested) { /* ended below */ }
             held.Kill();
-            var said = Ansi.Strip(await Quietly(stdout) + "\n" + await Quietly(stderr));
+            var said = Ansi.Strip(await stdout.SettledAsync() + "\n" + await stderr.SettledAsync());
             if (UnavailableLine(manifest, said) is { } warned)
                 throw new InvalidOperationException(
                     $"{Path.GetFileName(ask.Exe)} said \"{warned}\" in its dry run on {ask.Model}, so the tools it would offer are not the ones " +
@@ -170,10 +176,33 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
         return null;
     }
 
-    static async Task<string> Quietly(Task<string> read)
+    /// <summary>
+    /// WHAT ONE OF CODEX'S STREAMS HAS PRINTED, read as it arrives into a buffer no deadline cancels; <see cref="SettledAsync"/> gives
+    /// the stream up to two seconds to end once the process is killed and returns everything read by then.
+    /// </summary>
+    sealed class Printed
     {
-        try { return await read.WaitAsync(TimeSpan.FromSeconds(2)); }
-        catch (Exception) { return ""; }
+        readonly StringBuilder _text = new();
+        readonly Task _reading;
+
+        public Printed(StreamReader reader) => _reading = Task.Run(async () =>
+        {
+            var buffer = new char[4096];
+            try
+            {
+                int n;
+                while ((n = await reader.ReadAsync(buffer.AsMemory())) > 0)
+                    lock (_text) _text.Append(buffer, 0, n);
+            }
+            catch (Exception) { /* a closed pipe ends the reading; what arrived stays */ }
+        });
+
+        public async Task<string> SettledAsync()
+        {
+            try { await _reading.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (TimeoutException) { /* a descendant holds the pipe: what was read so far is the answer */ }
+            lock (_text) return _text.ToString();
+        }
     }
 
     /// <summary>
