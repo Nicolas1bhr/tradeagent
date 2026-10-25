@@ -449,6 +449,47 @@ public class OwnerPageTests
     });
 
     /// <summary>
+    /// THE PAGE READS THE SENTINEL AS THE SETUP'S CLI (<c>U-role-follows-setup</c>): after the CLI press — and for a literal row naming the
+    /// setup's CLI alike — the CLI button is the emphasised one and the Activity line names the resolved CLI, never the word the row stores.
+    /// </summary>
+    [Fact]
+    public async Task The_research_card_emphasises_the_cli_and_names_it_for_the_sentinel_and_a_literal_id_alike()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            host.Gateway.Update(s => s.SelectedRuntimeId = "codex");
+            var card = Field<OwnerPage.SeatChoices>(Build(host), "_seatChoices");
+            bool CliOn() => ((Button)card.ResearchRuntimeRow.Children[0]).Classes.Contains("on");
+            bool OwnOn() => ((Button)card.ResearchRuntimeRow.Children[1]).Classes.Contains("on");
+            List<string> Activity()
+            {
+                using var c = db.Cmd("SELECT text FROM activity ORDER BY id");
+                using var r = c.ExecuteReader();
+                var l = new List<string>();
+                while (r.Read()) l.Add(r.GetString(0));
+                return l;
+            }
+
+            Press((Button)card.ResearchRuntimeRow.Children[1]);
+            Assert.True(OwnOn() && !CliOn());
+
+            Press((Button)card.ResearchRuntimeRow.Children[0]);
+            Assert.Equal(TradeAgentSettings.SetupRuntime, host.Gateway.Settings.RuntimeForRole(CouncilRoles.Research));
+            Assert.True(CliOn() && !OwnOn());
+            Assert.Contains("The Research Director now runs on codex", Activity());
+            Assert.DoesNotContain(Activity(), a => a.Contains(TradeAgentSettings.SetupRuntime));
+
+            // A LITERAL ROW NAMING THE SETUP'S CLI READS THE SAME: the page asks the resolver, not the row.
+            host.Gateway.Update(s => s.RoleRuntime[CouncilRoles.Research] = "codex");
+            card.Update();
+            Assert.True(CliOn() && !OwnOn());
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// TODAY'S LINE PROMISES MIDNIGHT ONLY WHEN A FRESH DAY CAN FUND ONE TURN (<c>U-billing-classes</c>' review, P2): a reached day whose
     /// next turn fits a whole day waits for midnight; one whose single turn sets aside more than the whole day — or whose limit is 0 —
     /// says midnight will not bring a turn back, and names what would: his own limit for real money, the board's day-total for the plan.
