@@ -20,3 +20,18 @@ BUILDER-PROMPT-v2's gate. Report ≤ 20 lines appended here. Touched classes: `E
 
 ## Not in scope
 A reveal-in-Finder button or any listing of `.refused`; pruning old asides (the owner's choice, later); repairing a refusal of another kind (a seat, a chart, a cell proof); the Windows link-through cause (answered before U-cell-windows); restoring a position's plan from the aside.
+
+## Report
+Tip ffd77c54 (code; rebased on main 338744af). Build Release --no-incremental: 0 Warning(s), 0 Error(s). CI 40139678552 green, 12/12 jobs; 40133431188 was red on HomeFilesGuardTests (fixed below) plus linux-host's dated word (U-ci-dated-word).
+3× via suite.sh, all rc=0: RepairHomeTests 7/7, OrgSurfaceShellTests 2/2, OrganisationPageTests 5/5, ExecutorCellTests 13/13, HomeFilesGuardTests 2/2. names.sh: removed: 0 (base 3159, tip 3166).
+1 done (d4c41fbb): `WorkspaceBuilder.RepairHome` renames the home to `workspace/.refused/<home>-<UTC stamp>` (Directory.Move; nothing deleted) and rebuilds it; refuses on Windows. RED at main: CS0117 'WorkspaceBuilder' does not contain a definition for 'RepairHome'. MUTANT rename→Directory.Delete: DirectoryNotFoundException on `.refused/research-20261024T183005Z/AGENTS.md/planted.bin`, red.
+2 done: unrefused → "nothing to repair" and no `.refused`; an existing aside name refuses, untouched (both kernel, in commit 1). Open launch refused by the host (7b06217e). MUTANT drop the OpenAttemptIdFor check: `Assert.Contains() Failure: Sub-string not found`, red.
+3 done (09b119bf): `AppHost.HomeRefusalFor` / `RepairHome`: one Activity line and one engineering line `home_repaired`. Reach guard over GatewaySchema.Ops and the Gateway, GatewayHost, TradeCli, Core/Board and BrokerDoor sources. MUTANT a "repair_home" case in GatewayPipeServer: "an agent-facing or board source names the repair: GatewayPipeServer.cs", red.
+DEVIATION 3: `ActivationRefusal` never included the home refusal; the session's launch gate reads `RefusalFor(HomeFor)`, so that is what the check asserts. Items 2 and 3 share the host method, committed with item 2.
+4 done (97945e89): two-press `Ui.Confirm` on the refused row, made the first time the row is refused and kept. Labels and Theme.Caution only. RED: CS0117 'OrgSurfaceSources' does not contain 'HomeRefusal'. MUTANT build the press on every refresh: `Assert.Single() Failure: The collection contained 2 items`, red.
+DEVIATION 4: OrgSurfaceShellTests' no-press guard was amended, not weakened. It allows exactly one `Ui.Confirm(Labels.RepairHome, …)` in OrganisationView.cs, and the populated walk still finds no press. The page's subtitle now names the one press instead of claiming nothing can change.
+CI fix (ffd77c54): RepairHome's six System.IO calls were reviewed onto HomeFilesGuardTests' list with reasons: the home renamed by its own name, and `workspace/.refused`, which is beside the homes.
+Codex review: fleet/tmp/A-org/morg1-cards/U-repair-position-home-review.md, one [P1]. A `.refused` that is already a link (e.g. to inbox) is followed by the move. Not acted on (builder rule); for the seat to triage.
+NOT DONE: the mac-shot capture of the row. The refused state exists only after a start's prepare (`StartTheAiAsync`), which starts the AI, and this unit makes no real model call.
+tests box: NOT RUN — the machine does not answer
+Not verified: a repair racing a concurrent prepare; Windows behaviour beyond the in-words refusal its test asserts.
