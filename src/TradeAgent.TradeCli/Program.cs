@@ -33,7 +33,22 @@ if (command is "schema" && flags.ContainsKey("offline"))
     return 0;
 }
 
-var (op, args2) = Map(command, positional, flags, wantAll);
+string? op;
+Dictionary<string, object> args2;
+try { (op, args2) = Map(command, positional, flags, wantAll); }
+catch (UnreadWords refused)
+{
+    // A WORD A VERB DOES NOT TAKE IS REFUSED HERE, BEFORE ANY FRAME (U-verbs-a-followups): dropped, it answered `trade org show
+    // pos-other` with the caller's own view as though another position's had been read.
+    if (wantJson)
+        Console.WriteLine(Json.Write(CliReplayContract.UnansweredJson(null, TransportOutcome.NothingWritten, new IpcError
+        {
+            Code = nameof(ErrorCode.INVALID_REQUEST), Message = refused.Message, UserMessage = refused.Message, Repair = refused.Repair
+        }), true));
+    else
+        Console.Error.WriteLine($"trade: {refused.Message}\n  what to do: {refused.Repair}");
+    return 2;
+}
 if (op is null)
 {
     Console.Error.WriteLine($"trade: unknown command '{command}'. Try: trade --help");
@@ -389,6 +404,7 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                     Fill(a, rest, "delivery");
                     return (Ops.MandateReject, a);
                 case "list" or "ls":
+                    UnreadWords.Refuse("mandate list", rest, "'--before M' continues a cut list");
                     return (Ops.MandateList, a);
                 case "show":
                     Fill(a, rest, "mandate");
@@ -405,7 +421,7 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         }
 
         // `trade org show [--before M]` (U-org-verbs-a; the continuation, U-verbs-a-followups): the caller's own place on the chart. It
-        // takes no other argument; a flag it does not take is refused by the gateway.
+        // takes no other argument: a word after it is refused here (UnreadWords), and a flag it does not take by the gateway.
         // `trade org charter` and `trade org hire` (U-org-verbs-c): every flag is sent on under its own name, '-' read as '_'.
         case "org":
         {
@@ -419,6 +435,7 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
             {
                 case "show":
+                    UnreadWords.Refuse("org show", rest, "it reads your own place and nobody else's; '--before M' continues a cut list");
                     return (Ops.OrgShow, a);
                 case "charter":
                     Fill(a, rest, "kind", "ai_share", "rationale");
@@ -646,4 +663,24 @@ static void Usage()
     If a command dies without a reply, the order may still have reached the broker. Re-run it with
     the SAME --request-id, or read `trade orders` first. Never retry with a new id.
     """);
+}
+
+/// <summary>
+/// A WORD A VERB DOES NOT TAKE (<c>U-verbs-a-followups</c>): refused before any frame is sent, naming the word — never dropped, which
+/// would answer as though it had been read. For the verbs that take no positional word at all; a verb that does sends a word too many
+/// on as part of its last argument, and the gateway refuses it there.
+/// </summary>
+sealed class UnreadWords(string message, string repair) : Exception(message)
+{
+    public string Repair { get; } = repair;
+
+    public static void Refuse(string verb, List<string> words, string why)
+    {
+        if (words.Count == 0) return;
+        throw new UnreadWords(
+            $"'{verb}' takes no word after it, and {string.Join(" ", words.Select(w => $"'{w}'"))} "
+            + $"{(words.Count == 1 ? "is" : "are")} not taken — TradeAgent refuses a word rather than act as though it had read it. "
+            + "Nothing was sent.",
+            $"Run 'trade {verb}' with no word after it: {why}.");
+    }
 }
