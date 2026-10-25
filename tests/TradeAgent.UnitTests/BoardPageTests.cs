@@ -211,4 +211,19 @@ public class BoardPageTests
         Assert.Same(card, page.Acts.CardOf(act.Act.Id));
         Assert.Single(page.Root.GetLogicalDescendants().OfType<Button>());
     }
+
+    /// <summary>
+    /// (U-org-surface-b 6) VENTURES SHOW A NAMED EMPTY STATE (R24 § 4.6): no venture exists in this build, so the page says so in words
+    /// — "No venture yet — the board approves them once they exist" — and draws no empty frame. On the Board page: the Organisation
+    /// page's file is U-org-chief's under the seat's file seam. RED at base: no ventures section.
+    /// </summary>
+    [Fact]
+    public void Ventures_show_a_named_empty_state()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        Assert.Equal("No venture yet — the board approves them once they exist", Labels.VenturesNone);
+        Assert.Contains(Labels.VenturesNone, AllText(page));
+        Assert.Contains(Labels.Ventures.ToUpperInvariant(), AllText(page));
+    }
 }
