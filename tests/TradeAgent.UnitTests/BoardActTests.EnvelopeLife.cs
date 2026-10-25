@@ -61,13 +61,17 @@ public partial class BoardActTests
     /// A VETOED WIDENING NEVER LENGTHENS AN ENVELOPE'S LIFE (AUTH-001; the re-review's P1-2): an envelope of 0.05 granted for ten days; on
     /// day nine two seats widen it to 0.10, the owner vetoes that widening (back to 0.05), then one seat narrows to 0.04. With no health pass
     /// between and with one after the widening, the 0.04 envelope the next pass grants ends on day TEN — the life granted before the vetoed
-    /// widening — never day nineteen: revoked authority renews nothing, and where in doubt the envelope errs short. RED before the fix: with
-    /// no pass between, the vetoed widening still counted and it ended on day nineteen. Watched red with the veto unread.
+    /// widening — never day nineteen: revoked authority renews nothing, and where in doubt the envelope errs short. The third case (the
+    /// re-review's): after the widening's pass, one seat narrows to 0.08 and a pass grants it — keeping the widening's life, day nineteen —
+    /// THEN the owner vetoes the widening; the 0.08 envelope inherited that life from the vetoed widening, so the next narrowing still ends
+    /// on day ten. RED before the fix: with no pass between, the vetoed widening still counted and it ended on day nineteen; RED on the
+    /// fix's first cut for the third case (the inherited life was read from the 0.08 grant). Watched red with the veto unread.
     /// </summary>
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task A_vetoed_widening_never_lengthens_an_envelopes_life(bool passAfterWidening)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task A_vetoed_widening_never_lengthens_an_envelopes_life(bool passAfterWidening, bool narrowedBeforeVeto)
     {
         using var db = TestEnv.NewDb();
         SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
@@ -98,6 +102,13 @@ public partial class BoardActTests
         {
             await gw.RefreshHealthAsync();
             Assert.Equal((0.10m, day0.AddDays(19)), Assert.Single(gw.Envelopes.All(), Stands) is var w ? (w.MaxQuantity, w.ExpiresAt) : default);
+        }
+        if (narrowedBeforeVeto)
+        {
+            clock.Now = clock.Now.AddMinutes(1);
+            gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(With(0.10m)), Json(With(0.08m)))));
+            await gw.RefreshHealthAsync();
+            Assert.Equal((0.08m, day0.AddDays(19)), Assert.Single(gw.Envelopes.All(), Stands) is var n ? (n.MaxQuantity, n.ExpiresAt) : default);
         }
         gw.VetoBoardAct(widened.Act.Id);
         gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(With(0.05m)), Json(With(0.04m)))));
