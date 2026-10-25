@@ -48,6 +48,8 @@ public sealed partial class TradingGateway
             var before = _board.InForce();
             var done = act();
             if (done.PolicyVersion is { } version) WithdrawEnvelopeIfTermsMoved(before, _board.InForce(), version);
+            // A VETO ALSO TAKES BACK THE LIFE IT REVOKED, terms moved or not (U-board-b2 fix pass, re-review 2), in the same write.
+            if (done.Status == BoardActEventKind.Vetoed) WithdrawEnvelopesPastTheirAuthorisedLife(done.Act.Id);
             return done;
         });
         RefreshPolicy();

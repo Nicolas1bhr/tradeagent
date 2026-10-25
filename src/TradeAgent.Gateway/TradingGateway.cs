@@ -514,30 +514,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 // ANY version after the one that granted the policy's last envelope on this pair widened the terms — so a two-seat widening
                 // followed by a one-seat narrowing with no pass between keeps the widening's authorised life. A narrowing alone still ends
                 // no later than that envelope did, and an envelope whose life is over is not revived by one.
-                // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2 and the re-review's): the life a narrowing may
-                // keep is the AUTHORISED life of the policy's last envelope on this pair, read along every grant on the pair, oldest first —
-                // a grant's life is its own when an act since the grant before it widened the terms and the owner has not vetoed that act
-                // (or it is the pair's first grant, under a version not vetoed); otherwise it is no longer than the authorised life it
-                // replaced. So an envelope that kept a vetoed widening's life — itself or through any narrowing granted after it — keeps
-                // none of it, and where in doubt the life errs SHORT. WidenedSince skips a vetoed version.
-                var granted = _envelopes.All(int.MaxValue)
-                    .Where(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
-                                && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal) && PolicyGranted(e))
-                    .OrderBy(e => e.GrantedAt).ThenBy(e => e.Id, StringComparer.Ordinal).ToList();
-                DateTimeOffset? authorised = null;
-                int? lastGrant = null;
-                for (var i = 0; i < granted.Count; i++)
-                {
-                    var e = granted[i];
-                    var under = GrantedUnder(e);
-                    var fresh = i == 0
-                        ? !(under is { } u && _board.VetoedVersion(u))
-                        : under is { } u2 && WidenedSince(lastGrant, u2);
-                    authorised = fresh ? e.ExpiresAt
-                        : authorised is { } a ? (a < e.ExpiresAt ? a : e.ExpiresAt)
-                        : e.GrantedAt;
-                    lastGrant = under;
-                }
+                // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2 and its re-reviews): the life a narrowing may
+                // keep is the AUTHORISED life of the policy's grants on this pair (AuthorisedLife), and the terms are fresh only when every
+                // act since the last grant stands and one of them widened (WidenedSince).
+                var (authorised, lastGrant) = AuthorisedLife(stated.Connector, stated.Account);
                 var widened = WidenedSince(lastGrant, setBy);
                 if (!widened && authorised is { } life && life < until)
                 {
@@ -568,20 +548,77 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE AUTHORISED LIFE OF THE POLICY'S LAST ENVELOPE ON A PAIR, and the version that granted it (<c>U-board-b2</c> fix pass, the review's
+    /// P1-2 and its re-reviews): read along every policy grant on the pair, oldest first — a grant's life is its own when every act since the
+    /// grant before it stands and one of them widened the terms (<see cref="WidenedSince"/>), or when it is the pair's first grant under a
+    /// version the owner has not vetoed; otherwise it is no longer than the authorised life it replaced (and the first grant under a vetoed
+    /// version authorises none). So an envelope that kept a vetoed widening's life — itself, or through any narrowing granted after it —
+    /// keeps none of it, and a life that cannot be split between a standing act and a vetoed one errs SHORT. Null with no grant on the pair.
+    /// </summary>
+    (DateTimeOffset? Authorised, int? LastGrant) AuthorisedLife(string connector, string account)
+    {
+        var granted = _envelopes.All(int.MaxValue)
+            .Where(e => string.Equals(e.ConnectorId, connector, StringComparison.Ordinal)
+                        && string.Equals(e.AccountId, account, StringComparison.Ordinal) && PolicyGranted(e))
+            .OrderBy(e => e.GrantedAt).ThenBy(e => e.Id, StringComparer.Ordinal).ToList();
+        DateTimeOffset? authorised = null;
+        int? lastGrant = null;
+        for (var i = 0; i < granted.Count; i++)
+        {
+            var e = granted[i];
+            var under = GrantedUnder(e);
+            var fresh = i == 0
+                ? !(under is { } u && _board.VetoedVersion(u))
+                : under is { } u2 && WidenedSince(lastGrant, u2);
+            authorised = fresh ? e.ExpiresAt
+                : authorised is { } a ? (a < e.ExpiresAt ? a : e.ExpiresAt)
+                : e.GrantedAt;
+            lastGrant = under;
+        }
+        return (authorised, lastGrant);
+    }
+
+    /// <summary>
+    /// A VETO TAKES BACK THE LIFE IT REVOKED (<c>U-board-b2</c> fix pass, re-review 2): inside the veto's own write, every standing policy
+    /// envelope whose life runs past its <see cref="AuthorisedLife"/> — a life that rested on the act just vetoed, kept through a narrowing
+    /// granted after it — is withdrawn, even where the veto restored no terms (a field already as narrow as before). A veto grants nothing
+    /// in its place; the owner's later choices and the board's next act are what grant again.
+    /// </summary>
+    void WithdrawEnvelopesPastTheirAuthorisedLife(string actId)
+    {
+        var now = Now;
+        foreach (var envelope in _envelopes.All(int.MaxValue).Where(e => e.StandsAt(now) && PolicyGranted(e)).ToList())
+        {
+            var (authorised, _) = AuthorisedLife(envelope.ConnectorId, envelope.AccountId);
+            if (authorised is { } life && envelope.ExpiresAt <= life) continue;
+            var withdrawn = _envelopes.Withdraw(envelope.Id, now);
+            if (!withdrawn.Ok) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, withdrawn.Why + " Nothing was written.");
+            _log.Activity($"Your veto of {actId} took back the life it had given the standing paper envelope on account {envelope.AccountId}, "
+                          + "so that envelope is withdrawn: nothing new starts under it, and what was allocated under it may trade nothing. "
+                          + "A veto grants nothing in its place.");
+        }
+    }
+
+    /// <summary>
     /// WHETHER THE ENVELOPE'S TERMS WERE WIDENED BY ANY VERSION AFTER <paramref name="grantedUnder"/> UP TO <paramref name="setBy"/>
     /// (<c>U-board-b2</c> item 8): each version's terms against the version before it, by <see cref="BoardDirection"/>'s one table. With no
-    /// grant to measure from — or one whose version cannot be read — only the version that set the terms is read, as before. A version
-    /// whose act the owner VETOED never counts (<see cref="BoardStore.VetoedVersion"/>; the fix pass's P1-2): revoked authority renews no life.
+    /// grant to measure from — or one whose version cannot be read — only the version that set the terms is read, as before. FAILS CLOSED ON
+    /// A VETO (<see cref="BoardStore.VetoedVersion"/>; the fix pass's P1-2 and re-review 2): a range holding any version whose act the owner
+    /// vetoed renews nothing — revoked authority renews no life, and a life that cannot be split between a standing widening and a vetoed
+    /// one errs short.
     /// </summary>
     bool WidenedSince(int? grantedUnder, int setBy)
     {
         var from = grantedUnder is { } g && g < setBy ? g : setBy - 1;
+        var widened = false;
         for (var v = from + 1; v <= setBy; v++)
-            if (!_board.VetoedVersion(v)
-                && _board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
+        {
+            if (_board.VetoedVersion(v)) return false;
+            if (_board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
                 && BoardDirection.Of("paper_envelope", before, after) == BoardDirectionKind.Widens)
-                return true;
-        return false;
+                widened = true;
+        }
+        return widened;
     }
 
     /// <summary>The policy version a policy-granted envelope names in its reason (<c>…, version N</c>), or null where it names none.</summary>
