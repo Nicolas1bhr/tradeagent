@@ -433,22 +433,26 @@ public sealed partial class OrgStore
     internal static IReadOnlyList<string> CarriedBy(Database db, string unitId) => Carried(MergeLinks(db), unitId);
 
     /// <summary>
-    /// <see cref="CarriedBy"/>'S ANSWER AS ONE SQL PARAMETER (<c>U-merge-evidence-shares</c> item 2): a JSON array of unit ids, read
-    /// with <c>json_each</c> — one term and one parameter whatever the number of merges — by the per-unit trial and verdict use
-    /// (<see cref="CampaignStore"/>). Read inside the caller's own read or write.
+    /// <see cref="CarriedBy"/>'S ANSWER AS ONE SQL PARAMETER (<c>U-merge-evidence-shares</c>): a JSON array of unit ids, read with
+    /// <c>json_each</c> — one term and one parameter whatever the number of merges — by the per-unit trial and verdict use
+    /// (<see cref="CampaignStore"/>) and a unit's day (<see cref="AiAttemptStore"/>'s totals, admission's). Read inside the caller's own
+    /// read or write.
     /// </summary>
     internal static string CarriedSet(Database db, string unitId) => JsonSerializer.Serialize(CarriedBy(db, unitId));
 
     /// <summary>
     /// EVERY CARRIED PAIR AT ONCE (<c>U-org-verbs-d</c> fix pass 2; for the per-class read, <see cref="AiAttemptStore.UnitTotalsByClass"/>):
     /// each successor with every unit merged into it, transitively — <see cref="CarriedBy"/>'s answer for every successor, read from the
-    /// same links, the unit's own identity left out. Read inside the caller's own read.
+    /// same links, the unit's own identity left out — as ONE SQL parameter, a JSON array of <c>[carrier, member]</c> read with
+    /// <c>json_each</c> (<c>U-merge-evidence-shares</c> item 3): one compound term whatever the number of merges, where one term per
+    /// pair passed SQLite's 500-term limit after 32 successive merges (the Codex re-review 2 of U-org-verbs-d). Read inside the
+    /// caller's own read.
     /// </summary>
-    internal static IReadOnlyList<(string Carrier, string Member)> CarriedPairs(Database db)
+    internal static string CarriedPairs(Database db)
     {
         var links = MergeLinks(db);
-        return [.. links.Select(l => l.Into).Distinct(StringComparer.Ordinal)
-            .SelectMany(into => Carried(links, into).Skip(1).Select(member => (into, member)))];
+        return JsonSerializer.Serialize(links.Select(l => l.Into).Distinct(StringComparer.Ordinal)
+            .SelectMany(into => Carried(links, into).Skip(1).Select(member => new[] { into, member })));
     }
 
     /// <summary>Every <c>merged</c> event's link, A into B; a link this build did not write is damage, never read on a guess.</summary>

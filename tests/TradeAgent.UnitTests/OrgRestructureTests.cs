@@ -778,6 +778,39 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
+    /// (<c>U-merge-evidence-shares</c> item 3; the Codex re-review 2 of U-org-verbs-d, P2) FORTY SUCCESSIVE MERGES STILL READ: forty-one
+    /// sibling subdivisions merge one into the next, four days apart (inside the weekly throttle), so the last successor carries all
+    /// forty — 820 carried pairs across the chain. The Costs page's class totals (<see cref="AiAttemptStore.UnitTotalsByClass"/>) and
+    /// admission's day (<see cref="AiAttemptStore.UnitTotalsBetween"/>) both read, agree, and hold the first unit's launch as well as the
+    /// last's. RED at base: one UNION term per carried pair passed SQLite's 500-term compound limit, and the class totals threw.
+    /// </summary>
+    [Fact]
+    public void Forty_successive_merges_still_read_the_class_totals_and_the_day_totals()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var units = Enumerable.Range(0, 41).Select(i => $"sub-c4a1{i.ToString("D2", CultureInfo.InvariantCulture)}c0ffee").ToArray();
+        foreach (var unit in units) Aged(db, unit, Div, OrgUnitKind.Subdivision, 20);
+        Funded(db, Member, units[0], Div, OrgIds.Root);
+        Funded(db, Member, units[^1], Div, OrgIds.Root);
+
+        for (var i = 0; i < 40; i++)
+        {
+            var at = Now.AddDays(4 * i);
+            org.Merge(new MergeRequest(Head, null, units[i], units[i + 1], "two subdivisions chase one question", ["merge", "keep both"],
+                [], [Admissible(at.AddDays(45))]), at);
+        }
+
+        var ledger = new AiAttemptStore(db);
+        var (from, to) = (Now.AddDays(-1), Now.AddDays(1));
+        var classes = ledger.UnitTotalsByClass(from, to).Where(r => r.UnitId == units[^1]).Select(r => r.Totals).ToArray();
+        var day = ledger.UnitTotalsBetween(from, to, units[^1]);
+        Assert.Equal((0.20m, 2), (day.Reserved, day.Open));
+        Assert.Equal((day.Spent, day.Reserved, day.Open), (classes.Sum(c => c.Spent), classes.Sum(c => c.Reserved), classes.Sum(c => c.Open)));
+        Assert.Equal(0.10m, ledger.UnitTotalsByClass(from, to).Where(r => r.UnitId == units[0]).Sum(r => r.Totals.Reserved));
+    }
+
+    /// <summary>
     /// (F4) ONLY THE UNIT'S OWN PRECOMMITTED KILL FORECAST WAIVES THE FOURTEEN DAYS: a young unit's charter decision carries, besides
     /// its kill criterion, a forecast on something else and one added to the charter afterwards; each resolved, the close is still
     /// refused. RED before the fix: any resolved forecast on the charter waived the life.

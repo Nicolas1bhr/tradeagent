@@ -774,26 +774,22 @@ public sealed class AiAttemptStore(Database db)
     public IReadOnlyList<UnitClassTotals> UnitTotalsByClass(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
     {
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
-        var pairs = OrgStore.CarriedPairs(db);
-        var carry = pairs.Select((p, i) => ($"$carrier{i.ToString(CultureInfo.InvariantCulture)}", $"$member{i.ToString(CultureInfo.InvariantCulture)}", p))
-            .ToArray();
-        // EACH ROW UNDER EVERY UNIT ITS CHAIN HOLDS, AND UNDER EVERY SUCCESSOR OF ONE; UNION counts a row once per unit.
-        var carried = string.Concat(carry.Select(k => $"""
-
-                     UNION SELECT f.attempt_id, {k.Item1} FROM ai_attempt_funding f WHERE f.unit_id = {k.Item2}
-            """));
+        // EACH ROW UNDER EVERY UNIT ITS CHAIN HOLDS, AND UNDER EVERY SUCCESSOR OF ONE; UNION counts a row once per unit. The carried
+        // pairs are ONE parameter read with json_each — two compound terms however many merges there were (U-merge-evidence-shares).
         using var c = db.Cmd($"""
             SELECT unit_id, billing_class,
             {TotalsColumns}
             FROM (SELECT a.*, k.unit_id AS unit_id,
                          CASE WHEN a.role IN ({string.Join(",", principals.Select(p => p.Item1))}) THEN 0 ELSE 1 END AS counted
                     FROM ai_attempt a
-                    JOIN (SELECT f.attempt_id, f.unit_id FROM ai_attempt_funding f{carried}) k ON k.attempt_id = a.id
+                    JOIN (SELECT f.attempt_id, f.unit_id FROM ai_attempt_funding f
+                          UNION
+                          SELECT f.attempt_id, json_extract(p.value, '$[0]') FROM json_each($carry) p
+                            JOIN ai_attempt_funding f ON f.unit_id = json_extract(p.value, '$[1]')) k ON k.attempt_id = a.id
                    WHERE a.started_at >= $from AND a.started_at < $to)
             GROUP BY unit_id, billing_class
             ORDER BY unit_id, billing_class
-            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), .. principals,
-            .. carry.SelectMany(k => new[] { (k.Item1, (object?)k.p.Carrier), (k.Item2, (object?)k.p.Member) })]);
+            """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$carry", OrgStore.CarriedPairs(db)), .. principals]);
         using var r = c.ExecuteReader();
         var rows = new List<UnitClassTotals>();
         while (r.Read())
@@ -845,11 +841,10 @@ public sealed class AiAttemptStore(Database db)
         var principals = AppPrincipals.All.Select((p, i) => ($"$principal{i.ToString(CultureInfo.InvariantCulture)}", (object?)p)).ToArray();
         // A UNIT'S DAY CARRIES EVERY UNIT MERGED INTO IT (U-org-verbs-d; OrgStore.CarriedBy): each row stays on the chain it was
         // admitted under, and counts in its successor's day too.
-        IReadOnlyList<string> carried = unit is null ? [] : OrgStore.CarriedBy(db, unit);
-        var units = carried.Select((u, i) => ($"$unit{i.ToString(CultureInfo.InvariantCulture)}", (object?)u)).ToArray();
-        var unitClause = unit is null ? "" : $"""
+        // One parameter, read with json_each, however many merges there were (U-merge-evidence-shares).
+        var unitClause = unit is null ? "" : """
              AND EXISTS (SELECT 1 FROM ai_attempt_funding f
-                          WHERE f.unit_id IN ({string.Join(",", units.Select(u => u.Item1))}) AND f.attempt_id = ai_attempt.id)
+                          WHERE f.unit_id IN (SELECT value FROM json_each($carried)) AND f.attempt_id = ai_attempt.id)
             """;
         using var c = db.Cmd($"""
             SELECT
@@ -862,7 +857,7 @@ public sealed class AiAttemptStore(Database db)
                      {unitClause}
                      AND ($ceiling IS NULL OR billing_class = $ceiling OR billing_class = 'unknown'))
             """, [("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role), ("$ceiling", ceiling),
-            ("$chair", CouncilRoles.Default), .. principals, .. units]);
+            ("$chair", CouncilRoles.Default), ("$carried", unit is null ? null : OrgStore.CarriedSet(db, unit)), .. principals]);
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
 
