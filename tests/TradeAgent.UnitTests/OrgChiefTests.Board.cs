@@ -79,8 +79,10 @@ public partial class OrgChiefTests
     /// <summary>
     /// (3b) A CHIEF ACT BINDS TO ITS HASH, AND A MOVED CHIEF CLOSES IT STALE: one seat proposes a chief; a second seat's confirmation naming
     /// another hash is refused, nothing written; naming the act's own hash it appoints the chief in the decision's own write — DORMANT,
-    /// decided by <c>board</c> on the basis of the act with the act's id in the detail, beside a policy version whose body is the one in force
-    /// unchanged (rung 51 binds a confirmed act to the version it wrote; the policy holds no chief). A proposal to replace
+    /// decided by <c>board</c> on the basis of the act with the act's id in the detail, and NO policy version written — a chief change is
+    /// structure, not policy (fix pass 1, seat B's ruling; rung 52): <c>board_policy</c> holds as many rows as before, the policy in force is
+    /// the one it was, and the confirmed event names no version. RED at the builder's tip (the deviation): the act wrote an unchanged
+    /// version. THE WATCHED MUTANT: the chief act writing the unchanged version again turns this red. A proposal to replace
     /// it, overtaken by the owner's removal, closes <c>stale</c> at its confirmation and applies nothing. A runtime this host does not know
     /// is refused at the proposal. RED at base: no <c>org.chief</c>.
     /// </summary>
@@ -103,15 +105,16 @@ public partial class OrgChiefTests
         var inForce = new BoardReader(db).InForce();
         var confirmed = board.Decide(proposed.Act.Id, "board-2", null, true, proposed.Act.IntentSha256, "my own reading", Now);
         log.WriteLine(confirmed.Words);
-        Assert.Equal((BoardActEventKind.Confirmed, (int?)(inForce.Version + 1)), (confirmed.Status, confirmed.PolicyVersion));
+        Assert.Equal((BoardActEventKind.Confirmed, (int?)null), (confirmed.Status, confirmed.PolicyVersion));
         var chief = org.Chief()!;
         Assert.Equal((OrgPositionStatus.Dormant, "puppet"), (org.Position(chief)!.Status, org.Position(chief)!.SeatRuntime));
         Assert.Equal(1, Count(db, "org_event",
             $"kind='{OrgEventKind.ChiefAppointed}' AND decider='board' AND detail LIKE '%basis=act act={proposed.Act.Id} %'"));
-        // THE VERSION IT WROTE CHANGES NO LIMIT: the body in force, byte for byte, decided by the board on this act.
+        // NO VERSION: the policy's rows as they were, the version in force the one it was, and the confirmed event naming none.
         var after = new BoardReader(db).InForce();
-        Assert.Equal((versions + 1, inForce.BodySha256, BoardDecider.Board, BoardBasis.Act),
-            (Count(db, "board_policy"), after.BodySha256, after.Decider, after.Basis));
+        Assert.Equal((versions, inForce.Version, inForce.BodySha256, inForce.Decider),
+            (Count(db, "board_policy"), after.Version, after.BodySha256, after.Decider));
+        Assert.Equal(1, Count(db, "board_act_event", $"act_id='{proposed.Act.Id}' AND kind='confirmed' AND policy_version IS NULL"));
         Assert.Contains(chief, confirmed.Words, StringComparison.Ordinal);
 
         // OVERTAKEN: the owner removes the chief while a replacement waits; its confirmation closes it stale and applies nothing.

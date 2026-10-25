@@ -477,8 +477,18 @@ public static class Versions
     /// <c>act</c> or <c>veto</c>, <c>act_id</c> NULL iff founding — its mode and activation CHECKs UNCHANGED, so a live mode or an
     /// activation is still unstorable — and the event kinds widened by the owner's budget share and his seat founding and retiring.
     /// Every table refuses UPDATE, DELETE and an insert over its key by trigger. One writer, <c>BoardStore</c>.</para>
+    ///
+    /// <para><b>52 — a change of the chief is structure, not policy</b> (<c>U-org-chief</c>, rung <see cref="ChiefStructureRung"/>, after
+    /// <c>U-board-b1</c>'s 51): <c>board_act_event</c> is REBUILT in one transaction, every row copied byte for byte, without rung 51's CHECK
+    /// that every applied or confirmed event names a version; a trigger holds instead that an applied or confirmed event of an
+    /// <c>org.chief</c> act — an intent of exactly one change, of that field — names NO version, and every other one names the version it
+    /// wrote. A chief act changes the chart, not the policy, so it writes no version; nothing else's record moves. The indexes and the
+    /// seals are made again with the table.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = BoardActsRung;
+    public const int DatabaseSchemaVersion = ChiefStructureRung;
+
+    /// <summary>The rung where a chief act stops writing a policy version, spelled once (<c>U-org-chief</c>); a unit overtaken renumbers it here and nowhere else.</summary>
+    public const int ChiefStructureRung = 52;
 
     /// <summary>The three-dimension envelopes' rung, spelled once (<c>U-org-verbs-e</c>); a unit overtaken renumbers it here.</summary>
     public const int EvidenceSharesRung = 50;
