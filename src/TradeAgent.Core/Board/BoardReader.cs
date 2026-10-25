@@ -42,7 +42,7 @@ public sealed class BoardReader(Database db)
     /// <summary>The board's seats, in founding order.</summary>
     public IReadOnlyList<BoardSeat> Seats() => _store.Seats();
 
-    /// <summary>True only while a board seat is ACTIVE — its latest state row says so (<c>board_seat_state</c>). No product path writes one in this build.</summary>
+    /// <summary>True only while a board seat is ACTIVE — its latest state row says so (<c>board_seat_state</c>), read through the store's one reader of a seat's state now. No product path writes one in this build.</summary>
     public bool AnyActive => _store.AnyActive();
 
     /// <summary>
