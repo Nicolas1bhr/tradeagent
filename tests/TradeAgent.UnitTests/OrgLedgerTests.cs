@@ -319,10 +319,12 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-org-verbs-a (declared): ONE op names the organisation — `org-show`, `trade org show`, the READ
         // of the caller's own place on the chart. It takes no argument (so none can address a unit, a head or a seat), is not
         // mutating, and writes nothing (it is a reader of OrgStore's reads only, below). Every other op keeps the whole check.
+        // REVISITED, OUT LOUD, BY U-verbs-a-followups (declared): org-show takes ONE argument, 'before' — the continuation an answer
+        // handed back, a mandate id of the caller's own (any other is refused) — so it still addresses no unit, head, seat or position.
         var show = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.OrgShow);
-        Assert.Empty(show.Args);
+        Assert.Equal(["before"], show.Args.Select(a => a.Name));
         Assert.False(show.Mutating);
-        Assert.Equal("trade org show", show.Cli);
+        Assert.Equal("trade org show [--before M]", show.Cli);
         // REVISITED, OUT LOUD, BY U-org-verbs-c (declared): TWO ops WRITE the chart — `org-charter` and `org-hire`, `trade org charter`
         // and `trade org hire`, behind OrgVerbCaller and OrgStore's own checks (the rights matrix, the bounds, the throttle, the earning
         // test). Neither is mutating, and each takes EXACTLY the arguments pinned here: none names a seat, a head's id, a parent, a

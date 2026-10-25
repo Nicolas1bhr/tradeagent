@@ -576,4 +576,62 @@ public partial class OrgAssignmentTests
         Assert.Contains("never inside spent_today", note, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (3e) EVERY OPEN MANDATE IS REACHABLE THROUGH A CONTINUATION (<c>U-verbs-a-followups</c> item 2; refuse, never guess): 51 open
+    /// mandates held by one caller. <c>org-show</c> and <c>mandate-list</c> each serve at most 50, say the list is cut and hand back
+    /// <c>next_before</c> — the last row's id in the order served — and 'before' set to it serves the rest; the pages together are
+    /// every id once, newest first. A 'before' that is not one of the caller's mandates is refused. RED at base: no 'before', no
+    /// continuation — the 51st mandate cannot be read by either op.
+    /// </summary>
+    [Fact]
+    public async Task Fifty_one_open_mandates_are_all_reachable_through_the_continuation()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var t0 = DateTimeOffset.UtcNow;
+        var ids = Enumerable.Range(0, GatewayPipeServer.MandateListMax + 1)
+            .Select(i => gw.Org.Assign(Issue(), t0.AddMilliseconds(i)).Id).ToList();
+        ids.Reverse();   // newest first, as both ops serve them
+
+        foreach (var op in new[] { Ops.OrgShow, Ops.MandateList })
+        {
+            var seen = new List<string>();
+            string? before = null;
+            var pages = 0;
+            do
+            {
+                var reply = await server.CallAsync(before is null ? Frame(op) : Frame(op, ("before", before)), Member, Launch(db, Member));
+                Assert.True(reply.Ok, $"{op}: {Json.Write(reply.Error)}");
+                var body = Body(reply);
+                var rows = op == Ops.OrgShow
+                    ? body.GetProperty("held").EnumerateArray().Concat(body.GetProperty("decided").EnumerateArray())
+                    : body.GetProperty("mandates").EnumerateArray();
+                var page = rows.Select(r => r.GetProperty("mandate").GetString()!).ToList();
+                Assert.InRange(page.Count, 1, GatewayPipeServer.MandateListMax);
+                seen.AddRange(page);
+                pages++;
+                if (body.GetProperty("more").GetBoolean())
+                {
+                    Assert.True(body.TryGetProperty("next_before", out var next) && next.ValueKind == JsonValueKind.String,
+                        $"{op} stopped at {page.Count} with no continuation");
+                    Assert.Equal(page[^1], next.GetString());
+                    Assert.Contains("cut", body.GetProperty("cut").GetString(), StringComparison.Ordinal);
+                    before = next.GetString();
+                }
+                else
+                {
+                    Assert.True(Absent(body, "next_before"), $"{op} handed a continuation with nothing more");
+                    before = null;
+                }
+            } while (before is not null && pages < 4);
+            Assert.Equal(ids, seen);
+            Assert.Equal(2, pages);
+
+            var stray = await server.CallAsync(Frame(op, ("before", "mnd-not-yours")), Member, Launch(db, Member));
+            Assert.False(stray.Ok, $"{op} served a 'before' that is none of the caller's mandates");
+            Assert.Contains("'mnd-not-yours'", stray.Error!.Message, StringComparison.Ordinal);
+        }
+    }
 }
