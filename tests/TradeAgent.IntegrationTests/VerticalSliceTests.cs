@@ -229,6 +229,29 @@ public class TradeCliTests
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("IPC_UNAVAILABLE", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
+
+    /// <summary>
+    /// A WORD A READ DOES NOT TAKE IS REFUSED, NEVER DROPPED (<c>U-verbs-a-followups</c> item 3): <c>trade org show pos-other</c> once
+    /// answered with the CALLER's own view, as though another position's had been read. It exits non-zero with a refusal naming the
+    /// word, before any frame is sent — so no gateway is needed, and none answering is not the refusal. <c>trade mandate list</c>,
+    /// the other reader of open work, refuses the same way. RED at base: the word was dropped and the call went to the pipe.
+    /// </summary>
+    [Fact]
+    public async Task Org_show_with_an_argument_is_refused()
+    {
+        foreach (var argv in new[] { new[] { "org", "show", "pos-other", "--json" }, ["mandate", "list", "pos-other", "--json"] })
+        {
+            var (code, stdout, _) = await Build.RunTradeAsync(argv);
+            Assert.NotEqual(0, code);
+            using var doc = JsonDocument.Parse(stdout);
+            Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+            var error = doc.RootElement.GetProperty("error");
+            Assert.Equal("INVALID_REQUEST", error.GetProperty("code").GetString());
+            Assert.Contains("'pos-other'", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.Equal("NothingWritten", doc.RootElement.GetProperty("transport").GetString());
+            Assert.Equal(2, code);
+        }
+    }
 }
 
 /// <summary>
