@@ -816,9 +816,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m } });
         string[] chartering =
         [
-            $"trade org charter team 0.2 \"a family nobody has worked yet\" --forecasts {forecasts}",
-            $"trade org charter team 0.2 \"the funding skew family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
-            $"trade org charter team 0.2 \"the basis family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
+            $"trade org charter team 0.25 \"a family nobody has worked yet\" --forecasts {forecasts}",
+            $"trade org charter team 0.25 \"the funding skew family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
+            $"trade org charter team 0.25 \"the basis family earns a team\" --forecasts {forecasts} --collapse-by {collapse}",
             $"trade org charter team 0.1 \"a third family this week\" --forecasts {forecasts} --collapse-by {collapse}",
             "signal chartered", "usage 100 0 10", "final Chartered."
         ];
@@ -873,8 +873,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
 
         // THE CHART: two teams under the division, head vacant, each its share and its charter decision; two DORMANT positions in the
         // first, none active beyond the head — and nothing under div-operations but what was there.
+        // 0.25, not 0.2 (U-org-scorecards-b b1, declared): a division's first team below 0.25 is under the exploration floor.
         foreach (var t in org.Units().Where(u => u.ParentId == division))
-            Assert.Equal(((string?)null, "0.2", OrgUnitStatus.Active), (t.HeadPositionId, t.EnvelopeShare, t.Status));
+            Assert.Equal(((string?)null, "0.25", OrgUnitStatus.Active), (t.HeadPositionId, t.EnvelopeShare, t.Status));
         var hired = org.Positions().Where(p => p.UnitId == first).ToList();
         Assert.Equal(2, hired.Count);
         Assert.All(hired, p => Assert.Equal((OrgPositionStatus.Dormant, (string?)null), (p.Status, p.SeatRuntime)));

@@ -122,6 +122,12 @@ public sealed partial class OrgStore
                 if (Unfundable(funding.Seat, unit.Id, r.Share * parentEnvelope.Envelope, funding.Reservation) is { } never)
                     throw Refused($"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)})");
             if (StrandedSeat(unit, r.Share, seatOf) is { } stranded) throw Refused(stranded);
+            // THE EXPLORATION FLOOR (U-org-scorecards-b b1): an active child's AI share is never CUT below its equal part of the floor
+            // — a move up toward the floor is never refused by it, and a share set where the unit held none (the parent's whole room)
+            // is a cut.
+            if (unit.Status == OrgUnitStatus.Active && (from is null || r.Share < before)
+                && FloorRefusal(unit.ParentId!, unit.Id, r.Share) is { } belowFloor)
+                throw Refused(belowFloor);
         }
         else if (WorthRefusal(r.Currency, r.Share) is { } worthless) throw Refused(worthless);
 
@@ -229,6 +235,38 @@ public sealed partial class OrgStore
             : $"the units under {OrgEnvelopes.NameOf(parentId)} already hold {held.ToString(CultureInfo.InvariantCulture)} in {currency} shares, "
               + $"and {share.ToString(CultureInfo.InvariantCulture)} more would split more than the whole.";
     }
+
+    /// <summary>
+    /// WHY AN AI SHARE OF <paramref name="share"/> WOULD LEAVE AN ACTIVE CHILD OF <paramref name="parentId"/> BELOW THE EXPLORATION FLOOR,
+    /// or null (<c>U-org-scorecards-b</c> b1; ORGANISATION § 8): <see cref="OrgBounds.ExplorationFloor"/> of the parent's envelope split
+    /// equally among its ACTIVE units — <paramref name="unitId"/> (the one being set) counted once, and a charter's new unit
+    /// (<paramref name="unitId"/> null) counted too. The AI envelope is the pot (§ 8, "of the organisation's envelope"); a trial or verdict
+    /// share is a delegation of a campaign's evidence budget, which only a division head or a unit it delegated to spends, and is not floored.
+    /// </summary>
+    string? FloorRefusal(string parentId, string? unitId, decimal share)
+    {
+        var n = ActiveChildren(parentId, unitId);
+        var floor = FloorShare(n);
+        return share >= floor ? null
+            : $"an AI share of {share.ToString(CultureInfo.InvariantCulture)} would leave {(unitId is null ? "the new unit" : OrgEnvelopes.NameOf(unitId))} "
+              + $"below the exploration floor: {Pct(OrgBounds.ExplorationFloor)} of {OrgEnvelopes.NameOf(parentId)}'s envelope is split equally "
+              + $"among its {n.ToString(CultureInfo.InvariantCulture)} active unit{(n == 1 ? "" : "s")}, new ones included — "
+              + $"{Words(floor)} each (ORGANISATION § 8), the organisation's protected allocation for work no measure can value yet. "
+              + $"Give it at least {Words(floor)}.";
+    }
+
+    /// <summary>The active units under <paramref name="parentId"/>, <paramref name="unitId"/> counted once whatever its row says (null: a new one).</summary>
+    int ActiveChildren(string parentId, string? unitId) =>
+        Units().Count(u => u.ParentId == parentId && u.Id != unitId && u.Status == OrgUnitStatus.Active) + 1;
+
+    /// <summary>One active unit's equal part of the exploration floor among <paramref name="activeUnits"/>.</summary>
+    internal static decimal FloorShare(int activeUnits) => OrgBounds.ExplorationFloor / Math.Max(1, activeUnits);
+
+    static string Pct(decimal fraction) => (fraction * 100m).ToString("0.##", CultureInfo.InvariantCulture) + " %";
+
+    /// <summary>A share in words, at most four places, rounded UP so "at least" it still holds (0.08333…, said 0.0834).</summary>
+    internal static string Words(decimal share) =>
+        (Math.Ceiling(share * 10000m) / 10000m).ToString("0.####", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// WHY A TRIAL OR VERDICT SHARE IS WORTH LESS THAN ONE OF AN OPEN CAMPAIGN'S, or null: a share whose launches could never spend one
