@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
@@ -144,4 +145,56 @@ public class OwnerInboxTests
         Assert.Contains(page.BoardVetoCards.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == Labels.ForYouBoardVetoesNone);
         return Task.CompletedTask;
     });
+
+    // ---- item 7: the guards ---------------------------------------------------------------------------------------------------------
+
+    static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !File.Exists(Path.Combine(d.FullName, "TradeAgent.sln"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("could not find the repository root");
+    }
+
+    /// <summary>
+    /// (7a) NO OP OR VERB REACHES THE OWNER'S INBOX PRESSES (AUTH-001): no source outside the app's own process and the stores that
+    /// declare them — the pipe server, the broker door, the <c>trade</c> CLI, every tool and runtime included — names the structural veto,
+    /// the owner's activation press, the owed-words reader, the vetoable list or the page's sources; no op the gateway serves names a
+    /// veto, an inbox or an owed word; and the page's source holds exactly three presses, each <c>Ui.Confirm</c> (two presses), never
+    /// <c>ConfirmIf</c>, no other press and no box. RED with any of the names added to <c>GatewayPipeServer</c>.
+    /// </summary>
+    [Fact]
+    public void No_op_or_verb_reaches_the_owners_inbox_presses()
+    {
+        var root = RepoRoot();
+        var names = new Regex(@"\b(VetoStructure|ActivatePosition|OwnerWordsOwed|Vetoable|OwnerInboxSources|OwnerInboxPage)\b");
+        var reached = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
+            .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.StartsWith("src/TradeAgent.App/", StringComparison.Ordinal)
+                        && !f.StartsWith("src/TradeAgent.Core/Db/OrgStore", StringComparison.Ordinal)
+                        && f != "src/TradeAgent.Core/Db/MissionEventStore.cs")
+            .Where(f => names.IsMatch(File.ReadAllText(Path.Combine(root, f))))
+            .ToList();
+        Assert.Empty(reached);
+        // THE GUARD READS THE FILES IT MEANS: the pipe server, the door and the CLI are among those scanned.
+        var scanned = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')).ToList();
+        Assert.Contains("src/TradeAgent.Gateway/GatewayPipeServer.cs", scanned);
+        Assert.Contains("src/TradeAgent.AgentRuntime/BrokerDoor.cs", scanned);
+        Assert.Contains(scanned, f => f.StartsWith("src/TradeAgent.TradeCli/", StringComparison.Ordinal));
+
+        foreach (var op in TradeAgent.Gateway.GatewaySchema.Ops())
+            foreach (var word in new[] { "veto", "inbox-owner", "owed", "vetoable" })
+            {
+                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(word, op.Cli, StringComparison.OrdinalIgnoreCase);
+            }
+
+        var page = File.ReadAllText(Path.Combine(root, "src", "TradeAgent.App", "OwnerInboxView.cs"));
+        Assert.Equal(3, Regex.Matches(page, @"Ui\.Confirm\(").Count);
+        foreach (var press in new[] { "Ui.Confirm(Labels.VetoBoardActPress, Labels.VetoBoardActConfirm,",
+                     "Ui.Confirm(Labels.VetoStructurePress, Labels.VetoStructureConfirm,", "Ui.Confirm(Labels.ActivatePositionPress, Labels.ActivatePositionConfirm," })
+            Assert.Single(Regex.Matches(page, Regex.Escape(press)));
+        foreach (var other in new[] { "ConfirmIf", "new Button", "Ui.Primary", "Ui.Secondary", "Ui.Ghost", "Ui.Danger", "TextField", "AmountField", "new TextBox", "ComboBox" })
+            Assert.DoesNotContain(other, page, StringComparison.Ordinal);
+    }
 }
