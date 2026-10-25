@@ -678,6 +678,32 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
+    /// (<c>U-merge-evidence-shares</c> item 1) A MERGE KEEPS EVERY EVIDENCE SHARE WHOLE (BUDGET-001, Σ ≤ 1 per currency): A's team and
+    /// B's team each hold 0.6 of a currency — trials, then verdicts — and no AI share; under B the two would hold 1.2 of it, so the merge
+    /// is refused in words naming the currency, nothing written. RED at base: only the AI share was summed, and the merge was written.
+    /// </summary>
+    [Fact]
+    public void A_merge_whose_children_split_more_than_a_whole_verdict_share_is_refused()
+    {
+        foreach (var (currency, column) in new[] { (OrgCurrency.Verdicts, "verdict_share"), (OrgCurrency.Trials, "trial_share") })
+        {
+            using var db = Chart();
+            var org = new OrgStore(db);
+            Siblings(db);
+            Aged(db, BTeam, SubB, OrgUnitKind.Team, 20);
+            Exec(db, $"UPDATE org_unit SET {column}='0.6' WHERE id IN ($a, $b)", ("$a", ATeam), ("$b", BTeam));
+            var before = Written(db);
+
+            var refused = Assert.Throws<TradeAgentException>(() => org.Merge(MergeAsk(SubA, SubB), Now));
+
+            Assert.Contains("more than the whole", refused.Message, StringComparison.Ordinal);
+            Assert.Contains($"{currency} shares", refused.Message, StringComparison.Ordinal);
+            Assert.Equal(before, Written(db));
+            Assert.Equal(OrgUnitStatus.Active, org.Units().Single(u => u.Id == SubA).Status);
+        }
+    }
+
+    /// <summary>
     /// (F4) ONLY THE UNIT'S OWN PRECOMMITTED KILL FORECAST WAIVES THE FOURTEEN DAYS: a young unit's charter decision carries, besides
     /// its kill criterion, a forecast on something else and one added to the charter afterwards; each resolved, the close is still
     /// refused. RED before the fix: any resolved forecast on the charter waived the life.

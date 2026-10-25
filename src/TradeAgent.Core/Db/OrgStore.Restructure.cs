@@ -190,7 +190,8 @@ public sealed partial class OrgStore
     /// chain funded (lineage is immutable, BUDGET-001); only launches after the merge are funded through B. Refused in words, nothing
     /// written: the rights matrix on either unit; the same unit; either closed; not siblings of one parent; different kinds; A younger
     /// than <see cref="OrgBounds.MinimumLife"/> unless its kill forecast resolved; B past <see cref="OrgBounds.MaxMembers"/>
-    /// members; B's child units and A's moved ones splitting more than B's whole; a third structural change in seven days; no forecast.
+    /// members; B's child units and A's moved ones splitting more than B's whole in any currency — AI, trial or verdict share; a third
+    /// structural change in seven days; no forecast.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public MergedUnit Merge(MergeRequest r, DateTimeOffset now) => db.Write(_ =>
@@ -216,14 +217,20 @@ public sealed partial class OrgStore
         if (members > OrgBounds.MaxMembers)
             throw Refused($"{b.Id} would have {members.ToString(CultureInfo.InvariantCulture)} members, more than one head leads "
                           + $"({OrgBounds.MaxMembers.ToString(CultureInfo.InvariantCulture)}).");
-        // B'S CHILDREN AND A'S MOVED ONES SPLIT B'S ENVELOPE TOGETHER: never more than its whole (the Codex review of U-org-verbs-d,
-        // P2). A share left NULL is no separate cap and splits nothing.
-        var bSplit = all.Where(u => u.ParentId == b.Id && u.Status != OrgUnitStatus.Closed && u.EnvelopeShare is not null).Sum(ShareOf);
-        var aSplit = all.Where(u => u.ParentId == a.Id && u.Status != OrgUnitStatus.Closed && u.EnvelopeShare is not null).Sum(ShareOf);
-        if (bSplit + aSplit > 1m)
-            throw Refused($"the units under {b.Id} hold {bSplit.ToString(CultureInfo.InvariantCulture)} of its envelope and the units "
+        // B'S CHILDREN AND A'S MOVED ONES SPLIT B'S ENVELOPE TOGETHER, IN EVERY CURRENCY: never more than its whole (the Codex review of
+        // U-org-verbs-d, P2; U-merge-evidence-shares item 1 — the trial and verdict shares of U-org-verbs-e as the AI share, BUDGET-001's
+        // Σ ≤ 1 per currency). A share left NULL is no separate cap and splits nothing.
+        foreach (var currency in OrgCurrency.All)
+        {
+            decimal Split(string parent) => all.Where(u => u.ParentId == parent && u.Status != OrgUnitStatus.Closed)
+                .Sum(u => OrgCurrency.Of(u, currency) is { } text ? Share(u.Id, currency, text) : 0m);
+            var (bSplit, aSplit) = (Split(b.Id), Split(a.Id));
+            if (bSplit + aSplit <= 1m) continue;
+            var held = currency == OrgCurrency.Ai ? "of its envelope" : $"in {currency} shares";
+            throw Refused($"the units under {b.Id} hold {bSplit.ToString(CultureInfo.InvariantCulture)} {held} and the units "
                           + $"{a.Id} would bring hold {aSplit.ToString(CultureInfo.InvariantCulture)} of theirs: under {b.Id} they would split "
                           + "more than the whole.");
+        }
         if (ThrottleRefusal(now) is { } throttled) throw Refused(throttled);
         ForecastsRefusal(r.Forecasts, "a merge");
 
