@@ -505,8 +505,10 @@ public sealed class AiAttemptStore(Database db)
                         if (rule.Reservation <= 0m) return new AiAdmission { Refusal = Labels.BoardTurnUnpriced, Ceiling = AiAdmission.Board };
                         // ITS SHARE OF THE PLAN'S DAY-TOTAL IN FORCE, whichever ceiling the launch is billed to (R24 § 4.1: "its share of
                         // the plan's day-total"): a key launch fits the money cap above and this as well, never a larger share of money.
+                        // ONE BUDGET ACROSS EVERY BILLING CLASS (BUDGET-001; U-board-b2 fix pass, the review's P1-1): every board seat's rows,
+                        // plan, key and unknown alike — read through a class's filter, plan launches and key launches could each spend it whole.
                         var ceilingOf = share * rule.PlanCap;
-                        var board = BoardTotals(rule.From, rule.To, ceiling);
+                        var board = BoardTotals(rule.From, rule.To);
                         if (board.Spent + board.Reserved + rule.Reservation > ceilingOf)
                         {
                             var room = ceilingOf - board.Spent - board.Reserved;
@@ -931,14 +933,14 @@ public sealed class AiAttemptStore(Database db)
 
     /// <summary>
     /// WHAT THE SECURITY BOARD SPENT IN A WINDOW (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost"): every row whose role is a board seat,
-    /// in <paramref name="ceiling"/>'s rows (its class's and the unknown ones), summed — a closed row at its cost, or at its RESERVATION
-    /// where it ended unpriced (an unknown is never counted as nothing), and an open row at its reservation. The board's spend is its
-    /// launches' rows by role; no funding row is read.
+    /// of EVERY billing class — the board's share is one budget, whoever pays for a launch (BUDGET-001; the fix pass's P1-1) — summed: a
+    /// closed row at its cost, or at its RESERVATION where it ended unpriced (an unknown is never counted as nothing), and an open row at
+    /// its reservation. The board's spend is its launches' rows by role; no funding row is read, and no class filter is offered.
     /// </summary>
-    public AiAttemptTotals BoardTotalsBetween(DateTimeOffset from, DateTimeOffset to, string? ceiling = null) =>
-        db.Read(_ => BoardTotals(from, to, ceiling));
+    public AiAttemptTotals BoardTotalsBetween(DateTimeOffset from, DateTimeOffset to) =>
+        db.Read(_ => BoardTotals(from, to));
 
-    AiAttemptTotals BoardTotals(DateTimeOffset from, DateTimeOffset to, string? ceiling)
+    AiAttemptTotals BoardTotals(DateTimeOffset from, DateTimeOffset to)
     {
         using var c = db.Cmd("""
             SELECT COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE CAST(COALESCE(cost, reserved_cost) AS REAL) END), 0),
@@ -950,8 +952,7 @@ public sealed class AiAttemptStore(Database db)
               FROM ai_attempt
              WHERE started_at >= $from AND started_at < $to
                AND substr(role, 1, length($prefix)) = $prefix
-               AND ($ceiling IS NULL OR billing_class = $ceiling OR billing_class = 'unknown')
-            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$prefix", Board.BoardSeats.Prefix), ("$ceiling", ceiling));
+            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$prefix", Board.BoardSeats.Prefix));
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
         return new AiAttemptTotals((decimal)r.GetDouble(0), (decimal)r.GetDouble(1), Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5));

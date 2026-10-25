@@ -96,6 +96,73 @@ public partial class BoardTurnTests
     }
 
     /// <summary>
+    /// THE BOARD'S SHARE IS ONE BUDGET ACROSS EVERY BILLING CLASS (BUDGET-001; the re-review's P1-1): with the share holding two board turns
+    /// and a half, two seats spend it in one class and a third seat's launch billed to the OTHER class is refused by the board's ceiling —
+    /// plan rows then a key launch, and key rows then a plan launch. RED before the fix: the board's ceiling counted only the launch's own
+    /// class's rows, so each class could take the whole share. Watched red with the class filter restored.
+    /// </summary>
+    [Theory]
+    [InlineData(BillingClasses.Plan, BillingClasses.Key)]
+    [InlineData(BillingClasses.Key, BillingClasses.Plan)]
+    public void The_boards_share_is_one_budget_across_every_billing_class(string spentIn, string launchedIn)
+    {
+        using var db = TestEnv.NewDb();
+        Activate(db, "board-1", "board-2", "board-3");
+        var share = new BoardStore(db).BudgetShare()!.Value;
+        var plan = 0m;
+        var meter = Meter(db, _ => SeatClasses.Broker, cap: () => 1000m, planCap: () => plan);
+        var reservation = meter.AdmissionRuleFor("board-1", spentIn).Reservation;
+        Assert.True(reservation > 0m, "a board turn reserved nothing");
+        plan = 2.5m * reservation / share;
+        var store = new AiAttemptStore(db);
+        AiAdmission Launch(string seat, string billing) => store.Begin(new AiAttempt
+        {
+            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = DateTimeOffset.UtcNow, Role = seat, ReservedCost = reservation,
+            BillingClass = billing, Funding = []
+        }, admit: meter.AdmissionRuleFor(seat, billing));
+
+        foreach (var seat in new[] { "board-1", "board-2" })
+        {
+            var spent = Launch(seat, spentIn);
+            Assert.True(spent.Admitted, spent.Refusal);
+        }
+        var other = Launch("board-3", launchedIn);
+        log.WriteLine($"{spentIn} then {launchedIn}: {other.Refusal}");
+        Assert.False(other.Admitted, $"the board spent its share in {spentIn} and then again in {launchedIn}");
+        Assert.Equal(AiAdmission.Board, other.Ceiling);
+        var board = store.BoardTotalsBetween(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        Assert.Equal(2 * reservation, board.Spent + board.Reserved);
+    }
+
+    /// <summary>
+    /// A KEY-BILLED BOARD LAUNCH ALSO FITS THE MONEY CAP: with the board's share holding room, a key launch larger than the owner's real-money
+    /// cap is refused by the day's money ceiling, never admitted on the share alone — while a plan launch, held to no money, is admitted.
+    /// </summary>
+    [Fact]
+    public void A_key_billed_board_launch_also_fits_the_money_cap()
+    {
+        using var db = TestEnv.NewDb();
+        Activate(db, "board-1", "board-2");
+        var money = 0m;
+        var meter = Meter(db, _ => SeatClasses.Broker, cap: () => money, planCap: () => 1000m);
+        var reservation = meter.AdmissionRuleFor("board-1", BillingClasses.Key).Reservation;
+        Assert.True(reservation > 0m, "a board turn reserved nothing");
+        money = reservation / 2m;
+        var store = new AiAttemptStore(db);
+        AiAdmission Launch(string seat, string billing) => store.Begin(new AiAttempt
+        {
+            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = DateTimeOffset.UtcNow, Role = seat, ReservedCost = reservation,
+            BillingClass = billing, Funding = []
+        }, admit: meter.AdmissionRuleFor(seat, billing));
+
+        var key = Launch("board-1", BillingClasses.Key);
+        Assert.False(key.Admitted, "a key-billed board launch was admitted past the money cap");
+        Assert.NotEqual(AiAdmission.Board, key.Ceiling);
+        var planned = Launch("board-2", BillingClasses.Plan);
+        Assert.True(planned.Admitted, planned.Refusal);
+    }
+
+    /// <summary>
     /// A BOARD ACT CANNOT RAISE THE BOARD'S SHARE (CHANGE-001; b1 item 8): an intent naming the share is refused as no field of the policy,
     /// a power proposal on the board's budget is a record that changes nothing, and a two-seat widening of the plan's day-total — the
     /// figure the share is OF — leaves the share where the owner set it. Only his in-process press moves it.
