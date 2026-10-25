@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 
 namespace TradeAgent.Core.Db;
 
@@ -430,6 +431,13 @@ public sealed partial class OrgStore
     /// event whose link this build did not write is damage, refused, never read on a guess.
     /// </summary>
     internal static IReadOnlyList<string> CarriedBy(Database db, string unitId) => Carried(MergeLinks(db), unitId);
+
+    /// <summary>
+    /// <see cref="CarriedBy"/>'S ANSWER AS ONE SQL PARAMETER (<c>U-merge-evidence-shares</c> item 2): a JSON array of unit ids, read
+    /// with <c>json_each</c> — one term and one parameter whatever the number of merges — by the per-unit trial and verdict use
+    /// (<see cref="CampaignStore"/>). Read inside the caller's own read or write.
+    /// </summary>
+    internal static string CarriedSet(Database db, string unitId) => JsonSerializer.Serialize(CarriedBy(db, unitId));
 
     /// <summary>
     /// EVERY CARRIED PAIR AT ONCE (<c>U-org-verbs-d</c> fix pass 2; for the per-class read, <see cref="AiAttemptStore.UnitTotalsByClass"/>):

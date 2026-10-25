@@ -1,5 +1,6 @@
 using System.Globalization;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using Xunit;
 
@@ -701,6 +702,79 @@ public partial class OrgStructureTests
             Assert.Equal(before, Written(db));
             Assert.Equal(OrgUnitStatus.Active, org.Units().Single(u => u.Id == SubA).Status);
         }
+    }
+
+    /// <summary>
+    /// (<c>U-merge-evidence-shares</c> item 2) A MERGED UNIT'S SPENT VERDICT STAYS SPENT UNDER ITS SUCCESSOR (EVID-001; ORCHESTRATION
+    /// § 2.9, a merge "carries reservations, debts and history to the successor"): A holds a quarter of a 4-judgement campaign (one)
+    /// and spends it; B holds a half (two). After A merges into B, B's use reads A's judgement through the merge's successor link — one
+    /// more is charged, the next is refused in words naming B, while the campaign itself still has room; A's row still names the launch
+    /// that asked it (never rewritten). RED at base: B's use read only its own launches, and the third judgement was charged.
+    /// </summary>
+    [Fact]
+    public void A_merged_units_spent_verdict_stays_spent_under_its_successor()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var campaigns = new CampaignStore(db);
+        Siblings(db);
+        Exec(db, "UPDATE org_unit SET verdict_share = CASE id WHEN $a THEN '0.25' ELSE '0.5' END WHERE id IN ($a, $b)",
+            ("$a", SubA), ("$b", SubB));
+        var campaign = OrgEvidenceSharesTests.Opened(db, OrgEvidenceSharesTests.Held(db), trials: 10, verdicts: 4);
+        var v = Enumerable.Range(0, 4).Select(i => OrgEvidenceSharesTests.Version(db, $"version-merged-{i}")).ToArray();
+        var aLaunch = Funded(db, AHead, SubA, Div, OrgIds.Root);
+        Assert.True(campaigns.ChargeVerdict(campaign.Id, v[0], Now, aLaunch).Ok);
+
+        org.Merge(MergeAsk(SubA, SubB), Now);
+
+        var bLaunch = Funded(db, BHead, SubB, Div, OrgIds.Root);
+        var second = campaigns.ChargeVerdict(campaign.Id, v[1], Now, bLaunch);
+        Assert.True(second.Ok, second.Why);
+        var third = campaigns.ChargeVerdict(campaign.Id, v[2], Now, bLaunch);
+        Assert.False(third.Ok, "A's spent judgement was given back to B by the merge");
+        foreach (var words in new[] { SubB, "0.5", "2 of" })
+            Assert.Contains(words, third.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.VerdictCharged(campaign.Id, v[2]));
+        Assert.Equal(2, campaigns.JudgementsSpent(campaign.Id));
+        Assert.Equal(aLaunch, db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT attempt_id FROM strategy_verdict WHERE version_id = $v", ("$v", v[0]));
+            return (string)c.ExecuteScalar()!;
+        }));
+    }
+
+    /// <summary>
+    /// (<c>U-merge-evidence-shares</c> item 2, the trials twin) A MERGED UNIT'S SPENT TRIAL STAYS SPENT UNDER ITS SUCCESSOR: A holds a
+    /// quarter of a 4-trial campaign and runs one; B holds a half. After the merge, B's next run is registered and the one after is
+    /// refused in words naming B, the campaign still with room. RED at base: the third trial was registered.
+    /// </summary>
+    [Fact]
+    public void A_merged_units_spent_trial_stays_spent_under_its_successor()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var campaigns = new CampaignStore(db);
+        Siblings(db);
+        Exec(db, "UPDATE org_unit SET trial_share = CASE id WHEN $a THEN '0.25' ELSE '0.5' END WHERE id IN ($a, $b)",
+            ("$a", SubA), ("$b", SubB));
+        var set = OrgEvidenceSharesTests.Held(db);
+        var campaign = OrgEvidenceSharesTests.Opened(db, set, trials: 4, verdicts: 2);
+        var version = OrgEvidenceSharesTests.Version(db, "version-merged-trials");
+        TrialRegistered Register(string runId, string attempt) => campaigns.RegisterTrial(campaign.Id, version,
+            OrgEvidenceSharesTests.Run(db, set, version, runId, attempt), EvaluationClass.Research, Now);
+        Assert.True(Register("run-merged-a0", Funded(db, AHead, SubA, Div, OrgIds.Root)).Ok);
+
+        org.Merge(MergeAsk(SubA, SubB), Now);
+
+        var bLaunch = Funded(db, BHead, SubB, Div, OrgIds.Root);
+        var second = Register("run-merged-b0", bLaunch);
+        Assert.True(second.Ok, second.Why);
+        var third = Register("run-merged-b1", bLaunch);
+        Assert.False(third.Ok, "A's spent trial was given back to B by the merge");
+        foreach (var words in new[] { SubB, "0.5", "2 of" })
+            Assert.Contains(words, third.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.Registered(campaign.Id, version, "run-merged-b1"));
+        Assert.Equal(2, campaigns.TrialsCharged(campaign.Id));
     }
 
     /// <summary>
