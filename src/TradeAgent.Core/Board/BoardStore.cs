@@ -235,7 +235,8 @@ public sealed class BoardStore(Database db)
 
     /// <summary>
     /// THE BOARD'S SEATS, by id, each with its STATE NOW: the latest <c>board_seat_state</c> row — <c>dormant</c>, <c>active</c> or
-    /// <c>retired</c> — or, with none, the row's own <c>dormant</c>. A seat's row is sealed, so its life is on the state table.
+    /// <c>retired</c> — or, with none, the row's own <c>dormant</c>. A seat's row is sealed, so its life is on the state table. THE ONE READER of a
+    /// seat's state now: <see cref="Seat"/>, <see cref="AnyActive"/> and every caller of either read it, never the sealed row alone.
     /// </summary>
     public IReadOnlyList<BoardSeat> Seats() => _db.Read(_ =>
     {
@@ -255,15 +256,12 @@ public sealed class BoardStore(Database db)
     /// <summary>One seat with its state now, or null for an id that is no board seat.</summary>
     public BoardSeat? Seat(string id) => Seats().FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.Ordinal));
 
-    /// <summary>Whether any board seat is ACTIVE now — read from the state table. No product path writes <c>active</c> in this build.</summary>
-    public bool AnyActive() => _db.Read(_ =>
-    {
-        using var c = _db.Cmd("""
-            SELECT COUNT(*) FROM board_seat s
-             WHERE (SELECT t.state FROM board_seat_state t WHERE t.seat = s.id ORDER BY t.id DESC LIMIT 1) = 'active'
-            """);
-        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
-    });
+    /// <summary>
+    /// Whether any board seat is ACTIVE now — read through <see cref="Seats"/>, the ONE reader of a seat's state now (its latest
+    /// <c>board_seat_state</c> row), so the owner's activation, his page's presses and the board's own caller can never disagree on
+    /// whether the board is active. No product path writes <c>active</c> in this build.
+    /// </summary>
+    public bool AnyActive() => Seats().Any(s => s.Status == BoardSeatStatus.Active);
 
     /// <summary>
     /// THE TEST HOST'S SEAM OVER A SEAT'S STATE (<c>U-board-b1</c> item 6) — THE ONLY WRITER OF <c>active</c> in this build: internal,

@@ -429,12 +429,17 @@ public partial class OrgStructureTests
         // test host's seam — the only writer of `active` in this build (U-board-b1 item 6); the seat's sealed row still says dormant.
         var seat = new TradeAgent.Core.Board.BoardStore(db).Seats()[0].Id;
         new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest(seat, TradeAgent.Core.Board.BoardSeatStatus.Active, Now);
-        Assert.True(new TradeAgent.Core.Board.BoardReader(db).AnyActive);
         var before = Written(db);
         var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Puppets, 3, Now));
         Assert.Contains("the security board's now that a board seat is active", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(dormant.Position.Id)!.Status);
+        // The refusal read the state table, never the seat's sealed row: that row says dormant for ever.
+        Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Dormant, db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT status FROM board_seat WHERE id = $id", ("$id", seat));
+            return (string)c.ExecuteScalar()!;
+        }));
     }
 
     /// <summary>
