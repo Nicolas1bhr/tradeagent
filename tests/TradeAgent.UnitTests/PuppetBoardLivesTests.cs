@@ -191,4 +191,126 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(("board-2", "not while nothing is proven", life.AttemptsOf("board-2")[0].Id), (refused.Seat, refused.Rationale, refused.Attempt));
         Assert.DoesNotContain(life.Events(), e => e.Role == "board-3");
     }
+
+    // ---- item 6: board lives II — the edges ------------------------------------------------------------------------------------------
+
+    static BoardActRow Proposal(PuppetLife life) => new BoardStore(life.Host.Db).Acts().Single(a => a.Act.Kind == BoardActKind.Propose).Act;
+
+    /// <summary>
+    /// AN EXPIRED AND A STALE PROPOSAL APPLY NOTHING AND ARE RECORDED. board-1's puppet proposes a larger day; the clock passes the
+    /// confirmation life before any seat decides, and the sweep closes it <c>expired</c> — the other seat's wake closed with it, so no turn
+    /// is bought for it. Then board-1 proposes again; while it waits, board-3 narrows the same field at once; board-2, woken by the
+    /// proposal, confirms through its own turn — and the act closes <c>stale</c>, applying nothing: the narrowing stands.
+    /// </summary>
+    [Fact]
+    public async Task An_expired_or_stale_proposal_applies_nothing_and_is_recorded()
+    {
+        await using var life = await BoardLives.Begin("board-edges", "board-1", "board-2", "board-3");
+        var store = new BoardStore(life.Host.Db);
+
+        // EXPIRED: proposed, never decided, and the clock past its life.
+        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 60), BoardLives.Rationale), "signal proposed-1",
+            "await expired", "usage 100 0 10", "final Proposed."],
+            [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 55), BoardLives.Rationale), "signal proposed-2", "await narrowed",
+            "usage 100 0 10", "final Proposed again."]);
+        life.Wake("board-1");
+        await life.RunUntil(() => life.Reached("proposed-1"), "board-1 proposed");
+        var expiring = Proposal(life);
+        Assert.Equal(1, store.Expire(DateTimeOffset.UtcNow + BoardLimits.ConfirmationLife + TimeSpan.FromMinutes(1)));
+        Assert.Equal(BoardActEventKind.Expired, store.Status(expiring.Id));
+        Assert.All(life.Events().Where(e => e.Kind == MissionEventKind.Board && e.Payload == expiring.Id),
+            e => Assert.Equal(MissionEventStore.NoLaunch, e.ConsumedBy));
+        Assert.Equal(1, store.InForce().Version);
+        life.Release("expired");
+        await life.RunUntil(() => life.AttemptsOf("board-1").Any(a => a.State == AiAttemptState.ENDED), "board-1's first turn ended");
+        Assert.Empty(life.AttemptsOf("board-2"));
+
+        // STALE: proposed against 40; board-3 narrows to 30 at once; board-2's confirmation closes it stale.
+        life.Wake("board-1");
+        await life.RunUntil(() => life.Reached("proposed-2"), "board-1 proposed again");
+        var stale = new BoardStore(life.Host.Db).Acts().Single(a => a.Act.Kind == BoardActKind.Propose && a.Act.Id != expiring.Id).Act;
+        var narrowed = life.Host.Gateway.BoardNarrow(new BoardActRequest("board-3", null, BoardLives.Change("plan_day_total", 40, 30),
+            "a smaller day first", [], []));
+        Assert.Equal(BoardActEventKind.Applied, narrowed.Status);
+        life.Script("board-2", [BoardLives.Decide(stale.Id, "confirm", stale.IntentSha256, "the figures allow it"), "usage 100 0 10", "final Confirmed."]);
+        life.Release("narrowed");
+        await life.RunUntil(() => life.AttemptsOf("board-2").Any(a => a.State == AiAttemptState.ENDED), "board-2's turn ended");
+
+        Assert.Equal(BoardActEventKind.Stale, store.Status(stale.Id));
+        Assert.Contains(store.Events(stale.Id), e => e.Kind == BoardActEventKind.Stale && e.Seat == "board-2");
+        Assert.Equal((2, 30m), (store.InForce().Version, life.Host.Gateway.Policy.PlanDayTotal));
+    }
+
+    /// <summary>
+    /// THE OWNER'S VETO AFTER A CONFIRMED WIDENING RETURNS EVERY FIELD TO THE NARROWER OF NOW AND BEFORE, and two seats of one vendor family
+    /// record it. board-1 proposes a larger day and board-2 confirms it in its turn — both on the founding family, so the confirmation is
+    /// recorded <c>same_family</c> with the app's words; the owner's in-process veto (two presses) writes a version decided by him whose
+    /// day is the narrower of now and before.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_veto_after_a_confirmed_widening_returns_the_narrower_and_one_family_is_recorded()
+    {
+        await using var life = await BoardLives.Begin("board-veto", "board-1", "board-2");
+        var store = new BoardStore(life.Host.Db);
+        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 70), BoardLives.Rationale), "usage 100 0 10", "final Proposed."]);
+        life.Wake("board-1");
+        await life.RunUntil(() => store.Acts().Count == 1, "board-1 proposed");
+        var act = Proposal(life);
+        life.Script("board-2", [BoardLives.Decide(act.Id, "confirm", act.IntentSha256, "the plan has room"), "usage 100 0 10", "final Confirmed."]);
+        await life.RunUntil(() => life.AttemptsOf("board-2").Any(a => a.State == AiAttemptState.ENDED), "board-2's turn ended");
+        Assert.Equal(70m, life.Host.Gateway.Policy.PlanDayTotal);
+
+        var confirmed = Assert.Single(store.Events(act.Id), e => e.Kind == BoardActEventKind.Confirmed);
+        Assert.Equal((true, "openai", "openai"), (confirmed.SameFamily, confirmed.ProposerFamily, confirmed.DeciderFamily));
+        Assert.Contains("no active seat of another family could decide it", confirmed.Detail, StringComparison.Ordinal);
+
+        var preview = life.Host.Gateway.PreviewBoardVeto(act.Id);
+        Assert.True(preview.Allowed, preview.Words);
+        var vetoed = life.Host.Gateway.VetoBoardAct(act.Id);
+        Assert.Equal(BoardActEventKind.Vetoed, vetoed.Status);
+        var inForce = store.InForce();
+        Assert.Equal((3, BoardDecider.Owner, BoardBasis.Veto), (inForce.Version, inForce.Decider, inForce.Basis));
+        Assert.Equal(40m, life.Host.Gateway.Policy.PlanDayTotal);
+    }
+
+    /// <summary>
+    /// A BOARD SEAT'S REACH IS THE BOARD'S VERBS AND NOTHING ELSE, and the board's verbs are a board seat's alone: board-1's puppet proposes
+    /// a change of the board's own budget — a record listed for the owner that changes nothing — and its <c>trade buy</c> and
+    /// <c>trade ledger add</c> are refused with nothing written; the chair's puppet's <c>trade board propose</c> is refused, no act made.
+    /// </summary>
+    [Fact]
+    public async Task A_board_seat_reaches_only_board_verbs_and_a_position_reaches_none()
+    {
+        await using var life = await BoardLives.Begin("board-reach", "board-1");
+        var store = new BoardStore(life.Host.Db);
+        const string chair = CouncilRoles.Operations;
+        life.Script("board-1", ["trade board power-propose board-budget \"the board needs a larger share of the day\"",
+            "trade buy ES 1", "trade ledger add finding \"A board seat's note.\" --mark claim", "usage 100 0 10", "final Done."]);
+        life.Script(chair, [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 80), "the chair wants more"), "usage 10 0 5", "final Tried."],
+            ["usage 10 0 5", "final Nothing more."]);
+        life.Wake("board-1");
+        life.Wake(chair);
+        await life.RunUntil(() => life.AttemptsOf("board-1").Any(a => a.State == AiAttemptState.ENDED)
+                                  && life.AttemptsOf(chair).Any(a => a.State == AiAttemptState.ENDED), "both turns ended");
+
+        var steps = BoardLives.TradeSteps(life, "board-1", 1);
+        Assert.True((int?)steps[0]["exit"] == 0, $"the power proposal was refused: {BoardLives.Said(steps[0])}");
+        var power = Assert.Single(new BoardReader(life.Host.Db).PowerProposals());
+        Assert.Equal(("board-1", BoardPowerTarget.BoardBudget), (power.Seat, power.Target));
+        Assert.Equal(BoardFounding.BudgetShare, store.BudgetShare());
+        Assert.Equal(1, store.InForce().Version);
+        foreach (var refused in steps.Skip(1))
+            Assert.True((int?)refused["exit"] != 0, $"a board seat reached {refused["args"]!.ToJsonString()}: {BoardLives.Said(refused)}");
+        foreach (var table in new[] { "ledger_entry", "execution_request" })
+            Assert.Equal(0L, life.Host.Db.Read(_ =>
+            {
+                using var c = life.Host.Db.Cmd($"SELECT COUNT(*) FROM {table}");
+                return Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+            }));
+
+        var chairs = BoardLives.TradeSteps(life, chair, 1)[0];
+        Assert.True((int?)chairs["exit"] != 0, $"a position made a board act: {BoardLives.Said(chairs)}");
+        Assert.Empty(store.Acts());
+        output.WriteLine($"reach: {BoardLives.Said(chairs)}");
+    }
 }
