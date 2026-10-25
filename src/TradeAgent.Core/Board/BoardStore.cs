@@ -321,6 +321,11 @@ public sealed class BoardStore(Database db)
             $"proposed by {request.Seat} against version {inForce.Version}; it applies nothing until another active seat confirms it, "
             + $"naming the intent's hash, by {act.ExpiresAt:u}", at);
         InsertForecasts(act.Id, request, at);
+        // ONE WAKE PER OTHER ACTIVE SEAT, NEVER THE PROPOSER (U-board-b2 item 4), in the act's own write: the proposal is what wakes a
+        // board seat, and nothing else does.
+        var wakes = new MissionEventStore(_db);
+        foreach (var other in Seats().Where(s => s.Status == BoardSeatStatus.Active && s.Id != request.Seat))
+            wakes.Raise(MissionEventIds.Board(act.Id, other.Id), MissionEventKind.Board, at, act.Id, other.Id);
         return new BoardActResult(act, BoardActStatus.Open, null,
             $"Proposed: nothing changes until another active seat confirms {act.Id} with the intent's hash {act.IntentSha256}, "
             + $"by {act.ExpiresAt:u}.");
@@ -348,6 +353,7 @@ public sealed class BoardStore(Database db)
         {
             InsertEvent(act.Id, BoardActEventKind.Expired, "app", null, null, null, null, null, null,
                 $"no second seat confirmed it by {expires:u}; {seat}'s decision came after, and nothing was applied", at);
+            CloseWakes(act.Id, null, at, "the act expired");
             return new BoardActResult(act, BoardActEventKind.Expired, null,
                 $"Expired: {act.Id} waited for a confirmation until {expires:u}, so it applies nothing and no one decides it now.");
         }
@@ -385,6 +391,7 @@ public sealed class BoardStore(Database db)
         {
             InsertEvent(act.Id, BoardActEventKind.Refused, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, null,
                 familyWords, at);
+            CloseWakes(act.Id, seat, at, $"{seat} decided it");
             return new BoardActResult(act, BoardActStatus.Open, null,
                 $"Refused by {seat}, and recorded: {act.Id} applies nothing on your word, and stays open for another seat until {act.ExpiresAt:u}.");
         }
@@ -399,12 +406,14 @@ public sealed class BoardStore(Database db)
         {
             InsertEvent(act.Id, BoardActEventKind.Stale, seat, attempt, null, null, null, null, null,
                 $"version {inForce.Version} no longer holds what the proposal changed from: {string.Join("; ", moved)}", at);
+            CloseWakes(act.Id, null, at, "the act closed stale");
             return new BoardActResult(act, BoardActEventKind.Stale, null,
                 $"Stale: since {act.Id} was proposed, {string.Join("; ", moved)}. It applies nothing; propose it again against version {inForce.Version}.");
         }
         var version = InsertVersion(inForce, Applied(BodyOf(inForce), intent.Changes), BoardDecider.Board, BoardBasis.Act, act.Id, at);
         InsertEvent(act.Id, BoardActEventKind.Confirmed, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, version,
             familyWords, at);
+        CloseWakes(act.Id, null, at, $"{seat} confirmed it");
         return new BoardActResult(act, BoardActEventKind.Confirmed, version,
             $"Confirmed by {seat}: version {version} of the policy, proposed by {act.Seat}, is in force now.");
     });
@@ -417,10 +426,20 @@ public sealed class BoardStore(Database db)
     {
         var due = ActRows().Where(a => a.Kind == BoardActKind.Propose && a.ExpiresAt is { } e && e <= at && Status(a.Id) == BoardActStatus.Open).ToList();
         foreach (var act in due)
+        {
             InsertEvent(act.Id, BoardActEventKind.Expired, "app", null, null, null, null, null, null,
                 $"no second seat confirmed it by {act.ExpiresAt:u}, so it applies nothing", at);
+            CloseWakes(act.Id, null, at, "the act expired");
+        }
         return due.Count;
     });
+
+    /// <summary>
+    /// THE BOARD WAKES OF AN ACT, CLOSED WITHOUT A TURN (<c>U-board-b2</c> item 4), in the write that decided or closed it: the deciding
+    /// seat's own where <paramref name="seat"/> is named, every seat's where the act closed.
+    /// </summary>
+    void CloseWakes(string actId, string? seat, DateTimeOffset at, string why) =>
+        new MissionEventStore(_db).CloseBoardWakes(actId, seat, at, $"closed without a turn: {why}");
 
     /// <summary>Whether <paramref name="seat"/> has SEALED its own word on <paramref name="act"/>: it made the act, or decided it.</summary>
     bool Sealed(BoardActRow act, string seat) =>
@@ -674,6 +693,7 @@ public sealed class BoardStore(Database db)
         int? version = null;
         if (plan.Body is { } body) version = InsertVersion(plan.InForce!, body, BoardDecider.Owner, BoardBasis.Veto, plan.Act.Id, at);
         InsertEvent(plan.Act.Id, BoardActEventKind.Vetoed, BoardDecider.Owner, null, null, null, null, null, version, plan.Words, at);
+        CloseWakes(plan.Act.Id, null, at, "the owner vetoed it");
         return new BoardActResult(plan.Act, BoardActEventKind.Vetoed, version, plan.Words);
     });
 

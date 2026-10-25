@@ -178,6 +178,13 @@ public static class MissionEventKind
     /// mandate's id; the proposal is the holder's claim and carries no authority.
     /// </summary>
     public const string Proposal = "proposal";
+
+    /// <summary>
+    /// A PROPOSAL BEFORE THE SECURITY BOARD (<c>U-board-b2</c> item 4; R24 § 4.1: a board seat is woken by a proposal, "never on a
+    /// heartbeat"): raised by the app, in the write that recorded the act's <c>proposed</c> event, ONCE for every OTHER active seat — never
+    /// the proposer. Its payload is the act's id; it closes when the seat decides or the act closes.
+    /// </summary>
+    public const string Board = "board";
 }
 
 /// <summary>
@@ -254,6 +261,10 @@ public static class WakePriority
         // "research", too: a holder's proposal of a finding beyond its mandate (U-org-verbs-a) — classed with the escalation, the
         // other thing a mandate's life hands up to its decider; the work itself, as a report is.
         [MissionEventKind.Proposal] = WakeClass.Research,
+
+        // "unblocking an eligible deployment or required data": a proposal before the security board (U-board-b2) holds a change of the
+        // limits a deployment runs under until a second seat decides it — the decision another act waits on, as a boundary is.
+        [MissionEventKind.Board] = WakeClass.Unblocking,
 
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
@@ -536,6 +547,9 @@ public static class MissionEventIds
     /// <summary>A holder's proposal's ONE wake to its decider, keyed by the <c>proposed</c> event that raised it (<c>U-org-verbs-a</c>).</summary>
     public static string Proposal(string mandateId, long eventId) =>
         $"{MissionEventKind.Proposal}:{mandateId}:{eventId.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>A board act's ONE wake to one other active seat (<c>U-board-b2</c>), keyed by the act and the seat, so it is raised once.</summary>
+    public static string Board(string actId, string seat) => $"{MissionEventKind.Board}:{actId}:{seat}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,
@@ -1089,6 +1103,21 @@ public sealed class MissionEventStore(Database db)
             """,
             [("$at", (object?)Sql.T(at)), ("$none", NoLaunch), ("$d", disposition), ("$why", why),
              ("$mandate", kind), ("$id", mandateId), .. names.Select((n, i) => (n, (object?)ids[i]))]);
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// THE UNTAKEN BOARD WAKES OF ACT <paramref name="actId"/>, closed by no launch (<c>U-board-b2</c> item 4) — consumed by
+    /// <see cref="NoLaunch"/>, <see cref="MissionEventDisposition.Withdrawn"/> with <paramref name="why"/> — to <paramref name="seat"/>
+    /// alone where one is named (it decided), to every seat otherwise (the act closed). Answers how many.
+    /// </summary>
+    public int CloseBoardWakes(string actId, string? seat, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, consumed_by=$none, disposition=$d, disposition_detail=$why
+             WHERE kind = $board AND payload = $act AND consumed_at IS NULL AND ($seat IS NULL OR role = $seat)
+            """, ("$at", Sql.T(at)), ("$none", NoLaunch), ("$d", MissionEventDisposition.Withdrawn), ("$why", why),
+            ("$board", MissionEventKind.Board), ("$act", actId), ("$seat", seat));
         return c.ExecuteNonQuery();
     });
 

@@ -3679,7 +3679,9 @@ public sealed class MissionLoop
         IReadOnlyList<ChartPosition> named;
         try { named = _host.Positions(); }
         catch (Exception) { named = []; }
-        return [.. ChartPosition.LegacyPair, .. named.Where(p => !p.IsLegacy)];
+        // NEVER A SEAT OF THE SECURITY BOARD (U-board-b2 item 4; R24 § 4.1 "never on a heartbeat"): a board seat is woken by a proposal
+        // alone, so no look, ceiling, renewal or deadline of the clock is ever raised for one.
+        return [.. ChartPosition.LegacyPair, .. named.Where(p => !p.IsLegacy && !BoardSeats.IsBoardId(p.Id))];
     }
 
     /// <summary>
@@ -4194,7 +4196,8 @@ public sealed class MissionLoop
         var asked = AskedForDelay(role);
         if (events is null) return asked;
 
-        if (asked > TimeSpan.Zero)
+        // A BOARD SEAT'S REQUEST TO BE WOKEN IS READ AND CONSUMED, AND RAISES NOTHING (U-board-b2 item 4): it is woken by a proposal alone.
+        if (asked > TimeSpan.Zero && !BoardSeats.IsBoardId(role))
         {
             var now = _now();
             // The role's OWN wake. An attempt id already names one role, but the fallback does not,
