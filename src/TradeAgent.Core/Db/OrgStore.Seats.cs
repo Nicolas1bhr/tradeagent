@@ -26,22 +26,44 @@ public sealed partial class OrgStore
         if (row.EndedAt is not null || row.Status == OrgPositionStatus.Ended) throw Refused($"position '{position}' has ended; an ended position is not seated.");
         if (CouncilRoles.IsKnown(position))
             throw Refused($"'{position}' is seated on the Owner page, where its runtime and model are chosen; its seat columns stay empty.");
-        if (runtime is not { Length: > 0 } || !knownRuntime(runtime)) throw Refused($"'{runtime}' is not a runtime this build knows.");
-        if (model is not { Length: > 0 and <= 128 } || !model.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '/'))
-            throw Refused("a seat names its model in at most 128 letters, digits and . - _ : / — nothing else.");
-        if (inputTokens <= 0 || outputTokens <= 0) throw Refused("a seat's allowance is a positive number of input and of output tokens.");
+        if (SeatRefusal(runtime, model, inputTokens, outputTokens, knownRuntime) is { } bad) throw Refused(bad);
+        WriteSeat(row.UnitId, position, runtime, model, inputTokens, outputTokens, OrgDecider.Owner, at, recorded: true);
+        return 0;
+    });
 
+    /// <summary>
+    /// WHY A SEAT CANNOT BE WRITTEN, or null — <see cref="SetSeat"/>'s checks, spelled once for every writer of the seat columns (the chief's
+    /// appointment, <see cref="SeatChief"/>, seats its position through them): a runtime <paramref name="knownRuntime"/> knows, a model named in
+    /// at most 128 letters, digits and <c>. - _ : /</c>, positive token figures.
+    /// </summary>
+    static string? SeatRefusal(string runtime, string model, long inputTokens, long outputTokens, Func<string, bool> knownRuntime)
+    {
+        if (runtime is not { Length: > 0 } || !knownRuntime(runtime)) return $"'{runtime}' is not a runtime this build knows.";
+        if (model is not { Length: > 0 and <= 128 } || !model.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '/'))
+            return "a seat names its model in at most 128 letters, digits and . - _ : / — nothing else.";
+        if (inputTokens <= 0 || outputTokens <= 0) return "a seat's allowance is a positive number of input and of output tokens.";
+        return null;
+    }
+
+    /// <summary>
+    /// THE SEAT COLUMNS WRITTEN, all four in one statement inside the caller's write, already checked (<see cref="SeatRefusal"/>); with
+    /// <paramref name="recorded"/>, one <see cref="OrgEventKind.Seated"/> event decided by <paramref name="decider"/> whose detail the app
+    /// composes from the validated values. The chief's appointment records its seat in its own event instead.
+    /// </summary>
+    void WriteSeat(string unitId, string position, string runtime, string model, long inputTokens, long outputTokens, string decider,
+        DateTimeOffset at, bool recorded)
+    {
         var input = inputTokens.ToString(CultureInfo.InvariantCulture);
         var output = outputTokens.ToString(CultureInfo.InvariantCulture);
         using (var c = db.Cmd("""
             UPDATE org_position SET seat_runtime=$rt, seat_model=$model, seat_allow_in=$in, seat_allow_out=$out WHERE id=$id
             """, ("$rt", runtime), ("$model", model), ("$in", input), ("$out", output), ("$id", position)))
-            c.ExecuteNonQuery();
-        using (var e = db.Cmd("""
+            if (c.ExecuteNonQuery() != 1) throw Refused($"the chart holds no position '{position}' to seat.");
+        if (!recorded) return;
+        using var e = db.Cmd("""
             INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES($at, $unit, $id, $kind, $decider, $detail)
-            """, ("$at", Sql.T(at)), ("$unit", row.UnitId), ("$id", position), ("$kind", OrgEventKind.Seated),
-            ("$decider", OrgDecider.Owner), ("$detail", $"position={position} runtime={runtime} model={model} allow_in={input} allow_out={output}")))
-            e.ExecuteNonQuery();
-        return 0;
-    });
+            """, ("$at", Sql.T(at)), ("$unit", unitId), ("$id", position), ("$kind", OrgEventKind.Seated),
+            ("$decider", decider), ("$detail", $"position={position} runtime={runtime} model={model} allow_in={input} allow_out={output}"));
+        e.ExecuteNonQuery();
+    }
 }

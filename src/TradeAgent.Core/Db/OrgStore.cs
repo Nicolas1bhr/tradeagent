@@ -14,8 +14,10 @@ namespace TradeAgent.Core.Db;
 public static class OrgIds
 {
     /// <summary>
-    /// The organisation itself. Its head is NULL, and NULL here means THE OWNER, in-process: no row names them,
-    /// so no position can ever become them.
+    /// The organisation itself. ITS HEAD IS THE CHIEF (<c>U-org-chief</c>; R24 § 4.1, Q12): a position under the root, appointed and
+    /// replaced by a two-seat act of the security board — by the owner's in-process press only while no board seat is active — and
+    /// removed by the owner at any time (<see cref="OrgStore.SeatChief"/>). NULL is VACANT: no chief sits, and the owner, in-process,
+    /// holds the root — an escalation that reaches it is his record. No row ever names the owner, so no position can become him.
     /// </summary>
     public const string Root = "org";
 
@@ -163,6 +165,14 @@ public static class OrgEventKind
     public const string Vetoed = "vetoed", Activated = "activated";
 
     /// <summary>
+    /// THE CHIEF APPOINTED OVER A VACANT ROOT, REPLACED, OR REMOVED (<c>U-org-chief</c>; R24 §§ 4.1, Q12) — each written by the one chart
+    /// writer of the chief (<see cref="OrgStore.SeatChief"/>) and decided by <see cref="OrgDecider.Owner"/> (his in-process press while no
+    /// board seat is active, or his removal and veto at any time) or <see cref="OrgDecider.Board"/> (a two-seat board act), with the act's
+    /// id in app-composed detail. Never a structural change the weekly throttle counts, and never an event the chart's own veto undoes.
+    /// </summary>
+    public const string ChiefAppointed = "chief-appointed", ChiefReplaced = "chief-replaced", ChiefVacated = "chief-vacated";
+
+    /// <summary>
     /// THE LAUNCHES A MANDATE'S CANCELLATION OR RE-SCOPE TOOK AUTHORITY FROM (<c>U-org-verbs-d</c> fix pass; the Codex review, P2): the
     /// ones under it still open when that transition committed, read in its own write and named in app-composed detail — the record
     /// <see cref="OrgStore.FencedBy"/> reads, so which launch was cut mid-turn is commit order and never two stamps. Decided by the app;
@@ -187,6 +197,12 @@ public static class OrgDecider
 
     /// <summary>The owner, in-process — never a pipe op, a door verb or a <c>trade</c> verb (<see cref="OrgStore.SetSeat"/>).</summary>
     public const string Owner = "owner";
+
+    /// <summary>
+    /// THE SECURITY BOARD, BY A TWO-SEAT ACT (<c>U-org-chief</c>; R24 § 4.1): a proposal of one active seat confirmed by another, naming its
+    /// intent's hash — the decider of record of a chief it appointed, replaced or removed (<see cref="OrgStore.SeatChief"/>). Never a position.
+    /// </summary>
+    public const string Board = "board";
 }
 
 /// <summary>

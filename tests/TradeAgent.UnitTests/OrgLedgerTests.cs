@@ -442,6 +442,12 @@ public class OrgLedgerTests
         // one trial or verdict. OrgStore.Tilt.cs joins the writers of org_unit and org_event below. It raises no parent's envelope and
         // re-splits nothing under the organisation itself (the board's split, R24 § 4.1).
         mandate = [.. mandate, "Tilt"];
+        // REVISITED, OUT LOUD, BY U-org-chief: Chief — the root's head now, a READ. The chart writer of the chief (SeatChief) is internal:
+        // it writes org_position (the sitting chief ended, a new one minted DORMANT under the root with its seat columns), org_unit (the
+        // root's head) and org_event (one chief-appointed, -replaced or -vacated event decided by the owner or the board, and the fences of
+        // the restructuring it runs), called only by the owner's in-process route and the board's confirmed act
+        // (OrgChiefTests.No_op_or_verb_reaches_the_chiefs_appointment). OrgStore.Chief.cs joins the writers below.
+        mandate = [.. mandate, "Chief"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
@@ -455,7 +461,7 @@ public class OrgLedgerTests
             @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
             RegexOptions.IgnoreCase);
         Assert.Equal(
-            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
+            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Chief.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
              "src/TradeAgent.Core/Db/OrgStore.Tilt.cs", "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))
