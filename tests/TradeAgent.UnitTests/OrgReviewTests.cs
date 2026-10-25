@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -143,6 +144,54 @@ public class OrgReviewTests
         Assert.Equal(0, new OrgStore(db).ReviewSweep(Now.AddDays(1), ReviewThresholds.Default, Day()).Raised);
     }
 
+    /// <summary>
+    /// (b2, fix pass 1 — the Codex review's P2; BUDGET-001, unknown never zero) A UNIT WHOSE ONLY POSITION ENDED TODAY IS STILL JUDGED ON
+    /// WHAT WAS CHARGED TO IT: the sibling team's sole worker spent 3 of the team's 4 today (cap 10 × 0.4) through the real meter, with
+    /// nothing accepted, and then its position ended. The host's reading of the team's day (<c>AppHost.MissionHost.UnitDayOf</c>) reads
+    /// it through that ended position, so the sweep raises ONE review and ONE <c>cut-review</c> wake to the division's head. RED at base:
+    /// the reading looked through active positions only, read the team as empty ("nothing can be charged to it"), and raised nothing.
+    /// </summary>
+    [Fact]
+    public void A_unit_whose_only_position_ended_today_is_judged_on_what_was_charged_to_it()
+    {
+        using var db = Chart();
+        var store = new AiAttemptStore(db);
+        Assert.True(store.Begin(new AiAttempt
+        {
+            Id = "turn-4e71e0000001", StartedAt = Now.AddHours(-2), Role = SiblingWorker, ReservedCost = 0m, SeatClass = SeatClasses.Harness,
+            BillingClass = BillingClasses.Key, Funding = [Sibling, Div, OrgIds.Root]
+        }).Admitted);
+        Assert.True(store.End("turn-4e71e0000001", 0, Now.AddHours(-1), 1000, 0, null, 100, null, "model-x", 3m, null, null));
+        Exec(db, "UPDATE org_position SET status = $s, ended_at = $at WHERE id = $id",
+            ("$s", OrgPositionStatus.Ended), ("$at", Sql.T(Now.AddMinutes(-30))), ("$id", SiblingWorker));
+        var meter = new TurnMeter(db, () => 10m, runtimeId: () => "codex", now: () => Now, live: new LiveAttempts(),
+            declaredSeat: _ => SeatClasses.Harness);
+        var org = new OrgStore(db);
+        IReadOnlyList<UnitDay>? Read(string unit) => TradeAgent.App.AppHost.MissionHost.UnitDayOf(org, meter, store, Now, unit);
+
+        var swept = org.ReviewSweep(Now, ReviewThresholds.Default, Read);
+        Assert.Equal(1, swept.Raised);
+        var review = Assert.Single(Reviews(db));
+        Assert.Equal((Sibling, OrgDecider.App), (review.Unit, review.Decider));
+        Assert.True(review.Detail.Contains("ceiling=key spent=3 envelope=4.0 share=0.5 accepted=0", StringComparison.Ordinal), review.Detail);
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+        Assert.Equal(($"review:{ReviewRule.HalfEnvelope}:{Sibling}:{Day(Now)}", Head), (wake.Id, wake.Role));
+
+        // NO POSITION BELOW A UNIT AT ALL: empty with nothing charged to it today; with a charge (a position since moved out of it), the
+        // reading is unknown — said, never an empty day.
+        const string bare = "team-4e71e003";
+        Unit(db, bare, Div, OrgUnitKind.Team, null, "0.1");
+        Assert.Empty(Read(bare)!);
+        Assert.True(store.Begin(new AiAttempt
+        {
+            Id = "turn-4e71e0000002", StartedAt = Now.AddHours(-2), Role = Worker, ReservedCost = 0m, SeatClass = SeatClasses.Harness,
+            BillingClass = BillingClasses.Key, Funding = [bare, Div, OrgIds.Root]
+        }).Admitted);
+        Assert.Null(Read(bare));
+        Assert.Contains(org.ReviewSweep(Now, ReviewThresholds.Default, Read).Unjudged,
+            u => u.Contains($"{bare}'s day could not be read from the meter", StringComparison.Ordinal));
+    }
+
     static long Count(Database db, string table) => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT COUNT(*) FROM {table}");
@@ -219,7 +268,7 @@ public class OrgReviewTests
         Assert.Equal(1, org.ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 6m, 0))).Raised);
         var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
 
-        var line = TradeAgent.AgentRuntime.MissionLoop.Observation(wake, []);
+        var line = MissionLoop.Observation(wake, []);
         var named = System.Text.RegularExpressions.Regex.Match(line, @"`trade org review-answer (\d+) ");
         Assert.True(named.Success, $"the reviewer's wake does not name the review it answers: {line}");
         Assert.Contains(wake.Id, line, StringComparison.Ordinal);

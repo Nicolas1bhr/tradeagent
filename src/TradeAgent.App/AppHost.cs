@@ -2277,7 +2277,7 @@ public sealed class AppHost : IAsyncDisposable
             // AND THE CUT RULES' REVIEWS (U-org-scorecards-b), after the resolver, so a forecast resolved this tick scores in them. A review
             // is one event and one wake to its reviewer, and moves no share, status or seat; a reading it cannot judge is said, once.
             var org = new OrgStore(db);
-            var reviews = org.ReviewSweep(now, ReviewThresholds.Default, host.Meter is { } meter ? unit => UnitDayOf(org, meter, unit) : null);
+            var reviews = org.ReviewSweep(now, ReviewThresholds.Default, host.Meter is { } meter ? unit => UnitDayOf(org, meter, new AiAttemptStore(db), now, unit) : null);
             var unjudged = string.Join(" ", reviews.Unjudged);
             if (unjudged.Length > 0 && unjudged != _unjudgedReviews)
                 host.Gateway?.Log.Activity($"Reviews not judged: {unjudged}", "warn");
@@ -2289,14 +2289,22 @@ public sealed class AppHost : IAsyncDisposable
         /// <summary>
         /// ONE UNIT'S DAY IN EACH CEILING (<c>U-org-scorecards-b</c>), as admission resolves it: read through a position of its subtree —
         /// every launch charged to the unit is a launch of one — in both ceilings, from the meter's own reading
-        /// (<see cref="TurnMeter.EnvelopesIn"/>). Empty for a unit with no position below it (nothing can be charged to it); null where a
-        /// ceiling cannot be read: unknown, never zero.
+        /// (<see cref="TurnMeter.EnvelopesIn"/>). An active position first, and else an ENDED one (fix pass 1; BUDGET-001): a position that
+        /// ended today leaves its unit's charges standing, and its funding line still runs through the unit, so a unit whose last
+        /// position ended is judged on what was charged to it. With no position below it at all the ledger is asked whether anything was
+        /// charged to it today (<see cref="AiAttemptStore.UnitTotalsBetween"/>): nothing ⇒ empty; something ⇒ null, as a ceiling that
+        /// cannot be read is — unknown, never zero, and never an empty day while charges exist.
         /// </summary>
-        static IReadOnlyList<UnitDay>? UnitDayOf(OrgStore org, TurnMeter meter, string unitId)
+        internal static IReadOnlyList<UnitDay>? UnitDayOf(OrgStore org, TurnMeter meter, AiAttemptStore attempts, DateTimeOffset now, string unitId)
         {
             var inside = org.Subtree(unitId).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-            if (org.Positions().FirstOrDefault(p => inside.Contains(p.UnitId) && p.Status != OrgPositionStatus.Ended) is not { } through)
-                return [];
+            var below = org.Positions().Where(p => inside.Contains(p.UnitId)).ToList();
+            if ((below.FirstOrDefault(p => p.Status != OrgPositionStatus.Ended) ?? below.FirstOrDefault()) is not { } through)
+            {
+                var (from, to) = OwnerDay.Window(now);
+                var charged = attempts.UnitTotalsBetween(from, to, unitId);
+                return charged is { Turns: 0, Open: 0, Spent: 0m, Reserved: 0m, Unpriced: 0 } ? [] : null;
+            }
             var key = meter.EnvelopesIn(through.Id, BillingClasses.Key);
             var plan = meter.EnvelopesIn(through.Id, BillingClasses.Plan);
             return key is null || plan is null ? null : [.. key.Concat(plan).Where(d => d.UnitId == unitId)];
