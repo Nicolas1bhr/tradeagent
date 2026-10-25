@@ -348,9 +348,9 @@ public static partial class Labels
     /// THE SECURITY BOARD'S OWN BUDGET HAS NO ROOM (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost"): every board seat's launches today,
     /// summed, plus this one's reservation would pass the board's share of the day. Names the share, the ceiling and the room.
     /// </summary>
-    public static string BoardBudgetReached(decimal share, decimal ceiling, decimal room, decimal reservation, bool plan) =>
+    public static string BoardBudgetReached(decimal share, decimal ceiling, decimal room, decimal reservation) =>
         $"The security board has {Amount(room)} left of its {Amount(ceiling)} for today — its share {Amount(share)} of the "
-        + (plan ? "plan-capacity limit (your AI plan's turns counted at list price, not money)" : "AI spending limit") + " — and this "
+        + "plan's day-total (your AI plan's turns counted at list price, not money) — and this "
         + $"turn reserves {Amount(reservation)}, so it was not started. Nothing was sent to the AI tool. It starts again after "
         + "midnight; only the owner changes the board's share.";
 

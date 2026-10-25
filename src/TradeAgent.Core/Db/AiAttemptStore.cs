@@ -250,7 +250,7 @@ public sealed record AiAdmissionRule
 
     /// <summary>
     /// THE SECURITY BOARD'S SHARE OF THE DAY (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost", BUDGET-001), set exactly for a launch of a
-    /// board seat: the launch fits the day's ceiling FIRST, then the board's own — this share of each ceiling it must fit — over every
+    /// board seat: the launch fits the day's ceiling FIRST, then the board's own — this share of the plan's day-total in force — over every
     /// board seat's rows of the day (<see cref="AiAttemptStore.BoardTotalsBetween"/>), never an org unit's envelope; and it is funded by
     /// no unit, so no chain is recorded. Null for every other launch.
     /// </summary>
@@ -503,15 +503,16 @@ public sealed class AiAttemptStore(Database db)
                     if (rule.Metered)
                     {
                         if (rule.Reservation <= 0m) return new AiAdmission { Refusal = Labels.BoardTurnUnpriced, Ceiling = AiAdmission.Board };
-                        var ceilingOf = share * rule.CapOf(ceiling);
+                        // ITS SHARE OF THE PLAN'S DAY-TOTAL IN FORCE, whichever ceiling the launch is billed to (R24 § 4.1: "its share of
+                        // the plan's day-total"): a key launch fits the money cap above and this as well, never a larger share of money.
+                        var ceilingOf = share * rule.PlanCap;
                         var board = BoardTotals(rule.From, rule.To, ceiling);
                         if (board.Spent + board.Reserved + rule.Reservation > ceilingOf)
                         {
                             var room = ceilingOf - board.Spent - board.Reserved;
                             return new AiAdmission
                             {
-                                Refusal = Labels.BoardBudgetReached(share, ceilingOf, room > 0m ? room : 0m, rule.Reservation,
-                                    ceiling == BillingClasses.Plan),
+                                Refusal = Labels.BoardBudgetReached(share, ceilingOf, room > 0m ? room : 0m, rule.Reservation),
                                 Ceiling = AiAdmission.Board,
                                 Over = rule.Reservation - room,
                                 ResumesAt = rule.ResumesAt

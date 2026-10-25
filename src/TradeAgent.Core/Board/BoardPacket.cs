@@ -43,6 +43,11 @@ public static class BoardPacket
         if (acts.Count == 0) text.Append("None: this turn was not woken for an act.\n");
         foreach (var id in acts.Distinct(StringComparer.Ordinal))
         {
+            if (store.ActRow(id) is null)
+            {
+                text.Append("### ").Append(id).Append(" — no act of the board has this id.\n");
+                continue;
+            }
             var (blind, whole) = store.ShowTo(seat, id);
             if (blind is { } b) Blind(text, b);
             // A SEAT THAT HAS SEALED ITS WORD ON THE ACT — it made it or decided it — is shown no more than its standing: it has nothing
