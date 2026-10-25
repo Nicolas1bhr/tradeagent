@@ -92,6 +92,10 @@ public static class CouncilRoles
         Operations => "agent",
         Research => Research,
         _ when IsPositionId(role) => $"{OrgDir}/{role}",
+        // A SEAT OF THE SECURITY BOARD (U-board-b2 item 3): its own folder under the board's, never under an org position's and never
+        // shared between seats — so no file in one seat's home is a channel around another's blind read.
+        _ when Board.BoardSeats.IsBoardId(role) && role.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
+            => $"{BoardDir}/{role}",
         _ => throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
             $"'{role}' is not a position id, so it has no home: a position id is lower-case letters, digits and "
             + "hyphens, never a device name Windows reserves and never one of the app's own principals. Nothing was "
@@ -100,6 +104,9 @@ public static class CouncilRoles
 
     /// <summary>The folder every position after the legacy pair lives under: <c>workspace/org/&lt;id&gt;</c>.</summary>
     public const string OrgDir = "org";
+
+    /// <summary>The folder every seat of the security board lives under, each in its own: <c>workspace/board/&lt;id&gt;</c> (<c>U-board-b2</c>).</summary>
+    public const string BoardDir = "board";
 
     /// <summary>
     /// WHETHER AN ID CAN NAME A POSITION'S HOME: <c>[a-z0-9-]+</c>, not a device name Windows reserves (a folder

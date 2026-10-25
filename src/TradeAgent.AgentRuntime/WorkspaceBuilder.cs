@@ -169,7 +169,9 @@ public static class WorkspaceBuilder
             var home = HomeOf(ws, r);
             try
             {
-                homes[r] = Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles);
+                homes[r] = Core.Board.BoardSeats.IsBoardId(r)
+                    ? BuildBoardHome(r, root, appFiles)
+                    : Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles);
                 Unbuilt.TryRemove(Key(homes[r]), out _);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -181,6 +183,27 @@ public static class WorkspaceBuilder
             }
         }
         return homes;
+    }
+
+    /// <summary>
+    /// A SEAT OF THE SECURITY BOARD'S HOME (<c>U-board-b2</c> item 3): its own folder under <c>workspace/board/</c> — never under an org
+    /// position's and never shared between seats — holding the app's board canon for each runtime class it can run on, the folder a
+    /// session reads its request from, and nothing else: no research library, no context file, no inbox and no other seat's or position's
+    /// file, so its home is no channel around another seat's blind read. Everything below it written without following a link.
+    /// </summary>
+    public static string BuildBoardHome(string seat, string? root = null, AppFileManifest? appFiles = null)
+    {
+        var files = appFiles ?? AppFileManifest.Shared;
+        var ws = root ?? Paths.Workspace;
+        Directory.CreateDirectory(ws);
+        var home = HomeOf(ws, seat);
+        Directory.CreateDirectory(home);
+        HomeFiles.CreateDirectory(home, AgentReach.TopFolder(MissionLoop.WakeFile), replaceLinks: true);
+        var homeDir = CouncilRoles.HomeDir(seat);
+        var canon = Core.Board.BoardPacket.Canon(seat);
+        Write(home, homeDir, Canon.CliFile, canon, files);
+        Write(home, homeDir, Canon.HarnessFile, canon, files);
+        return home;
     }
 
     /// <summary>

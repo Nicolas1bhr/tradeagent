@@ -767,6 +767,10 @@ public static class SeatProfile
     public static async Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
         string workingDirectory, ISeatProbe probe, SeatLaunch launch, CancellationToken ct)
     {
+        // A TEST HOST'S PUPPET HAS NO VENDOR SEAT TO VERIFY (U-board-b2): it runs no model and starts no vendor program — it plays the class
+        // its test declared, so a board seat founded on a broker class can be played. Never in the product: a puppet runs only in a test host.
+        if (manifest.IsTestHostPuppet) return SeatVerdict.None;
+
         // A BROKER SEAT IS NEVER STARTED UNVERIFIED: a manifest with no seat profile has none of the class's deny set to carry.
         if (manifest.Seat is not { } seat)
             return BrokerSeat.IsVerified(launch.SeatClass)

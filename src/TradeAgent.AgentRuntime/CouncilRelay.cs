@@ -329,6 +329,9 @@ public sealed class CouncilRelay
     internal Pass Read(string role, string? attempt)
     {
         var pass = new Pass();
+        // A SEAT OF THE SECURITY BOARD PUBLISHES NOTHING (U-board-b2 item 3; INBOX-001, AUTH-002): it acts only by the board's verbs, and
+        // a file it leaves in its folder is read by no one — no publication, held or sent, is a channel around another seat's blind read.
+        if (Core.Board.BoardSeats.IsBoardId(role)) return pass;
         var home = _homeOf(role);
         var outDir = Path.Combine(home, WorkspaceBuilder.OutDir);
 

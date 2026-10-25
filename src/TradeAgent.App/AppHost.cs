@@ -545,8 +545,18 @@ public sealed class AppHost : IAsyncDisposable
         ActiveBeyondLegacy = ActiveBeyondLegacy(),
         OpenUnconfined = Meter?.OpenUnconfined(except: role) ?? [],
         UnconfinedActive = new OrgStore(_db!).UnconfinedSeatsActive(DeclaredSeatClass).Where(p => p != role).ToList(),
-        UnconfinedSeatSetting = Gateway.Settings.UnconfinedSeats
+        UnconfinedSeatSetting = Gateway.Settings.UnconfinedSeats,
+        // A SEAT OF THE SECURITY BOARD (U-board-b2 items 1 and 3): its recorded class and its state now, and whether the runtime it would
+        // open on is a test host's puppet — which runs no model and needs no proven cell. Always false in the product.
+        Board = BoardSeats.IsBoardId(role) ? new BoardStore(_db!).Seat(role) : null,
+        Puppet = TestHostPuppet(role)
     };
+
+    /// <summary>
+    /// Whether <paramref name="role"/> would open on a TEST HOST'S PUPPET (<see cref="RuntimeManifest.IsTestHostPuppet"/>): a scripted seat
+    /// that runs no model. Always false in the product.
+    /// </summary>
+    bool TestHostPuppet(string role) => RuntimeObjectFor(role) is CliAgentRuntime { Manifest.IsTestHostPuppet: true };
 
     /// <summary>
     /// THE ACTIVE POSITIONS BEYOND THE LEGACY PAIR, read where asked: one of the facts above, and the register's own neighbour read
@@ -596,7 +606,7 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public string? HomeRefusalFor(string role)
     {
-        if (!CouncilRoles.IsKnown(role) && !CouncilRoles.IsPositionId(role)) return null;   // no home, so nothing the last start could refuse
+        if (!CouncilRoles.IsKnown(role) && !CouncilRoles.IsPositionId(role) && !BoardSeats.IsBoardId(role)) return null;   // no home, so nothing the last start could refuse
         try { return WorkspaceBuilder.RefusalFor(HomeFor(role)); }
         catch (Exception ex) { return $"TradeAgent could not tell whether the folder of {role} was rebuilt ({ex.Message})."; }
     }
@@ -648,7 +658,8 @@ public sealed class AppHost : IAsyncDisposable
         // THE ROLE'S OWN RUNTIME RESOLVES IT. Asking the app's runtime for a role that is on the
         // harness answers with the CLI's rules — which is how a reservation gets priced at a model the
         // turn will not run on, in whichever direction the two happen to differ.
-        SeatModelOn(DeclaredSeatClass(role), chosen, RuntimeObjectFor(role)?.ModelFor(chosen)
+        // A TEST HOST'S PUPPET RUNS NO MODEL (U-board-b2 item 7): it is never priced or recorded at a broker class's pin, a real model.
+        SeatModelOn(TestHostPuppet(role) ? null : DeclaredSeatClass(role), chosen, RuntimeObjectFor(role)?.ModelFor(chosen)
             ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null));
 
     /// <summary>
@@ -669,7 +680,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         try
         {
-            if (DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
+            if (!TestHostPuppet(role) && DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
                 return SeatedOf(role)?.Model ?? Gateway.Settings.ModelForRole(role);
             return (Meter?.OpenSeatFor(role) ?? SeatFor(role)).Model;
         }
@@ -1283,10 +1294,13 @@ public sealed class AppHost : IAsyncDisposable
             // THE HOST'S PROVEN CELLS AND ITS ATTEMPTS' CGROUPS, for an executor's cell seat (U-execution-environment): route (a)
             // launches only under a counted proof this host's benchmark wrote; without one every executor is refused in words.
             cells: new CellRoute(db),
-            // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation.
+            // EVERY ACTIVE POSITION GETS ITS OWN HOME, AND NOTHING MORE: building one opens no conversation. AND EVERY ACTIVE SEAT OF
+            // THE SECURITY BOARD ITS OWN (U-board-b2 item 3), under the board's folder — none is active in the product.
             positions: () => new OrgStore(db).Positions()
                 .Where(p => p.Status == OrgPositionStatus.Active && CouncilRoles.IsPositionId(p.Id))
-                .Select(p => p.Id).ToList());
+                .Select(p => p.Id)
+                .Concat(new BoardStore(db).Seats().Where(s => s.Status == BoardSeatStatus.Active).Select(s => s.Id))
+                .ToList());
         Meter = new TurnMeter(db,
             cap: AiCap,
             // THE SECOND CEILING (U-billing-classes): the owner's plan capacity, beside the money cap and never inside it.
@@ -2376,6 +2390,15 @@ public sealed class AppHost : IAsyncDisposable
         /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>), composed by <see cref="PositionPacket.Compose"/> in one snapshot
         /// from <see cref="OrgStore"/> reads only. It writes nothing and reaches no verb.
         /// </summary>
+        /// <summary>
+        /// A SEAT OF THE SECURITY BOARD'S PROMPT (<c>U-board-b2</c> item 4): <see cref="BoardPacket.For"/> over the board's own store, for
+        /// the acts this turn's board wakes name. No ledger, no organisation block, no watcher figure is read here.
+        /// </summary>
+        public string? BoardPacketFor(string seat, string? attemptId, IReadOnlyList<MissionEvent> wake, DateTimeOffset now) =>
+            host._db is { } db
+                ? BoardPacket.For(new BoardStore(db), seat, attemptId, [], now)
+                : null;
+
         public PositionPacket? PacketFor(string role, DateTimeOffset now) =>
             host._db is { } db ? PositionPacket.Compose(db, role, now) : null;
 
