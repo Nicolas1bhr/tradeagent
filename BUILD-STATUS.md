@@ -11822,3 +11822,29 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Deviations:** `ActivationRefusal` never held the home refusal, so the check asserts `RefusalFor(HomeFor)`; the no-press guard allows exactly this one press.
 **NOT verified:** the mac-shot of the row (the refused state needs a start that runs the AI); a link swapped in between the second check and the rename; Windows link cases (the repair refuses on Windows first); a repair racing a concurrent prepare.
 **Landing:** TRAIN A10 (seat A), run 40159290061 green on every job incl. linux-host at stacked tip 1b5a6476, carried to dcd924bb (only bookkeeping paths differ).
+
+## U-cell-model-catalog — the confined broker and cell seats run gpt-6-luna on a pinned model catalog without its code-mode flag (OPTION C)
+
+**Landed** (land.sh train, seat A) on `main`; code `ea618c80`, report `bd4ca347` (builder abba73a8233d94fc0; fresh fixer a6a0da095d5247d04). No rung.
+**Source:** BOARD Decisions 2026-10-24 23:56 (the owner's catch): GPT-5.5 retired from Codex for ChatGPT sign-in on 2026-10-14; every other model is
+code_mode_only and fails closed under the broker/cell argv. ACCEPTED: option C. The owner, 10-25 00:2x: the fallback on a paid vendor account comes later (a card);
+if the servers refuse gpt-6-luna without a root cause, try sol inside the 11 EUR cap.
+**What it does:** `SeatData/codex-model-catalog.json` is gpt-6-luna's entry from `codex debug models --bundled` (codex 0.160.1 pinned, throwaway
+CODEX_HOME + HOME) with tool_mode removed and use_responses_lite false, labelled `_tradeagent` (the source and both edits), pinned by hash.
+Broker and cell argv carry `-c model_catalog_json=<seat home copy>`; an edited or linked copy is refused naming both hashes. BrokerSeat.Model = gpt-6-luna.
+exec is never offered to either class (BrokerSeat.NeverOffered), even against an expected set naming it. The vendor's "Defaulting to fallback metadata"
+warning, or an offered set different from Expected, REFUSES before admission. Fix pass: the tools-unavailable pattern is a security field of both
+classes (a runtimes.json clearing it, or keeping only its code-mode half, is refused in words before any probe; c125a111); the dry run keeps codex's
+stdout/stderr as they arrive and checks them however the wait ends, a deadline never swallowing them (ea618c80; the new row skipped on Windows).
+**Protects:** Law 2, route (a), CRED-001 and the deny set unchanged; no paid key; no code mode beside the owner's login (option B REJECTED).
+**RED / mutants:** exec guard red + mutant (NeverOffered = []); cell catalog pair dropped (mutant red); fallback warning refuses; fix pass: both P2s
+red-first with watched mutants (report on the branch).
+**Gate:** Release 0 warnings; Unit 57/57 x3, Integration ModelCatalogProbe|CliCodeModeHost 4/4 x3 (TZ=UTC, pinned codex); names removed 0.
+CI 40153809072 green on every job incl. linux-host at ea618c80 (bd4ca347 adds the report only); earlier 40138221355 red only at linux-host's dated word (named).
+**Review:** review.md + review-2.md (2 x P2, fixed), rereview.md "No defects found in the scoped re-review" (fleet/tmp/A-org/morg1-cards/).
+**Scan:** exact-phrase exclusions for the vendor catalog's prose and one probe wait line (fleet/tmp/A-org/morg1-cards/U-cell-model-catalog-scan-exclusions.txt); judged: the vendor's own text, no host.
+**Tests box:** NOT RUN — the machine did not answer at the build.
+**NOT VERIFIED:** OPTION C IS NOT VERIFIED UNTIL THE REAL gpt-6-luna TURN on the owner's account (no 4xx, the door called and served, offered = Expected),
+folded into his real-model sitting; the vendor does not document a catalog edit (said so). Fallback A (gpt-5.5 on an API key) only on his word.
+**After landing:** fleet/tmp/A-org/model-survey/kit/account-2026-10-22-catalog.json, luna-*.json and the runs embedding them are deleted; never committed.
+**Landing:** TRAIN A10 (seat A), run 40159290061 green on every job incl. linux-host at stacked tip 1b5a6476, carried to dcd924bb (only bookkeeping paths differ).
