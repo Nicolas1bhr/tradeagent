@@ -455,6 +455,10 @@ public class OrgLedgerTests
         // helper and one `cut-review` wake per rule, subject and period, in one write — and nothing else: no org_unit, no org_position,
         // no share, status or seat (OrgReviewTests.A_review_event_changes_no_share_status_or_seat holds that). No op or verb reaches it.
         mandate = [.. mandate, "ReviewSweep"];
+        // REVISITED, OUT LOUD, BY U-org-scorecards-b: AnswerReview — the reviewer's answer to a review: its mandatory `review-answer`
+        // decision (the review event its first ref), forecasts and ledger entry, and its untaken `cut-review` wakes closed answered, in one
+        // write. It writes no org_unit, org_position or org_event: the answer is a record, and moves no share, status or seat.
+        mandate = [.. mandate, "AnswerReview"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

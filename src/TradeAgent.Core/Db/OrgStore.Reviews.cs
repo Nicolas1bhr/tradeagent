@@ -34,6 +34,17 @@ public sealed record ReviewThresholds(decimal EnvelopeSpent, int MinScored, doub
 /// <summary>What one review sweep raised, and each reading it could not judge, in words (an unknown cost is said, never read as zero).</summary>
 public sealed record ReviewSweepResult(int Raised, IReadOnlyList<string> Unjudged);
 
+/// <summary>
+/// A REVIEW ANSWER AS THE REVIEWER ASKS IT (<c>U-org-scorecards-b</c> b3): the review event it answers, its choice, rationale and options
+/// (claims), the app records it rests on, and its forecasts (at least one; a subject left empty is the reviewed unit).
+/// </summary>
+public sealed record ReviewAnswerRequest(
+    string Caller, string? Attempt, long EventId, string Choice, string Rationale, IReadOnlyList<string> Options,
+    IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts);
+
+/// <summary>What a review answer wrote: its <c>review-answer</c> decision (the event its first ref), the forecasts, and how many untaken wakes it closed.</summary>
+public sealed record ReviewAnswered(long EventId, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, int WakesClosed);
+
 public sealed partial class OrgStore
 {
     /// <summary>
@@ -114,6 +125,50 @@ public sealed partial class OrgStore
         }
         return new ReviewSweepResult(raised, unjudged);
     }
+
+    /// <summary>
+    /// ANSWERS A REVIEW WITH A RECORD (<c>U-org-scorecards-b</c> b3; ORGANISATION § 8, "a review event its head answers with a record"):
+    /// the reviewer the app named — the role its <c>cut-review</c> wake was raised to — writes a <c>review-answer</c> decision, MANDATORY
+    /// (so no <c>decision-record</c> writes one), whose FIRST ref is the review event (<see cref="OrgRefKind.Event"/>), with at least one
+    /// forecast (a subject left empty is the reviewed unit), and its untaken wakes for that review are closed — in ONE write. Once per
+    /// review. Refused in words, nothing written: not an active position; no such review; another reviewer's; answered already; no
+    /// forecast. The answer is a record and nothing else: it moves no share, status or seat — a structural act after a review is the
+    /// reviewer's own verb, a board act or the owner's veto (R24).
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ReviewAnswered AnswerReview(ReviewAnswerRequest r, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (Board.BoardSeats.IsBoardId(r.Caller)) throw Forbidden(Board.BoardSeats.NotAPosition(r.Caller));
+        if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
+            throw Forbidden($"'{r.Caller}' is no active position: a review is answered by the position the app woke for it.");
+        var id = r.EventId.ToString(CultureInfo.InvariantCulture);
+        string unitId;
+        using (var e = db.Cmd("SELECT unit_id FROM org_event WHERE id = $id AND kind = $k", ("$id", r.EventId), ("$k", OrgEventKind.Review)))
+            unitId = e.ExecuteScalar() as string
+                     ?? throw Refused($"event {id} is no review of the organisation's: a review answer names the 'review' event its wake carried.");
+        string? reviewer;
+        using (var w = db.Cmd("SELECT role FROM mission_event WHERE kind = $k AND payload = $id ORDER BY created_at, id LIMIT 1",
+                   ("$k", MissionEventKind.CutReview), ("$id", id)))
+            reviewer = w.ExecuteScalar() as string;
+        if (reviewer != r.Caller)
+            throw Forbidden($"review {id} is {reviewer ?? "nobody's"} to answer, not yours: the app woke its reviewer for it, and only that "
+                            + "position answers it.");
+        var answered = $"[{{\"kind\":\"{OrgRefKind.Event}\",\"id\":\"{id}\"}}%";
+        using (var a = db.Cmd("SELECT id FROM org_decision WHERE kind = $k AND refs LIKE $first",
+                   ("$k", OrgDecisionKind.ReviewAnswer), ("$first", answered)))
+            if (a.ExecuteScalar() is string before)
+                throw Refused($"review {id} is answered already, by decision {before}: a review is answered once — a later act is its own record.");
+        if (r.Forecasts.Count is 0 or > DecisionLimits.MaxForecasts)
+            throw Refused($"a review answer carries 1 to {DecisionLimits.MaxForecasts.ToString(CultureInfo.InvariantCulture)} forecasts — such "
+                          + $"as '{ForecastVocabulary.UnitAdmissible}' on the reviewed unit, its subject left empty: an answer is a decision with a forecast.");
+
+        IReadOnlyList<OrgRef> refs = [new OrgRef(OrgRefKind.Event, id), .. r.Refs.Where(x => !(x.Kind == OrgRefKind.Event && x.Id == id))];
+        var decision = WriteDecision(r.Caller, r.Attempt, OrgDecisionKind.ReviewAnswer, r.Options.Count > 0 ? r.Options : [r.Choice], r.Choice,
+            r.Rationale, refs, now);
+        var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: unitId)).ToList();
+        var closed = new MissionEventStore(db).CloseReviewWakes(r.EventId, now, $"answered by decision {decision.Id}");
+        return new ReviewAnswered(r.EventId, decision, forecasts, closed);
+    });
 
     /// <summary>
     /// ONE REVIEW, IN ONE WRITE: nothing when its wake's id is already on the queue (a second pass, a restart); else the <c>review</c>

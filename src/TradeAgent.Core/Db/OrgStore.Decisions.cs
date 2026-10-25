@@ -14,7 +14,10 @@ public static class OrgRefKind
     public const string Version = "version", Run = "run", Promotion = "promotion", Ledger = "ledger", Mandate = "mandate",
         Delivery = "delivery", Decision = "decision", Escalation = "escalation";
 
-    public static readonly string[] All = [Version, Run, Promotion, Ledger, Mandate, Delivery, Decision, Escalation];
+    /// <summary>An <c>org_event</c> of the chart, by its number — the review a <c>review-answer</c> answers (<c>U-org-scorecards-b</c>).</summary>
+    public const string Event = "event";
+
+    public static readonly string[] All = [Version, Run, Promotion, Ledger, Mandate, Delivery, Decision, Escalation, Event];
 
     public static bool IsKnown(string? kind) => kind is not null && Array.IndexOf(All, kind) >= 0;
 }
@@ -66,7 +69,7 @@ public static class OrgDecisionKind
 
     public static readonly string[] Mandatory =
         [Charter, Merge, Close, "dormancy", EnvelopeTilt, "family-kill", "family-branch", "verdict-request",
-         "paper-nomination", "worker-replacement", "owner-proposal", Hire, Retire];
+         "paper-nomination", "worker-replacement", "owner-proposal", Hire, Retire, ReviewAnswer];
 
     /// <summary>A unit chartered (<see cref="OrgStore.Charter"/>); a position hired (<see cref="OrgStore.Hire"/>; <c>U-org-verbs-c</c>).</summary>
     public const string Charter = "charter", Hire = "hire";
@@ -76,6 +79,9 @@ public static class OrgDecisionKind
 
     /// <summary>One currency of a child unit's share re-split by its parent's head (<see cref="OrgStore.Tilt"/>; <c>U-org-verbs-e</c>).</summary>
     public const string EnvelopeTilt = "envelope-tilt";
+
+    /// <summary>A cut rule's review answered by its reviewer, the review event its first ref (<see cref="OrgStore.AnswerReview"/>; <c>U-org-scorecards-b</c>).</summary>
+    public const string ReviewAnswer = "review-answer";
 
     public static readonly string[] All = [Routine, .. Mandatory];
 
@@ -256,11 +262,12 @@ public sealed partial class OrgStore
             OrgRefKind.Delivery => ("org_delivery", "id"),
             OrgRefKind.Decision => ("org_decision", "id"),
             OrgRefKind.Escalation => ("org_escalation", "id"),
+            OrgRefKind.Event => ("org_event", "id"),
             _ => (null, null)
         };
         if (table is null) return false;
         object id = r.Id;
-        if (r.Kind == OrgRefKind.Ledger)
+        if (r.Kind is OrgRefKind.Ledger or OrgRefKind.Event)
         {
             if (!long.TryParse(r.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var entry)) return false;
             id = entry;

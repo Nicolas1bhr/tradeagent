@@ -142,4 +142,66 @@ public class OrgReviewTests
         Assert.Equal(TeamHead, wake.Role);
         Assert.Equal(0, new OrgStore(db).ReviewSweep(Now.AddDays(1), ReviewThresholds.Default, Day()).Raised);
     }
+
+    static long Count(Database db, string table) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT COUNT(*) FROM {table}");
+        return (long)c.ExecuteScalar()!;
+    });
+
+    static long[] Written(Database db) => [Count(db, "org_decision"), Count(db, "org_forecast"), Count(db, "ledger_entry")];
+
+    static ForecastClaim Admissible() => new(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, Now.AddDays(30), 0.3m);
+
+    static ReviewAnswerRequest Answer(string caller, long eventId, IReadOnlyList<ForecastClaim>? forecasts = null) =>
+        new(caller, null, eventId, "keep the team's share a week and watch its next delivery", "the spend bought two runs that are still being judged",
+            [], [], forecasts ?? [Admissible()]);
+
+    /// <summary>
+    /// (b3) A REVIEW IS ANSWERED ONLY BY A RECORD: the reviewer the app woke writes a <c>review-answer</c> decision — mandatory, so
+    /// <c>decision-record</c> cannot write one — whose first ref is the review event, with a forecast on the reviewed unit, and its untaken
+    /// wake is closed answered. Refused in words, nothing written: another position (the team's own head); no forecast; an event that is
+    /// no review; the same review a second time. RED at base: no review answer.
+    /// </summary>
+    [Fact]
+    public void A_review_is_answered_only_by_a_record()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        Assert.Equal(1, org.ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 6m, 0))).Raised);
+        var review = Assert.Single(Reviews(db)).Id;
+        var before = Written(db);
+
+        Assert.Contains("not yours", Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(TeamHead, review), Now)).Message,
+            StringComparison.Ordinal);
+        Assert.Contains("1 to 5 forecasts", Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(Head, review, []), Now)).Message,
+            StringComparison.Ordinal);
+        long seeded = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT MIN(id) FROM org_event WHERE kind <> $k", ("$k", OrgEventKind.Review));
+            return (long)c.ExecuteScalar()!;
+        });
+        Assert.Contains("no review of the organisation's", Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(Head, seeded), Now)).Message,
+            StringComparison.Ordinal);
+        Assert.Contains($"'{OrgDecisionKind.ReviewAnswer}' decision is written by the verb that performs it", Assert.Throws<TradeAgentException>(() =>
+            org.Decide(Head, null, OrgDecisionKind.ReviewAnswer, ["keep"], "keep", "why", [new OrgRef(OrgRefKind.Event, review.ToString(CultureInfo.InvariantCulture))],
+                [Admissible()], Now)).Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        Assert.Null(Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview)).ConsumedAt);
+
+        var answered = org.AnswerReview(Answer(Head, review), Now.AddMinutes(1));
+        Assert.Equal(OrgDecisionKind.ReviewAnswer, answered.Decision.Kind);
+        Assert.Equal(new OrgRef(OrgRefKind.Event, review.ToString(CultureInfo.InvariantCulture)), answered.Decision.Refs[0]);
+        Assert.Equal(Team, Assert.Single(answered.Forecasts).Subject);
+        Assert.Equal(1, answered.WakesClosed);
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+        Assert.Equal((MissionEventStore.NoLaunch, MissionEventDisposition.Answered), (wake.ConsumedBy, wake.Disposition));
+        Assert.Equal("the spend bought two runs that are still being judged",
+            new ResearchLedger(db).Latest(answered.Decision.LedgerEntryId)!.Text);
+
+        var again = Written(db);
+        Assert.Contains($"answered already, by decision {answered.Decision.Id}",
+            Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(Head, review), Now.AddMinutes(2))).Message, StringComparison.Ordinal);
+        Assert.Equal(again, Written(db));
+    }
 }
