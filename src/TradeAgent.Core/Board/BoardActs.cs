@@ -140,6 +140,34 @@ public sealed record BoardVetoField(string Field, string Now, string From, strin
 /// <summary>
 /// WHAT THE OWNER'S VETO WOULD DO (press one, <c>PreviewBoardVeto</c>): close an open proposal, write a version decided by him whose
 /// every field the act changed is the narrower of now and before, record a veto with nothing narrower to restore — or be refused, in
-/// words (a narrowing act: restoring it would widen). Reads only.
+/// words (a narrowing act: restoring it would widen). Reads only. <paramref name="Status"/> is the act's state the preview was read at.
+///
+/// <para><b>Press two is about what press one showed</b> (<c>U-org-surface-b</c> fix pass 1): the owner's second press hands this preview
+/// back, and <see cref="BoardStore.VetoBoardAct"/> refuses as moved — nothing written — when the veto it would write now is not the one
+/// shown (<see cref="WhatMoved"/>): a proposal confirmed between his presses is never vetoed with an effect he never saw.</para>
 /// </summary>
-public sealed record BoardVetoPreview(string ActId, bool Allowed, string Words, IReadOnlyList<BoardVetoField> Fields);
+public sealed record BoardVetoPreview(string ActId, string Status, bool Allowed, string Words, IReadOnlyList<BoardVetoField> Fields)
+{
+    /// <summary>
+    /// What differs between this preview — the one shown at press one — and <paramref name="now"/>, field by field, in words; or null
+    /// when the veto would do exactly what was shown: the same act, in the same state, accepted or refused alike, with the same words and
+    /// the same value now, <c>from</c> and restored value for every field, in order.
+    /// </summary>
+    public string? WhatMoved(BoardVetoPreview now)
+    {
+        var moved = new List<string>();
+        if (!string.Equals(ActId, now.ActId, StringComparison.Ordinal)) moved.Add($"the preview shown was of {ActId}, not {now.ActId}");
+        if (!string.Equals(Status, now.Status, StringComparison.Ordinal)) moved.Add($"it was {Status} and is {now.Status} now");
+        if (Allowed != now.Allowed) moved.Add(now.Allowed ? "a veto was refused and is accepted now" : $"a veto is refused now: {now.Words}");
+        if (!Fields.SequenceEqual(now.Fields)) moved.Add($"what the veto restores was {Effect(Fields)} and is {Effect(now.Fields)} now");
+        if (moved.Count == 0 && !string.Equals(Words, now.Words, StringComparison.Ordinal))
+            moved.Add($"what the veto does was “{Words}” and is “{now.Words}” now");
+        return moved.Count == 0
+            ? null
+            : $"{ActId} moved since your first press: {string.Join("; ", moved)}. Its card shows what a veto would do now — two presses veto that.";
+    }
+
+    static string Effect(IReadOnlyList<BoardVetoField> fields) => fields.Count == 0
+        ? "nothing"
+        : string.Join(", ", fields.Select(f => $"{f.Field} {f.Now} → {f.Restored}"));
+}
