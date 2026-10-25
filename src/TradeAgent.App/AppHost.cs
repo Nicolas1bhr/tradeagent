@@ -2396,7 +2396,8 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public string? BoardPacketFor(string seat, string? attemptId, IReadOnlyList<MissionEvent> wake, DateTimeOffset now) =>
             host._db is { } db
-                ? BoardPacket.For(new BoardStore(db), seat, attemptId, [], now)
+                ? BoardPacket.For(new BoardStore(db), seat, attemptId,
+                    [.. wake.Where(e => e.Kind == MissionEventKind.Board && e.Payload is { Length: > 0 }).Select(e => e.Payload!)], now)
                 : null;
 
         public PositionPacket? PacketFor(string role, DateTimeOffset now) =>
