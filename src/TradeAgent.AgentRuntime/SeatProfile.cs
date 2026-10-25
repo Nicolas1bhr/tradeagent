@@ -275,8 +275,8 @@ public static class SeatProfile
     /// </summary>
     static uint? WindowsLinkCount(string path)
     {
-        // A path past MAX_PATH reaches CreateFileW only with the \\?\ prefix (.NET adds it for its own calls, not for this one).
-        var name = path.Length < 260 || path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+        // A path past MAX_PATH reaches CreateFileW only verbatim (.NET adds the prefix for its own calls, not for this one).
+        var name = Win32Path.Verbatim(path);
         using var handle = CreateFileW(name, FileReadAttributes, FileShareAll, IntPtr.Zero, OpenExisting,
             FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero);
         if (handle.IsInvalid)
