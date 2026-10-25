@@ -22,3 +22,19 @@ seat start on the owner's Windows. `SeatProfile.WindowsLinkCount` already had th
 3. `SeatProfile.WindowsLinkCount` uses it instead of its own copy.
 
 Past 32,767 characters Windows itself refuses, and the refusal already names the path in the OS's words (`Win32Failure`).
+
+## Report
+Code tip `9a785f16` (this report follows it). PRODUCT defect: `OwnerOnlyFile`'s own `CreateFileW` got a 263-character temp un-prefixed.
+- Gate 1: Release `--no-incremental` 0 Warning(s), 0 Error(s).
+- Gate 2: Unit Win32LongPath|ModelCatalog|SeatAcl|SeatProfile|DailyReport x3 (TZ=UTC, suite.sh): "Passed! - Failed: 0, Passed: 32, Skipped: 2" each time.
+- Gate 3: CI 40177036771 completed success, all 12 jobs incl. linux-host and windows-latest 1-5.
+- Gate 3b: Codex review (fleet/tmp/A-org/morg1-cards/U-catalog-windows-path-review.md): "No defects found".
+- Gate 4: names.sh main → removed: 0, added: 2 (3294 → 3296).
+- Item 1 done: `Win32Path.Verbatim` + `Win32LongPathTests` (both tests on every OS).
+- Item 2 done: `OwnerOnlyFile` temp open and rename name verbatim past MAX_PATH.
+- Item 3 done: `SeatProfile.WindowsLinkCount` uses the shared rule (adds: a `\\.\` name is no longer mangled).
+- RED on the real machine: box run 20261025-093539 at 28533562 (tests, no fix): the new long-path publish test and the ModelCatalog test
+  both red, "could not open …\model-catalog.json.<guid>.tmp to publish it" (path not found). Before: runs 055630, 071030, 082528 identical.
+- Mutant: `Verbatim` → `return fullPath;` → `A_name_at_max_path_or_past_it_is_handed_to_win32_verbatim` red on macOS (Expected "\\?\C:\ddd…", Actual "C:\ddd…").
+- Tests box: run 20261025-093257 at 9a785f16, filter ModelCatalog|Win32LongPath → GREEN, Unit 8/8; his files unchanged.
+- NOT VERIFIED: the full suite on the box with the fix; a real seat start under a deep app home on the owner's Windows.
