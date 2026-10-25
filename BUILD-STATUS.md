@@ -11908,3 +11908,15 @@ Total: 175"; SchemaMatchesReconciler/BrokerDoor "Passed: 28, Total: 28"; names.s
 **NOT verified:** the app was not run; no real board seat turn (U-board-b2); head-ceiling liveness proven at the options level only; the full local suite not run on the
 rung-51 tree (the train's CI runs it); the tests box not re-run after fix pass 1; widen-then-narrow life (U-board-b2 item 8).
 **Seam fix (2026-10-25, 92a51458):** train A10 red (CI 40156572886) was a stale rung-49 test fake, not an authority bug — a seat active through rung 51's real path makes the owner's activation refuse; `BoardStore.AnyActive` now reads through `Seats()`, the one seat-state reader (mutant: sealed `s.status` ⇒ red); CI 40159609566 12/12; review `tmp/A-org/board-b/U-board-b1-seam-review.md`.
+
+## U-role-follows-setup — a role on "the AI tool from setup" stores that fact (a sentinel), not a copy of the CLI id
+
+**Landing** (seat A) from branch u-role-follows-setup; builder code commits 9519f64e, 44e6a407, 1013a3c5 (rebased onto later main, same diff), CI run 40162385381 green on every job on the pre-rebase tip. No rung.
+**Source:** fleet/records/U-settings-shed.md:10 (fix 8 partial).
+**What changed:** TradeAgentSettings.SetupRuntime = "setup"; AppHost.RuntimeForRole returns the app-wide runtime for a row holding it (any role, key held or not); the Research CLI press writes the sentinel; SwitchSetupCli and its role-rewriting loop are gone (the setup card writes SelectedRuntimeId directly); the source-grep one-writer assertion was dropped.
+**Protects:** pricing and seating of a role stay a static rule over three inputs; a literal CLI id in a row resolves as before (no migration); the sentinel is not a manifest id (Find is null, tested). No new owner-set limit; OwnerView hunks limited to the brief's (seat B's allowlist test and control order untouched).
+**RED / mutant:** resolver: Expected "opencode", Actual "setup"; switch test Expected "opencode", Actual "codex"; press test Expected "setup", Actual "codex"; the sentinel arm replaced by false watched red.
+**Gate:** build 0 warnings 0 errors; OwnerPageTests 13, HarnessRoleTests 17, OrgSeatsTests 12 green 3x; after the rebase the three classes passed together (42). names.sh: removed 0, added 2.
+**Deviation:** item 3 needed no source change (the page already asks the resolver); a pin test was added with no RED.
+**Review:** fleet/tmp/A-org/morg1-cards/U-role-follows-setup-review.md: "No defects found".
+**Tests box:** NOT RUN — the machine does not answer. **NOT verified:** the live window by hand; a full local suite.
