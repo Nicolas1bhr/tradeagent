@@ -141,6 +141,9 @@ public sealed partial class OrgStore
         if (Board.BoardSeats.IsBoardId(r.Caller)) throw Forbidden(Board.BoardSeats.NotAPosition(r.Caller));
         if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
             throw Forbidden($"'{r.Caller}' is no active position: a review is answered by the position the app woke for it.");
+        // THE RIGHTS MATRIX: a review answer is the review event's to decide — its reviewer — never the chart's.
+        if (OrgRights.Answer(OrgOperation.ReviewAnswer, OrgReserved.None, OrgRelation.Any).Answer != OrgRightAnswer.ReviewEventDecides)
+            throw Forbidden("the rights matrix does not leave a review's answer to its review event: refused, never guessed.");
         var id = r.EventId.ToString(CultureInfo.InvariantCulture);
         string unitId;
         using (var e = db.Cmd("SELECT unit_id FROM org_event WHERE id = $id AND kind = $k", ("$id", r.EventId), ("$k", OrgEventKind.Review)))

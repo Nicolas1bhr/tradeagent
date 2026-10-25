@@ -27,7 +27,16 @@ public static class OrgOperation
     /// <summary>The O5a/O5b/O6a mandate verbs: who may act is the MANDATE ROW's decider or holder, never the matrix.</summary>
     public static readonly string[] Mandate = ["assign", "cancel", "rescope", "accept", "reject", "deliver", "decline", "propose"];
 
-    public static readonly string[] All = [.. Structural, .. Mandate];
+    /// <summary>
+    /// A CUT RULE'S REVIEW ANSWERED (<c>U-org-scorecards-b</c>; <see cref="OrgStore.AnswerReview"/>): who answers is the reviewer the app
+    /// woke for that review event, never the chart — and the answer changes nothing on it.
+    /// </summary>
+    public const string ReviewAnswer = "review-answer";
+
+    /// <summary>The verbs the review event decides.</summary>
+    public static readonly string[] Review = [ReviewAnswer];
+
+    public static readonly string[] All = [.. Structural, .. Mandate, .. Review];
 }
 
 /// <summary>
@@ -101,7 +110,10 @@ public static class OrgRightAnswer
     /// <summary>Only the head of the target's parent unit restructures it (ORGANISATION § 2 :107).</summary>
     public const string NotYours = "only the parent unit's head";
 
-    public static readonly string[] All = [Allowed, BoardAct, AppTriggerOrBoardAct, MandateRowDecides, NotYours];
+    /// <summary>A review answer: the reviewer the app woke for that review event answers it, and the store checks the event (<c>U-org-scorecards-b</c>).</summary>
+    public const string ReviewEventDecides = "the review event decides";
+
+    public static readonly string[] All = [Allowed, BoardAct, AppTriggerOrBoardAct, MandateRowDecides, NotYours, ReviewEventDecides];
 }
 
 /// <summary>One cell of the rights matrix: an operation, a reserved identity, a relation, and the answer with why.</summary>
@@ -161,6 +173,9 @@ public static class OrgRights
         foreach (var op in OrgOperation.Mandate)
             rows.Add(new(op, OrgReserved.None, OrgRelation.Any, OrgRightAnswer.MandateRowDecides,
                 "the mandate row's decider or holder acts, and the store checks the row (O5a, O5b)"));
+        foreach (var op in OrgOperation.Review)
+            rows.Add(new(op, OrgReserved.None, OrgRelation.Any, OrgRightAnswer.ReviewEventDecides,
+                "the reviewer the app woke for the review event answers it, and the store checks the event (ORGANISATION § 8)"));
         return rows;
     }
 
@@ -231,6 +246,8 @@ public static class OrgRights
             $"{what} happens only by an {OrgRightAnswer.AppTriggerOrBoardAct} — {row.Why} — never by an organisation verb.",
         OrgRightAnswer.MandateRowDecides =>
             $"{what} is a mandate verb: {OrgRightAnswer.MandateRowDecides}, never the chart.",
+        OrgRightAnswer.ReviewEventDecides =>
+            $"{what} is a review's answer: {OrgRightAnswer.ReviewEventDecides}, never the chart.",
         _ => $"{what} is not yours: {row.Why}."
     };
 }

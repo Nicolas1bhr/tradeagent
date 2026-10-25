@@ -204,4 +204,46 @@ public class OrgReviewTests
             Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(Head, review), Now.AddMinutes(2))).Message, StringComparison.Ordinal);
         Assert.Equal(again, Written(db));
     }
+
+    /// <summary>Every unit's shares, status and head, and every position's unit, status and seat, as the rows hold them.</summary>
+    static List<string> Rows(Database db) => db.Read(_ =>
+    {
+        var rows = new List<string>();
+        foreach (var sql in new[]
+                 {
+                     "SELECT id, parent_id, head_position_id, status, envelope_share, trial_share, verdict_share, closed_at FROM org_unit ORDER BY id",
+                     "SELECT id, unit_id, status, seat_runtime, seat_model, seat_allow_in, seat_allow_out, ended_at FROM org_position ORDER BY id"
+                 })
+        {
+            using var c = db.Cmd(sql);
+            using var r = c.ExecuteReader();
+            while (r.Read())
+                rows.Add(string.Join("|", Enumerable.Range(0, r.FieldCount).Select(i => r.IsDBNull(i) ? "null" : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture))));
+        }
+        return rows;
+    });
+
+    /// <summary>
+    /// (b4) A REVIEW EVENT CHANGES NO SHARE, STATUS OR SEAT (ORG-001; R24): two units past half their day envelope — the team and its
+    /// sibling, whose share is the division's whole room left to it — are reviewed, and one review is answered; every unit's shares,
+    /// status and head and every position's unit, status and seat read exactly as before, and the only events the chart gained are the
+    /// two reviews, decided by the app. The watched mutant: the review writer also sets the reviewed unit's share to its exploration floor
+    /// ⇒ this test red.
+    /// </summary>
+    [Fact]
+    public void A_review_event_changes_no_share_status_or_seat()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var chart = Rows(db);
+        long events = Count(db, "org_event");
+
+        Assert.Equal(2, org.ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 9m, 0), (Sibling, 10m, 7m, 0))).Raised);
+        org.AnswerReview(Answer(Head, Reviews(db)[0].Id), Now.AddMinutes(1));
+
+        Assert.Equal(chart, Rows(db));
+        Assert.Equal(events + 2, Count(db, "org_event"));
+        Assert.All(Reviews(db), r => Assert.Equal(OrgDecider.App, r.Decider));
+        Assert.Equal([Team, Sibling], Reviews(db).Select(r => r.Unit).Order(StringComparer.Ordinal));
+    }
 }

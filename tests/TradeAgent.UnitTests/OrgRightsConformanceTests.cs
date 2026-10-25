@@ -49,6 +49,9 @@ public partial class OrgRightsConformanceTests
 
         foreach (var op in OrgOperation.Mandate)
             Assert.Equal(OrgRightAnswer.MandateRowDecides, OrgRights.Answer(op, OrgReserved.None, OrgRelation.HeadOfTarget).Answer);
+        // U-org-scorecards-b: a review's answer is the review event's — its reviewer — whatever the relation, never the chart's.
+        foreach (var relation in OrgRelation.Each)
+            Assert.Equal(OrgRightAnswer.ReviewEventDecides, OrgRights.Answer(OrgOperation.ReviewAnswer, OrgReserved.None, relation).Answer);
 
         // A COMBINATION NO ROW ANSWERS IS REFUSED, NEVER GUESSED.
         Assert.Contains("holds no answer", Assert.Throws<TradeAgentException>(() =>
