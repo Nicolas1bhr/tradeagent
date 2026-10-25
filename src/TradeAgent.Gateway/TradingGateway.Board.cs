@@ -122,12 +122,13 @@ public sealed partial class TradingGateway
     /// <summary>
     /// THE OWNER'S VETO, PRESS TWO (R24 Q2, AUTH-001): it ONLY NARROWS — an open proposal closed, a confirmed widening set back field by
     /// field to the narrower of now and before, the envelope following it and nothing granted in its place; an act that only narrowed is
-    /// refused. In process only. Nothing waits on him: the board never asks for it.
+    /// refused. In process only. Nothing waits on him: the board never asks for it. His press hands back <paramref name="asShown"/>, the
+    /// preview his first press showed, and a veto that would now do anything else is refused as moved, nothing written.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public BoardActResult VetoBoardAct(string actId)
+    public BoardActResult VetoBoardAct(string actId, BoardVetoPreview? asShown = null)
     {
-        var result = Followed(() => _board.VetoBoardAct(actId, Now));
+        var result = Followed(() => _board.VetoBoardAct(actId, Now, asShown));
         _log.Activity($"You vetoed the security board's act {result.Act.Id}. {result.Words}");
         return result;
     }

@@ -146,6 +146,68 @@ public class OwnerInboxTests
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// (4c) PRESS TWO IS BOUND TO WHAT PRESS ONE SHOWED (fix pass 1; Codex P2; anything that removes permission is two presses ABOUT ITS
+    /// SUBJECT): the owner arms the veto of an OPEN proposal — press one says it only closes it — and a second active seat confirms it
+    /// before his second press, with no tick between. Press two is REFUSED as moved, in words naming what moved: nothing is written (no
+    /// version, no vetoed event, no activity line), the confirmed raise stays in force, and the press is disarmed. Then a tick that changes
+    /// what the veto would do (one seat narrows the raise from 50 to 45) disarms a press armed against the earlier preview, and only two
+    /// fresh presses veto — to 40, the narrower of now and before. RED at base: press two vetoed the confirmed act it had never shown.
+    /// THE WATCHED MUTANT: the store's check of the preview removed (press two recomputes) turns this red.
+    /// </summary>
+    [Fact]
+    public Task A_veto_armed_on_a_proposal_is_refused_when_the_board_confirmed_it_between_the_presses() => OnTheInbox((page, host, db) =>
+    {
+        Active(db, "board-1", "board-2");
+        var board = new BoardStore(db);
+        var act = board.Propose(new BoardActRequest("board-1", null, Change("plan_day_total", 40, 50), "the plan runs short by noon", [], []),
+            DateTimeOffset.UtcNow);
+        page.Update();
+        var card = page.BoardVetoes.CardOf(act.Act.Id)!;
+        var press = card.GetLogicalDescendants().OfType<Button>().Single();
+
+        Press(press);
+        Assert.True(Ui.IsArmed(press));
+        Assert.Contains(card.GetLogicalDescendants().OfType<TextBlock>(), t => t.IsVisible && t.Text?.Contains("closes the proposal", StringComparison.Ordinal) == true);
+
+        // A SECOND SEAT CONFIRMS IT BETWEEN HIS PRESSES — no tick: the store alone stands between press two and an effect he never saw.
+        board.Decide(act.Act.Id, "board-2", null, true, act.Act.IntentSha256, "agreed: the noon stop costs a review", DateTimeOffset.UtcNow);
+        var raised = new BoardReader(db).InForce();
+        Assert.Equal(("50", BoardDecider.Board), (raised.Fields.Single(f => f.Name == "plan_day_total").Value, raised.Decider));
+
+        Press(press);
+        var after = new BoardReader(db).InForce();
+        Assert.Equal((raised.Version, raised.Decider, raised.BodySha256), (after.Version, after.Decider, after.BodySha256));
+        Assert.Equal(BoardActEventKind.Confirmed, board.Status(act.Act.Id));
+        Assert.DoesNotContain(board.Events(act.Act.Id), e => e.Kind == BoardActEventKind.Vetoed);
+        Assert.DoesNotContain(host.Gateway.Log.RecentActivity(), r => r.Text.StartsWith("You vetoed", StringComparison.Ordinal));
+        Assert.False(Ui.IsArmed(press));
+        var note = page.Root.GetLogicalDescendants().OfType<TextBlock>()
+            .Single(t => t.IsVisible && t.Text?.Contains("moved since your first press", StringComparison.Ordinal) == true);
+        Assert.Contains("it was open and is confirmed now", note.Text, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written", note.Text, StringComparison.Ordinal);
+        Assert.Equal(Theme.Caution, note.Foreground);
+
+        // A TICK THAT CHANGES THE PREVIEW DISARMS: armed against "50 → 40", the field is narrowed to 45 before his second press.
+        Assert.Same(card, page.BoardVetoes.CardOf(act.Act.Id));
+        Press(press);
+        Assert.True(Ui.IsArmed(press));
+        Assert.Equal(BoardActEventKind.Applied, board.Narrow(new BoardActRequest("board-1", null, Change("plan_day_total", 50, 45), "less is safer", [], []),
+            DateTimeOffset.UtcNow).Status);
+        var narrowed = new BoardReader(db).InForce();
+        page.Update();
+        Assert.False(Ui.IsArmed(press));
+        Assert.Equal(narrowed.Version, new BoardReader(db).InForce().Version);
+
+        Press(press);
+        Assert.Contains(card.GetLogicalDescendants().OfType<TextBlock>(), t => t.IsVisible && t.Text?.Contains(Labels.VetoField("plan_day_total", "45", "40"), StringComparison.Ordinal) == true);
+        Press(press);
+        var vetoed = new BoardReader(db).InForce();
+        Assert.Equal((narrowed.Version + 1, BoardDecider.Owner, "40"), (vetoed.Version, vetoed.Decider, vetoed.Fields.Single(f => f.Name == "plan_day_total").Value));
+        Assert.Equal(BoardActEventKind.Vetoed, board.Status(act.Act.Id));
+        return Task.CompletedTask;
+    });
+
     // ---- item 7: the guards ---------------------------------------------------------------------------------------------------------
 
     static string RepoRoot()

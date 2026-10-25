@@ -27,8 +27,11 @@ sealed record OwnerInboxSources
     /// <summary>The veto's press one: what vetoing a board act would restore, or why it cannot (reads only).</summary>
     public Func<string, BoardVetoPreview>? PreviewVeto { get; init; }
 
-    /// <summary>The veto's press two over a board act; its words, or a refusal thrown with nothing written.</summary>
-    public Func<string, string>? VetoAct { get; init; }
+    /// <summary>
+    /// The veto's press two over a board act, handed the preview press one showed: its words, or a refusal thrown with nothing written —
+    /// as moved when the veto would now do anything other than that preview said.
+    /// </summary>
+    public Func<string, BoardVetoPreview, string>? VetoAct { get; init; }
 
     /// <summary>The owner's veto of one structural change; its words, or a refusal thrown with nothing written.</summary>
     public Func<long, string>? VetoStructure { get; init; }
@@ -46,9 +49,9 @@ sealed record OwnerInboxSources
         Events = () => host.Db is { } db ? new MissionEventStore(db) : null,
         Board = () => host.Board,
         PreviewVeto = id => host.Gateway.PreviewBoardVeto(id),
-        VetoAct = id =>
+        VetoAct = (id, shown) =>
         {
-            var result = host.Gateway.VetoBoardAct(id);
+            var result = host.Gateway.VetoBoardAct(id, shown);
             return $"You vetoed the board's act {result.Act.Id}. {result.Words}";
         },
         VetoStructure = host.VetoStructure,
@@ -68,7 +71,8 @@ sealed record OwnerInboxSources
 ///
 /// <para><b>Built once and updated in place</b> (CLAUDE.md): every list is a <see cref="LiveList{T}"/> whose cards are made once per
 /// key and refilled; a tick never disarms a half-pressed veto or activation (each press is the two-step Confirm, never the variant that
-/// takes one press when its sentence is empty, so both presses are always two).</para>
+/// takes one press when its sentence is empty, so both presses are always two) — except a board act's veto whose preview the tick
+/// changes: that press was armed about the effect it showed, so it is disarmed and shows the new one (fix pass 1).</para>
 /// </summary>
 sealed class OwnerInboxPage
 {
@@ -265,21 +269,27 @@ sealed class OwnerInboxPage
     /// <summary>
     /// A BOARD ACT HIS VETO WOULD ACCEPT: the act, its seat's rationale as a claim, and the veto — TWO presses always: the first arms it
     /// and shows each field's value now and what the veto restores (the gateway's own preview, read on the tick); the second vetoes.
+    /// <para><b>Press two is about what press one showed</b> (fix pass 1; Codex P2): the card keeps the preview it shows; a tick whose
+    /// preview differs from it — the act confirmed, a field moved — disarms the press before showing the new one, and press two hands
+    /// the shown preview to the gateway, whose store refuses as moved, nothing written, a veto that would now do anything else.</para>
     /// </summary>
     (Control, Action<(BoardActRecord Act, BoardVetoPreview Preview)>) BoardVetoCard((BoardActRecord Act, BoardVetoPreview Preview) first)
     {
         var id = first.Act.Act.Id;
+        var shown = first.Preview;
         var title = Strong("");
         var status = Ui.Micro("");
         var intent = Ui.With(Ui.Mono(""), t => t.TextWrapping = TextWrapping.Wrap);
         var rationale = Ui.Body("");
         var restores = Ui.With(Ui.Body(""), t => t.IsVisible = false);
-        var press = Ui.Confirm(Labels.VetoBoardActPress, Labels.VetoBoardActConfirm, () => Pressed(_boardVetoNote, () => _sources.VetoAct!(id)));
+        var press = Ui.Confirm(Labels.VetoBoardActPress, Labels.VetoBoardActConfirm, () => Pressed(_boardVetoNote, () => _sources.VetoAct!(id, shown)));
         press.HorizontalAlignment = HorizontalAlignment.Left;
         // PRESS ONE SHOWS WHAT RETURNS: the Confirm's own handler arms first, so this one, added after it, sees the armed state.
         press.Click += (_, _) => restores.IsVisible = Ui.IsArmed(press);
         void Fill((BoardActRecord Act, BoardVetoPreview Preview) a)
         {
+            if (shown.WhatMoved(a.Preview) is not null) Ui.DisarmConfirm(press);
+            shown = a.Preview;
             var row = a.Act.Act;
             OrgText.Set(title, Labels.BoardActTitle(row.Id, row.Kind, row.Seat, When(row.At)));
             OrgText.Set(status, Labels.BoardActStatus(a.Act.Status));
