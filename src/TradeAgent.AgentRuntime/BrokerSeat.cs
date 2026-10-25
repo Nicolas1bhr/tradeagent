@@ -178,6 +178,10 @@ public static class BrokerSeat
         yield return ("feature allowlist", Seq(seat.FeaturesFor(seatClass)));
         // THE PINNED MODEL'S CATALOG (U-cell-model-catalog): where the seat home keeps it, the shipped file and its pin.
         yield return ("model catalog", Seq([seat.ModelCatalog, seat.ModelCatalogSource, seat.ModelCatalogSha256]));
+        // THE SENTENCE THAT REFUSES A SEAT ON TOOLS NO CHECK HAS SEEN (U-cell-model-catalog, fix pass): codex's fallback metadata and
+        // code mode's unavailability, read by the dry run and by every turn. Data for the CLI class; for a verified class it is this
+        // build's own, whole — an override that clears it or drops one alternative would let such a seat be admitted.
+        yield return ("tools-unavailable pattern", Seq([m.ToolsUnavailablePattern ?? ""]));
         yield return ("tool-server allowlist", Seq(seat.ServersFor(seatClass)));
         yield return ("feature report command", Seq(seat.FeaturesArgs));
         yield return ("tool-server report command", Seq(seat.McpArgs));

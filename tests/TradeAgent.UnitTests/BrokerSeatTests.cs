@@ -244,6 +244,49 @@ public class BrokerSeatTests : IDisposable
     }
 
     /// <summary>
+    /// (d) THE TOOLS-UNAVAILABLE SENTENCE IS THIS BUILD'S FOR A VERIFIED CLASS (U-cell-model-catalog, fix pass, review-2 finding 1): the
+    /// pattern that catches codex's "Defaulting to fallback metadata" and code mode's unavailability is what refuses a seat whose dry run
+    /// or turn ran on tools no check has seen. A <c>runtimes.json</c> that clears it, or keeps only the code-mode half, is refused for
+    /// the broker and the cell class, naming the field and both versions, before anything is probed; the CLI class still reads the file.
+    ///
+    /// <para>RED at base: the override was accepted — the pattern was not among the class's security fields.</para>
+    /// </summary>
+    [Fact]
+    public void A_runtimes_json_override_that_clears_the_tools_unavailable_pattern_is_refused()
+    {
+        foreach (var (name, pattern) in new (string, string?)[] { ("cleared", null), ("fallback half dropped", "Code Mode is unavailable because") })
+        {
+            using var db = TestEnv.NewDb();
+            var register = Position(db);
+            var (codex, exe, _) = SeatHomeTests.Seat($"override-unavailable-{name.Replace(' ', '-')}");
+            Assert.Contains("Defaulting to fallback metadata", codex.ToolsUnavailablePattern);
+            codex.ToolsUnavailablePattern = pattern;
+            RuntimeCatalog.SaveOverrides([codex]);
+            var loaded = RuntimeCatalog.Find("codex")!;
+            Assert.Equal(pattern, loaded.ToolsUnavailablePattern);
+
+            foreach (var seatClass in new[] { SeatPlan.BrokerClass, SeatPlan.CellClass })
+            {
+                var refusal = BrokerSeat.OverrideRefusal(loaded, seatClass);
+                Assert.True(refusal is not null, $"a runtimes.json whose tools-unavailable pattern was {name} was accepted for the {seatClass} class");
+                Assert.Contains("runtimes.json gives its tools-unavailable pattern as ", refusal);
+                Assert.Contains($"this build ({Versions.App}) compiles it as SHA-256 ", refusal);
+            }
+
+            var surface = new FakeSurface(Classic);
+            var verdict = Session(loaded, exe, register, surface).CheckSeat();
+            Assert.True(verdict.Refused, $"a broker seat whose tools-unavailable pattern was {name} was admitted");
+            Assert.Contains("tools-unavailable pattern", verdict.Refusal);
+            Assert.Equal(0, surface.Asks);
+
+            var chair = new AgentSession(loaded, () => exe, () => Path.GetDirectoryName(exe)!, () => new Dictionary<string, string>(),
+                presence: new AgentPresence(), seatProbe: new SeatHomeTests.FakeProbe());
+            Assert.False(chair.CheckSeat().Refused);
+            File.Delete(RuntimeCatalog.OverridePath);
+        }
+    }
+
+    /// <summary>
     /// (d) THE PROGRAM'S PIN IS THIS BUILD'S (fix pass 1, R1): a <c>runtimes.json</c> that swaps the program AND its digest — a script
     /// of the test's own, its SHA-256 written as the pin — is refused by <see cref="AgentSession.CheckSeat"/> naming the pin, before
     /// the CLI's own reports are read, so the swapped program never runs: not for its reports, not for the turn. The probe here is the
