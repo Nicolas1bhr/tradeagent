@@ -72,10 +72,11 @@ sealed record OrgSurfaceSources
 /// <summary>
 /// THE OWNER'S PRESSES OVER THE CHIEF (<c>U-org-chief</c> item 7; the orchestrator's Q1): whether a board seat is active (read through the board's
 /// one reader), the CLOSED list of seats a chief may be appointed on, and each press — appoint, replace, activate, remove — answering the app's
-/// words of what it did or why it was refused. Each runs in-process, in the owner's own app; none is reachable from the pipe.
+/// words of what it did or why it was refused. Replace, activate and remove name the chief the press was ARMED FOR (fix pass 1), and are
+/// refused as moved when another sits. Each runs in-process, in the owner's own app; none is reachable from the pipe.
 /// </summary>
 sealed record ChiefPresses(Func<bool> BoardActive, Func<IReadOnlyList<ChiefSeat>> Seats, Func<ChiefSeat, string> Appoint,
-    Func<ChiefSeat, string> Replace, Func<string> Activate, Func<string> Remove);
+    Func<string?, ChiefSeat, string> Replace, Func<string?, string> Activate, Func<string?, string> Remove);
 
 /// <summary>
 /// THE SENTENCES THE THREE PAGES SHARE. A claim — a rationale, a report, an objective, a probability — is always printed as someone's

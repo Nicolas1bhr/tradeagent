@@ -180,17 +180,17 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.Equal((allowance.TurnAllowanceInput.ToString(), allowance.TurnAllowanceOutput.ToString()),
             (org.Position(first.Chief!)!.SeatAllowIn, org.Position(first.Chief!)!.SeatAllowOut));
         Assert.Contains("Replace the chief", Assert.Throws<TradeAgentException>(() => org.AppointChief(Codex, Known, Now)).Message, StringComparison.Ordinal);
-        var second = org.ReplaceChief(Codex, Known, Now);
+        var second = org.ReplaceChief(org.Chief(), Codex, Known, Now);
         Assert.Equal((OrgEventKind.ChiefReplaced, first.Chief), (second.Kind, second.Was));
-        Assert.Equal(OrgEventKind.ChiefVacated, org.VacateChief(Now).Kind);
+        Assert.Equal(OrgEventKind.ChiefVacated, org.VacateChief(org.Chief(), Now).Kind);
         Assert.Null(org.Chief());
-        Assert.Contains("no chief to remove", Assert.Throws<TradeAgentException>(() => org.VacateChief(Now)).Message, StringComparison.Ordinal);
-        Assert.Contains("no chief to replace", Assert.Throws<TradeAgentException>(() => org.ReplaceChief(Codex, Known, Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("no chief to remove", Assert.Throws<TradeAgentException>(() => org.VacateChief(org.Chief(), Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("no chief to replace", Assert.Throws<TradeAgentException>(() => org.ReplaceChief(org.Chief(), Codex, Known, Now)).Message, StringComparison.Ordinal);
 
         var third = org.AppointChief(Puppet, Known, Now).Chief!;
         ActivateBoard(db, "board-2");
         var before = Written(db);
-        foreach (var press in new Action[] { () => org.AppointChief(Codex, Known, Now), () => org.ReplaceChief(Codex, Known, Now) })
+        foreach (var press in new Action[] { () => org.AppointChief(Codex, Known, Now), () => org.ReplaceChief(org.Chief(), Codex, Known, Now) })
         {
             var refused = Assert.Throws<TradeAgentException>(press).Message;
             log.WriteLine(refused);
@@ -201,7 +201,7 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.Equal(third, org.Chief());
 
         // HIS REMOVAL STANDS WHATEVER THE BOARD: the chief ended, the root vacant, no earlier chief restored.
-        var removed = org.VacateChief(Now);
+        var removed = org.VacateChief(org.Chief(), Now);
         Assert.Equal((OrgEventKind.ChiefVacated, (string?)null, third), (removed.Kind, removed.Chief, removed.Was));
         Assert.Null(org.Chief());
         Assert.All(new[] { first.Chief!, second.Chief!, third }, p => Assert.Equal(OrgPositionStatus.Ended, org.Position(p)!.Status));
@@ -241,7 +241,7 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.Equal(OrgPositionStatus.Active, org.Activate(chief, _ => SeatClasses.Harness, 3, Now, Proven).Status);
 
         // A REMOVED PROOF REFUSES AGAIN: the next chief on a model seat stays dormant.
-        org.VacateChief(Now);
+        org.VacateChief(org.Chief(), Now);
         var next = org.AppointChief(Codex, Known, Now).Chief!;
         proofs.Revoke(proof, "the profile recomputed to another hash");
         Assert.Contains("no proven executor cell", Assert.Throws<TradeAgentException>(() =>
@@ -249,10 +249,10 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(next)!.Status);
 
         // A PUPPET RUNS NO MODEL, SO IT IS EXEMPT — and once a board seat is active, no chief's activation is his.
-        org.VacateChief(Now);
+        org.VacateChief(org.Chief(), Now);
         var puppet = org.AppointChief(Puppet, Known, Now).Chief!;
         Assert.Equal(OrgPositionStatus.Active, org.Activate(puppet, _ => SeatClasses.Puppet, 3, Now, Proven).Status);
-        org.VacateChief(Now);
+        org.VacateChief(org.Chief(), Now);
         var later = org.AppointChief(Puppet, Known, Now).Chief!;
         ActivateBoard(db, "board-3");
         Assert.Contains("the security board's now", Assert.Throws<TradeAgentException>(() =>

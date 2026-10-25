@@ -128,24 +128,29 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// THE OWNER REPLACES THE SITTING CHIEF (<c>U-org-chief</c> item 2) — in-process only, and only while no board seat is ACTIVE: the sitting
-    /// chief ended through the restructuring's transaction and a new one hired DORMANT, in one write (<see cref="SeatChief"/>).
+    /// chief ended through the restructuring's transaction and a new one hired DORMANT, in one write (<see cref="SeatChief"/>). The press names
+    /// <paramref name="chief"/>, the chief it was armed for (fix pass 1): one who no longer sits is refused as moved, nothing written.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public ChiefChanged ReplaceChief(ChiefSeat seat, Func<string, bool> knownRuntime, DateTimeOffset now) => db.Write(_ =>
+    public ChiefChanged ReplaceChief(string? chief, ChiefSeat seat, Func<string, bool> knownRuntime, DateTimeOffset now) => db.Write(_ =>
     {
         OwnersWhileNoBoard("replacing the chief");
-        var sitting = Chief() ?? throw Refused("the organisation has no chief to replace: 'Appoint a chief' appoints one.");
-        return SeatChief(sitting, seat, OrgDecider.Owner, "press", null, PolicyAllowance(), knownRuntime, now);
+        if (Chief() is null) throw Refused("the organisation has no chief to replace: 'Appoint a chief' appoints one.");
+        return SeatChief(chief, seat, OrgDecider.Owner, "press", null, PolicyAllowance(), knownRuntime, now);
     });
 
     /// <summary>
     /// THE OWNER REMOVES THE CHIEF, AT ANY TIME (<c>U-org-chief</c> item 2; R24 Q12: "his narrowing veto removes a chief") — in-process only,
     /// whether or not a board seat is active: the sitting chief ended through the restructuring's transaction, the root left VACANT, and NO
-    /// predecessor restored — a removal only takes away. Refused only when no chief sits.
+    /// predecessor restored — a removal only takes away. The press names <paramref name="chief"/>, the chief it was armed for (fix pass 1:
+    /// anything that removes permission is two presses ABOUT ITS SUBJECT): refused when no chief sits, and as moved when another does.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public ChiefChanged VacateChief(DateTimeOffset now) => db.Write(_ =>
-        SeatChief(Chief(), null, OrgDecider.Owner, "press", null, null, null, now));
+    public ChiefChanged VacateChief(string? chief, DateTimeOffset now) => db.Write(_ =>
+    {
+        if (Chief() is null) throw Refused("the organisation has no chief to remove.");
+        return SeatChief(chief, null, OrgDecider.Owner, "press", null, null, null, now);
+    });
 
     /// <summary>The owner's appointment and replacement are his only while no board seat is active; after that, a two-seat board act.</summary>
     void OwnersWhileNoBoard(string doing)

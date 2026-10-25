@@ -119,7 +119,7 @@ public partial class OrgChiefTests
 
         // OVERTAKEN: the owner removes the chief while a replacement waits; its confirmation closes it stale and applies nothing.
         var replace = board.Propose(Act("board-1", ChiefIntent(chief, Codex)), Now);
-        org.VacateChief(Now);
+        org.VacateChief(org.Chief(), Now);
         var stale = board.Decide(replace.Act.Id, "board-2", null, true, replace.Act.IntentSha256, "my own reading", Now);
         Assert.Equal(BoardActEventKind.Stale, stale.Status);
         Assert.Contains("org.chief", stale.Words, StringComparison.Ordinal);

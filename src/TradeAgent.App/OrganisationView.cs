@@ -294,6 +294,11 @@ sealed class OrganisationPage
 /// one; and <b>Remove the chief</b> always. Two presses each (the app's two-step button): the first only arms and writes nothing. The seat a new chief runs on is chosen from a CLOSED list of presses, so no scroll over the page can
 /// change it (the owner, 2026-10-22). No veto press: that is <c>U-org-surface-b</c>'s. Built once; <see cref="Update"/> writes text and visibility
 /// in place, and disarms a press it hides.
+///
+/// <para><b>A half-press is about the chief it was armed for</b> (fix pass 1; Codex P1): the card keeps the chief it last showed; a refresh
+/// that shows another — the board replaced or removed it, or seated one — disarms every press, so a press armed against A is never
+/// completed against B; and Replace, Activate and Remove name that chief to the store, which refuses one who no longer sits as moved, so
+/// a change with no refresh between the presses writes nothing either.</para>
 /// </summary>
 sealed class ChiefCard
 {
@@ -307,6 +312,7 @@ sealed class ChiefCard
     readonly StackPanel _seatRow;
     readonly List<(ChiefSeat Seat, Button Press)> _choices = [];
     ChiefSeat? _chosen;
+    string? _shown;
 
     public Control Root { get; }
     internal Button Appoint { get; }
@@ -328,9 +334,9 @@ sealed class ChiefCard
 
         string? NoSeat() => _chosen is null ? Labels.ChiefChooseSeat : null;
         Appoint = Ui.Confirm(Labels.ChiefAppoint, Labels.ChiefAppointConfirm, () => Said(_presses.Appoint(_chosen!)), NoSeat, Said);
-        Replace = Ui.Confirm(Labels.ChiefReplace, Labels.ChiefReplaceConfirm, () => Said(_presses.Replace(_chosen!)), NoSeat, Said);
-        Activate = Ui.Confirm(Labels.ChiefActivate, Labels.ChiefActivateConfirm, () => Said(_presses.Activate()));
-        Remove = Ui.Confirm(Labels.ChiefRemove, Labels.ChiefRemoveConfirm, () => Said(_presses.Remove()));
+        Replace = Ui.Confirm(Labels.ChiefReplace, Labels.ChiefReplaceConfirm, () => Said(_presses.Replace(_shown, _chosen!)), NoSeat, Said);
+        Activate = Ui.Confirm(Labels.ChiefActivate, Labels.ChiefActivateConfirm, () => Said(_presses.Activate(_shown)));
+        Remove = Ui.Confirm(Labels.ChiefRemove, Labels.ChiefRemoveConfirm, () => Said(_presses.Remove(_shown)));
 
         var title = Ui.With(Ui.Body(Labels.ChiefTitle), t => t.FontWeight = FontWeight.SemiBold);
         var row = Ui.Wrap(Theme.S2, Appoint, Replace, Activate, Remove);
@@ -374,9 +380,17 @@ sealed class ChiefCard
         _refresh();
     }
 
-    /// <summary>In place: who sits, whose the presses are, and which presses are drawn — a press hidden is disarmed first.</summary>
+    /// <summary>
+    /// In place: who sits, whose the presses are, and which presses are drawn — a press hidden is disarmed first, and EVERY press is disarmed
+    /// when the chief shown changes, since each was armed about the chief it showed.
+    /// </summary>
     public void Update(OrgUnitWords root)
     {
+        if (root.HeadId != _shown)
+        {
+            foreach (var press in new[] { Appoint, Replace, Activate, Remove }) Ui.DisarmConfirm(press);
+            _shown = root.HeadId;
+        }
         bool board;
         try { board = _presses.BoardActive(); }
         catch (Exception) { board = true; }

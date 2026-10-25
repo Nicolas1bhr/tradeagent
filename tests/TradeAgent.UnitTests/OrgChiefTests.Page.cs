@@ -26,9 +26,11 @@ public partial class OrgChiefTests
             () => new TradeAgent.Core.Board.BoardReader(db).AnyActive,
             () => [Puppet, Codex],
             seat => Said(() => $"appointed {new OrgStore(db).AppointChief(seat, Known, Now).Chief}"),
-            seat => Said(() => $"replaced by {new OrgStore(db).ReplaceChief(seat, Known, Now).Chief}"),
-            () => Said(() => $"activated {new OrgStore(db).Activate(new OrgStore(db).Chief()!, _ => SeatClasses.Puppet, 3, Now, () => false).Id}"),
-            () => Said(() => $"removed {new OrgStore(db).VacateChief(Now).Was}"))
+            (chief, seat) => Said(() => $"replaced by {new OrgStore(db).ReplaceChief(chief, seat, Known, Now).Chief}"),
+            chief => Said(() => new OrgStore(db).Chief() is { } sitting && sitting == chief
+                ? $"activated {new OrgStore(db).Activate(sitting, _ => SeatClasses.Puppet, 3, Now, () => false).Id}"
+                : $"{new OrgStore(db).Chief()} is the chief now, not {chief}: nothing was activated"),
+            chief => Said(() => $"removed {new OrgStore(db).VacateChief(chief, Now).Was}"))
     };
 
     static string Said(Func<string> press)
@@ -136,5 +138,49 @@ public partial class OrgChiefTests
         Press(card.Remove);
         Assert.Null(org.Chief());
         Assert.Equal(OrgPositionStatus.Ended, org.Position(chief)!.Status);
+    }
+
+    /// <summary>
+    /// (7c) A HALF-PRESS IS ABOUT THE CHIEF IT WAS ARMED FOR (fix pass 1; Codex P1): "Remove the chief" armed while A sits, then a board act
+    /// replaces A with B. A refresh that shows B disarms the press, so the next press only arms it again and B still sits; and with no
+    /// refresh between, the second press acts on A, the chief it was armed for — refused as moved, nothing written, B still sitting. Anything
+    /// that removes permission is two presses about its subject. RED at base: the second press removed B, never confirmed.
+    /// </summary>
+    [Fact]
+    public void A_half_press_is_about_the_chief_it_was_armed_for()
+    {
+        using var db = TestEnv.NewDb();
+        var org = new OrgStore(db);
+        var board = Board(db);
+        var page = new OrganisationPage(Sources(db));
+        var a = org.AppointChief(Puppet, Known, Now).Chief!;
+        ActivateBoard(db, "board-1", "board-2");
+        var card = Card(page);
+
+        string Replaced(string from)
+        {
+            var p = board.Propose(Act("board-1", ChiefIntent(from, Puppet)), Now);
+            board.Decide(p.Act.Id, "board-2", null, true, p.Act.IntentSha256, "my own reading", Now);
+            return org.Chief()!;
+        }
+
+        // REFRESHED BETWEEN: the press armed for A is disarmed once the card shows B.
+        Press(card.Remove);
+        Assert.True(Ui.IsArmed(card.Remove));
+        var b = Replaced(a);
+        page.Update();
+        Assert.False(Ui.IsArmed(card.Remove), $"the press armed for {a} stayed armed once {b} sat");
+        Press(card.Remove);
+        Assert.Equal(b, org.Chief());
+        Assert.True(Ui.IsArmed(card.Remove));
+
+        // NOT REFRESHED BETWEEN: armed for B, the board seats C; the second press names B, and is refused as moved.
+        var c = Replaced(b);
+        var before = Written(db);
+        Press(card.Remove);
+        Assert.Equal(c, org.Chief());
+        Assert.Equal(before, Written(db));
+        Assert.Contains($"{c} is the chief now, not {b}", card.Done.Text, StringComparison.Ordinal);
+        Assert.False(Ui.IsArmed(card.Remove));
     }
 }

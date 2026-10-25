@@ -56,7 +56,7 @@ public partial class OrgChiefTests
         var passed = org.RaiseEscalation(DivHead, null, "the division's day is spent before noon", null, Now);
         Assert.Null(passed.Recipient);
         Assert.Contains(passed.Skipped, s => s.Contains(dormant, StringComparison.Ordinal) && s.Contains("not active", StringComparison.Ordinal));
-        org.VacateChief(Now);
+        org.VacateChief(org.Chief(), Now);
 
         var chief = ActiveChief(db);
         var raised = org.RaiseEscalation(DivHead, null, "the division needs a second family", null, Now);
