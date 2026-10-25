@@ -1,0 +1,59 @@
+using TradeAgent.Core;
+using TradeAgent.Core.Board;
+using TradeAgent.Core.Db;
+using Xunit;
+
+namespace TradeAgent.Tests.Unit;
+
+public partial class BoardActTests
+{
+    /// <summary>
+    /// AN ENVELOPE'S LIFE FOLLOWS EVERY ACT SINCE ITS LAST GRANT, NOT ONLY THE LAST ONE (<c>U-board-b2</c> item 8, from U-board-b1's re-review
+    /// 2): an envelope of 0.05 granted for ten days; on day nine two seats widen it to 0.10, then one seat narrows it to 0.08. With a health
+    /// pass between the two acts and without one, the 0.08 envelope the next pass grants ends on day NINETEEN — the widening's authorised
+    /// life — and a narrowing alone still never lengthens one (b1's rule, <c>A_narrowing_never_lengthens_an_envelopes_life</c>). RED before
+    /// the fix: with no pass between, it ended on day ten. Watched red with only the last act read.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_envelopes_life_follows_every_act_since_its_last_grant(bool passBetween)
+    {
+        using var db = TestEnv.NewDb();
+        SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
+        Activate(db, "board-1", "board-2");
+        var clock = new Settable(DateTimeOffset.UtcNow);
+        var inner = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker
+            { AccountId = BoardFounding.PaperAccount, IsSimulated = true }) { QuoteClock = clock };
+        var conn = new RecordingConnector(inner, BoardFounding.PaperVenue);
+        await using var gw = new TradeAgent.Gateway.TradingGateway(db, conn, new HealthRegistry(), new TradeAgent.Gateway.GatewayOptions { Clock = clock });
+        gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now);
+        var first = Assert.Single(gw.Envelopes.All(), Stands);
+        var day0 = clock.Now;
+        Assert.Equal(day0.AddDays(10), first.ExpiresAt);
+
+        clock.Now = day0.AddDays(9);
+        string With(decimal quantity)
+        {
+            var o = System.Text.Json.Nodes.JsonNode.Parse(EnvelopeWith("days", "10"))!.AsObject();
+            o["max_quantity"] = quantity;
+            return o.ToJsonString();
+        }
+        var widened = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(With(0.05m)), Json(With(0.10m)))));
+        gw.BoardDecide(widened.Act.Id, "board-2", null, true, widened.Act.IntentSha256, "the book has room");
+        if (passBetween)
+        {
+            await gw.RefreshHealthAsync();
+            Assert.Equal((0.10m, day0.AddDays(19)), Assert.Single(gw.Envelopes.All(), Stands) is var w ? (w.MaxQuantity, w.ExpiresAt) : default);
+        }
+        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(With(0.10m)), Json(With(0.08m)))));
+        await gw.RefreshHealthAsync();
+
+        var granted = Assert.Single(gw.Envelopes.All(), Stands);
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.Equal((0.08m, day0.AddDays(19)), (granted.MaxQuantity, granted.ExpiresAt));
+    }
+}
