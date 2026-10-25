@@ -1786,7 +1786,7 @@ public sealed class TurnMeter
             var (from, to) = OwnerDay.Window(now);
             // A SEAT OF THE SECURITY BOARD READS THE BOARD'S OWN BUDGET (U-board-b2 item 2): every board seat's rows, against its share.
             if (BoardSeats.IsBoardId(role))
-                return (_attempts.BoardTotalsBetween(from, to, ceiling), BoardShare() * (ceiling == BillingClasses.Plan ? planCap : cap));
+                return (_attempts.BoardTotalsBetween(from, to, ceiling), BoardShare() * planCap);
             (AiAttemptTotals Totals, decimal Envelope)? binding = null;
             var (money, plan) = FundingOf(role, cap, planCap);
             // THE ENVELOPES OF THIS CEILING, over this ceiling's rows (U-billing-classes), as the gate reads them.
