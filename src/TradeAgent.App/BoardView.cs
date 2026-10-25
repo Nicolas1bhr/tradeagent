@@ -258,8 +258,10 @@ sealed class BoardPage
             OrgText.Set(title, Labels.BoardActTitle(row.Id, row.Kind, row.Seat, OrgText.When(row.At)));
             OrgText.Set(status, Labels.BoardActStatus(a.Status));
             OrgText.Set(intent, $"Bound to its exact intent (fingerprint {Short(row.IntentSha256)}): {row.Intent}");
+            // A CHIEF ACT WRITES NO POLICY VERSION: its event's version is the one it was decided under (fix pass 1).
+            var chiefAct = BoardIntent.Parse(row.Intent).Intent?.Changes is [{ Field: BoardDirection.Chief }];
             OrgText.Set(events, string.Join("\n", a.Events.Select(e => Labels.BoardActEventLine(e.Kind, e.Seat, OrgText.When(e.At),
-                e.ProposerFamily, e.DeciderFamily, e.SameFamily, e.PolicyVersion, e.Detail))));
+                e.ProposerFamily, e.DeciderFamily, e.SameFamily, e.PolicyVersion, chiefAct, e.Detail))));
             OrgText.Set(rationales, string.Join("\n", a.Events.Where(e => e.Rationale is { Length: > 0 })
                 .Select(e => OrgText.Claim(e.Seat, e.Rationale!)).Prepend(OrgText.Claim(row.Seat, row.Rationale))));
             OrgText.Set(evidence, Labels.BoardActEvidenceClass(row.EvidenceClass));
