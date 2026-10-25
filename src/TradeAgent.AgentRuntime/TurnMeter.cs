@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
@@ -1182,6 +1183,8 @@ public sealed class TurnMeter
     /// </summary>
     (IReadOnlyList<FundedUnit> Money, IReadOnlyList<FundedUnit> Plan) FundingOf(string? role, decimal cap, decimal planCap)
     {
+        // A SEAT OF THE SECURITY BOARD IS FUNDED BY NO UNIT OF THE CHART (U-board-b2): it is outside it, so no chain is read for it.
+        if (BoardSeats.IsBoardId(role)) return ([], []);
         var line = new OrgStore(_db).FundingLine(Key(role));
         if (role is null)
         {
@@ -1486,7 +1489,11 @@ public sealed class TurnMeter
                 DeclaredClass = Declared(id),
                 ProvenCell = new CellProofStore(_db).HoldsProof(),
                 ActiveBeyondLegacy = chart.ActivePositionsBeyondLegacy(),
-                OpenUnconfined = OpenUnconfined(id)
+                OpenUnconfined = OpenUnconfined(id),
+                // A BOARD SEAT'S OWN FACTS (U-board-b2 item 1): its recorded class and its state now, and whether this launch runs on a
+                // test host's puppet — the seat's runtime as resolved for this admission, never a file's word.
+                Board = BoardSeats.IsBoardId(id) ? new BoardStore(_db).Seat(id) : null,
+                Puppet = PuppetRuntime(role)
             };
         }
         catch (Exception ex)
@@ -1498,11 +1505,21 @@ public sealed class TurnMeter
 
         // A POSITION BEYOND THE LEGACY PAIR LAUNCHES ONLY FROM A SEAT THIS METER VERIFIED: a conversation that declared none is not
         // one whose boundary anybody established.
-        if (verifiedClass is null && standing is { IsLegacy: false })
+        if (verifiedClass is null && (standing is { IsLegacy: false } || BoardSeats.IsBoardId(id)))
             return new TurnRefusal(RefusalKind.HostOrLaunch,
                 $"'{id}' has no seat this meter verified, so nothing is started for it. Its wakes are kept.");
 
         return PositionActivation.Decide(id, standing, facts, verifiedClass);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="role"/>'s seat runs on a PUPPET — the reserved puppet runtime, in a test host, which runs no model
+    /// (<see cref="PuppetSeats"/>). False wherever the seat cannot be read, and always false in the product.
+    /// </summary>
+    bool PuppetRuntime(string? role)
+    {
+        try { return PuppetSeats.TestHost && _seat(role).Runtime == RuntimeManifest.PuppetId; }
+        catch (Exception) { return false; }
     }
 
     /// <summary>The DECLARED class of the seat <paramref name="role"/> would launch on, as the app answers it; null for none or a throw.</summary>
@@ -1829,6 +1846,21 @@ public sealed class TurnMeter
     AiAdmission? NotAnActivePosition(string? role)
     {
         if (role is null) return null;
+
+        // A SEAT OF THE SECURITY BOARD IS ADMITTED ONLY WHILE ITS STATE NOW IS ACTIVE (U-board-b2 item 1): dormant, retired or no such
+        // seat is a refusal about the seat — nothing written, nothing consumed — and a state nobody could read refuses about the host.
+        if (BoardSeats.IsBoardId(role))
+        {
+            TurnRefusal? standing;
+            try { standing = BoardSeatGate.Standing(role, new BoardStore(_db).Seat(role)); }
+            catch (Exception ex)
+            {
+                var unread = PositionActivation.ChartUnreadable(role, $"the board's seats could not be read: {ex.Message}");
+                return new AiAdmission { Refusal = unread.Words, Kind = unread.Kind };
+            }
+            return standing is null ? null : new AiAdmission { Refusal = standing.Words, Kind = standing.Kind };
+        }
+
         try
         {
             if (!OrgStore.IsAppPrincipal(role) && new OrgStore(_db).Position(role) is { Status: OrgPositionStatus.Active })
