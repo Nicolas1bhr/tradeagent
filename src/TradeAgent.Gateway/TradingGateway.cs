@@ -514,14 +514,28 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 // ANY version after the one that granted the policy's last envelope on this pair widened the terms — so a two-seat widening
                 // followed by a one-seat narrowing with no pass between keeps the widening's authorised life. A narrowing alone still ends
                 // no later than that envelope did, and an envelope whose life is over is not revived by one.
-                var previous = _envelopes.All(int.MaxValue)
+                // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2): an envelope granted under a version whose act
+                // the owner vetoed carries revoked authority, so the life a narrowing may keep is read from the latest envelope granted under
+                // authority that still stands — capped by every vetoed one granted after it, so where in doubt the life errs SHORT — and with
+                // none, a narrowing grants nothing. WidenedSince skips a vetoed version too.
+                var granted = _envelopes.All(int.MaxValue)
                     .Where(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
                                 && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal) && PolicyGranted(e))
-                    .OrderByDescending(e => e.GrantedAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).FirstOrDefault();
-                var widened = WidenedSince(previous is null ? null : GrantedUnder(previous), setBy);
-                if (!widened && previous is not null && previous.ExpiresAt < until)
+                    .OrderByDescending(e => e.GrantedAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).ToList();
+                PaperEnvelopeRow? previous = null;
+                DateTimeOffset? lifeLeft = null;
+                foreach (var e in granted)
                 {
-                    until = previous.ExpiresAt;
+                    lifeLeft = lifeLeft is { } l && l < e.ExpiresAt ? l : e.ExpiresAt;
+                    if (GrantedUnder(e) is { } v && _board.VetoedVersion(v)) continue;
+                    previous = e;
+                    break;
+                }
+                var widened = WidenedSince(previous is not null ? GrantedUnder(previous) : granted.Count > 0 ? GrantedUnder(granted[0]) : null, setBy);
+                if (!widened && previous is null && granted.Count > 0) return null;
+                if (!widened && lifeLeft is { } left && left < until)
+                {
+                    until = left;
                     if (until <= now) return null;
                 }
                 terms = stated;
@@ -550,13 +564,15 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <summary>
     /// WHETHER THE ENVELOPE'S TERMS WERE WIDENED BY ANY VERSION AFTER <paramref name="grantedUnder"/> UP TO <paramref name="setBy"/>
     /// (<c>U-board-b2</c> item 8): each version's terms against the version before it, by <see cref="BoardDirection"/>'s one table. With no
-    /// grant to measure from — or one whose version cannot be read — only the version that set the terms is read, as before.
+    /// grant to measure from — or one whose version cannot be read — only the version that set the terms is read, as before. A version
+    /// whose act the owner VETOED never counts (<see cref="BoardStore.VetoedVersion"/>; the fix pass's P1-2): revoked authority renews no life.
     /// </summary>
     bool WidenedSince(int? grantedUnder, int setBy)
     {
         var from = grantedUnder is { } g && g < setBy ? g : setBy - 1;
         for (var v = from + 1; v <= setBy; v++)
-            if (_board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
+            if (!_board.VetoedVersion(v)
+                && _board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
                 && BoardDirection.Of("paper_envelope", before, after) == BoardDirectionKind.Widens)
                 return true;
         return false;

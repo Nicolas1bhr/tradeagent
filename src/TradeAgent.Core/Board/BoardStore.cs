@@ -516,6 +516,25 @@ public sealed class BoardStore(Database db)
     public string? EnvelopeTermsAt(int version) =>
         Rows().FirstOrDefault(r => r.Version == version) is { } row ? ValueAt(row.Body, "paper_envelope") : null;
 
+    /// <summary>
+    /// WHETHER <paramref name="version"/>'S AUTHORITY WAS REVOKED BY THE OWNER'S VETO (<c>U-board-b2</c> fix pass, the review's P1-2): true for a
+    /// version a board act wrote whose act the owner has since vetoed — and, failing closed, for a version that cannot be read or a board
+    /// version that names no act. The app's founding and the owner's own veto versions are never vetoed. A reader that would lengthen
+    /// anything on a version's authority asks this first, so revoked authority renews nothing.
+    /// </summary>
+    public bool VetoedVersion(int version)
+    {
+        var row = _db.Read(_ =>
+        {
+            using var c = _db.Cmd("SELECT decider, act_id FROM board_policy WHERE version=$v", ("$v", version));
+            using var r = c.ExecuteReader();
+            return r.Read() ? (Decider: r.GetString(0), Act: Sql.S(r.GetValue(1))) : ((string Decider, string? Act)?)null;
+        });
+        if (row is not { } found) return true;
+        if (found.Decider != BoardDecider.Board) return false;
+        return found.Act is not { } act || Status(act) == BoardActEventKind.Vetoed;
+    }
+
     /// <summary>The canonical body of the version in force, as stored.</summary>
     string BodyOf(BoardPolicyInForce inForce) => Rows().Single(r => r.Version == inForce.Version).Body;
 
