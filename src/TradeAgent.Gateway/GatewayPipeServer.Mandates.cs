@@ -195,18 +195,23 @@ public sealed partial class GatewayPipeServer
     /// <summary>
     /// THE CALLER'S OWN MANDATES, NEWEST FIRST — those it holds and those it decides, never another position's: each with its status
     /// (its latest event), the issuer's objective as written, and the app's measured spend. Bounded twice and never silently: at
-    /// most <see cref="MandateListMax"/> and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes them; 'more' says it
-    /// stopped.
+    /// most <see cref="MandateListMax"/> and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes them; 'more' and 'cut'
+    /// say it stopped, and 'next_before' — the last row's id, in the order served (<see cref="OrgStore.MandatesOf"/>: created,
+    /// then id, newest first) — continues it exactly as 'before' (<c>U-verbs-a-followups</c>). A 'before' that is none of the
+    /// caller's mandates is refused, never read as the start.
     /// </summary>
     object MandateList(AgentContext ctx, IpcRequest req)
     {
         OnlyDeclared(req, MandateArgsWhy);
         var caller = OrgVerbCaller(ctx, Capability.Reads);
+        var all = Gateway.Org.MandatesOf(caller).ToList();
+        var before = req.Str("before");
+        var from = From(all.FindIndex(m => m.Id == before), before, "mandate");
         var served = new List<object>();
         // THE FRAME FIRST, at its widest, and a comma between two rows: the WHOLE answer is bounded, not its rows alone.
-        long spent = ReplyBytes(ListAnswer([], "bytes"));
-        string? cappedBy = null;
-        foreach (var m in Gateway.Org.MandatesOf(caller))
+        long spent = ReplyBytes(ListAnswer([], "bytes", WidestId));
+        string? cappedBy = null, last = null;
+        foreach (var m in all.Skip(from))
         {
             if (served.Count == MandateListMax) { cappedBy = "count"; break; }
             var row = new
@@ -226,17 +231,34 @@ public sealed partial class GatewayPipeServer
             if (served.Count > 0 && spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = "bytes"; break; }
             spent += cost;
             served.Add(row);
+            last = m.Id;
         }
-        return ListAnswer(served, cappedBy);
+        return ListAnswer(served, cappedBy, cappedBy is null ? null : last);
     }
 
-    static object ListAnswer(List<object> served, string? cappedBy) => new
+    static object ListAnswer(List<object> served, string? cappedBy, string? next) => new
     {
         mandates = served,
         more = cappedBy is not null,
         capped_by = cappedBy,
+        next_before = next,
+        cut = Cut(served.Count, cappedBy, next),
         note = "Each goal is its issuer's words; the status, the allocation and the measured spend are TradeAgent's records."
     };
+
+    /// <summary>A mandate id at its widest, for measuring a frame before its rows: the bound is on the whole answer.</summary>
+    static readonly string WidestId = new('f', 64);
+
+    /// <summary>
+    /// THE LINE THAT SAYS A LIST OF MANDATES IS CUT, AND HOW TO CONTINUE IT (<c>U-verbs-a-followups</c>), or null for a whole list —
+    /// never a list that merely ends at a bound.
+    /// </summary>
+    static string? Cut(int served, string? cappedBy, string? next) => cappedBy is null ? null
+        : $"The list is cut after {served.ToString(CultureInfo.InvariantCulture)} mandates "
+          + $"({(cappedBy == "count" ? $"at most {MandateListMax.ToString(CultureInfo.InvariantCulture)} a call" : "the answer's size bound")}): "
+          + (next is null
+              ? "nothing could be served after the frame — read them with 'mandate-list'."
+              : $"ask again with 'before' set to '{next}' for the older ones.");
 
     /// <summary>
     /// THE CALLER'S OWN PLACE ON THE CHART (<c>org-show</c>, <c>U-org-verbs-a</c>; ORCHESTRATION § 2.9) — and nobody else's: its unit,
@@ -246,13 +268,15 @@ public sealed partial class GatewayPipeServer
     /// its OPEN mandates, held and decided, newest first, each with its status and measured spend — read from
     /// <see cref="OrgStore"/>'s own reads (<see cref="OrgStore.UnitOf"/>, <see cref="OrgStore.Ancestors"/>,
     /// <see cref="OrgStore.MandatesOf"/>, <see cref="OrgStore.SpendOf"/>), never a packet. Bounded by
-    /// <see cref="MandateListMax"/> mandates and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes it; 'more' says
-    /// it stopped, and <c>mandate-list</c> reads them all.
+    /// <see cref="MandateListMax"/> mandates and <see cref="ResearchLedger.MaxReadBytes"/> as the wire writes it; 'more' and 'cut'
+    /// say it stopped, and 'next_before' — the last open mandate served, in the order <see cref="OrgStore.MandatesOf"/> reads —
+    /// continues it as 'before' (<c>U-verbs-a-followups</c>): every open mandate is reachable, and a 'before' that is none of the
+    /// caller's mandates is refused.
     /// </summary>
     object OrgShow(AgentContext ctx, IpcRequest req)
     {
-        OnlyDeclared(req, "org-show reads YOUR place on the chart and nothing else: it takes no argument, and names no other "
-                          + "position's. Nothing was read.");
+        OnlyDeclared(req, "org-show reads YOUR place on the chart and nothing else: it takes only 'before', the continuation an "
+                          + "answer handed back, and names no other position's. Nothing was read.");
         var caller = OrgVerbCaller(ctx, Capability.Reads);
         var org = Gateway.Org;
         var unit = org.UnitOf(caller)
@@ -310,12 +334,15 @@ public sealed partial class GatewayPipeServer
 
         var held = new List<object>();
         var decided = new List<object>();
-        var open = org.MandatesOf(caller).Where(m => org.IsOpen(m.Id)).ToList();
-        long spent = ReplyBytes(ShowOrg(caller, units, held, decided, true, note)) + 64;
-        var more = false;
+        // THE CONTINUATION IS READ IN EVERY MANDATE OF THE CALLER'S, OPEN OR NOT: one that closed between two calls still continues.
+        var all = org.MandatesOf(caller).ToList();
+        var before = req.Str("before");
+        var open = all.Skip(From(all.FindIndex(m => m.Id == before), before, "mandate")).Where(m => org.IsOpen(m.Id));
+        long spent = ReplyBytes(ShowOrg(caller, units, held, decided, "bytes", WidestId, note)) + 64;
+        string? cappedBy = null, last = null;
         foreach (var m in open)
         {
-            if (held.Count + decided.Count == MandateListMax) { more = true; break; }
+            if (held.Count + decided.Count == MandateListMax) { cappedBy = "count"; break; }
             var mine = m.Holder == caller;
             var row = new
             {
@@ -329,21 +356,26 @@ public sealed partial class GatewayPipeServer
                 measured_spend = Measured(org.SpendOf(m.Id))
             };
             var cost = ReplyBytes(row) + 1;
-            if (spent + cost > ResearchLedger.MaxReadBytes) { more = true; break; }
+            if (spent + cost > ResearchLedger.MaxReadBytes) { cappedBy = "bytes"; break; }
             spent += cost;
             (mine ? held : decided).Add(row);
+            last = m.Id;
         }
-        return ShowOrg(caller, units, held, decided, more, note);
+        return ShowOrg(caller, units, held, decided, cappedBy, cappedBy is null ? null : last, note);
     }
 
-    static object ShowOrg(string caller, List<object> chain, List<object> held, List<object> decided, bool more, string envelopes) => new
+    static object ShowOrg(string caller, List<object> chain, List<object> held, List<object> decided, string? cappedBy, string? next,
+        string envelopes) => new
     {
         position = caller,
         unit = chain[0],
         chain,
         held,
         decided,
-        more,
+        more = cappedBy is not null,
+        capped_by = cappedBy,
+        next_before = next,
+        cut = Cut(held.Count + decided.Count, cappedBy, next),
         envelopes_note = envelopes,
         note = "Your own place on the chart: your unit, the line above it to the owner, and your open mandates. The chart, the "
                + "statuses, the envelopes and the spend are TradeAgent's records; a goal is its issuer's words — 'mandate-show' reads one."
