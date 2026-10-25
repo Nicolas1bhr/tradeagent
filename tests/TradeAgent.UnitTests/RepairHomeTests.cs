@@ -115,6 +115,101 @@ public class RepairHomeTests
         Assert.True(Directory.Exists(Path.Combine(home, Canon.CliFile)), "the refused home was changed");
         Assert.NotNull(WorkspaceBuilder.RefusalFor(home));
     }
+
+    /// <summary>
+    /// A REPAIR NEVER MOVES A FOLDER THROUGH A LINK (the Codex review's [P1]): a <c>workspace/.refused</c> that is already a link — into the
+    /// owner's scanned inbox, or out of the workspace — refuses the repair in words naming it, and the refused home, the link and where it
+    /// points are byte for byte as they were. Before the fix the move followed the link and the cell's folder landed in the inbox.
+    /// </summary>
+    [Theory]
+    [InlineData("inbox")]
+    [InlineData("outside")]
+    public void A_refused_dir_that_is_a_link_refuses_the_repair_and_changes_nothing(string into)
+    {
+        if (OperatingSystem.IsWindows()) return;   // no cell runs there and the repair refuses first (the first test asserts it)
+        var (root, home, files, _) = Refused();
+        var target = into == "inbox"
+            ? Path.Combine(root, MaterialScanner.InboxDir)
+            : Path.Combine(root, "..", $"outside-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "owner.txt"), "the owner's own document");
+        var refused = Path.Combine(root, WorkspaceBuilder.RefusedDir);
+        Directory.CreateSymbolicLink(refused, target);
+        var (homeBefore, targetBefore) = (Tree(home), Tree(target));
+
+        var result = WorkspaceBuilder.RepairHome(Ctx(), CouncilRoles.Research, root, files, () => At);
+
+        Assert.False(result.Repaired, result.Words);
+        Assert.Null(result.Aside);
+        Assert.Contains(refused, result.Words, StringComparison.Ordinal);
+        Assert.Contains("link", result.Words, StringComparison.Ordinal);
+        Assert.Contains("Nothing was changed", result.Words, StringComparison.Ordinal);
+        Assert.Equal(homeBefore, Tree(home));
+        Assert.Equal(targetBefore, Tree(target));
+        Assert.Equal(target, new FileInfo(refused).LinkTarget);
+        Assert.NotNull(WorkspaceBuilder.RefusalFor(home));
+    }
+
+    /// <summary>
+    /// THE HOME ITSELF, OR THE WORKSPACE, AS A LINK REFUSES THE REPAIR TOO (the fixer's cover of the same finding): nothing on this path
+    /// refused either before, so a repair renamed a linked home's link or moved a home through a linked workspace. Now each refuses in words
+    /// naming the link, and the link and what it points at are as they were.
+    /// </summary>
+    [Theory]
+    [InlineData("home")]
+    [InlineData("workspace")]
+    public void A_home_or_workspace_that_is_a_link_refuses_the_repair_and_changes_nothing(string which)
+    {
+        if (OperatingSystem.IsWindows()) return;   // no cell runs there and the repair refuses first (the first test asserts it)
+        var (root, home, files, _) = Refused();
+        string ws = root, link, real;
+        if (which == "home")
+        {
+            real = Path.Combine(root, "..", $"elsewhere-{Guid.NewGuid():n}");
+            Directory.Move(home, real);
+            Directory.CreateSymbolicLink(home, real);
+            link = home;
+        }
+        else
+        {
+            real = root;
+            ws = link = root + "-link";
+            Directory.CreateSymbolicLink(link, real);
+            WorkspaceBuilder.BuildAll(Ctx(), ws, files);                      // the start, through the linked workspace, that cannot rebuild it
+        }
+        var linkedHome = WorkspaceBuilder.HomeOf(ws, CouncilRoles.Research);
+        Assert.NotNull(WorkspaceBuilder.RefusalFor(linkedHome));
+        var before = Tree(real);
+
+        var result = WorkspaceBuilder.RepairHome(Ctx(), CouncilRoles.Research, ws, files, () => At);
+
+        Assert.False(result.Repaired, result.Words);
+        Assert.Contains(link, result.Words, StringComparison.Ordinal);
+        Assert.Contains("Nothing was changed", result.Words, StringComparison.Ordinal);
+        Assert.Equal(before, Tree(real));
+        Assert.Equal(real, new FileInfo(link).LinkTarget);
+        Assert.NotNull(WorkspaceBuilder.RefusalFor(linkedHome));
+    }
+
+    /// <summary>Every entry under <paramref name="dir"/>, never following a link: a link by its target, a file by its bytes.</summary>
+    static List<string> Tree(string dir)
+    {
+        var all = new List<string>();
+        void Walk(string at)
+        {
+            foreach (var e in Directory.GetFileSystemEntries(at).Order(StringComparer.Ordinal))
+            {
+                var rel = Path.GetRelativePath(dir, e);
+                var info = new FileInfo(e);
+                if (info.LinkTarget is { } to) all.Add($"{rel} -> {to}");
+                else if (Directory.Exists(e)) { all.Add($"{rel}/"); Walk(e); }
+                else all.Add($"{rel} = {Convert.ToHexString(File.ReadAllBytes(e))}");
+            }
+        }
+        Walk(dir);
+        return all;
+    }
+
     /// <summary>A position beyond the legacy pair in the app's own tree whose folder the last start could not rebuild, by a fresh id.</summary>
     static (string Pos, string Home) RefusedInTheAppsTree(AppHost host)
     {
