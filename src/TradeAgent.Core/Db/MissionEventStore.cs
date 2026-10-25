@@ -1111,6 +1111,22 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// THE UNTAKEN <see cref="MissionEventKind.CutReview"/> WAKES OF ONE REVIEW EVENT, closed by no launch — consumed by
+    /// <see cref="NoLaunch"/>, <see cref="MissionEventDisposition.Answered"/> with <paramref name="why"/> — and how many
+    /// (<c>U-org-scorecards-b</c> b3): its answer is recorded, so nobody is woken for it again. A wake a launch already took is that
+    /// launch's to settle and is left as it is. The guard is the statement's: that kind and that payload, unconsumed.
+    /// </summary>
+    public int CloseReviewWakes(long eventId, DateTimeOffset at, string why) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET consumed_at=$at, consumed_by=$none, disposition=$d, disposition_detail=$why
+             WHERE kind = $kind AND payload = $id AND consumed_at IS NULL
+            """, ("$at", Sql.T(at)), ("$none", NoLaunch), ("$d", MissionEventDisposition.Answered), ("$why", why),
+            ("$kind", MissionEventKind.CutReview), ("$id", eventId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
     /// BRINGS THE SWEEP'S PENDING RE-WAKE <paramref name="id"/> FORWARD TO <paramref name="dueAt"/> (<c>U-rewake-floor</c>), the time
     /// its holder asked for its own wake, and answers whether it moved. The guard is the statement's: only an unconsumed
     /// <see cref="MissionEventKind.Mandate"/> row of exactly that id, and only ever SOONER — nothing here delays a wake.
