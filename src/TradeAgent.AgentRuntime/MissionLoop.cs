@@ -4444,6 +4444,9 @@ public sealed class MissionLoop
                                        + "raised one (`trade escalation list`)",
         MissionEventKind.Proposal => "the holder of a mandate you decide proposed a finding beyond it — `trade mandate show` has "
                                      + "it; the finding is its claim and grants nothing",
+        MissionEventKind.CutReview => "a cut rule's review reached you — a unit you answer for spent half its day envelope with nothing "
+                                      + "accepted, or a position you decide forecast worse than the base rate; it changed nothing, and you "
+                                      + "answer it with `trade org review-answer` (`trade org show` has the chart)",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };

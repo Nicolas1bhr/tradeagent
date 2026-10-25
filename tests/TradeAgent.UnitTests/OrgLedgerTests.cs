@@ -450,6 +450,11 @@ public class OrgLedgerTests
         // AppointChief, ReplaceChief and VacateChief are the OWNER's in-process route to it (AUTH-001): the first two only while no board
         // seat is active, the removal at any time.
         mandate = [.. mandate, "AppointChief", "Chief", "ReplaceChief", "VacateChief"];
+        // REVISITED, OUT LOUD, BY U-org-scorecards-b: ReviewSweep — the app's cut-rule sweep, on the organisation's tick after the
+        // resolver. It writes org_event (one `review` event, decided by the app, its detail the app's) through the verbs' own Event
+        // helper and one `cut-review` wake per rule, subject and period, in one write — and nothing else: no org_unit, no org_position,
+        // no share, status or seat (OrgReviewTests.A_review_event_changes_no_share_status_or_seat holds that). No op or verb reaches it.
+        mandate = [.. mandate, "ReviewSweep"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

@@ -185,6 +185,13 @@ public static class MissionEventKind
     /// the proposer. Its payload is the act's id; it closes when the seat decides or the act closes.
     /// </summary>
     public const string Board = "board";
+
+    /// <summary>
+    /// A CUT RULE'S REVIEW REACHED ITS REVIEWER (<c>U-org-scorecards-b</c>; ORGANISATION § 8): raised by the app's review sweep, ONCE per
+    /// rule, subject and period, in the write that recorded the <c>review</c> event (<see cref="OrgEventKind.Review"/>). Its payload is that
+    /// event's id; the reviewer answers it with <c>org-review-answer</c>, a record — the review itself changes nothing.
+    /// </summary>
+    public const string CutReview = "cut-review";
 }
 
 /// <summary>
@@ -265,6 +272,10 @@ public static class WakePriority
         // "unblocking an eligible deployment or required data": a proposal before the security board (U-board-b2) holds a change of the
         // limits a deployment runs under until a second seat decides it — the decision another act waits on, as a boundary is.
         [MissionEventKind.Board] = WakeClass.Unblocking,
+
+        // "research", too: a cut rule's review handed up to the head that answers for the unit (U-org-scorecards-b) — classed with the
+        // escalation, the other thing the app hands a head when work is not paying; the work itself, as a report is.
+        [MissionEventKind.CutReview] = WakeClass.Research,
 
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
@@ -550,6 +561,13 @@ public static class MissionEventIds
 
     /// <summary>A board act's ONE wake to one other active seat (<c>U-board-b2</c>), keyed by the act and the seat, so it is raised once.</summary>
     public static string Board(string actId, string seat) => $"{MissionEventKind.Board}:{actId}:{seat}";
+
+    /// <summary>
+    /// A CUT RULE'S ONE WAKE TO ITS REVIEWER (<c>U-org-scorecards-b</c>), keyed by the rule, the subject (a unit or a position) and the
+    /// period (the owner's day, or a manager version and its count of scored forecasts), so a rule raises once per period and a restart
+    /// raises nothing. Its payload is the <c>review</c> event's id.
+    /// </summary>
+    public static string CutReview(string rule, string subject, string period) => $"review:{rule}:{subject}:{period}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,

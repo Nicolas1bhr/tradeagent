@@ -2367,6 +2367,32 @@ public sealed class AppHost : IAsyncDisposable
             var forecasts = new ForecastResolver(db).Sweep(now);
             if (forecasts.Refused.Count > 0)
                 host.Gateway?.Log.Activity($"Forecasts left unresolved: {string.Join(" ", forecasts.Refused)}", "warn");
+            // AND THE CUT RULES' REVIEWS (U-org-scorecards-b), after the resolver, so a forecast resolved this tick scores in them. A review
+            // is one event and one wake to its reviewer, and moves no share, status or seat; a reading it cannot judge is said, once.
+            var org = new OrgStore(db);
+            var reviews = org.ReviewSweep(now, ReviewThresholds.Default, host.Meter is { } meter ? unit => UnitDayOf(org, meter, unit) : null);
+            var unjudged = string.Join(" ", reviews.Unjudged);
+            if (unjudged.Length > 0 && unjudged != _unjudgedReviews)
+                host.Gateway?.Log.Activity($"Reviews not judged: {unjudged}", "warn");
+            _unjudgedReviews = unjudged;
+        }
+
+        string _unjudgedReviews = "";
+
+        /// <summary>
+        /// ONE UNIT'S DAY IN EACH CEILING (<c>U-org-scorecards-b</c>), as admission resolves it: read through a position of its subtree —
+        /// every launch charged to the unit is a launch of one — in both ceilings, from the meter's own reading
+        /// (<see cref="TurnMeter.EnvelopesIn"/>). Empty for a unit with no position below it (nothing can be charged to it); null where a
+        /// ceiling cannot be read: unknown, never zero.
+        /// </summary>
+        static IReadOnlyList<UnitDay>? UnitDayOf(OrgStore org, TurnMeter meter, string unitId)
+        {
+            var inside = org.Subtree(unitId).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+            if (org.Positions().FirstOrDefault(p => inside.Contains(p.UnitId) && p.Status != OrgPositionStatus.Ended) is not { } through)
+                return [];
+            var key = meter.EnvelopesIn(through.Id, BillingClasses.Key);
+            var plan = meter.EnvelopesIn(through.Id, BillingClasses.Plan);
+            return key is null || plan is null ? null : [.. key.Concat(plan).Where(d => d.UnitId == unitId)];
         }
 
         /// <summary>A launch its mandate refused: that mandate's wakes closed and, still open, its decider told, in one write.</summary>

@@ -181,6 +181,14 @@ public static class OrgEventKind
     public const string MandateFenced = "mandate-fenced";
 
     /// <summary>
+    /// A CUT RULE'S REVIEW (<c>U-org-scorecards-b</c>; ORGANISATION § 8, "app review events, not agent appeals"): raised by the app's
+    /// review sweep (<see cref="OrgStore.ReviewSweep"/>), decided by <see cref="OrgDecider.App"/>, its detail the app's — the rule, the
+    /// subject, the period, the measurement and the reviewer. It grants, removes, re-splits and reseats nothing; its reviewer answers it
+    /// with a <c>review-answer</c> record.
+    /// </summary>
+    public const string Review = "review";
+
+    /// <summary>
     /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
     /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
     /// positions instead.
