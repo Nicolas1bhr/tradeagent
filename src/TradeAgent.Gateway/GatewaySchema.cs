@@ -777,6 +777,23 @@ public static class GatewaySchema
                 new("options", "string", false, "A JSON list of the options you weighed, in your words; the act itself when omitted.")
             ]),
 
+        new(Core.Ops.OrgReviewAnswer, "trade org review-answer <event> <choice> <rationale> --forecasts JSON [--refs JSON] [--options JSON]", false,
+            "ANSWER A CUT RULE'S REVIEW WITH A RECORD — one the app woke you for with a 'cut-review' wake: a unit you answer for spent half "
+            + "its day envelope with nothing accepted, or a position you decide forecast worse than the base rate. 'event' is the review's "
+            + "number, the wake's payload. Your 'choice', 'rationale' and 'options' are claims; 'forecasts' carries at least one (a "
+            + "'unit-admissible' with its subject left empty is the reviewed unit). TradeAgent writes your 'review-answer' decision, the "
+            + "review its first ref, and its forecasts, and closes the review's wake, in ONE write — or refuses in words and writes "
+            + "nothing: only the reviewer the app woke answers, once per review. The review changed nothing and the answer changes "
+            + "nothing either: a change to a share or the chart is its own verb or the security board's. It places no order and moves no money.",
+            [
+                new("event", "string", true, "The review's number: the payload of the 'cut-review' wake that woke you."),
+                new("choice", "string", true, "What you decided about it, in your words — written as the decision's choice, a claim."),
+                new("rationale", "string", true, "Why — written as your own 'decision' entry in the research ledger, marked claim."),
+                new("forecasts", "string", true, ForecastsArg + " At least one."),
+                new("refs", "string", false, "A JSON list of {\"kind\": run | promotion | delivery | …, \"id\"}: the records the answer rests on; the review is cited first by TradeAgent."),
+                new("options", "string", false, "A JSON list of the options you weighed, in your words; the choice itself when omitted.")
+            ]),
+
         new(Core.Ops.OrgHire, "trade org hire <unit> <rationale> --forecasts JSON [--head true] [--refs JSON] [--options JSON]", false,
             "HIRE A POSITION into a unit whose PARENT you head (a team's head does not grow its own team; its parent's head does), or "
             + "appoint one to that unit's VACANT head ('head': true — replacing a head is a different operation, not this one). The "

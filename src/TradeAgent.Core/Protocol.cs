@@ -260,6 +260,13 @@ public static class Ops
     public const string OrgTilt = "org-tilt";
 
     /// <summary>
+    /// THE REVIEWER ANSWERS A CUT RULE'S REVIEW WITH A RECORD (<c>U-org-scorecards-b</c>; ORGANISATION § 8): a <c>review-answer</c>
+    /// decision whose first ref is the review event, with a forecast, its wake closed. NOT in <see cref="Mutating"/>: it places no order,
+    /// moves no money and changes no share, status or seat.
+    /// </summary>
+    public const string OrgReviewAnswer = "org-review-answer";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
@@ -316,7 +323,8 @@ public static class Ops
     /// </summary>
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
-        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgRetire, OrgClose, OrgMerge, OrgTilt];
+        LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgRetire, OrgClose, OrgMerge, OrgTilt,
+        OrgReviewAnswer];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

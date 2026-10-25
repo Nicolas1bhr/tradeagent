@@ -344,7 +344,11 @@ public class OrgLedgerTests
             [Ops.OrgRetire] = ("trade org retire", ["position", "rationale", "forecasts", "refs", "options"]),
             [Ops.OrgClose] = ("trade org close", ["unit", "rationale", "forecasts", "refs", "options"]),
             [Ops.OrgMerge] = ("trade org merge", ["unit", "into", "rationale", "forecasts", "refs", "options"]),
-            [Ops.OrgTilt] = ("trade org tilt", ["unit", "currency", "share", "rationale", "forecasts", "refs", "options"])
+            [Ops.OrgTilt] = ("trade org tilt", ["unit", "currency", "share", "rationale", "forecasts", "refs", "options"]),
+            // REVISITED, OUT LOUD, BY U-org-scorecards-b (declared): `org-review-answer` (`trade org review-answer`) writes a reviewer's
+            // `review-answer` record — a decision, its forecasts and its ledger entry — and closes the review's wake, behind OrgVerbCaller
+            // and OrgStore.AnswerReview's checks. It writes nothing of the chart, and names only the review event.
+            [Ops.OrgReviewAnswer] = ("trade org review-answer", ["event", "choice", "rationale", "forecasts", "refs", "options"])
         };
         foreach (var (name, (cli, args)) in structural)
         {

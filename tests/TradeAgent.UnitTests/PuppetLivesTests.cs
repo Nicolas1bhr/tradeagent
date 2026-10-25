@@ -1156,4 +1156,72 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(3, tilted);
         output.WriteLine($"life (org-tilt): {life.Counts()}");
     }
+
+    /// <summary>
+    /// (i) O8 PART B ON THE REAL KERNEL, WITH A PUPPET SEAT (<c>U-org-scorecards-b</c>): the app's review sweep finds a team past half its
+    /// day envelope with nothing accepted and raises ONE review and ONE <c>cut-review</c> wake to the division's head; that wake buys
+    /// the head's puppet a turn, in which it answers through <c>trade org review-answer</c> — an event that is no review refused, the
+    /// review answered with a record and a forecast, and a second answer refused. The answer is a <c>review-answer</c> decision citing
+    /// the review first; the team's share, status and seats read as before. No model.
+    /// </summary>
+    [Fact]
+    public async Task A_puppet_division_head_answers_a_review_with_a_record()
+    {
+        const string head = "pos-4e71dd000001", division = "div-4e71dd00", team = "team-4e71dd01", worker = "pos-4e71dd000002";
+        await using var life = await PuppetLife.Begin("org-review", seed: db =>
+        {
+            SeedDivision(division, head)(db);
+            db.Write(_ =>
+            {
+                foreach (var line in new[]
+                         {
+                             $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at) VALUES('{team}', '{division}', 'team', NULL, 'active', '0.4', '2026-10-23T12:00:00.0000000Z')",
+                             $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{worker}', '{team}', 'org/{worker}', 'dormant', '2026-10-23T12:00:00.0000000Z')"
+                         })
+                {
+                    using var c = db.Cmd(line);
+                    c.ExecuteNonQuery();
+                }
+                return 0;
+            });
+            // THE APP'S SWEEP, as the tick runs it, on a meter reading the team spent 6 of its 10 today.
+            Assert.Equal(1, new OrgStore(db).ReviewSweep(DateTimeOffset.UtcNow, ReviewThresholds.Default,
+                unit => unit == team ? [new UnitDay(team, BillingClasses.Key, 10m, 6m, 0m, 0)] : []).Raised);
+        });
+        var org = new OrgStore(life.Host.Db);
+        var review = life.Host.Db.Read(_ =>
+        {
+            using var c = life.Host.Db.Cmd("SELECT id FROM org_event WHERE kind = $k", ("$k", OrgEventKind.Review));
+            return (long)c.ExecuteScalar()!;
+        });
+        var before = (org.Units().Single(u => u.Id == team), org.Positions().Single(p => p.Id == worker));
+        var forecasts = Word(new[] { new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted,
+            by = DateTimeOffset.UtcNow.AddDays(30).ToString("O"), probability = 0.3m } });
+        life.Script(head,
+        [
+            $"trade org review-answer 999999 \"keep it\" \"no such review\" --forecasts {forecasts}",
+            $"trade org review-answer {review} \"keep the team's share a week\" \"its spend bought runs still being judged\" --forecasts {forecasts}",
+            $"trade org review-answer {review} \"again\" \"a second answer\" --forecasts {forecasts}",
+            "signal answered", "usage 100 0 10", "final Answered."
+        ]);
+        await life.RunUntil(() => life.Reached("answered") && life.AttemptsOf(head).Any(a => a.State == AiAttemptState.ENDED),
+            "the head's puppet answered its review");
+
+        var steps = TradeSteps(life, head, 1);
+        Assert.Equal(3, steps.Count);
+        Assert.True((int?)steps[0]["exit"] != 0, $"an event that is no review was answered: {Said(steps[0])}");
+        Assert.Contains("no review of the organisation's", Said(steps[0]), StringComparison.Ordinal);
+        Assert.True((int?)steps[1]["exit"] == 0, $"the review answer was refused: {Said(steps[1])}");
+        Assert.True((int?)steps[2]["exit"] != 0, $"a second answer was served: {Said(steps[2])}");
+        Assert.Contains("answered already", Said(steps[2]), StringComparison.Ordinal);
+
+        var answer = Assert.Single(org.DecisionsOf(head), d => d.Kind == OrgDecisionKind.ReviewAnswer);
+        Assert.Equal(new OrgRef(OrgRefKind.Event, review.ToString(System.Globalization.CultureInfo.InvariantCulture)), answer.Refs[0]);
+        Assert.Equal(team, Assert.Single(org.ForecastsOn(answer.Id)).Subject);
+        var wake = Assert.Single(life.Events(), e => e.Kind == MissionEventKind.CutReview);
+        Assert.Equal(head, wake.Role);
+        Assert.NotNull(wake.ConsumedAt);
+        Assert.Equal(before, (org.Units().Single(u => u.Id == team), org.Positions().Single(p => p.Id == worker)));
+        output.WriteLine($"life (org-review): {life.Counts()}");
+    }
 }

@@ -237,6 +237,8 @@ public partial class OrgRightsConformanceTests
             var why = row.Operation switch
             {
                 _ when OrgOperation.Mandate.Contains(row.Operation) => "a mandate verb: the row decides, never the chart",
+                // U-org-scorecards-b: org-review-answer's answer is the review event's; the puppet life A_puppet_division_head_answers_a_review_with_a_record exercises it on the pipe.
+                OrgOperation.ReviewAnswer => "a review's answer: the review event decides, never the chart",
                 OrgOperation.Charter when row.Relation == OrgRelation.HeadOfTarget => "a unit not yet chartered has no head",
                 OrgOperation.Appoint when row.Relation == OrgRelation.HeadOfTarget => "a vacant unit has no head",
                 OrgOperation.Replace or OrgOperation.Retire when row.Reserved is OrgReserved.Operations or OrgReserved.Chief =>

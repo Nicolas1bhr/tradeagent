@@ -182,6 +182,32 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>
+    /// ANSWERS A CUT RULE'S REVIEW WITH A RECORD (<see cref="OrgStore.AnswerReview"/>; <c>U-org-scorecards-b</c>): the review event its
+    /// wake carried, the choice, the rationale and options, the refs and the forecasts. Only the reviewer the app woke answers it; the
+    /// answer is a record and changes no share, status or seat.
+    /// </summary>
+    object OrgReviewAnswer(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var raw = Require(req, "event");
+        if (!long.TryParse(raw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var eventId))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{raw}' is no event number: 'event' is the review's number, the payload of the 'cut-review' wake that woke you. Nothing was written.");
+        var made = Gateway.Org.AnswerReview(new ReviewAnswerRequest(caller, ctx.AttemptId, eventId, Require(req, "choice"),
+            Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+        return new
+        {
+            @event = made.EventId,
+            decision = DecisionReply(made.Decision),
+            wakes_closed = made.WakesClosed,
+            note = "Answered: your 'review-answer' decision cites the review first, the rationale your own ledger entry, marked claim, and "
+                   + "its forecasts resolve from the app's records. The review changed nothing and neither does the answer: a change to the "
+                   + "unit's share or chart is its own verb — 'org-tilt', 'org-close', 'org-merge' — or the security board's."
+        };
+    }
+
+    /// <summary>
     /// WHAT A CHARTER'S SHARE IS SIZED AGAINST, as the host that meters launches reads it (<see cref="TradingGateway.AiEnvelopes"/>):
     /// for each ceiling, the nearest envelope at or above the caller's unit — the parent-to-be — and what one turn of the caller's own
     /// recorded launch reserves. Null when nothing meters, the reading fails, or it holds no reading of that unit: refused, never guessed.

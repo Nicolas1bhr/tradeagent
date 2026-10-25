@@ -458,6 +458,10 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "tilt":
                     Fill(a, rest, "unit", "currency", "share", "rationale");
                     return (Ops.OrgTilt, a);
+                // `trade org review-answer <event> <choice> <rationale> --forecasts JSON …` (U-org-scorecards-b).
+                case "review-answer":
+                    Fill(a, rest, "event", "choice", "rationale");
+                    return (Ops.OrgReviewAnswer, a);
                 default:
                     return (null, a);
             }
