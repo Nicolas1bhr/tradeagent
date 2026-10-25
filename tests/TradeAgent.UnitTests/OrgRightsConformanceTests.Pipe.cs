@@ -67,7 +67,7 @@ public partial class OrgRightsConformanceTests
         Unit(db, OpsTeam, OrgIds.Operations, OrgUnitKind.Team, OpsHead);
         Unit(db, OpsVacant, OrgIds.Operations, OrgUnitKind.Team, null);
         // THE HOST'S METER, AS ADMISSION WOULD READ IT: each unit of the caller's chain with an envelope in the plan's ceiling.
-        gw.AiEnvelopes = role => [.. new OrgStore(db).FundingLine(role).Select(u => new UnitDay(u.Id, BillingClasses.Plan, 10m, 0m, 0m, 0))];
+        gw.AiEnvelopes = role => [.. new OrgStore(db).FundingLine(role).Select(u => new UnitDay(u.Id, BillingClasses.Plan, 10m, 0m, 0m, 0, 0, 0m))];
         return (gw, db, new GatewayPipeServer(gw, IpcToken.Ensure()));
     }
 

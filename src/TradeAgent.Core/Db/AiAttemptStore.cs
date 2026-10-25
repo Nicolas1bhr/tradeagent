@@ -156,9 +156,14 @@ public sealed record AiAttempt
 /// app saw end with no usage event, and a turn a restart declared LOST. Their money is in
 /// <paramref name="Spent"/>, and this is what stops that total reading as a bill.
 /// </param>
+/// <param name="UnreportedCharge">
+/// THE MONEY OF THOSE TURNS (<c>U-verbs-a-followups</c>): the reservations charged as their cost because nothing measured them — the
+/// part of <paramref name="Spent"/> that is no bill. Summed over the same rows as <paramref name="Spent"/>, so
+/// <c>Spent − UnreportedCharge</c> is what was priced from a measurement, and nothing else is.
+/// </param>
 public sealed record AiAttemptTotals(
     decimal Spent, decimal Reserved, int Turns, int Unpriced, int Estimated, int Open,
-    int Unreported = 0);
+    int Unreported = 0, decimal UnreportedCharge = 0m);
 
 /// <summary>
 /// ONE GROUP OF RESOLVED ATTEMPTS IN A WINDOW (<see cref="AiAttemptStore.SessionProfile"/>, <c>U-org-packets-a</c>): a position, the
@@ -762,7 +767,7 @@ public sealed class AiAttemptStore(Database db)
 
     /// <summary>
     /// EVERY UNIT'S DAY SPLIT BY THE CLASS THAT PAID FOR IT (<c>U-org-surface-a</c>), in ONE query: for each unit that funded an attempt
-    /// in the window and each billing class among those attempts, the same seven figures <see cref="UnitTotalsBetween"/> reads for
+    /// in the window and each billing class among those attempts, the same eight figures <see cref="UnitTotalsBetween"/> reads for
     /// that unit (the same aggregate list, over the rows each unit's recorded funding chain holds). <b>The class is exact:</b>
     /// <c>plan</c> is the plan's rows alone and <c>unknown</c> is the rows nobody established — NOT the "or unknown" of a ceiling
     /// (<c>ceiling</c> counts an unknown row in both), so the three classes of a unit add up to its whole day and none is counted
@@ -798,12 +803,13 @@ public sealed class AiAttemptStore(Database db)
         var rows = new List<UnitClassTotals>();
         while (r.Read())
             rows.Add(new UnitClassTotals(r.GetString(0), BillingClasses.Of(r.GetString(1)),
-                new AiAttemptTotals((decimal)r.GetDouble(2), (decimal)r.GetDouble(3), Int(r, 4), Int(r, 5), Int(r, 6), Int(r, 7), Int(r, 8))));
+                new AiAttemptTotals((decimal)r.GetDouble(2), (decimal)r.GetDouble(3), Int(r, 4), Int(r, 5), Int(r, 6), Int(r, 7), Int(r, 8),
+                    (decimal)r.GetDouble(9))));
         return (IReadOnlyList<UnitClassTotals>)rows;
     });
 
     /// <summary>
-    /// THE SEVEN AGGREGATES EVERY TOTAL IS (<see cref="Totals"/>, <see cref="UnitTotalsByClass"/>), over rows that carry a <c>counted</c>
+    /// THE EIGHT AGGREGATES EVERY TOTAL IS (<see cref="Totals"/>, <see cref="UnitTotalsByClass"/>), over rows that carry a <c>counted</c>
     /// flag: one expression list, so a figure read by unit and by class can never drift from the figure read whole.
     /// </summary>
     const string TotalsColumns = """
@@ -817,7 +823,11 @@ public sealed class AiAttemptStore(Database db)
               -- Charged a RESERVATION rather than a bill: a cost with a reason it could not be
               -- priced is exactly that, and it is what keeps `Spent` from reading as an invoice.
               SUM(CASE WHEN counted=1 AND state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
-                       THEN 1 ELSE 0 END)
+                       THEN 1 ELSE 0 END),
+              -- THE MONEY OF THOSE CHARGES (U-verbs-a-followups), over every row `Spent` sums — money, like `Spent`, never a
+              -- count — so the priced part of the day is `Spent` less this, and an unmeasured charge never reads as a bill.
+              COALESCE(SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
+                                THEN CAST(cost AS REAL) ELSE 0 END), 0)
         """;
 
     /// <summary>
@@ -872,7 +882,7 @@ public sealed class AiAttemptStore(Database db)
         // owner reads are never routed through this.
         return new AiAttemptTotals(
             (decimal)r.GetDouble(0), (decimal)r.GetDouble(1),
-            Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5), Int(r, 6));
+            Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5), Int(r, 6), (decimal)r.GetDouble(7));
     }
 
     static int Int(SqliteDataReader r, int i) => r.IsDBNull(i) ? 0 : Convert.ToInt32(r.GetValue(i));

@@ -242,8 +242,14 @@ public sealed record FundedUnit(string UnitId, decimal? Envelope);
 /// — O4's readers, read by the host that meters launches, never recomputed. <paramref name="Unpriced"/> counts that ceiling's resolved
 /// turns today whose cost is UNKNOWN (<see cref="AiAttemptTotals.Unpriced"/>): <paramref name="Spent"/> adds them as nothing, so without
 /// the count an unpriceable seat's day would read as free.
+/// <para><b>MEASUREMENT AND CHARGE APART</b> (<c>U-verbs-a-followups</c>; BUDGET-001): <paramref name="Spent"/> is the PRICED part of the
+/// day only — what a measured turn cost. A turn that ended without reporting what it used, or that a restart declared LOST, is charged
+/// its reservation (<see cref="AiAttemptTotals.Unreported"/>): those turns are <paramref name="Unmeasured"/>, and their charge
+/// <paramref name="UnmeasuredCharge"/>, never inside <paramref name="Spent"/>. The day admission compares is
+/// <c>Spent + UnmeasuredCharge</c>; a reader that shows one without the other shows a guess as a bill, or a charge as nothing.</para>
 /// </summary>
-public sealed record UnitDay(string UnitId, string Ceiling, decimal? Envelope, decimal Spent, decimal Reserved, int Unpriced);
+public sealed record UnitDay(
+    string UnitId, string Ceiling, decimal? Envelope, decimal Spent, decimal Reserved, int Unpriced, int Unmeasured, decimal UnmeasuredCharge);
 
 /// <summary>
 /// HOW A UNIT'S ENVELOPE IS RESOLVED (<c>docs/ORCHESTRATION.md</c> § 2.4): <c>envelope_share</c> is a FRACTION of the parent's

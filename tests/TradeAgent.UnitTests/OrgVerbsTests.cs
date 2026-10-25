@@ -440,8 +440,8 @@ public partial class OrgAssignmentTests
         using var _db = db;
         await using var _server = server;
         gw.AiEnvelopes = position => position == Member
-            ? [new UnitDay(Team, BillingClasses.Key, null, 0.30m, 0.10m, 0), new UnitDay(OrgIds.Research, BillingClasses.Key, 6m, 1.25m, 0.10m, 0),
-               new UnitDay(OrgIds.Root, BillingClasses.Key, 12m, 2.5m, 0.2m, 0), new UnitDay(OrgIds.Root, BillingClasses.Plan, 40m, 7m, 0m, 0)]
+            ? [new UnitDay(Team, BillingClasses.Key, null, 0.30m, 0.10m, 0, 0, 0m), new UnitDay(OrgIds.Research, BillingClasses.Key, 6m, 1.25m, 0.10m, 0, 0, 0m),
+               new UnitDay(OrgIds.Root, BillingClasses.Key, 12m, 2.5m, 0.2m, 0, 0, 0m), new UnitDay(OrgIds.Root, BillingClasses.Plan, 40m, 7m, 0m, 0, 0, 0m)]
             : null;
 
         var view = Body(await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member)));
@@ -516,4 +516,64 @@ public partial class OrgAssignmentTests
         });
         Assert.Contains("unknown_cost_turns_today", Body(reply).GetProperty("envelopes_note").GetString(), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// (3d) A TURN CHARGED ITS RESERVATION BECAUSE NOTHING WAS MEASURED IS NEVER SHOWN AS PRICED SPEND (<c>U-verbs-a-followups</c>
+    /// item 1; BUDGET-001 "unknown never zero", measurement vs claim): one funded key turn priced at 0.25, one that ENDED without
+    /// reporting what it used (its 0.40 reservation stands as its cost) and one a restart declared LOST (its 0.30 likewise), read
+    /// through the real meter. Each unit of the chain shows 0.25 as <c>spent_today</c> and the two unmeasured turns apart — their
+    /// count and their 0.70 reservation charge. RED at base: <c>spent_today</c> "0.95" and nothing marking what was never measured.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_ended_without_usage_shows_as_a_reservation_charge_not_priced_spend()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var meter = new TurnMeter(db, () => 12m, runtimeId: () => "codex", live: new LiveAttempts(), declaredSeat: _ => SeatClasses.Harness);
+        gw.AiEnvelopes = meter.EnvelopesFor;
+
+        var store = new AiAttemptStore(db);
+        string Begun(decimal reserved)
+        {
+            var id = $"turn-{Guid.NewGuid():n}"[..17];
+            Assert.True(store.Begin(new AiAttempt
+            {
+                Id = id, StartedAt = DateTimeOffset.UtcNow, Role = Member, ReservedCost = reserved, SeatClass = SeatClasses.Harness,
+                BillingClass = BillingClasses.Key, Funding = [Team, OrgIds.Research, OrgIds.Root]
+            }).Admitted);
+            return id;
+        }
+        var priced = Begun(0.10m);
+        Assert.True(store.End(priced, 0, DateTimeOffset.UtcNow, 1000, 0, null, 100, null, "model-x", 0.25m, null, null));
+        var lost = Begun(0.30m);
+        Assert.Equal(1, store.LoseOpen(DateTimeOffset.UtcNow));
+        var silent = Begun(0.40m);
+        Assert.True(store.End(silent, 1, DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null));
+        Assert.Equal((AiAttemptState.LOST, 0.30m), (store.Get(lost)!.State, store.Get(lost)!.Cost!.Value));
+        Assert.Equal(0.40m, store.Get(silent)!.Cost);
+
+        var reply = await server.CallAsync(Frame(Ops.OrgShow), Member, Launch(db, Member));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        static decimal Figure(JsonElement e, string name) =>
+            decimal.Parse(e.GetProperty(name).GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+        var chain = Body(reply).GetProperty("chain").EnumerateArray().ToList();
+        Assert.Equal(3, chain.Count);
+        Assert.All(chain, u =>
+        {
+            var day = Assert.Single(u.GetProperty("ai_envelopes").EnumerateArray());
+            var unit = u.GetProperty("id").GetString();
+            Assert.True(day.TryGetProperty("unmeasured_turns_today", out var unmeasured),
+                $"unit {unit} read spent_today {day.GetProperty("spent_today")} with nothing marking the turns charged their reservation");
+            Assert.Equal(2, unmeasured.GetInt32());
+            Assert.Equal(0.70m, Figure(day, "unmeasured_charge_today"));
+            Assert.Equal(0.25m, Figure(day, "spent_today"));
+            Assert.Equal(0, day.GetProperty("unknown_cost_turns_today").GetInt32());
+        });
+        var note = Body(reply).GetProperty("envelopes_note").GetString()!;
+        Assert.Contains("unmeasured_charge_today", note, StringComparison.Ordinal);
+        Assert.Contains("never inside spent_today", note, StringComparison.Ordinal);
+    }
+
 }
