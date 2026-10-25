@@ -1062,8 +1062,9 @@ public sealed class CampaignStore(Database db)
     /// null because each has (<c>U-org-verbs-e</c>; ORCHESTRATION § 2.4; ORGANISATION § 3). The chain is the one the launch was ADMITTED
     /// under (<c>ai_attempt_funding</c>), never today's chart: a later move re-parents no past charge. A unit with no share of its own
     /// (NULL — every seeded unit, the legacy divisions included) is no ceiling. A unit's use is every charged trial (distinct run,
-    /// counted as the campaign counts its own) or every verdict of the campaign's lineage whose launch's recorded chain holds it; one
-    /// more must fit inside its share of the campaign's budget. Read inside the caller's write, so the count and the row are one
+    /// counted as the campaign counts its own) or every verdict of the campaign's lineage whose launch's recorded chain holds it — or
+    /// holds a unit merged into it (<c>U-merge-evidence-shares</c>; <see cref="OrgStore.CarriedBy"/>); one more must fit inside its
+    /// share of the campaign's budget. Read inside the caller's write, so the count and the row are one
     /// transaction. A share that is not a fraction is damage, refused (<see cref="OrgEnvelopes"/>), never guessed.
     /// </summary>
     string? UnitShareRefusal(ShareKind kind, CampaignRow campaign, string launch, string versionId)
@@ -1095,22 +1096,28 @@ public sealed class CampaignStore(Database db)
         {
             var share = OrgEnvelopes.Fraction(unit, text);
             int used;
+            // A UNIT'S USE CARRIES EVERY UNIT MERGED INTO IT (U-merge-evidence-shares item 2; ORCHESTRATION § 2.9): a charge whose
+            // recorded chain holds A counts against B once A merged into B — read through the merge's successor link, the one
+            // `OrgStore.CarriedBy` reads for the AI day, never by rewriting a run, a verdict or a funding row (EVID-001).
+            var carried = OrgStore.CarriedSet(db, unit);
             if (trials)
             {
                 using var u = db.Cmd("""
                     SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
                       JOIN strategy_run r ON r.id = t.run_id
-                      JOIN ai_attempt_funding f ON f.attempt_id = r.attempt AND f.unit_id = $unit
                      WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $launch
-                    """, ("$unit", unit), ("$id", campaign.Id), ("$launch", launch));
+                       AND EXISTS (SELECT 1 FROM ai_attempt_funding f
+                                    WHERE f.attempt_id = r.attempt AND f.unit_id IN (SELECT value FROM json_each($carried)))
+                    """, ("$carried", carried), ("$id", campaign.Id), ("$launch", launch));
                 used = Convert.ToInt32(u.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
             else
             {
                 using var u = db.Cmd("""
                     SELECT v.campaign_id, v.version_id FROM strategy_verdict v
-                      JOIN ai_attempt_funding f ON f.attempt_id = v.attempt_id AND f.unit_id = $unit
-                    """, ("$unit", unit));
+                     WHERE EXISTS (SELECT 1 FROM ai_attempt_funding f
+                                    WHERE f.attempt_id = v.attempt_id AND f.unit_id IN (SELECT value FROM json_each($carried)))
+                    """, ("$carried", carried));
                 using var rows = u.ExecuteReader();
                 used = 0;
                 while (rows.Read())
