@@ -74,6 +74,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         var woke = Assert.Single(life.Events(), e => e.Role == "board-2");
         Assert.Equal((MissionEventKind.Board, act.Id), (woke.Kind, woke.Payload));
         Assert.Equal(life.AttemptsOf("board-2")[0].Id, woke.ConsumedBy);
+        Assert.Equal(2, BoardLives.AssertNoModel(life));
         output.WriteLine($"observable: {life.Counts()}");
     }
 
@@ -131,6 +132,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         output.WriteLine(BoardLives.Said(second));
         Assert.NotEqual(0, (int?)second["exit"]);
         Assert.Contains(nameof(ErrorCode.RISK_LIMIT_EXCEEDED), BoardLives.Said(second), StringComparison.Ordinal);
+        Assert.Equal(1, BoardLives.AssertNoModel(life));
     }
 
     /// <summary>
@@ -163,6 +165,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         await life.Host.Gateway.RefreshHealthAsync();
         var granted = Assert.Single(life.Host.Gateway.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow));
         Assert.Equal((0.1m, $"granted by the app under the security board's act, version {seeded + 1}"), (granted.MaxQuantity, granted.Reason));
+        Assert.Equal(2, BoardLives.AssertNoModel(life));
     }
 
     /// <summary>
@@ -190,6 +193,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         var refused = Assert.Single(store.Events(act.Id), e => e.Kind == BoardActEventKind.Refused);
         Assert.Equal(("board-2", "not while nothing is proven", life.AttemptsOf("board-2")[0].Id), (refused.Seat, refused.Rationale, refused.Attempt));
         Assert.DoesNotContain(life.Events(), e => e.Role == "board-3");
+        Assert.Equal(2, BoardLives.AssertNoModel(life));
     }
 
     // ---- item 6: board lives II — the edges ------------------------------------------------------------------------------------------
@@ -239,6 +243,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(BoardActEventKind.Stale, store.Status(stale.Id));
         Assert.Contains(store.Events(stale.Id), e => e.Kind == BoardActEventKind.Stale && e.Seat == "board-2");
         Assert.Equal((2, 30m), (store.InForce().Version, life.Host.Gateway.Policy.PlanDayTotal));
+        Assert.Equal(3, BoardLives.AssertNoModel(life));
     }
 
     /// <summary>
@@ -271,6 +276,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         var inForce = store.InForce();
         Assert.Equal((3, BoardDecider.Owner, BoardBasis.Veto), (inForce.Version, inForce.Decider, inForce.Basis));
         Assert.Equal(40m, life.Host.Gateway.Policy.PlanDayTotal);
+        Assert.Equal(2, BoardLives.AssertNoModel(life));
     }
 
     /// <summary>
@@ -312,5 +318,53 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.True((int?)chairs["exit"] != 0, $"a position made a board act: {BoardLives.Said(chairs)}");
         Assert.Empty(store.Acts());
         output.WriteLine($"reach: {BoardLives.Said(chairs)}");
+        Assert.Equal(1, BoardLives.AssertNoModel(life));
+    }
+
+    // ---- item 7: the guards ------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// NOTHING ACTIVATES A BOARD SEAT IN THE PRODUCT (<c>U-board-b2</c> item 7; containment; the a2 rule that the owner's paper-only presses
+    /// stay his while no seat is active): the host's own composition over a fresh home, with no test seam, leaves every founded seat
+    /// dormant — no state row is written — and through a loop tick holding a board wake for board-1 it launches nothing: the wake is
+    /// settled refused for what the seat is, no launch is recorded, and the board is not active. Watched red with a composition-root line
+    /// that marks board-1 active.
+    /// </summary>
+    [Fact]
+    public async Task Nothing_in_the_product_composition_activates_or_launches_a_board_seat()
+    {
+        using var db = TestEnv.NewDb();
+        var connector = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker());
+        await connector.ConnectAsync();
+        var host = TradeAgent.App.AppHost.Composed(db, connector, new AgentPresence());
+        try
+        {
+            var reader = new BoardReader(db);
+            Assert.Equal(BoardSeats.Founding, reader.Seats().Select(s => s.Id));
+            Assert.All(reader.Seats(), s => Assert.Equal(BoardSeatStatus.Dormant, s.Status));
+            Assert.False(reader.AnyActive, "a board seat is active in the product composition");
+
+            var wake = MissionEventIds.Board("bact-000000000000", "board-1");
+            Assert.True(host.Wakes!.Raise(wake, MissionEventKind.Board, DateTimeOffset.UtcNow.AddMinutes(-1), "bact-000000000000", "board-1"));
+            await host.Mission.TurnAsync();
+
+            Assert.Empty(new AiAttemptStore(db).Between(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1))
+                .Where(a => BoardSeats.IsBoardId(a.Role)));
+            var settled = host.Wakes.Get(wake)!;
+            Assert.Equal((true, MissionEventDisposition.Refused), (settled.Consumed, settled.Disposition));
+            output.WriteLine(settled.DispositionDetail);
+            Assert.All(reader.Seats(), s => Assert.Equal(BoardSeatStatus.Dormant, s.Status));
+            Assert.False(reader.AnyActive, "a loop tick activated a board seat");
+            Assert.Equal(0L, db.Read(_ =>
+            {
+                using var c = db.Cmd("SELECT COUNT(*) FROM board_seat_state");
+                return Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+            }));
+        }
+        finally
+        {
+            try { await host.Mission.PauseAsync(); } catch (Exception) { }
+            await host.Gateway.DisposeAsync();
+        }
     }
 }

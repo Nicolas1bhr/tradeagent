@@ -72,6 +72,25 @@ static class BoardLives
     public static BoardPolicy EnvelopeHere(BoardPolicy p) =>
         p with { PaperEnvelope = new PaperEnvelopeTerms(Connectors.Fake.FakeConnector.ConnectorId, "SIM-001", "BTCUSDT", 0.05m, 5_000m, 1, null) };
 
+    /// <summary>
+    /// NO REAL MODEL RAN IN <paramref name="life"/> (<c>U-board-b2</c> item 7): its manifest is a puppet, and every launch the ledger recorded
+    /// ran on the puppet runtime, names no model it asked for or was answered by, and was priced at the test's own rate — never a vendor's
+    /// bill. Answers how many launches were board seats'.
+    /// </summary>
+    public static int AssertNoModel(PuppetLife life)
+    {
+        Xunit.Assert.True(life.Manifest.Puppet, "a board life ran on a manifest that is not a puppet");
+        var attempts = life.Attempts();
+        foreach (var a in attempts)
+        {
+            Xunit.Assert.Equal(AgentRuntime.RuntimeManifest.PuppetId, a.Runtime);
+            Xunit.Assert.True(a.RequestedModel is null && a.EffectiveModel is null,
+                $"{a.Id} ({a.Role}) names a model: requested {a.RequestedModel}, effective {a.EffectiveModel}");
+            Xunit.Assert.True(a.PricingBasis is null or "owner", $"{a.Id} ({a.Role}) was priced as a vendor's bill: {a.PricingBasis}");
+        }
+        return attempts.Count(a => BoardSeats.IsBoardId(a.Role));
+    }
+
     public static string Change(string field, object from, object to) =>
         JsonSerializer.Serialize(new[] { new Dictionary<string, object> { ["field"] = field, ["from"] = from, ["to"] = to } });
 
