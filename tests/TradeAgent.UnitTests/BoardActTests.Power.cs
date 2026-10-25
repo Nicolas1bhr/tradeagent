@@ -66,10 +66,17 @@ public partial class BoardActTests
     [Fact]
     public async Task Only_the_owners_presses_change_the_boards_composition_or_budget()
     {
+        // THE ORGANISATION'S OWN RETIREMENT (`org-retire`, U-org-verbs-d) retires a POSITION ON THE CHART, never a board seat: its one
+        // target is `position`, and a board seat's id is refused as a position's (OrgIds.PositionIdRefusal), so no board seat is ever
+        // on the chart for it to reach. Its NAME alone is exempt from the word "retire"; its arguments are checked like every op's.
+        var orgRetire = Assert.Single(GatewaySchema.Ops(), o => o.Op == Ops.OrgRetire);
+        Assert.Contains(orgRetire.Args, a => a.Name == "position");
+        Assert.NotNull(OrgIds.PositionIdRefusal("board-1"));
         foreach (var op in GatewaySchema.Ops())
             foreach (var word in new[] { "budget", "composition", "seat_class", "model_class", "vendor", "retire", "found", "veto", "budget_share" })
             {
-                Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
+                if (!(op.Op == Ops.OrgRetire && word == "retire"))
+                    Assert.DoesNotContain(word, op.Op, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(op.Args, a => a.Name.Contains(word, StringComparison.OrdinalIgnoreCase));
             }
         Assert.DoesNotContain(BoardDirection.Fields, f => f.Path.Contains("budget", StringComparison.Ordinal) || f.Path.Contains("seat", StringComparison.Ordinal));
