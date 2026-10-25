@@ -1536,8 +1536,17 @@ public sealed class AppHost : IAsyncDisposable
     /// The cost is null unless this installation can actually price a turn. Reporting zero would tell
     /// an AI whose mission is to pay for itself that it was free.
     /// </summary>
+    /// <summary>Whether this host's runtime catalogue names <paramref name="runtime"/> — the check a chief's seat is held to (<c>U-org-chief</c>).</summary>
+    internal static bool KnownRuntime(string runtime)
+    {
+        try { return RuntimeCatalog.Find(runtime) is not null; }
+        catch (Exception) { return false; }
+    }
+
     void ReportAiToTheGateway()
     {
+        // THE RUNTIMES THIS HOST KNOWS (U-org-chief): the catalogue a board act's chief is seated against — a read, never a choice.
+        Gateway.KnownRuntime = KnownRuntime;
         // EACH UNIT'S ENVELOPE AND TODAY'S SPEND, for a position's own org-show (U-org-verbs-a): the meter's reading, a read only.
         Gateway.AiEnvelopes = role => Meter?.EnvelopesFor(role);
         // AND IN ONE NAMED CEILING (U-org-verbs-e item 7): a charter sizes a legacy sibling's share where the charter draws, a read only.

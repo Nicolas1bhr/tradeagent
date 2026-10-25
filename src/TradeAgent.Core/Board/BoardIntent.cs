@@ -78,6 +78,19 @@ public sealed record BoardIntent(IReadOnlyList<BoardChange> Changes, string Cano
             var fieldElement = item.GetProperty("field");
             if (fieldElement.ValueKind != JsonValueKind.String) return (null, "a change's 'field' is the path of a policy field, as text");
             var field = fieldElement.GetString()!;
+            if (field == BoardDirection.Chief)
+            {
+                // THE CHIEF (U-org-chief item 3): its own types — the sitting chief's id or null, a seat or null — read as strictly.
+                var (chiefFrom, chiefFromWhy) = BoardDirection.ChiefFrom(item.GetProperty("from"));
+                if (chiefFrom is null) return (null, $"'{field}' from: {chiefFromWhy}");
+                var (chiefTo, chiefToWhy) = BoardDirection.ChiefTo(item.GetProperty("to"));
+                if (chiefTo is null) return (null, $"'{field}' to: {chiefToWhy}");
+                if (BoardDirection.Of(field, chiefFrom, chiefTo) == BoardDirectionKind.Unchanged)
+                    return (null, $"'{field}' would hold what it holds: a change that changes nothing is no change");
+                if (changes.Any(c => c.Field == field)) return (null, $"'{field}' is named twice: one change per field");
+                changes.Add(new BoardChange(field, chiefFrom, chiefTo));
+                continue;
+            }
             if (BoardDirection.Refusal(field) is { } notAField) return (null, notAField);
             var spec = BoardDirection.Spec(field)!;
             var (from, fromWhy) = BoardDirection.Normalise(spec, item.GetProperty("from"));
@@ -89,6 +102,8 @@ public sealed record BoardIntent(IReadOnlyList<BoardChange> Changes, string Cano
             if (changes.Any(c => c.Field == field)) return (null, $"'{field}' is named twice: one change per field");
             changes.Add(new BoardChange(field, from, to));
         }
+        if (changes.Count > 1 && changes.Any(c => c.Field == BoardDirection.Chief))
+            return (null, $"a change of '{BoardDirection.Chief}' is an act of its own: it is never mixed with the policy's fields");
         return (Of(changes), null);
     }
 
@@ -169,7 +184,57 @@ public static class BoardDirection
     /// <summary>One row of the table: the field's path, its order, the number it holds, the least value an intent may give it, and its default where one stands in.</summary>
     public sealed record FieldSpec(string Path, Order Order, Number Number, decimal Least, long? Default = null);
 
-    /// <summary>THE TABLE — every field one board act may change, and nothing else.</summary>
+    /// <summary>
+    /// THE CHIEF, AS AN ACT NAMES IT (<c>U-org-chief</c> item 3; R24 §§ 4.1, Q12: "the board appoints by a two-seat act"): no field of the
+    /// policy but the chart's root head — <c>from</c> the sitting chief's position id or null, <c>to</c> a seat
+    /// (<c>{"runtime", "model"}</c>) or null — ONE change, an act of its own, never mixed with the policy's fields. EVERY change of it
+    /// WIDENS (<see cref="Of"/>): an appointment, a replacement and a removal each take two seats, a proposer and a confirmer; only the
+    /// owner removes a chief alone, in-process. The confirmation applies it through the chart's one writer and writes no policy version.
+    /// </summary>
+    public const string Chief = "org.chief";
+
+    /// <summary>The <c>from</c> of a change of the chief, normalised: <c>null</c> (no chief sits) or a position id's JSON string — or why not.</summary>
+    public static (string? Value, string? Why) ChiefFrom(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Null) return ("null", null);
+        if (e.ValueKind != JsonValueKind.String || e.GetString() is not { } id || !id.StartsWith(OrgIds.PositionPrefix, StringComparison.Ordinal)
+            || !CouncilRoles.IsPositionId(id))
+            return (null, $"the sitting chief is named by its position id ({OrgIds.PositionPrefix}…), or null when no chief sits");
+        return (JsonSerializer.Serialize(id), null);
+    }
+
+    /// <summary>
+    /// The <c>to</c> of a change of the chief, normalised: <c>null</c> (remove the chief) or exactly <c>{"model", "runtime"}</c> — a runtime
+    /// id of 1 to 64 lower-case letters, digits and <c>. - _</c>, a model of 1 to 128 letters, digits and <c>. - _ : /</c> — or why not.
+    /// Whether this host knows the runtime is the store's question, asked at the act.
+    /// </summary>
+    public static (string? Value, string? Why) ChiefTo(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Null) return ("null", null);
+        if (e.ValueKind != JsonValueKind.Object) return (null, "a chief's seat is {\"runtime\", \"model\"}, or null to remove the chief");
+        var keys = e.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToList();
+        if (!keys.SequenceEqual(["model", "runtime"], StringComparer.Ordinal))
+            return (null, "a chief's seat has exactly 'runtime' and 'model', and nothing else");
+        if (e.GetProperty("runtime") is not { ValueKind: JsonValueKind.String } rt || rt.GetString() is not { Length: > 0 and <= 64 } runtime
+            || !runtime.All(ch => char.IsAsciiLetterLower(ch) || char.IsAsciiDigit(ch) || ch is '.' or '-' or '_'))
+            return (null, "a chief's runtime is named in 1 to 64 lower-case letters, digits and . - _");
+        if (e.GetProperty("model") is not { ValueKind: JsonValueKind.String } md || md.GetString() is not { Length: > 0 and <= 128 } model
+            || !model.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '/'))
+            return (null, "a chief's model is named in 1 to 128 letters, digits and . - _ : /");
+        return (Canon(new JsonObject { ["model"] = model, ["runtime"] = runtime }.ToJsonString()), null);
+    }
+
+    /// <summary>A change of the chief, read: the sitting chief it names (null: none) and the seat it appoints (null: the chief removed).</summary>
+    public static (string? From, ChiefSeat? To) ReadChief(BoardChange change)
+    {
+        if (change.Field != Chief) throw new ArgumentException($"'{change.Field}' is no change of the chief", nameof(change));
+        var from = Element(change.From);
+        var to = Element(change.To);
+        return (from.ValueKind == JsonValueKind.Null ? null : from.GetString(),
+            to.ValueKind == JsonValueKind.Null ? null : new ChiefSeat(to.GetProperty("runtime").GetString()!, to.GetProperty("model").GetString()!));
+    }
+
+    /// <summary>THE TABLE — every field of the policy one board act may change, and nothing else (the chief, <see cref="Chief"/>, is the chart's).</summary>
     public static readonly IReadOnlyList<FieldSpec> Fields =
     [
         new("mode", Order.Mode, Number.None, 0),
@@ -206,7 +271,7 @@ public static class BoardDirection
         _ when field.StartsWith("paper_envelope.", StringComparison.Ordinal) =>
             $"'{field}' is part of the envelope, which an act changes whole: name 'paper_envelope' with its terms, or null for none",
         _ when Spec(field) is null =>
-            $"'{field}' is no field the board's acts change: {string.Join(", ", Fields.Select(f => f.Path))}",
+            $"'{field}' is no field the board's acts change: {string.Join(", ", Fields.Select(f => f.Path).Append(Chief))}",
         _ => null
     };
 
@@ -216,6 +281,8 @@ public static class BoardDirection
     /// </summary>
     public static BoardDirectionKind Of(string field, string from, string to)
     {
+        // THE CHIEF: every change of it widens — two seats, its removal included (U-org-chief; the orchestrator's Q2).
+        if (field == Chief) return SameValue(from, to) ? BoardDirectionKind.Unchanged : BoardDirectionKind.Widens;
         if (Spec(field) is not { } spec) return BoardDirectionKind.Widens;
         JsonElement a, b;
         try { (a, b) = (Element(from), Element(to)); }

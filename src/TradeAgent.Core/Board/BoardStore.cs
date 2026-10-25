@@ -26,6 +26,12 @@ public sealed class BoardStore(Database db)
     readonly Database _db = db;
 
     /// <summary>
+    /// THE RUNTIMES A CHIEF MAY BE SEATED ON (<c>U-org-chief</c> item 3): this host's catalogue, which this assembly cannot see — the gateway
+    /// hands it on from the host. Null knows none, so an act appointing a chief is refused, never seated on a guess.
+    /// </summary>
+    public Func<string, bool>? KnownRuntime { get; init; }
+
+    /// <summary>
     /// THE FOUNDING WRITE, ONCE (<c>U-board-a1</c> item 2): version 1 of the policy (<see cref="BoardFounding.V1"/>), the three seats
     /// of the founding composition and the <c>founded</c> event naming the schema the home was at and the board's budget share — in
     /// ONE transaction, and only while no policy row exists, so a rung re-run after a crash before its stamp writes nothing twice.
@@ -297,12 +303,14 @@ public sealed class BoardStore(Database db)
             throw Refused($"this intent widens ({Widening(intent)}): one seat narrows, and a widening is proposed with 'board-propose' "
                           + "and applied only when another seat confirms it.");
         var act = InsertAct(request, BoardActKind.Narrow, intent, inForce.Version, null, at);
-        var version = InsertVersion(inForce, Applied(BodyOf(inForce), intent.Changes), BoardDecider.Board, BoardBasis.Act, act.Id, at);
+        var (version, did) = Apply(act, intent, inForce, at);
         InsertEvent(act.Id, BoardActEventKind.Applied, request.Seat, request.Attempt, null, null, null, null, version,
-            $"applied at once by {request.Seat}: version {version} narrows version {inForce.Version}", at);
+            did.Length == 0 ? $"applied at once by {request.Seat}: version {version} narrows version {inForce.Version}"
+                : $"applied at once by {request.Seat}: {did}; version {version} records it and changes no limit", at);
         InsertForecasts(act.Id, request, at);
-        return new BoardActResult(act, BoardActEventKind.Applied, version,
-            $"Applied: version {version} of the policy, decided by {request.Seat} alone because every change narrows, is in force now.");
+        return new BoardActResult(act, BoardActEventKind.Applied, version, did.Length == 0
+            ? $"Applied: version {version} of the policy, decided by {request.Seat} alone because every change narrows, is in force now."
+            : $"Applied by {request.Seat} alone: {did}.");
     });
 
     /// <summary>
@@ -402,11 +410,12 @@ public sealed class BoardStore(Database db)
             return new BoardActResult(act, BoardActEventKind.Stale, null,
                 $"Stale: since {act.Id} was proposed, {string.Join("; ", moved)}. It applies nothing; propose it again against version {inForce.Version}.");
         }
-        var version = InsertVersion(inForce, Applied(BodyOf(inForce), intent.Changes), BoardDecider.Board, BoardBasis.Act, act.Id, at);
+        var (version, did) = Apply(act, intent, inForce, at);
         InsertEvent(act.Id, BoardActEventKind.Confirmed, seat, attempt, rationale, proposer.VendorFamily, decider.VendorFamily, same, version,
             familyWords, at);
-        return new BoardActResult(act, BoardActEventKind.Confirmed, version,
-            $"Confirmed by {seat}: version {version} of the policy, proposed by {act.Seat}, is in force now.");
+        return new BoardActResult(act, BoardActEventKind.Confirmed, version, did.Length == 0
+            ? $"Confirmed by {seat}: version {version} of the policy, proposed by {act.Seat}, is in force now."
+            : $"Confirmed by {seat}, proposed by {act.Seat}: {did}. Version {version} of the policy records the act and changes no limit.");
     });
 
     /// <summary>
@@ -438,7 +447,8 @@ public sealed class BoardStore(Database db)
         var inForce = InForce();
         var (intent, _) = BoardIntent.Parse(act.Intent);
         var body = inForce.CouldNotBeRead ? null : BodyOf(inForce);
-        var figures = (intent?.Changes ?? []).Select(c => new BoardPolicyField(c.Field, body is null ? "unreadable" : ValueAt(body, c.Field),
+        var figures = (intent?.Changes ?? []).Select(c => new BoardPolicyField(c.Field,
+            c.Field == BoardDirection.Chief ? ChiefNow() : body is null ? "unreadable" : ValueAt(body, c.Field),
             inForce.Fields.Where(f => f.Name == c.Field || f.Name.StartsWith(c.Field + ".", StringComparison.Ordinal))
                 .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max())).ToList();
         return (new BoardActBlindView(act.Id, act.Kind, act.Seat, Status(act.Id), act.Intent, act.IntentSha256,
@@ -469,6 +479,8 @@ public sealed class BoardStore(Database db)
         if (Moved(intent, BodyOf(inForce)) is { Count: > 0 } moved)
             throw Refused($"the intent's 'from' is not what version {inForce.Version} holds: {string.Join("; ", moved)}. "
                           + "An act names the value in force: read it again with 'board-show'.");
+        if (ChiefOf(intent) is { To: { } seat } && KnownRuntime?.Invoke(seat.Runtime) != true)
+            throw Refused($"'{seat.Runtime}' is not a runtime this build knows, so no chief is seated on it.");
         RequireRationale(request.Rationale);
         if (OrgStore.RefsRefusal(_db, request.Refs) is { } badRef) throw Refused(badRef);
         if (request.Forecasts.Count > BoardLimits.MaxForecasts)
@@ -485,13 +497,16 @@ public sealed class BoardStore(Database db)
     /// <summary>The canonical body of the version in force, as stored.</summary>
     string BodyOf(BoardPolicyInForce inForce) => Rows().Single(r => r.Version == inForce.Version).Body;
 
-    /// <summary>Each change whose <c>from</c> is not the value <paramref name="body"/> holds, in words — empty when none moved.</summary>
-    static List<string> Moved(BoardIntent intent, string body)
+    /// <summary>
+    /// Each change whose <c>from</c> is not the value <paramref name="body"/> holds — for the chief, the chart's root head now — in words;
+    /// empty when none moved.
+    /// </summary>
+    List<string> Moved(BoardIntent intent, string body)
     {
         var moved = new List<string>();
         foreach (var c in intent.Changes)
         {
-            var now = ValueAt(body, c.Field);
+            var now = c.Field == BoardDirection.Chief ? ChiefNow() : ValueAt(body, c.Field);
             if (!BoardDirection.SameValue(now, c.From)) moved.Add($"{c.Field} holds {now}, not {c.From}");
         }
         return moved;
@@ -549,6 +564,36 @@ public sealed class BoardStore(Database db)
         if (policy is null) throw Refused($"the policy this act would write is not one this build writes: {why}.");
         if (policy.ModeIsLive || policy.LiveActivated) throw Refused("no act of this build selects a real-money mode or switches real money on.");
         return next;
+    }
+
+    /// <summary>The chief as a change's value: the sitting chief's id as JSON, or <c>null</c> — read from the chart, never from the policy.</summary>
+    string ChiefNow() => JsonSerializer.Serialize(new OrgStore(_db).Chief());
+
+    /// <summary>The intent's change of the chief, read — or null for an intent over the policy's fields.</summary>
+    static (string? From, ChiefSeat? To)? ChiefOf(BoardIntent intent) =>
+        intent.Changes is [{ Field: BoardDirection.Chief } change] ? BoardDirection.ReadChief(change) : null;
+
+    /// <summary>
+    /// WHAT A CHECKED ACT DOES, IN ITS OWN WRITE: the next version of the policy, the act's changes applied — and for a change of the chief,
+    /// that change made through the chart's one writer (<see cref="OrgStore.SeatChief"/>, decided by <c>board</c> on the basis <c>act</c>,
+    /// the act's id in its detail, seated at the policy's turn allowance) beside a version whose body is the one in force UNCHANGED: the
+    /// policy holds no chief, and rung 51 binds every applied or confirmed act to the version it wrote, so that version is the act's place
+    /// in the policy's history, its rationale and seats with it, and changes no limit. The version written and the words of what was done.
+    /// </summary>
+    (int Version, string Did) Apply(BoardActRow act, BoardIntent intent, BoardPolicyInForce inForce, DateTimeOffset at)
+    {
+        if (ChiefOf(intent) is not { } chief)
+            return (InsertVersion(inForce, Applied(BodyOf(inForce), intent.Changes), BoardDecider.Board, BoardBasis.Act, act.Id, at), "");
+        var (from, to) = chief;
+        var changed = new OrgStore(_db).SeatChief(from, to, OrgDecider.Board, BoardBasis.Act, act.Id,
+            TurnAllowance.From(inForce.Policy.TurnAllowanceInput, inForce.Policy.TurnAllowanceOutput), KnownRuntime, at);
+        var version = InsertVersion(inForce, BodyOf(inForce), BoardDecider.Board, BoardBasis.Act, act.Id, at);
+        return (version, changed.Kind switch
+        {
+            OrgEventKind.ChiefAppointed => $"the chief {changed.Chief} is appointed, DORMANT, on {to!.Runtime} with model {to.Model}",
+            OrgEventKind.ChiefReplaced => $"the chief {changed.Was} is replaced by {changed.Chief}, DORMANT, on {to!.Runtime} with model {to.Model}",
+            _ => $"the chief {changed.Was} is removed, and the organisation's head is vacant"
+        });
     }
 
     BoardActRow InsertAct(BoardActRequest request, string kind, BoardIntent intent, int policyVersion, DateTimeOffset? expires, DateTimeOffset at)

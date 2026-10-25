@@ -2390,6 +2390,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
     public Func<string, IReadOnlyList<UnitDay>?>? AiEnvelopes { get; set; }
 
     /// <summary>
+    /// THE RUNTIMES THE HOST'S CATALOGUE NAMES (<c>U-org-chief</c> item 3), which this assembly cannot see: what a board act's chief is
+    /// seated against. Null — a host that set none — knows no runtime, so a chief act is refused rather than seated on a guess. A read the
+    /// host hands in; nothing on the pipe reaches it.
+    /// </summary>
+    public Func<string, bool>? KnownRuntime { get; set; }
+
+    /// <summary>
     /// A POSITION'S FUNDING CHAIN IN ONE NAMED CEILING (<c>key</c> or <c>plan</c>), whatever class its own seat bills — the host's
     /// reading <see cref="AiEnvelopes"/> is, for one ceiling (<c>U-org-verbs-e</c> item 7): what a charter or a tilt sizes a legacy
     /// sibling's share in when it draws on a ceiling that sibling's seat does not bill. Null, or a null answer, is unread — refused by
@@ -2633,7 +2640,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         _envelopes = new Envelopes(db);
         _deployments = new Deployments(db);
         _health = health ?? new HealthRegistry();
-        _board = new BoardStore(db);
+        _board = new BoardStore(db) { KnownRuntime = runtime => KnownRuntime?.Invoke(runtime) == true };
         Settings = LoadSettings();
         _policy = PolicyInForce();
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is

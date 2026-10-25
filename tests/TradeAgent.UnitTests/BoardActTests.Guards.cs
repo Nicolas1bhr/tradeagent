@@ -76,8 +76,8 @@ public partial class BoardActTests
     }
 
     /// <summary>
-    /// THE BOARD'S FIELDS ARE THE POLICY'S, AND NO EVIDENCE SETTING IS ONE (EVID-001): every field an act may change is a field of the
-    /// policy's body — which holds no friction, holdout, price, campaign, judge or verdict (<c>BoardTests.The_policy_holds_no_evidence_setting</c>)
+    /// THE BOARD'S FIELDS ARE THE POLICY'S — AND THE CHART'S CHIEF (<c>U-org-chief</c>) — AND NO EVIDENCE SETTING IS ONE (EVID-001): every
+    /// field an act may change is a field of the policy's body or <c>org.chief</c> — which holds no friction, holdout, price, campaign, judge or verdict (<c>BoardTests.The_policy_holds_no_evidence_setting</c>)
     /// — and none names one of those itself. RED with an evidence field added to the direction table.
     /// </summary>
     [Fact]
@@ -93,5 +93,13 @@ public partial class BoardActTests
             Assert.Contains(f.Path, policy);
             Assert.DoesNotContain(evidence, e => f.Path.Contains(e, StringComparison.Ordinal));
         }
+
+        // THE ONE NAME BESIDE THE POLICY'S (U-org-chief): the chart's chief, which is no evidence setting — and an intent naming any other
+        // field outside the policy, an evidence word among them, is refused at the parse. The fields an act names ⊆ the policy's ∪ {org.chief}.
+        Assert.DoesNotContain(BoardDirection.Chief, policy);
+        Assert.DoesNotContain(evidence, e => BoardDirection.Chief.Contains(e, StringComparison.Ordinal));
+        Assert.NotNull(BoardIntent.Parse("""[{"field":"org.chief","from":null,"to":{"runtime":"codex","model":"gpt-6"}}]""").Intent);
+        foreach (var e in evidence.Append("org.unit").Append("org.chief.runtime"))
+            Assert.Null(BoardIntent.Parse($$"""[{"field":"{{e}}","from":1,"to":0}]""").Intent);
     }
 }
