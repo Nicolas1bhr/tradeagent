@@ -24,17 +24,18 @@ public partial class BoardTurnTests
         await using var life = await BoardLives.Begin("board-homes", "board-1", "board-2", "board-3");
         var host = life.Host;
         var board = Path.Combine(Paths.Workspace, CouncilRoles.BoardDir);
-        var homes = BoardSeats.Founding.ToDictionary(s => s, host.HomeFor);
+        var homes = BoardSeats.Founding.ToDictionary(s => s, s => Path.GetFullPath(host.HomeFor(s)));
         Assert.Equal(3, homes.Values.Distinct(StringComparer.Ordinal).Count());
         foreach (var (seat, home) in homes)
         {
-            Assert.Equal(Path.Combine(board, seat), home);
+            Assert.Equal(Path.GetFullPath(Path.Combine(board, seat)), Path.GetFullPath(home));
             Assert.True(File.Exists(Path.Combine(home, Canon.CliFile)), $"{seat}'s home holds no canon");
             Assert.Contains($"Security board seat {seat}", File.ReadAllText(Path.Combine(home, Canon.CliFile)), StringComparison.Ordinal);
             foreach (var none in new[] { WorkspaceBuilder.InDir, WorkspaceBuilder.OutDir, "research", "strategies", ".tradeagent/context.json" })
                 Assert.False(Directory.Exists(Path.Combine(home, none)) || File.Exists(Path.Combine(home, none)), $"{seat}'s home holds {none}");
             foreach (var role in CouncilRoles.All)
-                Assert.False(home.StartsWith(host.HomeFor(role) + Path.DirectorySeparatorChar, StringComparison.Ordinal) || home == host.HomeFor(role),
+                Assert.False(home.StartsWith(Path.GetFullPath(host.HomeFor(role)) + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                             || home == Path.GetFullPath(host.HomeFor(role)),
                     $"{seat}'s home is inside {role}'s");
 
             // ITS RUNTIME: the test host's puppet, never recorded at a broker class's pinned model.
