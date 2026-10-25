@@ -11797,3 +11797,14 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Tests box:** NOT RUN — the machine does not answer.
 **OPEN GAP (named at landing, closed by U-merge-evidence-shares, in scope before M-org1):** a merge does not yet check trial/verdict shares (Σ ≤ 1 is checked for envelope_share only) and does not carry a merged unit's trial/verdict use to its successor — a merge could give back spent verdicts (EVID-001).
 **NOT VERIFIED:** no single puppet life covers backtest refusal + a verdict charged to the chain (store- and pipe-level tests do); no real model turn.
+
+## U-ci-dated-word — the linux-host CI step takes every dated word from the tool's own calendar-day clock in the env file's zone
+
+**Landed** (`land.sh`, seat A) on `main`; builder `59d7b0d6` (code), report `3e37725b`. CI-only; `tools/linux-host.sh` unchanged. No rung.
+**Source:** linux-host failed 22:00-24:00Z (runs 40135261354, 40133410607, 40133431188) and on the 25-hour DST-end day (40137472570): `date -d tomorrow` gave UTC's day, and +24 h on 2026-10-25 00:46 Brussels is still 10-25.
+**Protects:** the owner's dated word (install and stop refuse without TODAY's word in the host's zone) is as strict as before; yesterday's, tomorrow's and an old word stay asserted. No host name; CI runners only.
+**RED / evidence:** injected now at 2026-10-25T00:46 Brussels: old +24 h instant gives tomorrow 10-25; the calendar-day helper gives 10-24 / 10-26. faketime and GNU date absent locally, so the old `date -d` was not run itself.
+**Gate:** `bash -n tools/linux-host.sh` ok; actionlint: no finding in the step. CI 40139569440 green on all jobs, linux-host started 22:47Z (inside the bug window) and passed. names: removed 0, added 0.
+**Review:** `fleet/tmp/A-org/ci-dated-word/U-ci-dated-word-review.md`: "No defects found".
+**Tests box:** NOT RUN — not a .NET change. **NOT verified:** the DST-end instant on the real runner; a run just after midnight Brussels.
+**Landing:** TRAIN A10 (seat A), run 40159290061 green on every job incl. linux-host at stacked tip 1b5a6476, carried to dcd924bb (only bookkeeping paths differ).
