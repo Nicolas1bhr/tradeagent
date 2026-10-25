@@ -213,6 +213,43 @@ public class BoardPageTests
     }
 
     /// <summary>
+    /// (U-org-surface-b fix pass 1; Codex P2) A CHIEF ACT NEVER CLAIMS TO HAVE WRITTEN A POLICY VERSION: the board appoints a chief by two
+    /// seats — a proposal and a confirmation of <c>org.chief</c> — which writes no version of the policy, and whose confirmed event names
+    /// the version in force it was DECIDED UNDER (U-org-chief, the orchestrator's ruling). Its history on the Board page says "decided
+    /// under version N; no policy version written" and never "wrote the policy's version"; a policy act's line still says it wrote one
+    /// (<see cref="Every_board_act_shows_history_rationale_deciders_class_and_score"/>). RED at base: every non-null event version was
+    /// worded as written. THE WATCHED MUTANT: the label's chief branch removed turns this red.
+    /// </summary>
+    [Fact]
+    public void A_chief_acts_history_says_the_version_it_was_decided_under_and_writes_none()
+    {
+        using var db = TestEnv.NewDb();
+        var board = new BoardStore(db) { KnownRuntime = runtime => runtime == "puppet" };
+        foreach (var seat in new[] { "board-1", "board-2" }) board.SetSeatStateUnderTest(seat, BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var intent = System.Text.Json.JsonSerializer.Serialize(new object[]
+        {
+            new Dictionary<string, object?>
+            {
+                ["field"] = BoardDirection.Chief, ["from"] = null,
+                ["to"] = new Dictionary<string, string> { ["runtime"] = "puppet", ["model"] = "scripted-1" }
+            }
+        });
+        var underVersion = new BoardReader(db).InForce().Version;
+        var act = board.Propose(new BoardActRequest("board-1", null, intent, "the organisation needs a head", [], []), now);
+        var confirmed = board.Decide(act.Act.Id, "board-2", null, true, act.Act.IntentSha256, "agreed: a dormant chief costs nothing", now);
+        Assert.Equal((BoardActEventKind.Confirmed, (int?)null), (confirmed.Status, confirmed.PolicyVersion));
+        Assert.Equal(underVersion, new BoardReader(db).InForce().Version);
+        Assert.Equal(underVersion, board.Events(act.Act.Id).Single(e => e.Kind == BoardActEventKind.Confirmed).PolicyVersion);
+
+        var page = new BoardPage(new BoardReader(db));
+        var text = string.Join("\n", page.Acts.CardOf(act.Act.Id)!.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text));
+        var line = text.Split('\n').Single(l => l.StartsWith("Confirmed by board-2", StringComparison.Ordinal));
+        Assert.Contains($"; decided under version {underVersion}; no policy version written", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("wrote the policy's version", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (U-org-surface-b 6) VENTURES SHOW A NAMED EMPTY STATE (R24 § 4.6): no venture exists in this build, so the page says so in words
     /// — "No venture yet — the board approves them once they exist" — and draws no empty frame. On the Board page: the Organisation
     /// page's file is U-org-chief's under the seat's file seam. RED at base: no ventures section.

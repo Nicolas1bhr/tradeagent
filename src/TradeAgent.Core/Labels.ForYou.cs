@@ -126,9 +126,13 @@ public static partial class Labels
     /// <summary>The audit line's score of an act: <c>U-org-audit-b</c>'s, not this build's.</summary>
     public const string BoardActAuditScore = "Audit score: not scored yet";
 
-    /// <summary>One event of an act, the app's record of it.</summary>
+    /// <summary>
+    /// One event of an act, the app's record of it. <paramref name="chiefAct"/>: the act changes the chief (<c>org.chief</c>), which writes
+    /// NO policy version — its event's version is the one in force it was DECIDED UNDER (U-org-chief, the orchestrator's ruling), and is
+    /// worded so, never as written (fix pass 1; Codex P2).
+    /// </summary>
     public static string BoardActEventLine(string kind, string seat, string when, string? proposerFamily, string? deciderFamily,
-        bool? sameFamily, int? version, string? detail)
+        bool? sameFamily, int? version, bool chiefAct, string? detail)
     {
         var families = (proposerFamily, deciderFamily) switch
         {
@@ -137,7 +141,11 @@ public static partial class Labels
             _ => ""
         };
         return $"{Capital(kind)} by {seat}, {when}{families}"
-               + (version is { } v ? $"; it wrote the policy's version {v.ToString(CultureInfo.InvariantCulture)}" : "")
+               + (version is { } v
+                   ? chiefAct
+                       ? $"; decided under version {v.ToString(CultureInfo.InvariantCulture)}; no policy version written"
+                       : $"; it wrote the policy's version {v.ToString(CultureInfo.InvariantCulture)}"
+                   : "")
                + (detail is { Length: > 0 } d2 ? $". {d2}" : ".");
     }
 
