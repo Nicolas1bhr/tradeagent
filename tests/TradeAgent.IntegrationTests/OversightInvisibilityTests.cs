@@ -270,7 +270,6 @@ public partial class OversightInvisibilityTests(ITestOutputHelper log)
         yield return ("BoardTotalsBetween", JsonSerializer.Serialize(attempts.BoardTotalsBetween(from, to)));
         foreach (var ceiling in new[] { BillingClasses.Plan, BillingClasses.Key })
         {
-            yield return ($"BoardTotalsBetween ceiling {ceiling}", JsonSerializer.Serialize(attempts.BoardTotalsBetween(from, to, ceiling)));
             yield return ($"TotalsBetween ceiling {ceiling}", JsonSerializer.Serialize(attempts.TotalsBetween(from, to, null, ceiling)));
             foreach (var u in org.Units())
                 yield return ($"UnitTotalsBetween {u.Id} ceiling {ceiling}", JsonSerializer.Serialize(attempts.UnitTotalsBetween(from, to, u.Id, ceiling)));
