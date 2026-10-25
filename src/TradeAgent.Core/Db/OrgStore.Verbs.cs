@@ -41,6 +41,14 @@ public static class OrgBounds
 
     /// <summary>The trailing window <see cref="TiltPerWeek"/> is summed over.</summary>
     public static readonly TimeSpan TiltWindow = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// THE EXPLORATION FLOOR (<c>U-org-scorecards-b</c> b1; ORGANISATION § 8): this fraction of every pot is split EQUALLY among its
+    /// active units, new ones included — the organisation's protected allocation for work no measure can value yet. A write of an AI
+    /// share that leaves an active child below <c>ExplorationFloor / n</c> of its parent's envelope is refused (<see cref="OrgStore.Tilt"/>,
+    /// <see cref="OrgStore.Charter"/>).
+    /// </summary>
+    public const decimal ExplorationFloor = 0.25m;
 }
 
 /// <summary>
@@ -172,6 +180,8 @@ public sealed partial class OrgStore
         foreach (var parentEnvelope in funding.Parent)
             if (Unfundable(funding.Seat, id, r.AiShare * parentEnvelope.Envelope, funding.Reservation) is { } never)
                 throw Refused($"{never} ({BillingClasses.Words(parentEnvelope.Ceiling)})");
+        // THE EXPLORATION FLOOR (U-org-scorecards-b b1): the new unit counted among its parent's active units.
+        if (FloorRefusal(parent.Id, null, r.AiShare) is { } belowFloor) throw Refused(belowFloor);
 
         // ITS TRIAL AND VERDICT SHARES, WHEN ASKED (U-org-verbs-e): fractions of a campaign's own budgets, the siblings' with each at
         // most the whole, each worth at least one of every open campaign's — the checks a tilt makes (OrgStore.Tilt).

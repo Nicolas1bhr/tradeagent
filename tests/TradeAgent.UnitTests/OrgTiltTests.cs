@@ -229,6 +229,44 @@ public class OrgTiltTests
         Assert.False(chain[1].GetProperty("shares").TryGetProperty("trials", out _), "a unit with no trial share of its own was shown one");
     }
 
+    /// <summary>
+    /// (b1, <c>U-org-scorecards-b</c>; ORGANISATION § 8) THE EXPLORATION FLOOR WHERE SHARES ARE WRITTEN: 25 % of the division's envelope
+    /// split equally among its active units, new ones included. Two active teams hold at least 0.125 each, so a tilt of the team's AI
+    /// share from 0.2 to 0.1 is refused in words naming the floor, nothing written; to 0.125 it is written. A third team chartered at
+    /// 0.05 is below its 0.0834 and refused; at 0.1 it is written. <c>OfUnit</c> shows the rule share beside the one held. RED at base:
+    /// both writes below the floor were served.
+    /// </summary>
+    [Fact]
+    public void A_tilt_below_the_exploration_floor_is_refused()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var before = Written(db);
+
+        // Every seat reserves 0.1 here, so each share below funds its turns and only the floor speaks.
+        static SeatTurn? Cheap(string _) => new(0.1m, [new(BillingClasses.Key, 10m)]);
+        var cut = Assert.Throws<TradeAgentException>(() => org.Tilt(Ask(OrgCurrency.Ai, 0.1m), Metered, Now, Cheap));
+        Assert.Contains("below the exploration floor", cut.Message, StringComparison.Ordinal);
+        Assert.Contains("its 2 active units, new ones included — 0.125 each", cut.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        Assert.Equal("0.2", ShareOf(db, Team, OrgCurrency.Ai));
+        Assert.Equal("0.125", org.Tilt(Ask(OrgCurrency.Ai, 0.125m), Metered, Now, Cheap).To);
+
+        CharterRequest Charter(decimal ai) => new(Head, null, OrgUnitKind.Team, ai, "a third family", ["a team"], [], [Admissible()], Now.AddDays(30));
+        var low = Assert.Throws<TradeAgentException>(() => org.Charter(Charter(0.05m), Metered, Now));
+        Assert.Contains("would leave the new unit below the exploration floor", low.Message, StringComparison.Ordinal);
+        Assert.Contains("its 3 active units, new ones included — 0.0834 each", low.Message, StringComparison.Ordinal);
+        var third = org.Charter(Charter(0.1m), Metered, Now).Unit;
+        Assert.Equal("0.1", third.EnvelopeShare);
+
+        // THE RULE SHARE BESIDE THE ONE HELD: three active teams, a floor of 0.0833… each and a rule share of a third.
+        var share = new Scorecards(db).OfUnit(Team, Now.AddDays(-1), Now.AddMinutes(1)).Share;
+        Assert.Equal((3, 0.25m / 3, "0.125"), (share.ActiveUnits, share.Floor, share.Actual));
+        Assert.Contains("rule share 0.3334 of unit div-71170000's envelope", share.Words, StringComparison.Ordinal);
+        Assert.Contains("held 0.125.", share.Words, StringComparison.Ordinal);
+        Assert.Contains("the security board's day-total", new Scorecards(db).OfUnit(OrgIds.Root, Now.AddDays(-1), Now).Share.Words, StringComparison.Ordinal);
+    }
+
     // ---- the fix pass --------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -297,8 +335,9 @@ public class OrgTiltTests
         var org = new OrgStore(db);
         var smallKey = Metered with { Parent = [new(BillingClasses.Key, 2m)] };
 
-        Assert.Equal("0.1", org.Tilt(Ask(OrgCurrency.Ai, 0.1m), smallKey, Now, PlanTeamHead(plan: 10m)).To);
-        Assert.Equal("0.1", ShareOf(db, Team, OrgCurrency.Ai));
+        // 0.15, not 0.1 (U-org-scorecards-b b1, declared): 0.1 is below the exploration floor's 0.125 for two active teams.
+        Assert.Equal("0.15", org.Tilt(Ask(OrgCurrency.Ai, 0.15m), smallKey, Now, PlanTeamHead(plan: 10m)).To);
+        Assert.Equal("0.15", ShareOf(db, Team, OrgCurrency.Ai));
     }
 
     /// <summary>

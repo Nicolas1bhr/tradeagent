@@ -214,10 +214,20 @@ public sealed record PositionScorecard(
 /// the window that a launch the unit funded had run by then; those per AI dollar, or null with the reason; and its contribution, which
 /// needs a forward record no unit has yet.
 /// </summary>
+/// <para><see cref="Share"/> (<c>U-org-scorecards-b</c> b1): the AI share the rules give the unit beside the one it holds.</para>
 public sealed record UnitYield(
     string Unit, DateTimeOffset From, DateTimeOffset To, AiAttemptTotals Spend, decimal? Cost, string CostWords,
     int MandatesOpened, int MandatesAccepted, int MandatesExpired, int Admissible, decimal? AdmissiblePerDollar, string PerDollarWords,
-    string Contribution);
+    string Contribution, UnitShare Share);
+
+/// <summary>
+/// A UNIT'S AI SHARE BY THE RULES AND AS HELD (<c>U-org-scorecards-b</c> b1; ORGANISATION § 8), read from today's chart: its equal part of
+/// the exploration floor among its parent's <see cref="ActiveUnits"/> (<see cref="Floor"/>), the RULE share — that floor plus an equal
+/// part of the other 75 %, which splits equally until a unit has 90 forward days and none has — and the <see cref="Actual"/> share its
+/// row holds (null: no own cap). Null rule and floor for the organisation itself, whose envelope is the board's day-total, and for a
+/// unit that is not active. <see cref="Words"/> says all of it.
+/// </summary>
+public sealed record UnitShare(int ActiveUnits, decimal? Floor, decimal? Rule, string? Actual, string Words);
 
 /// <summary>
 /// THE SCORECARDS (<c>U-org-scorecards-a</c>, O8; ORGANISATION § 8): computed by the app at read from its own resolutions and
@@ -343,8 +353,32 @@ public sealed class Scorecards(Database db)
         var perDollarWords = cost is null ? "not known: the unit's cost is not known"
             : cost == 0m ? "not measured: no AI dollar was spent"
             : perDollar!.Value.ToString("0.####", CultureInfo.InvariantCulture);
-        return new UnitYield(unit, from, to, spend, cost, costWords, opened, accepted, expired, admissible, perDollar, perDollarWords, NoForwardRecord);
+        return new UnitYield(unit, from, to, spend, cost, costWords, opened, accepted, expired, admissible, perDollar, perDollarWords, NoForwardRecord,
+            ShareOf(unit));
     });
+
+    /// <summary>The rule share beside the actual one (<see cref="UnitShare"/>), from today's chart.</summary>
+    UnitShare ShareOf(string unitId)
+    {
+        var units = new OrgStore(db).Units();
+        var unit = units.Single(u => u.Id == unitId);
+        var actual = unit.EnvelopeShare;
+        var held = actual is null
+            ? OrgEnvelopes.LegacyRoleOf(unit.Id) is not null ? "the split on the Safety page" : "no own cap — it spends inside the room above it"
+            : actual;
+        if (unit.ParentId is null)
+            return new UnitShare(0, null, null, actual, "the organisation's own envelope is the security board's day-total: no rule share.");
+        var n = units.Count(u => u.ParentId == unit.ParentId && u.Status == OrgUnitStatus.Active);
+        if (unit.Status != OrgUnitStatus.Active)
+            return new UnitShare(n, null, null, actual, $"not active ({unit.Status}): the exploration floor and the rule share are the active units'; held {held}.");
+        var floor = OrgStore.FloorShare(n);
+        var rule = floor + (1m - OrgBounds.ExplorationFloor) / n;
+        var words = $"rule share {OrgStore.Words(rule)} of {OrgEnvelopes.NameOf(unit.ParentId)}'s envelope — the exploration floor's equal "
+                    + $"{OrgStore.Words(floor)} among {n.ToString(CultureInfo.InvariantCulture)} active unit{(n == 1 ? "" : "s")} and an equal part "
+                    + "of the rest, which splits equally until a unit has 90 forward days (none has) — held " + held
+                    + (actual is not null && OrgEnvelopes.Fraction(unit.Id, actual) < floor ? ", below the floor" : "") + ".";
+        return new UnitShare(n, floor, rule, actual, words);
+    }
 
     static string Count(int n, string noun) => $"{n.ToString(CultureInfo.InvariantCulture)} {noun}{(n == 1 ? "" : "s")}";
 }
