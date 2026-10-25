@@ -63,7 +63,10 @@ public class OwnerPageTests
             // EVIDENCE (item 3): what a paper fill pays, and the holdout's two.
             "Use my numbers", "Clear my numbers", Labels.SetHoldout, Labels.SetHoldoutFixture,
             // UPDATES (item 3).
-            "Check for updates", "What's new", "Install update", "Turn off automatic checks"
+            "Check for updates", "What's new", "Install update", "Turn off automatic checks",
+            // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3, CHANGE-001): his, each two presses — the board only
+            // proposes them. Three presses: the share, founding a seat, retiring the seat chosen in its list.
+            Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress
         ];
         // THE ACCOUNT LIST'S ROWS arrive when the platform answers; each is the account's own press and nothing else.
         Assert.Equal(string.Join(" | ", owners.Concat(choices).Order(StringComparer.Ordinal)),
@@ -84,6 +87,76 @@ public class OwnerPageTests
         var left = settings.Root.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string).ToList();
         foreach (var label in owners) Assert.DoesNotContain(label, left);
         Assert.Contains("Download 12 months", left);
+        return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// (U-org-surface-b 5) THE BOARD'S COMPOSITION AND BUDGET TAKE TWO PRESSES AND REFUSE IN WORDS (R24 § 4.3, Q6, Q7; CHANGE-001): on the
+    /// owner's page the board's share, founding a seat and retiring one each write nothing on the first press and act on the second; a
+    /// choice moved after the first press disarms it; a box that reads as nothing refuses both presses; and the store's refusal — a seat
+    /// with no vendor family, a retirement that would leave one model class — is shown verbatim, nothing written. The closed lists are
+    /// the board's own (<c>BoardSeats.SeatClasses</c>, <c>BoardModelClass.All</c>) on a box no scroll changes. RED at base: no such presses.
+    /// </summary>
+    [Fact]
+    public Task The_boards_composition_and_budget_take_two_presses_and_refuse_in_words() => OnThePage((page, host) =>
+    {
+        static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var c = (BoardComposition)typeof(OwnerPage).GetField("_boardComposition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
+        var board = host.Board;
+        Assert.Equal(TradeAgent.Core.Board.BoardSeats.SeatClasses, c.SeatClass.ItemsSource);
+        Assert.Equal(TradeAgent.Core.Board.BoardModelClass.All, c.ModelClass.ItemsSource);
+        Assert.IsType<ChoiceBox>(c.SeatClass);
+        Assert.NotNull(typeof(ChoiceBox).GetMethod("OnPointerWheelChanged",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly));
+
+        // THE SHARE: an empty box refuses either press; a figure takes two.
+        var was = board.BudgetShare();
+        Press(c.SetShare);
+        Assert.False(Ui.IsArmed(c.SetShare));
+        Assert.Equal(was, board.BudgetShare());
+        c.Share.Box.Text = "0.3";
+        Press(c.SetShare);
+        Assert.True(Ui.IsArmed(c.SetShare));
+        Assert.Equal(was, board.BudgetShare());
+        Press(c.SetShare);
+        Assert.Equal(0.3m, board.BudgetShare());
+
+        // FOUNDING: two presses; a choice moved after the first disarms it; no vendor family is the store's refusal, verbatim.
+        var seats = board.Seats().Count;
+        c.SeatClass.SelectedItem = TradeAgent.Core.Db.SeatClasses.Cell;
+        c.Vendor.Text = "anthropic";
+        Press(c.Found);
+        Assert.Equal(seats, board.Seats().Count);
+        c.ModelClass.SelectedItem = TradeAgent.Core.Board.BoardModelClass.Standard;
+        Assert.False(Ui.IsArmed(c.Found));
+        Press(c.Found);
+        Press(c.Found);
+        var founded = board.Seats().Last();
+        Assert.Equal(seats + 1, board.Seats().Count);
+        Assert.Equal((TradeAgent.Core.Db.SeatClasses.Cell, TradeAgent.Core.Board.BoardModelClass.Standard, "anthropic", TradeAgent.Core.Board.BoardSeatStatus.Dormant),
+            (founded.SeatClass, founded.ModelClass, founded.VendorFamily, founded.Status));
+        c.Vendor.Text = "";
+        Press(c.Found);
+        Press(c.Found);
+        Assert.Equal(seats + 1, board.Seats().Count);
+        Assert.Equal(Assert.Throws<TradeAgentException>(() => new TradeAgent.Core.Board.BoardStore(host.Db).FoundBoardSeat(
+            TradeAgent.Core.Db.SeatClasses.Cell, TradeAgent.Core.Board.BoardModelClass.Standard, "", DateTimeOffset.UtcNow)).Message, c.Note.Text);
+
+        // RETIRING: two presses; one that would leave the board on one model class is the store's refusal, verbatim, nothing written.
+        Assert.Contains(founded.Id, (IEnumerable<string>)c.RetireSeat.ItemsSource!);
+        c.RetireSeat.SelectedItem = founded.Id;
+        Press(c.Retire);
+        Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Dormant, board.Seats().Single(s => s.Id == founded.Id).Status);
+        Press(c.Retire);
+        Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Retired, board.Seats().Single(s => s.Id == founded.Id).Status);
+        Assert.DoesNotContain(founded.Id, (IEnumerable<string>)c.RetireSeat.ItemsSource!);
+        var standard = board.Seats().Single(s => s.ModelClass == TradeAgent.Core.Board.BoardModelClass.Standard && s.Status != TradeAgent.Core.Board.BoardSeatStatus.Retired).Id;
+        c.RetireSeat.SelectedItem = standard;
+        Press(c.Retire);
+        Press(c.Retire);
+        Assert.NotEqual(TradeAgent.Core.Board.BoardSeatStatus.Retired, board.Seats().Single(s => s.Id == standard).Status);
+        Assert.Contains("would leave the board on fewer than two model classes", c.Note.Text, StringComparison.Ordinal);
+        Assert.Equal(Theme.Caution, c.Note.Foreground);
         return Task.CompletedTask;
     });
 
