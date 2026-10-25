@@ -217,9 +217,11 @@ public class NumberEntryCultureTests
     {
         var all = page.Root.GetLogicalDescendants().ToList();
         Assert.Empty(all.OfType<NumericUpDown>());
-        Assert.Equal(4, all.OfType<AmountField>().Count());
+        // FIVE since U-org-surface-b: the board's share of the plan's day joined the owner's four (R24 § 4.3, his to set).
+        Assert.Equal(5, all.OfType<AmountField>().Count());
         Assert.True(new HashSet<AmountField>([Field<AmountField>(page, "_dailyCap"), Field<AmountField>(page, "_priceIn"),
-                Field<AmountField>(page, "_priceOut"), Field<PerceptionCard>(page, "_perception").BudgetBox])
+                Field<AmountField>(page, "_priceOut"), Field<PerceptionCard>(page, "_perception").BudgetBox,
+                Field<BoardComposition>(page, "_boardComposition").Share])
             .SetEquals(all.OfType<AmountField>()));
 
         // AND THE OVERSIGHT PAGE'S CAP (fix pass 2): the one money box there, built the way the window builds the page.
@@ -663,7 +665,7 @@ public class NumberEntryCultureTests
     public Task A_scroll_over_a_money_box_never_changes_its_value_and_scrolls_the_page() => OnThePage((page, _) =>
     {
         var fields = page.Root.GetLogicalDescendants().OfType<AmountField>().ToList();
-        Assert.Equal(4, fields.Count);
+        Assert.Equal(5, fields.Count);   // the owner's four and, since U-org-surface-b, the board's share
         Field<AmountField>(page, "_dailyCap").Box.Text = "0,05";
 
         foreach (var field in fields)
@@ -683,6 +685,24 @@ public class NumberEntryCultureTests
             Assert.False(focused.Handled);
         }
         Assert.Equal(0.05m, Field<AmountField>(page, "_dailyCap").Value);
+
+        // AND NO SCROLL CHANGES A CHOICE (U-org-surface-b item 5): the board's closed lists on the owner's page — a seat's class, its
+        // model class, the seat to retire — keep their selection under a wheel, clicked into or not, and leave the scroll to the page.
+        // Watched red with a stock ComboBox: clicked into, one notch stepped the selection and swallowed the scroll.
+        var choices = page.Root.GetLogicalDescendants().OfType<ComboBox>().ToList();
+        Assert.Equal(3, choices.Count);
+        Assert.All(choices, c => Assert.IsType<ChoiceBox>(c));
+        foreach (var choice in choices)
+        {
+            choice.SelectedIndex = 1;
+            var unfocused = Wheel(choice, page.Root);
+            choice.RaiseEvent(unfocused);
+            Assert.Equal((1, false), (choice.SelectedIndex, unfocused.Handled));
+            Focused(choice);
+            var focused = Wheel(choice, page.Root);
+            choice.RaiseEvent(focused);
+            Assert.Equal((1, false), (choice.SelectedIndex, focused.Handled));
+        }
         return Task.CompletedTask;
     });
 }

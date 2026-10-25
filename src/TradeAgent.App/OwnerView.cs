@@ -33,6 +33,9 @@ sealed class OwnerPage
 {
     readonly AppHost _host;
 
+    /// <summary>The board's composition and budget, his (<c>U-org-surface-b</c> item 5).</summary>
+    readonly BoardComposition _boardComposition;
+
     readonly Button _stopButton;
 
     /// <summary>WHETHER EITHER LOSS BUDGET HAS FIRED TODAY, and what TradeAgent did about it: facts beside the emergency presses, hidden while nothing is closed.</summary>
@@ -757,9 +760,13 @@ sealed class OwnerPage
         // WHAT EACH SEAT RUNS ON, beside the key its worker needs: his while no board seat is active, then gone.
         _seatChoices = new SeatChoices(_host, BoardActive, Refresh);
 
+        // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3): his, always, each two presses — the board only proposes them.
+        _boardComposition = new BoardComposition(() => _host.Board, _host.Gateway.SetBoardBudgetShare, _host.Gateway.FoundBoardSeat,
+            _host.Gateway.RetireBoardSeat);
+
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, _releaseCard, running,
+            _unreadableCard, _releaseCard, running, _boardComposition.Root,
             Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, _seatChoices.Root, settings.Bridge,
             Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
             Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns,
@@ -774,6 +781,7 @@ sealed class OwnerPage
 
     public void Update(GatewayStatus status)
     {
+        _boardComposition.Update();
         // Read from the gateway, not from `status`: GatewayStatus is the agent-facing shape and this is a fact about the row this build read.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
 
@@ -1238,6 +1246,126 @@ sealed class OwnerPage
         {
             _deploymentValue.Text = "could not be read";
             _stopDeployment.IsEnabled = false;
+        }
+    }
+}
+
+/// <summary>
+/// A CLOSED-LIST CHOICE THAT A SCROLL NEVER CHANGES (the owner, 2026-10-22: "values cannot be changed by scrolling over them if they
+/// weren't clicked in the first place"): a stock <see cref="ComboBox"/> steps its selection on the mouse wheel once it has focus, so
+/// this one handles no wheel at all — the event goes on to the page, which scrolls. It looks exactly like a ComboBox.
+/// </summary>
+sealed class ChoiceBox : ComboBox
+{
+    protected override Type StyleKeyOverride => typeof(ComboBox);
+
+    protected override void OnPointerWheelChanged(Avalonia.Input.PointerWheelEventArgs e) { }
+}
+
+/// <summary>
+/// THE SECURITY BOARD'S COMPOSITION AND BUDGET, THE OWNER'S (<c>U-org-surface-b</c> item 5; R24 § 4.3, Q6, Q7; CHANGE-001): the board's
+/// share of the plan's day in an <see cref="AmountField"/>, founding a seat from closed lists (its class from
+/// <see cref="BoardSeats.SeatClasses"/>, its model class from <see cref="BoardModelClass.All"/>) and retiring one — each TWO presses
+/// (<see cref="Ui.Confirm(string, string, Action, Func{string?}, Action{string})"/>), in-process only, the store's refusal shown verbatim.
+/// No choice changes on a scroll (<see cref="ChoiceBox"/>). Built once; <see cref="Update"/> writes text and the seat list in place.
+/// </summary>
+sealed class BoardComposition
+{
+    readonly Func<BoardReader?> _board;
+    string _seatSignature = "\u0000";
+
+    public Control Root { get; }
+    public AmountField Share { get; }
+    public Button SetShare { get; }
+    public ChoiceBox SeatClass { get; } = new() { ItemsSource = BoardSeats.SeatClasses, SelectedIndex = 0, Width = Theme.FieldWidth };
+    public ChoiceBox ModelClass { get; } = new() { ItemsSource = BoardModelClass.All, SelectedIndex = 0, Width = Theme.FieldWidth };
+    public TextBox Vendor { get; } = Ui.TextField(placeholder: Labels.BoardVendorFamilyPlaceholder);
+    public Button Found { get; }
+    public ChoiceBox RetireSeat { get; } = new() { Width = Theme.FieldWidth };
+    public Button Retire { get; }
+    public TextBlock ShareNow { get; } = Ui.Body("");
+    public TextBlock Note { get; } = Ui.With(Ui.Micro(""), t => t.IsVisible = false);
+
+    public BoardComposition(Func<BoardReader?> board, Func<decimal, decimal> setShare, Func<string, string, string, BoardSeat> found,
+        Func<string, BoardSeat> retire)
+    {
+        _board = board;
+        Share = Ui.AmountField(null, AmountKind.Decimal, 0m, 1m);
+        SetShare = Ui.Confirm(Labels.SetBoardBudgetSharePress, Labels.SetBoardBudgetShareConfirm,
+            () => Done(() =>
+            {
+                var set = setShare(Share.Figure);
+                return $"Saved. The board's share of the plan's day is {set.ToString(System.Globalization.CultureInfo.InvariantCulture)}.";
+            }),
+            () => Ui.Refusal((Labels.BoardShareLabel, Share)), why => Ui.Refuse(Note, why));
+        Share.ValueChanged += (_, _) => Ui.DisarmConfirm(SetShare);
+        Found = Ui.Confirm(Labels.FoundBoardSeatPress, Labels.FoundBoardSeatConfirm,
+            () => Done(() =>
+            {
+                var seat = found(SeatClass.SelectedItem as string ?? "", ModelClass.SelectedItem as string ?? "", Vendor.Text ?? "");
+                return $"Founded {seat.Id}: {Labels.BoardSeatClass(seat.SeatClass)}; a {seat.ModelClass} model from {seat.VendorFamily}. It is dormant.";
+            }));
+        Retire = Ui.Confirm(Labels.RetireBoardSeatPress, Labels.RetireBoardSeatConfirm,
+            () => Done(() =>
+            {
+                var seat = retire(RetireSeat.SelectedItem as string ?? "");
+                return $"Retired {seat.Id}. It acts no more.";
+            }));
+        // A CHOICE THAT MOVED DISARMS THE PRESS ARMED FOR ANOTHER: the second press does what the first one showed, or nothing.
+        SeatClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
+        ModelClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
+        Vendor.TextChanged += (_, _) => Ui.DisarmConfirm(Found);
+        RetireSeat.SelectionChanged += (_, _) => Ui.DisarmConfirm(Retire);
+        foreach (var b in new[] { SetShare, Found, Retire }) b.HorizontalAlignment = HorizontalAlignment.Left;
+
+        Root = Ui.Section(Labels.BoardCompositionTitle, Ui.Col(Theme.S2,
+            Ui.Muted(Labels.BoardCompositionIsYours),
+            Ui.Spacer(Theme.S2),
+            ShareNow,
+            Ui.FieldRow(Labels.BoardShareLabel, Share),
+            SetShare,
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow("Seat class", SeatClass),
+            Ui.FieldRow("Model class", ModelClass),
+            Ui.FieldRow("Vendor family", Vendor),
+            Found,
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow("Seat", RetireSeat),
+            Retire,
+            Note));
+        Update();
+    }
+
+    /// <summary>A second press: the act's words, or the store's refusal verbatim in caution colour — nothing written then.</summary>
+    void Done(Func<string> act)
+    {
+        try { Ui.Said(Note, act()); }
+        catch (Exception ex) { Ui.Refuse(Note, ex.Message); }
+        Update();
+    }
+
+    /// <summary>The share in force and the seats a retirement may name, written in place; the list's items change only when the seats do.</summary>
+    public void Update()
+    {
+        try
+        {
+            var board = _board();
+            if (board is null) return;
+            var share = board.BudgetShare();
+            OrgText.Set(ShareNow, share is { } s
+                ? $"The board's share of the plan's day now: {s.ToString(System.Globalization.CultureInfo.InvariantCulture)}."
+                : "The board's share of the plan's day could not be read.");
+            var open = board.Seats().Where(x => x.Status != BoardSeatStatus.Retired).Select(x => x.Id).ToList();
+            var signature = string.Join('|', open);
+            if (signature == _seatSignature) return;
+            _seatSignature = signature;
+            var chosen = RetireSeat.SelectedItem as string;
+            RetireSeat.ItemsSource = open;
+            RetireSeat.SelectedItem = chosen is not null && open.Contains(chosen) ? chosen : open.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            OrgText.Set(ShareNow, $"The board could not be read: {ex.Message}");
         }
     }
 }
