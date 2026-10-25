@@ -6,7 +6,7 @@ namespace TradeAgent.Core;
 /// <summary>
 /// THE WORDS OF THE ORGANISATION-FIRST PAGES (<c>U-org-surface-a</c>; R24 § 4.7): the rail's three entries and each page's title, subtitle,
 /// section names and empty lines, and the plain words for a seat's boundary and a billing class. Spelled once, so a page, a test and a
-/// sentence cannot drift apart. These pages only read: the one control named here is the owner's repair of a refused position's folder (<c>U-repair-position-home</c>).
+/// sentence cannot drift apart. These pages only read: the controls named here are the owner's repair of a refused position's folder (<c>U-repair-position-home</c>) and his presses over the chief (<c>U-org-chief</c>).
 /// </summary>
 public static partial class Labels
 {
