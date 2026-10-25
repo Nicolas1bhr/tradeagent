@@ -1,0 +1,145 @@
+using System.Globalization;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using Xunit;
+using static TradeAgent.Tests.Unit.OrgSurfaceSeed;
+
+namespace TradeAgent.Tests.Unit;
+
+/// <summary>
+/// THE CUT RULES' REVIEWS (<c>U-org-scorecards-b</c>, O8 part -b; ORGANISATION § 8, "cut rules — app review events, not agent appeals"):
+/// the app's review sweep raises ONE <c>review</c> event and ONE <c>cut-review</c> wake per rule, subject and period — a unit past half its
+/// day envelope with nothing accepted, to the head above it; a position forecasting worse than the base rate over ten scored forecasts of
+/// one manager version, to its decider — and nothing else. The chart: <see cref="Head"/> heads <see cref="Div"/> under the organisation;
+/// under it <see cref="Team"/> (AI 0.4, headed by <see cref="TeamHead"/>, with <see cref="Worker"/>) and <see cref="Sibling"/> (AI 0.4,
+/// head vacant, with <see cref="SiblingWorker"/>). Every record is written by the test as the ledger would, never by a real model.
+/// </summary>
+public class OrgReviewTests
+{
+    internal const string Head = "pos-4e71e0000001", TeamHead = "pos-4e71e0000002", Worker = "pos-4e71e0000003", SiblingWorker = "pos-4e71e0000004";
+
+    internal const string Div = "div-4e71e000", Team = "team-4e71e001", Sibling = "team-4e71e002";
+
+    /// <summary>The moment of the sweep: a weekday noon, so the owner's day is whole around it in any zone the suite runs in.</summary>
+    static readonly DateTimeOffset Now = new(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+
+    static void Unit(Database db, string id, string parent, string kind, string? head, string? ai)
+    {
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at) VALUES($t,$p,$k,NULL,'active',$ai,$at)",
+            ("$t", id), ("$p", parent), ("$k", kind), ("$ai", ai), ("$at", Stamp));
+        if (head is null) return;
+        Seat(db, head, id);
+        Exec(db, "UPDATE org_unit SET head_position_id=$h WHERE id=$t", ("$h", head), ("$t", id));
+    }
+
+    internal static Database Chart()
+    {
+        var db = TestEnv.NewDb();
+        Unit(db, Div, OrgIds.Root, OrgUnitKind.Division, Head, null);
+        Unit(db, Team, Div, OrgUnitKind.Team, TeamHead, "0.4");
+        Seat(db, Worker, Team);
+        Unit(db, Sibling, Div, OrgUnitKind.Team, null, "0.4");
+        Seat(db, SiblingWorker, Sibling);
+        return db;
+    }
+
+    /// <summary>The meter's reading of each unit, in the key ceiling: its envelope, what it spent today and how many turns of unknown cost.</summary>
+    internal static Func<string, IReadOnlyList<UnitDay>?> Day(params (string Unit, decimal Envelope, decimal Spent, int Unpriced)[] units) =>
+        unit => [.. units.Where(u => u.Unit == unit).Select(u => new UnitDay(u.Unit, BillingClasses.Key, u.Envelope, u.Spent, 0m, u.Unpriced))];
+
+    internal static List<(long Id, string Unit, string? Position, string Decider, string Detail)> Reviews(Database db) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT id, unit_id, position_id, decider, detail FROM org_event WHERE kind = $k ORDER BY id", ("$k", OrgEventKind.Review));
+        using var r = c.ExecuteReader();
+        var rows = new List<(long, string, string?, string, string)>();
+        while (r.Read()) rows.Add((r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3), r.GetString(4)));
+        return rows;
+    });
+
+    static string Day(DateTimeOffset now) => OwnerDay.Window(now).From.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// (b2) A UNIT PAST HALF ITS DAY ENVELOPE WITH NOTHING ACCEPTED RAISES ONE REVIEW, AND A RESTART NONE: the team spent 5 of its 10 today
+    /// and nothing in its subtree was accepted ⇒ ONE <c>review</c> event, decided by the app, its detail the measurement, and ONE
+    /// <c>cut-review</c> wake to the division's head (the head whose verbs reach the team's share), carrying the event's id. The division —
+    /// whose head above is the organisation's, the owner's seat — is not reviewed; the sibling, with a mandate accepted today in its
+    /// subtree, is not; a spend under half with a turn of unknown cost is said and not judged. A second sweep — a restart, a fresh store —
+    /// raises nothing. RED at base: no review sweep.
+    /// </summary>
+    [Fact]
+    public void A_unit_past_half_its_envelope_raises_one_review_and_a_restart_none()
+    {
+        using var db = Chart();
+        Exec(db, """
+            INSERT INTO org_mandate(id, unit_id, decider, holder, kind, objective, scope, checks, latitude, deadline, allocation_ai, retry_limit, created_at)
+            VALUES('man-4e71e0000001', $d, $h, $w, 'research', 'find it', NULL, '[]', 'exact', '2026-12-01T00:00:00.0000000Z', '1.00', 3, $at)
+            """, ("$d", Div), ("$h", Head), ("$w", SiblingWorker), ("$at", Stamp));
+        Exec(db, "INSERT INTO org_mandate_event(mandate_id, at, kind, actor) VALUES('man-4e71e0000001', $at, $k, $a)",
+            ("$at", Sql.T(Now.AddHours(-1))), ("$k", MandateEventKind.Accepted), ("$a", Head));
+        var day = Day((Team, 10m, 5m, 0), (Sibling, 10m, 6m, 0), (Div, 25m, 20m, 0));
+
+        var swept = new OrgStore(db).ReviewSweep(Now, ReviewThresholds.Default, day);
+        Assert.Equal(1, swept.Raised);
+        Assert.Empty(swept.Unjudged);
+        var review = Assert.Single(Reviews(db));
+        var wakeId = $"review:{ReviewRule.HalfEnvelope}:{Team}:{Day(Now)}";
+        Assert.Equal((Team, (string?)null, OrgDecider.App), (review.Unit, review.Position, review.Decider));
+        Assert.Equal($"rule=half-envelope unit={Team} period={Day(Now)} ceiling=key spent=5 envelope=10 share=0.5 accepted=0 reviewer={Head} wake={wakeId}",
+            review.Detail);
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+        Assert.Equal((wakeId, Head, review.Id.ToString(CultureInfo.InvariantCulture)), (wake.Id, wake.Role, wake.Payload));
+
+        // A RESTART: a fresh store, the same day — nothing more.
+        Assert.Equal(0, new OrgStore(db).ReviewSweep(Now.AddMinutes(5), ReviewThresholds.Default, day).Raised);
+        Assert.Single(Reviews(db));
+        Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+
+        // UNDER HALF WITH A TURN OF UNKNOWN COST: said, never judged.
+        var unknown = new OrgStore(db).ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 5m, 0), (Div, 25m, 3m, 2)));
+        Assert.Equal(0, unknown.Raised);
+        Assert.Empty(unknown.Unjudged);                                               // the division has no head above it to review it
+        using var other = Chart();
+        var unpriced = new OrgStore(other).ReviewSweep(Now, ReviewThresholds.Default, Day((Team, 10m, 3m, 1)));
+        Assert.Equal(0, unpriced.Raised);
+        Assert.Contains("1 turn(s) of unknown cost", Assert.Single(unpriced.Unjudged), StringComparison.Ordinal);
+        Assert.Contains("this host meters no AI envelope", Assert.Single(new OrgStore(other).ReviewSweep(Now, ReviewThresholds.Default, null).Unjudged),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (b2) A POSITION FORECASTING WORSE THAN THE BASE RATE OVER TEN SCORED FORECASTS OF ONE MANAGER VERSION RAISES ONE REVIEW TO ITS
+    /// DECIDER: the worker forecasts ten versions promoted at 0.9; each is judged refused; against a base rate of one half (nothing judged
+    /// before), its skill is 0.25 − 0.81 &lt; 0 ⇒ ONE review on the worker, to the team's head; a second pass raises nothing. Nine scored
+    /// forecasts raise nothing.
+    /// </summary>
+    [Fact]
+    public void A_position_below_the_base_rate_over_ten_scored_forecasts_raises_one_review_to_its_decider()
+    {
+        using var db = Chart();
+        var t0 = Now.AddDays(-3);
+        var org = new OrgStore(db);
+        for (var i = 0; i < 10; i++)
+        {
+            var version = $"ver-4e71e{i:00}";
+            OrgScorecardTests.Version(db, version);
+            org.Decide(Worker, null, OrgDecisionKind.Routine, ["forecast it"], "forecast it", "my reasons", [],
+                [new ForecastClaim(ForecastVocabulary.VerdictClass, version, PromotionVerdict.Promoted, t0.AddDays(2), 0.9m)], t0);
+            if (i < 9) OrgScorecardTests.Verdict(db, version, PromotionVerdict.Refused, t0.AddHours(1));
+        }
+        Assert.Empty(new ForecastResolver(db).Sweep(t0.AddDays(1)).Refused);
+        Assert.Equal(0, org.ReviewSweep(Now, ReviewThresholds.Default, Day()).Raised);
+
+        OrgScorecardTests.Verdict(db, "ver-4e71e09", PromotionVerdict.Refused, t0.AddHours(1));
+        Assert.Empty(new ForecastResolver(db).Sweep(t0.AddDays(1)).Refused);
+        Assert.Equal(1, org.ReviewSweep(Now, ReviewThresholds.Default, Day()).Raised);
+        var review = Assert.Single(Reviews(db));
+        Assert.Equal((Team, (string?)Worker, OrgDecider.App), (review.Unit, review.Position, review.Decider));
+        Assert.StartsWith($"rule=calibration position={Worker} period=", review.Detail, StringComparison.Ordinal);
+        Assert.Contains("scored=10 skill=-0.56 below=0 version=no manager version recorded reviewer=" + TeamHead, review.Detail, StringComparison.Ordinal);
+        var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview));
+        Assert.StartsWith($"review:{ReviewRule.Calibration}:{Worker}:", wake.Id, StringComparison.Ordinal);
+        Assert.EndsWith("@10", wake.Id, StringComparison.Ordinal);
+        Assert.Equal(TeamHead, wake.Role);
+        Assert.Equal(0, new OrgStore(db).ReviewSweep(Now.AddDays(1), ReviewThresholds.Default, Day()).Raised);
+    }
+}
