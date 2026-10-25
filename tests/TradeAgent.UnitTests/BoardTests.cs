@@ -123,7 +123,7 @@ public class BoardTests(ITestOutputHelper log)
     /// <summary>
     /// LIVE IS CLOSED BY CONSTRUCTION: the schema itself refuses a policy row in either real-money mode or with real money switched
     /// on, and refuses every UPDATE and DELETE of the board's tables. RED before rung 49: no table to refuse anything. RE-RUN AFTER
-    /// RUNG 50's REBUILD (<c>U-board-b1</c>): the row offered is a board act's version — decider <c>board</c>, basis <c>act</c>, a real
+    /// RUNG 51's REBUILD (<c>U-board-b1</c>): the row offered is a board act's version — decider <c>board</c>, basis <c>act</c>, a real
     /// act behind it — right in every column but its mode or activation, and the same row in PAPER with real money off IS stored, so
     /// the refusal is the mode's and the activation's CHECK and nothing else's. Watched red with the rebuilt table's mode CHECK removed.
     /// </summary>

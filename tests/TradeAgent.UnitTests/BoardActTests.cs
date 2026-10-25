@@ -53,12 +53,12 @@ public partial class BoardActTests(ITestOutputHelper log)
         + " || '/' || (SELECT COUNT(*) FROM board_forecast_resolution) || '/' || (SELECT COUNT(*) FROM board_power_proposal)")!;
 
     /// <summary>
-    /// A RE-RUN OF RUNG 50 AFTER A CRASH BEFORE ITS STAMP WRITES NOTHING TWICE: a home that holds an act, its event and the version
-    /// it wrote, stamped back to 49, opens again with every row as it was, the rebuild not repeated, and the stamp 50. RED before
+    /// A RE-RUN OF RUNG 51 AFTER A CRASH BEFORE ITS STAMP WRITES NOTHING TWICE: a home that holds an act, its event and the version
+    /// it wrote, stamped back to 50 (<c>U-org-verbs-e</c>'s rung), opens again with every row as it was, the rebuild not repeated, and the stamp 51. RED before
     /// the rung: no <c>board_act</c> table.
     /// </summary>
     [Fact]
-    public void Rung_50_rerun_after_a_crash_before_its_stamp_writes_nothing_twice()
+    public void Rung_51_rerun_after_a_crash_before_its_stamp_writes_nothing_twice()
     {
         var file = NewFile();
         var body = BoardPolicyBody.Canonical(BoardFounding.V1 with { PlanDayTotal = 30m });
@@ -87,12 +87,13 @@ public partial class BoardActTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A HOME AT RUNG 49 OPENS AND GAINS 50 WITH ITS FOUNDING RECORD BYTE FOR BYTE: rung 49's own <c>board_policy</c> and
+    /// A HOME AT RUNG 50 OPENS AND GAINS 51 WITH ITS FOUNDING RECORD BYTE FOR BYTE: rung 49's own <c>board_policy</c> and
     /// <c>board_event</c> are rebuilt with every row copied as it was — the body and its hash unchanged, the decider <c>app</c>, no act —
-    /// the new tables made, every table sealed, and the founding policy still the one in force. RED before the rung: the home stays at 49.
+    /// the new tables made, every table sealed, and the founding policy still the one in force. RED before the rung: the home stays at 50. The board's tables are in the shape rung 49 wrote
+    /// them — rung 50 (<c>U-org-verbs-e</c>) does not touch them — and the home holds rung 50's own columns, since this build made it.
     /// </summary>
     [Fact]
-    public void A_home_at_rung_49_opens_gains_50_and_keeps_its_founding_record()
+    public void A_home_at_rung_50_opens_gains_51_and_keeps_its_founding_record()
     {
         var file = NewFile();
         string policy49, events49;
@@ -101,7 +102,7 @@ public partial class BoardActTests(ITestOutputHelper log)
             policy49 = Scalar(db, "SELECT version || '|' || decider || '|' || basis || '|' || written_at || '|' || body || '|' || body_sha256 FROM board_policy")!;
             events49 = Scalar(db, "SELECT group_concat(id || '|' || kind || '|' || detail, ',') FROM board_event")!;
         }
-        // RUNG 49's OWN SHAPE, as that rung wrote it (Database.cs at e317c011), and the stamp back at 49.
+        // RUNG 49's OWN SHAPE of the board's tables, as that rung wrote it (Database.cs at e317c011) and rung 50 left it, and the stamp back at 50.
         Raw(file, """
             PRAGMA foreign_keys=OFF;
             DROP TABLE IF EXISTS board_forecast_resolution; DROP TABLE IF EXISTS board_forecast; DROP TABLE IF EXISTS board_act_event;
@@ -134,7 +135,7 @@ public partial class BoardActTests(ITestOutputHelper log)
             INSERT INTO board_event SELECT id, at, kind, policy_version, home_schema, budget_share, detail FROM board_event_x;
             DROP TABLE board_event_x;
             DROP TABLE board_policy_x;
-            UPDATE meta SET value='49' WHERE key='schema_version';
+            UPDATE meta SET value='50' WHERE key='schema_version';
             """);
 
         using var opened = new Database(file);
