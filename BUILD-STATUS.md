@@ -11871,3 +11871,40 @@ folded into his real-model sitting; the vendor does not document a catalog edit 
 **Declared test changes:** OrgLedgerTests' org-show pin now allows only `before`; PerceptionReadersTests' totals record gains the charge; two `UnitDay` constructions gain 0, 0m.
 **Gate:** Release `--no-incremental` 0 warnings; OrgAssignmentTests 57, OrgLedgerTests 9, OrgRightsConformanceTests 3, PerceptionReadersTests 1, TradeCliTests 5 — 3× each green (TZ=UTC); branch CI 40157068180 12/12; names removed 0 (3233 → 3236); Codex review (gpt-6.1-sol) "No defects found". Tests box: NOT RUN — the machine does not answer.
 **Not changed / not verified:** the Org page (reads `UnitTotalsByClass`, not `UnitDay`; the Costs page already names unreported turns); a chart that alone fills org-show's size bound returns no mandates and points to `mandate-list`; no full local suite (CI's).
+
+## U-board-b1 — part b1 of U-board-b: the security board's acts — one seat narrows at once, two seats widen, the owner's veto only narrows, the gateway follows the policy in force
+
+**Landed** (land.sh, seat A's train — the train's run, id filled by seat A) on `main`, stacked after seat B's B12b and U-org-verbs-e. Builder retired after fix pass 2; landing fixer
+(rebase + renumber, one pass) on branch `u-board-b1-r51`, tip `0b05f758`, replayed by seat A onto main d11481b9 as `u-board-b1-r51b` tip `504cc2ec` (code tree identical). R24 §§ 4.1–4.4, 5, 7: AUTH-001/002, CHANGE-001, ORDER-001/SIGNAL-001, EVID-001, INBOX-001, BUDGET-001, refuse-never-guess, recovery.
+**RUNG 51** (tradeagent.db). Built as 50; RENUMBERED in one commit (`4ed93976`) at its replay onto U-org-verbs-e's rung 50 (`EvidenceSharesRung`), which lands first.
+`DatabaseSchemaVersion = BoardActsRung`. A home at rung 50 with the board's tables in rung 49's shape opens and gains 51, its founding record byte for byte; a crash before
+rung 51's stamp (stamp back to 50) re-runs it and writes nothing twice. board_policy/board_event are rebuilt in ONE transaction (rows copied byte for byte, FK-checked, seals
+remade, stamp last); every board table refuses UPDATE, DELETE and an insert over its key — the ledgers stay append-only. A live mode or an activation is still unstorable.
+**CI:** the train's run (seat A fills the id). Earlier: 40132986531 12/12 on 2cbd5369 (fix pass 1); 40137472570 11/12 on f68a325c — linux-host the NAMED dated-word red
+(GNU date's +24 h 'tomorrow' on the 25-hour DST-end day; BOARD Decisions 00:4x/00:49; fixed by U-ci-dated-word), the diff touching no tools/ or .github/.
+**Tests box:** 20261024-231005-2cbd5369 GREEN (Unit 2369, Integration 748, Fault 502/502, 0 failed) on 2cbd5369; fix pass 2 and the rung-51 tree NOT RUN there.
+**Build:**
+1. Rung: board_act, board_act_event, board_forecast(+resolution), board_power_proposal, board_seat_state; the copy is BoardStore.CopyForActsRung (one writer).
+2. BoardIntent/BoardDirection: one direction table; a raise is never a narrowing, an unlisted field widens.
+3. One active seat narrows at once (act, applied event, version, forecasts in one write). 4. Two seats widen: a proposal applies nothing until a different active seat
+   confirms by the intent's hash, blind to the rationale until its own is sealed. 5. The envelope and the gateway follow the policy at once.
+6. The board's verbs on the pipe: only an active board seat on a recorded launch; every other op refused. 7. `trade board …` in the CLI; none names an order, price, time or size.
+8. CHANGE-001: board-power-propose is a record nothing applies; only the owner's in-process presses set the board's share and found/retire seats.
+9. The owner's veto narrows only. 10. Guards: no pipe/door/tool/CLI source names his veto or presses; no board id holds order permission; no act field is evidence.
+**Reviews (Codex):** review — 3 P1 (refresh order; envelope terms re-read inside the grant's write; a narrowing never lengthens the envelope's life) + 2 P2 (loop reads
+interval/ceilings live; same-family refusal names the active other-family seat), all fixed red-first with mutants. Re-review — 2 P2 (pending looks/floors withdrawn when the
+interval goes to none; a two-seat widening's life read from the act that set it), fixed red-first with mutants. Re-review 2 — 1 P2: envelope life lost on widen-then-narrow
+before the next health pass; it fails CLOSED (errs short) → MOVED to U-board-b2 item 8. Rung-51 re-review: tmp/A-org/board-b/U-board-b1-r51-review.md (seat A triages).
+**Landing resolution:** U-org-verbs-d's `org-retire` tripped b1's guard word "retire" (`5862eb87`): the op's NAME alone is exempted, with asserts that its target is
+`position` and that a board id is refused as a position (OrgIds.PositionIdRefusal); every op's args are still checked.
+**Decisions ACCEPTED (orchestrator, BOARD 2026-10-24 21:1x, his to overrule):** state on events (sealed rows); the rationale in board_act, never the research ledger; the
+confirmer blind to the proposer's forecasts too; confirmation life 24 h as an APP CONSTANT (CHANGE-001); a different vendor family required when an active seat offers one;
+a board seat writes nothing but board acts; the veto field-wise narrower-of, refusing a narrowing act; evidence_class NULL until U-board-live, whose rung makes it
+REQUIRED for every allocation kind (carried into its card). Fix-pass decisions, ACCEPTED: a veto version grants no envelope; an envelope is granted once per decision of
+its TERMS; `paper_envelope.*` sub-paths refused in intents; a seat sees an act's rationales only once it proposed or decided that act; `active` state rows written by
+SetSeatStateUnderTest alone (nothing activates a seat in the product yet).
+**Gate (rung 51):** Release --no-incremental 0 warnings/0 errors; TZ=UTC ×3: Board*/CouncilLoop/OrgLedger/OrgEvidenceShares/OrgTilt/OrgRightsConformance "Passed: 175,
+Total: 175"; SchemaMatchesReconciler/BrokerDoor "Passed: 28, Total: 28"; names.sh "removed: 0" (base 3372, tip 3457).
+**NOT verified:** the app was not run; no real board seat turn (U-board-b2); head-ceiling liveness proven at the options level only; the full local suite not run on the
+rung-51 tree (the train's CI runs it); the tests box not re-run after fix pass 1; widen-then-narrow life (U-board-b2 item 8).
+**Seam fix (2026-10-25, 92a51458):** train A10 red (CI 40156572886) was a stale rung-49 test fake, not an authority bug — a seat active through rung 51's real path makes the owner's activation refuse; `BoardStore.AnyActive` now reads through `Seats()`, the one seat-state reader (mutant: sealed `s.status` ⇒ red); CI 40159609566 12/12; review `tmp/A-org/board-b/U-board-b1-seam-review.md`.
