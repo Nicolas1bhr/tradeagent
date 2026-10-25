@@ -639,6 +639,44 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE OWNER'S VETO OF ONE STRUCTURAL CHANGE (<c>U-org-surface-b</c> item 4; R24 § 4.3; ORGANISATION § 3) — his two-press press on
+    /// the "For you" page and nothing else: IN-PROCESS ONLY, no pipe op, door verb, <c>trade</c> verb or board act reaches it (AUTH-001;
+    /// a guard reads their sources). It only takes away: a charter or a hire undone, a close or a retirement restored DORMANT
+    /// (<see cref="OrgStore.Veto"/>). One Activity line, and the window refreshes. Returns the words; a refusal throws, nothing written.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    internal string VetoStructure(long eventId)
+    {
+        var org = OrgLedger ?? throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "The organisation's records are not open, so nothing was vetoed.");
+        var vetoed = org.Veto(eventId, DateTimeOffset.UtcNow);
+        static string Listed(IReadOnlyList<string> ids) => ids.Count == 0 ? "nothing" : string.Join(", ", ids);
+        var words = $"You vetoed the organisation's change {eventId.ToString(System.Globalization.CultureInfo.InvariantCulture)} ({vetoed.Kind}): "
+                    + $"restored {Listed(vetoed.Restored)}, dormant; ended {Listed(vetoed.Ended)}; "
+                    + $"{vetoed.Cancelled.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} mandate(s) cancelled. Nothing was granted.";
+        Gateway.Log.Activity(words);
+        Changed?.Invoke();
+        return words;
+    }
+
+    /// <summary>
+    /// THE OWNER ACTIVATES A DORMANT POSITION (<c>U-org-surface-b</c>; the orchestrator's ruling of 2026-10-24) — his two-press press on
+    /// the "For you" page, IN-PROCESS ONLY (AUTH-001), and his only while no board seat is active: <see cref="OrgStore.Activate"/>
+    /// refuses in words naming the board once one is, nothing written. It starts nothing — every launch still passes the activation
+    /// gate (<see cref="ActivationRefusal"/>), which refuses any real-model seat before a RECORDED proven cell whatever this press did.
+    /// One Activity line, and the window refreshes. Returns the words; a refusal throws, nothing written.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    internal string ActivatePosition(string positionId)
+    {
+        var org = OrgLedger ?? throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "The organisation's records are not open, so nothing was activated.");
+        var row = org.Activate(positionId, DeclaredSeatClass, Gateway.Settings.UnconfinedSeats, DateTimeOffset.UtcNow);
+        var words = $"You activated {row.Id} in {row.UnitId}. It starts nothing by itself: each launch still passes the activation gate.";
+        Gateway.Log.Activity(words);
+        Changed?.Invoke();
+        return words;
+    }
+
+    /// <summary>
     /// THE MODEL THE NEXT TURN OF ONE ROLE WILL RUN ON. The same fallback as
     /// <see cref="RequestedModel"/> — the prepared runtime first, the chosen runtime's manifest
     /// before one is prepared — over that role's own choice rather than the app-wide one, so the

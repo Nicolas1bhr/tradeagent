@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    internal enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, Settings, Activity, Checks, Oversight }
+    internal enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, ForYou, Settings, Activity, Checks, Oversight }
 
     /// <summary>
     /// THE RAIL, IN ORDER (<c>U-settings-shed</c>; R24 § 4.7), as data so a test reads the order the window builds:
@@ -44,6 +44,8 @@ public sealed class MainWindow : Window
     /// <item>The Board straight after the Dashboard: the decisions in force beside the live picture they govern.</item>
     /// <item>The daily report after them, because it answers the Dashboard's question over a longer window.</item>
     /// <item>The owner's page where Safety was: what stays his — the emergency family, his connections, his money, evidence, updates.</item>
+    /// <item>"For you" straight after it (<c>U-org-surface-b</c>): what reached him — escalations at the root, his words owed, the
+    /// board's power proposals — and his vetoes, beside the page of what stays his.</item>
     /// <item>Settings — the market data — then the diagnostic tail.</item>
     /// <item>Oversight last: the owner's word for his private line, his alone and never shown to an agent (U-org-watcher-b).</item>
     /// </list>
@@ -60,6 +62,7 @@ public sealed class MainWindow : Window
         (Page.Report, "Daily report"),
         (Page.Inbox, "Inbox"),
         (Page.Owner, Labels.OwnerPage),
+        (Page.ForYou, Labels.NavForYou),
         (Page.Settings, "Settings"),
         (Page.Activity, "Activity"),
         (Page.Checks, "Checks"),
@@ -151,6 +154,7 @@ public sealed class MainWindow : Window
     BoardPage? _boardPage;
     ReportPage? _report;
     OwnerPage? _owner;
+    OwnerInboxPage? _forYou;
     SettingsPage? _settings;
     InboxPage? _inbox;
     ActivityPage? _activity;
@@ -514,6 +518,7 @@ public sealed class MainWindow : Window
         // SETTINGS FIRST: it builds the owner's connection, evidence and update sections, which the owner's page shows (U-settings-shed).
         _settings = new SettingsPage(_host);
         _owner = new OwnerPage(_host, _settings);
+        _forYou = new OwnerInboxPage(OwnerInboxSources.For(_host));
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
         _oversightPage = new OversightPage(OversightSources.For(_host));
@@ -527,6 +532,7 @@ public sealed class MainWindow : Window
         Add(Page.Report, _report.Root);
         Add(Page.Inbox, _inbox.Root);
         Add(Page.Owner, _owner.Root);
+        Add(Page.ForYou, _forYou.Root);
         Add(Page.Settings, _settings.Root);
         Add(Page.Activity, _activity.Root);
         Add(Page.Checks, _checks.Root);
@@ -600,6 +606,7 @@ public sealed class MainWindow : Window
         _report?.Update();
         _inbox?.Update();
         _owner?.Update(status);
+        _forYou?.Update();
         _settings?.Update(status);
         _activity?.Update();
         _checks?.Update();
