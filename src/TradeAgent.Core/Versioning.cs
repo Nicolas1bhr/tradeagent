@@ -463,7 +463,8 @@ public static class Versions
     /// trial or verdict budget; NULL is no own cap, on every seeded unit) and <c>strategy_verdict.attempt_id</c> (the launch that asked
     /// it; NULL before the rung and on an in-process ask, funded by no unit). No backfill; no budget is written.</para>
     ///
-    /// <para><b>50 — the board's acts</b> (<c>U-board-b1</c>, rung <see cref="BoardActsRung"/>, after <c>U-board-a1</c>'s 49; R24 §§ 4.2–4.4):
+    /// <para><b>51 — the board's acts</b> (<c>U-board-b1</c>, rung <see cref="BoardActsRung"/>, after <c>U-org-verbs-e</c>'s 50 — renumbered from 50 at its
+    /// rebase, verbs-e having landed first; R24 §§ 4.2–4.4):
     /// <c>board_act</c> (one act: <c>narrow</c> by one seat or <c>propose</c> for two, its exact intent and the intent's SHA-256, the
     /// version it was made against, the rationale — a CLAIM — the refs the app checked, an <c>evidence_class</c> held NULL by CHECK
     /// until <c>U-board-live</c>, the expiry of a proposal), <c>board_act_event</c> (proposed, applied, confirmed, refused, expired,
@@ -486,7 +487,7 @@ public static class Versions
     public const int BoardRung = 49;
 
     /// <summary>The board's acts' rung, spelled once (<c>U-board-b1</c>); a unit overtaken renumbers it here and nowhere else.</summary>
-    public const int BoardActsRung = 50;
+    public const int BoardActsRung = 51;
 
     /// <summary>The input-lineage rung's number, spelled once (<c>U-org-packets-b</c>); a unit overtaken renumbers it here.</summary>
     public const int InputLineageRung = 45;

@@ -12,7 +12,7 @@ namespace TradeAgent.Core.Board;
 /// THE ONE WRITER OF THE BOARD'S TABLES (<c>U-board-a1</c>, <c>U-board-b1</c>; R24 §§ 4.1–4.4), and their one reader. Every
 /// <c>board_*</c> table is written here and nowhere else (a source guard holds that): the founding record, once, by the app at rung 49
 /// (<see cref="Found"/>); the record of an earlier live setting set aside by the owner's press (<see cref="RecordEarlierLiveSetAside"/>);
-/// and since rung 50 the board's ACTS — a narrowing by one active seat (<see cref="Narrow"/>), a proposal and another seat's decision on
+/// and since rung 51 the board's ACTS — a narrowing by one active seat (<see cref="Narrow"/>), a proposal and another seat's decision on
 /// it, their expiry, the owner's veto, which only narrows, and his in-process presses over the board's own power. No version is ever
 /// written from a caller's POLICY: a version is the one in force with an act's checked intent applied, read back strictly, in the
 /// act's own write — and no public writer takes a policy, a mode or an activation.
@@ -78,7 +78,7 @@ public sealed class BoardStore(Database db)
     }
 
     /// <summary>
-    /// RUNG 50's COPY (<c>U-board-b1</c>): every row of rung 49's <c>board_policy</c> and <c>board_event</c>, set aside by the rung as
+    /// RUNG 51's COPY (<c>U-board-b1</c>): every row of rung 49's <c>board_policy</c> and <c>board_event</c>, set aside by the rung as
     /// <c>board_policy_49</c> and <c>board_event_49</c>, into the rebuilt tables BYTE FOR BYTE — the body, its hash, the time and every
     /// event's id as they were; no version names an act, no event a seat. Run inside the rung's own transaction, on its connection,
     /// and by nothing else.
