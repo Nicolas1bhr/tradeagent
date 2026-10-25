@@ -11772,3 +11772,15 @@ re-stack legs a7586b9c6732ab666 and a3b1a93312736f0e1; BUILD RUN 2026-10-23. No 
 **Gate:** Release 0 warnings; touched classes 119–144 ×3 (build), 136/136 ×3 (fix 2); branch CI 40115618185, 40126685969, 40133344405 every job green; names vs its base removed 0. **Tests box:** GREEN on e960d194 (Unit 2369/0, Integration 748/0, Fault 502/0; his files unchanged).
 **OPEN GAP (named at landing, closed by U-merge-evidence-shares, in scope before M-org1):** a merge does not yet check trial/verdict shares (Σ ≤ 1 is checked for envelope_share only) and does not carry a merged unit's trial/verdict use to its successor — a merge could give back spent verdicts (EVID-001).
 **NOT VERIFIED:** the owner's veto and activation presses in the app (U-org-surface-b); no real model turn.
+
+## U-org-scorecards-a (O8, part -a) — every resolved forecast is scored against a base rate the app measured before it was written; scorecards per position and manager version and a unit's yield are read from measurements, never stored
+
+**Landed** (`land.sh`, seat B) on `main`; builder (shas as first pushed) `1d150879` a1 base-rate scorer · `dd6d9b77` a2 scorecards per position + manager version · `9f76a2fb` a3 unit yield from the recorded funding chain · `217703ac` a5 guards + the Organisation page's calibration line · `d07dbf24` review fix · report `1fbe4424`. No rung.
+**Protects:** EVID-001 and measurement vs claim (scores computed AT READ from resolutions and measurements; the base rate reads only records stamped before the forecast; a guard that the scorer reads no claim and stores no score); BUDGET-001 (an unknown cost and turns charged at their reservation said in words, never 0); ORG-001 (a score grants nothing).
+**RED / mutant:** the tests red at base by compile (33 errors, e.g. "The type or namespace name 'Scorecards' could not be found"); MUTANT `p.at < $at` → `1 = 1` in `VerdictClassBaseSql` ⇒ `A_forecast_is_scored_against_the_base_rate_measured_before_it` "Expected (5, 3) Actual (11, 4)"; restored, green.
+**Review:** Codex: 1 P2 (the unit-admissible base rate ignored the `none` target) → fixed by the builder, red first ("Expected (3, 1, True) Actual (3, 2, True)"); Codex re-review: no defects.
+**Deviations ACCEPTED (seat B):** `mandate-state`'s hit is the resolver's own rule (the target reached by the first closing event); `Scorecards` is its own class (no new public OrgStore member). a4 (the board's Score through `BoardStore.History`) NOT DONE — U-board-b1 not on main → CARD after b1.
+**Seat B's rulings (orchestrator accepted 22:4x):** cut rules raise review events only (part -b); any retirement is a board act (R24).
+**Gate:** Release 0 warnings; OrgScorecardTests 7/7 ×3, OrganisationPageTests 6/6 ×3; names removed 0 (+7). Branch CI 40135261354: 11/12 — linux-host a NAMED red (the dated-word step inside 22:00–24:00Z, the orchestrator's ruling 00:4x; fix U-ci-dated-word); this unit's landing train run is the gate.
+**Tests box:** NOT RUN — busy with another run.
+**NOT VERIFIED:** the page line in the running app (the owner held the screen; the Mac UI check is owed); part -b.
