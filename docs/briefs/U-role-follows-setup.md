@@ -19,3 +19,17 @@ BUILDER-PROMPT-v2's gate. Report ≤ 20 lines appended here. Touched classes: `O
 
 ## Not in scope
 Migrating or refusing hand-edited rows naming a non-setup CLI; the chair's runtime (stays the CLI); per-seat `SeatColumns.Runtime` (its own refusal at `AppHost.cs:411-419`); any new setting.
+
+## Report
+Tip: see the final message (code tip 1013a3c5, CI run 40162385381; this report is the one commit after it, no code changed).
+- Gate 1: build -c Release --no-incremental: "0 Warning(s) / 0 Error(s)".
+- Gate 2 (3x each, suite lock, TZ=UTC): OwnerPageTests Passed 13/13 x3; HarnessRoleTests Passed 17/17 x3; OrgSeatsTests Passed 12/12 x3.
+- Gate 3: CI 40162385381 (all three platforms, shards, packages, linux-host) every job success. Codex review: fleet/tmp/A-org/morg1-cards/U-role-follows-setup-review.md ("No defects found").
+- Gate 4: names.sh: "removed: 0" (added 2; base 3233, tip 3235).
+- Gate 5: tests box: NOT RUN — the machine does not answer
+- Item 1 DONE (9519f64e): TradeAgentSettings.SetupRuntime = "setup"; AppHost.RuntimeForRole returns appWide for it, any role, key or not. RED: Expected "opencode", Actual "setup". MUTANT (arm replaced by false): same RED, restored. The Find==null assert is not a resolver mutant target.
+- Item 2 DONE (44e6a407): CLI press writes the sentinel (null app-wide no longer removes the row); SwitchSetupCli deleted, OnboardingView writes s.SelectedRuntimeId = manifest.Id. Both test names kept (removed 0). RED before: switch test Expected "opencode" Actual "codex"; press test Expected "setup" Actual "codex". Source-grep one-writer assertion DROPPED, as the brief says.
+- Item 3 DONE as a pin, DEVIATION (1013a3c5): no source change; OwnerView's emphasis and Activity line already read the resolved runtime, so the sentinel and a literal "codex" row both emphasise the CLI and the Activity line names "codex". The new test passed on first run, so it has no RED.
+- Money path (resolver prices and seats a role): item 1 has RED and a mutant; items 2-3 follow from it.
+- Not done: no full local suite; allowlist test and control order untouched (seat B's constraint kept).
+- Not verified: the real app UI by hand; Windows tests box.
