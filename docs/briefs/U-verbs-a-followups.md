@@ -24,3 +24,19 @@ Red-first (quote each red at base): items 1–3's checks.
 **NOT in scope:** the meter's pricing; any other reader; the Org page (it reads the same `UnitDay` — if it renders `Spent`, show the unmeasured part beside it in words, Theme.cs only).
 Gate and report per `fleet/BUILDER-PROMPT-v2.md` (Release `--no-incremental` 0 warnings; touched classes 3×; branch CI on three platforms; Codex review; names vs
 `main` 0 removed; tests box line). `## Report` ≤ 20 lines appended here.
+
+## Report
+Code tip 193c6fd4 (base d11481b9; three item commits). Seat B builder, opus/high, one pass.
+- Gate 1: `dotnet build TradeAgent.sln -c Release --no-incremental` → "0 Warning(s)" "0 Error(s)" (20 projects).
+- Gate 2 (TZ=UTC, 3× each, suite lock): OrgAssignmentTests 57/57, OrgLedgerTests 9/9, OrgRightsConformanceTests 3/3, PerceptionReadersTests 1/1, TradeCliTests 5/5 — "Failed: 0" all three runs.
+- Gate 3: CI run 40157068180 on 193c6fd4 — completed success, 12/12 jobs green (three platforms). Codex review: fleet/tmp/B-scratch/u-verbs-a-followups/U-verbs-a-followups-review.md — "No defects found".
+- Gate 4: names.sh main → "removed: 0", added 3; [Fact]/[Theory] base 3233, tip 3236.
+- Tests box: NOT RUN — the machine does not answer.
+- Item 1 DONE (db3ee03c): `AiAttemptTotals.UnreportedCharge` (an eighth aggregate over the rows `Spent` sums); `UnitDay` gains `Unmeasured` + `UnmeasuredCharge`, and its `Spent` is now the PRICED part only (`TurnMeter.DayOf`); org-show adds `unmeasured_turns_today` / `unmeasured_charge_today`, and its note says they are never inside spent_today.
+- Item 2 DONE (a9d084b5): both ops take 'before' (a mandate id of the caller's; any other is refused) and reply with `next_before` (the last row's id, in created-then-id order), `capped_by` and a `cut` line. Schema forms are `[--before M]`; CLI flags were already passed through.
+- Item 3 DONE (193c6fd4): the CLI refuses a word after `org show` (and `mandate list`), naming it: INVALID_REQUEST, exit 2, transport NothingWritten, no frame sent.
+- RED at base: item 1 "unit team-a1c0ffee read spent_today 0.95 with nothing marking the turns charged their reservation" (all 3 units); item 2 "org-show stopped at 50 with no continuation"; item 3 "Expected: INVALID_REQUEST / Actual: IPC_UNAVAILABLE".
+- Mutant: `DayOf` with `day.Spent` (unreported charge folded back) → item 1 test red, "Expected: 0.25 Actual: 0.95"; restored → green.
+- Declared test changes: OrgLedgerTests' org-show pin now says it takes ONLY 'before' (revisited out loud); PerceptionReadersTests' totals record gains its charge (Reserve+Reserve); two UnitDay constructions gain 0, 0m.
+- Deviations: `mandate list` refuses extra words too (the same defect as `org show`). Org-show serves no row once the frame alone fills the byte bound; its cut line then points to mandate-list, which always serves one.
+- Not done / not verified: the Org page was not changed (it reads `UnitTotalsByClass`, not `UnitDay`; the Costs page already names unreported turns in words). No full local suite (CI's). Tests box not run.
