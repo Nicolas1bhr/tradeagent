@@ -345,6 +345,24 @@ public static partial class Labels
         + "midnight, or sooner if that envelope is widened.";
 
     /// <summary>
+    /// THE SECURITY BOARD'S OWN BUDGET HAS NO ROOM (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost"): every board seat's launches today,
+    /// summed, plus this one's reservation would pass the board's share of the day. Names the share, the ceiling and the room.
+    /// </summary>
+    public static string BoardBudgetReached(decimal share, decimal ceiling, decimal room, decimal reservation, bool plan) =>
+        $"The security board has {Amount(room)} left of its {Amount(ceiling)} for today — its share {Amount(share)} of the "
+        + (plan ? "plan-capacity limit (your AI plan's turns counted at list price, not money)" : "AI spending limit") + " — and this "
+        + $"turn reserves {Amount(reservation)}, so it was not started. Nothing was sent to the AI tool. It starts again after "
+        + "midnight; only the owner changes the board's share.";
+
+    /// <summary>
+    /// A BOARD SEAT'S TURN THAT COULD NOT BE PRICED (<c>U-board-b2</c> item 2): the board's budget is reserved before a launch, and a turn
+    /// with no price would be counted as nothing — so it is not started.
+    /// </summary>
+    public const string BoardTurnUnpriced =
+        "A security board seat's turn could not be priced, so it was not started: the board's budget is reserved before every launch "
+        + "and an unpriced turn is never counted as costing nothing. Nothing was sent to the AI tool.";
+
+    /// <summary>
     /// A SEAT WHOSE ONE TURN IS LARGER THAN ITS UNIT'S WHOLE ENVELOPE (<c>U-org-envelopes</c>; R17 #1): not a day that ran out but
     /// a split that cannot fund its own seat, so midnight changes nothing. Names the seat, the reservation and the envelope.
     /// </summary>

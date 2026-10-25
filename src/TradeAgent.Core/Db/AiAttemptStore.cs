@@ -248,6 +248,14 @@ public sealed record AiAdmissionRule
     /// <summary>What THIS launch commits — the number about to be written as its reservation.</summary>
     public decimal Reservation { get; init; }
 
+    /// <summary>
+    /// THE SECURITY BOARD'S SHARE OF THE DAY (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost", BUDGET-001), set exactly for a launch of a
+    /// board seat: the launch fits the day's ceiling FIRST, then the board's own — this share of each ceiling it must fit — over every
+    /// board seat's rows of the day (<see cref="AiAttemptStore.BoardTotalsBetween"/>), never an org unit's envelope; and it is funded by
+    /// no unit, so no chain is recorded. Null for every other launch.
+    /// </summary>
+    public decimal? BoardShare { get; init; }
+
     /// <summary>The local midnight the day's totals expire at, for the refusal's own sentence.</summary>
     public DateTimeOffset ResumesAt { get; init; }
 
@@ -336,6 +344,12 @@ public sealed record AiAdmission
 
     /// <summary>What <see cref="Ceiling"/> says for the owner's whole-day limit of real money.</summary>
     public const string Day = "day";
+
+    /// <summary>
+    /// What <see cref="Ceiling"/> says when the SECURITY BOARD'S OWN BUDGET refused a board seat's launch (<c>U-board-b2</c> item 2): its
+    /// share of the day has no room for it, or the turn could not be priced. Not the owner's day, and no unit's envelope.
+    /// </summary>
+    public const string Board = "board";
 
     /// <summary>
     /// What <see cref="Ceiling"/> says for the owner's whole-day PLAN-CAPACITY limit (<c>U-billing-classes</c>): a different figure with a
@@ -473,7 +487,39 @@ public sealed class AiAttemptStore(Database db)
             foreach (var ceiling in BillingClasses.CeilingsOf(rule.BillingClass))
             {
                 var day = Totals(rule.From, rule.To, null, null, ceiling);
-                if (rule.FundingOf(ceiling) is { } chain)
+                if (rule.BoardShare is { } share)
+                {
+                    // A SEAT OF THE SECURITY BOARD (U-board-b2 item 2): funded by no unit of the chart, so it records none.
+                    if (a.Funding is { Count: > 0 } || rule.FundingOf(ceiling) is { Count: > 0 })
+                        throw new ArgumentException("a board seat's launch is funded by no unit of the chart", nameof(a));
+
+                    // THE DAY FIRST: every row of that ceiling's money.
+                    var reading = rule.Reading(day, day, ceiling);
+                    if (!reading.AdmitsGlobally) return Refuse(rule, reading);
+
+                    // THEN THE BOARD'S OWN SHARE OF IT, over every board seat's rows read here under the same lock as the INSERT — an
+                    // unpriced turn never counted as nothing: a launch that cannot be priced is not started, and a row that ended
+                    // unpriced counts its reservation.
+                    if (rule.Metered)
+                    {
+                        if (rule.Reservation <= 0m) return new AiAdmission { Refusal = Labels.BoardTurnUnpriced, Ceiling = AiAdmission.Board };
+                        var ceilingOf = share * rule.CapOf(ceiling);
+                        var board = BoardTotals(rule.From, rule.To, ceiling);
+                        if (board.Spent + board.Reserved + rule.Reservation > ceilingOf)
+                        {
+                            var room = ceilingOf - board.Spent - board.Reserved;
+                            return new AiAdmission
+                            {
+                                Refusal = Labels.BoardBudgetReached(share, ceilingOf, room > 0m ? room : 0m, rule.Reservation,
+                                    ceiling == BillingClasses.Plan),
+                                Ceiling = AiAdmission.Board,
+                                Over = rule.Reservation - room,
+                                ResumesAt = rule.ResumesAt
+                            };
+                        }
+                    }
+                }
+                else if (rule.FundingOf(ceiling) is { } chain)
                 {
                     // THE CHAIN RECORDED IS THE CHAIN ADMITTED: one resolution, or the launch is not written.
                     if (!chain.Select(u => u.UnitId).SequenceEqual(a.Funding ?? [], StringComparer.Ordinal))
@@ -881,6 +927,34 @@ public sealed class AiAttemptStore(Database db)
     }
 
     static int Int(SqliteDataReader r, int i) => r.IsDBNull(i) ? 0 : Convert.ToInt32(r.GetValue(i));
+
+    /// <summary>
+    /// WHAT THE SECURITY BOARD SPENT IN A WINDOW (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost"): every row whose role is a board seat,
+    /// in <paramref name="ceiling"/>'s rows (its class's and the unknown ones), summed — a closed row at its cost, or at its RESERVATION
+    /// where it ended unpriced (an unknown is never counted as nothing), and an open row at its reservation. The board's spend is its
+    /// launches' rows by role; no funding row is read.
+    /// </summary>
+    public AiAttemptTotals BoardTotalsBetween(DateTimeOffset from, DateTimeOffset to, string? ceiling = null) =>
+        db.Read(_ => BoardTotals(from, to, ceiling));
+
+    AiAttemptTotals BoardTotals(DateTimeOffset from, DateTimeOffset to, string? ceiling)
+    {
+        using var c = db.Cmd("""
+            SELECT COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN 0 ELSE CAST(COALESCE(cost, reserved_cost) AS REAL) END), 0),
+                   COALESCE(SUM(CASE WHEN state='LAUNCHED' THEN CAST(reserved_cost AS REAL) ELSE 0 END), 0),
+                   SUM(CASE WHEN state<>'LAUNCHED' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
+                   0,
+                   SUM(CASE WHEN state='LAUNCHED' THEN 1 ELSE 0 END)
+              FROM ai_attempt
+             WHERE started_at >= $from AND started_at < $to
+               AND substr(role, 1, length($prefix)) = $prefix
+               AND ($ceiling IS NULL OR billing_class = $ceiling OR billing_class = 'unknown')
+            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$prefix", Board.BoardSeats.Prefix), ("$ceiling", ceiling));
+        using var r = c.ExecuteReader();
+        if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
+        return new AiAttemptTotals((decimal)r.GetDouble(0), (decimal)r.GetDouble(1), Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5));
+    }
 
     /// <summary>
     /// THE CHAIN AN ATTEMPT WAS ADMITTED UNDER, nearest unit first, as <see cref="Begin"/> recorded it; empty for an attempt no

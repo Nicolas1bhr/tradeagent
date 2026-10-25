@@ -1155,8 +1155,21 @@ public sealed class TurnMeter
             Funding = funding,
             PlanFunding = planFunding,
             Reservation = reservation.Cost ?? 0m,
-            ResumesAt = OwnerDay.Midnight(now)
+            ResumesAt = OwnerDay.Midnight(now),
+            // A SEAT OF THE SECURITY BOARD IS ADMITTED ON THE BOARD'S OWN SHARE (U-board-b2 item 2), read here for this admission.
+            BoardShare = BoardSeats.IsBoardId(role) ? BoardShare() : null
         };
+    }
+
+    /// <summary>
+    /// THE SECURITY BOARD'S SHARE OF THE DAY (<c>U-board-b2</c> item 2): the owner's latest press, else the founding share, as the board's
+    /// own events record it (<see cref="BoardStore.BudgetShare"/>) — never a value a board act writes (CHANGE-001). A share nobody can
+    /// read is none: zero, which admits no board turn.
+    /// </summary>
+    decimal BoardShare()
+    {
+        try { return new BoardStore(_db).BudgetShare() ?? 0m; }
+        catch (Exception) { return 0m; }
     }
 
     /// <summary>
@@ -1771,6 +1784,9 @@ public sealed class TurnMeter
         try
         {
             var (from, to) = OwnerDay.Window(now);
+            // A SEAT OF THE SECURITY BOARD READS THE BOARD'S OWN BUDGET (U-board-b2 item 2): every board seat's rows, against its share.
+            if (BoardSeats.IsBoardId(role))
+                return (_attempts.BoardTotalsBetween(from, to, ceiling), BoardShare() * (ceiling == BillingClasses.Plan ? planCap : cap));
             (AiAttemptTotals Totals, decimal Envelope)? binding = null;
             var (money, plan) = FundingOf(role, cap, planCap);
             // THE ENVELOPES OF THIS CEILING, over this ceiling's rows (U-billing-classes), as the gate reads them.
