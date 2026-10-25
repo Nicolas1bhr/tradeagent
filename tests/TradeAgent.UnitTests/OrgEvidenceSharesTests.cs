@@ -48,7 +48,7 @@ public class OrgEvidenceSharesTests
         return id;
     }
 
-    static DatasetRecord Held(Database db, string sha = "aa11")
+    internal static DatasetRecord Held(Database db, string sha = "aa11")
     {
         var store = new DatasetStore(db);
         var id = store.Record(new DatasetRecord(
@@ -60,14 +60,14 @@ public class OrgEvidenceSharesTests
         return store.ById(id)!;
     }
 
-    static CampaignRow Opened(Database db, DatasetRecord set, int trials, int verdicts)
+    internal static CampaignRow Opened(Database db, DatasetRecord set, int trials, int verdicts)
     {
         var opened = new CampaignStore(db).Open("BTCUSDT 1m v1", set, trials, verdicts, At);
         Assert.True(opened.Ok, opened.Why);
         return opened.Campaign!;
     }
 
-    static string Version(Database db, string id)
+    internal static string Version(Database db, string id)
     {
         new StrategyStore(db).RecordVersion(new StrategyVersionRow(
             id, "instrument BTCUSDT\n", "canonical", "{}", StrategyStore.InterpreterBuild,
@@ -76,7 +76,7 @@ public class OrgEvidenceSharesTests
     }
 
     /// <summary>A run of <paramref name="version"/> made by the launch <paramref name="attempt"/> — the run row carries it.</summary>
-    static string Run(Database db, DatasetRecord set, string version, string runId, string attempt)
+    internal static string Run(Database db, DatasetRecord set, string version, string runId, string attempt)
     {
         new StrategyStore(db).RecordRun(new StrategyRunRow(
             runId, version, set.Id, set.NormalisedSha256, Cutoff.AddDays(-10), Cutoff,
