@@ -391,11 +391,14 @@ public sealed partial class OrgStore
     /// nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
     /// <paramref name="declaredClass"/> is the host's declared seat class per position, and <paramref name="seatSetting"/> the owner's
     /// unconfined-seat setting: a position on a counted seat is refused while the ceiling is reached (<see cref="UnconfinedSeatCeiling"/>,
-    /// item 5). Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit; the
-    /// unconfined-seat ceiling reached.
+    /// item 5). Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit; THE
+    /// CHIEF on a seat that runs a real model — or one nobody declared — while <paramref name="provenCell"/> (null: this host's
+    /// <see cref="CellProofStore.HoldsProof"/>) answers no RECORDED proven cell (<c>U-org-chief</c> item 6); the unconfined-seat ceiling
+    /// reached.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public OrgPositionRow Activate(string positionId, Func<string, string?> declaredClass, int seatSetting, DateTimeOffset now) => db.Write(_ =>
+    public OrgPositionRow Activate(string positionId, Func<string, string?> declaredClass, int seatSetting, DateTimeOffset now,
+        Func<bool>? provenCell = null) => db.Write(_ =>
     {
         if (new Board.BoardReader(db).AnyActive)
             throw Refused($"activating {positionId} is the security board's now that a board seat is active (R24): it is a board act on the "
@@ -404,6 +407,17 @@ public sealed partial class OrgStore
         if (row.Status != OrgPositionStatus.Dormant) throw Refused($"{positionId} is {row.Status}: only a dormant position is activated.");
         if (Units().FirstOrDefault(u => u.Id == row.UnitId) is not { Status: not OrgUnitStatus.Closed } unit)
             throw Refused($"{positionId}'s unit {row.UnitId} is closed: nothing is activated in a closed unit.");
+        // THE CHIEF IS ACTIVATED ONLY PAST THE PROVEN-CELL RULE (U-org-chief item 6; ORCHESTRATION § 2.3; the orchestrator's Q1: "no
+        // real-model seat before a RECORDED proven cell; no press passes it"): a chief whose declared seat runs a model — or that nobody
+        // declared — stays dormant while this host records no proven cell. A puppet runs no model and is exempt.
+        if (unit.IsRoot && unit.HeadPositionId == positionId)
+        {
+            var declared = declaredClass(positionId);
+            if ((declared is null || SeatClasses.RunsModel(declared)) && !(provenCell ?? (() => new CellProofStore(db).HoldsProof()))())
+                throw Refused($"the chief {positionId} would run on a real-model seat ({declared ?? "undeclared"}), and this host has no proven "
+                              + "executor cell recorded: until it has one, no position beyond the legacy pair is activated on a real model "
+                              + "(ORCHESTRATION § 2.3). It stays dormant.");
+        }
         if (UnconfinedSeatCeiling.Refusal(positionId, declaredClass(positionId), UnconfinedSeatsActive(declaredClass), seatSetting) is { } over)
             throw Refused(over.Words);
         using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",

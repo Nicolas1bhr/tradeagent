@@ -207,5 +207,57 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.All(new[] { first.Chief!, second.Chief!, third }, p => Assert.Equal(OrgPositionStatus.Ended, org.Position(p)!.Status));
         Assert.Equal(1, Count(db, "org_event", $"kind='{OrgEventKind.ChiefVacated}' AND position_id='{third}' AND decider='owner'"));
     }
+
+    // ---- item 6: containment ---------------------------------------------------------------------------------------------------------
+
+    static readonly HostIdentity Here = new(Sha256Hex.Of("machine"), "6.17.0-1010-azure") { Boot = Sha256Hex.Of("boot-1") };
+
+    /// <summary>
+    /// (6) A CHIEF ON A MODEL SEAT STAYS DORMANT WITHOUT A RECORDED PROVEN CELL: the owner's activation of a chief whose declared seat runs a
+    /// real model — a CLI, a harness, or a seat nobody declared — is refused while this host records no proven cell, nothing written; a
+    /// RECORDED proof lets it through; a removed (revoked) proof refuses the next chief again; a puppet, which runs no model, is exempt; and
+    /// once a board seat is active no activation of a chief is his. RED at base: <c>Activate</c> passed a chief on a CLI seat.
+    /// </summary>
+    [Fact]
+    public void A_chief_on_a_model_seat_stays_dormant_without_a_recorded_proven_cell()
+    {
+        using var db = TestEnv.NewDb();
+        var org = new OrgStore(db);
+        var proofs = new CellProofStore(db, () => Here, () => "1.0.0+trade-sha256:aa");
+        bool Proven() => proofs.HoldsProof();
+
+        var chief = org.AppointChief(Codex, Known, Now).Chief!;
+        var before = Written(db);
+        foreach (var declared in new[] { SeatClasses.Cli, SeatClasses.Harness, null })
+        {
+            var refused = Assert.Throws<TradeAgentException>(() => org.Activate(chief, _ => declared, 3, Now, Proven)).Message;
+            log.WriteLine(refused);
+            Assert.Contains("no proven executor cell", refused, StringComparison.Ordinal);
+        }
+        Assert.Equal(before, Written(db));
+        Assert.Equal(OrgPositionStatus.Dormant, org.Position(chief)!.Status);
+
+        var proof = proofs.Record("p", "profile-1", ["none"]);
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(chief, _ => SeatClasses.Harness, 3, Now, Proven).Status);
+
+        // A REMOVED PROOF REFUSES AGAIN: the next chief on a model seat stays dormant.
+        org.VacateChief(Now);
+        var next = org.AppointChief(Codex, Known, Now).Chief!;
+        proofs.Revoke(proof, "the profile recomputed to another hash");
+        Assert.Contains("no proven executor cell", Assert.Throws<TradeAgentException>(() =>
+            org.Activate(next, _ => SeatClasses.Harness, 3, Now, Proven)).Message, StringComparison.Ordinal);
+        Assert.Equal(OrgPositionStatus.Dormant, org.Position(next)!.Status);
+
+        // A PUPPET RUNS NO MODEL, SO IT IS EXEMPT — and once a board seat is active, no chief's activation is his.
+        org.VacateChief(Now);
+        var puppet = org.AppointChief(Puppet, Known, Now).Chief!;
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(puppet, _ => SeatClasses.Puppet, 3, Now, Proven).Status);
+        org.VacateChief(Now);
+        var later = org.AppointChief(Puppet, Known, Now).Chief!;
+        ActivateBoard(db, "board-3");
+        Assert.Contains("the security board's now", Assert.Throws<TradeAgentException>(() =>
+            org.Activate(later, _ => SeatClasses.Puppet, 3, Now, Proven)).Message, StringComparison.Ordinal);
+        Assert.Equal(OrgPositionStatus.Dormant, org.Position(later)!.Status);
+    }
 }
 
