@@ -193,7 +193,7 @@ public sealed partial class GatewayPipeServer
         var raw = Require(req, "event");
         if (!long.TryParse(raw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var eventId))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{raw}' is no event number: 'event' is the review's number, the payload of the 'cut-review' wake that woke you. Nothing was written.");
+                $"'{raw}' is no event number: 'event' is the review's number, as the line of the 'cut-review' wake that woke you names it. Nothing was written.");
         var made = Gateway.Org.AnswerReview(new ReviewAnswerRequest(caller, ctx.AttemptId, eventId, Require(req, "choice"),
             Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
         return new

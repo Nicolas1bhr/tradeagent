@@ -25,6 +25,8 @@ using System.Text.Json.Nodes;
 //   exit <n>               ends the turn with that code
 //   hang                   never ends on its own: only the turn's teardown ends it
 //   crash                  dies at once, with nothing flushed and no answer
+// In any step, {prompt:PATTERN} is replaced by PATTERN's first group as matched in this turn's prompt — what the seat was told, never
+// the database (U-org-scorecards-b fix pass 1); PATTERN holds no '}'. A pattern the prompt does not match ends the turn with code 4.
 // What it did is written beside the scripts: <key>.<n>.prompt (the prompt as received) and <key>.<n>.log (one JSON line per
 // step that has a result). <dir>/launches.log gains a line before anything else, on every start but the version probe.
 
@@ -58,8 +60,13 @@ File.WriteAllText(Path.Combine(scripts, $"{key}.{n}.prompt"), prompt, new UTF8En
 var log = Path.Combine(scripts, $"{key}.{n}.log");
 
 var items = 0;
-foreach (var step in StepsFor(scripts, key, n))
+foreach (var scripted in StepsFor(scripts, key, n))
 {
+    if (FromPrompt(scripted, prompt) is not { } step)
+    {
+        Log(log, new JsonObject { ["step"] = "prompt", ["unmatched"] = scripted });
+        return 4;
+    }
     var (verb, rest) = Split(step);
     switch (verb)
     {
@@ -157,6 +164,21 @@ static List<string> StepsFor(string scripts, string key, int n)
     if (turns.Count == 0) return ["final Nothing to do."];
     var turn = turns[Math.Min(n, turns.Count) - 1]?.AsArray() ?? [];
     return [.. turn.Select(s => s?.GetValue<string>() ?? "")];
+}
+
+/// <summary>The step with each {prompt:PATTERN} replaced by PATTERN's first group in the prompt, or null where the prompt does not match.</summary>
+static string? FromPrompt(string step, string prompt)
+{
+    const string open = "{prompt:";
+    for (var at = step.IndexOf(open, StringComparison.Ordinal); at >= 0; at = step.IndexOf(open, StringComparison.Ordinal))
+    {
+        var end = step.IndexOf('}', at);
+        if (end < 0) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(prompt, step[(at + open.Length)..end]);
+        if (!match.Success || match.Groups.Count < 2) return null;
+        step = step[..at] + match.Groups[1].Value + step[(end + 1)..];
+    }
+    return step;
 }
 
 static (string Verb, string Tail) Split(string s)
