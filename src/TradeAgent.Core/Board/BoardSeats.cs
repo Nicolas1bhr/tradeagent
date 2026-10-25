@@ -35,7 +35,7 @@ public static class BoardSeats
 }
 
 /// <summary>
-/// A BOARD SEAT'S LIFE (<c>board_seat_state</c>, rung 50): a seat's row is sealed and says <see cref="Dormant"/> for ever, so its state
+/// A BOARD SEAT'S LIFE (<c>board_seat_state</c>, rung 51): a seat's row is sealed and says <see cref="Dormant"/> for ever, so its state
 /// now is its latest state row. Nothing in the product launches or activates a board seat yet (ORCHESTRATION § 2.3).
 /// </summary>
 public static class BoardSeatStatus
