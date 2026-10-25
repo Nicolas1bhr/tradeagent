@@ -67,6 +67,11 @@ public class HomeFilesGuardTests(ITestOutputHelper log)
         ("WorkspaceBuilder.RepairHome", "FileSystemInfo.get_LinkTarget", 1, "the kept folder's name under workspace/.refused: a link there refuses, never followed"),
         ("WorkspaceBuilder.RepairHome", "Directory.CreateDirectory", 1, "workspace/.refused itself, whose ancestry is the app's and no cell writes"),
         ("WorkspaceBuilder.RepairHome", "Directory.Move", 1, "the home folder itself renamed by its own name (one rename; nothing below it is opened or followed)"),
+        ("WorkspaceBuilder.LinkOnTheWay", "FileInfo..ctor", 1, "the workspace, the folders down to the home and to its kept folder, and those two, asked whether each is a link; nothing below a home"),
+        ("WorkspaceBuilder.LinkOnTheWay", "FileSystemInfo.get_LinkTarget", 1, "the same names' own link targets, never followed: a link there refuses the repair"),
+        ("WorkspaceBuilder.LinkOnTheWay", "FileSystemInfo.get_Attributes", 1, "the same names' own attributes (a reparse point), never followed"),
+        ("WorkspaceBuilder.LinkOnTheWay", "File.Exists", 1, "the same names, whether anything is there before its attributes are read; nothing below a home"),
+        ("WorkspaceBuilder.LinkOnTheWay", "Directory.Exists", 1, "the same names, whether anything is there before its attributes are read; nothing below a home"),
 
         // ---- the app's install, never a home ------------------------------------------------------------------------------------
         ("CliAgentRuntime.Candidates", "File.Exists", 4, "the runtime's executable: the manifest's absolute path, tools/<id>/ and PATH"),

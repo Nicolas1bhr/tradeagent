@@ -196,7 +196,9 @@ public static class WorkspaceBuilder
     /// THE OWNER'S REPAIR OF A HOME THE LAST START COULD NOT REBUILD (<c>U-repair-position-home</c>): the refused folder is MOVED WHOLE to
     /// <c>workspace/.refused/&lt;home-name&gt;-&lt;UTC stamp&gt;</c> and the home is built afresh from the app's templates (<see cref="Build"/>).
     /// <b>Nothing is deleted.</b> The move is one rename on the same volume of the folder by its own name — never a copy and a delete, and a
-    /// link inside it stays a link that is never followed. If the rename cannot be made nothing changes and the refusal stands; if the
+    /// link inside it stays a link that is never followed. Nor is it ever made THROUGH a link: the workspace, every folder down to the home
+    /// and to the kept folder, and those two, are asked first and again right before the rename (<see cref="LinkOnTheWay"/>), and a link
+    /// anywhere there refuses in words. If the rename cannot be made nothing changes and the refusal stands; if the
     /// rebuild fails again the refusal is recorded again, in words, and the old folder stays where it was moved. Whether a launch of the
     /// position is open is the caller's question (the host's), asked before this.
     /// </summary>
@@ -212,12 +214,17 @@ public static class WorkspaceBuilder
                                          + "build does on Linux and macOS only, and this computer runs Windows. Nothing was changed; the position stays refused.", null);
 
         var aside = Path.Combine(ws, RefusedDir, $"{Path.GetFileName(Key(home))}-{now().UtcDateTime:yyyyMMdd'T'HHmmss'Z'}");
+        if (LinkOnTheWay(ws, home, aside) is { } link)
+            return new HomeRepair(false, ThroughALink(role, link, "Nothing was changed"), null);
         if (File.Exists(aside) || Directory.Exists(aside) || new FileInfo(aside).LinkTarget is not null)
             return new HomeRepair(false, $"TradeAgent did not repair the folder of {role}: a kept folder named {aside} already exists, and a repair "
                                          + "never writes over one. Nothing was changed; press again in a second.", null);
         try
         {
             Directory.CreateDirectory(Path.Combine(ws, RefusedDir));
+            // ASKED AGAIN RIGHT BEFORE THE MOVE, so a link made while the kept folders' folder was being made is caught too.
+            if (LinkOnTheWay(ws, home, aside) is { } planted)
+                return new HomeRepair(false, ThroughALink(role, planted, "Nothing was moved, and the folder is as it was"), null);
             Directory.Move(home, aside);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -240,6 +247,40 @@ public static class WorkspaceBuilder
             return new HomeRepair(false, why, aside);
         }
     }
+
+    /// <summary>
+    /// A REPAIR NEVER MOVES A FOLDER THROUGH A LINK (the Codex review's [P1] on <c>U-repair-position-home</c>): the first of the workspace,
+    /// every folder from it down to the home and down to the kept folder, and those two themselves, that is a link, a junction or any other
+    /// reparse point — looked at without following it — in words naming it; or null. A <c>.refused</c> that links into the owner's inbox
+    /// would otherwise carry the cell's folder there, and one that links out of the workspace would carry it anywhere. What is above the
+    /// workspace is the owner's computer, not asked.
+    /// </summary>
+    static string? LinkOnTheWay(string ws, string home, string aside)
+    {
+        foreach (var at in StepsTo(ws, home).Concat(StepsTo(ws, aside)))
+        {
+            var info = new FileInfo(at);
+            string? target = null;
+            try { target = info.LinkTarget; }
+            catch (IOException) { /* a reparse point this platform cannot read the target of; the attribute below says */ }
+            if (target is not null) return $"{at} is a link to {target}";
+            if ((File.Exists(at) || Directory.Exists(at)) && info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return $"{at} is a link";
+        }
+        return null;
+    }
+
+    /// <summary>The workspace, then each folder from it down to <paramref name="to"/>, ending with <paramref name="to"/> itself.</summary>
+    static IEnumerable<string> StepsTo(string ws, string to)
+    {
+        var at = Path.TrimEndingDirectorySeparator(Path.GetFullPath(ws));
+        yield return at;
+        foreach (var part in Path.GetRelativePath(at, Path.GetFullPath(to)).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            yield return at = Path.Combine(at, part);
+    }
+
+    static string ThroughALink(string role, string link, string unchanged) =>
+        $"TradeAgent did not repair the folder of {role}: {link}, and a repair never moves a folder through a link — it could carry the "
+        + $"cell's folder into your inbox or out of TradeAgent's workspace. {unchanged}; the position stays refused.";
 
     /// <summary>The homes the last start of this process could not rebuild, by full path, with the words their positions are refused in.</summary>
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Unbuilt = new(StringComparer.Ordinal);
