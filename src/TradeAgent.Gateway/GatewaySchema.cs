@@ -695,11 +695,12 @@ public static class GatewaySchema
                 new("defect", "string", false, $"What is wrong with it, in your words: at most {Core.Db.MandateLimits.MaxClaimChars} characters.")
             ]),
 
-        new(Core.Ops.MandateList, "trade mandate list", false,
+        new(Core.Ops.MandateList, "trade mandate list [--before M]", false,
             "YOUR MANDATES, NEWEST FIRST — the ones you hold and the ones you decide, never another position's: each with its "
             + "status, its goal as its issuer wrote it, its allocation and TradeAgent's measured spend. At most "
-            + $"{GatewayPipeServer.MandateListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped.",
-            []),
+            + $"{GatewayPipeServer.MandateListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; when 'more' is true the "
+            + "list is cut — 'cut' says so — and 'before' set to its 'next_before' continues it exactly.",
+            [new("before", "string", false, "A mandate id: serve only your mandates older than it. Pass an answer's 'next_before' to continue it.")]),
         new(Core.Ops.MandateShow, "trade mandate show <mandate> [--part deliveries|events|forecasts] [--before ID]", false,
             "ONE MANDATE YOU HOLD OR DECIDE, IN FULL: as issued, its sealed deliveries newest first — each verbatim, with every "
             + "check TradeAgent ran on it — its events newest first, and its forecasts newest first, each probability (its "
@@ -714,7 +715,7 @@ public static class GatewaySchema
                 new("before", "string", false, "With 'part': serve only what is older than this delivery, event or forecast id — an answer's 'deliveries_next_before', 'events_next_before' or 'forecasts_next_before'.")
             ]),
 
-        new(Core.Ops.OrgShow, "trade org show", false,
+        new(Core.Ops.OrgShow, "trade org show [--before M]", false,
             "YOUR PLACE ON THE CHART — a READ, of your own view and nobody else's: your unit; the chain of units above it to the top, "
             + "whose head is the owner; each unit's head; each unit's AI envelope beside what was spent and is reserved today, as "
             + "TradeAgent resolves them for admission, once per ceiling your seat is held to — 'key' real money, 'plan' the plan's "
@@ -722,9 +723,9 @@ public static class GatewaySchema
             + "them, never zero) and turns charged their reservation because nothing measured them shown apart from the priced "
             + "spend, by count and charge; and your OPEN mandates, held "
             + $"and decided, each with its status and measured spend. At most {GatewayPipeServer.MandateListMax} mandates and "
-            + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped and 'mandate-list' reads them all. "
-            + "It takes no argument, and writes nothing.",
-            []),
+            + $"{Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; when 'more' is true the list is cut — 'cut' says so — and "
+            + "'before' set to its 'next_before' continues it exactly. It takes no other argument, and writes nothing.",
+            [new("before", "string", false, "A mandate id: serve only your open mandates older than it. Pass an answer's 'next_before' to continue it.")]),
 
         // THE STRUCTURAL VERBS (U-org-verbs-c, O6 part c; ORCHESTRATION § 2.9): a head charters a unit under its own and hires a
         // position into its subtree, each a decision record with a forecast, inside the rights matrix, the chart's bounds, the weekly

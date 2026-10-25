@@ -404,7 +404,8 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
-        // `trade org show` (U-org-verbs-a): the caller's own place on the chart. It takes no argument; one sent is refused by the gateway.
+        // `trade org show [--before M]` (U-org-verbs-a; the continuation, U-verbs-a-followups): the caller's own place on the chart. It
+        // takes no other argument; a flag it does not take is refused by the gateway.
         // `trade org charter` and `trade org hire` (U-org-verbs-c): every flag is sent on under its own name, '-' read as '_'.
         case "org":
         {
