@@ -234,7 +234,7 @@ public partial class OrgStructureTests
             Assert.Same(actCard, page.BoardVetoes.CardOf(act.Act.Id));
             Assert.Same(closeCard, page.StructureVetoes.CardOf(closed.EventId.ToString(CultureInfo.InvariantCulture)));
             Assert.Same(dormantCard, page.Dormant.CardOf(hired));
-            Assert.All(cards, c => Assert.True(c.GetLogicalAncestors().Contains(page.Root)));
+            Assert.All(cards, c => Assert.Contains(page.Root, c.GetLogicalAncestors()));
             Assert.True(Ui.IsArmed(veto));
             Assert.Equal(new BoardReader(db).InForce().Version, new BoardReader(db).Act(act.Act.Id)!.Events.Max(e => e.PolicyVersion ?? 0));
 
