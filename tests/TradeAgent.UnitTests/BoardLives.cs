@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TradeAgent.Core;
 using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 
@@ -27,7 +28,49 @@ static class BoardLives
             var store = new BoardStore(db);
             foreach (var seat in active) store.SetSeatStateUnderTest(seat, BoardSeatStatus.Active, DateTimeOffset.UtcNow);
             seed?.Invoke(db);
-        }, seatClasses: FoundingClasses);
+        }, seatClasses: FoundingClasses, settings: s => s.SelectedAccountId = "SIM-001");
+
+    /// <summary>
+    /// A POLICY VERSION THE TEST WRITES BEFORE THE LIFE STARTS, as only a test may (b1's <c>SeedVersion</c>): <paramref name="change"/>
+    /// over the version in force, decided by <c>board</c> under a seeded act. Returns the new version.
+    /// </summary>
+    public static int Seed(Database db, Func<BoardPolicy, BoardPolicy> change)
+    {
+        var inForce = new BoardReader(db).InForce();
+        var body = BoardPolicyBody.Canonical(change(inForce.Policy));
+        var act = $"bact-seed{inForce.Version + 1}";
+        const string at = "2026-10-24T12:00:00.0000000Z";
+        db.Write(_ =>
+        {
+            using (var c = db.Cmd("INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, "
+                                  + "evidence_class, expires_at, at) VALUES($id, 'narrow', 'board-3', NULL, '[]', $sha, $v, 'the test seeds this "
+                                  + "version', '[]', NULL, NULL, $at)",
+                       ("$id", act), ("$sha", Sha256Hex.Of("[]")), ("$v", inForce.Version), ("$at", at)))
+                c.ExecuteNonQuery();
+            using (var c = db.Cmd("INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, "
+                                  + "supersedes) VALUES($next, 'board', 'act', $act, $at, 'PAPER', 0, $body, $sha, $v)",
+                       ("$next", inForce.Version + 1), ("$act", act), ("$at", at), ("$body", body), ("$sha", Sha256Hex.Of(body)),
+                       ("$v", inForce.Version)))
+                c.ExecuteNonQuery();
+            return 0;
+        });
+        return inForce.Version + 1;
+    }
+
+    /// <summary>
+    /// A LIFE'S TRADABLE POLICY: the simulator's instrument allowed at up to ten.
+    /// </summary>
+    public static BoardPolicy Tradable(BoardPolicy p)
+    {
+        var risk = p.Risk;
+        risk.MaxOrderQuantity = 10m;
+        risk.InstrumentAllowlist = ["ES", "BTCUSDT"];
+        return p with { Risk = risk };
+    }
+
+    /// <summary>The policy's standing paper envelope on the life's own simulated venue and account (<c>fake</c>, <c>SIM-001</c>).</summary>
+    public static BoardPolicy EnvelopeHere(BoardPolicy p) =>
+        p with { PaperEnvelope = new PaperEnvelopeTerms(Connectors.Fake.FakeConnector.ConnectorId, "SIM-001", "BTCUSDT", 0.05m, 5_000m, 1, null) };
 
     public static string Change(string field, object from, object to) =>
         JsonSerializer.Serialize(new[] { new Dictionary<string, object> { ["field"] = field, ["from"] = from, ["to"] = to } });
