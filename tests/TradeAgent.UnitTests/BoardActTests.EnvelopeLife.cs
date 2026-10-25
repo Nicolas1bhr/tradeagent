@@ -201,4 +201,51 @@ public partial class BoardActTests
         foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
         Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.Now) && e.ExpiresAt > day0.AddDays(19));
     }
+
+    /// <summary>
+    /// A VETOED CHIEF ACT TAKES BACK NO ENVELOPE'S LIFE AND BLOCKS NO RENEWAL (U-board-b2 re-stacked on U-org-chief; the seam between them): a
+    /// chief act writes no policy version and its confirmed event names the version IN FORCE it was decided under — here the widening's —
+    /// so its veto must not read as a veto of that version. 0.05 for ten days; on day nine two seats widen to 0.10 (granted to day
+    /// nineteen); two seats then appoint a chief and the owner vetoes it: the 0.10 envelope still stands to day nineteen. On day fifteen two
+    /// seats widen to 0.12 and the next pass renews it to day twenty-five. The contrast, a vetoed POLICY act: the owner vetoes that widening
+    /// and the envelope standing past day nineteen is withdrawn in the veto's write. Watched red with <see cref="BoardStore.VetoedVersion"/>
+    /// also counting a vetoed act whose event names the version.
+    /// </summary>
+    [Fact]
+    public async Task A_vetoed_chief_act_neither_withdraws_an_envelope_nor_blocks_its_renewal()
+    {
+        using var db = TestEnv.NewDb();
+        var (gw, clock, day0, _) = await TenDayEnvelope(db);
+        await using var _gw = gw;
+        gw.KnownRuntime = runtime => runtime == "puppet";
+        PaperEnvelopeRow Standing() => Assert.Single(gw.Envelopes.All(), e => e.StandsAt(clock.Now));
+        clock.Now = day0.AddDays(9);
+        var widened = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Terms(0.05m, 10)), Json(Terms(0.10m, 10)))));
+        var v = gw.BoardDecide(widened.Act.Id, "board-2", null, true, widened.Act.IntentSha256, "the book has room").PolicyVersion;
+        await gw.RefreshHealthAsync();
+        Assert.Equal((0.10m, day0.AddDays(19)), (Standing().MaxQuantity, Standing().ExpiresAt));
+
+        clock.Now = clock.Now.AddMinutes(1);
+        var chief = gw.BoardPropose(Act("board-1", """[{"field":"org.chief","from":null,"to":{"runtime":"puppet","model":"scripted-1"}}]"""));
+        var seated = gw.BoardDecide(chief.Act.Id, "board-2", null, true, chief.Act.IntentSha256, "the root needs a head");
+        Assert.Equal((BoardActEventKind.Confirmed, (int?)null), (seated.Status, seated.PolicyVersion));
+        Assert.NotNull(new OrgStore(db).Chief());
+        var vetoed = gw.VetoBoardAct(chief.Act.Id);
+        Assert.Equal((BoardActEventKind.Vetoed, (int?)null), (vetoed.Status, vetoed.PolicyVersion));
+        Assert.Null(new OrgStore(db).Chief());
+        Assert.False(new BoardStore(db).VetoedVersion(v!.Value), $"vetoing the chief act {chief.Act.Id} read as a veto of version {v}");
+        await gw.RefreshHealthAsync();
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.Equal((0.10m, day0.AddDays(19)), (Standing().MaxQuantity, Standing().ExpiresAt));
+
+        clock.Now = day0.AddDays(15);
+        var renewed = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Terms(0.10m, 10)), Json(Terms(0.12m, 10)))));
+        gw.BoardDecide(renewed.Act.Id, "board-2", null, true, renewed.Act.IntentSha256, "more room");
+        await gw.RefreshHealthAsync();
+        Assert.Equal((0.12m, day0.AddDays(25)), (Standing().MaxQuantity, Standing().ExpiresAt));
+
+        gw.VetoBoardAct(renewed.Act.Id);
+        foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
+        Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.Now) && e.ExpiresAt > day0.AddDays(19));
+    }
 }
