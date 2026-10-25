@@ -149,4 +149,63 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         Assert.Contains("not a runtime this build knows",
             Assert.Throws<TradeAgentException>(() => Seat(org, null, new ChiefSeat("a-runtime-nobody-knows", "m"))).Message, StringComparison.Ordinal);
     }
+
+    // ---- item 2: the owner's route, in-process -------------------------------------------------------------------------------------
+
+    /// <summary>Makes a board seat ACTIVE through U-board-b1's own path: its latest state row, written by the test host's one seam (the SEAM RULING).</summary>
+    static void ActivateBoard(Database db, params string[] seats)
+    {
+        var store = new BoardStore(db);
+        foreach (var seat in seats) store.SetSeatStateUnderTest(seat, BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// (2) THE OWNER APPOINTS ONLY WHILE NO BOARD SEAT IS ACTIVE, AND REMOVES AT ANY TIME: with no seat active his press appoints a chief
+    /// (dormant, seated at the policy's turn allowance, decided by him on the basis of a press), refuses a second appointment over a sitting
+    /// chief, replaces one and removes one; once a board seat is active — read through the board's one reader — his appointment and his
+    /// replacement are refused in words naming the board, nothing written, while his removal still ends the chief and restores no
+    /// predecessor: the root is left vacant. RED at base: no <c>AppointChief</c>.
+    /// </summary>
+    [Fact]
+    public void The_owner_appoints_only_while_no_board_seat_is_active_and_removes_at_any_time()
+    {
+        using var db = TestEnv.NewDb();
+        var org = new OrgStore(db);
+        Assert.Null(org.Chief());
+
+        var first = org.AppointChief(Puppet, Known, Now);
+        Assert.Equal((OrgEventKind.ChiefAppointed, OrgPositionStatus.Dormant), (first.Kind, org.Position(first.Chief!)!.Status));
+        Assert.Equal(1, Count(db, "org_event", $"kind='{OrgEventKind.ChiefAppointed}' AND decider='owner' AND detail LIKE '%basis=press act=none%'"));
+        var allowance = new BoardReader(db).InForce().Policy;
+        Assert.Equal((allowance.TurnAllowanceInput.ToString(), allowance.TurnAllowanceOutput.ToString()),
+            (org.Position(first.Chief!)!.SeatAllowIn, org.Position(first.Chief!)!.SeatAllowOut));
+        Assert.Contains("Replace the chief", Assert.Throws<TradeAgentException>(() => org.AppointChief(Codex, Known, Now)).Message, StringComparison.Ordinal);
+        var second = org.ReplaceChief(Codex, Known, Now);
+        Assert.Equal((OrgEventKind.ChiefReplaced, first.Chief), (second.Kind, second.Was));
+        Assert.Equal(OrgEventKind.ChiefVacated, org.VacateChief(Now).Kind);
+        Assert.Null(org.Chief());
+        Assert.Contains("no chief to remove", Assert.Throws<TradeAgentException>(() => org.VacateChief(Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("no chief to replace", Assert.Throws<TradeAgentException>(() => org.ReplaceChief(Codex, Known, Now)).Message, StringComparison.Ordinal);
+
+        var third = org.AppointChief(Puppet, Known, Now).Chief!;
+        ActivateBoard(db, "board-2");
+        var before = Written(db);
+        foreach (var press in new Action[] { () => org.AppointChief(Codex, Known, Now), () => org.ReplaceChief(Codex, Known, Now) })
+        {
+            var refused = Assert.Throws<TradeAgentException>(press).Message;
+            log.WriteLine(refused);
+            Assert.Contains("the security board's now that a board seat is active", refused, StringComparison.Ordinal);
+            Assert.Contains("Nothing was written", refused, StringComparison.Ordinal);
+        }
+        Assert.Equal(before, Written(db));
+        Assert.Equal(third, org.Chief());
+
+        // HIS REMOVAL STANDS WHATEVER THE BOARD: the chief ended, the root vacant, no earlier chief restored.
+        var removed = org.VacateChief(Now);
+        Assert.Equal((OrgEventKind.ChiefVacated, (string?)null, third), (removed.Kind, removed.Chief, removed.Was));
+        Assert.Null(org.Chief());
+        Assert.All(new[] { first.Chief!, second.Chief!, third }, p => Assert.Equal(OrgPositionStatus.Ended, org.Position(p)!.Status));
+        Assert.Equal(1, Count(db, "org_event", $"kind='{OrgEventKind.ChiefVacated}' AND position_id='{third}' AND decider='owner'"));
+    }
 }
+

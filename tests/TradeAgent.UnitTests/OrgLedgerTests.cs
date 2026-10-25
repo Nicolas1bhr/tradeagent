@@ -447,7 +447,9 @@ public class OrgLedgerTests
         // root's head) and org_event (one chief-appointed, -replaced or -vacated event decided by the owner or the board, and the fences of
         // the restructuring it runs), called only by the owner's in-process route and the board's confirmed act
         // (OrgChiefTests.No_op_or_verb_reaches_the_chiefs_appointment). OrgStore.Chief.cs joins the writers below.
-        mandate = [.. mandate, "Chief"];
+        // AppointChief, ReplaceChief and VacateChief are the OWNER's in-process route to it (AUTH-001): the first two only while no board
+        // seat is active, the removal at any time.
+        mandate = [.. mandate, "AppointChief", "Chief", "ReplaceChief", "VacateChief"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

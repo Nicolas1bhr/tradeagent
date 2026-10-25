@@ -92,4 +92,62 @@ public sealed partial class OrgStore
             $"chief={chief ?? "none"} was={sitting ?? "none"}{seat} basis={basis} act={actId ?? "none"} cancelled={Ids(cancelled)}");
         return new ChiefChanged(kind, chief, sitting, cancelled, eventId);
     });
+
+    // ---- the owner's route, in-process (item 2; AUTH-001) ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE OWNER APPOINTS A CHIEF OVER A VACANT ROOT (<c>U-org-chief</c> item 2; the orchestrator's Q1) — IN-PROCESS ONLY: no pipe op, door
+    /// verb, <c>trade</c> verb or board act reaches it (AUTH-001; a guard reads their sources), and only while no board seat is ACTIVE (read
+    /// through <see cref="Board.BoardReader.AnyActive"/>, the board's one reader): "yours until the security board is active". The chief is
+    /// hired DORMANT on <paramref name="seat"/> at the policy's turn allowance; activating it is a press of its own through
+    /// <see cref="Activate"/>'s gate. Refused in words, nothing written: a board seat active; a chief already sitting; the policy unreadable;
+    /// a seat the checks refuse.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ChiefChanged AppointChief(ChiefSeat seat, Func<string, bool> knownRuntime, DateTimeOffset now) => db.Write(_ =>
+    {
+        OwnersWhileNoBoard("appointing a chief");
+        if (Chief() is { } sitting)
+            throw Refused($"{sitting} is the chief: a chief is appointed over a vacant root only — 'Replace the chief' replaces one.");
+        return SeatChief(null, seat, OrgDecider.Owner, "press", null, PolicyAllowance(), knownRuntime, now);
+    });
+
+    /// <summary>
+    /// THE OWNER REPLACES THE SITTING CHIEF (<c>U-org-chief</c> item 2) — in-process only, and only while no board seat is ACTIVE: the sitting
+    /// chief ended through the restructuring's transaction and a new one hired DORMANT, in one write (<see cref="SeatChief"/>).
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ChiefChanged ReplaceChief(ChiefSeat seat, Func<string, bool> knownRuntime, DateTimeOffset now) => db.Write(_ =>
+    {
+        OwnersWhileNoBoard("replacing the chief");
+        var sitting = Chief() ?? throw Refused("the organisation has no chief to replace: 'Appoint a chief' appoints one.");
+        return SeatChief(sitting, seat, OrgDecider.Owner, "press", null, PolicyAllowance(), knownRuntime, now);
+    });
+
+    /// <summary>
+    /// THE OWNER REMOVES THE CHIEF, AT ANY TIME (<c>U-org-chief</c> item 2; R24 Q12: "his narrowing veto removes a chief") — in-process only,
+    /// whether or not a board seat is active: the sitting chief ended through the restructuring's transaction, the root left VACANT, and NO
+    /// predecessor restored — a removal only takes away. Refused only when no chief sits.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public ChiefChanged VacateChief(DateTimeOffset now) => db.Write(_ =>
+        SeatChief(Chief(), null, OrgDecider.Owner, "press", null, null, null, now));
+
+    /// <summary>The owner's appointment and replacement are his only while no board seat is active; after that, a two-seat board act.</summary>
+    void OwnersWhileNoBoard(string doing)
+    {
+        if (new Board.BoardReader(db).AnyActive)
+            throw Refused($"{doing} is the security board's now that a board seat is active (R24 § 4.1): a two-seat act — one active seat "
+                          + "proposes it, another confirms it — under your narrowing veto. You can still remove the chief.");
+    }
+
+    /// <summary>The turn allowance a chief is seated at: the policy in force's, read strictly — an unreadable policy refuses, never a default.</summary>
+    TurnAllowance PolicyAllowance()
+    {
+        var inForce = new Board.BoardReader(db).InForce();
+        if (inForce.CouldNotBeRead)
+            throw Refused($"the board's policy could not be read ({inForce.Why}), so the turn allowance a chief is seated at is not known.");
+        return TurnAllowance.From(inForce.Policy.TurnAllowanceInput, inForce.Policy.TurnAllowanceOutput);
+    }
 }
+
