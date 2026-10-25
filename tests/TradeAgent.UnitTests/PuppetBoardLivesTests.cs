@@ -151,11 +151,14 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(0.05m, before.MaxQuantity);
 
         var intent = EnvelopeChange(EnvelopeJson(life), EnvelopeJson(life, 0.1m));
-        life.Script("board-1", [BoardLives.Propose(intent, BoardLives.Rationale), "usage 100 0 10", "final Proposed."]);
+        life.Script("board-1", [BoardLives.Propose(intent, BoardLives.Rationale), "signal proposed", "await confirmer-scripted",
+            "usage 100 0 10", "final Proposed."]);
         life.Wake("board-1");
         await life.RunUntil(() => new BoardStore(life.Host.Db).Acts().Any(a => a.Act.Kind == BoardActKind.Propose), "board-1's puppet proposed");
         var act = new BoardStore(life.Host.Db).Acts().Single(a => a.Act.Kind == BoardActKind.Propose).Act;
         life.Script("board-2", [BoardLives.Decide(act.Id, "confirm", act.IntentSha256, "the paper book has room"), "usage 100 0 10", "final Confirmed."]);
+        // ITS SCRIPT IS WRITTEN BEFORE IT CAN TURN: board-1's turn holds the one lane until it is.
+        life.Release("confirmer-scripted");
         await life.RunUntil(() => life.AttemptsOf("board-2").Any(a => a.State == AiAttemptState.ENDED), "board-2's turn ended");
         var decide = BoardLives.TradeSteps(life, "board-2", 1)[0];
         Assert.True((int?)decide["exit"] == 0, $"the confirmation was refused: {BoardLives.Said(decide)}");
@@ -177,12 +180,15 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
     public async Task A_refusal_by_the_second_seat_applies_nothing()
     {
         await using var life = await BoardLives.Begin("board-refusal", "board-1", "board-2");
-        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 60), BoardLives.Rationale), "usage 100 0 10", "final Proposed."]);
+        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 60), BoardLives.Rationale), "signal proposed", "await confirmer-scripted",
+            "usage 100 0 10", "final Proposed."]);
         life.Wake("board-1");
         await life.RunUntil(() => new BoardStore(life.Host.Db).Acts().Count == 1, "board-1's puppet proposed");
         var store = new BoardStore(life.Host.Db);
         var act = store.Acts()[0].Act;
         life.Script("board-2", [BoardLives.Decide(act.Id, "refuse", act.IntentSha256, "not while nothing is proven"), "usage 100 0 10", "final Refused."]);
+        // ITS SCRIPT IS WRITTEN BEFORE IT CAN TURN: board-1's turn holds the one lane until it is.
+        life.Release("confirmer-scripted");
         await life.RunUntil(() => life.AttemptsOf("board-2").Any(a => a.State == AiAttemptState.ENDED), "board-2's turn ended");
         var decide = BoardLives.TradeSteps(life, "board-2", 1)[0];
         Assert.True((int?)decide["exit"] == 0, $"the refusal was not recorded: {BoardLives.Said(decide)}");
@@ -257,11 +263,14 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
     {
         await using var life = await BoardLives.Begin("board-veto", "board-1", "board-2");
         var store = new BoardStore(life.Host.Db);
-        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 70), BoardLives.Rationale), "usage 100 0 10", "final Proposed."]);
+        life.Script("board-1", [BoardLives.Propose(BoardLives.Change("plan_day_total", 40, 70), BoardLives.Rationale), "signal proposed", "await confirmer-scripted",
+            "usage 100 0 10", "final Proposed."]);
         life.Wake("board-1");
         await life.RunUntil(() => store.Acts().Count == 1, "board-1 proposed");
         var act = Proposal(life);
         life.Script("board-2", [BoardLives.Decide(act.Id, "confirm", act.IntentSha256, "the plan has room"), "usage 100 0 10", "final Confirmed."]);
+        // ITS SCRIPT IS WRITTEN BEFORE IT CAN TURN: board-1's turn holds the one lane until it is.
+        life.Release("confirmer-scripted");
         await life.RunUntil(() => life.AttemptsOf("board-2").Any(a => a.State == AiAttemptState.ENDED), "board-2's turn ended");
         Assert.Equal(70m, life.Host.Gateway.Policy.PlanDayTotal);
 
