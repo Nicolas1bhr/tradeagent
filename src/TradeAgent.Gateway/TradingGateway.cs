@@ -509,16 +509,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
                 // A NARROWING NEVER LENGTHENS A LIFE (U-board-b1 fix pass, the review's P1): terms one seat narrowed — a lower ceiling,
                 // the same days — replace the policy's last envelope on this pair, and a fresh life from now would be a longer one,
-                // which only two seats may grant. WHETHER THESE TERMS MAY HAVE A FRESH LIFE IS READ FROM THE ACT THAT SET THEM (fix pass
-                // 2, the re-review's P2): the terms before that version against the terms it set — a two-seat widening gets its full
-                // authorised life even when a narrowing came first with no pass between; anything else ends no later than the policy's
-                // last envelope did, and an envelope whose life is over is not revived by a narrowing.
-                var widened = _board.EnvelopeTermsAt(setBy - 1) is { } priorTerms && _board.EnvelopeTermsAt(setBy) is { } setTerms
-                              && BoardDirection.Of("paper_envelope", priorTerms, setTerms) == BoardDirectionKind.Widens;
+                // which only two seats may grant. WHETHER THESE TERMS MAY HAVE A FRESH LIFE IS READ FROM EVERY ACT SINCE THE LAST GRANT
+                // (U-board-b2 item 8, b1's re-review 2; before it, b1 fix pass 2 read the act that SET them alone): the life is fresh when
+                // ANY version after the one that granted the policy's last envelope on this pair widened the terms — so a two-seat widening
+                // followed by a one-seat narrowing with no pass between keeps the widening's authorised life. A narrowing alone still ends
+                // no later than that envelope did, and an envelope whose life is over is not revived by one.
                 var previous = _envelopes.All(int.MaxValue)
                     .Where(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
                                 && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal) && PolicyGranted(e))
                     .OrderByDescending(e => e.GrantedAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).FirstOrDefault();
+                var widened = WidenedSince(previous is null ? null : GrantedUnder(previous), setBy);
                 if (!widened && previous is not null && previous.ExpiresAt < until)
                 {
                     until = previous.ExpiresAt;
@@ -545,6 +545,29 @@ public sealed partial class TradingGateway : IAsyncDisposable
                           + ". No capital and no live authority came with it.");
         }
         catch (Exception ex) { _log.TryEngineering("Gateway", "policy_envelope_failed", "error", ex: ex); }
+    }
+
+    /// <summary>
+    /// WHETHER THE ENVELOPE'S TERMS WERE WIDENED BY ANY VERSION AFTER <paramref name="grantedUnder"/> UP TO <paramref name="setBy"/>
+    /// (<c>U-board-b2</c> item 8): each version's terms against the version before it, by <see cref="BoardDirection"/>'s one table. With no
+    /// grant to measure from — or one whose version cannot be read — only the version that set the terms is read, as before.
+    /// </summary>
+    bool WidenedSince(int? grantedUnder, int setBy)
+    {
+        var from = grantedUnder is { } g && g < setBy ? g : setBy - 1;
+        for (var v = from + 1; v <= setBy; v++)
+            if (_board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
+                && BoardDirection.Of("paper_envelope", before, after) == BoardDirectionKind.Widens)
+                return true;
+        return false;
+    }
+
+    /// <summary>The policy version a policy-granted envelope names in its reason (<c>…, version N</c>), or null where it names none.</summary>
+    static int? GrantedUnder(PaperEnvelopeRow envelope)
+    {
+        var at = envelope.Reason.LastIndexOf("version ", StringComparison.Ordinal);
+        return at >= 0 && int.TryParse(envelope.Reason.AsSpan(at + "version ".Length), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
     }
 
     /// <summary>
