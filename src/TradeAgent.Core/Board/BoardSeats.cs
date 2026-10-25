@@ -56,3 +56,67 @@ public static class BoardSeatStatus
 /// founded it.
 /// </summary>
 public sealed record BoardSeat(string Id, string SeatClass, string ModelClass, string VendorFamily, string Status, DateTimeOffset FoundedAt);
+
+/// <summary>
+/// THE ACTIVATION GATE FOR A BOARD SEAT (<c>U-board-b2</c> item 1; R24 § 4.1 "Its seats are real-model seats under the activation gate"):
+/// the one rule the meter's admission, the host's seam and the last check before the process all ask for a board id, through
+/// <see cref="PositionActivation.Decide"/>. A board seat is no position, so the chart's gate never passes it; this one does, and only:
+/// its state now (<see cref="BoardStore.Seats"/>, the one reader) is <see cref="BoardSeatStatus.Active"/>; the seat about to start is
+/// its RECORDED class — <see cref="BoardSeats.SeatClasses"/>, never <c>cli</c> — and that class carries the board's decision verbs
+/// (<see cref="CapabilityPolicy.Minimum"/> of <see cref="Capability.DecisionVerbs"/>); a runtime that is not a test host's puppet runs a
+/// real model and needs this host's PROVEN cell (<see cref="CellProofStore.HoldsProof"/>); and no unconfined launch is open beside it.
+/// </summary>
+public static class BoardSeatGate
+{
+    /// <summary>
+    /// THE SEAT'S STANDING: null when <paramref name="seat"/> — as <see cref="BoardStore.Seat"/> read it now — is active, otherwise a
+    /// refusal about the seat itself (<see cref="RefusalKind.Position"/>): dormant, retired, or no seat of the board at all.
+    /// </summary>
+    public static TurnRefusal? Standing(string id, BoardSeat? seat) => seat switch
+    {
+        { Status: BoardSeatStatus.Active } when seat.Id == id => null,
+        null => new(RefusalKind.Position,
+            $"'{id}' is no seat of the security board, so no turn is launched under it and none is charged to anyone. Nothing was written."),
+        _ => new(RefusalKind.Position,
+            $"board seat {id} is {seat.Status}, not active, so no turn is launched for it (R24 § 4.1: only an active seat turns). "
+            + "Nothing was written.")
+    };
+
+    /// <summary>
+    /// THE GATE'S ONE RULE FOR A BOARD SEAT: null when <paramref name="id"/> may launch now on the seat about to start
+    /// (<paramref name="verifiedClass"/>, or the DECLARED one at the seam where nothing is verified yet), otherwise the refusal with its
+    /// kind. <paramref name="puppet"/> is a test host's puppet runtime — no model runs — and is never true in the product.
+    /// </summary>
+    public static TurnRefusal? Decide(string id, BoardSeat? seat, string? declaredClass, string? verifiedClass, bool puppet,
+        bool provenCell, IReadOnlyList<string> openUnconfined)
+    {
+        if (Standing(id, seat) is { } standing) return standing;
+        var recorded = seat!.SeatClass;
+        if (Array.IndexOf(BoardSeats.SeatClasses, recorded) < 0
+            || SeatClasses.AssuranceOf(recorded) is not { } assurance
+            || assurance < CapabilityPolicy.Minimum(Capability.DecisionVerbs))
+            return new(RefusalKind.Position,
+                $"board seat {id} is recorded on a '{recorded}' seat, which cannot carry the board's decision verbs (a board seat is "
+                + "broker-only, confined or the app's harness, never unconfined), so nothing is started for it.");
+
+        var about = verifiedClass ?? declaredClass;
+        if (about is null)
+            return new(RefusalKind.HostOrLaunch,
+                $"board seat {id} has no seat this host established, so nothing is started for it. Its wakes are kept.");
+        if (about != recorded)
+            return new(RefusalKind.HostOrLaunch,
+                $"board seat {id} is recorded on a {recorded} seat and the seat about to start is a {about} seat, so nothing is started: "
+                + "a board seat launches only on the class it was founded on. Its wakes are kept.");
+
+        if (!puppet && !provenCell)
+            return new(RefusalKind.HostOrLaunch,
+                $"board seat {id} would run a real model ({recorded}) and this host has no proven executor cell recorded: no board seat "
+                + "runs on a real model before one (R24 § 4.1, ORCHESTRATION § 2.3). Nothing is started; its wakes are kept.");
+
+        if (openUnconfined.Count > 0)
+            return new(RefusalKind.HostOrLaunch,
+                $"board seat {id} is not started while an unconfined launch is open on this host "
+                + $"({string.Join(", ", openUnconfined.Select(o => $"'{o}'"))}). It is tried again when that turn has ended.");
+        return null;
+    }
+}

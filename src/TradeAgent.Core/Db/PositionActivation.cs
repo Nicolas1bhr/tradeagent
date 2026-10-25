@@ -70,6 +70,18 @@ public sealed record SeatFacts
 
     /// <summary>The owner's unconfined-seat setting as stored; it only lowers the code's ceiling (<see cref="UnconfinedSeatCeiling.Effective"/>).</summary>
     public int UnconfinedSeatSetting { get; init; } = UnconfinedSeatCeiling.Ceiling;
+
+    /// <summary>
+    /// FOR A BOARD ID (<c>U-board-b2</c>): the seat as <see cref="TradeAgent.Core.Board.BoardStore.Seat"/> reads it now — its recorded class and its
+    /// state — or null for no such seat. Unread for a position.
+    /// </summary>
+    public TradeAgent.Core.Board.BoardSeat? Board { get; init; }
+
+    /// <summary>
+    /// Whether the launch would run on a test host's PUPPET — a scripted seat that runs no model — and so needs no proven cell. Never
+    /// true in the product: a puppet runs only in a test host (<c>PuppetSeats</c>).
+    /// </summary>
+    public bool Puppet { get; init; }
 }
 
 /// <summary>
@@ -245,6 +257,14 @@ public static class PositionActivation
     /// </summary>
     public static TurnRefusal? Decide(string id, PositionStanding? standing, SeatFacts? facts, string? verifiedClass = null)
     {
+        // A SEAT OF THE SECURITY BOARD IS NO POSITION (U-board-b2 item 1): its own rule, over the facts the app read for it — and an
+        // unset register refuses it as it refuses every id beyond the legacy pair.
+        if (TradeAgent.Core.Board.BoardSeats.IsBoardId(id))
+            return facts is null
+                ? Unset(id)
+                : TradeAgent.Core.Board.BoardSeatGate.Decide(id, facts.Board, facts.DeclaredClass, verifiedClass, facts.Puppet, facts.ProvenCell,
+                    facts.OpenUnconfined);
+
         if (standing is null || standing.Id != id || standing.Status != OrgPositionStatus.Active)
             return new(RefusalKind.Position, $"'{id}' is not an active position, so no conversation is opened for it and nothing is "
                                              + "folded into another position's.");
