@@ -82,7 +82,9 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
 
     static string UnitLine(OrgUnitRow unit, IEnumerable<OrgPositionRow> positions)
     {
-        var head = unit.IsRoot ? "headed by you"
+        // THE ROOT'S HEAD IS THE CHIEF (U-org-chief); vacant, it is yours, in-process.
+        var head = unit.IsRoot && unit.HeadPositionId is { } chief ? $"headed by the chief {chief}"
+            : unit.IsRoot ? "headed by you: no chief is appointed (vacant)"
             : unit.HeadPositionId is { } id ? $"headed by {id}"
             : "its head is vacant";
         var active = positions.Count(p => p.Status == OrgPositionStatus.Active);
@@ -93,7 +95,7 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
     static OrgPositionWords PositionWords(OrgUnitRow unit, OrgPositionRow p, IReadOnlyDictionary<string, RecordedSeat> seats,
         IReadOnlyDictionary<string, ResolvedSeat>? resolved)
     {
-        var role = unit.HeadPositionId == p.Id ? $"head of {OrgText.UnitTitle(unit)}"
+        var role = unit.HeadPositionId == p.Id ? $"{(unit.IsRoot ? "chief" : "head")} of {OrgText.UnitTitle(unit)}"
             : unit.Kind == OrgUnitKind.Staff ? $"staff of {OrgText.UnitTitle(unit)}"
             : $"member of {OrgText.UnitTitle(unit)}";
 

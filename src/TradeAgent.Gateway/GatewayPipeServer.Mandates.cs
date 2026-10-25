@@ -262,7 +262,7 @@ public sealed partial class GatewayPipeServer
 
     /// <summary>
     /// THE CALLER'S OWN PLACE ON THE CHART (<c>org-show</c>, <c>U-org-verbs-a</c>; ORCHESTRATION § 2.9) — and nobody else's: its unit,
-    /// the chain of units above it to the root, whose head is the owner and is named so (the chain is the caller's own line, so no
+    /// the chain of units above it to the root, whose head is the chief — or, vacant, the owner, named so (the chain is the caller's own line, so no
     /// watcher or audit line is in it), each unit's head, and each unit's AI envelope beside today's spent and reserved as the
     /// host that meters launches resolves them (<see cref="TradingGateway.AiEnvelopes"/>; not metered is said, never zero); and
     /// its OPEN mandates, held and decided, newest first, each with its status and measured spend — read from
@@ -294,7 +294,8 @@ public sealed partial class GatewayPipeServer
             id = u.Id,
             kind = u.Kind,
             name = OrgEnvelopes.NameOf(u.Id),
-            head = u.IsRoot ? "the owner" : u.HeadPositionId ?? "vacant",
+            // THE ROOT'S HEAD IS THE CHIEF (U-org-chief); vacant, the owner holds it in-process and an escalation reaches him as a record.
+            head = u.HeadPositionId ?? (u.IsRoot ? "the owner" : "vacant"),
             // ALL THREE DIMENSIONS OF ITS ENVELOPE (U-org-verbs-e), as the row holds them: absent is no own cap.
             shares = new { ai = u.EnvelopeShare, trials = u.TrialShare, verdicts = u.VerdictShare },
             ai_envelopes = byUnit is not null && byUnit.Contains(u.Id)

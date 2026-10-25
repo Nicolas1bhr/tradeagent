@@ -115,8 +115,9 @@ public sealed record OrgRightsRow(string Operation, string Reserved, string Rela
 /// <para><b>R24-checked (2026-10-23).</b> Every answer that was "the owner's two presses" is now <see cref="OrgRightAnswer.BoardAct"/>:
 /// the board holds what ORGANISATION § 3 gave the owner about <c>operations</c> — its seat, occupant and unit — and the chief's
 /// appointment and replacement (R24 § 4.1). No answer here is the owner's: R24 § 4.3 keeps for him the board's composition and budget,
-/// the audit line's budget, the unconfined-seat ceiling and his narrowing veto, none of them this matrix's. The board's verbs arrive with
-/// <c>U-board-b</c>; no board seat is active in this build, so a board act is refused in words naming that.</para>
+/// the audit line's budget, the unconfined-seat ceiling and his narrowing veto, none of them this matrix's. A board act is refused to every
+/// organisation verb in words naming the board's own verbs (<c>board-propose</c>, then another seat's <c>board-decide</c>; <c>U-board-b1</c>);
+/// the chief's is an <c>org.chief</c> act on them (<c>U-org-chief</c>).</para>
 ///
 /// <para><b>Refuse, never guess.</b> A combination the matrix holds no row for is refused (<see cref="Answer"/> throws), never read as
 /// allowed; a test holds that every operation × reserved identity the classifier can name × relation is answered.</para>
@@ -217,14 +218,15 @@ public static class OrgRights
 
     /// <summary>
     /// THE REFUSAL OF AN ANSWER THAT IS NOT <see cref="OrgRightAnswer.Allowed"/>, in words naming the answer and why, or null when it is.
-    /// A board act is refused naming that no board seat is active in this build — never allowed silently, never handed to the owner.
+    /// A board act is refused naming the board's own verbs — never allowed silently, never handed to the owner.
     /// </summary>
     public static string? Refusal(OrgRightsRow row, string what) => row.Answer switch
     {
         OrgRightAnswer.Allowed => null,
         OrgRightAnswer.BoardAct =>
-            $"{what} is {OrgRightAnswer.BoardAct} — {row.Why} — and never an organisation verb's to make. The security board's verbs "
-            + "are not in this build and no board seat is active, so no one can make it yet: it is refused, not passed to anyone.",
+            $"{what} is {OrgRightAnswer.BoardAct} — {row.Why} — and never an organisation verb's to make: one active seat of the security "
+            + "board proposes it ('board-propose') and a different active seat confirms it by its hash ('board-decide'). It is refused "
+            + "here, not passed to anyone.",
         OrgRightAnswer.AppTriggerOrBoardAct =>
             $"{what} happens only by an {OrgRightAnswer.AppTriggerOrBoardAct} — {row.Why} — never by an organisation verb.",
         OrgRightAnswer.MandateRowDecides =>

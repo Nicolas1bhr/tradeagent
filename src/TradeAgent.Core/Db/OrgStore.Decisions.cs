@@ -555,8 +555,9 @@ public sealed partial class OrgStore
     /// A HEAD ESCALATES (ORGANISATION § 4; RULINGS Q6, Q7): the APP chooses the recipient, walking UP the chain from the unit the
     /// caller heads — past every VACANT head and every head whose RECORDED seat cannot carry the organisation's verbs (its latest
     /// launch's assurance below <c>CapabilityPolicy.Minimum(DecisionVerbs)</c> — by capability, never by naming the legacy pair, so
-    /// a confined <c>research</c> seat later receives them) — and writes the escalation and ONE <c>escalation</c> wake to that head in
-    /// one write; at the root it is addressed to the OWNER as a record only — no wake, no pipe path (O7 shows it). Refused in words,
+    /// a confined <c>research</c> seat later receives them), the chief at the root included — and writes the escalation and ONE
+    /// <c>escalation</c> wake to that head in one write; past the root (the chief's own) or at a vacant one it is addressed to the OWNER
+    /// as a record only — no wake, no pipe path (O7 shows it). Refused in words,
     /// nothing written: a caller that heads no unit, a mandate it neither decides nor holds, a second escalation of one mandate, a
     /// third without a mandate in one UTC day.
     /// </summary>
@@ -605,8 +606,9 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// THE CHAIN ABOVE <paramref name="sender"/>, AS THE APP WALKS IT: from the topmost unit it heads, up through each parent — the
-    /// first head that is active, not the sender, and whose RECORDED seat carries the organisation's verbs; the root's head is the
-    /// owner (null). Every unit passed over is named with why, in the record.
+    /// first head that is active, not the sender, and whose RECORDED seat carries the organisation's verbs — the root's head, the chief,
+    /// included (<c>U-org-chief</c>); past the root, or at a vacant one, the owner (null). Every unit passed over is named with why, in
+    /// the record.
     /// </summary>
     (string Start, string? Recipient, List<string> Skipped) Walk(string sender)
     {
@@ -617,8 +619,13 @@ public sealed partial class OrgStore
         var skipped = new List<string>();
         foreach (var unit in Ancestors(start.Id))
         {
-            if (unit.IsRoot) return (start.Id, null, skipped);
-            if (unit.HeadPositionId is not { } head) { skipped.Add($"{unit.Id}: no head (vacant)"); continue; }
+            // THE ROOT'S HEAD IS THE CHIEF (U-org-chief): walked as every head is; a vacant root is the owner's, as a record.
+            if (unit.HeadPositionId is not { } head)
+            {
+                if (unit.IsRoot) return (start.Id, null, skipped);
+                skipped.Add($"{unit.Id}: no head (vacant)");
+                continue;
+            }
             if (head == sender) { skipped.Add($"{unit.Id}: headed by you"); continue; }
             if (Position(head) is not { Status: OrgPositionStatus.Active })
             {

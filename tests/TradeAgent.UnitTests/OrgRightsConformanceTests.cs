@@ -64,9 +64,10 @@ public partial class OrgRightsConformanceTests
         Assert.Equal(OrgRightAnswer.AppTriggerOrBoardAct, OrgRights.Answer(OrgOperation.Close, OrgReserved.DivResearch, OrgRelation.HeadOfParent).Answer);
         Assert.Equal(OrgRightAnswer.BoardAct, OrgRights.Answer(OrgOperation.Tilt, OrgReserved.Root, OrgRelation.HeadOfParent).Answer);
 
-        // A BOARD ACT'S REFUSAL SAYS NO BOARD SEAT IS ACTIVE AND HANDS NOTHING TO THE OWNER.
+        // A BOARD ACT'S REFUSAL NAMES THE BOARD'S OWN VERBS (U-org-chief: they are in this build since U-board-b1) AND HANDS NOTHING TO THE OWNER.
         var board = OrgRights.Refusal(OrgRights.Answer(OrgOperation.Hire, OrgReserved.DivOperations, OrgRelation.HeadOfParent), "a hire")!;
-        Assert.Contains("no board seat is active", board, StringComparison.Ordinal);
+        Assert.Contains("'board-propose'", board, StringComparison.Ordinal);
+        Assert.Contains("'board-decide'", board, StringComparison.Ordinal);
         Assert.DoesNotContain("owner", board, StringComparison.OrdinalIgnoreCase);
         Assert.Null(OrgRights.Refusal(OrgRights.Answer(OrgOperation.Hire, OrgReserved.None, OrgRelation.HeadOfParent), "a hire"));
     }
