@@ -405,6 +405,13 @@ public sealed record MissionOwnerMessage(
     string Text, DateTimeOffset ReceivedAt, string? RetryOf = null, string? Failure = null);
 
 /// <summary>
+/// ONE OWNER MESSAGE STILL OWED A TURN (<see cref="MissionEventStore.OwnerWordsOwed"/>): its id, the role it is addressed to, when it was
+/// received, the owner's words (a claim, his; null where the payload is not one this build writes), the reason no turn can take it
+/// while it is blocked (the app's), and the launch that holds it, if one does.
+/// </summary>
+public sealed record OwedOwnerWord(string Id, string Addressee, DateTimeOffset ReceivedAt, string? Text, string? BlockedWhy, string? TakenBy);
+
+/// <summary>
 /// ONE REASON THE AI MAY TAKE A TURN, as the app wrote it down.
 ///
 /// <see cref="Id"/> is deterministic per source, so raising the same fact twice is a no-op rather
@@ -1198,6 +1205,39 @@ public sealed class MissionEventStore(Database db)
         var list = new List<MissionEvent>();
         while (r.Read()) list.Add(Read(r));
         return list;
+    });
+
+    /// <summary>
+    /// EVERY ROLE'S OWNER WORDS STILL OWED A TURN (<c>U-org-surface-b</c> item 1; ORCHESTRATION § 2.5: shown "undelivered with the
+    /// reason"), oldest first: exactly what <see cref="OwnerWordsOpen"/> answers for each role, across every role at once, each with its
+    /// addressee (a row that names none is the chair's), when it was received, its words — null where the payload is not one this
+    /// build writes, never a guess — and, while it is <see cref="MissionEventDisposition.Blocked"/>, the reason no turn can take it.
+    /// Reads only; the owner's page shows it, and nothing on the pipe reads it.
+    /// </summary>
+    public IReadOnlyList<OwedOwnerWord> OwnerWordsOwed() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event e
+             WHERE e.kind = $owner
+               AND (e.consumed_at IS NULL
+                    OR ((e.disposition IS NULL OR e.disposition = $blocked)
+                        AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by
+                                     AND a.state IN ('LAUNCHED', 'LOST'))))
+             ORDER BY e.created_at, e.rowid
+            """,
+            ("$owner", MissionEventKind.Owner), ("$blocked", MissionEventDisposition.Blocked));
+        using var r = c.ExecuteReader();
+        var list = new List<OwedOwnerWord>();
+        while (r.Read())
+        {
+            var e = Read(r);
+            MissionOwnerMessage? said;
+            try { said = Json.Read<MissionOwnerMessage>(e.Payload ?? ""); }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException) { said = null; }
+            list.Add(new OwedOwnerWord(e.Id, e.Role ?? CouncilRoles.Default, said?.ReceivedAt ?? e.CreatedAt, said?.Text,
+                e.Disposition == MissionEventDisposition.Blocked ? e.DispositionDetail : null, e.ConsumedBy));
+        }
+        return (IReadOnlyList<OwedOwnerWord>)list;
     });
 
     /// <summary>

@@ -290,22 +290,14 @@ public sealed partial class OrgStore
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public Vetoed Veto(long eventId, DateTimeOffset now) => db.Write(_ =>
     {
-        string unitId, kind, decider, detail;
-        string? positionId;
-        using (var c = db.Cmd("SELECT unit_id, position_id, kind, decider, detail FROM org_event WHERE id = $id", ("$id", eventId)))
-        using (var rd = c.ExecuteReader())
-        {
-            if (!rd.Read()) throw Refused($"event {eventId.ToString(CultureInfo.InvariantCulture)} is not on the chart's record.");
-            (unitId, positionId, kind, decider, detail) = (rd.GetString(0), Sql.S(rd.GetValue(1)), rd.GetString(2), rd.GetString(3), rd.GetString(4));
-        }
+        // EVERY REFUSAL IS ONE READ's (U-org-surface-b item 1): the same check the owner's page lists the vetoable events by
+        // (Vetoable), so a listed event is one this accepts and a refused one is never offered.
+        var subject = VetoSubjectOf(eventId)
+                      ?? throw Refused($"event {eventId.ToString(CultureInfo.InvariantCulture)} is not on the chart's record.");
+        if (WhyNotVetoable(subject) is { } why) throw Refused(why);
+        var (unitId, positionId, kind, detail) = (subject.UnitId, subject.PositionId, subject.Kind, subject.Detail);
         var what = $"event {eventId.ToString(CultureInfo.InvariantCulture)} ({kind})";
-        if (decider is OrgDecider.App or OrgDecider.Owner)
-            throw Refused($"{what} was decided by {decider}: the veto undoes what the organisation decided, never the app's or your own act.");
-        using (var c = db.Cmd("SELECT COUNT(*) FROM org_event WHERE kind = $vetoed AND detail LIKE $mark",
-                   ("$vetoed", OrgEventKind.Vetoed), ("$mark", $"event={eventId.ToString(CultureInfo.InvariantCulture)} %")))
-            if (Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0) throw Refused($"{what} is vetoed already.");
-
-        var unit = Units().FirstOrDefault(u => u.Id == unitId) ?? throw Damaged($"{what} names {unitId}, which is not a unit");
+        var unit = Units().Single(u => u.Id == unitId);
         var act = $"the owner vetoed {what}";
         var restored = new List<string>();
         var ended = new List<string>();
@@ -314,10 +306,6 @@ public sealed partial class OrgStore
         {
             case OrgEventKind.Chartered:
             {
-                if (unit.Status == OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is closed already.");
-                var children = Units().Where(u => u.ParentId == unit.Id && u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToList();
-                if (children.Count > 0)
-                    throw Refused($"{what}: {unit.Id} has open units under it ({string.Join(", ", children)}); veto or close those first.");
                 using (var c = db.Cmd("UPDATE org_unit SET status = $closed, closed_at = $at WHERE id = $u",
                            ("$closed", OrgUnitStatus.Closed), ("$at", Sql.T(now)), ("$u", unit.Id)))
                     c.ExecuteNonQuery();
@@ -329,9 +317,6 @@ public sealed partial class OrgStore
             }
             case OrgEventKind.Closed:
             {
-                if (unit.Status != OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is not closed any more.");
-                if (unit.ParentId is { } parent && Units().Single(u => u.Id == parent).Status == OrgUnitStatus.Closed)
-                    throw Refused($"{what}: {unit.Id}'s parent {parent} is closed, so there is nothing to restore it under.");
                 using (var c = db.Cmd("UPDATE org_unit SET status = $dormant, closed_at = NULL WHERE id = $u",
                            ("$dormant", OrgUnitStatus.Dormant), ("$u", unit.Id)))
                     c.ExecuteNonQuery();
@@ -347,10 +332,7 @@ public sealed partial class OrgStore
             }
             case OrgEventKind.Retired:
             {
-                var p = positionId ?? throw Damaged($"{what} names no position");
-                if (Position(p) is not { Status: OrgPositionStatus.Ended } row || row.UnitId != unit.Id)
-                    throw Refused($"{what}: {p} is not the ended member of {unit.Id} the retirement left.");
-                if (unit.Status == OrgUnitStatus.Closed) throw Refused($"{what}: {unit.Id} is closed, so there is nothing to restore {p} into.");
+                var p = positionId!;
                 Restore(p);
                 if (DetailValue(detail, "head") == "yes")
                 {
@@ -363,19 +345,15 @@ public sealed partial class OrgStore
             }
             case OrgEventKind.Hired:
             {
-                var p = positionId ?? throw Damaged($"{what} names no position");
-                if (Position(p) is not { } row || row.Status == OrgPositionStatus.Ended) throw Refused($"{what}: {p} has ended already.");
+                var p = positionId!;
                 EndPositions([p], now);
                 if (unit.HeadPositionId == p) VacateHead(unit.Id, p);
                 cancelled = Restructure(new Restructuring(act, OrgDecider.Owner, [], [p], [p]), now).Cancelled;
                 ended.Add(p);
                 break;
             }
-            case OrgEventKind.Merged:
-                throw Refused($"{what}: a merge is not undone by a veto in this build — its positions have run in their new unit since, and "
-                              + "moving them back is a restructuring of its own.");
             default:
-                throw Refused($"{what} is no structural act a veto undoes: a charter, a close, a retirement or a hire.");
+                throw Damaged($"{what} passed the veto's check as a kind it does not undo");
         }
 
         var vetoId = Event(now, unit.Id, positionId, OrgEventKind.Vetoed, OrgDecider.Owner,

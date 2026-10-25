@@ -450,6 +450,10 @@ public class OrgLedgerTests
         // AppointChief, ReplaceChief and VacateChief are the OWNER's in-process route to it (AUTH-001): the first two only while no board
         // seat is active, the removal at any time.
         mandate = [.. mandate, "AppointChief", "Chief", "ReplaceChief", "VacateChief"];
+        // REVISITED, OUT LOUD, BY U-org-surface-b: Vetoable — a READ for the owner's "For you" page: the structural events his veto
+        // would accept now, asked of the same one check Veto throws on (OrgStore.Vetoable.cs, which writes nothing). No op, door verb
+        // or trade verb names it (OwnerInboxTests.No_op_or_verb_reaches_the_owners_inbox_presses).
+        mandate = [.. mandate, "Vetoable"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
