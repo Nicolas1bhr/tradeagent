@@ -92,14 +92,16 @@ public static class OwnerOnlyFile
         const int fileRenameInfoEx = 22, replaceIfExists = 0x1, posixSemantics = 0x2;
         const int invalidFunction = 1, notSupported = 50, invalidParameter = 87;
 
-        using var handle = CreateFileW(temp, delete | synchronize, FileShare.ReadWrite | FileShare.Delete,
+        // BOTH NAMES VERBATIM PAST MAX_PATH (U-catalog-windows-path): .NET prefixes its own calls, never this CreateFileW or the
+        // rename's name, and a Windows whose long paths are off refused a 263-character temp as "the path cannot be found".
+        using var handle = CreateFileW(Win32Path.Verbatim(Path.GetFullPath(temp)), delete | synchronize, FileShare.ReadWrite | FileShare.Delete,
             IntPtr.Zero, FileMode.Open, 0, IntPtr.Zero);
         if (handle.IsInvalid) throw Win32Failure(Marshal.GetLastPInvokeError(), $"could not open {temp} to publish it");
 
         // FILE_RENAME_INFO: Flags (a DWORD in a pointer-aligned union), RootDirectory (a handle; none, the
         // name is absolute), FileNameLength (bytes, without the NUL), then the name. Never smaller than the
         // struct itself.
-        var name = Path.GetFullPath(path);
+        var name = Win32Path.Verbatim(Path.GetFullPath(path));
         var nameAt = 2 * IntPtr.Size + 4;
         var size = Math.Max(nameAt + (name.Length + 1) * sizeof(char), (nameAt + sizeof(char) + IntPtr.Size - 1) & ~(IntPtr.Size - 1));
         var info = Marshal.AllocHGlobal(size);
