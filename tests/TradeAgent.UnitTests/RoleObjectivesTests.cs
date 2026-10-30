@@ -31,10 +31,17 @@ public class RoleObjectivesTests
     {
         string[] banned = ["objective", "wake", "renewal"];
 
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 1 (R25 D5): `org-wake` is the one op that names a wake — a position's request for
+        // its OWN next wake, the broker-seat equivalent of next.json, one `self` row bounded by the board's floor and ceiling, one pending,
+        // the AI day (MissionEventReachTests says the same). It names no objective and no renewal, and its one argument is the delay.
+        // Every other op and argument keeps the whole check.
         var ops = typeof(Ops).GetFields()
             .Where(f => f.IsLiteral && f.FieldType == typeof(string))
-            .Select(f => (string)f.GetRawConstantValue()!).ToArray();
-        var args = GatewaySchema.Ops().SelectMany(o => o.Args.Select(a => $"{o.Op}.{a.Name}")).ToArray();
+            .Select(f => (string)f.GetRawConstantValue()!).Where(o => o != Ops.OrgWake).ToArray();
+        var args = GatewaySchema.Ops().Where(o => o.Op != Ops.OrgWake).SelectMany(o => o.Args.Select(a => $"{o.Op}.{a.Name}")).ToArray();
+        Assert.Equal(["after_minutes"], GatewaySchema.Ops().Single(o => o.Op == Ops.OrgWake).Args.Select(a => a.Name));
+        Assert.DoesNotContain("objective", Ops.OrgWake, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("renewal", Ops.OrgWake, StringComparison.OrdinalIgnoreCase);
         foreach (var word in banned)
         {
             Assert.DoesNotContain(ops, o => o.Contains(word, StringComparison.OrdinalIgnoreCase));

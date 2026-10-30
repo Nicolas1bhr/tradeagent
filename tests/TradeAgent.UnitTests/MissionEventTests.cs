@@ -261,9 +261,19 @@ public class MissionEventReachTests
     [Fact]
     public void No_verb_and_no_pipe_op_names_the_wake_queue()
     {
-        var ops = string.Join(" ", typeof(Ops).GetFields()
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 1 (R25 D5, the orchestrator's decision on the owner's behalf): ONE op names a
+        // wake — `org-wake`, a position's request for its OWN next wake, the broker-seat equivalent of the `next.json` a cell writes.
+        // It inserts exactly one `self` row for its caller and nothing else — no other role's, no other kind, no delete — bounded by
+        // the security board's floor and ceiling for the caller's level, one pending at a time, and the AI day
+        // (OrgAutonomyTests.A_wake_before_the_floor_past_the_ceiling_or_from_an_unconfined_seat_is_refused and its neighbours). Every
+        // other op keeps the whole check, and this one keeps it for "event" and "mission".
+        var named = typeof(Ops).GetFields()
             .Where(f => f.IsLiteral && f.FieldType == typeof(string))
-            .Select(f => (string)f.GetRawConstantValue()!));
+            .Select(f => (string)f.GetRawConstantValue()!).ToList();
+        Assert.Contains(Ops.OrgWake, named);
+        var ops = string.Join(" ", named.Where(o => o != Ops.OrgWake));
+        Assert.DoesNotContain("event", Ops.OrgWake, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("mission", Ops.OrgWake, StringComparison.OrdinalIgnoreCase);
 
         Assert.DoesNotContain("event", ops, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("wake", ops, StringComparison.OrdinalIgnoreCase);

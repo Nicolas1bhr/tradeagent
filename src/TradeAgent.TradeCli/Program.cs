@@ -462,6 +462,10 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 case "review-answer":
                     Fill(a, rest, "event", "choice", "rationale");
                     return (Ops.OrgReviewAnswer, a);
+                // `trade org wake <after_minutes>` (U-org-autonomy): a position asks for its next wake.
+                case "wake":
+                    Fill(a, rest, "after_minutes");
+                    return (Ops.OrgWake, a);
                 default:
                     return (null, a);
             }

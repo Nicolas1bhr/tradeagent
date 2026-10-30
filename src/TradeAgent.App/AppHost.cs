@@ -1425,8 +1425,7 @@ public sealed class AppHost : IAsyncDisposable
     /// the levels' horizons are set apart; below zero reads zero, and zero raises none. The loop's ceilings and the re-wake floor's
     /// cap both read it here.
     /// </summary>
-    internal static Dictionary<string, TimeSpan> LevelCeilings(BoardPolicy policy) =>
-        OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, policy.HeadCeilingHours)), StringComparer.Ordinal);
+    internal static Dictionary<string, TimeSpan> LevelCeilings(BoardPolicy policy) => RewakeFloors.CeilingsOf(policy);
 
     /// <summary>
     /// THE RE-WAKE FLOORS AS THE POLICY IN FORCE STATES THEM NOW (<c>U-rewake-floor</c>; <see cref="BoardPolicy.RewakeFloorMinutes"/>, <c>U-board-a2</c>),

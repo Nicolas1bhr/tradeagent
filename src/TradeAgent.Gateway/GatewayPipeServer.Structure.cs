@@ -1,3 +1,4 @@
+using System.Globalization;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -205,6 +206,61 @@ public sealed partial class GatewayPipeServer
                    + "its forecasts resolve from the app's records. The review changed nothing and neither does the answer: a change to the "
                    + "unit's share or chart is its own verb — 'org-tilt', 'org-close', 'org-merge' — or the security board's."
         };
+    }
+
+    /// <summary>
+    /// A POSITION ASKS FOR ITS NEXT WAKE (<see cref="OrgStore.RequestWake"/>; <c>U-org-autonomy</c> item 1, R25 D5): one <c>self</c> wake,
+    /// bounded by the security board's policy IN FORCE — the floor and the ceiling of the caller's level, read from
+    /// <see cref="TradingGateway.Policy"/> at this call, never a constant — one pending at a time, and refused when one more turn of
+    /// the caller's seat does not fit its funding chain today (<see cref="NoRoomForATurn"/>).
+    /// </summary>
+    object OrgWake(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, StructureArgsWhy);
+        var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        if (req.Dec("after_minutes") is null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'after_minutes' is required: how long from now to be woken, in whole minutes above zero. Nothing was written.");
+        var minutes = WholeNumber(req, "after_minutes");
+        var asked = Gateway.Org.RequestWake(new WakeRequest(caller, ctx.AttemptId, TimeSpan.FromMinutes(minutes)),
+            RewakeFloors.Of(Gateway.Policy), NoRoomForATurn(caller, ctx.AttemptId), DateTimeOffset.UtcNow);
+        return new
+        {
+            wake = asked.EventId,
+            due_at = asked.DueAt,
+            level = asked.Level,
+            floor_minutes = (int)asked.Floor.TotalMinutes,
+            ceiling_minutes = (int)asked.Ceiling.TotalMinutes,
+            note = "Asked: TradeAgent wakes you once at the time above, unless work addressed to you wakes you first — the request stays "
+                   + "until a turn takes it. The turn is metered like any other: a day with no room left when it is due waits for room."
+        };
+    }
+
+    /// <summary>
+    /// WHY ONE MORE TURN OF <paramref name="caller"/>'S SEAT DOES NOT FIT ITS FUNDING CHAIN TODAY, or null where it fits: for every unit of the
+    /// chain the host's meter reads (<see cref="TradingGateway.AiEnvelopes"/>, nearest first and ending at the root — the plan's day-total),
+    /// today's spend, what is reserved and the unmeasured charge, plus one turn of the caller's own recorded launch, against its envelope.
+    /// A host that meters nothing, a reading that fails or a launch the ledger does not hold is a reason too — refused, never guessed.
+    /// </summary>
+    string? NoRoomForATurn(string caller, string? attemptId)
+    {
+        IReadOnlyList<UnitDay>? days;
+        try { days = Gateway.AiEnvelopes?.Invoke(caller); }
+        catch (Exception) { days = null; }
+        if (days is null || days.Count == 0)
+            return "TradeAgent could not read your unit's AI envelope today, so it does not raise a turn nobody can show fits.";
+        if ((attemptId is { } id ? Gateway.Attempt(id) : null) is not { } attempt)
+            return $"'{attemptId}' is no launch the ledger recorded, so there is no seat to price one more turn of.";
+        foreach (var d in days)
+        {
+            if (d.Envelope is not { } envelope) continue;
+            var committed = d.Spent + d.Reserved + d.UnmeasuredCharge;
+            if (committed + attempt.ReservedCost > envelope)
+                return $"{OrgEnvelopes.NameOf(d.UnitId)} has {committed.ToString(CultureInfo.InvariantCulture)} of its "
+                       + $"{envelope.ToString(CultureInfo.InvariantCulture)} ({d.Ceiling}) committed today, and one turn of your seat reserves "
+                       + $"{attempt.ReservedCost.ToString(CultureInfo.InvariantCulture)}. Your ceiling, or work addressed to you, wakes you.";
+        }
+        return null;
     }
 
     /// <summary>
