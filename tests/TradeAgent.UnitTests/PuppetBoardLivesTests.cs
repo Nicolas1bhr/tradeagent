@@ -280,7 +280,7 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
 
         var preview = life.Host.Gateway.PreviewBoardVeto(act.Id);
         Assert.True(preview.Allowed, preview.Words);
-        var vetoed = life.Host.Gateway.VetoBoardAct(act.Id);
+        var vetoed = life.Host.Gateway.VetoBoardAct(act.Id, life.Host.Gateway.PreviewBoardVeto(act.Id));
         Assert.Equal(BoardActEventKind.Vetoed, vetoed.Status);
         var inForce = store.InForce();
         Assert.Equal((3, BoardDecider.Owner, BoardBasis.Veto), (inForce.Version, inForce.Decider, inForce.Basis));

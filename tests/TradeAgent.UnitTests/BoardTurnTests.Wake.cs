@@ -60,7 +60,7 @@ public partial class BoardTurnTests
             var expiring = store.Propose(Act("board-2", Change("plan_day_total", 45, 46)), at).Act;
             Assert.Equal(1, store.Expire(at + BoardLimits.ConfirmationLife + TimeSpan.FromMinutes(1)));
             var vetoed = store.Propose(Act("board-3", Change("plan_day_total", 45, 47)), at).Act;
-            store.VetoBoardAct(vetoed.Id, at);
+            store.VetoBoardAct(vetoed.Id, at, store.PreviewBoardVeto(vetoed.Id));
             foreach (var act in new[] { expiring, vetoed })
             {
                 var its = BoardWakes(db).Where(w => w.Payload == act.Id).ToList();

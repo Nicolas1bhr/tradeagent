@@ -110,7 +110,7 @@ public partial class BoardActTests
             await gw.RefreshHealthAsync();
             Assert.Equal((0.08m, day0.AddDays(19)), Assert.Single(gw.Envelopes.All(), Stands) is var n ? (n.MaxQuantity, n.ExpiresAt) : default);
         }
-        gw.VetoBoardAct(widened.Act.Id);
+        gw.VetoBoardAct(widened.Act.Id, gw.PreviewBoardVeto(widened.Act.Id));
         gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(With(0.05m)), Json(With(0.04m)))));
         await gw.RefreshHealthAsync();
 
@@ -166,7 +166,7 @@ public partial class BoardActTests
         await gw.RefreshHealthAsync();
         Assert.Equal(day0.AddDays(19), Assert.Single(gw.Envelopes.All(), e => e.StandsAt(clock.Now)).ExpiresAt);
 
-        var vetoed = gw.VetoBoardAct(widened.Act.Id);
+        var vetoed = gw.VetoBoardAct(widened.Act.Id, gw.PreviewBoardVeto(widened.Act.Id));
         Assert.Null(vetoed.PolicyVersion);
         await gw.RefreshHealthAsync();
         foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
@@ -194,7 +194,7 @@ public partial class BoardActTests
         await gw.RefreshHealthAsync();
         Assert.Equal(day0.AddDays(29), Assert.Single(gw.Envelopes.All(), e => e.StandsAt(clock.Now)).ExpiresAt);
 
-        gw.VetoBoardAct(b.Act.Id);
+        gw.VetoBoardAct(b.Act.Id, gw.PreviewBoardVeto(b.Act.Id));
         clock.Now = day0.AddDays(10);
         gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Terms(0.10m, 10)), Json(Terms(0.09m, 10)))));
         await gw.RefreshHealthAsync();
@@ -230,7 +230,7 @@ public partial class BoardActTests
         var seated = gw.BoardDecide(chief.Act.Id, "board-2", null, true, chief.Act.IntentSha256, "the root needs a head");
         Assert.Equal((BoardActEventKind.Confirmed, (int?)null), (seated.Status, seated.PolicyVersion));
         Assert.NotNull(new OrgStore(db).Chief());
-        var vetoed = gw.VetoBoardAct(chief.Act.Id);
+        var vetoed = gw.VetoBoardAct(chief.Act.Id, gw.PreviewBoardVeto(chief.Act.Id));
         Assert.Equal((BoardActEventKind.Vetoed, (int?)null), (vetoed.Status, vetoed.PolicyVersion));
         Assert.Null(new OrgStore(db).Chief());
         Assert.False(new BoardStore(db).VetoedVersion(v!.Value), $"vetoing the chief act {chief.Act.Id} read as a veto of version {v}");
@@ -244,7 +244,7 @@ public partial class BoardActTests
         await gw.RefreshHealthAsync();
         Assert.Equal((0.12m, day0.AddDays(25)), (Standing().MaxQuantity, Standing().ExpiresAt));
 
-        gw.VetoBoardAct(renewed.Act.Id);
+        gw.VetoBoardAct(renewed.Act.Id, gw.PreviewBoardVeto(renewed.Act.Id));
         foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
         Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.Now) && e.ExpiresAt > day0.AddDays(19));
     }

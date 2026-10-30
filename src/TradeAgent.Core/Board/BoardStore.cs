@@ -767,17 +767,25 @@ public sealed class BoardStore(Database db)
     /// changed is the NARROWER of its value now and its <c>from</c> (<see cref="BoardDirection.NarrowerOf"/>) — or, with nothing narrower to
     /// restore, a <c>vetoed</c> event and no version; an act that only narrowed is refused, since undoing it would widen. Never a new
     /// limit or envelope above now. One write.
-    /// <para><b>Bound to what press one showed</b> (<c>U-org-surface-b</c> fix pass 1): the owner's press hands back
+    /// <para><b>Bound to what press one showed, always</b> (<c>U-org-surface-b</c> fix pass 1; REQUIRED since <c>U-veto-asshown-required</c> — a caller that
+    /// hands none is refused, <see cref="ArgumentNullException"/>): the owner's press hands back
     /// <paramref name="asShown"/>, the preview his first press showed, and the veto is REFUSED AS MOVED — in words naming what moved,
     /// nothing written — when the one it would write now differs from it in any way (<see cref="BoardVetoPreview.WhatMoved"/>): the act's
     /// state, whether a veto is accepted, its words, or any field's value now or restored. Checked inside this write, so nothing can move
     /// between the check and the write.</para>
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public BoardActResult VetoBoardAct(string actId, DateTimeOffset at, BoardVetoPreview? asShown = null) => _db.Write(_ =>
+    public BoardActResult VetoBoardAct(string actId, DateTimeOffset at, BoardVetoPreview asShown)
+    {
+        // REQUIRED, NOT OPTIONAL (U-veto-asshown-required; AUTH-001): a veto no preview was handed for is a veto of an effect nobody was shown.
+        ArgumentNullException.ThrowIfNull(asShown);
+        return VetoWritten(actId, at, asShown);
+    }
+
+    BoardActResult VetoWritten(string actId, DateTimeOffset at, BoardVetoPreview asShown) => _db.Write(_ =>
     {
         var plan = PlanVeto(actId);
-        if (asShown?.WhatMoved(PreviewOf(plan)) is { } moved) throw Refused(moved);
+        if (asShown.WhatMoved(PreviewOf(plan)) is { } moved) throw Refused(moved);
         if (!plan.Allowed) throw Refused(plan.Words);
         int? version = null;
         if (plan.Body is { } body) version = InsertVersion(plan.InForce!, body, BoardDecider.Owner, BoardBasis.Veto, plan.Act.Id, at);
