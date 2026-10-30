@@ -314,7 +314,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// “Choose your trading platfo" — cut. Built the way the window's setup surface holds it: a column at most 880 wide, padded.
     /// </summary>
     [Fact]
-    public void The_onboarding_footer_keeps_its_back_link_whole_at_1280x800()
+    public async Task The_onboarding_footer_keeps_its_back_link_whole_at_1280x800()
     {
         using var db = new Database(Path.Combine(UiTestHome.Home, $"onboarding-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
@@ -349,7 +349,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
             foreach (var o in overflow) output.WriteLine(o);
             Assert.True(overflow.Count == 0, string.Join(" | ", overflow));
         }
-        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 
     /// <summary>
