@@ -90,6 +90,22 @@ public static class AppContainerCell
         else throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{path} does not exist, so a cell cannot be granted it");
     }
 
+    /// <summary>
+    /// Removes from <paramref name="item"/> every explicit ACE naming an AppContainer or capability SID (<c>S-1-15-2-*</c>, <c>S-1-15-3-*</c>)
+    /// — what a cell could have written on a file it made — leaving inherited ACEs alone.
+    /// </summary>
+    public static void PurgeContainerAces(FileSystemInfo item)
+    {
+        FileSystemSecurity acl = item is DirectoryInfo d ? d.GetAccessControl(AccessControlSections.Access) : ((FileInfo)item).GetAccessControl(AccessControlSections.Access);
+        var stale = acl.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+            .Select(r => (SecurityIdentifier)r.IdentityReference).Where(s => s.Value.StartsWith("S-1-15-2-", StringComparison.Ordinal) || s.Value.StartsWith("S-1-15-3-", StringComparison.Ordinal))
+            .Distinct().ToList();
+        if (stale.Count == 0) return;
+        foreach (var sid in stale) acl.PurgeAccessRules(sid);
+        if (item is DirectoryInfo dir) dir.SetAccessControl((DirectorySecurity)acl);
+        else ((FileInfo)item).SetAccessControl((FileSecurity)acl);
+    }
+
     /// <summary>Removes every explicit ACE naming <paramref name="sid"/> from <paramref name="path"/>. Never throws for a path that is gone.</summary>
     public static void Revoke(string path, string sid)
     {

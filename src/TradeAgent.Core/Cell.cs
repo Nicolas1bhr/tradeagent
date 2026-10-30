@@ -160,6 +160,10 @@ public sealed record CellPolicy
         {
             if (string.IsNullOrWhiteSpace(p) || !Path.IsPathFullyQualified(p) || p.Contains('\0'))
                 return $"the cell's {what} '{p}' is not an absolute path";
+            // ON WINDOWS A DRIVE PATH IN ONE SPELLING (Codex, landing 2): no \\?\ or \\.\ device prefix and no UNC share, which the path
+            // rule would not see as the folders they name, and no stream (a colon past the drive).
+            if (OperatingSystem.IsWindows() && !(p.Length >= 3 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/' && p.IndexOf(':', 2) < 0))
+                return $"the cell's {what} '{p}' is not a plain drive path (X:\\…) on Windows";
             foreach (var form in Forms(p))
                 if (guarded.Refuses(form, executable: what == ProgramRoot) is { } why) return $"the cell's {what} {p} {why}";
         }
@@ -291,6 +295,8 @@ public sealed record CellPolicy
         yield return Full(p);
         if (CellNative.RealPath(p) is { } real) yield return Full(real);
         else if (OperatingSystem.IsWindows() && Resolved(p) is { } target) yield return Full(target);
+        // AND IN ITS LONG FORM: an 8.3 short name (OWNER~1) names the same folder and must be judged as it.
+        if (OperatingSystem.IsWindows() && LongPath(p) is { } longForm) yield return Full(longForm);
     }
 
     static string Full(string p) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p));
@@ -317,6 +323,18 @@ public sealed record CellPolicy
     }
 
     static TradeAgentException Refused(string why) => new(ErrorCode.CELL_UNAVAILABLE, why);
+
+    /// <summary>Windows's long form of an existing path (8.3 short names expanded), or null.</summary>
+    static string? LongPath(string p)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var buffer = new StringBuilder(1024);
+        var n = GetLongPathName(Path.GetFullPath(p), buffer, buffer.Capacity);
+        return n > 0 && n < buffer.Capacity ? buffer.ToString() : null;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetLongPathNameW")]
+    static extern int GetLongPathName(string shortPath, StringBuilder longPath, int size);
 
     /// <summary>
     /// ON WINDOWS, WHERE A PATH REALLY LEADS: every component that is a symlink or a junction followed to its end, so a grant through

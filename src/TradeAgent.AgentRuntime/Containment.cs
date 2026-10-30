@@ -426,6 +426,9 @@ public sealed class ContainedProcess : IDisposable
             _disposed = true;
         }
         Process.Dispose();
+        // A WINDOWS CELL'S STAGE ENDED BY THE JOB never reached its own sweep (U-cell-windows, Codex on landing 2): the free slots'
+        // grants are taken back here, once the tree is down. Nothing to do — one directory read — when no slot holds a record.
+        if (OperatingSystem.IsWindows()) WindowsCellStage.SweepFree();
     }
 
     /// <summary>

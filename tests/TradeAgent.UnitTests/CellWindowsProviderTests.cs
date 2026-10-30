@@ -48,6 +48,12 @@ public sealed class CellWindowsProviderTests
             var problem = new CellPolicy(Path.Combine(TestEnv.Home, "ws-ok"), [spelling], [], [new("PATH", "x")]).Problem();
             Assert.True(problem is not null && problem.Contains("inside TradeAgent's state", StringComparison.Ordinal), $"{spelling}: {problem ?? "granted"}");
         }
+        // A DEVICE PREFIX, A SHARE OR A STREAM IS NOT A SPELLING THE RULE READS: refused as such (Codex, landing 2).
+        foreach (var odd in new[] { @"\\?\" + Path.Combine(Paths.State, "x"), @"\\localhost\c$\x", Path.Combine(TestEnv.Home, "f.txt") + ":s" })
+        {
+            var problem = new CellPolicy(Path.Combine(TestEnv.Home, "ws-ok"), [odd], [], [new("PATH", "x")]).Problem();
+            Assert.True(problem is not null && problem.Contains("not a plain drive path", StringComparison.Ordinal), $"{odd}: {problem ?? "granted"}");
+        }
     }
 
     [Fact]
