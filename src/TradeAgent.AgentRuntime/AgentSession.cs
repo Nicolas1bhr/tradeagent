@@ -618,6 +618,7 @@ public sealed class AgentSession(
 
     /// <summary>The vendor's warnings and the dead-tools sentence of the turn in flight (<c>U-cli-code-mode</c>); null until it reads one.</summary>
     IReadOnlyList<string>? _warnings;
+    IReadOnlyList<string>? _errors;
     string? _toolsDead;
 
     public bool Busy => _busy;
@@ -868,6 +869,7 @@ public sealed class AgentSession(
         _session = null;
         _billingMoved = null;
         _warnings = null;
+        _errors = null;
         _toolsDead = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
@@ -932,6 +934,8 @@ public sealed class AgentSession(
                 BillingMoved = _billingMoved,
                 // AND THE VENDOR'S WARNINGS, AND THE SENTENCE FOR A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode).
                 VendorWarnings = _warnings,
+                // AND THE RUNTIME'S OWN ERROR EVENTS (U-chief-wake-once): the vendor's 4xx or refusal, for the launch's row.
+                VendorErrors = _errors,
                 ToolsUnavailable = _toolsDead
             });
         }
@@ -1184,6 +1188,7 @@ public sealed class AgentSession(
         void KeepWarnings()
         {
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
+            _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
             if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, launchModel, vendorSaid);
         }
 
@@ -1428,6 +1433,12 @@ public sealed class AgentSession(
         /// <summary>The vendor's warning items' messages, in order (<c>U-cli-code-mode</c>).</summary>
         public List<string> Warnings { get; } = [];
 
+        /// <summary>
+        /// THE RUNTIME'S OWN ERROR EVENTS' MESSAGES, in order (<c>U-chief-wake-once</c>): a vendor's 4xx, a refused model, a usage limit — what
+        /// the stream's <c>error</c> events said, never the model's words. Carried out as <see cref="AgentTurnEnded.VendorErrors"/>.
+        /// </summary>
+        public List<string> Errors { get; } = [];
+
         /// <summary>The first warning that says the seat's tools cannot run (<see cref="RuntimeManifest.ToolsUnavailablePattern"/>), or null.</summary>
         public string? ToolsDead { get; set; }
 
@@ -1491,6 +1502,8 @@ public sealed class AgentSession(
         if (type.Contains("error", StringComparison.OrdinalIgnoreCase))
         {
             var msg = Text(e, "message") ?? Text(e, "error") ?? FindText(e, 3) ?? "the AI reported an error";
+            // KEPT FOR THE LAUNCH'S ROW (U-chief-wake-once): the vendor's own words, whatever else this branch does with them.
+            state.Errors.Add(msg);
 
             // THE VENDOR REFUSING THE TURN FOR ITS OWN USAGE LIMIT, recognised by the manifest's data and
             // never by a sentence written here. Held rather than shown now, so that it is the LAST thing

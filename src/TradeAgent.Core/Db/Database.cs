@@ -3239,6 +3239,39 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{actsRung}') ON CONFLICT(key) DO UPDATE SET value='{actsRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-chief-wake-once): a unit overtaken renumbers it in Versions, nothing else.
+        const int launchEvidenceRung = Versions.LaunchEvidenceRung;
+        if (have < launchEvidenceRung)
+        {
+            // WHAT A LAUNCH WAS OFFERED AND WHAT ITS VENDOR SAID — `U-chief-wake-once` (the M-org1 sitting needs both to diagnose a
+            // refused model). MEASUREMENTS, written by the app only, on the launch's own row:
+            //
+            // `ai_attempt.offered_tools` — the NAMES of the tools the seat's verified surface offered this launch, sorted, one per line,
+            // beside the profile hash that already covered them (SeatProfile.ProfileHash): the hash proves which set, the names say it.
+            // Written in the row's own insert from the seat verdict its admission read; NULL where the seat has no verified surface (a
+            // CLI seat, a puppet) or before the rung. An UPDATE that changes it is refused by trigger.
+            //
+            // `ai_attempt.vendor_said` — the runtime's own error lines of the turn, as its stream reported them (a vendor's 4xx or a
+            // refusal of the model), bounded and with anything shaped like a credential withheld (VendorSaid). Written once, by the
+            // turn's close, where the turn reported any; NULL otherwise. Never a claim of the agent: the stream's error events only. An
+            // UPDATE that changes a value already written is refused by trigger.
+            //
+            // The columns added only where missing and the triggers IF NOT EXISTS, the stamp last: a crash between any statement here and
+            // the stamp runs this again over what it made. No backfill: a launch before the rung has NULL — unknown.
+            AddColumnIfMissing("ai_attempt", "offered_tools", "TEXT");
+            AddColumnIfMissing("ai_attempt", "vendor_said", "TEXT");
+            Exec("""
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_offered_fixed BEFORE UPDATE OF offered_tools ON ai_attempt
+                WHEN OLD.offered_tools IS NOT NEW.offered_tools
+                BEGIN SELECT RAISE(ABORT, 'a launch''s offered tools are refused an update: they are what its seat was verified as, written once.'); END;
+                CREATE TRIGGER IF NOT EXISTS ai_attempt_vendor_said_once BEFORE UPDATE OF vendor_said ON ai_attempt
+                WHEN OLD.vendor_said IS NOT NULL AND OLD.vendor_said IS NOT NEW.vendor_said
+                BEGIN SELECT RAISE(ABORT, 'what a launch''s vendor said is refused an update: it is written once, by the turn''s close.'); END;
+                """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{launchEvidenceRung}') ON CONFLICT(key) DO UPDATE SET value='{launchEvidenceRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

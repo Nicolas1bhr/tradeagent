@@ -1046,6 +1046,8 @@ public sealed class TurnMeter
             Role = role,
             // THE PROFILE THE SEAT WAS VERIFIED UNDER, above, before this row existed (U-seat-home). Written here and nowhere else.
             RuntimeProfile = seat.Profile,
+            // AND THE NAMES OF THE TOOLS THAT PROFILE'S SURFACE OFFERED (U-chief-wake-once), from the same verdict: the hash, said in words.
+            OfferedTools = LaunchEvidence.OfferedNames(seat.Offered?.Select(BrokerSeat.ToolName)),
             Funding = [.. funding.Select(u => u.UnitId)],
             // AND THE SEAT IT WAS VERIFIED ON (U-thinking-seats-a, rung 39), beside it and from the same verdict.
             SeatClass = seat.SeatClass,
@@ -1412,7 +1414,9 @@ public sealed class TurnMeter
         _attempts.End(id, ended.ExitCode, ended.At,
             ended.Usage?.InputTokens, ended.Usage?.CachedInputTokens, ended.Usage?.CacheWriteInputTokens,
             ended.Usage?.OutputTokens, ended.Usage?.ReasoningOutputTokens,
-            ended.Usage?.Model, price.Cost, price.Unpriced, context, price.Basis);
+            ended.Usage?.Model, price.Cost, price.Unpriced, context, price.Basis,
+            // WHAT THE VENDOR SAID (U-chief-wake-once): its error events, then its warning items — bounded, credentials withheld.
+            LaunchEvidence.VendorSaid([.. ended.VendorErrors ?? [], .. ended.VendorWarnings ?? []]));
 
         // CLOSED, SO NOT FLYING. After the write rather than before it: a close that threw leaves
         // the row LAUNCHED, and a row this process still claims is one nothing here will lose —
