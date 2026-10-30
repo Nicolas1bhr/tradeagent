@@ -92,7 +92,7 @@ public partial class OrgChiefTests
         var chief = ActiveChief(org);
         var at = DateTimeOffset.UtcNow;
         var shown = org.PreviewChiefWake(Facts());
-        foreach (var said in new[] { chief, "puppet · scripted-1", "plan", "next.json", "ceiling, 24 h", "Pause the AI", "Remove the chief" })
+        foreach (var said in new[] { chief, "puppet · scripted-1", "plan or your API key", "next.json", "ceiling, 24 h", "Pause the AI", "Remove the chief" })
             Assert.Contains(said, shown.Words, StringComparison.Ordinal);
 
         var policies = Count(db, "board_policy");
@@ -129,6 +129,15 @@ public partial class OrgChiefTests
         var before = State(db);
         Assert.Contains($"{b} is the chief now, not {a}", Refusal(() => org.WakeChiefOnce(shown, Facts(), DateTimeOffset.UtcNow)),
             StringComparison.Ordinal);
+        Assert.Equal(before, State(db));
+
+        // WHO THE TURN BILLS IS PART OF WHAT PRESS ONE SHOWED (the Codex review): armed on the plan, a seat that bills a key by press two
+        // is a press that moved — the armed sentence promised plan capacity, never real money.
+        var onPlan = org.PreviewChiefWake(Facts() with { Billing = BillingClasses.Plan });
+        Assert.Contains("your AI plan's capacity", onPlan.Words, StringComparison.Ordinal);
+        Assert.Contains("real money", org.PreviewChiefWake(Facts() with { Billing = BillingClasses.Key }).Words, StringComparison.Ordinal);
+        Assert.Contains("what the press would do changed",
+            Refusal(() => org.WakeChiefOnce(onPlan, Facts() with { Billing = BillingClasses.Key }, DateTimeOffset.UtcNow)), StringComparison.Ordinal);
         Assert.Equal(before, State(db));
 
         var refusing = org.PreviewChiefWake(Facts(own: false));
