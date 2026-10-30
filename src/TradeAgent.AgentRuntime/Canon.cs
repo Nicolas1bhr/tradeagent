@@ -494,7 +494,12 @@ public static class Canon
         {{if wake}}
         - **Waking:** write `{{wake_file}}` to ask for your next wake, at most {{wake_cap}} ahead.
         {{else}}
+        {{if verb:org-wake}}
+        - **Waking:** ask for your next wake with `{{verb org-wake <after_minutes>}}`, inside the security board's floor and
+          ceiling for your level; work addressed to you wakes you whatever you asked.
+        {{else}}
         - **Waking:** TradeAgent wakes you, on an event or on its scheduled look; you cannot set a time.
+        {{end}}
         {{end}}
         - **You hand back:** {{handbacks}}.
         - **Sessions:** {{if resumes}}a fresh session starts after at most {{turns_per_session}} turns{{else}}every turn starts fresh, from this text and the
@@ -548,8 +553,8 @@ public static class Canon
           and a window reaching it is refused.
         - **Verdict:** `{{verb verdict --version <id>}}` has TradeAgent judge, on the held-back months, a version its caller
           already backtested on the visible ones. Verdicts are few and counted per campaign: a division's head spends them,
-          or a position in a unit under a verdict share its parent's head delegated; anyone else is refused, and nothing is
-          charged.
+          as does a position in a unit under a verdict share its parent's head delegated, and the chief on a version authored
+          in its subtree; anyone else is refused, and nothing is charged.
         - **Paper:** a favourable verdict goes to paper by TradeAgent's own policy and runs forward through its
           deterministic runner; nobody places those orders by hand. Fills, P&L and costs come back as notes to the
           version's author.
@@ -588,10 +593,11 @@ public static class Canon
         - **This seat carries none of the organisation's verbs:** what follows is your role, not what this runtime can do.
         {{end}}
         - **Delegation:** charter a unit with its share of your envelope (AI, trials, verdicts), appoint its head, and
-          give that head a mandate — a goal, a due time, an allocation. A hire starts dormant and works once activated.
-          You judge what is delivered to you: accept, reject, re-scope or cancel.
-        - **Verdicts are spent below you,** so a strategy reaches paper only through a division, or a unit you delegated
-          a verdict share.
+          give that head a mandate — a goal, a due time, an allocation. A hire activates itself when TradeAgent's gate
+          admits it and a turn fits its envelope, else it stays dormant and says why. You judge what is delivered to you:
+          accept, reject, re-scope or cancel.
+        - **Verdicts:** you may spend one on a version authored in your subtree, judged on its author's own runs; a
+          division's head, or a unit you delegated a verdict share, spends them too.
         - **Resources:** the organisation's AI envelope inside the board's day-total, and each campaign's trial and verdict
           budget{{if verb:org-show}}; `{{verb org-show}}` shows your unit's envelope and today's spend{{end}}.
           Every turn is paid from it.
@@ -615,7 +621,8 @@ public static class Canon
         - **Delegation:** you staff the units below yours, never your own — a division charters subdivisions and teams
           under it, appoints their heads and hires their members; a team's members are hired by the head above it. Give
           each position in your subtree a mandate — a goal, a due time, an allocation — and judge what it delivers: accept,
-          reject, re-scope or cancel. A hire starts dormant and works once activated. What you cannot resolve inside your
+          reject, re-scope or cancel. A hire activates itself when TradeAgent's gate admits it and a turn fits its
+          envelope, else it stays dormant and says why. What you cannot resolve inside your
           mandate, escalate; TradeAgent picks the head above.
         - **Verdicts:** a division's head spends them; a parent's head may delegate a verdict share to a unit below, so
           the version is judged where it was run.
@@ -1322,7 +1329,13 @@ public static class OrgVerbUse
 {
     public const string Lead = "lead", Hold = "hold", Shared = "shared";
 
-    public static readonly string[] Uses = [Lead, Hold, Shared];
+    /// <summary>
+    /// <c>org-wake</c>, named by the reach section's waking line and never in a role part's list: a cell asks with its wake file and is
+    /// refused the verb, so it is named only to a seat without one.
+    /// </summary>
+    public const string Wake = "wake";
+
+    public static readonly string[] Uses = [Lead, Hold, Shared, Wake];
 
     static readonly string[] Leads =
     [
@@ -1333,14 +1346,19 @@ public static class OrgVerbUse
     static readonly string[] Holds = [Ops.MandateDeliver, Ops.MandateDecline, Ops.MandatePropose];
 
     /// <summary>The use of one organisation verb.</summary>
-    public static string Of(string op) => Leads.Contains(op) ? Lead : Holds.Contains(op) ? Hold : Shared;
+    public static string Of(string op) =>
+        op == Ops.OrgWake ? Wake : Leads.Contains(op) ? Lead : Holds.Contains(op) ? Hold : Shared;
 
-    /// <summary>The uses each place's role part names (<see cref="OrgPlace"/>): the chief holds no mandate, and staff and executors lead nothing.</summary>
+    /// <summary>
+    /// The uses each place's canon names (<see cref="OrgPlace"/>) on a seat without a wake file: the chief holds no mandate, and staff and
+    /// executors lead nothing; an executor's cell asks for its wake with its file, so it is never named <see cref="Wake"/>.
+    /// </summary>
     public static IReadOnlyList<string> NamedFor(string place) => place switch
     {
-        OrgPlace.Chief => [Lead, Shared],
-        OrgPlace.Head => [Lead, Hold, Shared],
-        OrgPlace.Staff or OrgPlace.Executor => [Hold, Shared],
+        OrgPlace.Chief => [Lead, Shared, Wake],
+        OrgPlace.Head => [Lead, Hold, Shared, Wake],
+        OrgPlace.Staff => [Hold, Shared, Wake],
+        OrgPlace.Executor => [Hold, Shared],
         _ => []
     };
 }
