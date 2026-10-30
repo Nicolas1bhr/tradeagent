@@ -486,6 +486,25 @@ public static class Versions
     /// </summary>
     public const int DatabaseSchemaVersion = LaunchEvidenceRung;
 
+    /// <summary>
+    /// THE OLDEST HOME THIS BUILD OPENS (<c>U-windows-release</c>): a home stamped below this schema is REFUSED, untouched, in words
+    /// naming both versions, with the owner's in-app "start fresh" beside the refusal (<see cref="OlderHome"/>). Not a rung: no row moves.
+    ///
+    /// <para>5 is the first schema no published release ever wrote. v0.1.0 and v0.1.1 wrote 2 and v0.1.2 wrote 4 (their tags'
+    /// <c>Versioning.cs</c>), so every home a published release left on a computer is below it, and the release this build becomes
+    /// does not migrate one on a guess. Homes written by unreleased builds of the building phase still climb the rungs; raising this
+    /// number — to refuse those too — is a later release's decision, made here and nowhere else.</para>
+    /// </summary>
+    public const int OldestHomeSchema = 5;
+
+    /// <summary>The published release that wrote a home at <paramref name="schema"/>, for the refusal's words; null at or above the floor.</summary>
+    public static string? ReleaseThatWrote(int schema) => schema switch
+    {
+        >= OldestHomeSchema => null,
+        <= 2 => "0.1.0 or 0.1.1",
+        _ => "0.1.2"
+    };
+
     /// <summary>What a launch was offered and what its vendor said, spelled once (<c>U-chief-wake-once</c>); a unit overtaken renumbers it here.</summary>
     public const int LaunchEvidenceRung = 52;
 

@@ -1327,12 +1327,55 @@ public sealed class AppHost : IAsyncDisposable
             await ResumeOnStartAsync();
             return true;
         }
+        catch (OlderHomeException older)
+        {
+            // REFUSED UNTOUCHED (U-windows-release): the window shows the words and the owner's start-fresh press, not a fatal page.
+            OlderHome = older;
+            StartupProblem = older.Message;
+            return false;
+        }
         catch (Exception ex)
         {
             StartupProblem = ex is TradeAgentException t ? t.Info.UserMessage : ex.Message;
             return false;
         }
     }
+
+    /// <summary>The older home this start refused (<see cref="OlderHomeException"/>), while it stands; null otherwise.</summary>
+    public OlderHomeException? OlderHome { get; private set; }
+
+    /// <summary>
+    /// THE OWNER'S START-FRESH PRESS, the second of two (<c>U-windows-release</c>): reachable only from the refusal screen this start put
+    /// up, in-process, never from the pipe or a verb. Lets go of the single-instance lock (its file is inside the home), moves the WHOLE
+    /// older home aside by one rename (<see cref="Core.OlderHome.SetAside"/> — which re-reads it and refuses to move a home this build
+    /// opens), recreates the managed folders and starts again in the new, empty home. Returns <see cref="StartAsync"/>'s answer; when the
+    /// move is refused the home stays where it was, the refusal stands, and <see cref="StartFreshProblem"/> says why.
+    /// </summary>
+    public async Task<bool> StartFreshAsync()
+    {
+        if (OlderHome is null) return false;
+        _lock?.Dispose();
+        _lock = null;
+        try
+        {
+            var aside = Core.OlderHome.SetAside(Paths.Home, DateTimeOffset.UtcNow);
+            OlderHome = null;
+            StartFreshProblem = null;
+            StartupProblem = null;
+            var started = await StartAsync();
+            if (started)
+                Gateway.Log.Activity($"You started fresh. The older TradeAgent folder is kept, whole, in {aside}.", "info");
+            return started;
+        }
+        catch (InvalidOperationException ex)
+        {
+            StartFreshProblem = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Why the last start-fresh press moved nothing, in the owner's words; null when it has not been refused.</summary>
+    public string? StartFreshProblem { get; private set; }
 
     /// <summary>
     /// EVERYTHING ABOVE THE GATEWAY THAT THE AI WORKS THROUGH: the supervisor, the meter, the wake

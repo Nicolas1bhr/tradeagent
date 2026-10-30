@@ -139,7 +139,7 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data, Reports }
+        foreach (var d in new[] { Home, Tools, SeatHome, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data, Reports }
                      .Concat(CouncilRoles.All.Select(RoleHome)))
         {
             Directory.CreateDirectory(d);
