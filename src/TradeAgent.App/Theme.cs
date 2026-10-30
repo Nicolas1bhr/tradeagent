@@ -166,6 +166,14 @@ static class Theme
             }
         });
 
+        // A BUTTON NEVER CUTS OR SPILLS ITS WORDS: its text wraps inside the width its place gives it. An armed two-press says in full what
+        // the second press does, and on the owner's 1280x800 screen that sentence ran out of its card under the next column (Dashboard) or
+        // was cut mid-word (the chief's wake, the onboarding's back link). In a row, where nothing bounds the width, nothing changes.
+        styles.Add(new Style(x => x.OfType<Button>().Template().OfType<ContentPresenter>())
+        {
+            Setters = { S(ContentPresenter.TextWrappingProperty, TextWrapping.Wrap) }
+        });
+
         AddButtonVariant(styles, "primary", Accent, AccentHover, AccentPress, TextOnAccent, Accent, FontWeight.SemiBold);
         AddButtonVariant(styles, "secondary", BgElevated, BgHover, BgActive, Text, Line);
         AddButtonVariant(styles, "ghost", Brushes.Transparent, BgHover, BgActive, TextMuted, Brushes.Transparent);
