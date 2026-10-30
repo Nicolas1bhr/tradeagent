@@ -51,13 +51,15 @@ public partial class OrgAutonomyTests
         await using var _server = server;
         var mine = Run(gw, Version(db, Member, "member's"));
         var theirs = Run(gw, Version(db, CouncilRoles.Research, "research's"));
+        // A RUN OF ITS OWN SUBTREE IN ANY MODE BUT PAPER IS NOT ITS TO SEE (R25 D9; the Codex review).
+        var live = Run(gw, Version(db, Member, "member's live"), mode: "LIVE_CONFIRM");
 
         var head = await server.CallAsync(Frame(Ops.DeploymentList), Head, Launch(db, Head));
         Assert.True(head.Ok, head.Error?.Message);
         Assert.Equal([mine], Listed(head));
         Assert.Equal([mine], Listed(await server.CallAsync(Frame(Ops.DeploymentList), Member, Launch(db, Member, SeatClasses.Cell))));
         var research = await server.CallAsync(Frame(Ops.DeploymentList), CouncilRoles.Research, Launch(db, CouncilRoles.Research, SeatClasses.Cli));
-        Assert.Equal(new[] { mine, theirs }.Order(StringComparer.Ordinal), Listed(research).Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { mine, theirs, live }.Order(StringComparer.Ordinal), Listed(research).Order(StringComparer.Ordinal));
 
         foreach (var runtime in new[] { RuntimeClass.Broker, RuntimeClass.Cell })
         {

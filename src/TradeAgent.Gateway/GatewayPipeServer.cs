@@ -4074,10 +4074,12 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         + "evidence. You cannot start one, widen one, point it somewhere else or move its cursor; "
         + "'deployment-stop' ends one, which only ever removes exposure."
         + (OrgPositionOf(ctx) is not null
-            ? " As a position of the organisation you see, and may stop, only the paper runs of versions authored in your own subtree — "
+            ? " As a position of the organisation you see, and may stop, only the PAPER runs of versions authored in your own subtree — "
               + "your own and those of every position under the units you head."
             : ""),
-        [.. gateway.DeploymentReadings().Where(d => OrgPositionOf(ctx) is not { } position || AuthoredUnder(position, d.VersionId))
+        // A POSITION SEES ITS OWN SUBTREE'S PAPER RUNS ONLY (R25 D9; the Codex review): never a run in any other mode.
+        [.. gateway.DeploymentReadings().Where(d => OrgPositionOf(ctx) is not { } position
+                                                    || d.Mode == TradingMode.PAPER.ToString() && AuthoredUnder(position, d.VersionId))
             .Select(d => new DeploymentListReplyRow(
             d.Id, d.VersionId, d.Symbol, d.ConnectorId, d.AccountId, d.Mode, d.State, d.StartedAt,
             d.CursorOpenTime, d.SuspendedReason, d.EndedAt, d.EndReason, d.Operations, d.Unresolved,
