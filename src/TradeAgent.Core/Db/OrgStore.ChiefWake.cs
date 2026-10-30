@@ -110,7 +110,8 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// WHAT WAKES THE CHIEF AFTER ITS ONE TURN, AND HOW HE STOPS IT — said on the card beside the press and in its armed sentence:
-    /// nothing more is started by the press; its own request in <c>next.json</c>, or its ceiling as the board's policy states it now.
+    /// nothing more is started by the press; its own request (<c>next.json</c> or <c>org-wake</c>), work addressed to it, or its ceiling as
+    /// the board's policy states it now.
     /// </summary>
     /// <summary>What one turn of the chief spends, in the words of who its seat bills now.</summary>
     static string Spends(string billing) => BillingClasses.Of(billing) switch
@@ -121,7 +122,8 @@ public sealed partial class OrgStore
     };
 
     public static string ChiefWakeAfter(TimeSpan ceiling) =>
-        "Nothing else is started by this press. After the turn the chief wakes again only when it asks to in its next.json, or "
+        "Nothing else is started by this press. After the turn the chief wakes again only when it asks to (its next.json, or its own "
+        + "`trade org wake` request), when work is addressed to it, or "
         + (ceiling > TimeSpan.Zero
             ? $"at its ceiling, {ceiling.TotalHours.ToString("0.##", CultureInfo.InvariantCulture)} h after its last turn"
             : "never by the clock: the security board's policy holds no ceiling")
