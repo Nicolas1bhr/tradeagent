@@ -311,11 +311,11 @@ public class OrgEvidenceSharesTests
     }
 
     /// <summary>A completed run of the one program, by <paramref name="role"/> under <paramref name="attempt"/>: its version id.</summary>
-    static string Measured(TradingGateway gw, DatasetRecord set, string role, string attempt)
+    static string Measured(TradingGateway gw, DatasetRecord set, string role, string attempt, string program = ProgramText)
     {
         var dir = Path.Combine(Paths.RoleHome(role), "strategies");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "evidence.strategy"), ProgramText);
+        File.WriteAllText(Path.Combine(dir, "evidence.strategy"), program);
         return gw.Backtests.Run(AgentContext.ForAgent("agent", role, attempt),
             new BacktestAsk("strategies/evidence.strategy", set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1), 0.001m, Increment: 1m)).Result.VersionId;
     }
@@ -481,5 +481,67 @@ public class OrgEvidenceSharesTests
         Assert.False(refused.Ok, "a charter was written that its own ceiling could not size");
         Assert.Contains("the split on the Safety page", refused.Error!.Message, StringComparison.Ordinal);
         Assert.Equal(before, Divisions(db));
+    }
+
+    // ---- U-org-autonomy item 3 (R25 D6): the chief spends a verdict on a version authored in its subtree ----------------------
+
+    /// <summary>
+    /// THE CHIEF SPENDS A VERDICT ON A VERSION AUTHORED IN ITS SUBTREE: a team head two units below it authored and measured the version;
+    /// the chief — who measured nothing — asks, and the judgement is charged to the CHIEF's launch, judged on the author's own completed
+    /// run. The team head itself, with no delegated share, is still refused (every other verdict rule unchanged). RED at base: the chief
+    /// was refused, measured on its own runs ("has never completed a run of version …").
+    /// </summary>
+    [Fact]
+    public async Task The_chief_spends_a_verdict_on_a_version_authored_in_its_subtree()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 4);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        HeadTheTeam(db);
+        SeatTheChief(db);
+        var authored = LaunchOf(db, TeamHead);
+        var version = Measured(gw, set, TeamHead, authored);
+
+        var refused = await server.CallAsync(VerdictFrame(version, set.Id), TeamHead, authored);
+        Assert.False(refused.Ok, "a team head with no delegated verdict share was charged a judgement");
+        Assert.False(gw.Campaigns.VerdictCharged(campaign.Id, version));
+
+        var chief = LaunchOf(db, Chief);
+        var served = await server.CallAsync(VerdictFrame(version, set.Id), Chief, chief);
+        Assert.True(served.Ok, served.Error?.Message);
+        Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
+        Assert.Equal(chief, AskedBy(db, campaign.Id, version));
+    }
+
+    /// <summary>
+    /// THE CAMPAIGN'S BUDGET BINDS THE CHIEF AS IT BINDS EVERYONE: with the campaign's one judgement spent on another version, the chief's
+    /// ask on its subtree's version is refused before anything is computed, nothing more charged. And a version this installation does not
+    /// hold is refused in words. RED at base: the chief was refused on its own (absent) runs, never reaching the budget.
+    /// </summary>
+    [Fact]
+    public async Task The_chiefs_verdict_is_held_to_the_campaigns_budget()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 1);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        HeadTheTeam(db);
+        SeatTheChief(db);
+        var research = LaunchOf(db, CouncilRoles.Research);
+        var spent = Measured(gw, set, CouncilRoles.Research, research, ProgramText.Replace("close < 97", "close < 96", StringComparison.Ordinal));
+        Assert.True((await server.CallAsync(VerdictFrame(spent, set.Id), CouncilRoles.Research, research)).Ok);
+
+        var authored = LaunchOf(db, TeamHead);
+        var version = Measured(gw, set, TeamHead, authored);
+        var chief = LaunchOf(db, Chief);
+        var refused = await server.CallAsync(VerdictFrame(version, set.Id), Chief, chief);
+        // THE REFEREE'S OWN REFUSAL, ANSWERED AS IT ALWAYS IS — a reply whose 'why' says the judgements are spent — and nothing charged.
+        Assert.Contains("final judgements", refused.Ok ? Json.Write(refused.Data) : refused.Error!.Message, StringComparison.Ordinal);
+        Assert.False(gw.Campaigns.VerdictCharged(campaign.Id, version), "the chief spent past the campaign's budget");
+
+        var unknown = await server.CallAsync(VerdictFrame(new string('a', 64), set.Id), Chief, chief);
+        Assert.False(unknown.Ok);
+        Assert.Contains("no version", unknown.Error!.Message, StringComparison.Ordinal);
     }
 }
