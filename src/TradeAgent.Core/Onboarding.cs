@@ -7,7 +7,7 @@ public enum OnboardingStep
     AI_RUNTIME_SELECTED, AI_RUNTIME_INSTALLED, AI_AUTHENTICATED,
     TRADING_PLATFORM_SELECTED, ATAS_INSTALLED, ATAS_BRIDGE_INSTALLED, ATAS_BRIDGE_CONNECTED,
     TRADING_CONNECTION_FOUND, ACCOUNT_SELECTED, MARKET_DATA_VERIFIED, ORDER_ACCESS_VERIFIED,
-    WORKSPACE_CREATED, AGENT_READY,
+    WORKSPACE_CREATED, EVIDENCE_HELD, AGENT_READY,
     SETUP_COMPLETE
 }
 
@@ -32,6 +32,7 @@ public static class OnboardingSteps
         OnboardingStep.MARKET_DATA_VERIFIED     => "Checking live prices",
         OnboardingStep.ORDER_ACCESS_VERIFIED    => "Checking trading access",
         OnboardingStep.WORKSPACE_CREATED        => "Creating the AI's workspace",
+        OnboardingStep.EVIDENCE_HELD            => "Setting up the test the AI is judged on",
         OnboardingStep.AGENT_READY              => "Starting the AI",
         OnboardingStep.SETUP_COMPLETE           => "Setup complete",
         _ => s.ToString()

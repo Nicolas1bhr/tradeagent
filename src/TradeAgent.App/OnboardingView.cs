@@ -7,6 +7,8 @@ using Avalonia.Threading;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Provisioning;
 
 // Aliased rather than imported: Avalonia.Controls.Shapes also defines Path, and this file needs
@@ -448,6 +450,10 @@ public sealed class OnboardingView
         OnboardingStep.WORKSPACE_CREATED =>
             () => Task.FromResult(File.Exists(Path.Combine(Paths.AgentHome, "AGENTS.md"))),
 
+        // DONE THE MOMENT A CAMPAIGN OVER REAL HISTORY IS OPEN — whether this step's press opened it or the owner's Settings page did.
+        OnboardingStep.EVIDENCE_HELD =>
+            () => Task.FromResult(_host.Evidence.Ready()),
+
         _ => null
     };
 
@@ -489,6 +495,7 @@ public sealed class OnboardingView
             "Checking that this account is allowed to place orders. This only checks permission — no order is placed.",
             Ui.Busy("Checking trading access.")),
         OnboardingStep.WORKSPACE_CREATED => CreateWorkspace(),
+        OnboardingStep.EVIDENCE_HELD => HoldEvidence(),
         OnboardingStep.AGENT_READY => StartAgent(),
         _ => new Screen(
             "Setup is finished. TradeAgent will now show you the main screen.",
@@ -1075,6 +1082,38 @@ public sealed class OnboardingView
         Note("The rules are a plain-text file you can read and change at any time. The AI is given them every " +
              "time it starts.", Theme.Info),
         Ui.Primary("Create it", Act(() => WorkspaceBuilder.Build(_host.WorkspaceContext()))));
+
+    /// <summary>
+    /// THE DATA AND THE HOLDOUT, IN ONE PRESS (<c>U-evidence-campaign</c> item 1): the Settings page's Download and "Hold these bars
+    /// back" with the defaults chosen for him — the last twelve complete months of his pair from Binance's public archive, the last
+    /// three held back — and the rule that follows a spent campaign said before he presses. "Later" leaves it to the Settings page:
+    /// nothing is judged until a holdout is set, and the step says so.
+    /// </summary>
+    Screen HoldEvidence() => new(
+        "TradeAgent judges every strategy the AI writes on market data the AI has never seen. It sets that up now.",
+        Ui.Card(Ui.Col(Theme.S4,
+            Numbered(1, "Download the history",
+                $"The last twelve complete months of {_host.Gateway.Settings.MarketDataPair} minute bars from Binance's public " +
+                "archive. No account and no key are needed."),
+            Numbered(2, $"Hold the last {EvidenceDefaults.HoldoutMonths} months back",
+                "The AI researches on the earlier months and never reads these. Each strategy's final judgement is computed over " +
+                $"them: {_host.Gateway.Settings.CampaignVerdictBudget} judgements and {_host.Gateway.Settings.CampaignTrialBudget} " +
+                "research runs count against them."),
+            Numbered(3, "Keep the test fresh by itself",
+                "When those are used up, TradeAgent holds back the market data that arrives next and opens the next test on it — " +
+                $"at least {CampaignRenewal.MinimumFreshDays} days of it, which nothing has seen. A month is never judged twice."))),
+        Ui.Primary("Download and hold back", Act(async () =>
+        {
+            var done = await _host.Evidence.SetUpAsync(DateTimeOffset.UtcNow);
+            if (!done.Ok) throw new InvalidOperationException(done.Words);
+            Done(OnboardingStep.EVIDENCE_HELD);
+        })),
+        [Ui.Secondary("Later, in Settings", async () =>
+        {
+            Done(OnboardingStep.EVIDENCE_HELD);
+            await CheckAsync();
+            _rerender();
+        })]);
 
     Screen StartAgent() => new(
         "Everything is ready. TradeAgent will start the AI and take you to the main screen, where you can talk to it.",

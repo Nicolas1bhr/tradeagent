@@ -1006,7 +1006,13 @@ sealed class SettingsPage
             var open = _host.Gateway.Campaigns.OpenForDataset(newest.Id);
             _holdoutValue.Text = $"{newest.Pair} from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on"
                 + (newest.EvaluationClass == EvaluationClass.Fixture ? ", fixture bars" : "")
-                + (open is { } c ? $", campaign {c.Id}" : "");
+                + (open is { } c ? $", campaign {c.Id}" : "")
+                // AND THE FRESH HOLDOUT BEING COLLECTED, when a campaign is spent (U-evidence-campaign; R25 D7): what the next one waits for.
+                + (_host.Gateway.Renewals.Holding() is [var held, ..]
+                    ? $"; campaign {held.SpentCampaignId} is spent, and the next one waits for fresh bars from "
+                      + $"{held.Cutoff.UtcDateTime:yyyy-MM-dd HH:mm} UTC — at least {Core.Db.CampaignRenewal.MinimumFreshDays} days of them, "
+                      + $"so no earlier than {held.Earliest.UtcDateTime:yyyy-MM-dd}"
+                    : "");
             _judgeValue.Text = JudgeLine(open);
         }
         catch (Exception)

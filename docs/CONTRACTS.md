@@ -3747,7 +3747,9 @@ decides which bars are served, the class decides whether a run over them is char
 **Only the owner's own window sets it, it can never move EARLIER, and it cannot move LATER while a campaign
 judges from it.** `DatasetStore.SetHoldout` is the one writer of both columns — deliberately not part of
 `DatasetStore.Record`, so collecting months cannot declare a holdout as a side effect — and it is reached from
-the two-press card on the Data page and from nowhere else. There is no pipe op, no `trade` verb and no request
+the two-press card on the Data page, from setup's one press (`EvidenceCampaigns.SetUpAsync`: the last
+`EvidenceDefaults.HoldoutMonths` complete months of the first download, never moving a cutoff already there) and from
+the app's fresh-holdout rule below, all three through `TradingGateway.SetHoldout`, and from nowhere else. There is no pipe op, no `trade` verb and no request
 field: `HoldoutOverPipeTests` asks **every op this build has**, in both directions, and the row does not move.
 Moving the cutoff back is refused in words because the bars in between have already been served, and
 COUNCIL:212 is literal about it — "a leaked holdout cannot become unseen". **Moving it LATER is refused too
@@ -3867,6 +3869,26 @@ partial unique index**, not a C# check, so two presses racing cannot make two. *
 second campaign**: `CampaignStore.Renew` closes the parent and opens a child carrying `renewed_from`, the
 parent's holdout **and the parent's policy text and sha** — so a renewal buys attempts and never an easier
 standard.
+
+**A spent campaign is followed by one over FRESH months, by the app's rule and unattended** (`U-evidence-campaign`; R25 D7,
+`CampaignRenewal`). Not by `Renew`, which carries the parent's holdout and whose policy counts verdicts across the lineage: by
+the repo's own way on, a holdout over OTHER months, pressed for the owner only on months no verdict and no research read could
+have seen. (1) An open research campaign whose judgements (`JudgementsSpent`) or trials (`TrialsCharged`) reach a budget above
+zero is SPENT. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
+midnight strictly after now, every dataset's last close, every forward bar's close, every held window's end and every cutoff
+armed before — refused when any of those has no measurable end — written once by `Database.AddKvOnce`
+(`campaign_forward_holdout:<id>`), one window at a time. (3) From that moment `TapeHoldout` holds `[cutoff, no end)` for every
+pipe caller and the referee's research evidence (`DatasetStore.ForwardWindows`) — not for the paper runner, which trades the
+present (a paper run's figures are not held back, as before) — and `data-list` names it. (4) Once `cutoff + 30 days`
+(`MinimumFreshDays`) has passed, the pass downloads the spent campaign's pair again (at most once a day) and
+`TradingGateway.OpenForwardCampaign` opens the next campaign through `SetHoldout` at the armed cutoff, in one transaction with
+the write-once successor (`campaign_forward_successor:<id>`) — only over an ACCEPTED download of the same source, pair and
+interval, holding no cutoff, with bars before the cutoff and at least thirty days from it, while no other held window reaches
+past it. Until then every spent-budget sentence and the Settings line say what it waits for, in days. Nothing is re-keyed: the
+spent campaign stays open (its cutoff cannot move later, its development months stay charged to it, a family rooted there stays
+charged there); the successor is a new lineage over new months, so its judgements and its α-wealth start over those months, as an
+owner's press on other months always did. The live quote and the cells' web egress still show the present to every agent: the
+fresh window binds the app's own paths, as every holdout does until containment (`docs/EDGE-FACTORY.md` § 6.11).
 
 **A campaign fixes TWO standards at open, and both are copied and never updated.** `scoring_policy` is
 `CampaignPolicy.V1`; `paper_policy` is `CampaignPolicy.PaperV1` (schema **23**), which is V1's three

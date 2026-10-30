@@ -473,13 +473,15 @@ public class CampaignLedgerTests
         Assert.Equal(ErrorCode.CAMPAIGN_BUDGET_REACHED, refused.Code);
         Assert.Contains("has registered all 1 of its research trials", refused.Message, StringComparison.Ordinal);
         Assert.Contains("not reset by a restart", refused.Message, StringComparison.Ordinal);
-        Assert.Contains("renewal", refused.Message, StringComparison.Ordinal);
+        // THE WAY ON IS NOW THE APP'S RULE (U-evidence-campaign; R25 D7): a campaign over fresh months, not more attempts at these.
+        Assert.Contains("fresh holdout", refused.Message, StringComparison.Ordinal);
 
         // It ran nothing: one run row, one trial, and the second window never became a measurement.
         Assert.Single(gw.Strategies.Runs());
         Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
 
-        // A renewal is what is left, and it lets the next run through — carrying the parent's holdout.
+        // A renewal, still the store's (no product caller: the app's rule opens fresh months instead), lets the next run through —
+        // carrying the parent's holdout.
         var renewed = gw.Campaigns.Renew(campaign.Id, trialBudget: 1, verdictBudget: 1, At);
         Assert.True(renewed.Ok, renewed.Why);
         Run(gw, set, path, toBar: HoldoutAtBar - 2);

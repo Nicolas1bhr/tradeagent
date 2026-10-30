@@ -425,6 +425,13 @@ public sealed class DatasetStore(Database db)
         return id;
     });
 
+    /// <summary>
+    /// THE FRESH HOLDOUTS STILL BEING COLLECTED, as windows with no end (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>):
+    /// read from the ledger at each call, as <see cref="All"/> is, so a window armed a second ago holds.
+    /// </summary>
+    public IReadOnlyList<Data.TapeHoldoutWindow> ForwardWindows() =>
+        [.. new CampaignRenewal(db).Holding().Select(Data.TapeHoldoutWindow.Forward)];
+
     /// <summary>Every dataset this installation has, newest first. Not verified — see <see cref="Checked"/>.</summary>
     public IReadOnlyList<DatasetRecord> All() => db.Read(_ =>
     {

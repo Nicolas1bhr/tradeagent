@@ -42,8 +42,25 @@ public sealed record TapeHoldoutWindow(
     /// </summary>
     public string BarWords => WordsOf("every pair's bars, from every dataset and the forward bars, are");
 
-    string WordsOf(string held) =>
-        $"dataset {DatasetId} ({Pair} {Interval} {Version}) holds out every bar from {From:u} onwards, so {held} held "
+    /// <summary>
+    /// THE SPENT CAMPAIGN WHOSE FRESH HOLDOUT THIS IS (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>), or null for a
+    /// dataset's own window. A fresh holdout belongs to no dataset — its <see cref="DatasetId"/> is 0, which no dataset has — and
+    /// has no end until the campaign over it opens.
+    /// </summary>
+    public long? ForwardOf { get; init; }
+
+    /// <summary>The open-ended window a fresh holdout holds from its cutoff until its campaign opens.</summary>
+    public static TapeHoldoutWindow Forward(ForwardHoldout held)
+    {
+        ArgumentNullException.ThrowIfNull(held);
+        return new TapeHoldoutWindow(0, "every pair", "", "", held.Cutoff, null) { ForwardOf = held.SpentCampaignId };
+    }
+
+    string WordsOf(string held) => ForwardOf is { } spent
+        ? $"campaign {spent} has spent its attempts, and the campaign after it is held over FRESH market data from {From:u} on, "
+          + $"which nothing has seen: from that instant {held} held back with no end until that campaign opens, once a download "
+          + $"holds at least {CampaignRenewal.MinimumFreshDays} days of it"
+        : $"dataset {DatasetId} ({Pair} {Interval} {Version}) holds out every bar from {From:u} onwards, so {held} held "
         + (Until is { } end
             ? $"back over the same market time, from {From:u} up to the close of its last bar at {end:u}"
             : $"back from {From:u} with no end, because the dataset does not record where its bars end");
@@ -138,8 +155,17 @@ public sealed class TapeHoldout
     }
 
     /// <summary>The windows this reader may not read, as the ledger holds them NOW — none for the referee's.</summary>
+    /// <remarks>
+    /// <b>And every fresh holdout still being collected</b> (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>), open-ended
+    /// from its cutoff — for every audience but the paper runner, which trades the present those minutes are. A paper run's figures
+    /// were never held back (<c>docs/CONTRACTS.md</c>, The holdout); holding its reads would end every paper run for a month.
+    /// </remarks>
     public IReadOnlyList<TapeHoldoutWindow> Windows() =>
-        Audience.MayReadHoldout || _ledger is null ? [] : WindowsOf(_ledger.All());
+        Audience.MayReadHoldout || _ledger is null
+            ? []
+            : ReferenceEquals(Audience, BarAudience.PaperRunner)
+                ? WindowsOf(_ledger.All())
+                : [.. WindowsOf(_ledger.All()), .. _ledger.ForwardWindows()];
 
     /// <summary>
     /// ONE DATASET'S ROW AS THE LEDGER HOLDS IT NOW — its cutoff included, read afresh as the windows are — or null for an

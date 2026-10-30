@@ -3035,7 +3035,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"dataset {dataset} has no open campaign, so there is no verdict to ask for. A campaign "
                 + "is opened by TradeAgent when the account owner sets a holdout cutoff on a dataset in "
-                + "TradeAgent's own window — it is what counts the attempts made against those months "
+                + "TradeAgent's own window — setup holds back the first download's last months — and, once a "
+                + "campaign is spent, over FRESH months by TradeAgent's own rule ('data-list' names the one "
+                + "being collected) — it is what counts the attempts made against those months "
                 + "and what bounds the judgements spent on them. There is no operation here that opens, "
                 + "renews or re-budgets one.");
 
@@ -3270,11 +3272,25 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             // AND THE TAPE, NAMED HERE AND KEPT APART FROM BOTH (U-tape-read): readings of the market's context, not
             // bars, with three times each and a class — a third kind of thing in a third list.
             + "'tape' is a THIRD kind of thing, in its own list: the market's context as TradeAgent recorded it "
-            + "arriving. Read a series of it with 'data-tape'.",
+            + "arriving. Read a series of it with 'data-tape'."
+            // AND THE FRESH HOLDOUT BEING COLLECTED, NAMED HERE (U-evidence-campaign; R25 D7): told rather than found one refusal at
+            // a time, for the reason the cutoffs are.
+            + FreshHoldoutNote(),
             [.. sets.Select(Describe)],
             [.. gateway.Forward.All().Select(Describe)],
             TapeList());
     }
+
+    /// <summary>
+    /// THE FRESH HOLDOUT BEING COLLECTED, for <c>data-list</c>'s note, or nothing while none is (<c>U-evidence-campaign</c>): its
+    /// cutoff, that nothing from it on is served here, and what its campaign waits for.
+    /// </summary>
+    string FreshHoldoutNote() => gateway.Renewals.Holding() is [var held, ..]
+        ? $" A FRESH HOLDOUT IS BEING COLLECTED: campaign {held.SpentCampaignId} has spent its {held.Spent}, so every bar of every "
+          + $"pair, every forward bar and every tape row from {held.Cutoff:u} on is held back with no end — 'data-bars', 'backtest' "
+          + "and 'data-tape' refuse any read reaching it — until the campaign after it opens over those months. "
+          + CampaignRenewal.Waiting(held, null)
+        : "";
 
     /// <summary>
     /// THE TAPE'S SERIES, FOR <c>data-list</c> (<c>U-tape-read</c>): every series with the switch that records it, its
