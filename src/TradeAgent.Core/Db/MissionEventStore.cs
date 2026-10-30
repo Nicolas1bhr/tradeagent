@@ -759,15 +759,28 @@ public sealed class MissionEventStore(Database db)
     public bool RecordOwnerMessage(string text, DateTimeOffset at)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
-        // THE CHAIR'S, ALWAYS. docs/COUNCIL.md round 4: "Owner text enters Operations' agenda first,
-        // with receipt, disposition and deadline; workers receive scoped briefs." A message routed
-        // to whichever role happened to be next would be a person waiting on the research queue.
+        // THE CHAIR'S — and, WHILE A CHIEF IS ACTIVE, THE CHIEF'S (U-org-autonomy item 4; R25 D4). docs/COUNCIL.md round 4: "Owner
+        // text enters Operations' agenda first, with receipt, disposition and deadline; workers receive scoped briefs." A message
+        // routed to whichever role happened to be next would be a person waiting on the research queue — and one routed to the
+        // legacy chair while the chief runs the organisation would wait on a role that is not started.
         var id = MissionEventIds.Owner(NextOwnerSequence());
         if (!Raise(id, MissionEventKind.Owner, at, Json.Write(new MissionOwnerMessage(text, at)),
-                CouncilRoles.Operations)) return false;
+                OwnerRecipient())) return false;
 
         SupersedeIdentical(text, id);
         return true;
+    }
+
+    /// <summary>
+    /// WHO THE OWNER'S WORDS AND HIS MATERIAL GO TO NOW (<c>U-org-autonomy</c> item 4; R25 D4; INBOX-001): the chief while the chart holds
+    /// one ACTIVE at its root — its queue, as data: a wake whose payload is his words, quoted in its packet and granting nothing — else
+    /// the chair, <see cref="CouncilRoles.Operations"/>, as always. A chart that cannot be read answers the chair: the words are kept
+    /// either way, and a recipient is never guessed beyond the two.
+    /// </summary>
+    public string OwnerRecipient()
+    {
+        try { return new OrgStore(db).ActiveChief() ?? CouncilRoles.Operations; }
+        catch (Exception) { return CouncilRoles.Operations; }
     }
 
     /// <summary>
