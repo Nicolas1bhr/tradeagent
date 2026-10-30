@@ -199,6 +199,14 @@ public static class MissionEventKind
     /// activated position's id. It grants nothing: the activation gate still decides every launch.
     /// </summary>
     public const string Activated = "activated";
+
+    /// <summary>
+    /// THE OWNER'S ONE WAKE OF AN ACTIVE CHIEF (<c>U-chief-wake-once</c>): raised ONLY by his two-press "Wake the chief once" on the
+    /// organisation's card, through <see cref="OrgStore.WakeChiefOnce"/>, in the write that records the <c>woken-once</c> event decided by
+    /// the owner (<see cref="OrgEventKind.WokenOnce"/>); its payload is that event's id. No pipe op, verb or board act raises one. One press
+    /// is one row, due now: it moves no ceiling, changes no interval and no value the board holds, and a failed turn is not retried on it.
+    /// </summary>
+    public const string OwnerWake = "owner-wake";
 }
 
 /// <summary>
@@ -247,6 +255,8 @@ public static class WakePriority
         // "the owner's words": what he typed, and what he dropped in his own folder.
         [MissionEventKind.Owner] = WakeClass.OwnerWords,
         [MissionEventKind.Inbox] = WakeClass.OwnerWords,
+        // and his press that wakes the chief once (U-chief-wake-once): his word, as what he typed is.
+        [MissionEventKind.OwnerWake] = WakeClass.OwnerWords,
 
         // "unblocking an eligible deployment or required data": a consequential boundary, its deadline and its challenge decide
         // a deployment; a dataset built and a tape reading stored are the required data.
@@ -586,6 +596,9 @@ public static class MissionEventIds
     /// raises nothing. Its payload is the <c>review</c> event's id.
     /// </summary>
     public static string CutReview(string rule, string subject, string period) => $"review:{rule}:{subject}:{period}";
+
+    /// <summary>THE OWNER'S ONE WAKE OF <paramref name="chief"/> (<c>U-chief-wake-once</c>), keyed by the instant he pressed: one press, one row.</summary>
+    public static string OwnerWake(string chief, DateTimeOffset at) => ForRole($"{MissionEventKind.OwnerWake}:{Instant(at)}", chief);
 
     /// <summary>
     /// An activation's ONE wake to <paramref name="recipient"/> — the activated position or its hirer — keyed by the <c>activated</c> event

@@ -88,6 +88,22 @@ public static partial class Labels
     public const string ChiefRemove = "Remove the chief";
     public const string ChiefRemoveConfirm = "Press again: end the chief and cancel its open mandates; no one takes its place";
 
+    /// <summary>THE OWNER'S WAKE-ONCE PRESS on the chief's card (<c>U-chief-wake-once</c>): two presses, the second carrying out what the first showed.</summary>
+    public const string ChiefWakeOnce = "Wake the chief once";
+
+    /// <summary>The armed sentence: the preview's own words, after "Press again".</summary>
+    public static string ChiefWakeOnceConfirm(string words) => $"Press again: {words}";
+
+    /// <summary>A second press that arrives with no first press shown — nothing is woken.</summary>
+    public const string ChiefWakeOnceUnarmed = "The wake press could not show what it would do, so nothing was woken.";
+
+    /// <summary>The preview could not be read: nothing is armed and nothing is woken.</summary>
+    public static string ChiefWakeOnceUnreadable(string why) => $"The wake press could not read what it would do ({why}), so nothing was woken.";
+
+    /// <summary>What the press does, beside it while it is drawn: one turn now, and what wakes the chief after it and how he stops it.</summary>
+    public const string ChiefWakeOnceWhat =
+        "\"Wake the chief once\" gives an active chief one turn now, on your plan, so you can watch its first turn instead of waiting for its ceiling.";
+
     public const string CellProofHeld = "A cell proof is recorded for this machine and this build.";
 
     public const string CellProofNone =

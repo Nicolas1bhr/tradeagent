@@ -4454,6 +4454,8 @@ public sealed class MissionLoop
                                       + "answer it with `trade org review-answer` (`trade org show` has the chart)",
         MissionEventKind.Activated => "a position was activated — you, newly hired, or one you hired — and it runs from now; "
                                       + "`trade org show` has the chart and `trade mandate list` your work",
+        MissionEventKind.OwnerWake => "your owner pressed \"Wake the chief once\" — one turn, now; after it you wake when you ask to "
+                                      + "in next.json, or at your ceiling",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
