@@ -118,14 +118,7 @@ sealed class SeatSignInCard
         _browserWell.IsVisible = false;
 
         _codeUrl.TextWrapping = TextWrapping.Wrap;
-        _codeText = new TextBlock
-        {
-            FontFamily = Theme.Mono,
-            FontSize = Theme.Display,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Theme.Text,
-            LetterSpacing = 3
-        };
+        _codeText = Ui.Code();
         _codeWell = Ui.Col(Theme.S2,
             Ui.Eyebrow("On your phone or another computer, open this address"),
             Well(_codeUrl),

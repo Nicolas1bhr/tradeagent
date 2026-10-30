@@ -93,6 +93,13 @@ static class Theme
         new("Cascadia Mono, Consolas, JetBrains Mono, SF Mono, Menlo, monospace");
 
     public const double Display = 30;
+    /// <summary>
+    /// The line box that holds <see cref="Display"/> text. Every TextBlock gets a 20 px line height from the base style below, which
+    /// is a line box for 13.5 px text: 30 px glyphs set in it overflow it, the well or card around them clips what overflows (measured
+    /// headless with Skia: 14 of 23 px of ink showed; the Linux server showed the top half). Anything set at
+    /// <see cref="Display"/> names this.
+    /// </summary>
+    public const double DisplayLine = 36;
     public const double H1 = 21;
     public const double H2 = 15.5;
     public const double H3 = 13.5;

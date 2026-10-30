@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+    <InternalsVisibleTo Include="TradeAgent.UiTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />

@@ -820,7 +820,7 @@ public sealed class OnboardingView
     }
 
     /// <summary>A device code, sized to be read off the screen and typed into a phone.</summary>
-    static Control CodeWell(string code) => Ui.Col(Theme.S2,
+    internal static Control CodeWell(string code) => Ui.Col(Theme.S2,
         Ui.Eyebrow("Enter this code on the sign-in page"),
         new Border
         {
@@ -828,15 +828,7 @@ public sealed class OnboardingView
             CornerRadius = Theme.RadiusSm,
             Padding = new Thickness(Theme.S5, Theme.S4),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Child = new TextBlock
-            {
-                Text = code,
-                FontFamily = Theme.Mono,
-                FontSize = Theme.Display,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = Theme.Text,
-                LetterSpacing = 3
-            }
+            Child = Ui.Code(code)
         });
 
     /// <summary>

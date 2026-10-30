@@ -35,8 +35,15 @@ static class Ui
     public static TextBlock Display(string text) => new()
     {
         Text = text, FontSize = Theme.Display, FontFamily = Theme.SansDisplay,
-        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 36,
+        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = Theme.DisplayLine,
         TextWrapping = TextWrapping.Wrap
+    };
+
+    /// <summary>A sign-in code, sized to be read off the screen and typed into a phone: mono, display size, its whole glyph height inside its line box.</summary>
+    public static TextBlock Code(string text = "") => new()
+    {
+        Text = text, FontFamily = Theme.Mono, FontSize = Theme.Display, LineHeight = Theme.DisplayLine,
+        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LetterSpacing = 3
     };
 
     public static TextBlock H1(string text) => new()
