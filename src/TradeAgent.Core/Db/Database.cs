@@ -46,6 +46,10 @@ public sealed class Database : IDisposable
             // THE KIND, BEFORE ANYTHING IS WRITTEN: the journal mode below is written into the file, and a store of
             // the other kind is left exactly as it was found.
             if (KindRefusal(file) is { } refused) throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, refused);
+            // AN OLDER HOME, BEFORE ANYTHING IS WRITTEN (U-windows-release): a home a published v0.1.x release wrote is refused in
+            // words naming both versions, untouched — not migrated, not even switched to WAL — and starting fresh is the owner's press.
+            if (OlderHome.Refused(ReadMetaInt("schema_version") ?? 0) is { } older)
+                throw new OlderHomeException(HomeOf(file), older, Versions.App);
             Proving.HomeMark.AfterCheck?.Invoke(file);
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
             ClaimKind(file);
@@ -92,6 +96,13 @@ public sealed class Database : IDisposable
         if (Proving.HomeMark.Read(_conn, "meta") is null && (ReadMetaInt("schema_version") ?? 0) == 0)
             Exec($"INSERT INTO meta(key,value) VALUES('{Proving.HomeMark.Key}','{Proving.HomeMark.Word(Kind)}');");
         tx.Commit();
+    }
+
+    /// <summary>The home a database file belongs to: the folder above its <c>state\</c>, as <see cref="Paths.DatabaseFile"/> lays it out.</summary>
+    static string HomeOf(string file)
+    {
+        var dir = Path.GetDirectoryName(file)!;
+        return string.Equals(Path.GetFileName(dir), "state", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(dir)! : dir;
     }
 
     int? ReadMetaInt(string key)

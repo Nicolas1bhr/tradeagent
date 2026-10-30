@@ -197,9 +197,15 @@ public sealed class MainWindow : Window
         var started = await _host.StartAsync();
         if (!started)
         {
-            ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
+            if (_host.OlderHome is not null) ShowOlderHome();
+            else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
             return;
         }
+        await AfterStartAsync();
+    }
+
+    async Task AfterStartAsync()
+    {
         // Anything thrown out of a button handler used to take the whole app down with it. A
         // nontechnical user cannot recover from a window that simply disappears.
         Ui.ReportError = message => Dispatcher.UIThread.Post(() => ShowProblem(message));
@@ -233,6 +239,29 @@ public sealed class MainWindow : Window
     {
         _wizard ??= new OnboardingView(_host, () => Dispatcher.UIThread.Post(() => _ = RefreshAsync()));
         _setupSlot.Content = _wizard.Build();
+        _setupSurface.IsVisible = true;
+        _shellSurface.IsVisible = false;
+    }
+
+    /// <summary>
+    /// AN OLDER HOME, REFUSED UNTOUCHED, AND THE OWNER'S WAY ON (<c>U-windows-release</c>): the words name both versions; "Start fresh"
+    /// is two presses (the second says in full what it does), and it moves the old home aside whole — nothing deleted.
+    /// </summary>
+    void ShowOlderHome()
+    {
+        var older = _host.OlderHome!;
+        var problem = Ui.With(Ui.Body(_host.StartFreshProblem ?? ""), t => { t.Foreground = Tokens.Caution; t.IsVisible = _host.StartFreshProblem is not null; });
+        _setupSlot.Content = Ui.Col(Tokens.S4,
+            Ui.H1("This TradeAgent does not open your older folder"),
+            Ui.Body(older.Message),
+            problem,
+            Ui.Row(Tokens.S3,
+                Ui.Confirm("Start fresh", OlderHome.ConfirmStartFresh, async () =>
+                {
+                    if (await _host.StartFreshAsync()) { await AfterStartAsync(); return; }
+                    if (_host.OlderHome is not null) ShowOlderHome();
+                    else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
+                })));
         _setupSurface.IsVisible = true;
         _shellSurface.IsVisible = false;
     }
