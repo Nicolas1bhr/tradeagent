@@ -83,6 +83,12 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
         (PublicationKind.Journal, "trading/JOURNAL.md", JournalLines)
     ];
 
+    /// <summary>
+    /// WHERE ONE OF THE TWO FILES LIVES IN A SEAT'S OWN FOLDER (<c>U-broker-seat-fixes</c> item 1): the path this class keeps, which the canon
+    /// and every turn's closing line name — never a bare file name a seat cannot find.
+    /// </summary>
+    public static string PathOf(string kind) => Files.Single(f => f.Kind == kind).Path;
+
     readonly PublicationStore _store = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.Now);
 

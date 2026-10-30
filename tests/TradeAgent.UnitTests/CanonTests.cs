@@ -343,7 +343,17 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (8, "org:chief", "b2a1d9f5baec6434c004b7b3068d313d592c82feaa319f36e00c6053d6bef39f"),
         (8, "org:head", "4e5c5e4428fd49b3e2fb5a3c9a8ca646df2f6ba366f13828698432d589e48844"),
         (8, "org:staff", "bf2e91e446fd45527f9216d87266525fa53ed1d335f657d3fea208efec282b99"),
-        (8, "org:executor", "c6be94f99b5bc5275779511b36b58dc990ba6b4ee862e0b95052a3ef5a6fb8ee")
+        (8, "org:executor", "c6be94f99b5bc5275779511b36b58dc990ba6b4ee862e0b95052a3ef5a6fb8ee"),
+        // v9 (U-broker-seat-fixes item 1): an organisation position is told where its plan and journal are — `trading/PLAN.md` and
+        // `trading/JOURNAL.md`, the paths WorkspaceRevisions keeps, through slots its reach writes — after the first real chief turn
+        // reported it could keep neither. The pair's templates are v8's.
+        (9, CouncilRoles.Operations, "18ff030e24db413cc1b892dbbea6de3b318c784e469b283866194faf71dbe115"),
+        (9, CouncilRoles.Research, "1fdb91ae57140245f531c6cce765ce00d26985a0d6882289772dec30baeb8ca5"),
+        (9, "org", "ec904ba40598d0ded6a0b02407204d2f3a9010359943ccd494d2c29c46d76cf0"),
+        (9, "org:chief", "aa3e83426db7270af68ee04bf42fc9731d64c86a2751dfa293131f721f1c0e53"),
+        (9, "org:head", "4ab7d4251da7ea502873c905d42bcbf7ec32feac0f199eb1215000e4cc4a870a"),
+        (9, "org:staff", "e3bb00a5c96469185bc5062711a02d34bf0fa954fd959b0f387972c5cc2280d6"),
+        (9, "org:executor", "dc7f7c3fe962e2fbf0a0040956cd1171314a054a132ea407328f26718ed25573")
     ];
 
     /// <summary>

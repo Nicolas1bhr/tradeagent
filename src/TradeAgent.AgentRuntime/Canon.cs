@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 8;
+    public const int Version = 9;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -567,7 +567,9 @@ public static class Canon
 
         **Leave durable results.** Your beliefs go in the research ledger — `{{verb ledger-add <kind> <text> --mark M}}`,
         a run or a verdict asked with `{{args --entry}}` linked to its entry by TradeAgent — your decisions in decision
-        records and your work in files. What lives only in a turn's transcript is lost to the next one.
+        records and your work in files. Your plan is `{{plan_file}}` and your journal `{{journal_file}}`, in your own folder:
+        read them first and update them before you finish, with any notes of your own beside them. What lives only in a turn's
+        transcript is lost to the next one.
 
         ## The boundary
 
@@ -1107,6 +1109,10 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "max_loss_per_trade" => $"{c.Risk.MaxLossPerTrade:N0}",
             "max_daily_loss" => $"{c.Risk.MaxDailyLoss:N0}",
             "allowlist" => string.Join(", ", c.Risk.InstrumentAllowlist),
+            // THE PLAN AND THE JOURNAL WHERE THE APP KEEPS THEM (U-broker-seat-fixes item 1): the path WorkspaceRevisions versions, through the
+            // write slot — so a seat whose tools cannot write it fails the render rather than being told a file it cannot keep.
+            "plan_file" => Write(WorkspaceRevisions.PathOf(PublicationKind.Plan)),
+            "journal_file" => Write(WorkspaceRevisions.PathOf(PublicationKind.Journal)),
             "plan_lines" => $"{WorkspaceRevisions.PlanLines}",
             "journal_lines" => $"{WorkspaceRevisions.JournalLines}",
             "archive_dir" => Write(WorkspaceRevisions.ArchiveDir + "/").TrimEnd('/'),
@@ -1135,7 +1141,7 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
     static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {
         "title", "version", "os", "network", "platform", "account", "mode", "blocked_reason", "max_order_quantity", "max_notional",
-        "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_lines",
+        "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_file", "journal_file", "plan_lines",
         "journal_lines", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
         "assessment_lines", "challenge_lines", "wake_file", "wake_cap", "turns_per_session", "guide", "verbs", "tools",
         "writes", "handbacks"

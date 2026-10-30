@@ -1191,11 +1191,15 @@ public sealed record MissionSituation
     /// rather than a cron job: the AI is told where its memory is and that keeping it is part of
     /// finishing, because a fresh CLI session starts every <see cref="MissionOptions.TurnsPerSession"/>
     /// turns and the files are the only thing that crosses that boundary.
+    ///
+    /// <para><b>The two files by the paths the app keeps them at</b> (<c>U-broker-seat-fixes</c> item 1): named bare, a broker seat whose
+    /// <c>write_file</c> takes <c>out/</c> or <c>trading/</c> read "`PLAN.md`" as a file outside both and reported it could keep neither
+    /// (the first real chief turn, 2026-10-30).</para>
     /// </summary>
-    public const string Continue =
-        "Continue your mission from what changed, what you believe and what is wanted. `PLAN.md` and " +
-        "`JOURNAL.md` are your scratch: read them first and update them before you finish, and put a belief " +
-        "worth keeping in the research ledger as your claim.";
+    public static readonly string Continue =
+        "Continue your mission from what changed, what you believe and what is wanted. " +
+        $"`{WorkspaceRevisions.PathOf(PublicationKind.Plan)}` and `{WorkspaceRevisions.PathOf(PublicationKind.Journal)}` are your " +
+        "scratch: read them first and update them before you finish, and put a belief worth keeping in the research ledger as your claim.";
 
     public string Text() => Text(out _);
 
