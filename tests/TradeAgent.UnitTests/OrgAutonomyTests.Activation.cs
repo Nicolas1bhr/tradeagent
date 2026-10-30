@@ -91,7 +91,7 @@ public partial class OrgAutonomyTests
 
     /// <summary>
     /// (2b) OUTSIDE THE GATE THE HIRE STAYS DORMANT, SAYS WHY, AND WAKES NOBODY: no proven cell on this host; an unconfined (CLI) seat;
-    /// a host that read no facts; no room for one turn in the day; a seat nobody priced. RED at base: no reason is given (the hire answers
+    /// a host that read no facts; no room for one turn in the day; a seat nobody priced, or priced at nothing. RED at base: no reason is given (the hire answers
     /// no 'dormant_because').
     /// </summary>
     [Fact]
@@ -108,7 +108,9 @@ public partial class OrgAutonomyTests
             ("team-a7a7c0e2", () => Host(gw, db, _ => SeatClasses.Cli), "only onto a broker or a cell seat"),
             ("team-a7a7c0e3", () => gw.SeatFactsOf = null, "nothing has told this host which seat"),
             ("team-a7a7c0e4", () => { Host(gw, db, _ => SeatClasses.Broker); gw.AiEnvelopes = Metered(db, spent: 9.95m); }, "committed today"),
-            ("team-a7a7c0e5", () => { Host(gw, db, _ => SeatClasses.Broker, turn: null); gw.AiEnvelopes = Metered(db); }, "could not price one turn")
+            ("team-a7a7c0e5", () => { Host(gw, db, _ => SeatClasses.Broker, turn: null); gw.AiEnvelopes = Metered(db); }, "could not price one turn"),
+            // AN UNPRICED SEAT THE HOST READS AS ZERO is no turn shown to fit (Codex review).
+            ("team-a7a7c0e7", () => Host(gw, db, _ => SeatClasses.Broker, turn: 0m), "could not price one turn")
         };
         foreach (var (unit, arrange, words) in cases)
         {
@@ -142,6 +144,11 @@ public partial class OrgAutonomyTests
 
         new OrgStore(db).Activate(id, _ => SeatClasses.Broker, 3, DateTimeOffset.UtcNow, () => true);
         Assert.Equal(new[] { Head, id }.Order(StringComparer.Ordinal), ActivatedWakes(db).Select(w => w.Role!).Order(StringComparer.Ordinal));
+
+        // ACTIVATED AGAIN after being made dormant (as a veto of its retirement restores it): woken again, never folded into the first wakes.
+        Exec(db, "UPDATE org_position SET status = 'dormant' WHERE id = $p", ("$p", id));
+        new OrgStore(db).Activate(id, _ => SeatClasses.Broker, 3, DateTimeOffset.UtcNow, () => true);
+        Assert.Equal(4, ActivatedWakes(db).Count);
     }
 
     static bool Absent(System.Text.Json.JsonElement e, string name) =>

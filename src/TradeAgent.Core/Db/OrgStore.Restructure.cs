@@ -402,9 +402,9 @@ public sealed partial class OrgStore
         using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
                    ("$active", OrgPositionStatus.Active), ("$p", positionId), ("$dormant", OrgPositionStatus.Dormant)))
             if (c.ExecuteNonQuery() != 1) throw Refused($"{positionId} changed while this activation was written.");
-        Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
+        var activated = Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
         // AND IT WAKES THE POSITION AND ITS HIRER (U-org-autonomy item 2; gap 5) — never the chief, whose activation is unchanged.
-        if (!(unit.IsRoot && unit.HeadPositionId == positionId)) WakeActivated(positionId, HirerOf(positionId), now);
+        if (!(unit.IsRoot && unit.HeadPositionId == positionId)) WakeActivated(positionId, HirerOf(positionId), activated, now);
         return Position(positionId)!;
     });
 

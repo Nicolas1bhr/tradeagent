@@ -228,7 +228,9 @@ public sealed partial class GatewayPipeServer
         decimal? turn;
         try { turn = Gateway.AiReservation?.Invoke(position); }
         catch (Exception) { turn = null; }
-        if (turn is not { } reserves)
+        // NONE, OR NOTHING (Codex review): a seat that runs a model always reserves something, and the host reads an unpriced seat as zero —
+        // either is a turn nobody can show fits, so the hire stays dormant.
+        if (turn is not { } reserves || reserves <= 0m)
             return $"TradeAgent could not price one turn of {position}'s seat, so it does not activate a seat nobody can show fits its day.";
         return NoRoomFor(position, reserves, $"{position}'s seat");
     }
@@ -243,6 +245,12 @@ public sealed partial class GatewayPipeServer
     {
         OnlyDeclared(req, StructureArgsWhy);
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        // A CELL ASKS WITH ITS WAKE FILE (Codex review): it writes '.tradeagent/next.json', and a request here beside it would be a second
+        // pending wake — one request per position, so a cell seat is refused this verb in words.
+        if ((ctx.AttemptId is { } launch ? Gateway.Attempt(launch) : null)?.SeatClass == SeatClasses.Cell)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"{caller} runs in a cell, which asks for its next wake by writing '.tradeagent/next.json' in its own home — one way to ask, so "
+                + "one request at a time. Nothing was written.");
         if (req.Dec("after_minutes") is null)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "'after_minutes' is required: how long from now to be woken, in whole minutes above zero. Nothing was written.");
