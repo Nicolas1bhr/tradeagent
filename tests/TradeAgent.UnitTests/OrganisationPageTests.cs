@@ -73,8 +73,9 @@ public class OrganisationPageTests
 
         var dormant = team.Positions.Single(p => p.Id == "pos-5ac0ffee0009");
         Assert.Equal("dormant", dormant.Status);
-        Assert.Contains("has not launched", dormant.Cell, StringComparison.Ordinal);
-        Assert.Contains("no billing class is recorded", dormant.Billing, StringComparison.Ordinal);
+        // NEVER LAUNCHED, IN ONE SENTENCE (U-ui-pages): no seat boundary and no payer are recorded, and no second "nothing yet" line is drawn.
+        Assert.Equal("Has not run yet, so nothing is recorded of where it ran or who paid.", dormant.Cell);
+        Assert.Equal("", dormant.Billing);
 
         var research = words.Units.Single(u => u.Id == OrgIds.Research).Positions.Single(p => p.Id == CouncilRoles.Research);
         Assert.Equal("Paid from: not known, so counted against both limits.", research.Billing);
