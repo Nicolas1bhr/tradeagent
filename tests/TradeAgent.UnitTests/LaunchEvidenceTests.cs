@@ -77,12 +77,18 @@ public class LaunchEvidenceTests
             "invalid API key: short.test.value",
             "invalid API key: 'quoted.test.value'",
             "Incorrect API key provided: given.test.value. You can find your key on the platform.",
+            "API key provided: \"bearer.test.value\"",
+            "password: abc`tick.test.value",
+            "API key is invalid",
+            "API key was not found",
             Refused
         ])!;
-        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value", "quoted.test.value", "given.test.value" })
+        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value", "quoted.test.value", "given.test.value", "bearer.test.value", "tick.test.value" })
             Assert.DoesNotContain(hidden, said, StringComparison.Ordinal);
         Assert.Contains("Authorization: Bearer [withheld] was refused", said, StringComparison.Ordinal);
         Assert.Contains("invalid API key: '[withheld]'", said, StringComparison.Ordinal);
+        // THE VENDOR'S DIAGNOSIS IS KEPT where no value follows a separator.
+        Assert.Contains("API key is invalid\nAPI key was not found", said, StringComparison.Ordinal);
         Assert.Contains("gpt-6-luna' model is not supported", said, StringComparison.Ordinal);
 
         var long_ = LaunchEvidence.VendorSaid([string.Join(' ', Enumerable.Repeat("refused", 1000))])!;
