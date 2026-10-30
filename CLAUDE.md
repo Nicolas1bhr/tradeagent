@@ -58,6 +58,11 @@ triad; `docs/hardening/` is the frozen record of the three days that did. Work i
 top-level manager seats, each with full authority over its lane, decisions above the seats on his behalf, and a heartbeat that carries the
 fleet across usage stops;
 live seats are on `fleet/BOARD.md` (`~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`).
+**Since 2026-10-30 the build runs on the fast lane** — the fleet's `FAST-LANE.md` (same fleet folder) under `docs/research/2026-10-30/R25-fast-lane-mvp.md`, on the
+owner's words that the orchestration standards are "a mere suggestion": `docs/FLEET.md`, `docs/HOW-WE-BUILD.md`, `fleet/SPEED-MODE.md` and the charters are suggestions for
+this build, not law, and the orchestrator dispatches builders directly in bigger units. **The protections are unchanged** — "The safety rules that outrank making it
+compile" below, `docs/PRINCIPLES.md`, the public-repo scan before every push, red-first plus a watched mutant on the money, evidence, authority, credential, containment and
+agent-boundary classes. Resume from `docs/RESUME-HERE.md`'s newest block and the fleet's `FAST-STATE.md`.
 
 ## The product rule that overrides convenience
 

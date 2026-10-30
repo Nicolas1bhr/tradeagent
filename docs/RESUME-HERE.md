@@ -10,12 +10,64 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
+**Since 2026-10-30 the build runs on the fast lane: start with the newest block right below, then the fleet's `FAST-LANE.md` and `FAST-STATE.md`. Everything after that block, down to the end of this file, is history of the ceremony-era build (seats, trains, queue files, the heartbeat, `docs/ORGANISATION.md` § 15 as the only order), kept as the record and no longer the way to resume.**
+
+**2026-10-30/31 — THE FAST LANE (the newest block; opened on the owner's word 2026-10-30 ~18:1x CET, in progress) — resume from the fleet's `FAST-STATE.md`
+(the live state) after `FAST-LANE.md` (the rules); the direction is `docs/research/2026-10-30/R25-fast-lane-mvp.md`.** Every block below this one is history;
+where one of them names a seat, a train, a queue file, a BOARD line or a heartbeat of the old ceremony, it describes how the build WAS run. The fleet's files live in
+`~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` (outside the repo, like the rest of the fleet's state).
+The owner, 2026-10-30 ~18:1x CET, verbatim: "hey let's reframe a bit, we've been doing good work on the tradeagent project. but in comparison to the end
+vision we are going way too slowly, this is because of my last directives and because we are way way too careful. here's what i'd like you to do. since you
+are the smartest agent out there, i'd like you to go your way to build full speed towards the end vision adn MVP. for you now the orchestration standards and
+such are a mere suggestion. i trust you to run as top level orchestrator and make the most of it with the tokens we have at our disposition. you can always
+ping me if in need and even though you need to be canonically grounded in the vision you must delegate expertly to keep your context lean and long-running.
+the only thing i'm going to do myself and don't want you using your tokens on is the head-start tools, skills and skills i'll build that myself and hand it to
+you later."
+- **What that changed:** `docs/FLEET.md`, `docs/HOW-WE-BUILD.md`, the charters and `fleet/SPEED-MODE.md` are suggestions for this build; the fleet's `FAST-LANE.md`
+  replaces them (no seats; the orchestrator dispatches builders directly; bigger units; the brief is a file under the fleet's `tmp/FAST/`; no committed brief,
+  queue file, RESUME-HERE edit or BOARD line per unit; CI by branch dispatch; the landing is the builder's own, under the main lock). **What it did NOT change**
+  (his protections and ours): `CLAUDE.md` "The safety rules that outrank making it compile", `docs/PRINCIPLES.md` "The boundary remains enforceable", the public-repo
+  scan before every push, red-first plus one watched mutant on the money, evidence, authority, credential, containment and agent-boundary classes, no silent test
+  weakening, never a real order, real money or his credentials. Out of scope for the fleet, his words: the agents' head-start tools and skills — he builds them.
+- **The MVP (R25 § 2).** MVP-L, on his Linux server: from a fresh home, onboarding (paper only), appoint and activate a chief, start the AI; then with no
+  further owner input the organisation charters a department or team, its head hires executors that activate inside the gate, executors author and backtest in their
+  cells, verdicts are asked, an eligible version is allocated to paper and runs forward, fills and P&L come back to its author, and the organisation keeps, kills or
+  iterates — **72 hours unattended** inside its AI budget, surviving a service restart, every step and cost on the app's pages, the owner able to talk to his chief.
+  MVP-W, the product: the same on a Windows 11 laptop from a published release, AppContainer cells, no terminal; Mihael is told only once MVP-W holds. Real money
+  stays closed in both. **Status: neither holds.** R25 itself marks no feature implemented and no test passed.
+- **The decisions taken on his behalf (R25 § 4, each his to overrule):** D1 the fast lane replaces the seat/train/record ceremony, protections stay · D2 Windows egress
+  by one fixed elevated helper and a firewall rule on the cell's SID, declined → egress `none`, said in words · D3 hires below the chief activate themselves inside the
+  gate and wake hire and hirer; his narrowing veto (deactivate, two presses) stays · D4 his words reach the active chief as data (INBOX-001) · D5 the chief and heads
+  request their next wake, bounded · D6 the chief may spend a verdict on a version from its subtree · D7 campaigns renew only on data no earlier verdict or research
+  could read, dataset and holdout set up in onboarding · D8 gpt-6-luna the default for every org seat, gpt-6.1-sol the fallback, a model a choice among catalog entries that
+  pass the classic-tools check · D9 positions list and stop their own subtree's paper deployments, paper only · D10 a read-only kit folder is the socket for his
+  head-start kit, which stays his to build.
+- **Landed on main since `997365c4`** (from `git log 997365c4..origin/main`; the CI runs are the fleet's records in `FAST-STATE.md` and `BUILD-STATUS.md`, not
+  re-verified here): R25 `8131ae25` (docs only) · U-ci-fast-fixes `8a6acc49` (the surface-probe timing row; the device code's full glyph height; the UI test project
+  `tests/TradeAgent.UiTests`) · U-cell-windows PROBE `6e5cd301` (the AppContainer + kill-on-close job primitive and the Windows cell probe rows — **a probe, not the
+  provider and not the proof**; Windows Server refuses the pinned codex its read-only home where Windows 11 grants it) · U-chief-wake-once `4b128c7f` (rung 52:
+  `ai_attempt.vendor_said` and `offered_tools`; the owner wakes an active chief once from its card, two presses) · U-evidence-campaign `9836e38b` (one setup press for the
+  data and its holdout; a spent campaign followed only over fresh months; `data-export`) · U-org-autonomy increment 1 `3cb9abd9` (D5, D3, D6) and increment 2
+  `d55784e4` (D4, D9) · U-org-canon `5ddadc92` (canon v8: every place on the chart is told its job, verbs derived from its seat). Schema 52.
+- **Running at the last record (the fleet's `FAST-STATE.md` is the live copy; this list lags it):** U-cell-windows (provider, then proof) · U-runway-fixes (canon cards,
+  homefile caps) · U-seat-models (D8) · U-ui-pages · U-loop-e2e (the whole loop under puppet seats) · the M-org1 sitting #1 leg. Next to dispatch: U-kit-socket (D10), then the
+  72-hour run kit. After that: the Windows release (a CI-built installer with the app's own paper venue first; the ATAS-enabled build when that box answers).
+- **The standing go (the owner, 2026-10-31 ~00:1x CET, recorded in `FAST-STATE.md`):** "Yes, standing go". The fleet reads it as permission to drive the owner's server
+  app for the sittings — installs, appoint and activate the chief, Start the AI, the organisation's autonomy, the wake-once press, paper envelopes — and **never** live
+  trading, money, credentials or his sign-in. The install word it files is dated. It is a standing permission, not a record that any of it was done.
+- **NOT VERIFIED (what this block cannot honestly say):** that any real model has taken a turn on a chief, head or executor seat — M-org1 sitting #1 was dispatched, and
+  until the fleet's records or `BUILD-STATUS.md` quote its result, none is confirmed; that a verdict → paper → fills path has run on any seat (it never had, R25 § 1); that
+  the organisation has run unattended for any length of time; anything on Windows beyond the probe rows; the release a user can install (the last published is v0.1.2, 2026-09-06).
+- **How to resume:** read, in order, `docs/PRINCIPLES.md`, `docs/VISION.md` §§ 0–3 and 11, R25, then the fleet's `FAST-LANE.md` and `FAST-STATE.md` (legs in flight, their
+  agent ids, the sittings, the log). A dead leg resumes by `SendMessage` to its id from its branch tip and its scratch notes. Then `BUILD-STATUS.md` for what is proven.
+  The order of work is R25 § 5 and the fleet's roadmap brief, no longer `docs/ORGANISATION.md` § 15 alone.
+
+*(History, to 2026-10-30 — the ceremony-era instruction:)* **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
 heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-23 09:5x, RESUMED on the owner's word: the security board, R24), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
-**2026-10-23 09:5x — RESUMED ON THE OWNER'S WORD; the security board (R24) is the direction — resume from `fleet/handoff/ORCHESTRATOR.md`'s RESUMED
+*(History from here:)* **2026-10-23 09:5x — RESUMED ON THE OWNER'S WORD; the security board (R24) is the direction — resume from `fleet/handoff/ORCHESTRATOR.md`'s RESUMED
 block, then the seats' handoffs.** The owner, 2026-10-23 ~00:0x, verbatim: "okay let's resume with our same momentum i'd like you to continue what was going on
 and update everything that should be after the world wode php exploit. i noticed that the app is a not only a bad reflection of the current software but also
 currently holds way too much decision making in the settings and such. based on the end vision this software will run a continuously running wild and zany

@@ -121,6 +121,16 @@ The operational text is `fleet/SPEED-MODE.md`, with the compact builder prompt `
   read-only, the step-3b prompt, never the builder's report) stands in as the independent review and the held Codex review runs after the window as a second
   pass; the record says so. The stand-ins found real defects in nearly every unit that morning, among them three credential-path link races.
 
+## Fast lane (2026-10-30) — the build runs on the fleet's `FAST-LANE.md`
+
+The owner, 2026-10-30 ~18:1x CET, asked for the build to go "full speed towards the end vision adn MVP" and said that "the orchestration standards and such are a mere suggestion"
+(the full words are in `docs/research/2026-10-30/R25-fast-lane-mvp.md`). Since then this file's seats, trains, `land.sh` landing and per-unit records, `docs/HOW-WE-BUILD.md`,
+`fleet/SPEED-MODE.md` and the charters are suggestions for this build, not law; the operating rules are the fleet's `FAST-LANE.md` (in the fleet folder named at the top of
+`CLAUDE.md`'s "How we build"), and the live state is its `FAST-STATE.md`. In short: no seats, the orchestrator dispatches builders directly; each builder owns a bigger unit from
+first commit to landing; the brief is a file under the fleet's `tmp/FAST/`; branch CI on all three platforms; the builder lands its own unit under the main lock. The
+protections in `CLAUDE.md` are unchanged and the rest of this file is left as it was — read it as the record of how the build was run before 2026-10-30. The MVP and the
+decisions D1–D10 are R25's; `docs/RESUME-HERE.md`'s newest block says where the build stands, including what is not verified.
+
 ## Grounding — read before acting, verify before trusting
 
 - **A manager:** `CLAUDE.md`; `docs/HOW-WE-BUILD.md`; this file; `docs/RESUME-HERE.md` "Do this first"; `docs/PRINCIPLES.md`; its lane's plan (EDGE-FACTORY
