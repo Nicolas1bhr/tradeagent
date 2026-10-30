@@ -483,6 +483,48 @@ public class OrgEvidenceSharesTests
         Assert.Equal(before, Divisions(db));
     }
 
+    /// <summary>
+    /// A LEGACY PAIR THE GATE KEEPS ASLEEP HOLDS NONE OF THE ROOT'S SPLIT (<c>U-loop-e2e</c>; R25 D4): on the founding policy the Safety page's
+    /// split gives each legacy division half the day, so the two hold the whole root — and while the chief is active the activation gate
+    /// refuses the pair every launch (unconfined beside a position beyond the pair), so that half is spent by nobody, ever, and the chief
+    /// could charter nothing. A sleeping pair's division counts nothing; an AWAKE one — its seat not unconfined, so the gate lets it run —
+    /// still counts its split and the charter is refused in the Safety page's words. RED at base: the chief's experiment division on a fresh
+    /// home's split was refused ("already hold 1.0 of its envelope").
+    /// </summary>
+    [Fact]
+    public async Task A_legacy_pair_the_gate_keeps_asleep_holds_none_of_the_split()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        SeatTheChief(db);
+        var meter = new TurnMeter(db, () => 10m, runtimeId: () => "codex", live: new LiveAttempts(),
+            share: _ => 0.5m, declaredSeat: role => role == Chief ? SeatClasses.Harness : SeatClasses.Cli);
+        gw.AiEnvelopes = meter.EnvelopesFor;
+        gw.AiEnvelopesIn = meter.EnvelopesIn;
+        var org = new OrgStore(db);
+        void Pair(string seatClass) => gw.SeatFactsOf = role => new SeatFacts
+        {
+            Standing = org.Standing(role), DeclaredClass = CouncilRoles.IsKnown(role) ? seatClass : SeatClasses.Broker, ProvenCell = true,
+            ActiveBeyondLegacy = org.ActivePositionsBeyondLegacy()
+        };
+        var before = Divisions(db);
+
+        // AWAKE: the pair on a mediated seat runs beside the chief, so its split stands and nothing more fits.
+        Pair(SeatClasses.Broker);
+        var refused = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.False(refused.Ok, "a charter was written past an awake legacy pair's split");
+        Assert.Contains("the split on the Safety page", refused.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Divisions(db));
+
+        // ASLEEP: the pair on its unconfined CLI seats, refused by the gate while the chief is active — its split holds nothing.
+        Pair(SeatClasses.Cli);
+        var made = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.True(made.Ok, made.Error?.Message);
+        Assert.Equal(before + 1, Divisions(db));
+    }
+
     // ---- U-org-autonomy item 3 (R25 D6): the chief spends a verdict on a version authored in its subtree ----------------------
 
     /// <summary>
