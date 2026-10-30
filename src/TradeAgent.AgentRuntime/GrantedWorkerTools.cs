@@ -147,7 +147,7 @@ public sealed class GrantedWorkerTools(
     /// (<c>U-tape-read</c>) joins for every role for the reason the other two are here: it is research context, held
     /// back from no one, and the gateway serves it read-only.
     /// </summary>
-    public static readonly string[] DataOps = [Ops.DataList, Ops.DataBars, Ops.DataTape];
+    public static readonly string[] DataOps = [Ops.DataList, Ops.DataBars, Ops.DataTape, Ops.DataExport];
 
     /// <summary>The one op <c>report</c> carries: a read of the owner's daily report.</summary>
     public static readonly string[] ReportOps = [Ops.Report];

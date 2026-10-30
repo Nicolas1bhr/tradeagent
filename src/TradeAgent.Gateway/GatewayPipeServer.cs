@@ -347,6 +347,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
         new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
         new(Core.Ops.DataTape, TimeSpan.Zero, "the tape's own file, opened read-only, one snapshot, on disk"),
+        new(Core.Ops.DataExport, TimeSpan.Zero, "the same hashes, one normalised file read, one file written in the caller's folder, on disk"),
         new(Core.Ops.VenueList, TimeSpan.Zero, "the venue catalogue this installation has recorded, in process"),
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
         new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
@@ -1430,6 +1431,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.DataList     => DataList(ctx),
                 Core.Ops.DataBars     => DataBars(ctx, req),
                 Core.Ops.DataTape     => DataTape(ctx, req),
+                Core.Ops.DataExport   => DataExport(ctx, req),
                 Core.Ops.VenueList    => VenueList(),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
@@ -3430,6 +3432,126 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             [.. window.Bars.Select(b => new DataBarsReplyBar(
                 b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume, b.Quality))]);
     }
+
+    /// <summary>
+    /// THE RESEARCH MONTHS OF ONE DATASET, AS A FILE IN THE CALLER'S OWN FOLDER (<c>U-evidence-campaign</c> item 3; see
+    /// <see cref="DataExports"/>).
+    ///
+    /// <para><b>The holdout is decided by the reader, exactly as for <c>data-bars</c> and the evaluator</b>: <see cref="DatasetReader.Read"/>
+    /// with the caller's pipe holdout asks the dataset's own cutoff and then every other window — the fresh holdout being collected
+    /// included — before a byte of the file is read, and a refusal writes NOTHING. 'to' is required: a window with no end is the whole
+    /// dataset, and an export is bounded by what it names. Over <see cref="DataExports.MaxBars"/> bars, or into a folder already holding
+    /// <see cref="DataExports.MaxFiles"/> exports, is refused naming the bound, never cut short.</para>
+    ///
+    /// <para><b>Written into the caller's own home and nowhere else</b> — the active position's folder (<c>Paths.RoleHome</c>), through
+    /// <see cref="HomeFiles.Write"/>, which follows no link at any component and replaces whatever is at the name unread, so a link a cell
+    /// planted there points nowhere this writes. <b>And recorded as a read of that position</b>: one <c>tool_call</c> row — the
+    /// observed-deliveries ledger, which no op writes — with the attempt, the position, the dataset, the window, the file and its bytes.</para>
+    /// </summary>
+    object DataExport(AgentContext ctx, IpcRequest req)
+    {
+        var position = gateway.ActivePositionOf(ctx.Role)
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "an export is written into the folder of the position that asked for it, and this connection presented no launch "
+                + "grant of an active position — so there is no folder to write it to. Nothing was written.");
+
+        var id = DatasetId(req);
+        var from = BarInstant(req, "from");
+        var to = BarInstant(req, "to")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'to' is required: an export writes the window it names, and a window with no end is every bar there is. Name a 'to' "
+                + "before the dataset's 'holdout_from' ('trade data list' has it). Nothing was written.");
+        if (from is { } lo && lo > to)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'from' ({lo:O}) is after 'to' ({to:O}), which is a window with nothing in it. Nothing was written.");
+
+        var row = gateway.Datasets.ById(id)
+            ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"there is no dataset {id} in this installation's ledger. 'trade data list' has them. Nothing was written.");
+        var set = gateway.Datasets.Checked(row);
+        if (set.State == DatasetState.REJECTED)
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"dataset {id} is REJECTED and its bars are not served: {set.RejectedReason}. Nothing was written.");
+
+        BarWindow window;
+        try
+        {
+            // THE SAME READER, THE SAME HOLDOUT, A LARGER CAP: the caller's own pipe audience with the dataset ledger, so a window reaching
+            // this dataset's cutoff, another dataset's window or the fresh holdout is refused before the file is read.
+            window = DatasetReader.Read(set, TapeHoldout.Pipe(ctx.Role, gateway.Datasets), from, to, DataExports.MaxBars);
+        }
+        catch (IOException ex)
+        {
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"dataset {id}'s file could not be read: {ex.Message} Nothing was written.");
+        }
+
+        if (window.Refusal is { } withheld)
+            throw new GatewayDeniedException(ErrorCode.HOLDOUT_WITHHELD, withheld + " Nothing was written.");
+        if (window.OverCap)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"that window holds more than {DataExports.MaxBars} bars, the most one export writes. Export it in shorter windows. "
+                + "Nothing was written.");
+        if (window.Bars.Count == 0)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"dataset {id} holds no bar in that window, so there is nothing to write. Nothing was written.");
+
+        var home = Paths.RoleHome(position);
+        var relative = DataExports.FileName(set, from, to);
+        var bytes = DataExports.Csv(window.Bars);
+        try
+        {
+            var held = Exports(home);
+            if (held.Count >= DataExports.MaxFiles && !held.Contains(relative[(DataExports.Folder.Length + 1)..]))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
+                    + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
+            HomeFiles.Write(home, relative, bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"the export could not be written into your folder: {ex.Message} Nothing else was changed.");
+        }
+
+        // A READ OF THIS POSITION, RECORDED: the observed-deliveries ledger, beside every door call (`ToolCallStore` never throws).
+        gateway.ToolCalls.Record(new ToolCallRow
+        {
+            At = DateTimeOffset.UtcNow,
+            Attempt = ctx.AttemptId,
+            Role = position,
+            Tool = Core.Ops.DataExport,
+            Argument = $"dataset {id} {set.Pair} {set.Interval} {set.Version}, {window.Bars.Count} bars "
+                       + $"{window.Bars[0].OpenTime:u} to {window.Bars[^1].OpenTime:u} -> {relative}",
+            Bytes = bytes.Length,
+            Served = true
+        });
+
+        return new DataExportReply(relative, set.Id, set.Pair, set.Interval, set.Version, window.Bars[0].OpenTime,
+            window.Bars[^1].OpenTime, window.Bars.Count, bytes.Length,
+            $"The bars are in your own folder at '{relative}', as '{KlineNormaliser.HeaderWithQuality}' rows in UTC, ascending, nothing "
+            + "filled in — for your own code to read. They are the months before every holdout and are hypothesis evidence: no fill, no "
+            + "queue position, no intrabar ordering. A backtest still runs through 'trade backtest', which is what is charged and "
+            + $"recorded. The folder keeps at most {DataExports.MaxFiles} exports; exporting the same window again rewrites its file.");
+    }
+
+    /// <summary>The export files in the caller's folder, by name, read without following a link; none when there is no folder.</summary>
+    static IReadOnlyList<string> Exports(string home)
+    {
+        try
+        {
+            return [.. HomeFiles.List(home, DataExports.Folder)
+                .Where(e => !e.Folder && e.Name.StartsWith(DataExports.Prefix, StringComparison.Ordinal))
+                .Select(e => e.Name).Order(StringComparer.Ordinal)];
+        }
+        catch (DirectoryNotFoundException) { return []; }
+        catch (FileNotFoundException) { return []; }
+    }
+
+    /// <summary>What <c>data-export</c> answers: the file it wrote, the dataset and window it holds, and what it is.</summary>
+    sealed record DataExportReply(
+        string Path, long DatasetId, string Pair, string Interval, string Version, DateTimeOffset FirstBar, DateTimeOffset LastBar,
+        int Bars, long Bytes, string Note);
 
     /// <summary>
     /// THE FORWARD BARS — the closed minutes TradeAgent collected itself while it was running.

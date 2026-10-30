@@ -63,9 +63,10 @@ public class DataOpsTests
 
         Assert.DoesNotContain(ops, o => o is "data-collect" or "data-download" or "data-delete" or "data-reject");
         Assert.DoesNotContain(Ops.Mutating, o => o.StartsWith("data", StringComparison.Ordinal));
-        // THE THREE READS BY NAME, not a count: the tape's (`U-tape-read`) joined the two the ledger has, and it
-        // writes nothing either — no op records, edits or deletes a tape row.
-        Assert.Equal([Ops.DataBars, Ops.DataList, Ops.DataTape],
+        // THE FOUR BY NAME, not a count: the tape's (`U-tape-read`) joined the two the ledger has, and it writes nothing either —
+        // no op records, edits or deletes a tape row. `data-export` (U-evidence-campaign) writes a FILE of bars into the caller's
+        // own folder and no dataset, ledger row or tape row: a read of the bars, delivered as a file.
+        Assert.Equal([Ops.DataBars, Ops.DataExport, Ops.DataList, Ops.DataTape],
             ops.Where(o => o.StartsWith("data-", StringComparison.Ordinal)).Order(StringComparer.Ordinal));
         Assert.DoesNotContain(ops, o => o is "data-record" or "data-tape-write" or "data-tape-delete");
     }
