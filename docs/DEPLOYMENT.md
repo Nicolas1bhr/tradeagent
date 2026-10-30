@@ -33,11 +33,44 @@ deploy the bridge in the same sitting — see §4.
 
 ## 1. Get the release onto the machine
 
-Two assets per release: `TradeAgent-Setup-x64.exe` and `SHA256SUMS.txt`. Both are produced by
-`packaging/build.ps1` and the checksum file is not optional — the app refuses an update it cannot
-verify against it (`docs/USER-GUIDE.md` § "When it refuses"; `src/TradeAgent.Provisioning/UpdateService.cs:543-571`).
+### How a release is cut (U-windows-release, 2026-10-31)
 
-Cut a release the way U3 did:
+CI cuts it; you press two buttons; nothing is published without the second one.
+
+1. **The version.** Raise `<Version>` in `Directory.Build.props` (a commit on main, CI green). The in-app updater offers only a
+   version newer than the one installed, and the workflow refuses a version that already has a release.
+2. **The draft.** GitHub → Actions → `release` → *Run workflow* on `main`, **untick `dry_run`**. (Pushing a tag `v<version>` does
+   the same.) `.github/workflows/release.yml` builds the Windows installer and the Linux kit from that commit, checks each against
+   the manifest its own build wrote (`.github/ci/release-assets.sh`, tested by `release-assets-test.sh` in the same job), and
+   creates a **DRAFT** release `v<version>` with four assets: `TradeAgent-Setup-x64-no-atas.exe`,
+   `TradeAgent-<version>-linux-x64.tar.gz`, `SHA256SUMS.txt` and `SHA256SUMS` (one manifest naming both files, under the two
+   names the updater and `packaging/linux/install.sh` read). It refuses — creating nothing — when the version and a pushed tag
+   differ, when dispatched from anything but main, when a release of that version exists, or when no `build` run on that exact
+   commit concluded success. With `dry_run` ticked (the default) it builds and checks everything, uploads the four files as the
+   run's artifact `release-assets`, and makes no draft.
+3. **Publish.** Open the draft on the repository's Releases page, read it, press **Publish release**. That press creates the tag
+   and makes it `latest`; from then on every installed TradeAgent's check offers it. A draft is invisible to the updater
+   (`/releases/latest` never returns one, and `ReleaseFeed.Parse` refuses one besides). *Not yet walked: no release has been cut
+   this way.*
+
+**ATAS is not in a CI build.** A hosted runner has no ATAS assemblies, so the bridge ships without its ATAS adapter and
+`packaging/build.ps1` (reading the adapter out of the compiled bridge, never the switch) names the installer
+`TradeAgent-Setup-x64-no-atas.exe`. Its welcome and last pages say **"ATAS is not in this build; paper runs on TradeAgent's own
+venue."**; the app says the same words where ATAS would be offered, onboarding offers TradeAgent paper in its place, and the switch
+to ATAS is refused (`BuildContents`, `AppHost.SwitchConnectorAsync`). A build with the adapter can still only be made on the ATAS box
+(`pwsh packaging/build.ps1 -AtasInstallDir <path>`); it is named `TradeAgent-Setup-x64.exe`, and you upload it to a release by hand.
+
+**The updater's channel.** An installed TradeAgent installs exactly its own kind: a build with the ATAS adapter takes
+`TradeAgent-Setup-x64.exe` and refuses, in words, a release carrying only the no-ATAS installer; a build without it takes
+`TradeAgent-Setup-x64-no-atas.exe` (`UpdateChannel`, `src/TradeAgent.Provisioning/UpdateService.cs`). v0.1.x's updater predates
+this and matches any `TradeAgent-Setup*.exe`, so a v0.1.2 laptop is offered the CI release.
+
+**A v0.1.x home is refused.** TradeAgent 0.2.0 does not open a home a v0.1.x release wrote (schema 2 or 4; `Versions.OldestHomeSchema`
+is 5). The app shows "This TradeAgent does not open your older folder", naming both versions; nothing in the folder is changed.
+**Start fresh** (two presses) moves the whole `%LOCALAPPDATA%\TradeAgent` aside to `TradeAgent-from-0.1.2-<UTC time>` beside it and
+starts in an empty one: setup and the AI sign-in again; nothing is deleted. *Not yet walked on Windows.*
+
+### By hand (U3, v0.1.2)
 
 ```powershell
 gh release create v0.1.2 --target <FULL 40-char sha> artifacts\TradeAgent-Setup-x64.exe artifacts\SHA256SUMS.txt
@@ -46,7 +79,7 @@ gh release create v0.1.2 --target <FULL 40-char sha> artifacts\TradeAgent-Setup-
 **A short sha is rejected with HTTP 422.** `--target` takes a branch or a full sha, nothing else
 (U3 § "Building and publishing v0.1.1"). *Walked.*
 
-Before publishing, read the build's own summary block (`packaging/build.ps1:310-319`). The line that
+Before publishing, read the build's own summary block (`packaging/build.ps1`, "what this build actually contains"). The line that
 matters is:
 
 ```
@@ -54,7 +87,7 @@ ATAS adapter      PRESENT - AtasStrategyAdapter is compiled into the bridge asse
 ```
 
 `ABSENT` means the build cannot trade through ATAS at all. It is read back out of the compiled
-assembly, not from the switch that was passed in (`packaging/build.ps1:210`). *Walked (U3).*
+assembly, not from the switch that was passed in. *Walked (U3).*
 
 Hash the installer on both machines and against the release asset before trusting it. U3 got the same
 `sha256` and the same byte count in five places: the box, the Mac, `SHA256SUMS.txt`, the GitHub asset
@@ -307,9 +340,10 @@ order history. The uninstaller leaves the home in place too, deliberately.
 
 Two things that make a backward step different from a forward one, and neither is tested:
 
-- **The database schema version is 3** (`Versioning.cs:42`) and migration is forward-only and additive
-  by design. An older build opening a schema-3 database is untested. **Take a copy of
-  `state\tradeagent.db` before you roll back.**
+- **A home only goes forward.** 0.2.0's home is at schema 52 (`Versions.DatabaseSchemaVersion`); an older build refuses a
+  home newer than it ("database schema N is newer than this build supports"), and 0.2.0 refuses a v0.1.x home (§ 1). Rolling
+  0.2.0 back to v0.1.2 therefore needs the v0.1.2 home: the `TradeAgent-from-0.1.2-<time>` folder Start fresh kept, renamed back
+  to `TradeAgent` by hand. Untested. **Take a copy of `%LOCALAPPDATA%\TradeAgent` before you roll back.**
 - **The bridge protocol number moves with the app.** Rolling the app back to a protocol-2 build over a
   protocol-3 DLL produces the same refusal in the other direction. Redeploy the bridge from the
   release you rolled back to.

@@ -1341,6 +1341,12 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Whether this build carries the ATAS adapter (<see cref="BuildContents.AtasAdapterInThisBuild"/>, read from its installed bridge).
+    /// Settable only by a test host, which stands in for a build made on the machine with ATAS.
+    /// </summary>
+    public bool AtasInThisBuild { get; internal set; } = BuildContents.AtasAdapterInThisBuild;
+
     /// <summary>The older home this start refused (<see cref="OlderHomeException"/>), while it stands; null otherwise.</summary>
     public OlderHomeException? OlderHome { get; private set; }
 
@@ -1615,6 +1621,9 @@ public sealed class AppHost : IAsyncDisposable
     public async Task SwitchConnectorAsync(string id)
     {
         if (_db is null) return;
+        // ATAS ONLY WHERE THIS BUILD CARRIES ITS ADAPTER (U-windows-release): a CI build's bridge has no ATAS half, so ATAS is refused
+        // here, for every surface that offers it, in the words the installer used — before anything is written or torn down.
+        if (id == Platforms.Connectors.Atas && !AtasInThisBuild) throw new InvalidOperationException(BuildContents.AtasNotInThisBuild);
         var current = _db.GetKv("connector") ?? "fake";
         _db.SetKv("connector", id);
         if (current == id && Gateway is not null) return;

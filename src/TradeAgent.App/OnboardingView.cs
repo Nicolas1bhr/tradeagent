@@ -891,18 +891,29 @@ public sealed class OnboardingView
                     await _host.SwitchConnectorAsync("fake");
                     Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
                 })),
-            Choice("ATAS",
-                Ui.Muted("Your real trading platform. TradeAgent connects to it and stays inside the limits you set."),
-                null,
-                Act(async () =>
-                {
-                    await _host.SwitchConnectorAsync("atas");
-                    Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
-                }))));
+            // A BUILD WITHOUT THE ATAS ADAPTER (U-windows-release — every CI build) offers TradeAgent's own paper venue where ATAS would
+            // be, and says why in the installer's words; the switch itself refuses ATAS too (AppHost.SwitchConnectorAsync).
+            _host.AtasInThisBuild
+                ? Choice("ATAS",
+                    Ui.Muted("Your real trading platform. TradeAgent connects to it and stays inside the limits you set."),
+                    null,
+                    Act(async () =>
+                    {
+                        await _host.SwitchConnectorAsync("atas");
+                        Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
+                    }))
+                : Choice("TradeAgent paper",
+                    Ui.Muted("Real prices, simulated fills, no money. " + BuildContents.AtasNotInThisBuild),
+                    null,
+                    Act(async () =>
+                    {
+                        await _host.SwitchConnectorAsync(Platforms.Connectors.Paper);
+                        Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
+                    }))));
 
     Screen FindAtas()
     {
-        if (!UsingAtas) return Skipped("You chose the practice simulator, so ATAS is not needed.");
+        if (!UsingAtas) return Skipped("You are not using ATAS, so it is not needed.");
 
         // The account note is on every variant of this screen on purpose. It is the one part of the
         // journey TradeAgent genuinely cannot do for the user, and finding that out after a 459 MB
@@ -987,7 +998,7 @@ public sealed class OnboardingView
                 var dir = AtasInstallation.InstallBridge(Path.Combine(AppContext.BaseDirectory, "bridge"));
                 _note = $"The bridge is in place, in {dir}.";
             })))
-        : Skipped("Not needed for the practice simulator.");
+        : Skipped("Not needed: you are not using ATAS.");
 
     Screen ConnectBridge() => UsingAtas
         ? new Screen(
@@ -1008,7 +1019,7 @@ public sealed class OnboardingView
                     Numbered(5, "Press Add, then press Start"))),
                 Ui.Busy("Waiting for ATAS to connect.")),
             Ui.Primary("Open ATAS", () => MainWindow.OpenAtasOrExplain(ShowProblem)))
-        : Skipped("Not needed for the practice simulator.");
+        : Skipped("Not needed: you are not using ATAS.");
 
     /// <summary>A step that does not apply to this setup. It still gets a designed screen.</summary>
     static Screen Skipped(string why) => new(why, Ui.Busy("Moving on."));
