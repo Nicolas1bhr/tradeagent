@@ -211,8 +211,10 @@ public sealed class SeatRegister
 /// on any real-model seat, a harness head included; no flag or setting lifts it. <b>No unconfined neighbour:</b> while a position
 /// beyond the legacy pair is active, every unconfined launch — the legacy pair and the owner's chat included — is refused, and a
 /// position beyond the pair is refused while an unconfined launch is open. The legacy pair otherwise keep their existing two-role
-/// behaviour on unconfined seats. <c>org-hire</c> (<c>U-org-verbs-c</c>) writes a position DORMANT and no organisation verb activates
-/// one, so the neighbour rule has no production effect until a position is activated.</para>
+/// behaviour on unconfined seats. <c>org-hire</c> (<c>U-org-verbs-c</c>) writes a position DORMANT; since <c>U-org-autonomy</c> (R25 D3)
+/// the hire ACTIVATES ITSELF in the same write when it lands on a broker or cell seat and THIS gate would admit it as active
+/// (<see cref="SelfActivation"/>) — the proven cell, the seat's assurance, the unconfined-seat ceiling and no unconfined neighbour —
+/// and the host's meter shows one turn of it fits its envelopes and the day-total; otherwise it stays dormant, as before.</para>
 /// </summary>
 public static class PositionActivation
 {
@@ -318,6 +320,23 @@ public static class PositionActivation
                 + "beyond the legacy pair runs beside an unconfined neighbour. It is tried again when that turn has ended.");
 
         return null;
+    }
+
+    /// <summary>
+    /// WHY A HIRE MAY NOT ACTIVATE ITSELF NOW (<c>U-org-autonomy</c> item 2; R25 D3), in words — or null where it may: the position is the
+    /// one <paramref name="facts"/> were read for, its DECLARED seat is a broker or a cell seat (mediated or confined, never unconfined
+    /// and never the harness), and <see cref="Decide"/> — this gate's one rule, asked as though the position were active — admits it: the
+    /// proven-cell rule, the seat's assurance against every capability it holds, the unconfined-seat ceiling and no unconfined
+    /// neighbour. Facts nobody could read refuse. It writes nothing; the hire's own write does (<see cref="OrgStore.Hire"/>).
+    /// </summary>
+    public static string? SelfActivation(string id, SeatFacts? facts)
+    {
+        if (facts?.Standing is not { } standing || standing.Id != id)
+            return $"nothing has told this host which seat {id} would run on, so it is not activated on a guess.";
+        if (facts.DeclaredClass is not (SeatClasses.Broker or SeatClasses.Cell))
+            return $"{id} would run on a {facts.DeclaredClass ?? "undeclared"} seat, and a hire activates itself only onto a broker or a "
+                   + "cell seat (mediated or confined).";
+        return Decide(id, standing with { Status = OrgPositionStatus.Active }, facts)?.Words;
     }
 
     /// <summary>

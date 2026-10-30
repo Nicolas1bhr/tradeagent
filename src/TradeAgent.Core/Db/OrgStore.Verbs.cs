@@ -86,8 +86,11 @@ public sealed record HireRequest(
     string Caller, string? Attempt, string UnitId, bool AsHead, string Rationale, IReadOnlyList<string> Options,
     IReadOnlyList<OrgRef> Refs, IReadOnlyList<ForecastClaim> Forecasts);
 
-/// <summary>What a hire wrote: the position (dormant), its <c>hire</c> decision, the forecasts on it and the <c>hired</c> event's id.</summary>
-public sealed record Hired(OrgPositionRow Position, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId);
+/// <summary>
+/// What a hire wrote: the position — ACTIVE where it activated itself (<c>U-org-autonomy</c>), dormant otherwise — its <c>hire</c> decision,
+/// the forecasts on it and the <c>hired</c> event's id; and <paramref name="Dormant"/>, why it stays dormant in words, or null where it is active.
+/// </summary>
+public sealed record Hired(OrgPositionRow Position, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId, string? Dormant = null);
 
 /// <summary>What a charter wrote: the unit, its <c>charter</c> decision, the forecasts on it and the <c>chartered</c> event's id.</summary>
 public sealed record Chartered(OrgUnitRow Unit, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId);
@@ -245,15 +248,21 @@ public sealed partial class OrgStore
     /// HIRES A POSITION INTO A UNIT (ORGANISATION § 2 :107 — only the head of the unit's PARENT hires; survey Q3): the app mints the id,
     /// writes the <c>org_position</c> row DORMANT — home <c>org/&lt;id&gt;</c>, no seat (<c>U-org-seats</c> binds one) — and, for an
     /// appointment, makes it the VACANT unit's head; the <c>hire</c> decision through the mandatory-kind path (rationale in the ledger),
-    /// its forecasts, and one <c>hired</c> event decided by the caller — in ONE write. DORMANT, so nothing activates (survey Q2): an
-    /// active position beyond the legacy pair would refuse the legacy pair's unconfined launches (<see cref="PositionActivation"/>), and
-    /// activation is not an organisation verb's. Refused in words, nothing written: the rights matrix; a head's REPLACEMENT (a different
+    /// its forecasts, and one <c>hired</c> event decided by the caller — in ONE write. DORMANT unless the activation gate holds (below): an
+    /// active position beyond the legacy pair refuses the legacy pair's unconfined launches (<see cref="PositionActivation"/>). Refused in words, nothing written: the rights matrix; a head's REPLACEMENT (a different
     /// operation); a unit that is not there or is closed; more than <see cref="OrgBounds.MaxPositions"/> positions; more than
     /// <see cref="OrgBounds.MaxMembers"/> members in the unit; the earning test (current work cited, or the unit's first position, or a
     /// unit chartered as a bounded experiment before its collapse date); no forecast.
+    ///
+    /// <para><b>AND IT ACTIVATES ITSELF WHERE THE GATE HOLDS</b> (<c>U-org-autonomy</c> item 2; R25 D3): <paramref name="activation"/> is the
+    /// host's answer for the new position, asked inside this write once it is on the chart — null where it may run (its seat a broker or
+    /// cell seat the activation gate admits, one turn of it inside its envelopes and the day-total), else why not. Where it may, the same
+    /// write turns it active with one <c>activated</c> event decided by the hiring head and wakes it and its hirer once each
+    /// (<see cref="MissionEventKind.Activated"/>); where it may not — or the answer throws, or none is asked — it stays DORMANT as before and
+    /// <see cref="Hired.Dormant"/> says why. Never the chief: a hire is never the root's head. The owner's veto of the hire still ends it.</para>
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public Hired Hire(HireRequest r, DateTimeOffset now) => db.Write(_ =>
+    public Hired Hire(HireRequest r, DateTimeOffset now, Func<string, string?>? activation = null) => db.Write(_ =>
     {
         if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
             throw Forbidden($"'{r.Caller}' is no active position: a position is hired by the head whose launch asks it.");
@@ -322,7 +331,23 @@ public sealed partial class OrgStore
         var eventId = Event(now, unit.Id, id, OrgEventKind.Hired, r.Caller,
             $"position={id} unit={unit.Id} as={(r.AsHead ? "head" : "member")} status={OrgPositionStatus.Dormant} home={home} "
             + $"decision={decision.Id} {route}");
-        return new Hired(Position(id)!, decision, forecasts, eventId);
+
+        // THE GATE, ASKED OF THE POSITION NOW ON THE CHART: an answer that throws is a refusal, and the hire stands dormant either way.
+        string? dormant;
+        if (activation is null) dormant = "nothing asked the activation gate for it, so it waits for an activation.";
+        else
+            try { dormant = activation(id); }
+            catch (Exception ex) { dormant = $"TradeAgent could not ask the activation gate for it ({ex.Message})."; }
+        if (dormant is null)
+        {
+            using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
+                       ("$active", OrgPositionStatus.Active), ("$p", id), ("$dormant", OrgPositionStatus.Dormant)))
+                if (c.ExecuteNonQuery() != 1) throw Damaged($"{id} was not dormant in the write that hired it");
+            Event(now, unit.Id, id, OrgEventKind.Activated, r.Caller,
+                $"position={id} unit={unit.Id} was={OrgPositionStatus.Dormant} by=hire event={eventId.ToString(CultureInfo.InvariantCulture)}");
+            WakeActivated(id, r.Caller, now);
+        }
+        return new Hired(Position(id)!, decision, forecasts, eventId, dormant);
     });
 
     /// <summary>
@@ -419,6 +444,21 @@ public sealed partial class OrgStore
         + "days — or charter it as a funded, bounded experiment with a collapse date. Nothing cited is current work of yours.";
 
     /// <summary>ONE <c>org_event</c>, inside the caller's write; its detail is the app's, from ids and fixed words. Answers its id.</summary>
+    /// <summary>
+    /// AN ACTIVATION'S TWO WAKES (<c>U-org-autonomy</c>; gap 5): one <see cref="MissionEventKind.Activated"/> to the position, and one to the head
+    /// that hired it where that is a position — never the app, the owner or the board. Inside the caller's write; a wake not written throws, so
+    /// the activation is not written either.
+    /// </summary>
+    void WakeActivated(string position, string? hirer, DateTimeOffset now)
+    {
+        var events = new MissionEventStore(db);
+        foreach (var to in new[] { position, hirer }.OfType<string>().Distinct(StringComparer.Ordinal))
+        {
+            if (to != position && (IsAppPrincipal(to) || !CouncilRoles.IsPositionId(to) || Position(to) is null)) continue;
+            events.Raise(MissionEventIds.Activated(position, to), MissionEventKind.Activated, now, payload: position, role: to);
+        }
+    }
+
     long Event(DateTimeOffset at, string unitId, string? positionId, string kind, string decider, string detail)
     {
         using var c = db.Cmd("""

@@ -63,18 +63,23 @@ public sealed partial class GatewayPipeServer
         OnlyDeclared(req, StructureArgsWhy);
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var hired = Gateway.Org.Hire(new HireRequest(caller, ctx.AttemptId, Require(req, "unit"), NamedFlag(req, "head", whenAbsent: false),
-            Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow);
+            Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow,
+            SelfActivationRefusal);
+        var active = hired.Dormant is null;
         return new
         {
             position = hired.Position.Id,
             unit = hired.Position.UnitId,
             status = hired.Position.Status,
             home = hired.Position.HomeDir,
-            seat = "none",
+            dormant_because = hired.Dormant,
             decision = DecisionReply(hired.Decision),
-            note = "Hired DORMANT: the position's id and home are TradeAgent's, it has no seat, and it runs nothing — no wake reaches "
-                   + "it and no launch starts for it until it is seated and activated, neither of which is an organisation verb's. "
-                   + "The hire is your 'hire' decision, the rationale your own ledger entry, marked claim."
+            note = (active
+                       ? "Hired and ACTIVE: the activation gate admits it on its seat and one turn of it fits its unit's envelope and the "
+                         + "day-total, so it activated itself in the same write, and TradeAgent wakes it and you once each. "
+                       : "Hired DORMANT: it runs nothing until it is activated — 'dormant_because' says why it did not activate itself. ")
+                   + "The position's id and home are TradeAgent's. The hire is your 'hire' decision, the rationale your own ledger entry, "
+                   + "marked claim; the owner can veto it, which ends it."
         };
     }
 
@@ -209,6 +214,26 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>
+    /// WHY A HIRE MAY NOT ACTIVATE ITSELF NOW, or null where it may (<c>U-org-autonomy</c> item 2; R25 D3): the activation gate over the
+    /// host's facts for it (<see cref="PositionActivation.SelfActivation"/> — a broker or cell seat, the proven cell, the seat's assurance,
+    /// the unconfined seats), then one turn of its seat (<see cref="TradingGateway.AiReservation"/>) against its funding chain today — its
+    /// unit's envelopes up to the plan's day-total (<see cref="NoRoomFor"/>). A host that reads none of it keeps the hire dormant.
+    /// </summary>
+    string? SelfActivationRefusal(string position)
+    {
+        SeatFacts? facts;
+        try { facts = Gateway.SeatFactsOf?.Invoke(position); }
+        catch (Exception) { facts = null; }
+        if (PositionActivation.SelfActivation(position, facts) is { } gate) return gate;
+        decimal? turn;
+        try { turn = Gateway.AiReservation?.Invoke(position); }
+        catch (Exception) { turn = null; }
+        if (turn is not { } reserves)
+            return $"TradeAgent could not price one turn of {position}'s seat, so it does not activate a seat nobody can show fits its day.";
+        return NoRoomFor(position, reserves, $"{position}'s seat");
+    }
+
+    /// <summary>
     /// A POSITION ASKS FOR ITS NEXT WAKE (<see cref="OrgStore.RequestWake"/>; <c>U-org-autonomy</c> item 1, R25 D5): one <c>self</c> wake,
     /// bounded by the security board's policy IN FORCE — the floor and the ceiling of the caller's level, read from
     /// <see cref="TradingGateway.Policy"/> at this call, never a constant — one pending at a time, and refused when one more turn of
@@ -244,21 +269,33 @@ public sealed partial class GatewayPipeServer
     /// </summary>
     string? NoRoomForATurn(string caller, string? attemptId)
     {
-        IReadOnlyList<UnitDay>? days;
-        try { days = Gateway.AiEnvelopes?.Invoke(caller); }
-        catch (Exception) { days = null; }
-        if (days is null || days.Count == 0)
-            return "TradeAgent could not read your unit's AI envelope today, so it does not raise a turn nobody can show fits.";
         if ((attemptId is { } id ? Gateway.Attempt(id) : null) is not { } attempt)
             return $"'{attemptId}' is no launch the ledger recorded, so there is no seat to price one more turn of.";
+        return NoRoomFor(caller, attempt.ReservedCost, "your seat") is { } why
+            ? why + " Your ceiling, or work addressed to you, wakes you."
+            : null;
+    }
+
+    /// <summary>
+    /// WHY ONE TURN RESERVING <paramref name="reserves"/> DOES NOT FIT <paramref name="position"/>'S FUNDING CHAIN TODAY, or null where it fits:
+    /// every unit the host's meter reads for it (<see cref="TradingGateway.AiEnvelopes"/>, nearest first, ending at the root — the plan's
+    /// day-total), today's spend, reservations and unmeasured charge plus that turn, against its envelope. No reading is a reason.
+    /// </summary>
+    string? NoRoomFor(string position, decimal reserves, string seat)
+    {
+        IReadOnlyList<UnitDay>? days;
+        try { days = Gateway.AiEnvelopes?.Invoke(position); }
+        catch (Exception) { days = null; }
+        if (days is null || days.Count == 0)
+            return $"TradeAgent could not read the AI envelope of {position}'s unit today, so it does not commit a turn nobody can show fits.";
         foreach (var d in days)
         {
             if (d.Envelope is not { } envelope) continue;
             var committed = d.Spent + d.Reserved + d.UnmeasuredCharge;
-            if (committed + attempt.ReservedCost > envelope)
+            if (committed + reserves > envelope)
                 return $"{OrgEnvelopes.NameOf(d.UnitId)} has {committed.ToString(CultureInfo.InvariantCulture)} of its "
-                       + $"{envelope.ToString(CultureInfo.InvariantCulture)} ({d.Ceiling}) committed today, and one turn of your seat reserves "
-                       + $"{attempt.ReservedCost.ToString(CultureInfo.InvariantCulture)}. Your ceiling, or work addressed to you, wakes you.";
+                       + $"{envelope.ToString(CultureInfo.InvariantCulture)} ({d.Ceiling}) committed today, and one turn of {seat} reserves "
+                       + $"{reserves.ToString(CultureInfo.InvariantCulture)}.";
         }
         return null;
     }

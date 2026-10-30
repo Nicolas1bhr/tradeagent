@@ -192,6 +192,13 @@ public static class MissionEventKind
     /// event's id; the reviewer answers it with <c>org-review-answer</c>, a record — the review itself changes nothing.
     /// </summary>
     public const string CutReview = "cut-review";
+
+    /// <summary>
+    /// A POSITION WAS ACTIVATED (<c>U-org-autonomy</c> item 2; R25 D3, gap 5): raised by the app in the write that activated it, ONCE to the
+    /// position itself and ONCE to the head that hired it — a hire that activated itself, or one the owner activated. Its payload is the
+    /// activated position's id. It grants nothing: the activation gate still decides every launch.
+    /// </summary>
+    public const string Activated = "activated";
 }
 
 /// <summary>
@@ -276,6 +283,10 @@ public static class WakePriority
         // "research", too: a cut rule's review handed up to the head that answers for the unit (U-org-scorecards-b) — classed with the
         // escalation, the other thing the app hands a head when work is not paying; the work itself, as a report is.
         [MissionEventKind.CutReview] = WakeClass.Research,
+
+        // "the chief's strategy": a position just activated, and the head that hired it (U-org-autonomy) — the agenda handed down to a new
+        // seat, and the head told its hire runs.
+        [MissionEventKind.Activated] = WakeClass.Strategy,
 
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
@@ -575,6 +586,9 @@ public static class MissionEventIds
     /// raises nothing. Its payload is the <c>review</c> event's id.
     /// </summary>
     public static string CutReview(string rule, string subject, string period) => $"review:{rule}:{subject}:{period}";
+
+    /// <summary>An activation's ONE wake to <paramref name="recipient"/> — the activated position or its hirer — keyed by both (<c>U-org-autonomy</c>).</summary>
+    public static string Activated(string position, string recipient) => $"{MissionEventKind.Activated}:{position}:{recipient}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,

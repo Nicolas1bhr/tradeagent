@@ -365,8 +365,9 @@ public sealed partial class OrgStore
     /// THE OWNER ACTIVATES A DORMANT POSITION (<c>U-org-verbs-d</c> item 4; survey Q2) — IN-PROCESS ONLY (AUTH-001: no pipe op, door
     /// verb, <c>trade</c> verb or setting reaches it) and only while no board seat is ACTIVE: a board act on plan capacity with no other
     /// decider stays his until then (R24; the orchestrator's generalised ruling), and once a seat is active it is the board's, refused
-    /// here in words naming it. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>. It starts
-    /// nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
+    /// here in words naming it. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>, and — for any
+    /// position but the chief — one <see cref="MissionEventKind.Activated"/> wake to it and one to the head that hired it (<c>U-org-autonomy</c>,
+    /// gap 5). It starts nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
     /// <paramref name="declaredClass"/> is the host's declared seat class per position, and <paramref name="seatSetting"/> the owner's
     /// unconfined-seat setting: a position on a counted seat is refused while the ceiling is reached (<see cref="UnconfinedSeatCeiling"/>,
     /// item 5). Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit; THE
@@ -402,8 +403,18 @@ public sealed partial class OrgStore
                    ("$active", OrgPositionStatus.Active), ("$p", positionId), ("$dormant", OrgPositionStatus.Dormant)))
             if (c.ExecuteNonQuery() != 1) throw Refused($"{positionId} changed while this activation was written.");
         Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
+        // AND IT WAKES THE POSITION AND ITS HIRER (U-org-autonomy item 2; gap 5) — never the chief, whose activation is unchanged.
+        if (!(unit.IsRoot && unit.HeadPositionId == positionId)) WakeActivated(positionId, HirerOf(positionId), now);
         return Position(positionId)!;
     });
+
+    /// <summary>The position that decided <paramref name="positionId"/>'s <c>hired</c> event, or null: seeded, or hired by no position.</summary>
+    string? HirerOf(string positionId)
+    {
+        using var c = db.Cmd("SELECT decider FROM org_event WHERE kind = $k AND position_id = $p ORDER BY id LIMIT 1",
+            ("$k", OrgEventKind.Hired), ("$p", positionId));
+        return c.ExecuteScalar() is string d && CouncilRoles.IsPositionId(d) && !IsAppPrincipal(d) ? d : null;
+    }
 
     /// <summary>
     /// THE ACTIVE POSITIONS ON SEATS THE OWNER'S UNCONFINED-SEAT CEILING COUNTS (<c>U-org-verbs-d</c> item 5): the legacy pair whenever

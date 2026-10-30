@@ -219,7 +219,7 @@ public partial class OrgAutonomyTests
         gw.AiEnvelopes = null;
         var unread = await server.CallAsync(WakeFrame(90), Head, Launch(db, Head));
         Assert.False(unread.Ok);
-        Assert.Contains("could not read your unit's AI envelope", unread.Error!.Message, StringComparison.Ordinal);
+        Assert.Contains("could not read the AI envelope", unread.Error!.Message, StringComparison.Ordinal);
         Assert.Empty(new MissionEventStore(db).OfKind(MissionEventKind.Self));
     }
 }

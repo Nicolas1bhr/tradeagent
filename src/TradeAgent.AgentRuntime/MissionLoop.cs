@@ -4452,6 +4452,8 @@ public sealed class MissionLoop
         MissionEventKind.CutReview => "a cut rule's review reached you — a unit you answer for spent half its day envelope with nothing "
                                       + "accepted, or a position you decide forecast worse than the base rate; it changed nothing, and you "
                                       + "answer it with `trade org review-answer` (`trade org show` has the chart)",
+        MissionEventKind.Activated => "a position was activated — you, newly hired, or one you hired — and it runs from now; "
+                                      + "`trade org show` has the chart and `trade mandate list` your work",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
