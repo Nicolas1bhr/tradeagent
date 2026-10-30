@@ -26,6 +26,15 @@ public static class RouteA
     /// <summary>The provider a <c>cell_proof</c> row names for this route: the pinned codex exec-server in a Linux cell.</summary>
     public const string Provider = "codex-exec-server-linux";
 
+    /// <summary>
+    /// THE WINDOWS PROVIDER (<c>U-cell-windows</c>): the pinned codex exec-server in an AppContainer slot inside a kill-on-close job, on a
+    /// window station of its own — its OWN row set and profile, never the Linux rows' (<see cref="CellBenchmark"/>).
+    /// </summary>
+    public const string WindowsProvider = "codex-exec-server-windows-appcontainer";
+
+    /// <summary>The provider a cell on <paramref name="platform"/> runs and is proved under.</summary>
+    public static string ProviderOn(CellPlatform platform) => platform.Windows ? WindowsProvider : Provider;
+
     /// <summary>The harness a <c>cell_assurance</c> row names for this route.</summary>
     public const string Harness = "codex-0.160.1-exec-server-stdio";
 
@@ -72,7 +81,8 @@ public static class RouteA
         var dir = Path.GetDirectoryName(Path.GetFullPath(exe))!;
         var package = Path.GetDirectoryName(dir);
         var tools = Path.TrimEndingDirectorySeparator(Paths.Tools);
-        return Path.GetFileName(dir) == "bin" && package is not null && package.StartsWith(tools + "/", StringComparison.Ordinal) ? package : dir;
+        var how = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return Path.GetFileName(dir).Equals("bin", how) && package is not null && package.StartsWith(tools + Path.DirectorySeparatorChar, how) ? package : dir;
     }
 
     /// <summary>
@@ -81,6 +91,7 @@ public static class RouteA
     /// harness's — and egress <see cref="Egress"/> (<c>web</c>: <c>U-execution-environment</c>; <c>none</c> before it).
     /// </summary>
     public static CellPolicy Policy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome) =>
+        OperatingSystem.IsWindows() ? WindowsPolicy(workspace, codexExe, codexRoot, cellCodexHome, cellHome, Egress) :
         new(workspace, [cellCodexHome, cellHome], [codexRoot, .. CellPolicy.SystemRoots],
         [
             new("PATH", Path.GetDirectoryName(codexExe) + ":/usr/local/bin:/usr/bin:/bin"),
@@ -91,18 +102,41 @@ public static class RouteA
         ], Egress);
 
     /// <summary>
+    /// THE WINDOWS CELL'S POLICY (<c>U-cell-windows</c>): the same grants — the workspace read-write, the cell's EMPTY codex home and home
+    /// read-only, codex's own root read and run — and no system root (Windows grants every AppContainer its own system folders); an
+    /// environment named in full, Windows-shaped: the system's names, the cell's home as USERPROFILE and HOME, LOCALAPPDATA inside the
+    /// workspace (Windows rewrites it, and TEMP and TMP beneath it, for an AppContainer — measured), and nothing of the owner's.
+    /// </summary>
+    public static CellPolicy WindowsPolicy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome, CellEgress egress)
+    {
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var system32 = Path.Combine(windows, "System32");
+        return new(workspace, [cellCodexHome, cellHome], [codexRoot],
+        [
+            new("PATH", string.Join(';', Path.GetDirectoryName(codexExe), system32, windows)),
+            new("SystemRoot", windows), new("windir", windows), new("ComSpec", Path.Combine(system32, "cmd.exe")),
+            new("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
+            new("USERPROFILE", cellHome), new("HOME", cellHome), new("CODEX_HOME", cellCodexHome),
+            new("LOCALAPPDATA", Path.Combine(workspace, ".local")), new("APPDATA", Path.Combine(cellHome, "AppData", "Roaming")),
+            new("TEMP", workspace), new("TMP", workspace), new("LANG", "C.UTF-8"),
+            .. CellPolicy.ToolEnvironment(workspace)
+        ], egress);
+    }
+
+    /// <summary>
     /// THE HARNESS'S <c>environments.toml</c>: one stdio environment, the default, no local one. Its program is TradeAgent's own
     /// launcher, which joins <paramref name="cellLeaf"/>, enters the cell <paramref name="policyFile"/> describes and becomes
     /// <c>codex exec-server --listen stdio</c>; its only variable is the app's home, where the launcher finds its cell folder. Every
     /// string is a TOML literal the bytes of which are refused if they cannot be one.
     /// </summary>
-    public static string EnvironmentsToml(IReadOnlyList<string> launcher, string cellLeaf, string policyFile, string codexExe, string home)
+    public static string EnvironmentsToml(IReadOnlyList<string> launcher, string? cellLeaf, string policyFile, string codexExe, string home)
     {
         if (launcher is not { Count: > 0 }) throw new ArgumentException("no launcher", nameof(launcher));
+        // ON WINDOWS NO CGROUP (cellLeaf null): the stage runs in the harness's job and the cell in a job of the stage's, nested in it.
         string[] args =
         [
-            .. launcher.Skip(1), ContainedLaunch.Flag, ContainedLaunch.CgroupFlag, cellLeaf, ContainedLaunch.CellFlag, policyFile,
-            codexExe, "exec-server", "--listen", "stdio"
+            .. launcher.Skip(1), ContainedLaunch.Flag, .. cellLeaf is null ? Array.Empty<string>() : [ContainedLaunch.CgroupFlag, cellLeaf],
+            ContainedLaunch.CellFlag, policyFile, codexExe, "exec-server", "--listen", "stdio"
         ];
         var sb = new StringBuilder();
         sb.Append("default = ").Append(Literal(EnvironmentId)).Append('\n');
@@ -138,8 +172,21 @@ public static class RouteA
         }
         OwnerOnlyFile.Write(Path.Combine(layout.HarnessCodexHome, "config.toml"), config);
         OwnerOnlyFile.Write(Path.Combine(layout.HarnessCodexHome, CellPolicy.CodexEnvironments), Encoding.UTF8.GetBytes(environmentsToml));
-        File.CreateSymbolicLink(Path.Combine(layout.HarnessCodexHome, "auth.json"), seatAuth);
+        var link = Path.Combine(layout.HarnessCodexHome, "auth.json");
+        // ON WINDOWS A HARD LINK: a symlink needs Developer Mode or elevation there, and codex rewrites auth.json in place, so a link to the
+        // same file carries a refresh to the seat home either way. Same volume by construction: both live under the seat home.
+        if (OperatingSystem.IsWindows())
+        {
+            if (!CreateHardLink(link, seatAuth, IntPtr.Zero))
+                throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                    $"Windows would not link the harness's sign-in to the seat home's (error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()})");
+        }
+        else File.CreateSymbolicLink(link, seatAuth);
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true, EntryPoint = "CreateHardLinkW")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    static extern bool CreateHardLink(string link, string existing, IntPtr reserved);
 
     /// <summary>Removes one attempt's homes. Never throws: what stays grants nothing on its own and the next start's sweep sees it.</summary>
     public static void Remove(Layout layout)
@@ -157,17 +204,40 @@ public static class RouteA
     /// </summary>
     public static (CellProof? Proof, string? Refusal) Admission(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress)
     {
+        var (proof, _, refusal) = AdmissionOn(route, codexPin, platform, egress);
+        return (proof, refusal);
+    }
+
+    /// <summary>
+    /// <see cref="Admission"/>, and the egress the cell then runs under. ON WINDOWS ONLY (the egress decision of 2026-10-30, the owner's to
+    /// overrule): a launch asking <c>web</c> on a host whose proof measured only <c>none</c> — the firewall rule declined or failed, so
+    /// <c>web</c> could not be shown to hold to 443 — runs under <c>none</c>, the proof's own class, and the refusal is not one. Linux is
+    /// unchanged: there a proof without <c>web</c> refuses a <c>web</c> launch.
+    /// </summary>
+    public static (CellProof? Proof, CellEgress Egress, string? Refusal) AdmissionOn(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress)
+    {
+        if (platform.Windows && egress.Name == CellEgress.Web.Name && route?.Proofs.ProofOf(ProviderOn(platform)) is { } hostProof
+            && !hostProof.Egress.Contains(CellEgress.Web.Name, StringComparer.Ordinal)
+            && hostProof.Egress.Contains(CellEgress.None.Name, StringComparer.Ordinal))
+            egress = CellEgress.None;
+        var (proof, refusal) = Admit(route, codexPin, platform, egress);
+        return (proof, egress, refusal);
+    }
+
+    static (CellProof? Proof, string? Refusal) Admit(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress)
+    {
         const string none = "TradeAgent did not start the AI as a cell seat";
         if (route is null) return (null, $"{none}: this host was given no record of proven cells to launch one under.");
         if (platform.Refusal() is { } refusal) return (null, $"{none}: {refusal}");
-        if (route.Proofs.ProofOf(Provider) is not { } proof)
+        var provider = ProviderOn(platform);
+        if (route.Proofs.ProofOf(provider) is not { } proof)
             return (null, $"{none}: no cell proof counts on this machine, kernel, boot and build. TradeAgent measures its cells itself at " +
                           "every start and records a proof only when every row holds; until then no cell seat starts.");
         // THE CLASS THE PROOF MEASURED, read off the proof itself (fix pass 1, R4): a proof names the egress classes its rows proved.
         if (!proof.Egress.Contains(egress.Name, StringComparer.Ordinal))
             return (null, $"{none}: its cell would have egress '{egress.Name}', and the proof it would run under measured only " +
                           $"{(proof.Egress.Count == 0 ? "no egress class" : string.Join(", ", proof.Egress))}.");
-        var now = CellBenchmark.Profile(Provider, platform, codexPin);
+        var now = CellBenchmark.Profile(provider, platform, codexPin);
         if (now != proof.ProfileHash)
         {
             try { route.Proofs.Revoke(proof.Id, $"a launch recomputed the profile as {now[..12]}, not the proof's {proof.ProfileHash[..Math.Min(12, proof.ProfileHash.Length)]}"); }
@@ -187,12 +257,13 @@ public static class RouteA
     /// <para><b>The network, as the policy's egress</b> (<c>U-execution-environment</c> item 3): the row names <paramref name="egress"/>,
     /// and under <c>web</c> two GAP rows carry the reach the owner accepted with it — loopback and his LAN on 443 — under the proof's own
     /// row names, never as passes.</para>
-    public static IReadOnlyList<AssuranceRow> AssuranceRows(long proofId, CellEgress egress)
+    public static IReadOnlyList<AssuranceRow> AssuranceRows(long proofId, CellEgress egress, bool windows = false)
     {
         var proof = $"cell proof {proofId}";
         var web = egress.Name == CellEgress.Web.Name;
         if (!web && egress.Name != CellEgress.None.Name)
             throw new ArgumentException($"route (a)'s assurance knows egress none and web, not '{egress.Name}'", nameof(egress));
+        if (windows) return WindowsAssuranceRows(proof, web);
         AssuranceRow Cell(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Cell, c, $"{why}; {proof}");
         static AssuranceRow Harness(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Harness, c, why);
         const string unconfined = "an unconfined codex holding the login: no model-directed tool crosses, the process could";
@@ -231,6 +302,59 @@ public static class RouteA
             .. web ? WebGaps(proof) : [],
         ]);
     }
+
+    /// <summary>
+    /// THE WINDOWS CELL'S ASSURANCE (<c>U-cell-windows</c>): the same properties, held by an AppContainer slot, its job and its own window
+    /// station, each a claim the Windows proof's rows measured. What no row measured on Windows is never HARD: <c>cmdline</c> and
+    /// <c>stat</c> stay GAP, and under <c>web</c> another host of the LAN on 443 is a GAP (only this host's own address is measured).
+    /// </summary>
+    static IReadOnlyList<AssuranceRow> WindowsAssuranceRows(string proof, bool web)
+    {
+        AssuranceRow Cell(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Cell, c, $"{why}; {proof}");
+        static AssuranceRow Harness(string p, EnforcementClass c, string why) => new(p, AssuranceSide.Harness, c, why);
+        const string unconfined = "an unconfined codex holding the login: no model-directed tool crosses, the process could";
+        const string noAce = "AppContainer: no ACE names the cell's slot";
+        return CellAssuranceStore.WithAttemptSide(
+        [
+            Cell("state", EnforcementClass.HardPlatform, $"{noAce} on state/ (Guarded refuses it)"),
+            Harness("state", EnforcementClass.Mediated, unconfined),
+            Cell("holdout-ledgers", EnforcementClass.HardPlatform, $"{noAce}: under state/"),
+            Harness("holdout-ledgers", EnforcementClass.Mediated, unconfined),
+            Cell("login", EnforcementClass.HardPlatform, $"{noAce} on the seat home; the cell's environment is the policy's alone"),
+            Harness("login", EnforcementClass.Mediated, "the harness holds it; code mode is refused before admission (Law 2)"),
+            Cell("inbox", EnforcementClass.HardPlatform, $"{noAce} on the inbox or what holds it"),
+            Harness("inbox", EnforcementClass.Mediated, unconfined),
+            Cell("ipc", EnforcementClass.HardPlatform, "AppContainer: no pipe of the app's grants the container, and loopback is closed to it"),
+            Harness("ipc", EnforcementClass.Mediated, unconfined),
+            Cell("signals-ptrace-environ", EnforcementClass.HardPlatform, "AppContainer at Low integrity: no process outside the cell opens to it"),
+            Harness("signals-ptrace-environ", EnforcementClass.Mediated, unconfined),
+            Cell("network", EnforcementClass.HardPlatform, web
+                ? "egress web: internetClient, with the firewall rule blocking every TCP port but 443 and every datagram for the slot's SID"
+                : "egress none: no capability, no network"),
+            Harness("network", EnforcementClass.Advisory, "the harness reaches its provider and anything else its account can"),
+            Cell("descendants-cancellation", EnforcementClass.HardPlatform, "the stage's kill-on-close job without breakaway, nested in the harness's"),
+            Harness("descendants-cancellation", EnforcementClass.HardPlatform, "the harness's kill-on-close job, the app's"),
+            Cell("broker-reach", EnforcementClass.HardPlatform, "loopback, where the door listens, is closed to an AppContainer, and nothing of the harness's sign-in is in the cell"),
+            Harness("broker-reach", EnforcementClass.HardApp, "the launch grant answers to the harness's job"),
+            Cell("order-permission", EnforcementClass.HardPlatform, "no pipe, no loopback and no grant in the cell"),
+            Harness("order-permission", EnforcementClass.HardApp, "the grant's role and the gateway's order rules"),
+            Cell("cmdline", EnforcementClass.Gap, "not measured on Windows"),
+            Harness("cmdline", EnforcementClass.Gap, "any process of the account reads another's command line"),
+            Cell("stat", EnforcementClass.Gap, "not measured on Windows"),
+            Harness("stat", EnforcementClass.Gap, unconfined),
+            .. web
+                ? new[]
+                {
+                    new AssuranceRow(WindowsLanGap, AssuranceSide.Cell, EnforcementClass.Gap,
+                        $"egress web: another host of the local network on 443 is not measured (this host's own address is, and is closed); {proof} records it as a GAP"),
+                    new AssuranceRow(WindowsLanGap, AssuranceSide.Harness, EnforcementClass.Gap, "the harness reaches the local network and beyond"),
+                }
+                : [],
+        ]);
+    }
+
+    /// <summary>The Windows proof's GAP row: another host of the LAN on 443, which no row measures.</summary>
+    public const string WindowsLanGap = "gap-web-lan-other-hosts-443";
 
     /// <summary>
     /// WHAT WEB EGRESS LEAVES OPEN, SAID (the owner's answer, ORGANISATION § 16): from a <c>web</c> cell, TCP 443 on loopback and on the

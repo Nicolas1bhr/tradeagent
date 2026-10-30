@@ -290,18 +290,60 @@ public sealed record CellPolicy
     {
         yield return Full(p);
         if (CellNative.RealPath(p) is { } real) yield return Full(real);
+        else if (OperatingSystem.IsWindows() && Resolved(p) is { } target) yield return Full(target);
     }
 
     static string Full(string p) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p));
 
-    /// <summary>Whether <paramref name="inner"/> is <paramref name="outer"/> or beneath it, by whole path components.</summary>
-    internal static bool Within(string inner, string outer)
+    /// <summary>
+    /// Whether <paramref name="inner"/> is <paramref name="outer"/> or beneath it, by whole path components — on Windows (<c>U-cell-windows</c>)
+    /// with either separator and without case, as NTFS resolves a path, so <c>C:\Users\X\AppData\Local\TradeAgent\STATE</c> is the
+    /// app's state as much as its own spelling is.
+    /// </summary>
+    internal static bool Within(string inner, string outer) => Within(inner, outer, OperatingSystem.IsWindows());
+
+    /// <summary><see cref="Within(string, string)"/> by the rules of Windows (<paramref name="windows"/>) or of Linux.</summary>
+    internal static bool Within(string inner, string outer, bool windows)
     {
-        if (outer == "/") return true;
-        return inner == outer || inner.StartsWith(outer + "/", StringComparison.Ordinal);
+        if (!windows)
+        {
+            if (outer == "/") return true;
+            return inner == outer || inner.StartsWith(outer + "/", StringComparison.Ordinal);
+        }
+        static string Norm(string p) => p.Replace('/', '\\').TrimEnd('\\');
+        var (i, o) = (Norm(inner), Norm(outer));
+        if (o.Length == 0 || (o.Length == 2 && o[1] == ':')) return i.StartsWith(o, StringComparison.OrdinalIgnoreCase);
+        return i.Equals(o, StringComparison.OrdinalIgnoreCase) || i.StartsWith(o + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
     static TradeAgentException Refused(string why) => new(ErrorCode.CELL_UNAVAILABLE, why);
+
+    /// <summary>
+    /// ON WINDOWS, WHERE A PATH REALLY LEADS: every component that is a symlink or a junction followed to its end, so a grant through
+    /// one is judged where it lands. Null when nothing along it is a link, or it cannot be read.
+    /// </summary>
+    static string? Resolved(string p)
+    {
+        try
+        {
+            var full = Path.GetFullPath(p);
+            var root = Path.GetPathRoot(full) ?? "";
+            var at = root;
+            var changed = false;
+            foreach (var part in full[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                at = Path.Combine(at, part);
+                FileSystemInfo info = System.IO.Directory.Exists(at) ? new DirectoryInfo(at) : new FileInfo(at);
+                if (info.Exists && info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                {
+                    at = target.FullName;
+                    changed = true;
+                }
+            }
+            return changed ? at : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+    }
 
     /// <summary>
     /// The file codex reads from its home and, present, lets REPLACE <c>CODEX_EXEC_SERVER_URL</c> (vendor environment_toml.rs:222-233):
@@ -486,8 +528,14 @@ public sealed class CellEgress
 /// way: refuse, never guess.</para>
 /// </summary>
 public sealed record CellPlatform(bool Linux, string Kernel, string Architecture, int LandlockAbi, string? LandlockError,
-    string? Lsm, string? UsernsRestricted)
+    string? Lsm, string? UsernsRestricted, bool Windows = false, int WindowsBuild = 0)
 {
+    /// <summary>
+    /// THE LOWEST WINDOWS BUILD A CELL RUNS ON (<c>U-cell-windows</c>): 22000, Windows 11 — the AppContainer, job and private-desktop
+    /// cell its probe measured on 26200 and CI's Server 2025. Below it, or on a processor the pinned codex is not built for, refused.
+    /// </summary>
+    public const int MinimumWindowsBuild = 22000;
+
     /// <summary>The lowest Landlock ABI a cell runs on: 6, kernel 6.12 (signal and abstract-UNIX-socket scoping).</summary>
     public const int MinimumAbi = 6;
 
@@ -495,6 +543,9 @@ public sealed record CellPlatform(bool Linux, string Kernel, string Architecture
     public static CellPlatform Read()
     {
         var arch = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        if (OperatingSystem.IsWindows())
+            return new CellPlatform(false, RuntimeInformation.OSDescription, arch, 0, "not Linux", null, null,
+                Windows: true, WindowsBuild: Environment.OSVersion.Version.Build);
         if (!OperatingSystem.IsLinux())
             return new CellPlatform(false, RuntimeInformation.OSDescription, arch, 0, "not Linux", null, null);
 
@@ -514,6 +565,15 @@ public sealed record CellPlatform(bool Linux, string Kernel, string Architecture
     {
         var versions = $"Landlock ABI found: {AbiFound}; minimum: {MinimumAbi}";
         const string none = "TradeAgent will not start the program, in a cell or outside one";
+        if (Windows)
+        {
+            if (WindowsBuild < MinimumWindowsBuild)
+                return $"A cell on Windows needs Windows 11 (build {MinimumWindowsBuild} or later), and this computer runs {Kernel} " +
+                       $"(build {WindowsBuild}). {none}.";
+            if (Architecture != "x64")
+                return $"A cell on Windows runs the pinned codex built for x64, and this computer is {Architecture} ({Kernel}). {none}.";
+            return null;
+        }
         if (!Linux)
             return $"A cell runs on Linux only, and this computer runs {Kernel} ({versions}). {none}.";
         if (Architecture is not ("x64" or "arm64"))
@@ -530,7 +590,9 @@ public sealed record CellPlatform(bool Linux, string Kernel, string Architecture
     }
 
     /// <summary>One line for the Mechanism row: what held the cell.</summary>
-    public string Summary => $"Landlock ABI {AbiFound} on Linux {Kernel} ({Architecture}; modules {Lsm ?? "unknown"})";
+    public string Summary => Windows
+        ? $"an AppContainer in a job of its own on {Kernel} (build {WindowsBuild}, {Architecture}), on a window station of its own"
+        : $"Landlock ABI {AbiFound} on Linux {Kernel} ({Architecture}; modules {Lsm ?? "unknown"})";
 
     static string? ReadLine(string path)
     {

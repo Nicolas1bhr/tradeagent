@@ -121,6 +121,14 @@ public static class ContainedLaunch
             return true;
         }
 
+        if (OperatingSystem.IsWindows() && cellPolicy is not null && cgroup is null)
+        {
+            // A WINDOWS CELL (U-cell-windows): this process stays outside, in the job the app (or the harness the app started) put it
+            // in, and starts the program in a cell of its own — an AppContainer slot inside a kill-on-close job of the stage's.
+            exitCode = WindowsCellStage.Run(cellPolicy, run[0], run.Skip(1).ToList(), error);
+            return true;
+        }
+
         if (OperatingSystem.IsWindows())
         {
             // Not a fallback: on Windows the app assigns the child to a Job Object, which is
@@ -362,6 +370,10 @@ public static class CellStage
             return Failed;
         }
 
+        // ON WINDOWS THERE IS NO SELF-CONFINING STAGE: a Windows cell is entered through --spawn-contained --cell (WindowsCellStage).
+        if (OperatingSystem.IsWindows())
+            return Refuse($"{ContainedLaunch.CellExecFlag} confines this process with Landlock and seccomp, which Windows has not; a Windows " +
+                          $"cell is entered through {ContainedLaunch.Flag} {ContainedLaunch.CellFlag}");
         var platform = CellPlatform.Read();
         if (platform.Refusal() is { } refusal) return Refuse(refusal);
 
@@ -401,12 +413,22 @@ public static class CellStage
     /// Why <paramref name="path"/> is not a policy file the app wrote, or null when it is: in the app's own cell folder, not a
     /// symlink, writable by nobody else, and on Linux owned by this account (triage #7).
     /// </summary>
-    static string? AppOwned(string path)
+    internal static string? AppOwned(string path)
     {
         var full = Path.GetFullPath(path);
         var info = new FileInfo(full);
         if (!info.Exists) return $"the cell policy {full} does not exist";
         if (info.LinkTarget is not null) return $"the cell policy {full} is a symlink";
+        if (OperatingSystem.IsWindows())
+        {
+            // ON WINDOWS: the folder the file is in, by its full path without case, is the app's own cell folder, and neither the file
+            // nor that folder is a link. The folder's DACL is the app home's, which only the account and the system hold.
+            var folder = new DirectoryInfo(Path.GetDirectoryName(full)!);
+            var own = Path.TrimEndingDirectorySeparator(Path.GetFullPath(CellPolicy.Directory));
+            if (folder.LinkTarget is not null || !string.Equals(Path.TrimEndingDirectorySeparator(folder.FullName), own, StringComparison.OrdinalIgnoreCase))
+                return $"the cell policy {full} is not in TradeAgent's own cell folder {CellPolicy.Directory}";
+            return null;
+        }
         var dir = CellNative.RealPath(CellPolicy.Directory);
         var real = CellNative.RealPath(full);
         if (dir is null || real is null || Path.GetDirectoryName(real) != dir)

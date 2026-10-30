@@ -151,7 +151,9 @@ public class ExecutorCellTests : IDisposable
                      ("a proof that is not route (a)'s", (db, _) => ThinkingSeatsTests.ProveCell(db), "no cell proof counts"),
                      ("route (a)'s proof measuring only none", (db, codex) => new CellProofStore(db).Record(RouteA.Provider,
                          CellBenchmark.Profile(RouteA.Provider, CellPlatform.Read(), codex.Install.ExecutableSha256!), [CellEgress.None.Name]),
-                      "measured only none"),
+                      // ON WINDOWS THIS IS THE LINUX PROVIDER'S PROOF, which counts for no Windows cell; a Windows proof of none alone
+                      // ADMITS a web launch under none there (the egress decision of 2026-10-30, CellWindowsProviderTests).
+                      OperatingSystem.IsWindows() ? "no cell proof counts" : "measured only none"),
                  })
         {
             using var db = Chart();

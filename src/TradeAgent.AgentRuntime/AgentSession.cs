@@ -467,7 +467,7 @@ public sealed class AgentSession(
     string? CellRefusal()
     {
         if (SeatClass != SeatPlan.CellClass) return null;
-        try { return RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", CellPlatform.Read(), RouteA.Egress).Refusal; }
+        try { return RouteA.AdmissionOn(cells, manifest.Install.ExecutableSha256 ?? "", CellPlatform.Read(), RouteA.Egress).Refusal; }
         catch (Exception ex) { return $"TradeAgent did not start the AI as a cell seat: it could not read its record of proven cells ({ex.Message})."; }
     }
 
@@ -1281,10 +1281,12 @@ public sealed class AgentSession(
         homes = null;
         survivors = null;
         var platform = CellPlatform.Read();
-        // THE EXECUTOR CELL'S ONE EGRESS (item 3): the constant the policy below is written with, admitted under a proof that measured it.
-        var (proof, refusal) = RouteA.Admission(cells, manifest.Install.ExecutableSha256 ?? "", platform, RouteA.Egress);
+        // THE EXECUTOR CELL'S ONE EGRESS (item 3): the constant the policy below is written with, admitted under a proof that measured it
+        // — on Windows the proof's own class when its rule could not be shown to hold (RouteA.AdmissionOn).
+        var (proof, egress, refusal) = RouteA.AdmissionOn(cells, manifest.Install.ExecutableSha256 ?? "", platform, RouteA.Egress);
         if (refusal is not null || proof is null || cells is null || manifest.Seat is not { } seat)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, refusal ?? "TradeAgent did not start the AI as a cell seat: it has no seat profile.");
+        if (platform.Windows) return StartInWindowsCell(psi, exe, attemptId, platform, proof, egress, seat, out homes, out survivors);
         var attempt = ProcessContainment.RouteAAttempt(cells.Cgroups, attemptId);
         string? policyFile = null;
         ContainedProcess? started = null;
@@ -1316,6 +1318,48 @@ public sealed class AgentSession(
             }
             else if (!attempt.Kill(TimeSpan.FromSeconds(3))) survivors = attempt.Left();
             if (survivors is null) attempt.Remove();
+            if (policyFile is not null) CellStage.Discard(policyFile);
+            throw ex is TradeAgentException { Code: ErrorCode.CELL_UNAVAILABLE } ? ex
+                : new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"TradeAgent did not start the AI as a cell seat: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// ROUTE (a) ON WINDOWS (<c>U-cell-windows</c> item 2): the same shape without a cgroup — the per-attempt codex homes made under a
+    /// key of the attempt's own, the cell's policy written under the egress its proof admits, the harness's <c>environments.toml</c>
+    /// naming TradeAgent's Windows cell stage, the harness started in a kill-on-close job of the app's (held, or refused), and the
+    /// launch's assurance written once from the Windows rows. A failure ends what started and throws <see cref="ErrorCode.CELL_UNAVAILABLE"/>.
+    /// </summary>
+    ContainedProcess StartInWindowsCell(ProcessStartInfo psi, string exe, string attemptId, CellPlatform platform, CellProof proof,
+        CellEgress egress, SeatPlan seat, out RouteA.Layout? homes, out IReadOnlyList<ProcessEntry>? survivors)
+    {
+        homes = null;
+        survivors = null;
+        var key = "w-" + (attemptId.Length > 0 && attemptId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ? attemptId + "-" : "")
+                  + Guid.NewGuid().ToString("n")[..12];
+        string? policyFile = null;
+        ContainedProcess? started = null;
+        try
+        {
+            var layout = RouteA.LayoutFor(key);
+            var policy = RouteA.WindowsPolicy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome, egress);
+            var launcher = cells!.Launcher ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                "TradeAgent's own trade command, which starts a cell, is not installed; nothing was started");
+            policyFile = policy.Write();
+            homes = layout;
+            RouteA.Make(layout, SeatProfile.ConfigBytes(seat), RouteA.EnvironmentsToml(launcher, null, policyFile, exe, Paths.Home),
+                Path.Combine(seat.Root, "codex", "auth.json"));
+            psi.Environment["CODEX_HOME"] = layout.HarnessCodexHome;
+            started = ProcessContainment.Start(psi, launcher, requireHeld: true, attemptId: attemptId);
+            if (!started.Held) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"the harness was not held ({started.Mechanism})");
+            cells.Assurance.Record(new CellAssurance(attemptId.Length > 0 ? attemptId : key, RouteA.WindowsProvider,
+                policy.Hash, proof.ProfileHash, proof.Id, platform.Kernel, 0, "", policy.Egress.Name,
+                key, RouteA.Harness, RouteA.AssuranceRows(proof.Id, policy.Egress, windows: true)));
+            return started;
+        }
+        catch (Exception ex)
+        {
+            if (started is not null && EndTree(started) is { Ended: false } end) survivors = end.Survivors;
             if (policyFile is not null) CellStage.Discard(policyFile);
             throw ex is TradeAgentException { Code: ErrorCode.CELL_UNAVAILABLE } ? ex
                 : new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"TradeAgent did not start the AI as a cell seat: {ex.Message}", ex);
