@@ -241,6 +241,25 @@ once and then deleted.
 CI exercises all four verbs over a real ssh to its own `linux-host` runner (`.github/workflows/build.yml`, "The fleet's
 tool, against this host"); it has never been pointed at the owner's machines.
 
+### linux-ui.sh — the app's window on that host, seen and pressed (M-org1)
+
+Same env file, same rule: nothing here names the host. The display, its X cookie and the account are read from
+`tradeagent.service` itself; every X call runs as the app's account with the cookie in place (never copied or printed), and
+it goes around VNC, so the VNC pass file is never touched.
+
+```bash
+tools/linux-ui.sh setup                          # apt-get xdotool + imagemagick on the host (sudo -n), once
+tools/linux-ui.sh shot /tmp/ui.png               # the whole display as a PNG, copied back; refuses to leave a non-PNG
+tools/linux-ui.sh click 600 300 [double]         # display pixels = the shot's pixels
+tools/linux-ui.sh scroll 600 400 down 5
+tools/linux-ui.sh type "some text"               # into the focused control
+tools/linux-ui.sh key Return                     # xdotool key names; chords like ctrl+a
+```
+
+It presses what the owner could press, so it runs only inside a sitting he has said yes to — never live mode, real money,
+a credential field or his sign-in. Look at every shot before the next press. It reads none of the app's state; read that
+with read-only SQL.
+
 ## winagent/ — driving the Windows GUI without a person
 
 `probe atas` answers the measurement question. This answers the other one: **who presses the buttons.**
