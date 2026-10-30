@@ -1364,7 +1364,13 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         // Refused here rather than inside TradingGateway because it is a fact about the CALLER, not
         // about the order: the gateway's modes, limits, approvals and kill switch are unchanged and
         // still apply to everything that gets past this.
-        if (Core.Ops.IsMutating(req.Op) && !ctx.MayPlaceOrders)
+        // THE ONE CARVE-OUT (U-org-autonomy item 5; R25 D9): a position beyond the legacy pair STOPS A PAPER RUN its own subtree caused —
+        // which only ever removes exposure on a practice account. It is let past this line to its handler, which proves the caller with
+        // OrgVerbCaller and refuses anything but a PAPER deployment of a version authored in its subtree (PositionsPaperStopRefusal).
+        // Every order op — buy, sell, modify, cancel, close and their kin — stays refused here for every role but the one that trades.
+        var positionStops = req.Op == Core.Ops.DeploymentStop && ctx.Role is { } stopper && CouncilRoles.IsPositionId(stopper)
+                            && !CouncilRoles.IsKnown(stopper) && !Core.Board.BoardSeats.IsBoardId(stopper);
+        if (Core.Ops.IsMutating(req.Op) && !ctx.MayPlaceOrders && !positionStops)
         {
             // THE ROLE MAY, THIS LAUNCH MAY NOT (ORDER-001, U-grant-tree): an Operations launch that started beside
             // another attempt's unconfined process holds no order permission, and is told why in the grant's own words.
@@ -1437,7 +1443,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
                 Core.Ops.RunTrades    => RunTrades(ctx, req),
                 Core.Ops.Verdict      => VerdictFor(ctx, req, ct),
-                Core.Ops.DeploymentList => DeploymentList(),
+                Core.Ops.DeploymentList => DeploymentList(ctx),
                 Core.Ops.LedgerAdd    => LedgerAdd(ctx, req),
                 Core.Ops.LedgerRevise => LedgerRevise(ctx, req),
                 Core.Ops.LedgerList   => LedgerList(req),
@@ -4061,13 +4067,18 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// own policy inside the grant the account owner pressed once, like an envelope and like an
     /// allocation; an agent that wanted one has nowhere to ask.</para>
     /// </summary>
-    object DeploymentList() => new DeploymentListReply(
+    object DeploymentList(AgentContext ctx) => new DeploymentListReply(
         "A paper deployment is TradeAgent running a frozen strategy version forward on a practice "
         + "account, inside the paper envelope standing on that account. It carries NO capital "
         + "and NO live authority, its fills are simulated, and nothing it produces is execution "
         + "evidence. You cannot start one, widen one, point it somewhere else or move its cursor; "
-        + "'deployment-stop' ends one, which only ever removes exposure.",
-        [.. gateway.DeploymentReadings().Select(d => new DeploymentListReplyRow(
+        + "'deployment-stop' ends one, which only ever removes exposure."
+        + (OrgPositionOf(ctx) is not null
+            ? " As a position of the organisation you see, and may stop, only the paper runs of versions authored in your own subtree — "
+              + "your own and those of every position under the units you head."
+            : ""),
+        [.. gateway.DeploymentReadings().Where(d => OrgPositionOf(ctx) is not { } position || AuthoredUnder(position, d.VersionId))
+            .Select(d => new DeploymentListReplyRow(
             d.Id, d.VersionId, d.Symbol, d.ConnectorId, d.AccountId, d.Mode, d.State, d.StartedAt,
             d.CursorOpenTime, d.SuspendedReason, d.EndedAt, d.EndReason, d.Operations, d.Unresolved,
             d.Line))]);
@@ -4091,6 +4102,16 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         var id = Require(req, "id");
         var who = ctx.Role is { Length: > 0 } role ? CouncilRoles.Title(role) : ctx.SessionId;
 
+        // A POSITION BEYOND THE LEGACY PAIR, past the order gate's one carve-out (U-org-autonomy item 5): proven by OrgVerbCaller before
+        // anything is read, then held to PAPER and its own subtree's versions — refused in words, nothing ended, otherwise.
+        if (!ctx.MayPlaceOrders)
+        {
+            var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+            if (gateway.Deployments.ById(id) is { } row && PositionsPaperStopRefusal(position, row) is { } notYours)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, notYours);
+            who = position;
+        }
+
         if (gateway.Deployments.ById(id) is null)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"there is no deployment {Short(id)} on this installation. 'deployment-list' says "
@@ -4106,6 +4127,47 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             ended.State, ended.StartedAt, ended.CursorOpenTime, ended.SuspendedReason, ended.EndedAt,
             ended.EndReason, reading?.Operations ?? 0, reading?.Unresolved ?? 0,
             reading?.Line ?? ended.State);
+    }
+
+    /// <summary>
+    /// THE POSITION BEYOND THE LEGACY PAIR THIS CALLER IS (<c>U-org-autonomy</c> item 5), or null for the legacy pair, the owner, an app
+    /// principal or a board seat — every one of which reads <c>deployment-list</c> whole, as before. A position the chart does not hold as
+    /// active is still a position: it reads nothing beyond its own, never the whole list.
+    /// </summary>
+    static string? OrgPositionOf(AgentContext ctx) =>
+        ctx.Role is { } role && CouncilRoles.IsPositionId(role) && !CouncilRoles.IsKnown(role) && !Core.Board.BoardSeats.IsBoardId(role)
+            ? role
+            : null;
+
+    /// <summary>
+    /// WHETHER <paramref name="versionId"/> WAS AUTHORED IN <paramref name="position"/>'S OWN SUBTREE: by the position itself, or by a position
+    /// of a unit it heads or one below it (<see cref="OrgStore.SubtreeOf"/>). A version or chart that cannot be read is not.
+    /// </summary>
+    bool AuthoredUnder(string position, string versionId)
+    {
+        try
+        {
+            if (gateway.Strategies.VersionById(versionId)?.Role is not { } author) return false;
+            if (author == position) return true;
+            if (OrgStore.IsAppPrincipal(author) || gateway.Org.UnitOf(author) is not { } unit) return false;
+            return gateway.Org.SubtreeOf(position).Any(u => u.Id == unit.Id);
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// WHY <paramref name="position"/> MAY NOT STOP <paramref name="deployment"/>, in words, or null (<c>U-org-autonomy</c> item 5; R25 D9): only a
+    /// PAPER run, and only one of a version authored in its own subtree. A live run — or any mode but paper — is the runner's and the board's.
+    /// </summary>
+    string? PositionsPaperStopRefusal(string position, StrategyDeploymentRow deployment)
+    {
+        if (!string.Equals(deployment.Mode, TradingMode.PAPER.ToString(), StringComparison.Ordinal))
+            return $"deployment {Short(deployment.Id)} runs in {deployment.Mode}, and a position stops only a PAPER run: anything else is the "
+                   + "runner's and the security board's. Nothing was ended.";
+        if (!AuthoredUnder(position, deployment.VersionId))
+            return $"deployment {Short(deployment.Id)} runs version {Short(deployment.VersionId)}, which was not authored in {position}'s own "
+                   + "subtree: a position stops only the paper runs its own work caused. 'deployment-list' shows yours. Nothing was ended.";
+        return null;
     }
 
     /// <summary>What <c>deployment-list</c> answers with. The sentence is part of the reply, not a doc comment.</summary>

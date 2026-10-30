@@ -531,7 +531,13 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         var reach = AgentReach.For(role, runtime);
         // AND THE ORGANISATION'S VERBS ON A SEAT THAT CANNOT CARRY THEM (U-org-assignments-a): the broker serves them only to a
         // launch whose recorded assurance carries the decision verbs, and a CLI seat is unconfined.
-        bool Refused(string op) => Ops.IsMutating(op) && !CouncilRoles.MayPlaceOrders(role)
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 5 (R25 D9): the pipe's line has ONE carve-out — `deployment-stop` from a position beyond
+        // the legacy pair, proven by OrgVerbCaller and held to its own subtree's PAPER runs (OrgAutonomyTests) — and the reach of a broker or
+        // cell seat, whose assurance carries that caller gate, lists it. Every other mutating op stays refused every role but the one that
+        // trades, on every runtime.
+        bool PositionStops(string op) => op == Ops.DeploymentStop && runtime is RuntimeClass.Broker or RuntimeClass.Cell
+                                         && CouncilRoles.IsPositionId(role) && !CouncilRoles.IsKnown(role);
+        bool Refused(string op) => Ops.IsMutating(op) && !CouncilRoles.MayPlaceOrders(role) && !PositionStops(op)
                                    || runtime == RuntimeClass.Cli && !AgentReach.CarriedBy(op, TradeAgent.Core.Db.SeatClasses.Cli);
         log.WriteLine($"{role}·{runtime}: {reach.Verbs.Count} verbs, tools {string.Join(" ", reach.Tools)}, "
                       + $"writes {string.Join(" ", reach.Writes)}, wake {reach.WakeFile ?? "none"}");

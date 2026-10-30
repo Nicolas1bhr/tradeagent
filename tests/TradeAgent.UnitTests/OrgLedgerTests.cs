@@ -481,6 +481,9 @@ public class OrgLedgerTests
         // a READ, and ChiefWakeAfter a pure sentence. No op, verb or board act reaches any of them
         // (OrgChiefTests.No_op_or_verb_reaches_the_wake_once_press); OrgStore.ChiefWake.cs holds no SQL of its own.
         mandate = [.. mandate, "ChiefWakeAfter", "PreviewChiefWake", "WakeChiefOnce"];
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 4: ActiveChief — a READ, the root's head while its position is active, which the owner's
+        // words and his material are routed by (MissionEventStore.OwnerRecipient). It writes nothing.
+        mandate = [.. mandate, "ActiveChief"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
