@@ -161,6 +161,20 @@ public sealed partial class TradingGateway
         return seat;
     }
 
+    /// <summary>
+    /// THE OWNER ACTIVATES A DORMANT BOARD SEAT (<c>U-board-alive</c> item 1) — his press, in process only: written by the store only when
+    /// <paramref name="hostRefusal"/> — the host's facts: the class it would start on, a proven cell — admits it. Launches nothing.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat ActivateBoardSeat(string id, Func<BoardSeat, string?> hostRefusal)
+    {
+        var seat = _board.ActivateBoardSeat(id, hostRefusal, Now);
+        _log.Activity($"You activated the security board's seat {seat.Id} ({seat.SeatClass}). It turns only when a proposal wakes it, and "
+                      + "while a board seat is active your own presses over the chief and the positions' activation are the board's.");
+        StateChanged?.Invoke();
+        return seat;
+    }
+
     /// <summary>THE OWNER RETIRES A BOARD SEAT — his press, in process only; the board kept on at least two model classes.</summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
     public BoardSeat RetireBoardSeat(string id)

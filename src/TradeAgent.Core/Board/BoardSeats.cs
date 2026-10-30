@@ -36,14 +36,17 @@ public static class BoardSeats
 
 /// <summary>
 /// A BOARD SEAT'S LIFE (<c>board_seat_state</c>, rung 51): a seat's row is sealed and says <see cref="Dormant"/> for ever, so its state
-/// now is its latest state row. Nothing in the product launches or activates a board seat yet (ORCHESTRATION § 2.3).
+/// now is its latest state row. Only the owner's in-process press activates one, and only where the host could seat it (ORCHESTRATION § 2.3).
 /// </summary>
 public static class BoardSeatStatus
 {
     /// <summary>Founded and never launched: no turn, no act, no reach.</summary>
     public const string Dormant = "dormant";
 
-    /// <summary>Past the activation gate and acting — written by the app alone (in this build, by the test host's seam only).</summary>
+    /// <summary>
+    /// Past the activation gate and acting — written by the app alone: on the owner's in-process press, once the host's facts admit it
+    /// (<see cref="BoardStore.ActivateBoardSeat"/>), and by the test host's seam.
+    /// </summary>
     public const string Active = "active";
 
     /// <summary>Retired by the owner's press (CHANGE-001): no turn, no act, and never active again.</summary>
@@ -81,6 +84,35 @@ public static class BoardSeatGate
             $"board seat {id} is {seat.Status}, not active, so no turn is launched for it (R24 § 4.1: only an active seat turns). "
             + "Nothing was written.")
     };
+
+    /// <summary>
+    /// THE OWNER'S ACTIVATION OF A DORMANT SEAT, ASKED BEFORE ANYTHING IS WRITTEN (<c>U-board-alive</c> item 1; R24 § 4.1, CHANGE-001 —
+    /// the board's composition is his, in process): null when <paramref name="seat"/> may be made active on this host, otherwise why not,
+    /// in words. The facts are the host's, read where asked: <paramref name="declaredClass"/> is the class of the seat this host would
+    /// start it on, <paramref name="puppet"/> a test host's puppet (never in the product), <paramref name="provenCell"/> whether this host
+    /// holds a RECORDED proven cell. A seat is activated only where it could sit: on the class it was founded on, carrying the board's
+    /// verbs — which only the app's door serves (a broker-only or confined seat), never the harness's own surface — and, running a real
+    /// model, never before a proven cell (containment). Activation launches nothing: every turn still passes <see cref="Decide"/>.
+    /// </summary>
+    public static string? ActivationRefusal(string id, BoardSeat? seat, string? declaredClass, bool puppet, bool provenCell)
+    {
+        if (seat is null || seat.Id != id) return $"'{id}' is no seat of the security board.";
+        if (seat.Status == BoardSeatStatus.Retired) return $"board seat {id} is retired, and a retired seat never acts again.";
+        if (seat.Status == BoardSeatStatus.Active) return $"board seat {id} is active already.";
+        if (seat.SeatClass == SeatClasses.Harness)
+            return $"board seat {id} is founded on the app's harness, and in this build only the app's door — served to a broker-only or "
+                   + "confined seat — carries the board's verbs: on the harness it would sit with nothing it could do. Found a broker seat "
+                   + "in its place.";
+        if (declaredClass is null)
+            return $"board seat {id} has no AI runtime chosen or prepared to start on, so it is not activated.";
+        if (declaredClass != seat.SeatClass)
+            return $"board seat {id} is founded on a {seat.SeatClass} seat and this host would start it on a {declaredClass} seat: a board "
+                   + "seat sits only on the class it was founded on.";
+        if (!puppet && !provenCell)
+            return $"board seat {id} would run a real model ({seat.SeatClass}) and this host has no proven executor cell recorded: no board "
+                   + "seat is activated before one (R24 § 4.1, ORCHESTRATION § 2.3).";
+        return null;
+    }
 
     /// <summary>
     /// THE GATE'S ONE RULE FOR A BOARD SEAT: null when <paramref name="id"/> may launch now on the seat about to start
