@@ -333,8 +333,26 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         // v7 (U-board-a2): the allowlist is the security board's policy in force, shown on the Board page, and permission lives only
         // in that policy and the owner's own presses — the Safety page is gone.
         (7, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
-        (7, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc")
+        (7, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc"),
+        // v8 (U-org-canon): every position beyond the pair is written the ORGANISATION's mission and the role part of its place —
+        // the chief, a head, staff, an executor — whose verb lists are generated from its seat's reach; the pair's words are v7's.
+        (8, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
+        (8, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc"),
+        (8, "org", "2993dcbfe67fd0b934ccc7d600c153598ec109abfedda9f95a05903c2382cd9f"),
+        (8, "org:chief", "ef2fea1fe457b3c473629c2e6e129d4dc8bc20c8a7bdb80e330bc9094698ae60"),
+        (8, "org:head", "cfc1f3dbfa515a0b46f36a659422699653c95c3df3bdf90f069eb29e28046774"),
+        (8, "org:staff", "c564cd8018c842fda1d22cf5ff4033b33f220c272e984ff52a18fc1081cc5708"),
+        (8, "org:executor", "02ef6f4ed26ccc64f355d083324571d0b08b7b22cd21c28ed23f14fa1d1e1487")
     ];
+
+    /// <summary>
+    /// Every seat the ledger holds at <see cref="Canon.Version"/>: the pair by role; from v8 an organisation position by its place
+    /// (<c>org:&lt;place&gt;</c>), and <c>org</c> for one whose place nobody could read.
+    /// </summary>
+    static IEnumerable<(string Seat, string Template)> Seats() =>
+        CouncilRoles.All.Select(r => (r, Canon.Template(r)))
+            .Append(("org", Canon.Template(Position)))
+            .Concat(TradeAgent.Core.Db.OrgPlace.All.Select(p => ($"org:{p}", Canon.Template(Position, p))));
 
     /// <summary>
     /// (d) A CANON CHANGE WITHOUT A NEW VERSION IS REFUSED. Every seat's template at this build's version must hash to
@@ -353,15 +371,18 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         Assert.Equal(Canon.Version, Ledger.Max(l => l.Version));
         Assert.Equal(Enumerable.Range(1, Canon.Version), Ledger.Select(l => l.Version).Distinct());
 
-        foreach (var seat in CouncilRoles.All)
+        // EVERY SEAT'S MISMATCH SAID AT ONCE, so a new version's lines are written in one pass.
+        var changed = new List<string>();
+        foreach (var (seat, template) in Seats())
         {
             var entry = Assert.Single(Ledger, l => l.Version == Canon.Version && l.Seat == seat);
-            var now = Sha256Hex.Of(Canon.Template(seat));
+            var now = Sha256Hex.Of(template);
             log.WriteLine($"v{Canon.Version} {seat}: {now}");
-            Assert.True(entry.Sha256 == now,
-                $"the {CouncilRoles.Title(seat)}'s canon changed without a new version: v{Canon.Version} is {entry.Sha256} "
-                + $"in the ledger and the template hashes to {now}. Raise Canon.Version and add its lines to the ledger.");
+            if (entry.Sha256 != now)
+                changed.Add($"the {CouncilRoles.Title(seat)}'s canon changed without a new version: v{Canon.Version} is {entry.Sha256} "
+                            + $"in the ledger and the template hashes to {now}. Raise Canon.Version and add its lines to the ledger.");
         }
+        Assert.True(changed.Count == 0, string.Join("\n", changed));
     }
 
     // ---- (e) the canon fits in half the vendor's read limit --------------------------------------------

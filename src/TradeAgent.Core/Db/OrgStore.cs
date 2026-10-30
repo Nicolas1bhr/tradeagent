@@ -481,8 +481,8 @@ public sealed partial class OrgStore(Database db)
     /// ONE POSITION'S STANDING, or null because the chart holds no position by exactly that id — an app principal, a name
     /// that is not a position id, and an unknown id included, none of them folded into another. Its kind is DERIVED:
     /// <see cref="OrgPositionKind.Head"/> where a unit's head is this position, <see cref="OrgPositionKind.Staff"/> in a
-    /// <see cref="OrgUnitKind.Staff"/> unit, else <see cref="OrgPositionKind.Member"/>; its home is computed from the id.
-    /// Read in one snapshot. The seam <see cref="PositionActivation.Refusal"/> reads it (<c>U-org-principals</c>).
+    /// <see cref="OrgUnitKind.Staff"/> unit, else <see cref="OrgPositionKind.Member"/>; its home is computed from the id, and the kind
+    /// of the unit it heads is carried for its place (<see cref="OrgPlace"/>). Read in one snapshot. The seam <see cref="PositionActivation.Refusal"/> reads it (<c>U-org-principals</c>).
     /// </summary>
     public PositionStanding? Standing(string id)
     {
@@ -491,17 +491,18 @@ public sealed partial class OrgStore(Database db)
         {
             using var c = db.Cmd("""
                 SELECT p.id, p.unit_id, p.status, u.kind,
-                       EXISTS (SELECT 1 FROM org_unit h WHERE h.head_position_id = p.id)
+                       (SELECT h.kind FROM org_unit h WHERE h.head_position_id = p.id ORDER BY h.id LIMIT 1)
                   FROM org_position p JOIN org_unit u ON u.id = p.unit_id
                  WHERE p.id = $id
                 """, ("$id", id));
             using var r = c.ExecuteReader();
             if (!r.Read()) return null;
-            var kind = r.GetInt64(4) != 0 ? OrgPositionKind.Head
+            var heads = r.IsDBNull(4) ? null : r.GetString(4);
+            var kind = heads is not null ? OrgPositionKind.Head
                 : r.GetString(3) == OrgUnitKind.Staff ? OrgPositionKind.Staff
                 : OrgPositionKind.Member;
             return new PositionStanding(r.GetString(0), r.GetString(1), r.GetString(2), kind,
-                CouncilRoles.IsKnown(id), CouncilRoles.HomeDir(id));
+                CouncilRoles.IsKnown(id), CouncilRoles.HomeDir(id), heads);
         });
     }
 
