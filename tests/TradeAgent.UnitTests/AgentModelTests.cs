@@ -62,8 +62,9 @@ public class AgentModelTests
     public void The_model_asked_for_is_the_owners_choice_then_the_manifests_default_then_none()
     {
         var codex = Codex();
-        Assert.Equal("gpt-5.6-sol", codex.ModelFor(null));
-        Assert.Equal("gpt-5.6-sol", codex.ModelFor(""));
+        // THE DEFAULT MOVED TO gpt-6-luna (U-seat-models; R25 D8), from gpt-5.6-sol.
+        Assert.Equal("gpt-6-luna", codex.ModelFor(null));
+        Assert.Equal("gpt-6-luna", codex.ModelFor(""));
         Assert.Equal("gpt-5.6-luna", codex.ModelFor("gpt-5.6-luna"));
 
         var noFlag = new RuntimeManifest { Id = "custom", DefaultModel = "does-not-matter" };
@@ -95,6 +96,6 @@ public class AgentModelTests
     public void An_untouched_installation_still_runs_on_a_model_somebody_chose()
     {
         Assert.Null(new TradeAgentSettings().SelectedModelId);
-        Assert.Equal("gpt-5.6-sol", Codex().ModelFor(new TradeAgentSettings().SelectedModelId));
+        Assert.Equal("gpt-6-luna", Codex().ModelFor(new TradeAgentSettings().SelectedModelId));   // gpt-5.6-sol before U-seat-models (R25 D8)
     }
 }

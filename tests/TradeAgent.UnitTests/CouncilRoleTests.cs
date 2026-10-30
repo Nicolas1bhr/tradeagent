@@ -248,7 +248,7 @@ public class CouncilRoleTests
 }
 
 /// <summary>
-/// The default the brief names — <c>gpt-5.6-sol</c> — lives in the runtime manifest, where a
+/// The default the brief names — <c>gpt-6-luna</c> since <c>U-seat-models</c> (R25 D8; <c>gpt-5.6-sol</c> before) — lives in the runtime manifest, where a
 /// vendor's model names belong, and not in the settings class. Asserted where it actually is, so
 /// that "the role runs on gpt-5.6-sol out of the box" is a claim about the shipped data.
 ///
@@ -265,7 +265,7 @@ public class CouncilRoleModelDefaultTests
         var codex = RuntimeCatalog.Find("codex")!;
         var settings = new TradeAgentSettings();
 
-        Assert.Equal("gpt-5.6-sol", codex.ModelFor(settings.ModelForRole(CouncilRoles.Research)));
-        Assert.Equal("gpt-5.6-sol", codex.ModelFor(settings.ModelForRole(CouncilRoles.Operations)));
+        Assert.Equal("gpt-6-luna", codex.ModelFor(settings.ModelForRole(CouncilRoles.Research)));
+        Assert.Equal("gpt-6-luna", codex.ModelFor(settings.ModelForRole(CouncilRoles.Operations)));
     }
 }
