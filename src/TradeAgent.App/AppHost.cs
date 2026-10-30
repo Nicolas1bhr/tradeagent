@@ -910,6 +910,34 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// RUNS THE WINDOWS HOST BENCHMARK ONCE (<see cref="WindowsCellBenchmark"/>) and says what it found in the activity log — the Windows
+    /// counterpart of <see cref="ProveCellsAsync"/>. The pinned codex is the one this install would start. Never throws.
+    /// </summary>
+    void RunWindowsBenchmark(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows()) _ = ProveWindowsCellsAsync(ct);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    async Task ProveWindowsCellsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var manifest = RuntimeCatalog.Load().FirstOrDefault(m => m.Id == "codex");
+            var exe = manifest is null ? null : new CliAgentRuntime(manifest).ResolveExecutable();
+            if (manifest is not null && exe is not null && !SeatProfile.IsPin(manifest, exe)) exe = null;
+            BenchResult result;
+            using (_presence.Enter())
+                result = await WindowsCellBenchmark.RunAsync(_db!, exe, manifest?.Install.ExecutableSha256 ?? "", ct: ct);
+            Gateway.Log.Activity("Cell benchmark: " + result.Sentence, result.ProofId is null ? "warn" : "info");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
+        }
+    }
+
     string? PricingRuntime => PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId);
 
     /// <summary>Every model this build ships a price for on the runtime in force. The Safety page's row.</summary>
@@ -1315,6 +1343,9 @@ public sealed class AppHost : IAsyncDisposable
             // the legacy pair activate (ORCHESTRATION § 2.3) — bound to this machine, kernel, boot and build. In the background, and
             // inside the presence register: a cell's processes are agent processes.
             if (OperatingSystem.IsLinux() && cgroups.Held) _ = Task.Run(() => ProveCellsAsync(cgroups, _loop.Token));
+            // AND AT EVERY START ON WINDOWS (U-cell-windows item 3): the Windows benchmark writes the Windows proof the gate reads, through
+            // the product's own path (the cell stage, a slot's AppContainer and its job). No cgroup there — the job is the leash.
+            else if (OperatingSystem.IsWindows()) { var t = _loop.Token; _ = Task.Run(() => RunWindowsBenchmark(t)); }
 
             // ON START, BEFORE THE LOOP TAKES A TURN. A crash between a role's publication and the
             // copy into the recipient's folder leaves a task pointing at a file that is not there;
