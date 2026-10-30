@@ -97,6 +97,9 @@ public sealed class CellWindowsProbeTests : IDisposable
     static void Require(bool ok, string what) => Assert.True(ok, $"missing prerequisite for the Windows cell rows: {what}");
 
     static string System32 => Environment.GetFolderPath(Environment.SpecialFolder.System);
+
+    /// <summary>"Client" or "Server", as Windows records its own installation type.</summary>
+    static string Edition => Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "InstallationType", "") as string ?? "";
     static string Windows => Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 
     /// <summary>The whole environment a probe cell starts with: the system's own names, the cell's home and codex home, TEMP the workspace.</summary>
@@ -124,6 +127,7 @@ public sealed class CellWindowsProbeTests : IDisposable
         Require(p.WaitForExit(60_000), $"{program} ended within 60 s");
         var text = (await so) + (await se);
         _out.WriteLine($"> {Path.GetFileName(program)} {string.Join(' ', args)}  [caps {(caps is { Count: > 0 } ? string.Join(',', caps) : "none")}; desktop {(ownDesktop ? p.Desktop : "the caller's")}]");
+        Assert.True(ownDesktop == p.Desktop.StartsWith("TradeAgent-cell-", StringComparison.Ordinal), $"the cell's desktop: '{p.Desktop}'");
         _out.WriteLine($"  exit {p.ExitCode} (0x{p.ExitCode:X8}): {text.Trim().Replace("\r", "").Replace('\n', ' ')}");
         return (p.ExitCode, text);
     }
@@ -216,7 +220,22 @@ public sealed class CellWindowsProbeTests : IDisposable
         _out.WriteLine($"the container's own folder {ac}: " + (Directory.Exists(ac)
             ? string.Join(", ", Directory.EnumerateFileSystemEntries(ac, "*", SearchOption.AllDirectories).Select(e => Path.GetRelativePath(ac, e)).Take(40))
             : "absent"));
-        Assert.Equal(0, layers);
+        _out.WriteLine($"this host: Windows {Edition} {Environment.OSVersion.Version}");
+        if (Edition == "Server")
+        {
+            // WINDOWS SERVER (CI's image, 26100) REFUSES WHAT WINDOWS 11 GRANTS (measured: CI runs 41110438315, 41116396083 against the
+            // tests box's 26200): the pinned codex cannot canonicalize its own read-only home from an AppContainer there — so
+            // environmentConfig/read fails — and a child given the null device is refused. Asserted as what this edition does, so the
+            // day it changes this row says so; the route is claimed on Windows 11 alone, where the row below holds.
+            Assert.Contains("failed to canonicalize CODEX_HOME", es.Stderr, StringComparison.Ordinal);
+            Assert.Equal(-1, layers);
+            Assert.True(piped, "on Server a child given the null device is refused");
+        }
+        else
+        {
+            Assert.Equal(0, layers);
+            Assert.False(piped, "on Windows 11 a child given the null device starts");
+        }
         Assert.Equal(0, exit);
         Assert.Equal(_ws.TrimEnd('\\'), output.Split('\n')[0].Trim().TrimEnd('\\'), ignoreCase: true);
         Assert.Empty(Directory.EnumerateFileSystemEntries(_codexHome));
@@ -236,8 +255,13 @@ public sealed class CellWindowsProbeTests : IDisposable
         GrantCodex(codex);
         // THE CONTROL: on the window station this test runs on, which no ACE grants the container, codex cannot start — so a cell
         // that starts below is on its own, and the owner's station and desktop are not the container's.
+        // THE CONTROL IS PRINTED, NOT ASSERTED: whether the caller's station admits an AppContainer is the HOST's — closed on the tests
+        // box (0xC0000142, 26200), open on CI's runner session (exit 0, run 41116396083). The cell never depends on it: it is always
+        // started on a station of its own, which the line below asserts by name.
         var (control, _) = await Run(codex, ["--version"], ownDesktop: false);
-        Assert.Equal(unchecked((int)0xC0000142), control);
+        _out.WriteLine(control == unchecked((int)0xC0000142)
+            ? "the caller's window station is closed to an AppContainer on this host"
+            : $"the caller's window station is OPEN to an AppContainer on this host (exit {control})");
         var (codexCode, codexOut) = await Run(codex, ["--version"]);
         var (cmdCode, _) = await Run(Path.Combine(System32, "cmd.exe"), ["/d", "/c", "ver & set"]);
         var (curlCode, _) = await Run(Path.Combine(System32, "curl.exe"), ["--version"]);
