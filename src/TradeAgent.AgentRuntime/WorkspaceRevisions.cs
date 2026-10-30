@@ -56,11 +56,23 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     public const int JournalLines = 200;
 
     /// <summary>
-    /// THE BYTES ONE LINE OF A PLAN OR JOURNAL MAY TAKE, ON AVERAGE (<c>U-execution-environment</c> fix pass 5, P1): each file is read
-    /// under its line budget times this, so a file far past any plan — a sparse gigabyte a cell made in an instant — is refused by its
-    /// size before a byte is read, never allocated and decoded on every turn before its lines are counted.
+    /// THE MOST BYTES OF A PLAN TRADEAGENT READS (<c>U-runway-fixes</c> item 5; the size guard of <c>U-execution-environment</c> fix pass 5,
+    /// P1): a file past it — a sparse gigabyte a cell made in an instant — is refused by its size before a byte is read, never allocated,
+    /// and the turn is told it in bytes. A cap in BYTES, no longer the line budget times 1 KiB: that refused a plan inside its 60 lines
+    /// whose lines averaged over 1 KiB — a model's paragraphs — and told it to come under 60 lines, which it already was.
+    /// <para><b>Sized for a 72-hour unattended run:</b> a plan is rewritten, never appended, so the run's length adds nothing to it; the
+    /// guard must admit 60 lines at any width a model writes — 256 KiB is 60 lines at 4.3 KiB each, four times the old guard.</para>
     /// </summary>
-    public const int LineBytes = 1024;
+    public const int PlanBytes = 256 * 1024;
+
+    /// <summary>
+    /// THE MOST BYTES OF A JOURNAL TRADEAGENT READS (<c>U-runway-fixes</c> item 5), refused unread past it as <see cref="PlanBytes"/> is.
+    /// <para><b>Sized for a 72-hour unattended run:</b> the journal gains an entry a turn — at the 30-minute look alone a seat takes 144
+    /// turns in 72 hours, more on events — and its line budget, not this guard, is what makes its owner move older entries to
+    /// <see cref="ArchiveDir"/>; so the most it holds is 200 non-empty lines whatever the run's length, and 1 MiB admits them at 5.2 KiB
+    /// each, five times the old 200 KiB guard, which refused a 200-line journal of 1 KiB lines before its line budget did.</para>
+    /// </summary>
+    public const int JournalBytes = 1024 * 1024;
 
     /// <summary>
     /// Where the agent moves what no longer fits, and where the app keeps a refused file before it
@@ -76,11 +88,11 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     /// </summary>
     const int KeptNames = 100;
 
-    /// <summary>The two files that cross a fresh session, and the budget each is held to.</summary>
-    public static readonly (string Kind, string Path, int Lines)[] Files =
+    /// <summary>The two files that cross a fresh session, the budget each is held to in lines, and the most of each TradeAgent reads.</summary>
+    public static readonly (string Kind, string Path, int Lines, int Bytes)[] Files =
     [
-        (PublicationKind.Plan, "trading/PLAN.md", PlanLines),
-        (PublicationKind.Journal, "trading/JOURNAL.md", JournalLines)
+        (PublicationKind.Plan, "trading/PLAN.md", PlanLines, PlanBytes),
+        (PublicationKind.Journal, "trading/JOURNAL.md", JournalLines, JournalBytes)
     ];
 
     /// <summary>
@@ -125,7 +137,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
         // A SEAT OF THE SECURITY BOARD KEEPS NO VERSIONED MEMORY IN THE APP'S RECORDS (U-board-b2 item 3): its folder is read by no one.
         if (Core.Board.BoardSeats.IsBoardId(role)) return restores;
 
-        foreach (var (kind, rel, cap) in Files)
+        foreach (var (kind, rel, cap, capBytes) in Files)
         {
             var home = homeOf(role);
 
@@ -141,13 +153,13 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             // whole home, so either file — or `trading/` — may be a link it aimed at a login or a file outside. HomeFiles opens each
             // component without following one, so a linked file is unreadable: refused, nothing kept and nothing put back over it.
             //
-            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its line budget in bytes (LineBytes), a file over it refused by its size
-            // unread — so it has no bytes to keep, and nothing is put back over it.
+            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its cap in bytes (PlanBytes, JournalBytes), a file over it refused by its
+            // size unread — so it has no bytes to keep, and nothing is put back over it — and said in bytes, never in lines.
             byte[]? bytes;
             string? tooLarge = null;
-            try { bytes = HomeFiles.ReadAll(home, rel, (long)cap * LineBytes); }
+            try { bytes = HomeFiles.ReadAll(home, rel, capBytes); }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { continue; }
-            catch (HomeFileTooLarge big) { bytes = null; tooLarge = $"is {big.Length:N0} bytes and the limit is {big.Cap:N0}"; }
+            catch (HomeFileTooLarge big) { bytes = null; tooLarge = $"is {big.Length:N0} bytes and the limit is {big.Cap:N0} bytes"; }
             catch (Exception) { bytes = null; }      // unreadable reads as refused, below
             var content = bytes is null ? null : Text(bytes);
 
@@ -177,6 +189,8 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
             var why = tooLarge ?? (content is null
                 ? "could not be read"
                 : $"is {NonEmpty(content)} lines and the limit is {cap}");
+            // WHAT TO BRING IT UNDER, IN THE UNIT THAT REFUSED IT (U-runway-fixes item 5): bytes for a file over its size, lines otherwise.
+            var under = tooLarge is not null ? $"{capBytes:N0} bytes" : $"{cap} lines";
 
             var last = _store.Latest(role, kind);
             string notice;
@@ -194,7 +208,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 notice = $"`{rel}` {why}, so it was not recorded and revision {last.Revision} — the last one "
                          + $"the app accepted — has been put back in its place; what you wrote is kept at "
                          + $"`{kept}`. Move what still matters into the "
-                         + $"{(kind == PublicationKind.Plan ? "plan" : "journal")} under {cap} lines.";
+                         + $"{(kind == PublicationKind.Plan ? "plan" : "journal")} under {under}.";
             }
             else
                 // NOT KEPT, SO NOT PUT BACK. A write-back over the only copy of what the turn wrote is
@@ -203,7 +217,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
                 notice = $"`{rel}` {why}, so it was not recorded. What you wrote could not be kept in "
                          + $"`{ArchiveDir}/`, so revision {last.Revision} — the last one the app accepted — "
                          + "was not put back: what is on disk is what you last wrote."
-                         + (content is null && tooLarge is null ? "" : $" Bring it under {cap} lines yourself.");
+                         + (content is null && tooLarge is null ? "" : $" Bring it under {under} yourself.");
 
             Note(role, kind, notice, putBack);
             try { Rejected?.Invoke($"{CouncilRoles.Title(role)}: {notice}"); }
@@ -315,7 +329,7 @@ public sealed class WorkspaceRevisions(Database db, Func<string, string> homeOf,
     static IReadOnlyList<string> Read(Database db, string role, bool? putBack)
     {
         var said = new List<string>();
-        foreach (var (kind, _, _) in Files)
+        foreach (var (kind, _, _, _) in Files)
             try
             {
                 if (db.GetKv(Key(role, kind)) is not { Length: > 0 } text) continue;

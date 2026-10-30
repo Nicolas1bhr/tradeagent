@@ -228,6 +228,40 @@ public class CouncilRelayTests
     }
 
     /// <summary>
+    /// A REPORT INSIDE ITS LINES IS NEVER REFUSED FOR ITS LINES' WIDTH, AND ONE PAST ITS BYTES IS TOLD SO IN BYTES (<c>U-runway-fixes</c> item
+    /// 5): twenty lines of a model's paragraphs — 2 KiB each — are published; twenty lines past <see cref="CouncilRelay.ReportBytes"/> are
+    /// refused unread, the rejection naming the file's bytes and the byte limit of a report, and the last valid one stands.
+    ///
+    /// <para>RED at base d55784e4: the 41 KiB report was refused as "over the 20,480 a 20-line report may take".</para>
+    /// </summary>
+    [Fact]
+    public void A_report_inside_its_lines_is_never_refused_for_their_width_and_one_past_its_bytes_is_told_so_in_bytes()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var rejected = new List<string>();
+        static string Wide(int width) =>
+            string.Join("\n", Enumerable.Range(1, CouncilRelay.ReportLines).Select(i => $"line {i}: " + new string('p', width)));
+
+        world.Launched(db, CouncilRoles.Research, "turn-a");
+        world.WriteFor(CouncilRoles.Research, "turn-a", Wide(2048));
+        var relay = new CouncilRelay(db, world.Home) { Rejected = rejected.Add };
+        relay.Run(CouncilRoles.Research, "turn-a");
+        Assert.Empty(rejected);
+        var good = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+
+        world.Launched(db, CouncilRoles.Research, "turn-b");
+        var over = Wide(4 * 1024);
+        world.WriteFor(CouncilRoles.Research, "turn-b", over);
+        relay.Run(CouncilRoles.Research, "turn-b");
+
+        Assert.Equal([good.Id], new PublicationStore(db).By(CouncilRoles.Research).Select(p => p.Id));
+        var why = Assert.Single(rejected);
+        Assert.Contains($"is {System.Text.Encoding.UTF8.GetByteCount(over):N0} bytes, over the {CouncilRelay.ReportBytes:N0}-byte limit of a "
+                        + $"{PublicationKind.Report}", why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// THE REVERSE PATH. The chair's agenda goes down to Research as a <c>brief</c>, at most forty
     /// lines, by the same three steps — and a role does not choose its own audience: the recipient
     /// is a function of the role, decided by the app.

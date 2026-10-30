@@ -565,7 +565,7 @@ public class WorkspaceRevisionTests
     /// A PLAN OVER ITS SIZE IS REFUSED UNREAD (<c>U-execution-environment</c> fix pass 5, the fourth re-review's P1). An executor's cell can
     /// make <c>trading/PLAN.md</c> a sparse file of a gigabyte in an instant (<c>ftruncate</c>), and the UNCONFINED app read every byte
     /// of it into memory and decoded it on every turn before the line cap was ever asked. Now the read names its cap in bytes — the plan's
-    /// lines times <see cref="WorkspaceRevisions.LineBytes"/> — and a file over it is refused by its size, never allocated: nothing is
+    /// <see cref="WorkspaceRevisions.PlanBytes"/> — and a file over it is refused by its size, never allocated: nothing is
     /// recorded, nothing kept (there are no bytes to keep) and so nothing put back over it, and the turn is told the size and the limit.
     /// </summary>
     [UnixFact]
@@ -597,5 +597,49 @@ public class WorkspaceRevisionTests
             Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Plan));
         }
         finally { File.Delete(plan); }
+    }
+
+    /// <summary>
+    /// A JOURNAL INSIDE ITS LINE BUDGET IS NEVER REFUSED FOR ITS LINES' WIDTH, AND ONE PAST ITS BYTES IS TOLD SO IN BYTES (<c>U-runway-fixes</c>
+    /// item 5). A 72-hour run's journal sits at its 200 non-empty lines once its owner archives at the budget; written in a model's
+    /// paragraphs — 200 lines of 2 KiB — it is recorded. One past <see cref="WorkspaceRevisions.JournalBytes"/> under the line budget is
+    /// refused by its size, and the notice says bytes, both the size and the limit, and asks for it under the limit in bytes — never
+    /// "under 200 lines", which it already is. The plan too: 60 lines of 2 KiB are recorded.
+    ///
+    /// <para>RED at base d55784e4: the 2 KiB-a-line journal was refused — "is 414,091 bytes and the limit is 204,800" — and the plan's notice for
+    /// a file over its size said "Bring it under 60 lines yourself".</para>
+    /// </summary>
+    [Fact]
+    public void A_journal_inside_its_line_budget_is_never_refused_for_its_lines_width_and_one_past_its_bytes_is_told_so_in_bytes()
+    {
+        using var world = new World();
+        var notices = new List<string>();
+        static string Wide(int n, int width) =>
+            string.Join("\n", Enumerable.Range(1, n).Select(i => $"2026-10-30 entry {i}: " + new string('w', width)));
+
+        var journal = Wide(WorkspaceRevisions.JournalLines, 2048);
+        var plan = Wide(WorkspaceRevisions.PlanLines, 2048);
+        world.Write(CouncilRoles.Research, PublicationKind.Journal, journal);
+        world.Write(CouncilRoles.Research, PublicationKind.Plan, plan);
+        var revisions = world.Revisions();
+        revisions.Rejected = notices.Add;
+        revisions.Snapshot(CouncilRoles.Research, "turn-a");
+        Assert.Empty(notices);
+        Assert.Equal(journal, Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Journal)).Content);
+        Assert.Equal(plan, Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Plan)).Content);
+
+        // PAST THE BYTES, UNDER THE LINES: 150 lines of 8 KiB.
+        var over = Wide(150, 8 * 1024);
+        world.Write(CouncilRoles.Research, PublicationKind.Journal, over);
+        var size = new FileInfo(world.PathOf(CouncilRoles.Research, PublicationKind.Journal)).Length;
+        Assert.True(size > WorkspaceRevisions.JournalBytes);
+        var refused = world.Revisions();
+        refused.Rejected = notices.Add;
+        refused.Snapshot(CouncilRoles.Research, "turn-b");
+        var notice = Assert.Single(notices);
+        Assert.Contains($"is {size:N0} bytes and the limit is {WorkspaceRevisions.JournalBytes:N0} bytes", notice, StringComparison.Ordinal);
+        Assert.Contains($"under {WorkspaceRevisions.JournalBytes:N0} bytes", notice, StringComparison.Ordinal);
+        Assert.DoesNotContain("lines", notice, StringComparison.Ordinal);
+        Assert.Single(world.Of(CouncilRoles.Research, PublicationKind.Journal));
     }
 }
