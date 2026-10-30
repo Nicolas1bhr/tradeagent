@@ -443,7 +443,6 @@ public sealed partial class OrgStore
         + $"such a run ran, or a delivery on one of its mandates, recorded in the last {OrgBounds.EarningWindow.TotalDays.ToString(CultureInfo.InvariantCulture)} "
         + "days — or charter it as a funded, bounded experiment with a collapse date. Nothing cited is current work of yours.";
 
-    /// <summary>ONE <c>org_event</c>, inside the caller's write; its detail is the app's, from ids and fixed words. Answers its id.</summary>
     /// <summary>
     /// AN ACTIVATION'S TWO WAKES (<c>U-org-autonomy</c>; gap 5): one <see cref="MissionEventKind.Activated"/> to the position, and one to the head
     /// that hired it where that is a position — never the app, the owner or the board. Inside the caller's write; a wake not written throws, so
@@ -460,6 +459,7 @@ public sealed partial class OrgStore
         }
     }
 
+    /// <summary>ONE <c>org_event</c>, inside the caller's write; its detail is the app's, from ids and fixed words. Answers its id.</summary>
     long Event(DateTimeOffset at, string unitId, string? positionId, string kind, string decider, string detail)
     {
         using var c = db.Cmd("""
