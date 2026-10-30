@@ -2959,6 +2959,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     string? VerdictSpenderRefusal(string position)
     {
         var org = gateway.Org;
+        // THE CHIEF (U-org-autonomy item 3; R25 D6): the version's author is in its subtree, or VerdictFor refused before here.
+        if (IsChief(position)) return null;
         if (org.UnitOf(position) is not { } unit)
             return $"{position} belongs to no unit on the chart, so no division delegated it a verdict share: only a division's head spends "
                    + "final judgements (ORGANISATION § 2). Nothing was charged.";
@@ -2978,6 +2980,29 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                + "division's head for a verdict share, or for the verdict. Nothing was charged and nothing was computed.";
     }
 
+    /// <summary>Whether <paramref name="position"/> heads the organisation itself — the chief.</summary>
+    bool IsChief(string position) => gateway.Org.UnitOf(position) is { IsRoot: true } root && root.HeadPositionId == position;
+
+    /// <summary>
+    /// THE AUTHOR WHOSE RUNS THE CHIEF'S VERDICT ON <paramref name="version"/> IS MEASURED ON (<c>U-org-autonomy</c> item 3; R25 D6), or null
+    /// for any caller that is not the chief: the version's author (<c>strategy_version.role</c>) where it is a position of a unit in the
+    /// chief's subtree. A version this installation does not hold, or one authored outside the subtree or by no position, is refused in
+    /// words, nothing charged.
+    /// </summary>
+    string? ChiefsAuthor(string role, string version)
+    {
+        if (!IsChief(role)) return null;
+        var author = gateway.Strategies.VersionById(version)?.Role
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"there is no version {Short(version)} on this installation, so there is nothing to judge. Nothing was charged.");
+        var subtree = gateway.Org.SubtreeOf(role).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+        if (OrgStore.IsAppPrincipal(author) || gateway.Org.UnitOf(author) is not { } unit || !subtree.Contains(unit.Id))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"the chief spends a final judgement only on a version authored in its own subtree, and version {Short(version)} was "
+                + $"authored by {author}, which holds no position there. Nothing was charged and nothing was computed.");
+        return author;
+    }
+
     object VerdictFor(AgentContext ctx, IpcRequest req, CancellationToken ct)
     {
         // THE ROLE FIRST, and it is `Backtests`' own answer rather than a second reading of the same
@@ -2991,14 +3016,20 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         var under = LedgerEntry(ctx, role, req);
 
         var version = Require(req, "version");
-        var completed = gateway.Strategies.CompletedRunsOf(version, role);
+
+        // THE CHIEF SPENDS ONE ON A VERSION AUTHORED IN ITS SUBTREE (U-org-autonomy item 3; R25 D6): it is judged on its AUTHOR's own
+        // completed runs — the chief measured nothing itself, and a judgement is still spent only on a program its author already
+        // measured. Every other caller is measured on its own runs, as before; the campaign, its budget and every other rule below
+        // are unchanged.
+        var measurer = ChiefsAuthor(role, version) ?? role;
+        var completed = gateway.Strategies.CompletedRunsOf(version, measurer);
 
         // THE DATASET IS NAMED OR IT IS THE ONE OBVIOUS ANSWER, and never a guess between two. Each
         // dataset with a cutoff has its own campaign and its own budget, so picking for the caller
         // would be choosing which of the owner's holdouts to spend.
         var dataset = req.Args is not null && req.Args.ContainsKey("dataset")
             ? DatasetId(req)
-            : OnlyDataset(completed, version, role);
+            : OnlyDataset(completed, version, measurer);
 
         var campaign = gateway.Campaigns.OpenForDataset(dataset)
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -3010,7 +3041,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
 
         if (!completed.Any(r => r.DatasetId == dataset && Registered(campaign.Id, version, r.Id)))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"{CouncilRoles.Title(role)} has never completed a run of version {Short(version)} over "
+                $"{CouncilRoles.Title(measurer)} has never completed a run of version {Short(version)} over "
                 + $"dataset {dataset}, so there is nothing to have judged. TradeAgent judges a program "
                 + "its author already measured on the months it was allowed to see: run "
                 + "'trade backtest --strategy <your program> --dataset " + dataset.ToString(CultureInfo.InvariantCulture)
