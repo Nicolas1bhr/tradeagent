@@ -6,9 +6,12 @@ namespace TradeAgent.Core.Db;
 /// WHAT THE APP KNOWS ABOUT ITSELF THAT THE WAKE-ONCE PRESS IS REFUSED ON (<c>U-chief-wake-once</c>), read by the owner's own app at each
 /// press — never by an agent, never from a file: whether the AI is started (an agent prepared), whether it works on its own (the loop is
 /// running, not paused), whether this host records a current proven executor cell, and the chief's ceiling as the board's policy states
-/// it now (what wakes it next, said on the card).
+/// it now (what wakes it next, said on the card), and who the chief's seat bills now (<see cref="BillingClasses"/>: the app's reading
+/// of its sign-in — a plan, a key, or unknown), so the armed sentence says what the turn spends and a change of it between the presses
+/// is a press that moved (the Codex review).
 /// </summary>
-public sealed record ChiefWakeFacts(bool AgentStarted, bool WorksOnItsOwn, bool ProvenCell, TimeSpan Ceiling);
+public sealed record ChiefWakeFacts(bool AgentStarted, bool WorksOnItsOwn, bool ProvenCell, TimeSpan Ceiling,
+    string Billing = BillingClasses.Unknown);
 
 /// <summary>
 /// WHAT THE FIRST PRESS OF "Wake the chief once" SHOWED: the chief, its seat, and the sentence the second press carries out — or why it
@@ -101,7 +104,7 @@ public sealed partial class OrgStore
             return Refuse(chief, seat, $"The wake you pressed for the chief {chief} has not been taken yet: one press is one wake, so nothing "
                                        + "more is raised until its turn has run.");
         return new ChiefWakePreview(chief, seat,
-            $"Wake the chief {chief} once, now: one turn on {seat}, which spends your AI plan's capacity. {after}",
+            $"Wake the chief {chief} once, now: one turn on {seat}, {Spends(facts.Billing)}. {after}",
             null) { After = after };
     }
 
@@ -109,6 +112,14 @@ public sealed partial class OrgStore
     /// WHAT WAKES THE CHIEF AFTER ITS ONE TURN, AND HOW HE STOPS IT — said on the card beside the press and in its armed sentence:
     /// nothing more is started by the press; its own request in <c>next.json</c>, or its ceiling as the board's policy states it now.
     /// </summary>
+    /// <summary>What one turn of the chief spends, in the words of who its seat bills now.</summary>
+    static string Spends(string billing) => BillingClasses.Of(billing) switch
+    {
+        BillingClasses.Plan => "which spends your AI plan's capacity",
+        BillingClasses.Key => "which is billed to your API key — real money, against your daily money cap",
+        _ => "billed to your AI plan or your API key — TradeAgent cannot tell which, so it counts against both your ceilings"
+    };
+
     public static string ChiefWakeAfter(TimeSpan ceiling) =>
         "Nothing else is started by this press. After the turn the chief wakes again only when it asks to in its next.json, or "
         + (ceiling > TimeSpan.Zero

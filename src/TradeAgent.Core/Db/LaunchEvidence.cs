@@ -39,7 +39,15 @@ public static partial class LaunchEvidence
     }
 
     static string Scrub(string line) =>
-        Key().Replace(Bearer().Replace(line, m => m.Groups[1].Value + Withheld), Withheld);
+        Key().Replace(Named().Replace(Bearer().Replace(line, m => m.Groups[1].Value + Withheld), m => m.Groups[1].Value + Withheld), Withheld);
+
+    /// <summary>
+    /// THE VALUE AFTER A WORD THAT NAMES A CREDENTIAL — however short or dotted (the Codex review: a pasted key echoed in an error line is
+    /// not always long): "api key", "key", "token", "password", "secret", "credential", "authorization", then an optional ":" or "=",
+    /// and the next run of non-space characters.
+    /// </summary>
+    [GeneratedRegex(@"(?i)(\b(?:api[ _-]?key|key|token|password|passwd|secret|credential|authorization)\b\s*[:=]?\s*)(?!\[withheld\]|bearer\b)[^\s""',;]+")]
+    private static partial Regex Named();
 
     [GeneratedRegex(@"(?i)(bearer\s+)[^\s""',;]+")]
     private static partial Regex Bearer();

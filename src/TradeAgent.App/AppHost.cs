@@ -1648,11 +1648,20 @@ public sealed class AppHost : IAsyncDisposable
     ChiefWakeFacts WakeFacts()
     {
         var state = Mission?.Status.State;
+        string? chief = null;
+        try { chief = OrgLedger?.Chief(); }
+        catch (Exception) { /* no chief read: the store refuses on its own read */ }
+        string billing;
+        try { billing = chief is not null && Meter is { } meter ? meter.ClassOf(chief) : BillingClasses.Unknown; }
+        catch (Exception) { billing = BillingClasses.Unknown; }
         return new ChiefWakeFacts(
             AgentStarted: state is not null and not MissionState.Stopped,
-            WorksOnItsOwn: state is MissionState.Waiting or MissionState.Working,
+            // WORKING ON ITS OWN IS THE OWNER'S SETTING AND THE LOOP RUNNING, never the card's state alone (the Codex review): while a Pause
+            // is unwinding a turn the card still reads Working, and the setting is already off.
+            WorksOnItsOwn: Gateway.Settings.AiWorksOnItsOwn && Mission is { Running: true } && state is MissionState.Waiting or MissionState.Working,
             ProvenCell: CellProofHeld,
-            Ceiling: TimeSpan.FromHours(Math.Max(0, Gateway.Policy.HeadCeilingHours)));
+            Ceiling: TimeSpan.FromHours(Math.Max(0, Gateway.Policy.HeadCeilingHours)),
+            Billing: billing);
     }
 
     /// <summary>"Wake the chief once", press one: what it would do now, or why it cannot. Reads only.</summary>

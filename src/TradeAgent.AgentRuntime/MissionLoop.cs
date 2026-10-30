@@ -4506,7 +4506,14 @@ public sealed class MissionLoop
         {
             try
             {
-                events.Release([.. wake.Select(e => e.Id)], consumer);
+                // THE OWNER'S PRESSED WAKE IS NEVER GIVEN BACK (U-chief-wake-once; the Codex review): one press is one launch, so a launch
+                // refused before any work settles it failed with the refusal's sentence, and nothing serves it again when a hold lifts —
+                // he presses again if he still wants the turn. Every other wake is given back as before.
+                var pressed = wake.Where(e => e.Kind == MissionEventKind.OwnerWake).ToList();
+                events.Release([.. wake.Where(e => e.Kind != MissionEventKind.OwnerWake).Select(e => e.Id)], consumer);
+                foreach (var e in pressed)
+                    events.Settle(e.Id, MissionEventDisposition.Failed,
+                        $"{why} — a pressed wake is served once: press \"Wake the chief once\" again for another turn");
                 // THE REFUSAL'S OWN SENTENCE, over any earlier blocked reason the words carried into the launch (fix pass 1,
                 // the review's P2): the latest reason they wait is the one shown, never a stale one — for the gate's refusal and
                 // the vendor's limit alike.

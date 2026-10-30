@@ -49,4 +49,43 @@ public partial class CouncilLoopTests
         await loop.TurnAsync();
         Assert.Single(host.Opened);
     }
+
+    /// <summary>
+    /// (w7) A PRESSED WAKE IS NEVER GIVEN BACK (the Codex review): the chief's launch on it is refused before any work — here at the gate's
+    /// last check, the same branch a vendor's usage limit met before work takes — and the wake is settled failed with the refusal's sentence
+    /// and how to press again, not released; later passes, past any hold, launch nothing more on it. RED before the fix: the wake was released
+    /// due again, and the next pass launched the chief a second time on one press.
+    /// </summary>
+    [Fact]
+    public async Task A_pressed_wake_refused_before_any_work_is_settled_and_never_served_again()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var now = Noon();
+        var org = new OrgStore(db);
+        var chief = org.AppointChief(new ChiefSeat("puppet", "scripted-1"), r => r == "puppet", now).Chief!;
+        org.Activate(chief, _ => SeatClasses.Puppet, 3, now, () => false);
+        var host = new CouncilHost(db, root, new Concurrency()) { Clock = () => now }.Add(chief);
+        host.Conversations[chief].GateRefused =
+            new LateRefusal(new TurnRefusal(RefusalKind.HostOrLaunch, "the host's cell proof changed"), BeforeAnyWork: true);
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        var facts = new ChiefWakeFacts(AgentStarted: true, WorksOnItsOwn: true, ProvenCell: true, MissionOptions.DefaultCeiling);
+        var woken = org.WakeChiefOnce(org.PreviewChiefWake(facts), facts, now);
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+        var settled = Row(host, woken.WakeId)!;
+        Assert.True(settled.Consumed);
+        Assert.Equal(MissionEventDisposition.Failed, settled.Disposition);
+        Assert.Contains("the host's cell proof changed", settled.DispositionDetail, StringComparison.Ordinal);
+        Assert.Contains("Wake the chief once", settled.DispositionDetail, StringComparison.Ordinal);
+
+        host.Conversations[chief].GateRefused = null;
+        for (var i = 0; i < 3; i++)
+        {
+            now = now.AddMinutes(30);
+            await loop.TurnAsync();
+        }
+        Assert.Single(host.Opened);
+    }
 }
