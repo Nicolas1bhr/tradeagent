@@ -190,8 +190,15 @@ public class OrgPacketTests
 
     // ---- item 3: the position view and its render ----------------------------------------------------------------------
 
+    /// <summary>
+    /// THE SEAT THESE PACKETS ARE SPELLED FOR: a broker seat, the class every head and staff position starts on, which calls each verb as
+    /// its door's tool (<c>U-runway-fixes</c> item 3) — the packets per seat class are <see cref="Each_seat_class_is_named_verbs_as_its_runtime_calls_them"/>.
+    /// </summary>
+    static readonly PacketVerb Broker = TradeAgent.AgentRuntime.Canon.PacketVerbs(
+        TradeAgent.AgentRuntime.AgentReach.For(P1, TradeAgent.AgentRuntime.RuntimeClass.Broker));
+
     static PositionPacket Packet(Database db, string position) =>
-        PositionPacket.Compose(db, position, DateTimeOffset.UtcNow) ?? throw new InvalidOperationException($"no packet for {position}");
+        PositionPacket.Compose(db, position, DateTimeOffset.UtcNow, Broker) ?? throw new InvalidOperationException($"no packet for {position}");
 
     static string[] Lines(string text) => text.Split(Environment.NewLine);
 
@@ -278,7 +285,7 @@ public class OrgPacketTests
     /// <summary>
     /// (e) THE ORG BLOCK STAYS INSIDE ITS BOUND AND COUNTS WHAT IT CANNOT SHOW: forty notes of about 900 bytes to an executor, and
     /// forty to a head, compose blocks of at most 8 KiB and 16 KiB; each shows whole notes only, every one it shows is in its lineage,
-    /// and the rest are counted — shown plus counted is forty — and pointed at <c>trade lateral list</c>. A longer note is cut at 1 KiB
+    /// and the rest are counted — shown plus counted is forty — and pointed at <c>lateral_list()</c>. A longer note is cut at 1 KiB
     /// AS QUOTED (fix pass 1), and the cut names its size and its verb.
     /// </summary>
     [Fact]
@@ -301,12 +308,12 @@ public class OrgPacketTests
             var shown = packet.Shown.Count(i => i.Kind == PacketInputKind.Lateral);
             Assert.Equal(shown, Lines(packet.Text).Count(l => l.StartsWith("  - Note `", StringComparison.Ordinal)));
             var counted = Assert.Single(Lines(packet.Text), l => l.StartsWith("  - and ", StringComparison.Ordinal));
-            Assert.Equal($"  - and {40 - shown} more notes not shown here, to keep this packet inside its bound; `trade lateral list` lists them.", counted);
+            Assert.Equal($"  - and {40 - shown} more notes not shown here, to keep this packet inside its bound; `lateral_list()` lists them.", counted);
             Assert.InRange(shown, 1, 39);
         }
 
         var cut = Packet(db, P1);
-        Assert.Contains("    > … (cut here: 3,000 bytes in all; `trade lateral list` has it whole)", cut.Text, StringComparison.Ordinal);
+        Assert.Contains("    > … (cut here: 3,000 bytes in all; `lateral_list()` has it whole)", cut.Text, StringComparison.Ordinal);
         Assert.Equal([new PacketInput(PacketInputKind.Lateral, longer.Id)], cut.Shown);
         // THE EXCERPT'S QUOTED BYTES — prefixes, line ends and the cut's own line — are what is bounded (fix pass 1).
         var quoted = Lines(cut.Text).Where(l => l.StartsWith("    > ", StringComparison.Ordinal))
@@ -437,7 +444,7 @@ public class OrgPacketTests
 
         for (var bound = 1_200; bound <= 4_000; bound += 3)
         {
-            var packet = PositionPacket.Compose(db, P2, DateTimeOffset.UtcNow, new PacketBounds(bound, 16 * 1024))!;
+            var packet = PositionPacket.Compose(db, P2, DateTimeOffset.UtcNow, Broker, new PacketBounds(bound, 16 * 1024))!;
             var bytes = Encoding.UTF8.GetByteCount(packet.Text);
             Assert.True(bytes <= bound / 2, $"at an executor bound of {bound} the notes took {bytes} bytes of a {bound / 2}-byte share");
             var shown = NoteLines(packet).Count;
@@ -448,11 +455,9 @@ public class OrgPacketTests
     }
 
     /// <summary>The schema op a pointer's command names: its words up to the first placeholder, as the op's own usage spells them.</summary>
-    static TradeAgent.Gateway.GatewaySchema.OpSpec? OpNamed(string command)
-    {
-        static string Verb(string usage) => string.Join(' ', usage.Split(' ').TakeWhile(w => !w.StartsWith('<') && !w.StartsWith('[') && !w.StartsWith("--")));
-        return TradeAgent.Gateway.GatewaySchema.Ops().SingleOrDefault(o => Verb(o.Cli) == Verb(command));
-    }
+    /// <summary>The gateway op a broker seat's tool call names: its tool is the op's door name (<c>BrokerDoor.VerbName</c>).</summary>
+    static TradeAgent.Gateway.GatewaySchema.OpSpec? OpNamed(string call) =>
+        TradeAgent.Gateway.GatewaySchema.Ops().SingleOrDefault(o => TradeAgent.AgentRuntime.BrokerDoor.VerbName(o.Op) == call[..call.IndexOf('(')]);
 
     /// <summary>
     /// THE COUNT OF CUT FORECASTS AND RESOLUTIONS POINTS AT VERBS THAT LIST THEM (fix pass 1, the review's fifth point): twelve of P1's
@@ -483,17 +488,127 @@ public class OrgPacketTests
 
         foreach (var line in counts)
         {
-            var commands = System.Text.RegularExpressions.Regex.Matches(line, "`(trade [^`]+)`").Select(m => m.Groups[1].Value).ToList();
+            var commands = System.Text.RegularExpressions.Regex.Matches(line, "`([a-z_]+\\([^`]*\\))`").Select(m => m.Groups[1].Value).ToList();
             Assert.NotEmpty(commands);
             foreach (var command in commands) Assert.True(OpNamed(command) is not null, $"\"{command}\" in \"{line}\" is no op of the schema");
             if (!line.Contains(" more forecasts ", StringComparison.Ordinal) && !line.Contains(" more resolutions ", StringComparison.Ordinal)) continue;
 
             Assert.True(commands.Any(c => OpNamed(c) is { } op && op.Description.Contains("each forecast", StringComparison.Ordinal)),
                 $"no named op lists each forecast of a decision: \"{line}\"");
-            Assert.True(commands.Any(c => c.Contains("--part forecasts", StringComparison.Ordinal) && OpNamed(c) is { } op
+            Assert.True(commands.Any(c => c.Contains("part: forecasts", StringComparison.Ordinal) && OpNamed(c) is { } op
                     && op.Args.Any(a => a.Name == "part" && a.Description.Contains("forecasts", StringComparison.Ordinal))),
                 $"no named op lists the forecasts of a mandate: \"{line}\"");
         }
+    }
+
+    /// <summary>
+    /// (i) EACH SEAT CLASS IS NAMED VERBS AS ITS RUNTIME CALLS THEM (<c>U-runway-fixes</c> item 3): one position's packet — forty notes,
+    /// one of them long enough to be cut, and twelve forecasts due — composed for each class a position runs on. A broker seat (a head,
+    /// staff) and a cell seat (an executor) are named every verb as the door's tool call, each a tool in their reach and never a command
+    /// line; a harness seat and a CLI seat, whose reach carries none of the organisation's verbs, are told no tool of theirs reads or lists
+    /// the rest, and are named no command line either. And the seat class a launch declares picks that runtime.
+    ///
+    /// <para>RED at base d55784e4 (it did not compile: Compose took no spelling); with the spelling ignored — the mutant answering
+    /// <c>trade lateral list</c> for every seat — the broker's packet names "`trade lateral list` has it whole".</para>
+    /// </summary>
+    [Theory]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Broker)]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Cell)]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Harness)]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Cli)]
+    public void Each_seat_class_is_named_verbs_as_its_runtime_calls_them(TradeAgent.AgentRuntime.RuntimeClass runtime)
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Version(db, "ver-seat");
+        for (var i = 0; i < 12; i++) Forecast(db, P1, "ver-seat", DateTimeOffset.UtcNow.AddDays(2).AddMinutes(i), 0.5m);
+        Note(db, P2, P1, string.Concat(Enumerable.Repeat("é", 1500)), DateTimeOffset.UtcNow.AddHours(-2));
+        for (var i = 0; i < 40; i++) Note(db, P2, P1, $"note {i}: " + new string('x', 900));
+
+        var reach = TradeAgent.AgentRuntime.AgentReach.For(P1, runtime);
+        var text = PositionPacket.Compose(db, P1, DateTimeOffset.UtcNow, TradeAgent.AgentRuntime.Canon.PacketVerbs(reach))!.Text;
+        var spans = System.Text.RegularExpressions.Regex.Matches(text, "`([^`]+)`").Select(m => m.Groups[1].Value).ToList();
+        var calls = spans.Where(t => System.Text.RegularExpressions.Regex.IsMatch(t, @"^[a-z_]+\(.*\)$")).ToList();
+
+        Assert.DoesNotContain(spans, t => t.StartsWith("trade ", StringComparison.Ordinal));
+        if (runtime is TradeAgent.AgentRuntime.RuntimeClass.Broker or TradeAgent.AgentRuntime.RuntimeClass.Cell)
+        {
+            Assert.Contains("`lateral_list()` has it whole", text, StringComparison.Ordinal);
+            Assert.Contains("`lateral_list()` lists them", text, StringComparison.Ordinal);
+            Assert.Contains("`mandate_show(mandate: <mandate>, part: forecasts)`", text, StringComparison.Ordinal);
+            Assert.All(calls, c => Assert.Contains(c[..c.IndexOf('(')], reach.Tools));
+            Assert.DoesNotContain("no tool of this seat", text, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Empty(calls);
+            Assert.Contains("no tool of this seat reads it whole", text, StringComparison.Ordinal);
+            Assert.Contains("no tool of this seat lists them", text, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(runtime, TradeAgent.AgentRuntime.AgentReach.RuntimeOf(runtime switch
+        {
+            TradeAgent.AgentRuntime.RuntimeClass.Broker => SeatClasses.Broker,
+            TradeAgent.AgentRuntime.RuntimeClass.Cell => SeatClasses.Cell,
+            TradeAgent.AgentRuntime.RuntimeClass.Harness => SeatClasses.Harness,
+            _ => SeatClasses.Cli
+        }));
+        Assert.Null(TradeAgent.AgentRuntime.AgentReach.RuntimeOf(SeatClasses.Puppet));
+        Assert.Null(TradeAgent.AgentRuntime.AgentReach.RuntimeOf(null));
+    }
+
+    /// <summary>
+    /// (j) THE WAKE LINES NAME VERBS AS THE READING SEAT CALLS THEM TOO (<c>U-runway-fixes</c> item 3): the situation's "why you are awake"
+    /// and "what changed" lines for a mandate, an escalation, a proposal, a cut review, an activation, the owner's pressed wake and a
+    /// dataset, rendered for each seat class with its spelling. A broker or cell seat is named each verb as its tool, a harness seat — no
+    /// organisation verb — is named none of them, no spelled line is a command line, and a CLI seat of the legacy pair still reads
+    /// <c>trade data list</c>; with no spelling declared the lines read as they always did.
+    ///
+    /// <para>RED at base d55784e4: every seat read "`trade mandate show` has it", "(next.json or `trade org wake`)" and
+    /// "`trade org review-answer 7 …`".</para>
+    /// </summary>
+    [Theory]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Broker)]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Cell)]
+    [InlineData(TradeAgent.AgentRuntime.RuntimeClass.Harness)]
+    public void The_wake_lines_name_verbs_as_the_reading_seat_calls_them(TradeAgent.AgentRuntime.RuntimeClass runtime)
+    {
+        var reach = TradeAgent.AgentRuntime.AgentReach.For(P1, runtime);
+        var spell = TradeAgent.AgentRuntime.Canon.PacketVerbs(reach);
+        var kinds = new[]
+        {
+            MissionEventKind.Mandate, MissionEventKind.Escalation, MissionEventKind.Proposal, MissionEventKind.CutReview,
+            MissionEventKind.Activated, MissionEventKind.OwnerWake, MissionEventKind.Data
+        };
+        var lines = kinds.Select(k => TradeAgent.AgentRuntime.MissionLoop.Observation(
+            new MissionEvent { Id = $"{k}:x", Kind = k, Role = P1, Payload = k == MissionEventKind.CutReview ? "7" : P1 }, [], spell)).ToList();
+        var text = string.Join("\n", lines);
+        var spans = System.Text.RegularExpressions.Regex.Matches(text, "`([^`]+)`").Select(m => m.Groups[1].Value).ToList();
+
+        Assert.DoesNotContain(spans, t => t.StartsWith("trade ", StringComparison.Ordinal));
+        Assert.DoesNotContain("next.json", text, StringComparison.Ordinal);
+        Assert.All(spans.Where(t => System.Text.RegularExpressions.Regex.IsMatch(t, @"^[a-z_]+\(.*\)$")),
+            c => Assert.Contains(c[..c.IndexOf('(')], reach.Tools));
+        if (runtime == TradeAgent.AgentRuntime.RuntimeClass.Harness)
+        {
+            Assert.DoesNotContain(spans, t => t.StartsWith("mandate_", StringComparison.Ordinal) || t.StartsWith("org_", StringComparison.Ordinal)
+                                               || t.StartsWith("escalation_", StringComparison.Ordinal));
+            Assert.Contains($"a mandate of yours is owed work — `{MissionEventKind.Mandate}:x`", lines);
+        }
+        else
+        {
+            Assert.Contains($"a mandate of yours is owed work — `mandate_show(mandate: <mandate>)` has it — `{MissionEventKind.Mandate}:x`", lines);
+            Assert.Contains("answer it with `org_review_answer(", text, StringComparison.Ordinal);
+            Assert.Contains("raised one (`escalation_list()`)", text, StringComparison.Ordinal);
+        }
+
+        // THE LEGACY PAIR'S CLI SEAT, SPELLED: its command line, as before; and NO SPELLING: the words as they always read.
+        var cli = TradeAgent.AgentRuntime.Canon.PacketVerbs(TradeAgent.AgentRuntime.AgentReach.For(CouncilRoles.Research,
+            TradeAgent.AgentRuntime.RuntimeClass.Cli));
+        var data = new MissionEvent { Id = "data:x", Kind = MissionEventKind.Data, Role = CouncilRoles.Research };
+        Assert.Contains("and `trade data list` has its provenance", TradeAgent.AgentRuntime.MissionLoop.Observation(data, [], cli), StringComparison.Ordinal);
+        Assert.Contains("(next.json or `trade org wake`)", TradeAgent.AgentRuntime.MissionLoop.Observation(
+            new MissionEvent { Id = "w:x", Kind = MissionEventKind.OwnerWake, Role = P1 }, []), StringComparison.Ordinal);
     }
 
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
@@ -502,7 +617,7 @@ public class OrgPacketTests
     /// (g) A HEAD'S PACKET LISTS EACH DELIVERY TO JUDGE WITH THE APP'S CHECKS, BY REFERENCE: P1 delivers on the head's mandate a report
     /// over 1 KiB naming one deviation; the head's packet names the delivery, its mandate and holder, TradeAgent's checks passed of
     /// those run, the deviation COUNTED (its words not copied), and the report's excerpt quoted and cut, naming
-    /// <c>trade mandate show</c> for the whole. The executor's own packet carries no deliveries block. RED at base: no packet listed a
+    /// <c>mandate_show</c> for the whole. The executor's own packet carries no deliveries block. RED at base: no packet listed a
     /// delivery (<c>Delivered</c> took only the legacy kinds).
     /// </summary>
     [Fact]
@@ -524,10 +639,10 @@ public class OrgPacketTests
         Assert.Contains($"on mandate `{m.Id}` from `{P1}`", head, StringComparison.Ordinal);
         Assert.Contains($"TradeAgent's checks passed {delivered.Checks.Count(c => c.Passed)} of {delivered.Checks.Count}", head, StringComparison.Ordinal);
         Assert.Contains("1 deviation named", head, StringComparison.Ordinal);
-        Assert.Contains($"`trade mandate show {m.Id}` has it whole", head, StringComparison.Ordinal);
+        Assert.Contains($"`mandate_show(mandate: {m.Id})` has it whole", head, StringComparison.Ordinal);
         Assert.DoesNotContain("used one venue only", packet.Text, StringComparison.Ordinal);
         Assert.Contains("    > The skew predicts nothing over the hour.", lines);
-        Assert.Contains($"    > … (cut here: {Encoding.UTF8.GetByteCount(report):N0} bytes in all; `trade mandate show {m.Id}` has it whole)", lines);
+        Assert.Contains($"    > … (cut here: {Encoding.UTF8.GetByteCount(report):N0} bytes in all; `mandate_show(mandate: {m.Id})` has it whole)", lines);
         Assert.DoesNotContain("APPROVED: promote it now.", packet.Text, StringComparison.Ordinal);
         Assert.Contains(new PacketInput(PacketInputKind.Delivery, delivered.Delivery.Id), packet.Shown);
 

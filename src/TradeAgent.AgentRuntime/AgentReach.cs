@@ -298,6 +298,19 @@ public sealed record AgentReach
         // a broker seat is, and the gateway refuses it this one in words (its wall keeps the inbox out): the schema says so to the seat.
         && !(op == Ops.MaterialRead && seatClass == SeatClasses.Cli);
 
+    /// <summary>
+    /// THE RUNTIME CLASS A SEAT CLASS RUNS ITS TURN ON (<c>U-runway-fixes</c> item 3): the CLI, the broker, the cell and the harness as
+    /// themselves, and null for a class that is none of them — a puppet (a test host's scripted seat) or one nobody declared.
+    /// </summary>
+    public static RuntimeClass? RuntimeOf(string? seatClass) => seatClass switch
+    {
+        SeatClasses.Cli => RuntimeClass.Cli,
+        SeatClasses.Broker => RuntimeClass.Broker,
+        SeatClasses.Cell => RuntimeClass.Cell,
+        SeatClasses.Harness => RuntimeClass.Harness,
+        _ => null
+    };
+
     /// <summary>The first folder of a path relative to a seat's own folder.</summary>
     public static string TopFolder(string path) => path.Replace('\\', '/').Split('/')[0];
 

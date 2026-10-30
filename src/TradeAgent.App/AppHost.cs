@@ -2706,10 +2706,6 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         /// <summary>
-        /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>), composed by <see cref="PositionPacket.Compose"/> in one snapshot
-        /// from <see cref="OrgStore"/> reads only. It writes nothing and reaches no verb.
-        /// </summary>
-        /// <summary>
         /// A SEAT OF THE SECURITY BOARD'S PROMPT (<c>U-board-b2</c> item 4): <see cref="BoardPacket.For"/> over the board's own store, for
         /// the acts this turn's board wakes name. No ledger, no organisation block, no watcher figure is read here.
         /// </summary>
@@ -2719,8 +2715,20 @@ public sealed class AppHost : IAsyncDisposable
                     [.. wake.Where(e => e.Kind == MissionEventKind.Board && e.Payload is { Length: > 0 }).Select(e => e.Payload!)], now)
                 : null;
 
+        /// <summary>
+        /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>), composed by <see cref="PositionPacket.Compose"/> in one snapshot from
+        /// <see cref="OrgStore"/> reads only — it writes nothing and reaches no verb — with its verbs spelled as the seat this launch runs on
+        /// calls them (<c>U-runway-fixes</c> item 3): the declared seat class's runtime, or, where none is declared yet, the one its home's
+        /// canon was first written for.
+        /// </summary>
         public PositionPacket? PacketFor(string role, DateTimeOffset now) =>
-            host._db is { } db ? PositionPacket.Compose(db, role, now) : null;
+            host._db is { } db ? PositionPacket.Compose(db, role, now, VerbsFor(role)) : null;
+
+        /// <inheritdoc cref="IMissionHost.VerbsFor"/>
+        public PacketVerb VerbsFor(string role) => host.DeclaredSeatClass(role) is var declared && declared == SeatClasses.Puppet
+            ? Canon.CommandLineVerbs   // a test host's puppet: its scripts speak the command line
+            : Canon.PacketVerbs(AgentReach.For(role,
+                AgentReach.RuntimeOf(declared) ?? WorkspaceBuilder.RuntimesOf(role, host._seats.KindOf(role))[0]));
 
         /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
         internal static MandateView View(OrgStore org, MandateRow m)
