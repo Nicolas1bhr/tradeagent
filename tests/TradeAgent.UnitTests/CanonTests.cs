@@ -335,14 +335,15 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (7, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
         (7, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc"),
         // v8 (U-org-canon): every position beyond the pair is written the ORGANISATION's mission and the role part of its place —
-        // the chief, a head, staff, an executor — whose verb lists are generated from its seat's reach; the pair's words are v7's.
-        (8, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
-        (8, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc"),
-        (8, "org", "639d8561a05bf4f59141b05391a72824d15658423e81f9129ff41d48789c2d0b"),
-        (8, "org:chief", "53301f0e6c92e2ac6fd7c158757643efd9db47bffe3d816ad24535d71cab5d04"),
-        (8, "org:head", "60145acc4dcaa2a1829eea2f82862a1e44059297c6b0396a567418c06b345cb9"),
-        (8, "org:staff", "60d62b2313dfc3407cca8bfec03f61c9c97f8311ceb13b5ee3b4d7ff01bd7ffa"),
-        (8, "org:executor", "a6d9ff00a4cdf01705499c6769a46178365278544418f68ce269978ad35cc19e")
+        // the chief, a head, staff, an executor — whose verb lists are generated from its seat's reach; and the shared reach section
+        // tells a seat that holds `org-wake` (U-org-autonomy) how to ask for its next wake. The pair's rendered words are v7's.
+        (8, CouncilRoles.Operations, "18ff030e24db413cc1b892dbbea6de3b318c784e469b283866194faf71dbe115"),
+        (8, CouncilRoles.Research, "1fdb91ae57140245f531c6cce765ce00d26985a0d6882289772dec30baeb8ca5"),
+        (8, "org", "095f56e41a56241d344163a2c531ad6ae04bfb29cd620b6ee8b55b0a6fd1e6e4"),
+        (8, "org:chief", "b2a1d9f5baec6434c004b7b3068d313d592c82feaa319f36e00c6053d6bef39f"),
+        (8, "org:head", "4e5c5e4428fd49b3e2fb5a3c9a8ca646df2f6ba366f13828698432d589e48844"),
+        (8, "org:staff", "bf2e91e446fd45527f9216d87266525fa53ed1d335f657d3fea208efec282b99"),
+        (8, "org:executor", "c6be94f99b5bc5275779511b36b58dc990ba6b4ee862e0b95052a3ef5a6fb8ee")
     ];
 
     /// <summary>
