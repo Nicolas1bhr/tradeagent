@@ -60,10 +60,18 @@ public sealed class CouncilRelay
     public const int AgendaLines = 40;
 
     /// <summary>
-    /// THE BYTES ONE LINE OF A REPORT OR AGENDA MAY TAKE, ON AVERAGE (<c>U-execution-environment</c> fix pass 5, P1): a staged file is read
-    /// under its line limit times this, and one over it is refused by its size before a byte is read.
+    /// THE MOST BYTES OF A STAGED REPORT TRADEAGENT READS (<c>U-runway-fixes</c> item 5; the size guard of <c>U-execution-environment</c>
+    /// fix pass 5, P1): one past it is refused by its size before a byte is read, and the rejection says so in bytes. A cap in BYTES, no
+    /// longer the line limit times 1 KiB, which refused a 20-line report of a model's paragraphs (over 1 KiB a line on average) as "over
+    /// the 20,480 a 20-line report may take".
+    /// <para><b>Sized for a 72-hour unattended run:</b> a report is one turn's file, so the run's length adds reports, never bytes to one;
+    /// the guard must admit 20 lines at any width a model writes — 64 KiB is 20 lines at 3.2 KiB each — while a delivered report is quoted
+    /// whole into its recipient's next prompt, so it stays a report's size, not a dataset's.</para>
     /// </summary>
-    public const int LineBytes = 1024;
+    public const int ReportBytes = 64 * 1024;
+
+    /// <summary>The most bytes of a staged agenda TradeAgent reads: 40 lines at 3.2 KiB each, as <see cref="ReportBytes"/> is sized.</summary>
+    public const int AgendaBytes = 128 * 1024;
 
     /// <summary>
     /// The most publications one pass will take from one role's <c>out/</c>. A role that filled its
@@ -383,13 +391,13 @@ public sealed class CouncilRelay
             string content;
             // NEVER THROUGH A LINK (fix pass 3, P2): a report name the cell made a link to a login or the app's state is refused by the
             // descriptor that would be read, so no byte of what it points at reaches a held publication.
-            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its line limit in bytes (LineBytes); one over it is refused unread, said
+            // AND NEVER PAST ITS SIZE (fix pass 5, P1): read under its cap in bytes (LimitBytes); one over it is refused unread, said in bytes
             // as a rejection — never allocated, and never left to be read again on every pass.
-            try { content = HomeFiles.ReadAllText(home, $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}", (long)Limit(kind) * LineBytes); }
+            try { content = HomeFiles.ReadAllText(home, $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}", LimitBytes(kind)); }
             catch (HomeFileTooLarge big)
             {
-                pass.Rejecting.Add($"{CouncilRoles.Title(role)}: {Path.GetFileName(file)} is {big.Length:N0} bytes, over the {big.Cap:N0} a "
-                                   + $"{Limit(kind)}-line {kind} may take, so it was not read or published. The last one it published still stands.");
+                pass.Rejecting.Add($"{CouncilRoles.Title(role)}: {Path.GetFileName(file)} is {big.Length:N0} bytes, over the {big.Cap:N0}-byte "
+                                   + $"limit of a {kind}, so it was not read or published. The last one it published still stands.");
                 continue;
             }
             catch (Exception) { continue; }         // being written now, or refused; the next pass takes it
@@ -784,6 +792,9 @@ public sealed class CouncilRelay
     /// owner's expense, which is the one thing context etiquette exists to stop.
     /// </summary>
     public static int Limit(string kind) => kind == PublicationKind.Brief ? AgendaLines : ReportLines;
+
+    /// <summary>The most bytes of a staged publication of <paramref name="kind"/> TradeAgent reads: <see cref="AgendaBytes"/> or <see cref="ReportBytes"/>.</summary>
+    public static int LimitBytes(string kind) => kind == PublicationKind.Brief ? AgendaBytes : ReportBytes;
 
     /// <summary>
     /// Whether this text may be published. Blank is not a publication, and neither is a file over

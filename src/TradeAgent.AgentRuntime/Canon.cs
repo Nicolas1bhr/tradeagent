@@ -1126,7 +1126,7 @@ public static class Canon
 
         {{if writes:trading}}
         - TradeAgent keeps a copy of `{{write trading/}}PLAN.md` and `trading/JOURNAL.md` at the end of every turn, and holds
-          them to {{plan_lines}} and {{journal_lines}} non-empty lines. One over its limit is moved to
+          them to {{plan_lines}} and {{journal_lines}} non-empty lines and {{plan_bytes}} and {{journal_bytes}}. One over its limit is moved to
           `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md`, the last accepted one returns, and your next `## Situation` says so.
           Nothing caps `{{archive_dir}}/`.
         {{end}}
@@ -1252,6 +1252,8 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "journal_file" => Write(WorkspaceRevisions.PathOf(PublicationKind.Journal)),
             "plan_lines" => $"{WorkspaceRevisions.PlanLines}",
             "journal_lines" => $"{WorkspaceRevisions.JournalLines}",
+            "plan_bytes" => $"{WorkspaceRevisions.PlanBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes",
+            "journal_bytes" => $"{WorkspaceRevisions.JournalBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes",
             "archive_dir" => Write(WorkspaceRevisions.ArchiveDir + "/").TrimEnd('/'),
             "reference_path" => Read(ResearchLibrary.ReferencePath),
             "examples_dir" => Read(ResearchLibrary.ExamplesDir + "/").TrimEnd('/'),
@@ -1279,7 +1281,7 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
     {
         "title", "version", "os", "network", "platform", "account", "mode", "blocked_reason", "max_order_quantity", "max_notional",
         "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_file", "journal_file", "plan_lines",
-        "journal_lines", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
+        "journal_lines", "plan_bytes", "journal_bytes", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
         "assessment_lines", "challenge_lines", "wake_file", "wake_cap", "turns_per_session", "guide", "verbs", "tools",
         "writes", "handbacks"
     };
