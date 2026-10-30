@@ -79,11 +79,14 @@ public class LaunchEvidenceTests
             "Incorrect API key provided: given.test.value. You can find your key on the platform.",
             "API key provided: \"bearer.test.value\"",
             "password: abc`tick.test.value",
+            "API key value: value.test.value",
+            "password was = was.test.value",
+            "API key is \"is.test.value\"",
             "API key is invalid",
             "API key was not found",
             Refused
         ])!;
-        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value", "quoted.test.value", "given.test.value", "bearer.test.value", "tick.test.value" })
+        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value", "quoted.test.value", "given.test.value", "bearer.test.value", "tick.test.value", "value.test.value", "was.test.value", "is.test.value" })
             Assert.DoesNotContain(hidden, said, StringComparison.Ordinal);
         Assert.Contains("Authorization: Bearer [withheld] was refused", said, StringComparison.Ordinal);
         Assert.Contains("invalid API key: '[withheld]'", said, StringComparison.Ordinal);

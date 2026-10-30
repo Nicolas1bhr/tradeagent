@@ -44,11 +44,11 @@ public static partial class LaunchEvidence
     /// <summary>
     /// THE VALUE AFTER A WORD THAT NAMES A CREDENTIAL — however short or dotted (the Codex reviews: a pasted key echoed in an error line is
     /// not always long): "api key", "key", "token", "password", "secret", "credential", "authorization", then an optional "provided",
-    /// "given", "supplied" or "used", then a ":" or "=" (an opening quote may follow) or an opening quote alone — and the next run of characters
+    /// "given", "supplied", "used", "value", "was" or "is", then a ":" or "=" (an opening quote may follow) or an opening quote alone — and the next run of characters
     /// that is no space, quote or separator, whatever it starts with but the Bearer scheme, which <see cref="Bearer"/> withholds. A word with
     /// no separator after it ("API key is invalid", "API key was not found") is the vendor's diagnosis and is kept.
     /// </summary>
-    [GeneratedRegex(@"(?i)(\b(?:api[ _-]?key|key|token|password|passwd|secret|credential|authorization)\b(?>(?:\s+(?:provided|given|supplied|used))?\s*(?:[:=]\s*[""'`]?|[""'`])))(?!\[withheld\]|bearer\s)[^\s""',;]+")]
+    [GeneratedRegex(@"(?i)(\b(?:api[ _-]?key|key|token|password|passwd|secret|credential|authorization)\b(?>(?:\s+(?:provided|given|supplied|used|value|was|is))?\s*(?:[:=]\s*[""'`]?|[""'`])))(?!\[withheld\]|bearer\s)[^\s""',;]+")]
     private static partial Regex Named();
 
     [GeneratedRegex(@"(?i)(bearer\s+)[^\s""',;]+")]
