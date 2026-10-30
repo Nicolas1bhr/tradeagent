@@ -169,13 +169,38 @@ public static class CellBenchmark
     }
 
     /// <summary>THE PROFILE a proof of <paramref name="provider"/> is measured under on this platform with codex <paramref name="codexPin"/>.</summary>
-    public static string Profile(string provider, CellPlatform platform, string codexPin) =>
-        Sha256Hex.Of(string.Join('\n',
+    public static string Profile(string provider, CellPlatform platform, string codexPin) => platform.Windows
+        ? WindowsProfile(provider, platform, codexPin)
+        : Sha256Hex.Of(string.Join('\n',
         [
             "provider " + provider, "platform " + CellProofStore.ThisPlatform, "architecture " + platform.Architecture,
             "landlock-abi " + platform.LandlockAbi, "lsm " + (platform.Lsm ?? "unknown"),
             CellNative.KernelSurface(RuntimeInformation.ProcessArchitecture, platform.LandlockAbi),
             "codex " + codexPin, "egress " + string.Join(',', ProvedEgress), "rows " + string.Join(',', RowNames)
+        ]));
+
+    /// <summary>
+    /// THE WINDOWS ROWS, by name, in the order they run (<c>U-cell-windows</c>; the survey's row set, its own and never the Linux rows):
+    /// the profile names them, so a build that changes the list holds no proof.
+    /// </summary>
+    public static readonly IReadOnlyList<string> WindowsRowNames =
+    [
+        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "owner-desktop-denied",
+        "no-egress", "web-443-granted", "web-nothing-else", "loopback-denied", "own-lan-address-denied", RouteA.WindowsLanGap,
+        "pipe-denied", "processes-denied", "job-escape-denied", "descendants-cancelled", "slot-leaves-nothing", "route-a-exec-server"
+    ];
+
+    /// <summary>
+    /// THE WINDOWS PROFILE: provider, platform, processor and build, the cell's mechanism as the stage sets it (the AppContainer, the job's
+    /// limits and UI restrictions, the window station, the slot count), the codex pin, the egress classes and the Windows rows.
+    /// </summary>
+    static string WindowsProfile(string provider, CellPlatform platform, string codexPin) =>
+        Sha256Hex.Of(string.Join('\n',
+        [
+            "provider " + provider, "platform " + CellProofStore.ThisPlatform, "architecture " + platform.Architecture,
+            "windows-build " + platform.WindowsBuild,
+            "mechanism appcontainer+job(kill-on-close,die-on-unhandled-exception,no-breakaway,ui-0xFF)+own-window-station+handle-list;slots " + WindowsCellSlots.Count,
+            "codex " + codexPin, "egress " + string.Join(',', ProvedEgress), "rows " + string.Join(',', WindowsRowNames)
         ]));
 
     /// <summary>

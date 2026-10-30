@@ -671,6 +671,8 @@ public class CellLaunchTests
         var code = CellStage.Run([Path.Combine(TestEnv.Home, "no-such-" + Guid.NewGuid().ToString("n") + ".cell.json"), "true"], error);
         Assert.Equal(CellStage.Failed, code);
         Assert.Contains("the cell was not entered", error.ToString());
-        Assert.Contains(OperatingSystem.IsLinux() && CellPlatform.Read().Refusal() is null ? "does not exist" : "minimum: 6", error.ToString());
+        // ON WINDOWS THE SELF-CONFINING STAGE IS REFUSED BY NAME (U-cell-windows): a Windows cell is entered through --spawn-contained --cell.
+        Assert.Contains(OperatingSystem.IsWindows() ? "which Windows has not"
+            : OperatingSystem.IsLinux() && CellPlatform.Read().Refusal() is null ? "does not exist" : "minimum: 6", error.ToString());
     }
 }

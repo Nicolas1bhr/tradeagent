@@ -245,7 +245,9 @@ public class RouteATests
             if (!OperatingSystem.IsLinux())
             {
                 Assert.True(ended.Raw.Contains("did not start the AI as a cell seat", StringComparison.Ordinal), ended.Raw);
-                Assert.Contains("Linux only", ended.Raw, StringComparison.Ordinal);   // admitted by everything before the cell, refused at it
+                // admitted by everything before the cell, refused at it: off Linux and Windows by the platform; on Windows by the proof,
+                // which is the Linux provider's here and so counts for no Windows cell (U-cell-windows).
+                Assert.Contains(OperatingSystem.IsWindows() ? "no cell proof counts" : "Linux only", ended.Raw, StringComparison.Ordinal);
                 Assert.Null(ended.Survivors);
                 Assert.Equal(0, presence.Live);
                 return;

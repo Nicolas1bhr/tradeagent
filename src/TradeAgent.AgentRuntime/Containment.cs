@@ -821,6 +821,11 @@ public static class ProcessContainment
         // A POLICY THAT IS REFUSED IS REFUSED FIRST, by its own words (the inbox, the app's own tree): what is wrong with the request
         // is said before what the computer lacks. Write checks it again.
         if (cell.Problem() is { } problem) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, problem);
+        // A WINDOWS CELL ON A WINDOWS PLATFORM (U-cell-windows): by the platform this launch is judged on, so a stand-in Linux platform
+        // still meets the cgroup rule below wherever the row runs.
+        if (on.Windows)
+            return OperatingSystem.IsWindows() ? StartWindowsCell(psi, cell, prefix, on)
+                : throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"a Windows cell runs on Windows; {psi.FileName} was not started");
         var root = cgroups ?? AttemptCgroups.Current;
         if (!root.Held)
             throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
@@ -889,8 +894,48 @@ public static class ProcessContainment
         foreach (var a in args) psi.ArgumentList.Add(a);
     }
 
+    /// <summary>
+    /// A WINDOWS CELL (<c>U-cell-windows</c> item 2): the policy written, and the launcher's Windows cell stage
+    /// (<c>trade --spawn-contained --cell &lt;policy&gt; &lt;program&gt;</c>, <see cref="WindowsCellStage"/>) started in a kill-on-close job of the app's,
+    /// held or refused — never started unheld. The stage starts the program in an AppContainer slot inside a job of its own, nested in
+    /// this one, so ending this job ends the stage and the cell together.
+    /// </summary>
     [SupportedOSPlatform("windows")]
-    static ContainedProcess StartWindows(ProcessStartInfo psi, bool requireHeld, IntPtr prepared = default)
+    static ContainedProcess StartWindowsCell(ProcessStartInfo psi, CellPolicy cell, IReadOnlyList<string> prefix, CellPlatform on)
+    {
+        var policyFile = cell.Write();
+        var exe = psi.FileName;
+        var args = psi.ArgumentList.ToArray();
+        Relaunch(psi, prefix, [ContainedLaunch.CellFlag, policyFile]);
+        psi.Environment["TRADEAGENT_HOME"] = Paths.Home;
+        ContainedProcess started;
+        try
+        {
+            started = StartWindows(psi, requireHeld: true, cell: new CellLaunch(cell.Hash, on, policyFile),
+                mechanism: $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) started by TradeAgent's own stage in a job of the app's; " +
+                           "cancelling ends the job, the stage and the cell's own job with it");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or TradeAgentException)
+        {
+            Command(psi, exe, args);
+            CellStage.Discard(policyFile);
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                $"TradeAgent's own trade command at {prefix[0]} would not start a cell ({ex.Message}); {exe} was not started, in a cell or outside one", ex);
+        }
+        if (!started.Held)
+        {
+            // A STAGE THE JOB DOES NOT HOLD IS ENDED AT ONCE: a cell is never left running outside the app's leash.
+            try { started.Process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+            started.Dispose();
+            CellStage.Discard(policyFile);
+            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{started.Mechanism}; {exe} was not started, in a cell or outside one");
+        }
+        return started;
+    }
+
+    [SupportedOSPlatform("windows")]
+    static ContainedProcess StartWindows(ProcessStartInfo psi, bool requireHeld, IntPtr prepared = default, CellLaunch? cell = null,
+        string? mechanism = null)
     {
         var why = "";
         var job = prepared != IntPtr.Zero ? prepared : CreateJob(out why);
@@ -941,7 +986,7 @@ public static class ProcessContainment
         }
 
         return new ContainedProcess(process, job, false, true,
-            "a Windows job object; it dies with TradeAgent and breakaway is refused");
+            mechanism ?? "a Windows job object; it dies with TradeAgent and breakaway is refused", cell);
     }
 
     /// <summary>
