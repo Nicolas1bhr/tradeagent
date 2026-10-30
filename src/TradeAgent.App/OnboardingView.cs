@@ -391,12 +391,22 @@ public sealed class OnboardingView
         {
             if (!await probe()) return;
             _host.Onboarding.Complete(step);
-            _host.Gateway.Log.Activity($"Setup: {step.Title()} — done");
+            _host.Gateway.Log.Activity(StepDoneLine(step, UsingAtas));
             if (_host.Onboarding.IsComplete()) _poll.Stop();
             _rerender();
         }
         catch (Exception) { /* a probe that fails is just "not yet" */ }
     }
+
+    /// <summary>
+    /// THE ACTIVITY LINE FOR A SETUP STEP THAT PASSED, saying what actually happened: an ATAS step on a setup that chose another platform passes
+    /// because there is nothing to do, and said "Finding ATAS — done" on the owner's practice-simulator setup (2026-10-30), where nothing
+    /// looked for ATAS at all.
+    /// </summary>
+    internal static string StepDoneLine(OnboardingStep step, bool usingAtas) =>
+        !usingAtas && step is OnboardingStep.ATAS_INSTALLED or OnboardingStep.ATAS_BRIDGE_INSTALLED or OnboardingStep.ATAS_BRIDGE_CONNECTED
+            ? $"Setup: {step.Title()} — skipped: the platform you chose is not ATAS, so there was nothing to do"
+            : $"Setup: {step.Title()} — done";
 
     /// <summary>
     /// What each waiting step is waiting for. Deliberately separate from the screens: this runs

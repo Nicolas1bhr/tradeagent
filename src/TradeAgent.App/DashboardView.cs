@@ -256,7 +256,13 @@ sealed class DashboardPage
             _missionCounts,
             _missionCost,
             Ui.With(_missionLast, t => t.FontSize = Theme.Small),
-            Ui.With(Ui.Row(Theme.S2, _workButton), r => r.Margin = new Thickness(0, Theme.S2, 0, 0)),
+            // NOT IN A ROW: a row gives its children all the width they ask for, and the armed sentence asked for more than the card has
+            // and ran under the System Health column. Left-aligned in the column, the button is as wide as its words up to the card's width.
+            Ui.With(_workButton, b =>
+            {
+                b.HorizontalAlignment = HorizontalAlignment.Left;
+                b.Margin = new Thickness(0, Theme.S2, 0, 0);
+            }),
             Ui.With(Ui.Divider(), d => d.Margin = new Thickness(0, Theme.S2, 0, 0)),
             Ui.Label("Guidance"),
             // Words, not authority, and the box says so. Nothing typed here can widen a limit,
@@ -494,7 +500,14 @@ sealed class DashboardPage
         // WHICH MODEL IS SPENDING IT, beside what it has spent. The same turn on gpt-6-astra and on
         // gpt-5.6-luna differs by a factor of fifty, so a total with no model beside it is a number
         // the owner cannot act on — and this is the choice they make one press away, on this page.
-        if (spend.Model is { Length: > 0 } model) line += $", running {model}";
+        //
+        // NAMED AS THE SEAT'S, NEVER AS WHAT RAN (seen on the owner's screen, 2026-10-30): the figure is the day's, every position's turns
+        // in it, and the model is the one THIS role's next turn asks for — "running gpt-5.6-sol" stood beside a total a chief on
+        // gpt-6-luna had spent. Each turn's own model is on its row in the ledger.
+        if (spend.Model is { Length: > 0 } model)
+            line += spend.Role is { Length: > 0 } role
+                ? $"; the {CouncilRoles.Title(role)}'s next turn asks for {model}"
+                : $"; the next turn asks for {model}";
         // Where the figure came from, beside the figure. An owner cannot tell an upper bound from a
         // bill by looking at it, and the difference decides whether they should go and correct it —
         // so the third reading is the one where they already have: their own rate, named as theirs,

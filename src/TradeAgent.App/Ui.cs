@@ -576,10 +576,12 @@ static class Ui
             Margin = new Thickness(0, 3),
             Children =
             {
+                // A KEY LONGER THAN ITS COLUMN WRAPS, never cut at the column's edge ("material-unwoken: longest interval" lost its last
+                // letters on the Oversight page).
                 new TextBlock
                 {
                     Text = key, Foreground = Theme.TextMuted, FontSize = Theme.Small,
-                    VerticalAlignment = VerticalAlignment.Center
+                    VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, Theme.S2, 0)
                 },
                 value
             }

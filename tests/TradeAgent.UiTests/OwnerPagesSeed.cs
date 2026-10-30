@@ -101,15 +101,20 @@ static class OwnerPagesSeed
         Mandate(db, "man-a1c0ffee0003", Head, Executor1, "Collect a second source for the liquidation data and compare the two.",
             Now.AddDays(1), 1.00m, "issued", "delivered");
 
-        // TODAY'S LAUNCHES AND WHAT THEY COST.
-        Priced(db, Launch(db, Executor1, Now.AddHours(-3), Team, "man-a1c0ffee0001"), Now.AddHours(-3).AddMinutes(4), 0.31m);
-        Priced(db, Launch(db, Executor1, Now.AddHours(-2), Team, "man-a1c0ffee0001"), Now.AddHours(-2).AddMinutes(6), 0.27m);
-        Priced(db, Launch(db, Executor2, Now.AddHours(-1), Team, "man-a1c0ffee0002"), Now.AddHours(-1).AddMinutes(3), 0.44m);
-        Priced(db, Launch(db, Head, Now.AddMinutes(-40), Team), Now.AddMinutes(-36), 0.18m);
-        Priced(db, Launch(db, Executor1, Now.AddMinutes(-30), Team, "man-a1c0ffee0003"), Now.AddMinutes(-25), 0.22m);
+        // TODAY'S LAUNCHES AND WHAT THEY COST — inside the owner's local day as it stands now, however soon after midnight the test runs
+        // (the pages cut the day there: a launch "three hours ago" at 00:30 is yesterday's, and the Costs page rightly leaves it out).
+        var day = OwnerDay.Window(Now).From;
+        var span = Now - day;
+        DateTimeOffset At(int sixth) => day + span * sixth / 6;
+        DateTimeOffset Ended(int sixth) => At(sixth) + span / 12;
+        Priced(db, Launch(db, Executor1, At(1), Team, "man-a1c0ffee0001"), Ended(1), 0.31m);
+        Priced(db, Launch(db, Executor1, At(2), Team, "man-a1c0ffee0001"), Ended(2), 0.27m);
+        Priced(db, Launch(db, Executor2, At(3), Team, "man-a1c0ffee0002"), Ended(3), 0.44m);
+        Priced(db, Launch(db, Head, At(4), Team), Ended(4), 0.18m);
+        Priced(db, Launch(db, Executor1, At(5), Team, "man-a1c0ffee0003"), Ended(5), 0.22m);
 
         Deliver(db, "man-a1c0ffee0003", "Both sources agree within 2% on 97% of the hours; the gaps are listed in the attached table.",
-            Now.AddMinutes(-20), ("sources-cited", true, "every source is cited"), ("output-shape", true, "the table has the columns asked for"));
+            Ended(5), ("sources-cited", true, "every source is cited"), ("output-shape", true, "the table has the columns asked for"));
 
         // A DECISION WITH ITS FORECAST.
         var decision = org.Decide(Head, null, "routine", ["keep testing the skew", "drop it"], "keep testing the skew",

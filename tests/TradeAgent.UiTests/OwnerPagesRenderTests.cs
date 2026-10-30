@@ -117,6 +117,11 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         {
             if (v is ScrollViewer sv && sv.Extent.Width > sv.Viewport.Width + 1)
                 found.Add($"a scroll viewer in {(sv.TemplatedParent as Control)?.GetType().Name ?? "the page"} “{Describe(sv.TemplatedParent as Control ?? sv)}” scrolls sideways ({sv.Extent.Width:0} wide in {sv.Viewport.Width:0})");
+            // CUT WHERE IT STANDS: a text whose laid-out line is wider than the box it was given — a button's words that do not wrap, a
+            // label in a column too narrow — is clipped at the box's edge without ever reaching the page's.
+            // (A wrapping text breaks its line at the box instead; only a line that does not wrap can be cut.)
+            if (v is TextBlock { TextWrapping: TextWrapping.NoWrap } cut && cut.TextLayout.Width > cut.Bounds.Width + 1)
+                found.Add($"{v.GetType().Name} “{Describe(cut)}” is cut: {cut.TextLayout.Width:0} wide in a {cut.Bounds.Width:0} box");
             if (v is not (TextBlock or Button or TextBox or ComboBox)) continue;
             var box = Pixels(v, frame);
             if (box.Right > right + 1)
@@ -148,7 +153,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// Renders each page in the window's frame at <paramref name="width"/>x<paramref name="height"/>: the rail and header as blank bands, the
     /// page beside and below them. Returns each page's overflow; saves the frames when <c>TA_UI_SHOTS</c> is set.
     /// </summary>
-    List<Frame> RenderAll(Database db, string home, int width, int height, Action<AppHost>? prepare = null)
+    List<Frame> RenderAll(Database db, string home, int width, int height, Action<AppHost>? prepare = null, bool armed = false)
     {
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
         try
@@ -176,6 +181,18 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                     foreach (var box in shown.OfType<TextBox>().Where(b => b.PlaceholderText is { Length: > 0 }))
                         boxes.TryAdd(box.PlaceholderText!, box.Bounds.Width);
                     Save(win, $"{home}-{maker.Name}-{width}x{height}.png");
+
+                    // AND EVERY TWO-PRESS ARMED: its first press only arms (Ui.Confirm) or, for one that takes away, acts here on a scratch
+                    // home — and the armed sentence, the longest words a button carries, must fit the page as the resting label did.
+                    if (armed)
+                    {
+                        foreach (var two in page.GetSelfAndVisualDescendants().OfType<Button>()
+                                     .Where(x => x.IsEffectivelyVisible && x.IsEnabled && x.Tag?.GetType().Name == "ConfirmState").ToList())
+                            two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                        win.UpdateLayout();
+                        overflow.AddRange(OverflowIn(page, win, width - Theme.S6).Select(o => "armed: " + o));
+                        Save(win, $"{home}-{maker.Name}-{width}x{height}-armed.png");
+                    }
 
                     // AND THE WHOLE PAGE: the window grown to the page's own height, so a review reads what is below the fold.
                     var bottom = page.GetSelfAndVisualDescendants().OfType<ScrollViewer>().Where(s => s.TemplatedParent is null && s.IsEffectivelyVisible)
@@ -231,6 +248,24 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         AssertFits(RenderAll(db, "working", width, height, host => host.Gateway.Reports.WriteNow(host.ReportInputs())), width, height);
     }
 
+    /// <summary>
+    /// EVERY TWO-PRESS, ARMED, FITS (seen on the owner's Linux screen, 2026-10-30): the armed sentence of "Let the AI work on its own" ran out
+    /// of its card under the System Health column, and "Wake the chief once"'s was cut mid-word. Over the working organisation with its chief
+    /// ACTIVE, so the wake press is drawn.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Sizes))]
+    public void Every_owner_page_fits_its_box_with_every_two_press_armed(int width, int height)
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"armed-{Guid.NewGuid():n}.db"));
+        var frames = RenderAll(db, "armed", width, height, host =>
+        {
+            output.WriteLine(host.ActivateChief(new OrgStore(db).Chief()));
+            host.Gateway.Reports.WriteNow(host.ReportInputs());
+        }, armed: true);
+        AssertFits(frames, width, height);
+    }
+
     [Theory]
     [MemberData(nameof(Sizes))]
     public void Every_owner_page_renders_and_fits_its_box_over_an_empty_home(int width, int height)
@@ -272,5 +307,81 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         Assert.DoesNotContain("trade pnl", All("report"), StringComparison.Ordinal);
         Assert.DoesNotContain("it has not launched", All("organisation"), StringComparison.Ordinal);
         Assert.Contains("chief of the organisation", frames["organisation"].Texts);
+    }
+
+    /// <summary>
+    /// ONBOARDING STEP 15 AT 1280x800 (seen on the owner's Linux screen, 2026-10-30): the back link beside the two presses read "← Back to
+    /// “Choose your trading platfo" — cut. Built the way the window's setup surface holds it: a column at most 880 wide, padded.
+    /// </summary>
+    [Fact]
+    public void The_onboarding_footer_keeps_its_back_link_whole_at_1280x800()
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"onboarding-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var onboarding = new OnboardingStore(db);
+            foreach (var step in OnboardingSteps.Order.TakeWhile(s => s != OnboardingStep.EVIDENCE_HELD)) onboarding.Complete(step);
+            Assert.Equal(OnboardingStep.EVIDENCE_HELD, onboarding.Current());
+            List<string> overflow = [];
+            HeadlessUi.Run(() =>
+            {
+                var view = new OnboardingView(host, () => { });
+                var screen = view.Build();
+                var win = new Window
+                {
+                    Width = 1280, Height = 800, Background = Theme.Bg,
+                    Content = new ScrollViewer
+                    {
+                        Content = new Border
+                        {
+                            Padding = new Thickness(Theme.S8, Theme.S10),
+                            Child = new ContentControl { MaxWidth = 880, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch, Content = screen }
+                        }
+                    }
+                };
+                win.Show();
+                win.UpdateLayout();
+                overflow = OverflowIn(screen, win, 1280);
+                Save(win, "onboarding-step15-1280x800.png");
+                win.Close();
+            });
+            foreach (var o in overflow) output.WriteLine(o);
+            Assert.True(overflow.Count == 0, string.Join(" | ", overflow));
+        }
+        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+    }
+
+    /// <summary>
+    /// THE DASHBOARD'S COST LINE NAMES THE SEAT'S MODEL AS THE SEAT'S (seen on the owner's screen, 2026-10-30): "running gpt-5.6-sol" stood
+    /// beside a day's figure a chief on gpt-6-luna had spent. The figure is every position's; the model is the one this role's next turn asks for.
+    /// </summary>
+    [Fact]
+    public void The_cost_line_never_says_a_model_ran_that_only_the_chairs_next_turn_asks_for()
+    {
+        var spend = new AiSpendToday
+        {
+            Metered = true, CanPrice = true, Class = BillingClasses.Plan, Role = CouncilRoles.Operations, Model = "gpt-5.6-sol",
+            Spent = 0.0049m, Cap = 40m, Currency = "USD", Turns = 1
+        };
+        var line = DashboardPage.MissionCost(spend);
+        Assert.DoesNotContain("running gpt-5.6-sol", line, StringComparison.Ordinal);
+        Assert.Contains("the Operations Director's next turn asks for gpt-5.6-sol", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// SETUP'S ACTIVITY LINES SAY WHAT HAPPENED FOR THE PLATFORM CHOSEN (seen on the owner's practice-simulator setup, 2026-10-30): "Finding
+    /// ATAS / Installing the ATAS bridge / Connecting to ATAS — done", where nothing looked for ATAS.
+    /// </summary>
+    [Fact]
+    public void Setup_says_an_atas_step_was_skipped_when_the_platform_is_not_atas()
+    {
+        foreach (var step in new[] { OnboardingStep.ATAS_INSTALLED, OnboardingStep.ATAS_BRIDGE_INSTALLED, OnboardingStep.ATAS_BRIDGE_CONNECTED })
+        {
+            Assert.Equal($"Setup: {step.Title()} — skipped: the platform you chose is not ATAS, so there was nothing to do",
+                OnboardingView.StepDoneLine(step, usingAtas: false));
+            Assert.Equal($"Setup: {step.Title()} — done", OnboardingView.StepDoneLine(step, usingAtas: true));
+        }
+        Assert.Equal("Setup: Choose your trading platform — done", OnboardingView.StepDoneLine(OnboardingStep.TRADING_PLATFORM_SELECTED, usingAtas: false));
     }
 }
