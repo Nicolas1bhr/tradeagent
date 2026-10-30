@@ -366,7 +366,9 @@ public sealed class AppHost : IAsyncDisposable
         // THE ORGANISATION'S VERBS (U-org-assignments-a): the mandate ops, each run on the pipe under the grant. The gate is part
         // a's recorded assurance against its one policy: a verb is offered and served only to an attempt whose ai_attempt row
         // carries at least a mediated seat, and an unreadable row refuses — and the pipe's own OrgVerbCaller decides again.
-        Verbs = BrokerDoor.OrganisationVerbs(() => _server),
+        // AND THE SECURITY BOARD'S (U-board-alive item 1): served to a board seat's grant alone, which is served nothing else of the door
+        // (BrokerDoor.VerbsFor) — and the pipe's BoardVerbCaller decides again.
+        Verbs = [.. BrokerDoor.OrganisationVerbs(() => _server), .. BrokerDoor.BoardVerbs(() => _server)],
         VerbGate = _db is { } attemptsDb ? BrokerDoor.RecordedAssurance(new AiAttemptStore(attemptsDb).Get) : BrokerDoor.NoRecordedAssurance,
         Ledger = _db is null ? null : new ToolCallStore(_db),
         Log = line =>
