@@ -39,6 +39,6 @@ public static class SeatResolver
                 ? null
                 : throw SeatColumns.Refused(role, SeatColumns.RuntimeColumn,
                     "is set, but the Operations and Research Directors are seated on the Owner page");
-        return SeatColumns.Of(row, id => RuntimeCatalog.Find(id) is not null);
+        return SeatColumns.Of(row, RuntimeCatalog.Knows);
     }
 }

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
+using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Board;
@@ -137,6 +138,12 @@ sealed class PuppetLife : IAsyncDisposable
     /// <summary>The life's change to the security board's policy in force, applied to every gateway it composes (<c>U-board-a2</c>).</summary>
     Func<BoardPolicy, BoardPolicy>? _policy;
 
+    /// <summary>
+    /// THE BROKER EVERY START OF THIS LIFE IS COMPOSED OVER (<c>U-loop-e2e</c>), built over that start's database — the simulator's
+    /// <c>FakeConnector</c> unless the life names another (the app's own paper venue, whose envelope the founding policy grants).
+    /// </summary>
+    Func<Database, ITradingConnector>? _connector;
+
     PuppetLife(string scripts, string? seatClass, IReadOnlyDictionary<string, string>? seatClasses = null)
     {
         Scripts = scripts;
@@ -150,7 +157,7 @@ sealed class PuppetLife : IAsyncDisposable
     /// </summary>
     public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null,
         Action<TradeAgentSettings>? settings = null, Func<BoardPolicy, BoardPolicy>? policy = null,
-        IReadOnlyDictionary<string, string>? seatClasses = null)
+        IReadOnlyDictionary<string, string>? seatClasses = null, Func<Database, ITradingConnector>? connector = null)
     {
         // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
         var found = ProcessWide.Note();
@@ -159,14 +166,15 @@ sealed class PuppetLife : IAsyncDisposable
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
             Environment.SetEnvironmentVariable("DOTNET_ROOT", Puppet.DotnetRoot);
 
-        var life = new PuppetLife(Puppet.NewScripts(name), seatClass, seatClasses) { _found = found, _policy = policy };
+        var life = new PuppetLife(Puppet.NewScripts(name), seatClass, seatClasses)
+            { _found = found, _policy = policy, _connector = connector };
         DeployTrade();
 
         life.DatabasePath = Path.Combine(TestEnv.Home, $"puppet-life-{Guid.NewGuid():n}.db");
         var db = new Database(life.DatabasePath);
         seed?.Invoke(db);
-        var connector = new FakeConnector(new FakeBroker());
-        await using (var last = new TradingGateway(db, connector, new HealthRegistry()))
+        var simulator = new FakeConnector(new FakeBroker());
+        await using (var last = new TradingGateway(db, simulator, new HealthRegistry()))
             last.Update(s =>
             {
                 s.SelectedRuntimeId = RuntimeManifest.PuppetId;
@@ -176,11 +184,11 @@ sealed class PuppetLife : IAsyncDisposable
                 settings?.Invoke(s);
             });
         new OnboardingStore(db).Complete(OnboardingStep.SETUP_COMPLETE);
-        await life.Compose(db, connector);
+        await life.Compose(db, life._connector?.Invoke(db) ?? simulator);
         return life;
     }
 
-    async Task Compose(Database db, FakeConnector connector)
+    async Task Compose(Database db, ITradingConnector connector)
     {
         await connector.ConnectAsync();
         Presence = new AgentPresence();
@@ -315,7 +323,8 @@ sealed class PuppetLife : IAsyncDisposable
         Host.Db.Read(_ => { Host.Db.Exec($"VACUUM INTO '{image.Replace("'", "''", StringComparison.Ordinal)}'"); return 0; });
         await Close();
         DatabasePath = image;
-        await Compose(new Database(image), new FakeConnector(new FakeBroker()));
+        var next = new Database(image);
+        await Compose(next, _connector?.Invoke(next) ?? new FakeConnector(new FakeBroker()));
     }
 
     // ---- the stores ------------------------------------------------------------------------------------------------------
