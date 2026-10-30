@@ -508,20 +508,25 @@ public sealed class AppHost : IAsyncDisposable
         var runtime = RuntimeObjectFor(role);
         if (runtime is null) return null;
 
-        if (_roleConversations.TryGetValue(role, out var held) && ReferenceEquals(held.Owner, runtime))
-            return held.Conversation;
+        // ONE CACHE, TWO CALLERS (U-org-autonomy item 4; the Codex review): the loop and the Chat page — which shows the chief's — both ask for
+        // a role's conversation, so the read-or-open is one locked step and both are handed the same one.
+        lock (_roleConversations)
+        {
+            if (_roleConversations.TryGetValue(role, out var held) && ReferenceEquals(held.Owner, runtime))
+                return held.Conversation;
 
-        held.Metering?.Dispose();
-        // FUNCTIONS, NOT VALUES. The folder is rebuilt on every prepare and the model is changed on
-        // the Safety page while the agent is running; the next turn is the one that has to obey.
-        var conversation = runtime.OpenConversation(role,
-            workspace: () => HomeFor(role),
-            environment: () => WorkspaceBuilder.EnvironmentFor(Agent?.SessionId ?? "", HomeFor(role)),
-            // THE SEAT'S MODEL, the one the meter admitted this role's launch on (U-org-seats): the argv or the request body names
-            // exactly what the row records and the reservation priced.
-            model: () => ConversationModelFor(role));
-        _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation, role));
-        return conversation;
+            held.Metering?.Dispose();
+            // FUNCTIONS, NOT VALUES. The folder is rebuilt on every prepare and the model is changed on
+            // the Safety page while the agent is running; the next turn is the one that has to obey.
+            var conversation = runtime.OpenConversation(role,
+                workspace: () => HomeFor(role),
+                environment: () => WorkspaceBuilder.EnvironmentFor(Agent?.SessionId ?? "", HomeFor(role)),
+                // THE SEAT'S MODEL, the one the meter admitted this role's launch on (U-org-seats): the argv or the request body names
+                // exactly what the row records and the reservation priced.
+                model: () => ConversationModelFor(role));
+            _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation, role));
+            return conversation;
+        }
     }
 
     readonly Dictionary<string, (IAgentRuntime Owner, IAgentConversation Conversation, IDisposable? Metering)>
