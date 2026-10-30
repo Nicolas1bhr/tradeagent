@@ -57,6 +57,8 @@ sealed class ReportPage
 
     public Control Root { get; }
 
+    readonly Control _bodyCard;
+
     public ReportPage(AppHost host)
     {
         _host = host;
@@ -75,7 +77,7 @@ sealed class ReportPage
                     r => r.HorizontalAlignment = HorizontalAlignment.Left),
                 _days),
             Ui.Col(Theme.S3, _written, _noteSection),
-            Ui.Card(_body));
+            _bodyCard = Ui.Card(_body));
 
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
@@ -135,6 +137,8 @@ sealed class ReportPage
         _noteText.Text = words.Note;
         _noteText.Foreground = words.HasNote ? Theme.Text : Theme.TextMuted;
 
+        // NO REPORT, NO CARD: an empty card under "No report has been written" read as a report that failed to show.
+        _bodyCard.IsVisible = words.Body.Length > 0;
         _body.Children.Clear();
         foreach (var line in words.Body.Replace("\r\n", "\n").Split('\n'))
             _body.Children.Add(Line(line));

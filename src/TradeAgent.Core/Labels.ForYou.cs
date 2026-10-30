@@ -53,13 +53,16 @@ public static partial class Labels
         $"From {sender} in {unit}, {when}" + (mandate is null ? ", about no mandate." : $", about mandate {mandate}.");
 
     /// <summary>One owed word's addressee and receipt.</summary>
-    public static string OwedTo(string addressee, string when) => $"To {addressee}, received {when}.";
+    public static string OwedTo(string addressee, string when) => $"To {Whom(addressee)}, received {when}.";
+
+    /// <summary>An addressee in the owner's words: a council role by its title ("the Operations Director"), any other by its id.</summary>
+    static string Whom(string addressee) => CouncilRoles.Title(addressee) is var title && title != addressee ? "the " + title : addressee;
 
     /// <summary>Why a word is still owed: the block's own reason (the app's), a launch that holds it, or the next turn.</summary>
     public static string OwedWhy(string addressee, string? blocked, string? takenBy) =>
         blocked is { Length: > 0 } why ? $"Not delivered: {why}"
         : takenBy is { Length: > 0 } turn ? $"Taken by launch {turn}; its turn has not answered yet."
-        : $"Waiting for {addressee}'s next turn.";
+        : $"Waiting for {Whom(addressee)}'s next turn.";
 
     /// <summary>An owed word whose payload is not one this build writes: named, never guessed at.</summary>
     public const string OwedUnreadable = "These words cannot be read as TradeAgent writes them.";
@@ -167,7 +170,7 @@ public static partial class Labels
     public const string BoardCompositionTitle = "The security board's seats and budget";
 
     public const string BoardCompositionIsYours =
-        "The board's seats and its share of your plan's day are yours, never the board's own (R24): a seat may only propose a change "
+        "The board's seats and its share of your plan's day are yours, never the board's own: a seat may only propose a change "
         + "to them. Founding a seat starts nothing — it is dormant until a sealed workspace is proven; the board stays on at least two "
         + "model classes.";
 
@@ -175,5 +178,5 @@ public static partial class Labels
     public const string FoundBoardSeatConfirm = "Press again to found the seat, dormant";
     public const string RetireBoardSeatConfirm = "Press again to retire the seat — it acts no more";
     public const string BoardShareLabel = "The board's share of the plan's day";
-    public const string BoardVendorFamilyPlaceholder = "Vendor family, e.g. openai";
+    public const string BoardVendorFamilyPlaceholder = "e.g. openai";
 }

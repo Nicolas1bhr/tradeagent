@@ -508,7 +508,7 @@ public class BillingClassesTests : IDisposable
     // ---- (g) the readings name their ceiling ------------------------------------------------------------------------------
 
     /// <summary>The words that name the plan ceiling to the AI, and the money one.</summary>
-    const string PlanWords = "daily plan-capacity limit — your owner's ChatGPT plan counted at list price, not money";
+    const string PlanWords = "daily plan-capacity limit (your owner's ChatGPT plan counted at list price, not money)";
     const string MoneyWords = "daily limit of real money";
 
     /// <summary>
@@ -541,8 +541,8 @@ public class BillingClassesTests : IDisposable
         var committed = $"including {Labels.Money(Turn, "USD")} committed";
         Assert.Contains($"Cost today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} daily limit of real money", card,
             StringComparison.Ordinal);
-        Assert.Contains($"Plan capacity used today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} daily plan-capacity limit — "
-                        + "your ChatGPT plan counted at list price, not money", card, StringComparison.Ordinal);
+        Assert.Contains($"Plan capacity used today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} daily plan-capacity limit ("
+                        + "your ChatGPT plan counted at list price, not money)", card, StringComparison.Ordinal);
         Assert.Equal(2, card.Split(committed).Length - 1);
     }
 

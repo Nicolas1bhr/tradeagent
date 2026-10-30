@@ -1352,6 +1352,9 @@ sealed class BoardComposition
             var board = _board();
             if (board is null) return;
             var share = board.BudgetShare();
+            // THE BOX OPENS ON THE SHARE IN FORCE, once and only while untouched (AmountField.OpenOn): an empty box drew its refusal in
+            // caution colour before the owner had typed anything.
+            if (share is { } inForce) Share.OpenOn(inForce);
             OrgText.Set(ShareNow, share is { } s
                 ? $"The board's share of the plan's day now: {s.ToString(System.Globalization.CultureInfo.InvariantCulture)}."
                 : "The board's share of the plan's day could not be read.");

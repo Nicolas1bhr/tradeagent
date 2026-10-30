@@ -25,7 +25,7 @@ sealed record WorkRead(
 }
 
 /// <summary>One open mandate as the page says it. <see cref="Objective"/> is its decider's claim; the rest is the app's record.</summary>
-sealed record MandateWords(string Id, string Header, string Status, string Terms, string Objective, string Spend);
+sealed record MandateWords(string Id, string Header, string Status, string Terms, string Objective, string Spend, bool Late = false);
 
 /// <summary>One delivery waiting to be judged. <see cref="Report"/> and <see cref="Deviations"/> are the holder's claims; <see cref="Checks"/> are the app's results.</summary>
 sealed record DeliveryWords(string Id, string Header, string Report, string Deviations, string Checks);
@@ -64,7 +64,7 @@ sealed record WorkWords(
     {
         var m = o.Mandate;
         var late = read.Now > m.Deadline ? ", past its deadline" : "";
-        var terms = $"A {m.Kind} mandate, latitude {m.Latitude}; due {OrgText.When(m.Deadline)}{late}; "
+        var terms = $"A {m.Kind} mandate, {Latitude(m.Latitude)}; due {OrgText.When(m.Deadline)}{late}; "
                     + $"{Labels.Money(m.Allocation, read.Currency)} allocated; up to {m.RetryLimit} {(m.RetryLimit == 1 ? "try" : "tries")}.";
         var objective = OrgText.Claim(m.Decider, m.Objective)
                         + (m.Scope is { Length: > 0 } scope ? "\nScope. " + OrgText.Claim(m.Decider, scope) : "");
@@ -80,8 +80,16 @@ sealed record WorkWords(
         spend += ".";
 
         return new MandateWords(m.Id, $"{m.Id}: {m.Holder} holds it for {m.Decider}",
-            $"Status: {o.Status ?? "no status is recorded"}.", terms, objective, spend);
+            $"Status: {o.Status ?? "no status is recorded"}.", terms, objective, spend, late.Length > 0);
     }
+
+    /// <summary>A mandate's latitude in the owner's words: whether its holder may deliver something other than what was asked.</summary>
+    static string Latitude(string latitude) => latitude switch
+    {
+        MandateLatitude.Exact => "to be delivered exactly as asked",
+        MandateLatitude.Open => "free to deviate if the holder says how",
+        _ => $"latitude {latitude}"
+    };
 
     static DeliveryWords Delivery(DeliveryToJudge d)
     {
@@ -235,6 +243,9 @@ sealed class WorkPage
             OrgText.Set(header, m.Header);
             OrgText.Set(status, m.Status);
             OrgText.Set(terms, m.Terms);
+            // A MANDATE PAST ITS DEADLINE IS SAID IN CAUTION COLOUR, so a late one is seen at a glance among the open ones.
+            var tone = m.Late ? Theme.Caution : Theme.TextMuted;
+            if (!ReferenceEquals(terms.Foreground, tone)) terms.Foreground = tone;
             OrgText.Set(objective, m.Objective);
             OrgText.Set(spend, m.Spend);
         });

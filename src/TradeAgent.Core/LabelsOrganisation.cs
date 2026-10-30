@@ -164,6 +164,9 @@ public static partial class Labels
         "What the organisation's AI turns cost today, unit by unit, and who paid for them. A unit's figure includes every unit below it.";
 
     public const string CostsNoUnits = "The chart holds no units.";
+
+    /// <summary>A unit with no turn today in any billing class: one line, never three "none today" lines.</summary>
+    public const string CostsNothingToday = "Nothing spent today: no AI turn of this unit or any unit below it has run.";
     public const string CostsNoTurns = "No AI turn has been funded here today.";
 
     public const string CostsPlanHeading = "Your ChatGPT plan";

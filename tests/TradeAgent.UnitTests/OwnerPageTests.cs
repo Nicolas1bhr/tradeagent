@@ -109,8 +109,11 @@ public class OwnerPageTests
         Assert.NotNull(typeof(ChoiceBox).GetMethod("OnPointerWheelChanged",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly));
 
-        // THE SHARE: an empty box refuses either press; a figure takes two.
+        // THE SHARE: the box opens on the share in force (U-ui-pages: an empty box drew a refusal before anything was typed); an emptied
+        // box refuses either press; a figure takes two.
         var was = board.BudgetShare();
+        Assert.Equal(was, c.Share.Value);
+        c.Share.Box.Text = "";
         Press(c.SetShare);
         Assert.False(Ui.IsArmed(c.SetShare));
         Assert.Equal(was, board.BudgetShare());

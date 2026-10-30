@@ -95,7 +95,7 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
     static OrgPositionWords PositionWords(OrgUnitRow unit, OrgPositionRow p, IReadOnlyDictionary<string, RecordedSeat> seats,
         IReadOnlyDictionary<string, ResolvedSeat>? resolved)
     {
-        var role = unit.HeadPositionId == p.Id ? $"{(unit.IsRoot ? "chief" : "head")} of {OrgText.UnitTitle(unit)}"
+        var role = unit.HeadPositionId == p.Id ? (unit.IsRoot ? "chief of the organisation" : $"head of {OrgText.UnitTitle(unit)}")
             : unit.Kind == OrgUnitKind.Staff ? $"staff of {OrgText.UnitTitle(unit)}"
             : $"member of {OrgText.UnitTitle(unit)}";
 
@@ -106,7 +106,7 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             set = r.Refused is { Length: > 0 } why
                 ? $"Its seat cannot be resolved: {why}."
                 : r.Runtime is null
-                    ? "Resolves to: no runtime is chosen yet (it has no seat of its own; the app's settings for the role decide)."
+                    ? "Resolves to: nothing yet — no runtime is chosen in the app's settings for its role."
                     : $"Resolves to: {r.Runtime}, {(r.Model is null ? "no model named" : $"model {r.Model}")} (it has no seat of its own; the app's settings for the role decide).";
         else if (p.Status != OrgPositionStatus.Active)
             set = $"Set to run on: nothing of its own; it is {p.Status}, so no seat is resolved.";
@@ -114,9 +114,9 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             set = "Set to run on: nothing of its own, and where it runs is not resolved here.";
 
         if (!seats.TryGetValue(p.Id, out var seat))
+            // NEVER LAUNCHED: one sentence, not two that each say "nothing yet" — no seat boundary and no payer are recorded.
             return new OrgPositionWords(p.Id, role, p.Status, set,
-                "Last ran on: nothing yet — it has not launched, so no seat boundary is recorded.",
-                "Paid from: nothing yet — it has not launched, so no billing class is recorded.");
+                "Has not run yet, so nothing is recorded of where it ran or who paid.", "");
 
         var cell = seat.Assurance is { } assurance
             ? $"Last ran on: {Labels.SeatAssuranceWords(assurance)} ({OrgText.When(seat.StartedAt)})."
@@ -258,6 +258,7 @@ sealed class OrganisationPage
             OrgText.Set(seat, p.Seat);
             OrgText.Set(cell, p.Cell);
             OrgText.Set(billing, p.Billing);
+            if (billing.IsVisible != p.Billing.Length > 0) billing.IsVisible = p.Billing.Length > 0;
             OrgText.Set(calibration, p.Calibration);
             if (calibration.IsVisible != p.Calibration.Length > 0) calibration.IsVisible = p.Calibration.Length > 0;
             OrgText.Set(refusal, p.HomeRefusal ?? "");

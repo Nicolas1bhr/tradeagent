@@ -71,7 +71,7 @@ public partial class OrgChiefTests
         // THE CHART PAGE AND THE CALLER'S OWN CHAIN NAME THE CHIEF AT THE ROOT.
         var words = OrganisationWords.Of(OrganisationRead.From(org, new AiAttemptStore(db), proofHeld: false), null);
         Assert.Contains($"headed by the chief {chief}", words.Units.Single(u => u.Id == OrgIds.Root).Line, StringComparison.Ordinal);
-        Assert.Equal($"chief of The organisation", words.Units.Single(u => u.Id == OrgIds.Root).Positions.Single(p => p.Id == chief).Role);
+        Assert.Equal("chief of the organisation", words.Units.Single(u => u.Id == OrgIds.Root).Positions.Single(p => p.Id == chief).Role);
         var show = await server.CallAsync(Frame(Ops.OrgShow), DivHead, Funded(db, DivHead, SeatClasses.Harness, Div, OrgIds.Root));
         Assert.True(show.Ok, Json.Write(show.Error));
         Assert.Equal(chief, Body(show).GetProperty("chain").EnumerateArray().Last().GetProperty("head").GetString());
