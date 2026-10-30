@@ -206,7 +206,11 @@ public sealed class UpdateService
     /// <summary>Where releases come from. Overridable so a staging repo can be tested before a real release exists.</summary>
     public const string DefaultRepository = "Nicolas1bhr/tradeagent";
 
-    /// <summary>The one artifact in a release that is an installable TradeAgent.</summary>
+    /// <summary>
+    /// Any TradeAgent installer, of either kind. NOT what the app installs by: a service built without a pattern takes exactly its own
+    /// channel's installer (<see cref="UpdateChannel"/>); this is the shape a staging test hands in, and what tells "the other kind
+    /// only" apart from "no installer uploaded".
+    /// </summary>
     public const string DefaultAssetPattern = @"^TradeAgent-Setup.*\.exe$";
 
     static readonly Regex RepositoryShape = new(@"^[A-Za-z0-9._-]{1,64}/[A-Za-z0-9._-]{1,100}$", RegexOptions.Compiled);
@@ -221,12 +225,13 @@ public sealed class UpdateService
     string? _lastRefusalReason;
 
     public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null,
-        bool byDeploy = false)
+        bool byDeploy = false, bool? atasAdapter = null)
     {
         UpdateVersion.TryParse(currentVersion, out _current);
         CurrentVersion = _current.ToString();
         Repository = Resolve(repository);
-        _assetPattern = assetPattern ?? Environment.GetEnvironmentVariable("TRADEAGENT_UPDATE_ASSET") ?? DefaultAssetPattern;
+        _assetPattern = assetPattern ?? Environment.GetEnvironmentVariable("TRADEAGENT_UPDATE_ASSET")
+            ?? UpdateChannel.PatternFor(atasAdapter ?? BuildContents.AtasAdapterInThisBuild);
         _sources = sources ?? UpdateSources.GitHub(Repository);
         ByDeploy = byDeploy;
         if (ByDeploy) { Stage = UpdateStage.ByDeploy; Message = DeployedHere; }
@@ -736,8 +741,37 @@ public sealed class UpdateService
 }
 
 /// <summary>Reads GitHub's release JSON. Pure, so the awkward cases are testable without a network.</summary>
+/// <summary>
+/// WHICH INSTALLER IN A RELEASE IS THIS TRADEAGENT'S (<c>U-windows-release</c>): the channel is the kind of build, and the kind is
+/// whether the ATAS adapter is in it (<see cref="BuildContents.AtasAdapterInThisBuild"/>, read from the installed bridge).
+///
+/// <para><b>An update never changes which kind this computer has.</b> A release the workflow cuts in CI carries
+/// <see cref="WithoutAtas"/> (no ATAS assemblies on a hosted runner); a build made on the machine with ATAS carries
+/// <see cref="WithAtas"/>. A build that trades through ATAS replaced by one without the adapter would take the owner's venue away
+/// under his open positions; the reverse is a different product he did not install. So each build takes exactly its own name, a
+/// release carrying only the other kind is refused in words (<see cref="ReleaseFeed.Parse(string?, UpdateVersion, string, out string?)"/>),
+/// and a release carrying both gives each build its own.</para>
+/// </summary>
+public static class UpdateChannel
+{
+    /// <summary>The installer of a build with the ATAS adapter in its bridge — the name every release before this unit used.</summary>
+    public const string WithAtas = "TradeAgent-Setup-x64.exe";
+
+    /// <summary>The installer of a build without the ATAS adapter: every installer CI builds.</summary>
+    public const string WithoutAtas = "TradeAgent-Setup-x64-no-atas.exe";
+
+    /// <summary>The installer this kind of build installs.</summary>
+    public static string InstallerFor(bool atasAdapter) => atasAdapter ? WithAtas : WithoutAtas;
+
+    /// <summary>The exact-name pattern for <see cref="InstallerFor"/>.</summary>
+    public static string PatternFor(bool atasAdapter) => "^" + Regex.Escape(InstallerFor(atasAdapter)) + "$";
+}
+
 public static class ReleaseFeed
 {
+    /// <summary>Any TradeAgent installer, of either kind: what tells "the other kind only" from "no installer uploaded".</summary>
+    static readonly Regex AnyInstaller = new(UpdateService.DefaultAssetPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>
     /// The newest release, if it is newer than <paramref name="current"/> AND carries an installer we
     /// could actually run. Null in every other case, including the ones a careless reader would call
@@ -801,7 +835,17 @@ public static class ReleaseFeed
                 size = asset.TryGetProperty("size", out var s) && s.TryGetInt64(out var bytes) ? bytes : 0;
             }
 
-            if (name is null || url is null) return null;
+            if (name is null || url is null)
+            {
+                // THE OTHER KIND ONLY (U-windows-release): a newer release whose only installer is the other channel's is a refusal the
+                // owner is told, not "you have the newest one" — the newer version exists, and this build will not become it.
+                var other = assets.EnumerateArray().Select(a => Str(a, "name")).FirstOrDefault(n => n is not null && AnyInstaller.IsMatch(n));
+                if (other is not null && IsPlainFileName(other))
+                    problem = $"TradeAgent {version} cannot be installed here: its installer, {other}, is the other kind of TradeAgent — " +
+                              "one has ATAS in it and the other does not — and an update never changes which kind this computer has. " +
+                              "Nothing was downloaded.";
+                return null;
+            }
 
             // The name comes off a web page and becomes a path: Path.Combine(updates\<version>\, name).
             // Nothing downstream is obliged to notice that "TradeAgent-Setup/../../../Startup/x.exe"
