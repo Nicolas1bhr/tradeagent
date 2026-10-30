@@ -587,8 +587,12 @@ public static class MissionEventIds
     /// </summary>
     public static string CutReview(string rule, string subject, string period) => $"review:{rule}:{subject}:{period}";
 
-    /// <summary>An activation's ONE wake to <paramref name="recipient"/> — the activated position or its hirer — keyed by both (<c>U-org-autonomy</c>).</summary>
-    public static string Activated(string position, string recipient) => $"{MissionEventKind.Activated}:{position}:{recipient}";
+    /// <summary>
+    /// An activation's ONE wake to <paramref name="recipient"/> — the activated position or its hirer — keyed by the <c>activated</c> event
+    /// that raised it (<c>U-org-autonomy</c>; Codex review): a position activated again after a veto restored it dormant is woken again.
+    /// </summary>
+    public static string Activated(string position, string recipient, long eventId) =>
+        $"{MissionEventKind.Activated}:{position}:{recipient}:{eventId.ToString(CultureInfo.InvariantCulture)}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,

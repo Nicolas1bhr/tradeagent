@@ -119,8 +119,14 @@ public partial class OrgAutonomyTests
         Assert.Contains("one request at a time", again.Error!.Message, StringComparison.Ordinal);
         Assert.Single(Asked(db, Head));
 
-        foreach (var runtime in new[] { RuntimeClass.Broker, RuntimeClass.Cell })
-            Assert.Contains(AgentReach.For(Head, runtime).Verbs, v => v.Op == Ops.OrgWake);
+        // ON THE BROKER SEAT'S REACH, WHICH HAS NO WAKE FILE; a cell has one, and is refused the verb in words (one way to ask, so one
+        // request at a time — the Codex review): the door serves every organisation verb alike, and the gateway decides.
+        Assert.Contains(AgentReach.For(Head, RuntimeClass.Broker).Verbs, v => v.Op == Ops.OrgWake);
+        Assert.Null(AgentReach.For(Head, RuntimeClass.Broker).WakeFile);
+        Assert.Equal(MissionLoop.WakeFile, AgentReach.For(Head, RuntimeClass.Cell).WakeFile);
+        var cell = await server.CallAsync(WakeFrame(90), Member, Launch(db, Member, SeatClasses.Cell));
+        Assert.False(cell.Ok);
+        Assert.Contains("runs in a cell", cell.Error!.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(Ops.OrgWake, Ops.Mutating);
     }
 

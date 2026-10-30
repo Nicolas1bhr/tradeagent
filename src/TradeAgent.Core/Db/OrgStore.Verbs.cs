@@ -343,9 +343,9 @@ public sealed partial class OrgStore
             using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
                        ("$active", OrgPositionStatus.Active), ("$p", id), ("$dormant", OrgPositionStatus.Dormant)))
                 if (c.ExecuteNonQuery() != 1) throw Damaged($"{id} was not dormant in the write that hired it");
-            Event(now, unit.Id, id, OrgEventKind.Activated, r.Caller,
+            var activated = Event(now, unit.Id, id, OrgEventKind.Activated, r.Caller,
                 $"position={id} unit={unit.Id} was={OrgPositionStatus.Dormant} by=hire event={eventId.ToString(CultureInfo.InvariantCulture)}");
-            WakeActivated(id, r.Caller, now);
+            WakeActivated(id, r.Caller, activated, now);
         }
         return new Hired(Position(id)!, decision, forecasts, eventId, dormant);
     });
@@ -449,13 +449,14 @@ public sealed partial class OrgStore
     /// that hired it where that is a position — never the app, the owner or the board. Inside the caller's write; a wake not written throws, so
     /// the activation is not written either.
     /// </summary>
-    void WakeActivated(string position, string? hirer, DateTimeOffset now)
+    void WakeActivated(string position, string? hirer, long activatedEvent, DateTimeOffset now)
     {
         var events = new MissionEventStore(db);
         foreach (var to in new[] { position, hirer }.OfType<string>().Distinct(StringComparer.Ordinal))
         {
             if (to != position && (IsAppPrincipal(to) || !CouncilRoles.IsPositionId(to) || Position(to) is null)) continue;
-            events.Raise(MissionEventIds.Activated(position, to), MissionEventKind.Activated, now, payload: position, role: to);
+            if (!events.Raise(MissionEventIds.Activated(position, to, activatedEvent), MissionEventKind.Activated, now, payload: position, role: to))
+                throw Damaged($"the activation wake of {position} to {to} was written already");
         }
     }
 
