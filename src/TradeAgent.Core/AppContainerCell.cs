@@ -124,6 +124,7 @@ public static class AppContainerCell
         var commandLine = CommandLine(program, arguments);
         var block = EnvironmentBlock(environment);
         var job = CreateCellJob();
+        var desktop = PrivateDesktop.Create(containerSid);
         var owned = new List<SafeFileHandle>();
         SafeFileHandle? inParent = null, outParent = null, errParent = null;
         IntPtr childIn, childOut, childErr;
@@ -183,6 +184,7 @@ public static class AppContainerCell
 
             var si = new StartupInfoEx();
             si.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
+            si.StartupInfo.lpDesktop = desktop.NamePointer;
             si.StartupInfo.dwFlags = StartfUseStdHandles;
             si.StartupInfo.hStdInput = childIn;
             si.StartupInfo.hStdOutput = childOut;
@@ -215,9 +217,10 @@ public static class AppContainerCell
             }
             CloseHandle(pi.hThread);
 
-            var process = new AppContainerProcess((int)pi.dwProcessId, new SafeProcessHandle(pi.hProcess, true), job,
+            var process = new AppContainerProcess((int)pi.dwProcessId, new SafeProcessHandle(pi.hProcess, true), job, desktop,
                 inParent, outParent, errParent);
             job = IntPtr.Zero;
+            desktop = null;
             inParent = outParent = errParent = null;
             return process;
         }
@@ -228,6 +231,7 @@ public static class AppContainerCell
             outParent?.Dispose();
             errParent?.Dispose();
             if (job != IntPtr.Zero) CloseHandle(job);
+            desktop?.Dispose();
             if (attrsReady) DeleteProcThreadAttributeList(attrs);
             foreach (var p in new[] { attrs, scPtr, capsPtr, handlesPtr }) if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
             foreach (var s in sids) LocalFree(s);
@@ -518,11 +522,14 @@ public sealed class AppContainerProcess : IDisposable
     readonly SafeProcessHandle _process;
     IntPtr _job;
 
-    internal AppContainerProcess(int pid, SafeProcessHandle process, IntPtr job, SafeFileHandle? input, SafeFileHandle? output, SafeFileHandle? error)
+    readonly PrivateDesktop? _desktop;
+
+    internal AppContainerProcess(int pid, SafeProcessHandle process, IntPtr job, PrivateDesktop? desktop, SafeFileHandle? input, SafeFileHandle? output, SafeFileHandle? error)
     {
         Id = pid;
         _process = process;
         _job = job;
+        _desktop = desktop;
         var utf8 = new UTF8Encoding(false);
         if (input is not null) StandardInput = new StreamWriter(new FileStream(input, FileAccess.Write, 4096, false), utf8) { AutoFlush = true };
         if (output is not null) StandardOutput = new StreamReader(new FileStream(output, FileAccess.Read, 4096, false), utf8);
@@ -589,7 +596,11 @@ public sealed class AppContainerProcess : IDisposable
             _job = IntPtr.Zero;
         }
         _process.Dispose();
+        _desktop?.Dispose();
     }
+
+    /// <summary>The window station and desktop the cell runs on: its own, never the owner's (<c>winsta\desktop</c>).</summary>
+    public string Desktop => _desktop?.Name ?? "";
 
     sealed class ProcessWaitHandle : WaitHandle
     {
@@ -615,4 +626,112 @@ public sealed class AppContainerProcess : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool DuplicateHandle(IntPtr sourceProcess, SafeProcessHandle source, IntPtr targetProcess, out SafeWaitHandle target,
         uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+}
+
+/// <summary>
+/// A CELL'S OWN WINDOW STATION AND DESKTOP (<c>U-cell-windows</c> item 1, measured on Windows 11 26200: the pinned codex dies 0xC0000142
+/// in an AppContainer that can open no window station, where cmd and curl start). Created for one cell, ACL'd to the account and the
+/// container SID alone, labelled Low so the container may use it — so the cell's programs start without the container ever being
+/// granted the OWNER'S window station or desktop: nothing of his screen, windows or clipboard is on the cell's desktop. The handles
+/// live as long as the cell; Windows destroys both when the last handle closes.
+/// </summary>
+[SupportedOSPlatform("windows")]
+public sealed class PrivateDesktop : IDisposable
+{
+    static readonly object Swap = new();
+    IntPtr _station, _desktop, _name;
+
+    PrivateDesktop(IntPtr station, IntPtr desktop, string name)
+    {
+        _station = station;
+        _desktop = desktop;
+        Name = name;
+        _name = Marshal.StringToHGlobalUni(name);
+    }
+
+    /// <summary><c>station\desktop</c>, as <c>STARTUPINFO.lpDesktop</c> names it.</summary>
+    public string Name { get; }
+
+    internal IntPtr NamePointer => _name;
+
+    /// <summary>
+    /// Makes the pair for <paramref name="containerSid"/>. The desktop is made on the new station by switching this process's window
+    /// station to it for the one call and back (<c>CreateDesktop</c> has no station argument), under a lock.
+    /// </summary>
+    public static PrivateDesktop Create(string containerSid)
+    {
+        var user = WindowsIdentity.GetCurrent().User!.Value;
+        var sddl = $"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})S:(ML;;NW;;;LW)";
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out var sd, IntPtr.Zero))
+            throw Fail("describe the cell's window station");
+        try
+        {
+            var sa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = sd, bInheritHandle = 0 };
+            var station = "TradeAgent-cell-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
+            var ws = CreateWindowStation(station, 1 /* CWF_CREATE_ONLY */, 0x37F /* WINSTA_ALL_ACCESS */, ref sa);
+            if (ws == IntPtr.Zero) throw Fail("make the cell's window station");
+            IntPtr dt;
+            lock (Swap)
+            {
+                var mine = GetProcessWindowStation();
+                if (!SetProcessWindowStation(ws))
+                {
+                    var e = Fail("enter the cell's window station");
+                    CloseWindowStation(ws);
+                    throw e;
+                }
+                try { dt = CreateDesktop("cell", IntPtr.Zero, IntPtr.Zero, 0, 0x10000000 /* GENERIC_ALL */, ref sa); }
+                finally { SetProcessWindowStation(mine); }
+            }
+            if (dt == IntPtr.Zero)
+            {
+                var e = Fail("make the cell's desktop");
+                CloseWindowStation(ws);
+                throw e;
+            }
+            return new PrivateDesktop(ws, dt, station + "\\cell");
+        }
+        finally { LocalFree(sd); }
+    }
+
+    public void Dispose()
+    {
+        if (_desktop != IntPtr.Zero) { CloseDesktop(_desktop); _desktop = IntPtr.Zero; }
+        if (_station != IntPtr.Zero) { CloseWindowStation(_station); _station = IntPtr.Zero; }
+        if (_name != IntPtr.Zero) { Marshal.FreeHGlobal(_name); _name = IntPtr.Zero; }
+    }
+
+    static TradeAgentException Fail(string what)
+    {
+        var err = Marshal.GetLastWin32Error();
+        return new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"Windows would not {what} (error {err}: {new Win32Exception(err).Message})");
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct Sa { public int nLength; public IntPtr lpSecurityDescriptor; public int bInheritHandle; }
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl, uint revision, out IntPtr sd, IntPtr size);
+
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateWindowStationW")]
+    static extern IntPtr CreateWindowStation(string name, uint flags, uint access, ref Sa sa);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateDesktopW")]
+    static extern IntPtr CreateDesktop(string name, IntPtr device, IntPtr mode, uint flags, uint access, ref Sa sa);
+
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetProcessWindowStation();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetProcessWindowStation(IntPtr station);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseWindowStation(IntPtr station);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseDesktop(IntPtr desktop);
 }
