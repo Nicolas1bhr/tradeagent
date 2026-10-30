@@ -794,6 +794,17 @@ public static class GatewaySchema
                 new("options", "string", false, "A JSON list of the options you weighed, in your words; the choice itself when omitted.")
             ]),
 
+        new(Core.Ops.OrgWake, "trade org wake <after_minutes>", false,
+            "ASK FOR YOUR NEXT WAKE: TradeAgent wakes you once, 'after_minutes' from now — the way a position whose seat writes no "
+            + "'.tradeagent/next.json' asks to be woken for its own work. Bounded by the security board's policy for your level: no sooner "
+            + "than its floor between wakes after your last woken turn began, and no later than your ceiling, which wakes you anyway. One "
+            + "request at a time: a second is refused while the first is untaken. Refused too when one more turn of your seat does not fit "
+            + "your unit's AI envelope or the plan's day-total today. Work addressed to you — a mandate, a delivery, an escalation — still "
+            + "wakes you whatever you asked. The turn it buys is metered like any other. It places no order and moves no money.",
+            [
+                new("after_minutes", "number", true, "How long from now to be woken, in whole minutes above zero.")
+            ]),
+
         new(Core.Ops.OrgHire, "trade org hire <unit> <rationale> --forecasts JSON [--head true] [--refs JSON] [--options JSON]", false,
             "HIRE A POSITION into a unit whose PARENT you head (a team's head does not grow its own team; its parent's head does), or "
             + "appoint one to that unit's VACANT head ('head': true — replacing a head is a different operation, not this one). The "

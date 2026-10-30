@@ -348,7 +348,11 @@ public class OrgLedgerTests
             // REVISITED, OUT LOUD, BY U-org-scorecards-b (declared): `org-review-answer` (`trade org review-answer`) writes a reviewer's
             // `review-answer` record — a decision, its forecasts and its ledger entry — and closes the review's wake, behind OrgVerbCaller
             // and OrgStore.AnswerReview's checks. It writes nothing of the chart, and names only the review event.
-            [Ops.OrgReviewAnswer] = ("trade org review-answer", ["event", "choice", "rationale", "forecasts", "refs", "options"])
+            [Ops.OrgReviewAnswer] = ("trade org review-answer", ["event", "choice", "rationale", "forecasts", "refs", "options"]),
+            // REVISITED, OUT LOUD, BY U-org-autonomy item 1 (R25 D5, declared): `org-wake` (`trade org wake`) writes ONE `self` wake for the
+            // caller itself — never the chart — behind OrgVerbCaller and OrgStore.RequestWake's checks (the board's floor and ceiling for
+            // its level, one pending, the AI day). It names only the delay: never a unit, a head, a seat, a position or another role.
+            [Ops.OrgWake] = ("trade org wake", ["after_minutes"])
         };
         foreach (var (name, (cli, args)) in structural)
         {
@@ -467,6 +471,10 @@ public class OrgLedgerTests
         // would accept now, asked of the same one check Veto throws on (OrgStore.Vetoable.cs, which writes nothing). No op, door verb
         // or trade verb names it (OwnerInboxTests.No_op_or_verb_reaches_the_owners_inbox_presses).
         mandate = [.. mandate, "Vetoable"];
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 1: RequestWake — a position's request for its own next wake (R25 D5). It writes one
+        // `self` mission_event for the caller and nothing of the chart (OrgStore.Autonomy.cs writes no org table: the source scan below is
+        // unchanged), behind OrgVerbCaller and the board's floor and ceiling, one pending, the AI day (OrgAutonomyTests).
+        mandate = [.. mandate, "RequestWake"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

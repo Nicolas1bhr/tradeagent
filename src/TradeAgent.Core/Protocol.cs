@@ -267,6 +267,13 @@ public static class Ops
     public const string OrgReviewAnswer = "org-review-answer";
 
     /// <summary>
+    /// A POSITION ASKS FOR ITS NEXT WAKE (<c>U-org-autonomy</c> item 1; R25 D5): the broker-seat equivalent of a cell's <c>next.json</c> —
+    /// one <c>self</c> wake, between the security board's floor and its ceiling for the caller's level, one pending at a time, inside
+    /// the AI day. NOT in <see cref="Mutating"/>: it places no order, moves no money and reaches no operator authority.
+    /// </summary>
+    public const string OrgWake = "org-wake";
+
+    /// <summary>
     /// THE ORGANISATION'S DECISION RECORDS (<c>U-org-decisions</c>, O5b; ORGANISATION § 5): a position records a ROUTINE decision —
     /// its options, its choice, its rationale (written as its own <c>decision</c> entry in the research ledger) and the app records
     /// it cites — and reads its own. Named apart from the pipe's ops and joined to <see cref="Organisation"/>, so the same caller
@@ -324,7 +331,7 @@ public static class Ops
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
         LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgRetire, OrgClose, OrgMerge, OrgTilt,
-        OrgReviewAnswer];
+        OrgReviewAnswer, OrgWake];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

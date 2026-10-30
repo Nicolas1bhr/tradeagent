@@ -48,6 +48,17 @@ public sealed record RewakeFloors(IReadOnlyDictionary<string, TimeSpan> Floors, 
             StringComparer.Ordinal));
 
     /// <summary>
+    /// EACH LEVEL'S CEILING AS THE POLICY IN FORCE STATES IT (<see cref="Board.BoardPolicy.HeadCeilingHours"/>, <c>U-board-a2</c>): one value for
+    /// every level until the levels' horizons are set apart; below zero reads zero, and zero raises none. The ONE reading: the loop's
+    /// ceilings, the re-wake floors' cap and a position's own wake request (<c>U-org-autonomy</c> item 1) all read it here.
+    /// </summary>
+    public static Dictionary<string, TimeSpan> CeilingsOf(Board.BoardPolicy policy) =>
+        OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(Math.Max(0, policy.HeadCeilingHours)), StringComparer.Ordinal);
+
+    /// <summary>The floors and ceilings of the policy in force (<see cref="From"/> over <see cref="CeilingsOf"/>).</summary>
+    public static RewakeFloors Of(Board.BoardPolicy policy) => From(policy.RewakeFloorMinutes, CeilingsOf(policy));
+
+    /// <summary>
     /// THE LEVEL WHOSE FLOOR IS THE LARGEST — what a holder the chart cannot place is held to: refused a guess, it takes the
     /// saving direction.
     /// </summary>
