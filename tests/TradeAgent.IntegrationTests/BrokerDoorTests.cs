@@ -19,7 +19,7 @@ namespace TradeAgent.Tests.Integration;
 /// loopback, spoken to here by a real HTTP client on every runner.
 /// </summary>
 [Collection("containment")]
-public class BrokerDoorTests
+public partial class BrokerDoorTests
 {
     /// <summary>
     /// ITEM 1, GUARD: THE DOOR IS ON LOOPBACK, ON A PORT CHOSEN AT START, ANSWERS MCP's HANDSHAKE AS JSON AND OPENS NO STREAM.

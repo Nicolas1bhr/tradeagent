@@ -107,4 +107,29 @@ public class BoardActivationTests(ITestOutputHelper log)
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
+
+    /// <summary>
+    /// A BOARD SEAT IS TOLD THE NAMES ITS DOOR SERVES (<c>U-board-alive</c> item 1): on a broker seat there is no <c>trade</c> command, so the
+    /// packet and the canon name each board verb by the door's own name (<c>BrokerDoor.VerbName</c>) — and the packet still names the
+    /// <c>trade board</c> form a puppet's path has. Neither names an organisation verb or a harness tool as the seat's.
+    /// </summary>
+    [Fact]
+    public void A_board_seats_packet_and_canon_name_the_doors_board_verbs()
+    {
+        using var db = TestEnv.NewDb();
+        var packet = BoardPacket.For(new BoardStore(db), "board-1", null, [], DateTimeOffset.UtcNow);
+        var canon = BoardPacket.Canon("board-1");
+        foreach (var op in Ops.Board)
+        {
+            Assert.Equal(TradeAgent.AgentRuntime.BrokerDoor.VerbName(op), BoardPacket.DoorName(op));
+            Assert.Contains($"`{TradeAgent.AgentRuntime.BrokerDoor.VerbName(op)}`", packet, StringComparison.Ordinal);
+            Assert.Contains(TradeAgent.AgentRuntime.BrokerDoor.VerbName(op), canon, StringComparison.Ordinal);
+        }
+        Assert.Contains("trade board decide", packet, StringComparison.Ordinal);
+        foreach (var other in new[] { "mandate_", "read_file", "write_file", "`trade`" })
+        {
+            Assert.DoesNotContain(other, packet, StringComparison.Ordinal);
+            Assert.DoesNotContain(other, canon, StringComparison.Ordinal);
+        }
+    }
 }

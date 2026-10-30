@@ -23,8 +23,9 @@ public static class BoardPacket
         var text = new StringBuilder();
         text.Append("# The security board — seat ").Append(seat).Append('\n');
         text.Append("You are seat ").Append(seat).Append(" of TradeAgent's security board. This packet is composed by TradeAgent from the "
-                    + "board's own records. You act only through the `trade board` commands below, and only an act you make with them binds "
-                    + "anything; nothing you write elsewhere does. You never place, change or time an order.\n");
+                    + "board's own records. You act only through the board's verbs below — the tools TradeAgent's door offers you, or the same "
+                    + "`trade board` commands where that command is on your path — and only an act you make with them binds anything; nothing "
+                    + "you write elsewhere does. You never place, change or time an order.\n");
         if (attemptId is not null) text.Append("This turn's launch: ").Append(attemptId).Append(".\n");
 
         var inForce = store.InForce();
@@ -58,15 +59,22 @@ public static class BoardPacket
         }
 
         text.Append("\n## Your commands\n")
-            .Append("- `trade board show <act>` — an act as you may read it\n")
-            .Append("- `trade board decide <act> confirm|refuse <intent_sha256> \"<your reasons>\"` — your decision on another seat's proposal, bound to its hash\n")
-            .Append("- `trade board narrow '<intent>' \"<your reasons>\"` — one seat narrows, at once\n")
-            .Append("- `trade board propose '<intent>' \"<your reasons>\"` — a widening, applied only when another seat confirms it\n")
-            .Append("- `trade board list` — the board's acts\n")
-            .Append("- `trade board power-propose <target> \"<text>\"` — a proposal of the board's own power, shown to the owner and applied by no one else\n")
-            .Append("An intent is a JSON list of changes {\"field\", \"from\", \"to\"}; every \"from\" is the value in force above.\n");
+            .Append("- `").Append(DoorName(Ops.BoardShow)).Append("` (act) — `trade board show <act>` — an act as you may read it\n")
+            .Append("- `").Append(DoorName(Ops.BoardDecide)).Append("` (act, answer, intent_sha256, rationale) — `trade board decide <act> confirm|refuse <intent_sha256> \"<your reasons>\"` — your decision on another seat's proposal, bound to its hash\n")
+            .Append("- `").Append(DoorName(Ops.BoardNarrow)).Append("` (intent, rationale) — `trade board narrow '<intent>' \"<your reasons>\"` — one seat narrows, at once\n")
+            .Append("- `").Append(DoorName(Ops.BoardPropose)).Append("` (intent, rationale) — `trade board propose '<intent>' \"<your reasons>\"` — a widening, applied only when another seat confirms it\n")
+            .Append("- `").Append(DoorName(Ops.BoardList)).Append("` — `trade board list` — the board's acts\n")
+            .Append("- `").Append(DoorName(Ops.BoardPowerPropose)).Append("` (target, text) — `trade board power-propose <target> \"<text>\"` — a proposal of the board's own power, shown to the owner and applied by no one else\n")
+            .Append("An intent is a JSON list of changes {\"field\", \"from\", \"to\"}; every \"from\" is the value in force above. A real-money mode and "
+                    + "real money's switch are no field of any act: real money stays closed.\n");
         return text.ToString();
     }
+
+    /// <summary>
+    /// THE NAME THE APP'S DOOR SERVES A BOARD VERB UNDER (<c>BrokerDoor.VerbName</c>, which this assembly cannot see; a test holds them
+    /// equal): the op's words joined by <c>_</c>.
+    /// </summary>
+    public static string DoorName(string op) => op.Replace('-', '_');
 
     /// <summary>THE BLIND READ of one act: what <see cref="BoardActBlindView"/> holds, and nothing it does not.</summary>
     static void Blind(StringBuilder text, BoardActBlindView b)
@@ -89,7 +97,9 @@ public static class BoardPacket
     public static string Canon(string seat) =>
         $"# Security board seat {seat}\n\n"
         + "You are a seat of TradeAgent's security board. Each turn TradeAgent hands you a packet: the policy in force and the acts you "
-        + "were woken for. You act only through `trade board` commands; nothing you write in this folder is read by anyone. A widening "
+        + "were woken for. You act only through the board's verbs — the tools TradeAgent's door offers you ("
+        + string.Join(", ", Ops.Board.Select(DoorName)) + "), or `trade board` commands where that command is on your path; nothing you "
+        + "write in this folder is read by anyone. A widening "
         + "takes two seats; a narrowing takes one. You never place, change or time an order, and you never change the board's own "
         + "composition or budget — you may only propose them to the owner with `trade board power-propose`.\n";
 }

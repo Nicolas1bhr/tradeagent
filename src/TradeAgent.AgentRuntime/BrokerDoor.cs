@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
@@ -187,10 +188,34 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// mandate verbs (<see cref="OrganisationVerbs"/>); O5b's <c>decision-*</c>/<c>forecast-*</c>/<c>escalation-*</c>/<c>lateral-*</c>
     /// join here. Run under the grant; never reached unless <see cref="VerbGate"/> passes the attempt.
     /// </summary>
-    public sealed record DoorVerb(ToolSpec Spec, Func<AgentGrant, string, CancellationToken, Task<ToolAnswer>> Run);
+    public sealed record DoorVerb(ToolSpec Spec, Func<AgentGrant, string, CancellationToken, Task<ToolAnswer>> Run)
+    {
+        /// <summary>
+        /// The pipe op this verb runs, or null for a verb that names none (a test's). A board op (<see cref="Ops.IsBoard"/>) is served to a
+        /// board seat's grant alone, and every other verb never to one (<see cref="VerbsFor"/>).
+        /// </summary>
+        public string? Op { get; init; }
+    }
 
     /// <summary>The organisation's verbs this door serves; a verb's name may be no harness tool's and no pipe op's.</summary>
     public IReadOnlyList<DoorVerb> Verbs { get; init; } = [];
+
+    /// <summary>
+    /// THE VERBS ONE GRANT IS SERVED (<c>U-board-alive</c> item 1; R24 § 4.2, ORCHESTRATION § 2.9): a seat of the security board — its
+    /// grant's role a board id (<see cref="BoardSeats.IsBoardId"/>) — is served EXACTLY the board's verbs (<see cref="Ops.Board"/>) and
+    /// nothing else of the door; every other grant — a position, the chief included — is served every verb BUT the board's. The pipe's own
+    /// gates decide again behind this (<c>BoardVerbCaller</c>, <c>OrgVerbCaller</c>); this is what each is offered and what it may call.
+    /// </summary>
+    public IReadOnlyList<DoorVerb> VerbsFor(AgentGrant grant) =>
+        BoardSeats.IsBoardId(grant.Role)
+            ? [.. Verbs.Where(v => v.Op is { } op && Ops.IsBoard(op))]
+            : [.. Verbs.Where(v => v.Op is not { } op || !Ops.IsBoard(op))];
+
+    /// <summary>What a board seat's door says of any tool but the board's verbs: its door carries those alone.</summary>
+    public static string BoardSeatOnlyVerbs(string name) =>
+        $"'{name}' is not served to a seat of the security board: its door carries the board's verbs alone ("
+        + string.Join(", ", Ops.Board.Select(VerbName)) + "). A board seat reads, writes and trades nothing else here, and places, changes or "
+        + "times no order. Nothing was run.";
 
     /// <summary>
     /// THE ORGANISATION'S VERBS AS THE DOOR SERVES THEM (<c>U-org-assignments-a</c> fix pass 1, item 4): one per
@@ -199,16 +224,27 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// own gate (<c>OrgVerbCaller</c>: the active position the grant proved, its launch's RECORDED assurance) decides again behind
     /// <see cref="VerbGate"/>, and the mandate row decides who may judge, deliver or cancel. The pipe server is read per call.
     /// </summary>
-    public static IReadOnlyList<DoorVerb> OrganisationVerbs(Func<Gateway.GatewayPipeServer?> server)
+    public static IReadOnlyList<DoorVerb> OrganisationVerbs(Func<Gateway.GatewayPipeServer?> server) => PipeVerbs(Ops.Organisation, server);
+
+    /// <summary>
+    /// THE SECURITY BOARD'S VERBS AS THE DOOR SERVES THEM (<c>U-board-alive</c> item 1; R24 § 4.2): one per <see cref="Ops.Board"/> op —
+    /// narrow, propose, decide (confirm or refuse), list, show, and a proposal of the board's own power — named <see cref="VerbName"/>,
+    /// described by the gateway's own schema, each running ITS op on the pipe under the grant, whose <c>BoardVerbCaller</c> decides again:
+    /// an active seat of the board, on a launch the ledger recorded under it, at its recorded assurance. Served to a board seat's grant
+    /// alone (<see cref="VerbsFor"/>). None places, alters, times or sizes an order, and none reaches the owner's authority.
+    /// </summary>
+    public static IReadOnlyList<DoorVerb> BoardVerbs(Func<Gateway.GatewayPipeServer?> server) => PipeVerbs(Ops.Board, server);
+
+    static IReadOnlyList<DoorVerb> PipeVerbs(IReadOnlyList<string> ops, Func<Gateway.GatewayPipeServer?> server)
     {
         ArgumentNullException.ThrowIfNull(server);
         var described = Gateway.GatewaySchema.Ops();
-        return [.. Ops.Organisation.Select(op =>
+        return [.. ops.Select(op =>
         {
             var spec = described.Single(o => o.Op == op);
             var name = VerbName(op);
             return new DoorVerb(new ToolSpec(name, spec.Description, GrantedWorkerTools.OpArgsSchema(spec)),
-                (grant, arguments, ct) => RunOrganisationVerb(op, name, server, grant, arguments, ct));
+                (grant, arguments, ct) => RunOrganisationVerb(op, name, server, grant, arguments, ct)) { Op = op };
         })];
     }
 
@@ -470,8 +506,9 @@ public sealed class BrokerDoor : IAsyncDisposable
                 result = new Dictionary<string, object>
                 {
                     // THE HARNESS'S TOOLS, AND THE VERBS ONLY FOR AN ATTEMPT THE GATE PASSES: a seat is not offered what it may not use.
-                    ["tools"] = (Tools(connection.Grant!)?.Offered ?? [])
-                        .Concat(VerbGate(connection.Grant!) is null ? Verbs.Select(v => v.Spec) : [])
+                    // A BOARD SEAT IS OFFERED THE BOARD'S VERBS AND NOTHING ELSE (U-board-alive item 1): no harness tool at all.
+                    ["tools"] = (BoardSeats.IsBoardId(connection.Grant!.Role) ? [] : Tools(connection.Grant!)?.Offered ?? [])
+                        .Concat(VerbGate(connection.Grant!) is null ? VerbsFor(connection.Grant!).Select(v => v.Spec) : [])
                         .Select(t => new Dictionary<string, object>
                         {
                             ["name"] = t.Name, ["description"] = t.Description, ["inputSchema"] = t.Parameters
@@ -576,8 +613,12 @@ public sealed class BrokerDoor : IAsyncDisposable
         if (name is null) return ToolResult("a tools/call names its tool", served: false);
         var arguments = parameters.TryGetProperty("arguments", out var a) && a.ValueKind != JsonValueKind.Null ? a.GetRawText() : "";
 
-        if (Verbs.FirstOrDefault(v => string.Equals(v.Spec.Name, name, StringComparison.Ordinal)) is { } verb)
+        if (VerbsFor(grant).FirstOrDefault(v => string.Equals(v.Spec.Name, name, StringComparison.Ordinal)) is { } verb)
             return await Verb(grant, verb, arguments, ct);
+
+        // A BOARD SEAT'S DOOR SERVES NOTHING BUT THE BOARD'S VERBS (U-board-alive item 1): any other name — a harness tool, an organisation
+        // verb — is refused here, before any surface is asked, and recorded as every refusal is.
+        if (BoardSeats.IsBoardId(grant.Role)) return Recorded(grant, name, ToolAnswer.Refused(BoardSeatOnlyVerbs(name), name));
 
         if (Tools(grant) is not { } tools) return ToolResult("the door serves no tool to this launch", served: false);
         var answer = await tools.InvokeAsync(new ToolRequest(id.ToString(), name, arguments), ct);
@@ -592,20 +633,26 @@ public sealed class BrokerDoor : IAsyncDisposable
     {
         ToolAnswer answer;
         if (VerbGate(grant) is { } refused)
-            answer = ToolAnswer.Refused($"'{verb.Spec.Name}' is an organisation verb, and {refused}.", verb.Spec.Name);
+            answer = ToolAnswer.Refused($"'{verb.Spec.Name}' is {(verb.Op is { } op && Ops.IsBoard(op) ? "a verb of the security board" : "an organisation verb")}, "
+                                        + $"and {refused}.", verb.Spec.Name);
         else
         {
             try { answer = await verb.Run(grant, arguments, ct); }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { answer = ToolAnswer.Refused($"'{verb.Spec.Name}' could not be answered: {ex.Message}", verb.Spec.Name); }
         }
-        // THE ROW MEASURES WHAT THE CALLER RECEIVES (fix pass 1, R3): the cut first, then the record.
+        return Recorded(grant, verb.Spec.Name, answer);
+    }
+
+    /// <summary>ONE ANSWER, CUT AND RECORDED: the row measures what the caller receives (fix pass 1, R3) — the cut first, then the record.</summary>
+    Dictionary<string, object> Recorded(AgentGrant grant, string tool, ToolAnswer answer)
+    {
         var delivered = Bounded(answer.Content);
         try
         {
             Ledger?.Record(new Core.Db.ToolCallRow
             {
-                At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = verb.Spec.Name,
+                At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = tool,
                 Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(delivered), Served = answer.Served,
                 Refusal = answer.Served ? null : delivered
             });
