@@ -266,8 +266,43 @@ jobs:
               echo "$BASHPID" > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
               echo "+pids +memory" > "$svc/cgroup.subtree_control" || { state "enable refused"; echo "::error::enabling +pids +memory below $svc failed"; exit 1; }
               state after
-              exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope!=EveryOs" \
+              exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope!=EveryOs&CellScope!=Windows" \
                 --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"'
+
+      # THE WINDOWS CELL'S ROWS (U-cell-windows) — in THIS job, the first windows shard only, for the reason the Linux rows run in the
+      # ubuntu one. First the pinned codex: the windows package of the one release every seat runs, its archive and its bin\codex.exe
+      # checked against the build's own pins (RuntimeManifest.cs CodexInstall) — a mismatch is a red run, never a newer codex. Unpacked
+      # with Windows's own tar (Git's GNU tar reads "D:" as a remote host). No model, no login, no key ever reaches it.
+      - name: Fetch the pinned windows codex for the Windows cell rows
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'codex-pkg'; New-Item -ItemType Directory -Force $dir | Out-Null
+          $tgz = Join-Path $env:RUNNER_TEMP 'codex.tar.gz'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/openai/codex/releases/download/rust-v0.160.1/codex-package-x86_64-pc-windows-msvc.tar.gz' -OutFile $tgz
+          $a = (Get-FileHash -Algorithm SHA256 $tgz).Hash.ToLower()
+          if ($a -ne '25c6fe4e46d5bff939312fc46de67ace37561f6f1f89b409af63fd8cc6098425') { Write-Output "::error::codex archive hashes to $a"; exit 1 }
+          & "$env:SystemRoot\System32\tar.exe" -xzf $tgz -C $dir; if ($LASTEXITCODE -ne 0) { exit 1 }
+          $exe = Join-Path $dir 'bin\codex.exe'
+          $e = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+          if ($e -ne '9e7c59c05cc1ce5677b1f94e835b2ac038ca3be14504e78d558eacdb0ea3f55d') { Write-Output "::error::bin\codex.exe hashes to $e"; exit 1 }
+          Write-Output "codex package: $((Get-ChildItem $dir).Name -join ' '); $(& $exe --version)"
+          "TA_CELL_CODEX=$exe" >> $env:GITHUB_ENV
+
+      # THE ROWS, AS THE RUNNER IS: elevated (CI's windows runner is an administrator), so TA_CELL_WINDOWS_ADMIN=1 lets the one row that
+      # places a firewall rule run — on a machine thrown away after — and makes a missing elevation a red row, never a skip. The UAC
+      # prompt the product shows the owner cannot be shown here; that row measures the rule, not the prompt.
+      - name: Test the Windows cell rows
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
+        timeout-minutes: 15
+        shell: bash
+        env:
+          TA_CELL_WINDOWS_ADMIN: '1'
+        run: |
+          set -euo pipefail
+          dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope=Windows" \
+            --logger "trx;LogFileName=results-cell-windows.trx" --logger "console;verbosity=normal"
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
