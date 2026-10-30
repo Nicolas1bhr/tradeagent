@@ -190,8 +190,9 @@ public class OrgSeatsTests : IDisposable
         Assert.Equal(row.RequestedModel, host.ConversationModelFor(CouncilRoles.Research));
         Assert.Equal("gpt-5.6-luna", host.SeatFor(CouncilRoles.Research).Model);   // the NEXT launch's seat moves; this one's does not
 
-        // A BROKER-ONLY SEAT: its model is the pin whatever was chosen, and the pin is what its session launches.
-        Assert.Equal(BrokerSeat.Model, AppHost.SeatModelOn(SeatPlan.BrokerClass, chosen: "gpt-5.6-luna", resolved: "gpt-5.6-luna"));
+        // A VERIFIED SEAT: its model is its own choice as chosen (U-seat-models; before it, the pin whatever was chosen) — so the seat the
+        // meter admits names what the session launches, and a choice outside the catalog reaches the session's check, which refuses it.
+        Assert.Equal("gpt-5.6-luna", AppHost.SeatModelOn(SeatPlan.BrokerClass, chosen: "gpt-5.6-luna", resolved: "gpt-5.6-luna"));
         Assert.Equal("gpt-5.6-luna", AppHost.SeatModelOn(SeatClasses.Cli, chosen: "gpt-5.6-luna", resolved: "gpt-5.6-luna"));
         // ...unless the choice is a model of the verified catalog (U-seat-models): the fallback is priced as the fallback, on both verified
         // classes; no choice is the default.
@@ -239,6 +240,13 @@ public class OrgSeatsTests : IDisposable
         Assert.Equal(BrokerSeat.Fallback, store.ChooseSeatModel(Pos, BrokerSeat.Model, BrokerSeat.IsCatalogModel, "codex", Known, now));
         row = store.Position(Pos)!;
         Assert.Equal((Harness, BrokerSeat.Model, "300000", "8000"), (row.SeatRuntime, row.SeatModel, row.SeatAllowIn, row.SeatAllowOut));
+
+        // A SEAT WRITTEN IN PART IS REFUSED, NEVER GUESSED OVER (the Codex review): its figures are not replaced with the policy's.
+        Exec(db, "UPDATE org_position SET seat_allow_out='lots' WHERE id=$id", ("$id", Pos));
+        Assert.Contains("incomplete or unreadable", Assert.Throws<TradeAgentException>(() =>
+            store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message);
+        Assert.Equal((BrokerSeat.Model, "lots"), (store.Position(Pos)!.SeatModel, store.Position(Pos)!.SeatAllowOut));
+        Exec(db, "UPDATE org_position SET seat_allow_out='8000' WHERE id=$id", ("$id", Pos));
 
         new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest("board-2", TradeAgent.Core.Board.BoardSeatStatus.Active, now);
         var refused = Assert.Throws<TradeAgentException>(() => store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message;

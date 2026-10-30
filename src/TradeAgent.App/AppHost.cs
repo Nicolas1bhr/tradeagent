@@ -729,14 +729,14 @@ public sealed class AppHost : IAsyncDisposable
             ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null));
 
     /// <summary>
-    /// THE RULE <see cref="ModelOn"/> APPLIES, given the declared seat class: a verified seat runs on its position's choice among the
-    /// verified catalog's models, else the catalog's default, so its reservation is priced at the model it launches on (U-thinking-seats-c;
-    /// U-seat-models) — a choice outside the catalog never launches, and is priced at the default; any other seat, on the model its runtime
-    /// resolved the choice to.
+    /// THE RULE <see cref="ModelOn"/> APPLIES, given the declared seat class: a verified seat's model is its position's own choice, else the
+    /// verified catalog's default (U-thinking-seats-c; U-seat-models) — the choice kept as chosen, so the seat the meter admits, prices and
+    /// records names the model the session launches, and a choice outside the catalog reaches the session's check, which refuses it in words
+    /// before anything starts; any other seat, on the model its runtime resolved the choice to.
     /// </summary>
     internal static string? SeatModelOn(string? declaredClass, string? chosen, string? resolved) =>
         declaredClass is { } declared && BrokerSeat.IsVerified(declared)
-            ? BrokerSeat.ModelOf(declared, chosen) ?? BrokerSeat.ModelOf(declared)
+            ? chosen is { Length: > 0 } own ? own : BrokerSeat.ModelOf(declared)
             : resolved;
 
     /// <summary>
@@ -751,19 +751,15 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>
     /// WHAT A ROLE'S CONVERSATION IS OPENED ON (<c>U-org-seats</c>): the model of the seat the meter admitted its launch on, so the argv or
-    /// request body names exactly the row's <c>requested_model</c>; before any admission, the seat as it resolves now. A BROKER-ONLY seat
-    /// is handed the CHOICE instead, unresolved — its session launches its pin whatever it is handed, and verifies the choice against the
-    /// pin, refusing one that names another model (U-thinking-seats-c). Never throws: a seat that cannot be read opens nothing that runs
-    /// — the meter refused its launch before this is asked.
+    /// request body names exactly the row's <c>requested_model</c>; before any admission, the seat as it resolves now. A verified seat's
+    /// too (the Codex review of U-seat-models): its admitted seat carries its position's choice unresolved (<see cref="SeatModelOn"/>), so
+    /// a switch between the admission and the start never launches a model the row and the reservation do not name, and the session still
+    /// verifies the choice against the catalog, refusing one outside it (U-thinking-seats-c). Never throws: a seat that cannot be read opens
+    /// nothing that runs — the meter refused its launch before this is asked.
     /// </summary>
     internal string? ConversationModelFor(string role)
     {
-        try
-        {
-            if (!TestHostPuppet(role) && DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
-                return SeatedOf(role)?.Model ?? Gateway.Settings.OwnModelForRole(role);
-            return (Meter?.OpenSeatFor(role) ?? SeatFor(role)).Model;
-        }
+        try { return (Meter?.OpenSeatFor(role) ?? SeatFor(role)).Model; }
         catch (Exception) { return null; }
     }
 

@@ -60,14 +60,19 @@ public sealed partial class OrgStore
 
         string seatRuntime;
         long input, output;
-        if (row.SeatRuntime is { } own && long.TryParse(row.SeatAllowIn, NumberStyles.None, CultureInfo.InvariantCulture, out var i)
-            && long.TryParse(row.SeatAllowOut, NumberStyles.None, CultureInfo.InvariantCulture, out var o))
-            (seatRuntime, input, output) = (own, i, o);
-        else
+        if (row.SeatRuntime is null && row.SeatModel is null && row.SeatAllowIn is null && row.SeatAllowOut is null)
         {
             var allowance = PolicyAllowance();
-            (seatRuntime, input, output) = (row.SeatRuntime ?? runtime ?? "", allowance.InputTokens, allowance.OutputTokens);
+            (seatRuntime, input, output) = (runtime ?? "", allowance.InputTokens, allowance.OutputTokens);
         }
+        else if (row.SeatRuntime is { } own && long.TryParse(row.SeatAllowIn, NumberStyles.None, CultureInfo.InvariantCulture, out var i)
+                 && long.TryParse(row.SeatAllowOut, NumberStyles.None, CultureInfo.InvariantCulture, out var o))
+            (seatRuntime, input, output) = (own, i, o);
+        else
+            // REFUSE, NEVER GUESS (the Codex review): a seat written in part, or with an allowance that does not read as a whole number, is
+            // not overwritten with the policy's figures — its launch is refused in words already, and so is this switch.
+            throw Refused($"{position}'s seat columns are incomplete or unreadable (runtime {row.SeatRuntime ?? "none"}, allowance " +
+                          $"{row.SeatAllowIn ?? "none"} in / {row.SeatAllowOut ?? "none"} out), so its model is not switched over them.");
         if (SeatRefusal(seatRuntime, model, input, output, knownRuntime) is { } bad) throw Refused(bad);
         WriteSeat(row.UnitId, position, seatRuntime, model, input, output, OrgDecider.Owner, at, recorded: true);
         return row.SeatModel;
