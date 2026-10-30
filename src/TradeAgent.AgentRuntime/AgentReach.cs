@@ -279,10 +279,15 @@ public sealed record AgentReach
     /// WHETHER A SEAT OF <paramref name="seatClass"/> CAN BE SERVED <paramref name="op"/> AT ALL: every op but the organisation's
     /// verbs, and those only on a seat whose assurance carries <see cref="Capability.DecisionVerbs"/> (the broker's own line,
     /// <c>GatewayPipeServer.OrgVerbCaller</c>).
+    ///
+    /// <para><b>And <c>data-export</c> on the door's seats only</b> (<c>U-evidence-campaign</c> item 3): it is a file of bars for code in a
+    /// cell or on the harness, which cannot read the app's datasets; a CLI seat's own unconfined process is not who it is for, and its
+    /// canon — within bytes of its ceiling — is not spent naming it. The gateway still answers the op to any active position.</para>
     /// </summary>
     public static bool CarriedBy(string op, string seatClass) =>
-        !Ops.IsOrganisation(op)
-        || SeatClasses.AssuranceOf(seatClass) is { } assurance && assurance >= CapabilityPolicy.Minimum(Capability.DecisionVerbs);
+        (!Ops.IsOrganisation(op)
+         || SeatClasses.AssuranceOf(seatClass) is { } assurance && assurance >= CapabilityPolicy.Minimum(Capability.DecisionVerbs))
+        && !(op == Ops.DataExport && seatClass == SeatClasses.Cli);
 
     /// <summary>The first folder of a path relative to a seat's own folder.</summary>
     public static string TopFolder(string path) => path.Replace('\\', '/').Split('/')[0];
