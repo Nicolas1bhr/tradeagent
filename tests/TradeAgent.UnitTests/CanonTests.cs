@@ -197,7 +197,8 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
                      "the cell refuses any path outside this folder"
                  })
             Assert.Contains(said, text, StringComparison.Ordinal);
-        Assert.Contains("All trading goes through your `trade` tool", guide, StringComparison.Ordinal);
+        // AN EXECUTOR'S GUIDE IS THE ORGANISATION'S (U-runway-fixes item 1): it places no orders, so it has no trading desk.
+        Assert.DoesNotContain("All trading goes through", guide, StringComparison.Ordinal);
         Assert.Contains("TradeAgent ends everything your", guide, StringComparison.Ordinal);
         foreach (var t in new[] { text, guide })
         {
@@ -353,7 +354,17 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (9, "org:chief", "aa3e83426db7270af68ee04bf42fc9731d64c86a2751dfa293131f721f1c0e53"),
         (9, "org:head", "4ab7d4251da7ea502873c905d42bcbf7ec32feac0f199eb1215000e4cc4a870a"),
         (9, "org:staff", "e3bb00a5c96469185bc5062711a02d34bf0fa954fd959b0f387972c5cc2280d6"),
-        (9, "org:executor", "dc7f7c3fe962e2fbf0a0040956cd1171314a054a132ea407328f26718ed25573")
+        (9, "org:executor", "dc7f7c3fe962e2fbf0a0040956cd1171314a054a132ea407328f26718ed25573"),
+        // v10 (U-runway-fixes): the reach section tells an organisation position that its guide holds TradeAgent's reference — what its
+        // tools, files and loop do — and that how it works is its own; the pair are told of procedures and reference as before. The
+        // pair's rendered words are v9's.
+        (10, CouncilRoles.Operations, "TBD"),
+        (10, CouncilRoles.Research, "TBD"),
+        (10, "org", "TBD"),
+        (10, "org:chief", "TBD"),
+        (10, "org:head", "TBD"),
+        (10, "org:staff", "TBD"),
+        (10, "org:executor", "TBD")
     ];
 
     /// <summary>

@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 9;
+    public const int Version = 10;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -128,8 +128,18 @@ public static class Canon
                 : new[] { OrgHead, OrgRolePart(place), CanonTail })
             .Select(p => p.ReplaceLineEndings("\n").Trim('\n')).Where(p => p.Length > 0));
 
-    /// <summary>The guide's template. Not versioned: it is the defaults, and the canon outranks it.</summary>
+    /// <summary>The legacy pair's guide template. Not versioned: it is the defaults, and the canon outranks it.</summary>
     public static string GuideTemplate => GuideText.ReplaceLineEndings("\n");
+
+    /// <summary>
+    /// AN ORGANISATION POSITION'S GUIDE TEMPLATE (<c>U-runway-fixes</c> item 1): reference only — what TradeAgent's tools, files and loop do —
+    /// and never a procedure, so it says nothing the organisation's canon contradicts (PRINCIPLES, "Autonomy is the default inside
+    /// authority"). Not versioned, like the pair's: the canon outranks it.
+    /// </summary>
+    public static string OrgGuideTemplate => OrgGuideText.ReplaceLineEndings("\n");
+
+    /// <summary>The guide template a seat is written: the pair's own, or the organisation's for every other position.</summary>
+    public static string GuideTemplateFor(string role) => CouncilRoles.IsKnown(role) ? GuideTemplate : OrgGuideTemplate;
 
     /// <summary>The canon for the seat <paramref name="ctx"/> names, rendered for one runtime class.</summary>
     public static string Render(WorkspaceContext ctx, RuntimeClass runtime) =>
@@ -145,7 +155,7 @@ public static class Canon
 
     /// <summary>The guide rendered against an explicit reach, with every capability it named.</summary>
     public static CanonRender Guide(WorkspaceContext ctx, AgentReach reach) =>
-        Slots.Render(GuideTemplate, new CanonModel(ctx, reach));
+        Slots.Render(GuideTemplateFor(ctx.Role), new CanonModel(ctx, reach));
 
     /// <summary>
     /// THE ONE PART OF THE CANON THAT DIFFERS BETWEEN SEATS. A role is not a rank and this section grants nothing: what
@@ -505,8 +515,13 @@ public static class Canon
         - **Sessions:** {{if resumes}}a fresh session starts after at most {{turns_per_session}} turns{{else}}every turn starts fresh, from this text and the
           turn's `## Situation`{{end}}; only what you wrote down crosses that gap.
 
+        {{if org}}
+        `{{guide}}` holds TradeAgent's reference — what its tools, files and loop do — rewritten at every start; how you
+        work is yours, and your own methods belong in your own files.
+        {{else}}
         `{{guide}}` holds TradeAgent's procedures and reference — defaults, rewritten at every start; your
         own methods belong in your own files.
+        {{end}}
 
         Write down what you did and why as you go, in `{{write trading/}}`. The person who owns this account is
         trusting software they cannot read. A clear record is part of the job.
@@ -1007,6 +1022,109 @@ public static class Canon
         put anything you want to survive, or want anyone to be able to find later, in a tracked folder.
         {{end}}
         """;
+
+    // ---- the organisation's guide -------------------------------------------------------------------------------
+
+    const string OrgGuideText = """
+        # Guide
+
+        This is reference: what TradeAgent's tools, files and loop do. It holds no procedure — how you work is yours — and your
+        canon outranks it. TradeAgent rewrites this file at every start, so an edit of yours here does not survive.
+
+        ## Your turns
+
+        A turn happens because something happened, and the `## Situation` block names it on its `Why you are awake` line. Under
+        it, **what changed** names each observation TradeAgent recorded for you, **what you believe** lists your own open entries
+        in the research ledger — claims, never measurements — and **what is wanted** lists the work TradeAgent records as yours.
+        The organisation's records owed to you — notes sent to you, deliveries you judge, your own forecasts due and resolved,
+        escalations still open — come in the same message inside a byte bound; what does not fit is counted, with the verb that
+        lists it. Nothing obliges a turn to act: one with nothing to do may end.
+
+        {{if resumes}}A session runs at most {{turns_per_session}} turns, then a fresh one starts{{else}}Every turn starts a fresh session{{end}}; your
+        files and your research ledger are what crosses into it.
+        {{if wake}}
+
+        `{{wake_file}}` holding `{"after_seconds": 900}` asks for your next wake fifteen minutes on. The delay is capped at
+        {{wake_cap}}, the file is read and deleted after every turn, and anything that happens before then wakes you sooner.
+        {{end}}
+
+        ## Data and its held-back months
+
+        - `{{verb data-list}}` names every dataset and tape series and how complete each is; `{{verb data-bars --pair P --from D --to D}}`
+          reads bars. Bars are hypothesis evidence: they establish no fill, no queue position and no intrabar ordering.
+        - **Part of that history may be held back.** A dataset whose `{{verb data-list}}` entry carries a `holdout_from` has its months
+          from that instant to the close of its last bar held back as the owner's private evaluation evidence. A window reaching
+          them is REFUSED, never shortened — from every dataset, a newer version of the same pair or another pair alike, from
+          `{{args --source forward}}` and from the tape — and a missing `{{args --from}}` or `{{args --to}}` reaches every window on its side.
+        - **The market's context is on the tape** — Binance and Hyperliquid futures funding and open interest for six coins,
+          Binance's long/short ratios, OKX's announcements and GDELT's crypto news, recorded as they arrived. Its rows are
+          MEASUREMENTS, not bars: each carries the vendor's `source_time`, `received_at` when TradeAgent got it, its `revision`
+          and an `evidence_class` — `O-LIVE` alone is first-hand — and none of it is evaluation evidence.
+          `{{verb data-tape --source <id> [--subject BTCUSDT] [--from D] [--as-of D]}}` reads one, newest arrival first and at most
+          5,000 rows; `{{args --as-of}}` is what had arrived by then, a `quarantine` row comes without its text, and GDELT's rows
+          carry a `citation`.
+
+        ## The strategy language and its runs
+
+        - **`{{reference_path}}`** holds the grammar, what each indicator computes, the limits and every refusal; three worked
+          programs are in `{{examples_dir}}/` — a moving-average crossover, an opening-range breakout and an RSI mean
+          reversion. TradeAgent rewrites both at every start.
+        - **`bars 1h`** makes a program decide once per closed hour bar instead of every minute (`5m`, `15m`, `30m`, `4h` and
+          `1d` are the others); its 500-bar lookback then reaches about three weeks, and fills, stops and targets still happen
+          on the minute — in backtests, in the verdict and on paper alike.
+        - **`feature funding = <spec>`** declares a value TradeAgent computes from the tape, read at each bar's close from only
+          what had arrived by then less its `latency_s`; a value it cannot state is no decision, never a zero. A backtest
+          refuses where no tape is open or where its features would read a holdout window, the last bar's close included. The
+          spec's keys and kinds are in the language reference; every tape source is research-only.
+        - **`{{verb backtest --strategy {{first_example}} --dataset <id>}}`** runs with nothing written by you. A backtest's
+          metrics come from TradeAgent's own trace. A fee or slippage left out is the venue cost model's for that dataset's venue
+          — its published fee and an assumed two basis points — and `friction_source` says which number came from where;
+          `{{args --fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000}}` measures a model of your own. Every run is
+          counted against the campaign's trial budget, which a restart does not reset, and no backtest is a record of a fill.
+        - **`{{verb verdict --version <hash>}}`** judges, on the held-back months, a version its caller already backtested on the visible ones. Each one
+          costs one of the campaign's judgements — three by default, counted across renewals and never reset; who may spend
+          one is in your canon. The answer is a verdict and a reason class in words, never a figure from those months, and
+          asking twice about one version is one judgement.
+
+        ## The research ledger
+
+        Each entry is a hypothesis, an experiment, a finding, a kill or a lesson, marked as a claim, an assumption or a
+        hypothesis — never a measurement — with a confidence from 0 to 1 or recorded as unknown. Only its author revises an
+        entry, each revision says why, and nothing edits or deletes one:
+
+        ```
+        {{verb ledger-add hypothesis "breakouts above the 20-bar high pay after costs" --mark hypothesis [--confidence 0.6]}}
+        {{verb ledger-revise <entry> "only on BTCUSDT" --mark claim --why "the ETHUSDT run lost"}}
+        {{verb ledger-list --kind hypothesis}}
+        {{verb ledger-show <entry>}}
+        ```
+
+        A backtest or verdict asked with `{{args --entry <entry>}}` is linked by TradeAgent to that entry; nothing you send writes
+        a link, and a link says only that it answered under that entry, never that the record supports it.
+        `{{verb lens-propose <lens>}}` registers a lens — a question asked of every new OKX announcement or GDELT item — once
+        TradeAgent has validated, numbered and hashed it, or says why not; registering one runs nothing and spends nothing.
+        `{{verb lens-list}}` and `{{verb lens-show <id>}}` read every lens.
+
+        ## Your files
+
+        {{if writes:trading}}
+        - TradeAgent keeps a copy of `{{write trading/}}PLAN.md` and `trading/JOURNAL.md` at the end of every turn, and holds
+          them to {{plan_lines}} and {{journal_lines}} non-empty lines. One over its limit is moved to
+          `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md`, the last accepted one returns, and your next `## Situation` says so.
+          Nothing caps `{{archive_dir}}/`.
+        {{end}}
+        - TradeAgent records every file that appears in `trading/`, `research/`, `strategies/`, `data/` and `scripts/`, and in
+          `{{read in/}}` and `out/` — its name, size, SHA-256 and when it showed up — in a ledger you cannot edit; `logs/` and
+          `scratch/` are not recorded.
+        - `{{read in/}}` is what TradeAgent delivered to you; `out/` is what you hand back, as your canon says.
+        {{if cell}}
+
+        ## Your cell
+
+        A turn ENDS: when it does, TradeAgent ends everything your cell started, so work left running is lost and only what
+        is in a file carries to the next turn.
+        {{end}}
+        """;
 }
 
 /// <summary>
@@ -1061,6 +1179,8 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "walled" => reach.Walled,
             // A SEAT THAT CARRIES THE ORGANISATION'S VERBS (U-org-canon): the broker and the cell do; the harness carries none.
             "org_verbs" => reach.Verbs.Any(v => Core.Ops.IsOrganisation(v.Op)),
+            // A POSITION OF THE ORGANISATION (U-runway-fixes item 1): every seat but the legacy pair, whose guide is reference only.
+            "org" => !CouncilRoles.IsKnown(c.Role),
             "simulator" => c.ConnectorIsBuiltInSimulator,
             "paper" => c.ConnectorIsPaper,
             "account" => c.AccountId is { Length: > 0 },
