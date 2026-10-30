@@ -12,7 +12,7 @@ public partial class BoardActTests
 
     /// <summary>The owner's in-process seams over the board (AUTH-001, CHANGE-001), and the test host's one writer of an active seat.</summary>
     static readonly string[] OwnersSeams =
-        ["VetoBoardAct", "PreviewBoardVeto", "SetBoardBudgetShare", "FoundBoardSeat", "RetireBoardSeat", "SetSeatStateUnderTest"];
+        ["VetoBoardAct", "PreviewBoardVeto", "SetBoardBudgetShare", "FoundBoardSeat", "RetireBoardSeat", "ActivateBoardSeat", "SetSeatStateUnderTest"];
 
     /// <summary>Every source of the agent-facing side: the pipe server's partials, the broker door, the worker's tools and the CLI.</summary>
     static IEnumerable<string> AgentFacingSources()
@@ -49,7 +49,7 @@ public partial class BoardActTests
 
         foreach (var op in GatewaySchema.Ops())
             Assert.DoesNotContain(OwnersSeams, s => Regex.IsMatch(op.Op.Replace("-", ""), Regex.Escape(s.Replace("Board", "")), RegexOptions.IgnoreCase));
-        foreach (var seam in OwnersSeams.Take(5))
+        foreach (var seam in OwnersSeams.Take(6))
             Assert.True(typeof(TradingGateway).GetMethod(seam) is { IsPublic: true }, $"{seam} is not the gateway's own in-process seam");
         Assert.True(typeof(BoardStore).GetMethod("SetSeatStateUnderTest", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             is { IsAssembly: true });
