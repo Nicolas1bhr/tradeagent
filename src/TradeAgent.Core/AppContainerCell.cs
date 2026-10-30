@@ -114,17 +114,18 @@ public static class AppContainerCell
     /// STARTS <paramref name="program"/> in the AppContainer <paramref name="containerSid"/> with <paramref name="capabilities"/> (none:
     /// no network at all), in a kill-on-close job without breakaway: created suspended, assigned, resumed. Its standard streams are
     /// pipes the caller holds, or the handles <paramref name="stdio"/> names (the cell stage's own, passed through); its environment is
-    /// <paramref name="environment"/> and nothing else. Throws <see cref="TradeAgentException"/> (<see cref="ErrorCode.CELL_UNAVAILABLE"/>)
+    /// <paramref name="environment"/> and nothing else; its window station and desktop its own (<see cref="PrivateDesktop"/>) —
+    /// <paramref name="ownDesktop"/> false is the probe's control alone, the station the caller runs on, which no ACE grants the container. Throws <see cref="TradeAgentException"/> (<see cref="ErrorCode.CELL_UNAVAILABLE"/>)
     /// naming the step that failed; a process that was created and could not be put in its job is killed before the throw.
     /// </summary>
     public static AppContainerProcess Start(string program, IReadOnlyList<string> arguments, string workingDirectory,
         IReadOnlyList<KeyValuePair<string, string>> environment, string containerSid, IReadOnlyList<string> capabilities,
-        AppContainerStdio? stdio = null)
+        AppContainerStdio? stdio = null, bool ownDesktop = true)
     {
         var commandLine = CommandLine(program, arguments);
-        var block = EnvironmentBlock(environment);
-        var job = CreateCellJob();
-        var desktop = PrivateDesktop.Create(containerSid);
+        var block = IntPtr.Zero;
+        var job = IntPtr.Zero;
+        PrivateDesktop? desktop = null;
         var owned = new List<SafeFileHandle>();
         SafeFileHandle? inParent = null, outParent = null, errParent = null;
         IntPtr childIn, childOut, childErr;
@@ -133,6 +134,9 @@ public static class AppContainerCell
         var attrsReady = false;
         try
         {
+            block = EnvironmentBlock(environment);
+            job = CreateCellJob();
+            if (ownDesktop) desktop = PrivateDesktop.Create(containerSid);
             if (stdio is { } given)
             {
                 childIn = Inheritable(given.Input, owned);
@@ -184,7 +188,7 @@ public static class AppContainerCell
 
             var si = new StartupInfoEx();
             si.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
-            si.StartupInfo.lpDesktop = desktop.NamePointer;
+            si.StartupInfo.lpDesktop = desktop?.NamePointer ?? IntPtr.Zero;
             si.StartupInfo.dwFlags = StartfUseStdHandles;
             si.StartupInfo.hStdInput = childIn;
             si.StartupInfo.hStdOutput = childOut;
@@ -236,7 +240,7 @@ public static class AppContainerCell
             foreach (var p in new[] { attrs, scPtr, capsPtr, handlesPtr }) if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
             foreach (var s in sids) LocalFree(s);
             if (containerPtr != IntPtr.Zero) LocalFree(containerPtr);
-            Marshal.FreeHGlobal(block);
+            if (block != IntPtr.Zero) Marshal.FreeHGlobal(block);
         }
     }
 
@@ -581,6 +585,33 @@ public sealed class AppContainerProcess : IDisposable
         finally { AppContainerCell.CloseHandle(h); }
     }
 
+    /// <summary>The ids of every process the job holds now (empty when Windows would not say).</summary>
+    public IReadOnlyList<int> ProcessIds()
+    {
+        if (_job == IntPtr.Zero) return [];
+        const int max = 1024;
+        var size = 8 + IntPtr.Size * max;
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(_job, 3 /* JobObjectBasicProcessIdList */, buffer, size, IntPtr.Zero)) return [];
+            var count = Marshal.ReadInt32(buffer, 4);
+            return [.. Enumerable.Range(0, Math.Min(count, max)).Select(i => (int)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size))];
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    /// <summary>
+    /// Closes this side's job handle WITHOUT asking Windows to end anything — what the app's crash does — so the job's kill-on-close is
+    /// what ends the cell. After it the job can no longer be asked anything.
+    /// </summary>
+    public void ReleaseJob()
+    {
+        if (_job == IntPtr.Zero) return;
+        AppContainerCell.CloseHandle(_job);
+        _job = IntPtr.Zero;
+    }
+
     /// <summary>Ends every process in the job. True when Windows did.</summary>
     public bool Kill() => _job != IntPtr.Zero && AppContainerCell.TerminateJobObject(_job, 1);
 
@@ -618,6 +649,10 @@ public sealed class AppContainerProcess : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length, IntPtr returned);
 
     [DllImport("kernel32.dll")]
     static extern IntPtr GetCurrentProcess();

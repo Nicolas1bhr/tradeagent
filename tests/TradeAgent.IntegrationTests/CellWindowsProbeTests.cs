@@ -115,15 +115,15 @@ public sealed class CellWindowsProbeTests : IDisposable
     string LocalAppData => Path.Combine(_ws, ".local");
 
     /// <summary>Runs one program in the probe cell to its end (60 s at most) and returns its exit code and output.</summary>
-    async Task<(int Code, string Out)> Run(string program, IReadOnlyList<string> args, IReadOnlyList<string>? caps = null)
+    async Task<(int Code, string Out)> Run(string program, IReadOnlyList<string> args, IReadOnlyList<string>? caps = null, bool ownDesktop = true)
     {
-        using var p = AppContainerCell.Start(program, args, _ws, Env(), _sid, caps ?? []);
+        using var p = AppContainerCell.Start(program, args, _ws, Env(), _sid, caps ?? [], ownDesktop: ownDesktop);
         p.StandardInput!.Close();
         var so = p.StandardOutput!.ReadToEndAsync();
         var se = p.StandardError!.ReadToEndAsync();
         Require(p.WaitForExit(60_000), $"{program} ended within 60 s");
         var text = (await so) + (await se);
-        _out.WriteLine($"> {Path.GetFileName(program)} {string.Join(' ', args)}  [caps {(caps is { Count: > 0 } ? string.Join(',', caps) : "none")}]");
+        _out.WriteLine($"> {Path.GetFileName(program)} {string.Join(' ', args)}  [caps {(caps is { Count: > 0 } ? string.Join(',', caps) : "none")}; desktop {(ownDesktop ? p.Desktop : "the caller's")}]");
         _out.WriteLine($"  exit {p.ExitCode} (0x{p.ExitCode:X8}): {text.Trim().Replace("\r", "").Replace('\n', ' ')}");
         return (p.ExitCode, text);
     }
@@ -196,9 +196,19 @@ public sealed class CellWindowsProbeTests : IDisposable
             ? l.GetArrayLength() : -1;
         _out.WriteLine($"environmentConfig/read: {(config is { Ok: true } ? layers + " layer(s)" : "FAILED " + es.Last)}");
         var cmd = Path.Combine(System32, "cmd.exe");
+        // THE CHILD'S INPUT: the null device first, as codex gives a command that reads none; then a pipe. Windows Server 2025 (CI's
+        // image) refuses an AppContainer the null device where Windows 11 26200 grants it — measured — so both are printed, and the
+        // row holds on the first that gives the workspace.
         var (exit, output) = await es.RunAsync(_ws, [cmd, "/d", "/c", "cd"], default);
-        _out.WriteLine($"process/start cmd /c cd: exit {exit}: {output.Trim()}");
-        var (_, seen) = await es.RunAsync(_ws, [cmd, "/d", "/c", "echo USERPROFILE=%USERPROFILE% LOCALAPPDATA=%LOCALAPPDATA% APPDATA=%APPDATA% TEMP=%TEMP%"], default);
+        _out.WriteLine($"process/start cmd /c cd (input: the null device): exit {exit}: {output.Trim()}");
+        var piped = false;
+        if (exit != 0)
+        {
+            piped = true;
+            (exit, output) = await es.RunAsync(_ws, [cmd, "/d", "/c", "cd"], default, pipeStdin: true);
+            _out.WriteLine($"process/start cmd /c cd (input: a pipe): exit {exit}: {output.Trim()}");
+        }
+        var (_, seen) = await es.RunAsync(_ws, [cmd, "/d", "/c", "echo USERPROFILE=%USERPROFILE% LOCALAPPDATA=%LOCALAPPDATA% APPDATA=%APPDATA% TEMP=%TEMP%"], default, piped);
         _out.WriteLine($"a child's home: {seen.Trim()}");
         _out.WriteLine("exec-server stderr after: " + es.Stderr.Trim().Replace('\n', ' '));
         _out.WriteLine("the workspace after: " + string.Join(", ", Directory.EnumerateFileSystemEntries(_ws, "*", SearchOption.AllDirectories).Select(e => Path.GetRelativePath(_ws, e))));
@@ -224,6 +234,10 @@ public sealed class CellWindowsProbeTests : IDisposable
     {
         var codex = PinnedCodex();
         GrantCodex(codex);
+        // THE CONTROL: on the window station this test runs on, which no ACE grants the container, codex cannot start — so a cell
+        // that starts below is on its own, and the owner's station and desktop are not the container's.
+        var (control, _) = await Run(codex, ["--version"], ownDesktop: false);
+        Assert.Equal(unchecked((int)0xC0000142), control);
         var (codexCode, codexOut) = await Run(codex, ["--version"]);
         var (cmdCode, _) = await Run(Path.Combine(System32, "cmd.exe"), ["/d", "/c", "ver & set"]);
         var (curlCode, _) = await Run(Path.Combine(System32, "curl.exe"), ["--version"]);
@@ -243,13 +257,18 @@ public sealed class CellWindowsProbeTests : IDisposable
         var cmd = Path.Combine(System32, "cmd.exe");
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         // NO QUOTES INSIDE: cmd reads its command line raw and a C-runtime \" escape is not one to it; the test paths hold no space.
+        // NOTHING SENT TO NUL: CI's Windows Server 2025 refuses an AppContainer the null device, which would fail every probe that
+        // writes there whatever it read — each probe's output goes to a file of the workspace instead, and NUL is a line of its own.
         Require(!$"{_ws}{_ro}{_outside}{profile}".Contains(' '), "test paths without a space");
+        var sink = Path.Combine(_ws, "sink.txt");
         var (_, o) = await Run(cmd, ["/d", "/c",
             $"(echo x> {_ws}\\made.txt && echo WS-WRITE-OPEN || echo WS-WRITE-DENIED) & " +
-            $"(type {_ro}\\in.txt >nul 2>&1 && echo RO-READ-OPEN || echo RO-READ-DENIED) & " +
+            $"(type {_ro}\\in.txt > {sink} && echo RO-READ-OPEN || echo RO-READ-DENIED) & " +
             $"(echo x>> {_ro}\\in.txt && echo RO-WRITE-OPEN || echo RO-WRITE-DENIED) & " +
-            $"(type {_outside}\\auth.json >nul 2>&1 && echo OUTSIDE-READ-OPEN || echo OUTSIDE-READ-DENIED) & " +
-            $"(dir {profile} >nul 2>&1 && echo PROFILE-LIST-OPEN || echo PROFILE-LIST-DENIED)"]);
+            $"(type {_outside}\\auth.json > {sink} && echo OUTSIDE-READ-OPEN || echo OUTSIDE-READ-DENIED) & " +
+            $"(dir {profile} > {sink} && echo PROFILE-LIST-OPEN || echo PROFILE-LIST-DENIED) & " +
+            "(echo x> nul && echo NUL-OPEN || echo NUL-DENIED)"]);
+        _out.WriteLine("[host] the read-only input's ACL: " + new DirectoryInfo(_ro).GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access));
         Assert.Contains("WS-WRITE-OPEN", o, StringComparison.Ordinal);
         Assert.Contains("RO-READ-OPEN", o, StringComparison.Ordinal);
         Assert.Contains("RO-WRITE-DENIED", o, StringComparison.Ordinal);
@@ -263,7 +282,7 @@ public sealed class CellWindowsProbeTests : IDisposable
     const string Https = "https://github.com/", Http80 = "http://github.com/";
 
     Task<(int Code, string Out)> Curl(string url, IReadOnlyList<string>? caps, int seconds = 10) =>
-        Run(Path.Combine(System32, "curl.exe"), ["-sS", "-o", "NUL", "-w", "HTTP=%{http_code}", "--connect-timeout", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Run(Path.Combine(System32, "curl.exe"), ["-sS", "-o", Path.Combine(_ws, "curl.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--max-time", (seconds + 5).ToString(System.Globalization.CultureInfo.InvariantCulture), url], caps);
 
     /// <summary>A connect the host's own listener sees or not: (curl's word, whether it arrived).</summary>
@@ -316,8 +335,10 @@ public sealed class CellWindowsProbeTests : IDisposable
         var (c443, o443) = await Curl(Https, caps);
         var (c80, o80) = await Curl(Http80, caps);
         var (_, loop) = await Reach(IPAddress.Loopback, "127.0.0.1", caps);
+        // THIS HOST'S OWN LAN ADDRESS, printed: another machine of the LAN is not measured here (NOT RUN) — nothing of ours probes a
+        // network somebody else owns.
         if (OwnLanAddress() is { } lan) await Reach(IPAddress.Any, lan.ToString(), caps);
-        else _out.WriteLine("  LAN: this host has no LAN IPv4 address to measure from");
+        else _out.WriteLine("  this host has no LAN IPv4 address to measure from");
         await Run(Path.Combine(System32, "nslookup.exe"), ["github.com", "8.8.8.8"], caps);
         Assert.True(c443 == 0 && o443.Contains("HTTP=", StringComparison.Ordinal) && !o443.Contains("HTTP=000", StringComparison.Ordinal), "443 with internetClient: " + o443);
         Assert.True(c80 == 0 && !o80.Contains("HTTP=000", StringComparison.Ordinal), "80 with internetClient: " + o80);
@@ -347,6 +368,8 @@ public sealed class CellWindowsProbeTests : IDisposable
             var (_, dns) = await Run(Path.Combine(System32, "nslookup.exe"), ["-timeout=3", "-retry=1", "github.com", "8.8.8.8"], caps);
             Assert.True(c443 == 0 && !o443.Contains("HTTP=000", StringComparison.Ordinal), "443 under the rule: " + o443);
             Assert.True(c80 != 0, "80 under the rule: " + o80);
+            // nslookup prints the name it resolved ("Name: github.com") only when the resolver ANSWERED the cell's own datagram.
+            Assert.DoesNotContain("github.com", dns, StringComparison.OrdinalIgnoreCase);
         }
         finally { Ps($"Remove-NetFirewallRule -DisplayName '{name}'"); }
     }
@@ -365,6 +388,52 @@ public sealed class CellWindowsProbeTests : IDisposable
     // ---- (d) the job: descendants and breakaway ----------------------------------------------------------------------------------
 
     /// <summary>
+    /// A SHELL AND A DETACHED GRANDCHILD THAT LIVE UNTIL ENDED: both read the cell's standard input, which the test holds open, so neither
+    /// ends by itself (a sleeper such as <c>ping</c> can end on its own — under the first form of this row a mutant without kill-on-close
+    /// still read "every one ended" on the tests box, a vacuous row).
+    /// </summary>
+    const string Blockers = "start /b findstr x & findstr y";
+
+    /// <summary>
+    /// KILL ON CLOSE — WHAT THE APP'S CRASH DOES: the job's last handle closed with nothing asked of Windows, and the shell and its
+    /// detached grandchild are gone.
+    /// </summary>
+    [WindowsFact]
+    public async Task Closing_the_jobs_last_handle_ends_the_cell()
+    {
+        var cmd = Path.Combine(System32, "cmd.exe");
+        var p = AppContainerCell.Start(cmd, ["/d", "/c", Blockers], _ws, Env(), _sid, []);
+        try
+        {
+            IReadOnlyList<int> pids = [];
+            for (var i = 0; i < 100 && pids.Count < 3; i++)
+            {
+                pids = p.ProcessIds();
+                await Task.Delay(50);
+            }
+            _out.WriteLine($"the job held {string.Join(", ", pids)}");
+            Assert.True(pids.Count >= 3, $"the shell and its two readers are in the job ({pids.Count})");
+            p.ReleaseJob();
+            var alive = pids.ToList();
+            for (var i = 0; i < 100 && alive.Count > 0; i++)
+            {
+                await Task.Delay(50);
+                alive = [.. alive.Where(Alive)];
+            }
+            _out.WriteLine($"after the last handle closed: {(alive.Count == 0 ? "every one ended" : "STILL RUNNING " + string.Join(", ", alive))}");
+            Assert.Empty(alive);
+        }
+        finally { p.Dispose(); }
+
+        static bool Alive(int pid)
+        {
+            try { using var q = Process.GetProcessById(pid); return !q.HasExited; }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
+    }
+
+    /// <summary>
     /// DESCENDANTS END WITH THE JOB: a cell whose shell starts a detached grandchild (<c>start /b</c>) holds them all in its job, and
     /// ending the job ends every one of them.
     /// </summary>
@@ -372,8 +441,7 @@ public sealed class CellWindowsProbeTests : IDisposable
     public async Task Descendants_are_in_the_job_and_end_with_it()
     {
         var cmd = Path.Combine(System32, "cmd.exe");
-        using var p = AppContainerCell.Start(cmd, ["/d", "/c", "start /b ping -n 300 127.0.0.1 >nul & ping -n 300 127.0.0.1 >nul"], _ws, Env(), _sid, []);
-        p.StandardInput!.Close();
+        using var p = AppContainerCell.Start(cmd, ["/d", "/c", Blockers], _ws, Env(), _sid, []);
         Assert.True(p.Holds(p.Id), "the shell is in its job");
         var most = 0;
         for (var i = 0; i < 100 && most < 3; i++)
@@ -382,7 +450,7 @@ public sealed class CellWindowsProbeTests : IDisposable
             await Task.Delay(50);
         }
         _out.WriteLine($"the job held {most} process(es) at most before the cancel");
-        Assert.True(most >= 3, $"the shell and its two pings are in the job ({most})");
+        Assert.True(most >= 3, $"the shell and its two readers are in the job ({most})");
         Assert.True(p.Kill(), "the job was ended");
         var left = p.ActiveProcesses;
         for (var i = 0; i < 100 && left > 0; i++)
@@ -392,6 +460,6 @@ public sealed class CellWindowsProbeTests : IDisposable
         }
         _out.WriteLine($"after the cancel the job holds {left}");
         Assert.Equal(0, left);
-        Assert.True(p.HasExited);
+        Assert.True(p.WaitForExit(5_000), "the shell itself ended within 5 s of the cancel");
     }
 }
