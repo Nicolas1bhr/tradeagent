@@ -16,6 +16,7 @@ name: release
 on:
   push:
     tags: ['v*']
+    branches: [u-windows-release]   # TEMPORARY test trigger, removed before landing
   workflow_dispatch:
     inputs:
       dry_run:
