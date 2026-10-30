@@ -131,6 +131,32 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
     }
 
     /// <summary>
+    /// (2b) THE START WRITES EACH POSITION THE CANON OF ITS PLACE: <see cref="WorkspaceBuilder.BuildAll"/>, handed the chart's place per
+    /// position as the supervisor hands it, writes the chief's home the chief's role part and an executor's the executor's, and a
+    /// position whose place nobody could read the organisation's shared canon alone — never the pair's.
+    ///
+    /// <para>RED with the place left off BuildAll's context (Codex's review, item 5): both homes carry no role part.</para>
+    /// </summary>
+    [Fact]
+    public void The_start_writes_each_position_the_canon_of_its_place()
+    {
+        const string chief = "pos-00000000c41e", executor = "pos-0000000e8ec0", unknown = "pos-00000000a0a0";
+        var places = new Dictionary<string, string?> { [chief] = OrgPlace.Chief, [executor] = OrgPlace.Executor, [unknown] = null };
+        var files = new AppFileManifest(Path.Combine(_root, "files-all.tsv"));
+        var homes = WorkspaceBuilder.BuildAll(Ctx(OrgPlace.Chief) with { Role = CouncilRoles.Operations, Kind = null, Place = null },
+            Path.Combine(_root, "all"), files, positions: places.Keys,
+            kindOf: id => places.GetValueOrDefault(id) is { } p ? KindOf(p) : null, placeOf: places.GetValueOrDefault);
+
+        string Agents(string id) => File.ReadAllText(Path.Combine(homes[id], Canon.CliFile));
+        Assert.Contains(Heading(OrgPlace.Chief), Agents(chief), StringComparison.Ordinal);
+        Assert.Contains(Heading(OrgPlace.Executor), Agents(executor), StringComparison.Ordinal);
+        Assert.Contains("a sealed Linux cell", Agents(executor), StringComparison.Ordinal);
+        Assert.DoesNotContain("## Your role:", Agents(unknown), StringComparison.Ordinal);
+        Assert.Contains("pays for the organisation that makes it", Agents(unknown), StringComparison.Ordinal);
+        Assert.Contains("pay for yourself", Agents(CouncilRoles.Operations), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (3) THE PLACE IS READ OFF THE CHART, NEVER STORED: the chief is the root's head, the legacy pair have none (their canon is
     /// their own), and a standing whose kind is a head of any other unit, staff or a member is a head, staff or an executor.
     /// </summary>
