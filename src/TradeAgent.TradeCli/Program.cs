@@ -336,6 +336,14 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 return (Ops.MaterialList, a);
             }
 
+            // trade material read <sha> [--offset N]       (an organisation position's read of the owner's inbox)
+            if (sub == "read")
+            {
+                a["sha"] = flags.GetValueOrDefault("sha") ?? pos.ElementAtOrDefault(1) ?? "";
+                Opt("offset");
+                return (Ops.MaterialRead, a);
+            }
+
             // trade material ran <sha> some words about it
             // trade material derived <sha> --from <sha> some words
             // trade material note "some words"            (a bare note needs no subject)

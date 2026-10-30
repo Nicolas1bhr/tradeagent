@@ -35,6 +35,14 @@ public static class Ops
     public const string MaterialList = "material-list", MaterialNote = "material-note";
 
     /// <summary>
+    /// THE OWNER'S DROP FOLDER, READ BY A POSITION THAT HAS NO FOLDER OF ITS OWN TO READ IT FROM (<c>U-chief-inbox-read</c>; INBOX-001): one page
+    /// of one file the scanner recorded in the inbox, named by its hash, returned as DATA beside the hash the scanner measured. It writes nothing,
+    /// changes no ledger row and records no note; it is served only to an active organisation position on a seat the app mediates (never a cell,
+    /// which the wall keeps out of the inbox, and never a seat of the security board). The legacy research seat reads the same folder directly.
+    /// </summary>
+    public const string MaterialRead = "material-read";
+
+    /// <summary>
     /// THE MARKET DATA LEDGER, AND IT IS READ-ONLY ON THIS CHANNEL. <c>DataList</c> serves what this
     /// installation collected and where every byte of it came from; <c>DataBars</c> serves the bars
     /// themselves. Neither writes anything, and there is no op on this pipe that collects, normalises,
