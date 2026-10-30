@@ -278,6 +278,29 @@ public class EvidenceCampaignTests
         Assert.Null(gw.Datasets.ById(fresh.Id)!.HoldoutFrom);
     }
 
+    /// <summary>
+    /// A DATASET ROW READ BEFORE ITS FRESH CAMPAIGN OPENED STILL SERVES NONE OF ITS HELD BARS (the Codex review's P1): the caller's row
+    /// carries no cutoff, the fresh window has retired, and the dataset's own new window is asked because the row does not carry it.
+    /// </summary>
+    [Fact]
+    public async Task A_row_read_before_its_fresh_campaign_opened_still_serves_none_of_its_held_bars()
+    {
+        var pair = TestEnv.NewPair();
+        var (gw, db, _, k1) = await SpentOnce(pair);
+        using var owned = db;
+        await using var gateway = gw;
+        var armed = Assert.Single(gw.Renewals.Arm(Now));
+        var stale = Recorded(db, pair, First.AddMonths(2), armed.Cutoff.AddDays(40), "v2");
+        Assert.Null(stale.HoldoutFrom);
+
+        Assert.True(gw.OpenForwardCampaign(k1.Id, stale.Id).Ok);
+        Assert.Empty(gw.Renewals.Holding());
+
+        var refused = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets).Refusal(stale, armed.Cutoff.AddHours(1), armed.Cutoff.AddHours(2));
+        Assert.NotNull(refused);
+        Assert.Contains($"dataset {stale.Id}", refused, StringComparison.Ordinal);
+    }
+
     /// <summary>A SPENT CAMPAIGN'S REFUSAL SAYS WHAT FOLLOWS IT: the fresh cutoff and the thirty days it waits for.</summary>
     [Fact]
     public async Task A_refused_judgement_names_the_fresh_months_it_waits_for()

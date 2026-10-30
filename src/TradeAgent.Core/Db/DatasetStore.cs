@@ -432,6 +432,16 @@ public sealed class DatasetStore(Database db)
     public IReadOnlyList<Data.TapeHoldoutWindow> ForwardWindows() =>
         [.. new CampaignRenewal(db).Holding().Select(Data.TapeHoldoutWindow.Forward)];
 
+    /// <summary>
+    /// EVERY HELD WINDOW IN ONE READ OF THE LEDGER: each dataset's (<see cref="Data.TapeHoldout.WindowsOf"/>) and, with
+    /// <paramref name="forward"/>, every fresh holdout still being collected — one snapshot, so a campaign opening over a fresh holdout
+    /// is seen either before (the fresh window) or after (its dataset's window), never neither.
+    /// </summary>
+    public IReadOnlyList<Data.TapeHoldoutWindow> HeldWindows(bool forward) => db.Read(_ =>
+        forward
+            ? (IReadOnlyList<Data.TapeHoldoutWindow>)[.. Data.TapeHoldout.WindowsOf(All()), .. ForwardWindows()]
+            : Data.TapeHoldout.WindowsOf(All()));
+
     /// <summary>Every dataset this installation has, newest first. Not verified — see <see cref="Checked"/>.</summary>
     public IReadOnlyList<DatasetRecord> All() => db.Read(_ =>
     {

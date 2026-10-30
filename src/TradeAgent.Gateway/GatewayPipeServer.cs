@@ -3497,16 +3497,20 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 $"dataset {id} holds no bar in that window, so there is nothing to write. Nothing was written.");
 
         var home = Paths.RoleHome(position);
-        var relative = DataExports.FileName(set, from, to);
+        var relative = DataExports.FileName(set, window.Bars[0].OpenTime, window.Bars[^1].OpenTime);
         var bytes = DataExports.Csv(window.Bars);
         try
         {
-            var held = Exports(home);
-            if (held.Count >= DataExports.MaxFiles && !held.Contains(relative[(DataExports.Folder.Length + 1)..]))
-                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                    $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
-                    + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
-            HomeFiles.Write(home, relative, bytes);
+            // THE COUNT AND THE WRITE UNDER ONE GATE (the Codex review's P2): two exports at once must not both see room for one.
+            lock (ExportGate)
+            {
+                var held = Exports(home);
+                if (held.Count >= DataExports.MaxFiles && !held.Contains(relative[(DataExports.Folder.Length + 1)..]))
+                    throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                        $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
+                        + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
+                HomeFiles.Write(home, relative, bytes);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -3534,6 +3538,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             + "queue position, no intrabar ordering. A backtest still runs through 'trade backtest', which is what is charged and "
             + $"recorded. The folder keeps at most {DataExports.MaxFiles} exports; exporting the same window again rewrites its file.");
     }
+
+    /// <summary>The one gate every export's count and write pass, in this process.</summary>
+    static readonly object ExportGate = new();
 
     /// <summary>The export files in the caller's folder, by name, read without following a link; none when there is no folder.</summary>
     static IReadOnlyList<string> Exports(string home)
