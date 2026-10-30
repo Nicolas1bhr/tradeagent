@@ -2588,10 +2588,10 @@ public sealed class AppHost : IAsyncDisposable
             host._db is { } db ? PositionPacket.Compose(db, role, now, VerbsFor(role)) : null;
 
         /// <inheritdoc cref="IMissionHost.VerbsFor"/>
-        public PacketVerb VerbsFor(string role) => host.DeclaredSeatClass(role) is var declared && declared == SeatClasses.Puppet
-            ? Canon.CommandLineVerbs   // a test host's puppet: its scripts speak the command line
+        public PacketVerb VerbsFor(string role) => host.TestHostPuppet(role)
+            ? Canon.CommandLineVerbs   // a test host's puppet, whatever class it declares: its scripts speak the command line
             : Canon.PacketVerbs(AgentReach.For(role,
-                AgentReach.RuntimeOf(declared) ?? WorkspaceBuilder.RuntimesOf(role, host._seats.KindOf(role))[0]));
+                AgentReach.RuntimeOf(host.DeclaredSeatClass(role)) ?? WorkspaceBuilder.RuntimesOf(role, host._seats.KindOf(role))[0]));
 
         /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
         internal static MandateView View(OrgStore org, MandateRow m)
