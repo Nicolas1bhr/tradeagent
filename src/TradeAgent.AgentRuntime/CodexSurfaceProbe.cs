@@ -43,6 +43,16 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
     /// </summary>
     internal Action<CancellationTokenSource>? OnFirstRequest { get; init; }
 
+    /// <summary>
+    /// A SEAM FOR THE ROW THAT PROVES WHERE THE PINNED CODEX FINDS SKILLS (<c>U-kit-socket</c>): handed the throwaway codex home before the
+    /// dry run starts, to lay in it what a launch lays in a harness's own (<see cref="RouteA.Make"/>'s link to the kit's skills); and
+    /// handed the first model request's body as codex sent it. Null in the product.
+    /// </summary>
+    internal Action<string>? PrepareHome { get; init; }
+
+    /// <inheritdoc cref="PrepareHome"/>
+    internal Action<string>? OnBody { get; init; }
+
     public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
     {
         var seat = ask.Manifest.Seat ?? throw new InvalidOperationException($"{ask.Manifest.DisplayName} has no seat profile");
@@ -81,6 +91,7 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
                 catalogPath = Path.Combine(root, "codex", Path.GetFileName(seat.ModelCatalog is { Length: > 0 } c ? c : "model-catalog.json"));
                 File.WriteAllBytes(catalogPath, catalog);
             }
+            PrepareHome?.Invoke(Path.Combine(root, "codex"));
             // THE CLASS'S OWN ARGV, as a turn builds it — the stub door in the door's slot — and the mock pinned as the provider.
             string[] provider =
             [
@@ -144,6 +155,7 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
 
             var body = await mock.FirstBody;
             OnFirstRequest?.Invoke(timer);
+            OnBody?.Invoke(body);
             // CODEX'S OWN WORDS ABOUT THE RUN, READ BEFORE ITS TOOLS COUNT (U-cell-model-catalog, rider (b)): the mock answers the request
             // with a finished response, so codex ends its turn on its own; its warnings — fallback metadata above all — are in what it
             // printed. One the manifest names (ToolsUnavailablePattern) refuses the seat, quoted, whatever tools were offered. However the
