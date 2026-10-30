@@ -475,6 +475,9 @@ public class OrgLedgerTests
         // `self` mission_event for the caller and nothing of the chart (OrgStore.Autonomy.cs writes no org table: the source scan below is
         // unchanged), behind OrgVerbCaller and the board's floor and ceiling, one pending, the AI day (OrgAutonomyTests).
         mandate = [.. mandate, "RequestWake"];
+        // REVISITED, OUT LOUD, BY U-org-autonomy item 4: ActiveChief — a READ, the root's head while its position is active, which the owner's
+        // words and his material are routed by (MissionEventStore.OwnerRecipient). It writes nothing.
+        mandate = [.. mandate, "ActiveChief"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

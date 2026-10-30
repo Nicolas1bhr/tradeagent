@@ -1,4 +1,5 @@
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 
@@ -145,6 +146,11 @@ public sealed record AgentReach
     {
         bool Allowed(string op) => CouncilRoles.MayPlaceOrders(role) || !Ops.IsMutating(op);
 
+        // A POSITION BEYOND THE LEGACY PAIR, on a seat whose door carries the organisation's verbs, also stops its own subtree's PAPER runs
+        // (U-org-autonomy item 5; R25 D9) — the gateway's one carve-out from the order gate; every order op stays refused it.
+        bool Door(string op) => Allowed(op)
+            || op == Ops.DeploymentStop && CouncilRoles.IsPositionId(role) && !CouncilRoles.IsKnown(role) && !BoardSeats.IsBoardId(role);
+
         var handsBack = CouncilRelay.KindsFor(role)
             .Select(k => new ReachHandBack(k, $"{CouncilRoles.OutDir}/{CouncilRelay.Pattern(k).Replace("*", "<attempt>")}",
                 CouncilRelay.Limit(k)))
@@ -189,7 +195,7 @@ public sealed record AgentReach
         {
             var served = GrantedWorkerTools.Granted.Select(t => t.Name).ToList();
             var doorVerbs = served
-                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Allowed).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
+                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Door).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
                 .Concat(Ops.Organisation.Where(op => Allowed(op) && CarriedBy(op, SeatClasses.Cell))
                     .Select(op => new ReachVerb(op, BrokerDoor.VerbName(op), Ops.IsMutating(op))))
                 .ToList();
@@ -223,7 +229,7 @@ public sealed record AgentReach
         {
             var served = GrantedWorkerTools.Granted.Select(t => t.Name).ToList();
             var doorVerbs = served
-                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Allowed).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
+                .SelectMany(t => GrantedWorkerTools.OpsOf(t).Where(Door).Select(op => new ReachVerb(op, t, Ops.IsMutating(op))))
                 .Concat(Ops.Organisation.Where(op => Allowed(op) && CarriedBy(op, SeatClasses.Broker))
                     .Select(op => new ReachVerb(op, BrokerDoor.VerbName(op), Ops.IsMutating(op))))
                 .ToList();
