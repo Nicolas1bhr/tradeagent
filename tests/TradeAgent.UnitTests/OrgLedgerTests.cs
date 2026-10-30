@@ -475,6 +475,12 @@ public class OrgLedgerTests
         // `self` mission_event for the caller and nothing of the chart (OrgStore.Autonomy.cs writes no org table: the source scan below is
         // unchanged), behind OrgVerbCaller and the board's floor and ceiling, one pending, the AI day (OrgAutonomyTests).
         mandate = [.. mandate, "RequestWake"];
+        // REVISITED, OUT LOUD, BY U-chief-wake-once: WakeChiefOnce — the owner's in-process wake of an active chief (AUTH-001), press two of
+        // two: one org_event (`woken-once`, decided by the owner) through the verbs' own Event helper and one `owner-wake` for the chief,
+        // in one write, and nothing else — no org_unit, no org_position, no ceiling, no board value. PreviewChiefWake is its press one,
+        // a READ, and ChiefWakeAfter a pure sentence. No op, verb or board act reaches any of them
+        // (OrgChiefTests.No_op_or_verb_reaches_the_wake_once_press); OrgStore.ChiefWake.cs holds no SQL of its own.
+        mandate = [.. mandate, "ChiefWakeAfter", "PreviewChiefWake", "WakeChiefOnce"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

@@ -452,6 +452,13 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public IReadOnlyList<string>? VendorWarnings { get; init; }
 
     /// <summary>
+    /// THE RUNTIME'S OWN ERROR EVENTS THIS TURN'S STREAM CARRIED (<c>U-chief-wake-once</c>): each top-level <c>error</c> event's message, in
+    /// order — a vendor's 4xx, a refused model, a usage limit. Never the model's words. The meter writes them, bounded and with any
+    /// credential-shaped run withheld, on the launch's row (<c>ai_attempt.vendor_said</c>); null for none.
+    /// </summary>
+    public IReadOnlyList<string>? VendorErrors { get; init; }
+
+    /// <summary>
     /// THE APP'S SENTENCE FOR A TURN WHOSE TOOLS COULD NOT RUN, quoting the vendor's (<see cref="RuntimeManifest.ToolsUnavailablePattern"/>),
     /// or null. Set by the conversation that read the stream: the loop gives back every wake the turn took, as for the gate's refusal,
     /// and the seat's next launch is refused in the same words until its program, settings or model change — the turn ran, and was

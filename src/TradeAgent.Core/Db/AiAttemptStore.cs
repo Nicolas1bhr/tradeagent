@@ -138,6 +138,19 @@ public sealed record AiAttempt
     public string BillingClass { get; init; } = BillingClasses.Unknown;
 
     /// <summary>
+    /// THE NAMES OF THE TOOLS THIS LAUNCH'S SEAT WAS VERIFIED AS OFFERED (<c>U-chief-wake-once</c>, rung 52), sorted, one per line — the
+    /// set <see cref="RuntimeProfile"/>'s hash covers, said in words. Written in the row's own insert, never updated; null where the seat
+    /// has no verified surface.
+    /// </summary>
+    public string? OfferedTools { get; init; }
+
+    /// <summary>
+    /// WHAT THE VENDOR SAID (<c>U-chief-wake-once</c>, rung 52): the turn's own error lines from the runtime's stream — a 4xx, a refused
+    /// model — bounded, any credential-shaped run withheld (<see cref="LaunchEvidence.VendorSaid"/>). Written once by the turn's close.
+    /// </summary>
+    public string? VendorSaid { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -444,7 +457,8 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash, role, runtime_profile, seat_class, assurance, mandate_id, allow_in, allow_out, turn_bound, billing_class
+        input_hash, role, runtime_profile, seat_class, assurance, mandate_id, allow_in, allow_out, turn_bound, billing_class,
+        offered_tools, vendor_said
         """;
 
     /// <summary>
@@ -571,14 +585,15 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate,$in,$out,$bound,$billing)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role,$profile,$class,$assurance,$mandate,$in,$out,$bound,$billing,$offered,NULL)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role), ("$profile", a.RuntimeProfile),
             ("$class", a.SeatClass), ("$assurance", a.Assurance), ("$mandate", mandateId),
-            ("$in", a.AllowIn), ("$out", a.AllowOut), ("$bound", a.TurnBound), ("$billing", BillingClasses.Of(a.BillingClass)));
+            ("$in", a.AllowIn), ("$out", a.AllowOut), ("$bound", a.TurnBound), ("$billing", BillingClasses.Of(a.BillingClass)),
+            ("$offered", a.OfferedTools));
         c.ExecuteNonQuery();
         // THE CHAIN, IN THE SAME COMMIT AS THE ROW IT FUNDS: never a row without its chain, and never a chain re-read later.
         if (a.Funding is { Count: > 0 } funding)
@@ -672,7 +687,7 @@ public sealed class AiAttemptStore(Database db)
     /// </summary>
     public bool End(string id, int exitCode, DateTimeOffset endedAt, long? input, long? cached,
         long? cacheWrite, long? output, long? reasoning, string? effectiveModel, decimal? cost,
-        string? unpricedReason, string? context, string? pricingBasis = null) => db.Write(_ =>
+        string? unpricedReason, string? context, string? pricingBasis = null, string? vendorSaid = null) => db.Write(_ =>
     {
         // A TURN THAT ENDED WITHOUT SAYING WHAT IT USED KEEPS ITS RESERVATION AS ITS COST.
         //
@@ -698,14 +713,15 @@ public sealed class AiAttemptStore(Database db)
                                         AND CAST(reserved_cost AS REAL) > 0
                                    THEN $unreported ELSE $why END,
               context=COALESCE($ctx, context),
-              pricing_basis=COALESCE($basis, pricing_basis)
+              pricing_basis=COALESCE($basis, pricing_basis),
+              vendor_said=COALESCE(vendor_said, $said)
             WHERE id=$id AND state='LAUNCHED'
             """,
             ("$end", Sql.T(endedAt)), ("$exit", exitCode), ("$in", input), ("$cached", cached),
             ("$write", cacheWrite), ("$out", output), ("$reason", reasoning),
             ("$model", effectiveModel), ("$cost", cost is null ? null : Sql.D(cost.Value)),
             ("$why", unpricedReason), ("$unreported", UnreportedReason),
-            ("$ctx", context), ("$basis", pricingBasis), ("$id", id));
+            ("$ctx", context), ("$basis", pricingBasis), ("$said", vendorSaid), ("$id", id));
         return c.ExecuteNonQuery() == 1;
     });
 
@@ -1146,7 +1162,9 @@ public sealed class AiAttemptStore(Database db)
         AllowIn = Long(r, 25),
         AllowOut = Long(r, 26),
         TurnBound = Sql.S(r.GetValue(27)),
-        BillingClass = BillingClasses.Of(Sql.S(r.GetValue(28)))
+        BillingClass = BillingClasses.Of(Sql.S(r.GetValue(28))),
+        OfferedTools = Sql.S(r.GetValue(29)),
+        VendorSaid = Sql.S(r.GetValue(30))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);

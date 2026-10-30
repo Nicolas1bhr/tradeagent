@@ -477,8 +477,17 @@ public static class Versions
     /// <c>act</c> or <c>veto</c>, <c>act_id</c> NULL iff founding — its mode and activation CHECKs UNCHANGED, so a live mode or an
     /// activation is still unstorable — and the event kinds widened by the owner's budget share and his seat founding and retiring.
     /// Every table refuses UPDATE, DELETE and an insert over its key by trigger. One writer, <c>BoardStore</c>.</para>
+    ///
+    /// <para><b>52 — what a launch was offered and what its vendor said</b> (<c>U-chief-wake-once</c>, rung <see cref="LaunchEvidenceRung"/>,
+    /// after <c>U-board-b1</c>'s 51): <c>ai_attempt.offered_tools</c> (the names of the tools the seat's verified surface offered, beside
+    /// the profile hash that covered them; written in the row's insert, an update that changes it refused by trigger) and
+    /// <c>ai_attempt.vendor_said</c> (the turn's own error lines from the runtime's stream — a vendor's 4xx, a refused model — bounded, a
+    /// credential-shaped run withheld; written once by the turn's close). Measurements only. No backfill: NULL before the rung.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = BoardActsRung;
+    public const int DatabaseSchemaVersion = LaunchEvidenceRung;
+
+    /// <summary>What a launch was offered and what its vendor said, spelled once (<c>U-chief-wake-once</c>); a unit overtaken renumbers it here.</summary>
+    public const int LaunchEvidenceRung = 52;
 
     /// <summary>The three-dimension envelopes' rung, spelled once (<c>U-org-verbs-e</c>); a unit overtaken renumbers it here.</summary>
     public const int EvidenceSharesRung = 50;
