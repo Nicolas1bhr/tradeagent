@@ -464,7 +464,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         var seated = SeatedOf(role);
         var runtime = seated?.Runtime ?? RuntimeForRole(role);
-        return SeatResolver.Of(role, runtime, ModelOn(role, runtime, seated?.Model ?? Gateway.Settings.ModelForRole(role)),
+        return SeatResolver.Of(role, runtime, ModelOn(role, runtime, seated?.Model ?? SettingsModelFor(role)),
             seated?.Allowance ?? AppAllowance);
     }
 
@@ -729,11 +729,25 @@ public sealed class AppHost : IAsyncDisposable
             ?? (runtime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null));
 
     /// <summary>
-    /// THE RULE <see cref="ModelOn"/> APPLIES, given the declared seat class: a broker-only seat runs on its pin whatever was chosen, so its
-    /// reservation is priced at the pin (U-thinking-seats-c); any other seat, on the model its runtime resolved the choice to.
+    /// THE RULE <see cref="ModelOn"/> APPLIES, given the declared seat class: a verified seat runs on its position's choice among the
+    /// verified catalog's models, else the catalog's default, so its reservation is priced at the model it launches on (U-thinking-seats-c;
+    /// U-seat-models) — a choice outside the catalog never launches, and is priced at the default; any other seat, on the model its runtime
+    /// resolved the choice to.
     /// </summary>
     internal static string? SeatModelOn(string? declaredClass, string? chosen, string? resolved) =>
-        declaredClass is { } declared && BrokerSeat.ModelOf(declared) is { } pinned ? pinned : resolved;
+        declaredClass is { } declared && BrokerSeat.IsVerified(declared)
+            ? BrokerSeat.ModelOf(declared, chosen) ?? BrokerSeat.ModelOf(declared)
+            : resolved;
+
+    /// <summary>
+    /// THE SETTINGS' MODEL FOR A ROLE WITH NO SEAT OF ITS OWN: for a verified seat (broker, cell) the role's OWN choice only — never the
+    /// app-wide one the owner's chat runs on (<c>U-seat-models</c>: such a seat runs on the catalog's default until its position chooses);
+    /// for any other, its own choice, then the app-wide one.
+    /// </summary>
+    string? SettingsModelFor(string role) =>
+        !TestHostPuppet(role) && DeclaredSeatClass(role) is { } declared && BrokerSeat.IsVerified(declared)
+            ? Gateway.Settings.OwnModelForRole(role)
+            : Gateway.Settings.ModelForRole(role);
 
     /// <summary>
     /// WHAT A ROLE'S CONVERSATION IS OPENED ON (<c>U-org-seats</c>): the model of the seat the meter admitted its launch on, so the argv or
@@ -747,7 +761,7 @@ public sealed class AppHost : IAsyncDisposable
         try
         {
             if (!TestHostPuppet(role) && DeclaredSeatClass(role) is { } declared && BrokerSeat.ModelOf(declared) is not null)
-                return SeatedOf(role)?.Model ?? Gateway.Settings.ModelForRole(role);
+                return SeatedOf(role)?.Model ?? Gateway.Settings.OwnModelForRole(role);
             return (Meter?.OpenSeatFor(role) ?? SeatFor(role)).Model;
         }
         catch (Exception) { return null; }
@@ -1640,15 +1654,49 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE CLOSED LIST OF SEATS A CHIEF MAY BE APPOINTED ON: the runtime the setup prepared, with each model this build prices on it — a list
-    /// of presses, never a box a scroll could change. Empty before a runtime is chosen.
+    /// THE CLOSED LIST OF SEATS A CHIEF MAY BE APPOINTED ON: the runtime the setup prepared, with — where that runtime has the broker class
+    /// the chief runs in — each model of the verified catalog (<c>U-seat-models</c>), else each model this build prices on it; a list of
+    /// presses, never a box a scroll could change. Empty before a runtime is chosen.
     /// </summary>
     internal IReadOnlyList<ChiefSeat> ChiefSeats()
     {
         var runtime = Gateway.Settings.SelectedRuntimeId;
         if (runtime is not { Length: > 0 } || !KnownRuntime(runtime)) return [];
+        if (BrokerSeat.Offers(runtime)) return [.. BrokerSeat.Models.Select(m => new ChiefSeat(runtime, m))];
         return [.. ModelChoices.Where(m => m.Model.Length > 0).Select(m => new ChiefSeat(runtime, m.Model)).DistinctBy(c => c.Model)];
     }
+
+    // ---- the owner's switch of a position's model (U-seat-models; R25 D8; AUTH-001: in-process only) ------------------------------
+
+    /// <summary>
+    /// THE CLOSED LIST OF MODELS <paramref name="position"/> MAY BE SWITCHED TO: the verified catalog's, default first, for a position that
+    /// runs on a verified seat (broker, cell); none for any other — the legacy pair's model is the Owner page's, and a seat the catalog does
+    /// not govern has no list here. Empty while a board seat is active or the class cannot be read. Never throws.
+    /// </summary>
+    internal IReadOnlyList<string> SeatModels(string position)
+    {
+        try
+        {
+            if (CouncilRoles.IsKnown(position) || BoardActive || TestHostPuppet(position)) return [];
+            return DeclaredSeatClass(position) is { } declared && BrokerSeat.IsVerified(declared) ? BrokerSeat.Models : [];
+        }
+        catch (Exception) { return []; }
+    }
+
+    /// <summary>
+    /// THE OWNER'S SECOND PRESS: <paramref name="position"/> set to run on <paramref name="model"/>, one of the verified catalog's, through
+    /// the store (<see cref="OrgStore.ChooseSeatModel"/>) — refused in words while a board seat is active. Answers the app's words of what was
+    /// done or why not. The next launch of the position runs on it and its surface is checked for it before admission, as the default's is.
+    /// </summary>
+    internal string ChooseSeatModel(string position, string model) => ChiefPress(org =>
+    {
+        string? runtime;
+        try { runtime = SeatRuntimeFor(position) ?? Gateway.Settings.SelectedRuntimeId; }
+        catch (Exception) { runtime = Gateway.Settings.SelectedRuntimeId; }
+        var was = org.ChooseSeatModel(position, model, BrokerSeat.IsCatalogModel, runtime, KnownRuntime, DateTimeOffset.UtcNow);
+        return $"You set {position} to run on {BrokerSeat.ModelWords(model)}" +
+               $"{(was is null ? "" : $", in place of {was}")}. Its next turn runs on it, after its offered tools are checked for that model.";
+    });
 
     internal string AppointChief(ChiefSeat seat) => ChiefPress(org =>
     {

@@ -54,6 +54,18 @@ sealed record OrgSurfaceSources
     /// </summary>
     public ChiefPresses? Chief { get; init; }
 
+    /// <summary>
+    /// THE CLOSED LIST OF MODELS A POSITION MAY BE SWITCHED TO (<c>U-seat-models</c>): the verified catalog's for a position on a verified seat
+    /// while no board seat is active, else none — and no press is drawn.
+    /// </summary>
+    public Func<string, IReadOnlyList<string>> SeatModels { get; init; } = _ => [];
+
+    /// <summary>
+    /// THE OWNER'S SWITCH OF A POSITION'S MODEL, press two (<see cref="AppHost.ChooseSeatModel"/>): the words of what was done or why not. In
+    /// process only, never the pipe's; null where there is no host, and no press is drawn.
+    /// </summary>
+    public Func<string, string, string>? ChooseModel { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
@@ -70,6 +82,8 @@ sealed record OrgSurfaceSources
         Currency = () => host.SpendToday.Currency,
         HomeRefusal = host.HomeRefusalFor,
         RepairHome = host.RepairHome,
+        SeatModels = host.SeatModels,
+        ChooseModel = host.ChooseSeatModel,
     };
 }
 

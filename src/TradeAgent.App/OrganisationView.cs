@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -40,7 +41,8 @@ sealed record OrganisationRead(
 /// One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on, who paid, its
 /// calibration as the app scores it at read (empty where no scorecard was read) and, where its home folder is refused, the refusal's sentence.
 /// </summary>
-sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null);
+sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null,
+    string? Model = null);
 
 /// <summary>One unit as the page says it, with the depth it is indented to, the positions in it and its head's id (the root's: the chief).</summary>
 sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions, string? HeadId = null);
@@ -99,15 +101,24 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             : unit.Kind == OrgUnitKind.Staff ? $"staff of {OrgText.UnitTitle(unit)}"
             : $"member of {OrgText.UnitTitle(unit)}";
 
+        // THE MODEL IT RUNS ON, as its seat or its launch's resolution names it (U-seat-models): a model of the verified catalog is named with
+        // its standing — "(the default)", "(the fallback)" — so the owner's choice shows on the card.
+        string? model = null;
         string set;
         if (p.SeatRuntime is not null)
-            set = p.SeatModel is null ? $"Set to run on: {p.SeatRuntime}, no model named." : $"Set to run on: {p.SeatRuntime}, model {p.SeatModel}.";
+        {
+            model = p.SeatModel;
+            set = p.SeatModel is null ? $"Set to run on: {p.SeatRuntime}, no model named." : $"Set to run on: {p.SeatRuntime}, model {ModelWords(p.SeatModel)}.";
+        }
         else if (resolved is not null && resolved.TryGetValue(p.Id, out var r))
+        {
+            model = r.Refused is { Length: > 0 } ? null : r.Model;
             set = r.Refused is { Length: > 0 } why
                 ? $"Its seat cannot be resolved: {why}."
                 : r.Runtime is null
                     ? "Resolves to: nothing yet — no runtime is chosen in the app's settings for its role."
-                    : $"Resolves to: {r.Runtime}, {(r.Model is null ? "no model named" : $"model {r.Model}")} (it has no seat of its own; the app's settings for the role decide).";
+                    : $"Resolves to: {r.Runtime}, {(r.Model is null ? "no model named" : $"model {ModelWords(r.Model)}")} (it has no seat of its own; the app's settings for the role decide).";
+        }
         else if (p.Status != OrgPositionStatus.Active)
             set = $"Set to run on: nothing of its own; it is {p.Status}, so no seat is resolved.";
         else
@@ -116,13 +127,16 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         if (!seats.TryGetValue(p.Id, out var seat))
             // NEVER LAUNCHED: one sentence, not two that each say "nothing yet" — no seat boundary and no payer are recorded.
             return new OrgPositionWords(p.Id, role, p.Status, set,
-                "Has not run yet, so nothing is recorded of where it ran or who paid.", "");
+                "Has not run yet, so nothing is recorded of where it ran or who paid.", "", Model: model);
 
         var cell = seat.Assurance is { } assurance
             ? $"Last ran on: {Labels.SeatAssuranceWords(assurance)} ({OrgText.When(seat.StartedAt)})."
             : $"Last ran on: a seat the ledger records as {seat.SeatClass ?? "no class"}, which is not a boundary this build knows ({OrgText.When(seat.StartedAt)}).";
-        return new OrgPositionWords(p.Id, role, p.Status, set, cell, $"Paid from: {BillingClasses.Words(seat.BillingClass)}.");
+        return new OrgPositionWords(p.Id, role, p.Status, set, cell, $"Paid from: {BillingClasses.Words(seat.BillingClass)}.", Model: model);
     }
+
+    /// <summary>A model as the card names it: a model of the verified catalog with its standing, any other as it is.</summary>
+    static string ModelWords(string model) => BrokerSeat.IsCatalogModel(model) ? BrokerSeat.ModelWords(model) : model;
 }
 
 /// <summary>
@@ -245,7 +259,12 @@ sealed class OrganisationPage
         var repaired = Small();
         var repair = new StackPanel { Spacing = Theme.S1 };
         Button? press = null;
-        var row = Ui.Col(Theme.S1, head, role, seat, cell, billing, calibration, refusal, repair, repaired);
+        // THE OWNER'S SWITCH OF ITS MODEL (U-seat-models): one two-step press per model of the verified catalog it is not on, re-laid only
+        // when that list changes; the words of the last switch under them.
+        var models = new WrapPanel { Orientation = Orientation.Horizontal };
+        var switched = Small();
+        IReadOnlyList<string> offered = [];
+        var row = Ui.Col(Theme.S1, head, role, seat, models, switched, cell, billing, calibration, refusal, repair, repaired);
         row.Margin = new Thickness(Theme.S3, 0, 0, 0);
 
         return (row, p =>
@@ -283,6 +302,32 @@ sealed class OrganisationPage
                 press.IsVisible = p.HomeRefusal is not null;
             }
             repaired.IsVisible = repaired.Text is { Length: > 0 };
+
+            IReadOnlyList<string> choices = [];
+            if (_src.ChooseModel is not null && p.Status != OrgPositionStatus.Ended)
+            {
+                try { choices = [.. _src.SeatModels(p.Id).Where(m => m != p.Model)]; }
+                catch (Exception) { choices = []; }
+            }
+            if (!choices.SequenceEqual(offered))
+            {
+                offered = choices;
+                models.Children.Clear();
+                foreach (var model in choices)
+                {
+                    var (pos, words) = (p.Id, BrokerSeat.ModelWords(model));
+                    var b = Ui.Confirm(Labels.SeatModelSwitch(words), Labels.SeatModelSwitchConfirm(words), () =>
+                    {
+                        OrgText.Set(switched, _src.ChooseModel!(pos, model));
+                        switched.IsVisible = true;
+                        Update();
+                    });
+                    b.Margin = new Thickness(0, 0, Theme.S2, Theme.S2);
+                    models.Children.Add(b);
+                }
+            }
+            models.IsVisible = models.Children.Count > 0;
+            switched.IsVisible = switched.Text is { Length: > 0 };
         });
 
         static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);

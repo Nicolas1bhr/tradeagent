@@ -39,8 +39,44 @@ public static class BrokerSeat
     /// </summary>
     public const string Model = "gpt-6-luna";
 
-    /// <summary>The model <paramref name="seatClass"/> is pinned to, or null for a class that pins none.</summary>
+    /// <summary>
+    /// THE FALLBACK (<c>U-seat-models</c>; R25 D8, the owner's 2026-10-25 words: "if the servers refuse gpt-6-luna, try sol"): gpt-6.1-sol on
+    /// the same catalog — the vendor's bundled entry with option C's two edits — under the same refusal rules. Never a seat's default: a
+    /// position runs on it only once the owner has chosen it for that position.
+    /// </summary>
+    public const string Fallback = "gpt-6.1-sol";
+
+    /// <summary>
+    /// THE VERIFIED CATALOG, THE DEFAULT FIRST (<c>U-seat-models</c>): the models a broker or cell seat may run on — each one an entry of
+    /// the app's pinned catalog (<see cref="SeatPlan.ModelCatalog"/>) and each with this build's expected surface for both classes, so its
+    /// offered tools are held to a known set before every launch. A position's model is chosen among these and nothing else.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Models = [Model, Fallback];
+
+    /// <summary>
+    /// Whether <paramref name="model"/> is a model of the verified catalog (<see cref="Models"/>) with an expected surface for every
+    /// verified class — the only models a position's choice may name.
+    /// </summary>
+    public static bool IsCatalogModel(string? model) =>
+        model is { Length: > 0 } m && Models.Contains(m, StringComparer.Ordinal) && Expected.ContainsKey(m) && ExpectedInCell.ContainsKey(m);
+
+    /// <summary>The model <paramref name="seatClass"/> is pinned to by default, or null for a class that pins none.</summary>
     public static string? ModelOf(string seatClass) => IsVerified(seatClass) ? Model : null;
+
+    /// <summary>
+    /// THE MODEL A <paramref name="seatClass"/> SEAT LAUNCHES ON, given its position's choice: the default where nothing is chosen, the
+    /// chosen model where it is one of the verified catalog's, and null — no model to launch — for a class that pins none or a choice the
+    /// catalog does not hold (<see cref="ModelRefusal"/> refuses that seat in words).
+    /// </summary>
+    public static string? ModelOf(string seatClass, string? chosen) =>
+        !IsVerified(seatClass) ? null
+        : chosen is not { Length: > 0 } ? Model
+        : IsCatalogModel(chosen) ? chosen
+        : null;
+
+    /// <summary>A model as the owner's words name it among the catalog's: "(the default)", "(the fallback)", or bare.</summary>
+    public static string ModelWords(string model) =>
+        model == Model ? $"{model} (the default)" : model == Fallback ? $"{model} (the fallback)" : model;
 
     /// <summary>
     /// THE CLASSES WHOSE SEAT IS VERIFIED BEFORE EVERY LAUNCH (<c>U-cell-linux-c</c> item 4): the broker and route (a)'s cell — a pinned
@@ -50,6 +86,13 @@ public static class BrokerSeat
 
     /// <summary>The words a refusal names a verified class by.</summary>
     public static string Kind(string seatClass) => seatClass == SeatPlan.CellClass ? "a route (a) cell seat" : "a broker-only seat";
+
+    // THE TWO SURFACES, declared before the dictionaries that hold them (static fields initialise in order).
+    static readonly string[] BrokerSurface =
+        ["clock.curr_time", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "tool_search"];
+    static readonly string[] CellSurface =
+        ["apply_patch", "clock.curr_time", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
+         "tool_search", "view_image", "write_stdin"];
 
     /// <summary>
     /// THE TOOLS EACH PINNED MODEL IS OFFERED UNDER THE BROKER CLASS, compiled: the app's door's tools are deferred behind
@@ -65,8 +108,12 @@ public static class BrokerSeat
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
-        [Model] = ["clock.curr_time", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "tool_search"]
+        [Model] = BrokerSurface,
+        // THE FALLBACK'S, MEASURED (U-seat-models): gpt-6.1-sol on the app's catalog, codex-cli 0.160.1, the loopback mock and a throwaway
+        // home (ModelCatalogProbeTests) — the same set as gpt-6-luna's: the two entries differ in no field that decides a tool.
+        [Fallback] = BrokerSurface
     };
+
 
     /// <summary>
     /// ROUTE (a)'S CELL CLASS'S EXPECTED SURFACE (<c>U-cell-linux-c</c> L2), RUN on codex-cli 0.160.1 and the pinned model on the app's
@@ -76,9 +123,10 @@ public static class BrokerSeat
     public static readonly IReadOnlyDictionary<string, string[]> ExpectedInCell = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
         // NO QUESTION NOBODY ANSWERS (U-broker-seat-fixes item 2): request_user_input and its async form are off for the cell as for the broker.
-        [Model] = ["apply_patch", "clock.curr_time", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
-                   "tool_search", "view_image", "write_stdin"]
+        [Model] = CellSurface,
+        [Fallback] = CellSurface
     };
+
 
     /// <summary>The expected surface of <paramref name="seatClass"/> on <paramref name="model"/>, or null for none this build knows.</summary>
     public static string[]? ExpectedFor(string seatClass, string model) =>
@@ -224,9 +272,10 @@ public static class BrokerSeat
     // ---- the pinned model --------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// NULL WHEN A <paramref name="seatClass"/> SEAT MAY RUN ON ITS PINNED MODEL, or the refusal: a class that pins no model, a runtime
-    /// that cannot name one on its command line, or an owner's choice for the position that names another model.
-    /// <paramref name="chosen"/> is the owner's own choice for the position, null or empty for none — the pin then stands.
+    /// NULL WHEN A <paramref name="seatClass"/> SEAT MAY RUN ON THE MODEL ITS POSITION CHOSE, or the refusal: a class that pins no model, a
+    /// runtime that cannot name one on its command line, or an owner's choice for the position that names a model the verified catalog does
+    /// not hold (<see cref="Models"/>; <c>U-seat-models</c>). <paramref name="chosen"/> is the owner's own choice for the position, null or
+    /// empty for none — the default (<see cref="Model"/>) then stands.
     /// </summary>
     public static string? ModelRefusal(string seatClass, string? chosen, RuntimeManifest manifest)
     {
@@ -236,9 +285,12 @@ public static class BrokerSeat
         if (!manifest.ModelArgs.Any(a => a.Contains("{model}", StringComparison.Ordinal)))
             return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: its command line cannot name the model, so it " +
                    $"would run on whatever its account defaults to rather than {pin}. Nothing was started.";
-        if (chosen is { Length: > 0 } other && !string.Equals(other, pin, StringComparison.Ordinal))
-            return $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat on {other}: a broker-only seat runs only on {pin}, " +
-                   $"the model whose offered tools this build knows. Choose {pin} for this position, or no model, to continue. Nothing was started.";
+        // THE CATALOG REFUSAL (U-seat-models): a choice outside the verified catalog never launches — whatever tools it would be offered,
+        // this build has no entry pinning its metadata and no set to hold its surface to.
+        if (chosen is { Length: > 0 } other && !IsCatalogModel(other))
+            return $"TradeAgent will not start {manifest.DisplayName} as {Kind(seatClass)} on {other}: such a seat runs only on a model of " +
+                   $"this build's verified catalog — {string.Join(" or ", Models.Select(ModelWords))} — whose offered tools it checks before every " +
+                   $"start. Choose one of them for this position, or no model for {pin}, to continue. Nothing was started.";
         return null;
     }
 

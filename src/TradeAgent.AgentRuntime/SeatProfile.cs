@@ -788,15 +788,16 @@ public static class SeatProfile
                 return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                     $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: TradeAgent's own door, the one tool server it " +
                     "may use, is not open. Nothing was started; the next turn checks again.");
-            // THE PINNED MODEL, AND ONLY IT: a class that pins none, a command line that cannot name one, or another model refuses.
+            // A MODEL OF THE VERIFIED CATALOG, AND ONLY ONE (U-seat-models): a class that pins none, a command line that cannot name
+            // one, or a choice the catalog does not hold refuses; the position's choice among its entries — or the default — launches.
             if (BrokerSeat.ModelRefusal(seatClass, launch.Model, manifest) is { } notPinned)
                 return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, notPinned);
-            model = BrokerSeat.ModelOf(seatClass)!;
+            model = BrokerSeat.ModelOf(seatClass, launch.Model)!;
             string[] named = [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
             if (!Carries(argv, named))
                 return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED,
                     $"TradeAgent will not start {manifest.DisplayName} as a broker-only seat: the command it built does not name {model}, the " +
-                    "model a broker-only seat is pinned to, so it would run on whatever its account defaults to. This is TradeAgent's own " +
+                    "model this seat runs on, so it would run on whatever its account defaults to. This is TradeAgent's own " +
                     "fault, not the AI's; nothing was started.");
         }
         else if (!seat.Args.ContainsKey(seatClass) && seatClass != SeatPlan.CliClass)

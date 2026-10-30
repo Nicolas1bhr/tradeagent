@@ -1,5 +1,7 @@
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -253,5 +255,53 @@ public class OrganisationPageTests
         Assert.DoesNotContain("0.8", words, StringComparison.Ordinal);
         Assert.DoesNotContain("0.35", words, StringComparison.Ordinal);
         Assert.Contains("Calibration: no scored forecast of its has resolved yet.", AllText(page.CardOf(Elsewhere)!), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (e) A POSITION'S MODEL SHOWS ON ITS CARD AND IS SWITCHED BY THE OWNER'S TWO PRESSES (<c>U-seat-models</c>; R25 D8): a position on a verified
+    /// seat names its model with its standing ("gpt-6-luna (the default)") and carries one two-step press per other model of the catalog — the
+    /// first press arms and switches nothing, a refresh between the presses leaves it armed, the second switches; the card then names the
+    /// fallback and offers the default back. A position the catalog does not govern — or any while a board seat is active, when the list is
+    /// empty — carries no press. RED at base: no press, no list.
+    /// </summary>
+    [Fact]
+    public void A_positions_model_shows_on_its_card_and_the_owners_two_presses_switch_it()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        var model = BrokerSeat.Model;
+        var switches = new List<(string, string)>();
+        var page = new OrganisationPage(Sources(db) with
+        {
+            SeatOf = role => new ResolvedSeat("codex", role == Member ? model : null, null),
+            SeatModels = role => role == Member ? BrokerSeat.Models : [],
+            ChooseModel = (role, chosen) =>
+            {
+                switches.Add((role, chosen));
+                model = chosen;
+                return $"You set {role} to run on {chosen}.";
+            }
+        });
+        page.Update();
+        var team = page.CardOf(Team) ?? throw new Xunit.Sdk.XunitException("the team's card was not made");
+        Assert.Contains(Texts(team), t => t.Text is { } x && x.Contains("model gpt-6-luna (the default)", StringComparison.Ordinal));
+
+        var press = Assert.Single(team.GetLogicalDescendants().OfType<Button>());   // the member's, for the one model it is not on
+        Assert.Equal(Labels.SeatModelSwitch("gpt-6.1-sol (the fallback)"), press.Content);
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(Ui.IsArmed(press));
+        Assert.Empty(switches);
+        page.Update();
+        Assert.Same(press, Assert.Single(team.GetLogicalDescendants().OfType<Button>()));
+        Assert.True(Ui.IsArmed(press), "the refresh disarmed the half-pressed switch");
+
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal([(Member, BrokerSeat.Fallback)], switches);
+        page.Update();
+        var back = Assert.Single(team.GetLogicalDescendants().OfType<Button>());
+        Assert.Equal(Labels.SeatModelSwitch("gpt-6-luna (the default)"), back.Content);
+        var shown = Texts(team).Where(t => t.IsVisible).Select(t => t.Text).ToList();
+        Assert.Contains(shown, t => t?.Contains("model gpt-6.1-sol (the fallback)", StringComparison.Ordinal) == true);
+        Assert.Contains($"You set {Member} to run on {BrokerSeat.Fallback}.", shown);
     }
 }
