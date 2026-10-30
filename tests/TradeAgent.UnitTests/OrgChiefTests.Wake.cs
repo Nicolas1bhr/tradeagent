@@ -225,7 +225,11 @@ public partial class OrgChiefTests
             .ToList();
         foreach (var h in hits) log.WriteLine(h);
         Assert.Empty(hits);
-        Assert.DoesNotContain(GatewaySchema.Ops(), op => op.Op.Contains("wake", StringComparison.OrdinalIgnoreCase));
+        // NO OP IS NAMED FOR IT: `org-wake` (U-org-autonomy) is a position asking for ITS OWN next wake, a `self` row behind its verb caller —
+        // never the owner's wake of the chief, which the source scan above holds no agent-facing file names.
+        Assert.DoesNotContain(GatewaySchema.Ops(), op => op.Op.Contains("chief", StringComparison.OrdinalIgnoreCase)
+                                                          || op.Op.Contains("once", StringComparison.OrdinalIgnoreCase)
+                                                          || op.Op.Contains("owner", StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(["TradeAgent.App/AppHost.cs", "TradeAgent.Core/Db/OrgStore.ChiefWake.cs"],
             Naming(".WakeChiefOnce").Concat(Naming(" WakeChiefOnce")).Distinct().Order(StringComparer.Ordinal));
