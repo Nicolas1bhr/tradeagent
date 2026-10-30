@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- THE HEADLESS-RENDER ROWS, IN THEIR OWN ASSEMBLY (U-device-code-clipped). Avalonia is one application and one UI thread per process;
+       a headless session started inside TradeAgent.UnitTests took over the dispatcher that hundreds of that assembly's other rows build
+       controls on and post work to, and ran their leftovers as its own. An assembly of its own is a process of its own. -->
+  <ItemGroup>
+    <!-- Nothing of the shared test home: these rows draw controls; they open no home, no gateway and no database. -->
+    <Compile Remove="../Shared/**" />
+    <AssemblyAttribute Remove="Xunit.TestFrameworkAttribute" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.App/TradeAgent.App.csproj" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.4" />
+  </ItemGroup>
+</Project>
