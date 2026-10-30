@@ -89,12 +89,21 @@ public static class RouteA
     /// THE CELL'S POLICY: the workspace read-write; the cell's codex home and home read-only (both empty, both the app's); codex's own
     /// root read and run; the system roots; an environment named in full — no <c>CODEX_HOME</c>, <c>HOME</c> or bearer of the
     /// harness's — and egress <see cref="Egress"/> (<c>web</c>: <c>U-execution-environment</c>; <c>none</c> before it).
+    ///
+    /// <para><b>And the owner's head-start kit, when one is installed and still hashes to its install</b> (<c>U-kit-socket</c>,
+    /// <see cref="Kit.Granted"/>): the whole kit a READ-ONLY input — its index, its skills, where codex's skill list points — and its
+    /// <c>tools/</c> a program root, read and run, at the END of the PATH, so a tool is run by its name and never shadows a system
+    /// program of the same name. Never the workspace: <see cref="CellPolicy.Problem"/> refuses a workspace that is, lies inside or holds
+    /// the kit.</para>
     /// </summary>
-    public static CellPolicy Policy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome) =>
+    public static CellPolicy Policy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome, Kit.View? kit = null) =>
+        // ON WINDOWS NO KIT YET (U-kit-socket): the Windows cell grants exactly its policy's folders by ACL and its PATH is Windows-shaped;
+        // granting the kit there is owed to the Windows cell track, so a Windows cell is given none.
         OperatingSystem.IsWindows() ? WindowsPolicy(workspace, codexExe, codexRoot, cellCodexHome, cellHome, Egress) :
-        new(workspace, [cellCodexHome, cellHome], [codexRoot, .. CellPolicy.SystemRoots],
+        new(workspace, [cellCodexHome, cellHome, .. kit is null ? [] : new[] { kit.Dir }],
+        [codexRoot, .. CellPolicy.SystemRoots, .. kit?.Tools is { } tools ? new[] { tools } : []],
         [
-            new("PATH", Path.GetDirectoryName(codexExe) + ":/usr/local/bin:/usr/bin:/bin"),
+            new("PATH", Path.GetDirectoryName(codexExe) + ":/usr/local/bin:/usr/bin:/bin" + (kit?.Tools is { } t ? ":" + t : "")),
             new("HOME", cellHome),
             new("CODEX_HOME", cellCodexHome),
             new("LANG", "C.UTF-8"),
@@ -161,7 +170,7 @@ public static class RouteA
     /// home with the class's verified <c>config.toml</c> bytes, <paramref name="environmentsToml"/>, and <c>auth.json</c> a symlink to
     /// <paramref name="seatAuth"/>. A layout that already exists is refused: one attempt, one set of homes.
     /// </summary>
-    public static void Make(Layout layout, byte[] config, string environmentsToml, string seatAuth)
+    public static void Make(Layout layout, byte[] config, string environmentsToml, string seatAuth, Kit.View? kit = null)
     {
         foreach (var root in layout.Roots)
             if (Directory.Exists(root)) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"{root} already exists: one attempt, one set of homes");
@@ -182,7 +191,15 @@ public static class RouteA
                     $"Windows would not link the harness's sign-in to the seat home's (error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()})");
         }
         else File.CreateSymbolicLink(link, seatAuth);
+        // THE KIT'S SKILLS WHERE THE PINNED CODEX LOOKS (U-kit-socket): its user skill root is `$CODEX_HOME/skills` (vendor
+        // ext/skills/src/host_roots.rs:94-100 at rust-v0.160.1), canonicalised before its skills are listed (loader/host.rs:132-133),
+        // so the list names the kit's own path — the path the cell reads it at, read-only. This home is the attempt's, written here.
+        // Not on Windows, whose cell is given no kit yet (Policy).
+        if (!OperatingSystem.IsWindows() && kit?.Skills is { } skills) File.CreateSymbolicLink(Path.Combine(layout.HarnessCodexHome, SkillsLink), skills);
     }
+
+    /// <summary>The name, in the harness's per-attempt codex home, of the link to the kit's skills: codex's own user skill root.</summary>
+    public const string SkillsLink = "skills";
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true, EntryPoint = "CreateHardLinkW")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]

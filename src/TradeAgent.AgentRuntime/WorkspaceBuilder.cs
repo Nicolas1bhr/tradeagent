@@ -18,7 +18,8 @@ namespace TradeAgent.AgentRuntime;
 public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPaper, string? AccountId,
     TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk,
     bool ConnectorIsBuiltInSimulator = false, string Role = CouncilRoles.Operations, int? TurnsPerSession = null,
-    string? Kind = null, string? Place = null);
+    string? Kind = null, string? Place = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] Kit.View? Kit = null);
 
 /// <summary>
 /// What the owner's repair of a home did (<see cref="WorkspaceBuilder.RepairHome"/>): whether the home was rebuilt, the words, and where the
