@@ -74,6 +74,7 @@ public sealed class CellWindowsProbeTests : IDisposable
         File.WriteAllText(Path.Combine(_outside, "auth.json"), Planted);
         _profile = "TradeAgent.Probe." + Guid.NewGuid().ToString("n")[..12];
         _sid = AppContainerCell.Profile(_profile, "TradeAgent cell probe (a test; deleted when it ends)");
+        Directory.CreateDirectory(Path.Combine(_ws, ".local", "Packages", _profile, "AC", "Temp"));
         Grant(_ws, FileSystemRights.Modify);
         foreach (var d in new[] { _ro, _home, _codexHome }) Grant(d, FileSystemRights.ReadAndExecute);
     }
@@ -105,7 +106,13 @@ public sealed class CellWindowsProbeTests : IDisposable
         new("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
         new("PATH", string.Join(';', new[] { codexBin, System32, Windows }.Where(p => p is not null))),
         new("USERPROFILE", _home), new("HOME", _home), new("CODEX_HOME", _codexHome), new("TEMP", _ws), new("TMP", _ws),
+        // WINDOWS REWRITES THREE OF THESE for an AppContainer (measured on Windows 11 26200): LOCALAPPDATA becomes
+        // <given>\Packages\<profile>\AC and TEMP and TMP <that>\Temp — and a block with no LOCALAPPDATA is refused (error 203). Given
+        // inside the workspace, the rewritten TEMP is the workspace's too; the folder is made before the start.
+        new("LOCALAPPDATA", LocalAppData), new("APPDATA", Path.Combine(_home, "AppData", "Roaming")),
     ];
+
+    string LocalAppData => Path.Combine(_ws, ".local");
 
     /// <summary>Runs one program in the probe cell to its end (60 s at most) and returns its exit code and output.</summary>
     async Task<(int Code, string Out)> Run(string program, IReadOnlyList<string> args, IReadOnlyList<string>? caps = null)
@@ -207,16 +214,18 @@ public sealed class CellWindowsProbeTests : IDisposable
     }
 
     /// <summary>
-    /// THE WINDOW STATION (the survey's open question): native programs started with CREATE_NO_WINDOW and NO ACE on the owner's window
-    /// station or desktop — codex, cmd, curl, nslookup — and whether each starts at all (0xC0000142 is the one that cannot).
+    /// THE WINDOW STATION (the survey's open question): with no ACE on the owner's window station or desktop, the pinned codex dies
+    /// 0xC0000142 where cmd and curl start (measured on Windows 11 26200) — so every cell runs on a window station and desktop of its
+    /// own (<see cref="PrivateDesktop"/>), and the owner's are never granted. Here codex, cmd and curl start there; cmd prints what its
+    /// environment became.
     /// </summary>
     [WindowsFact]
-    public async Task Native_programs_start_with_no_window_station_grant()
+    public async Task Native_programs_start_on_the_cells_own_desktop()
     {
         var codex = PinnedCodex();
         GrantCodex(codex);
         var (codexCode, codexOut) = await Run(codex, ["--version"]);
-        var (cmdCode, _) = await Run(Path.Combine(System32, "cmd.exe"), ["/d", "/c", "ver"]);
+        var (cmdCode, _) = await Run(Path.Combine(System32, "cmd.exe"), ["/d", "/c", "ver & set"]);
         var (curlCode, _) = await Run(Path.Combine(System32, "curl.exe"), ["--version"]);
         Assert.Equal(0, codexCode);
         Assert.Contains("0.160.1", codexOut, StringComparison.Ordinal);
@@ -233,12 +242,14 @@ public sealed class CellWindowsProbeTests : IDisposable
     {
         var cmd = Path.Combine(System32, "cmd.exe");
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // NO QUOTES INSIDE: cmd reads its command line raw and a C-runtime \" escape is not one to it; the test paths hold no space.
+        Require(!$"{_ws}{_ro}{_outside}{profile}".Contains(' '), "test paths without a space");
         var (_, o) = await Run(cmd, ["/d", "/c",
-            $"(echo x> \"{_ws}\\made.txt\" && echo WS-WRITE-OPEN || echo WS-WRITE-DENIED) & " +
-            $"(type \"{_ro}\\in.txt\" >nul 2>&1 && echo RO-READ-OPEN || echo RO-READ-DENIED) & " +
-            $"(echo x>> \"{_ro}\\in.txt\" && echo RO-WRITE-OPEN || echo RO-WRITE-DENIED) & " +
-            $"(type \"{_outside}\\auth.json\" >nul 2>&1 && echo OUTSIDE-READ-OPEN || echo OUTSIDE-READ-DENIED) & " +
-            $"(dir \"{profile}\" >nul 2>&1 && echo PROFILE-LIST-OPEN || echo PROFILE-LIST-DENIED)"]);
+            $"(echo x> {_ws}\\made.txt && echo WS-WRITE-OPEN || echo WS-WRITE-DENIED) & " +
+            $"(type {_ro}\\in.txt >nul 2>&1 && echo RO-READ-OPEN || echo RO-READ-DENIED) & " +
+            $"(echo x>> {_ro}\\in.txt && echo RO-WRITE-OPEN || echo RO-WRITE-DENIED) & " +
+            $"(type {_outside}\\auth.json >nul 2>&1 && echo OUTSIDE-READ-OPEN || echo OUTSIDE-READ-DENIED) & " +
+            $"(dir {profile} >nul 2>&1 && echo PROFILE-LIST-OPEN || echo PROFILE-LIST-DENIED)"]);
         Assert.Contains("WS-WRITE-OPEN", o, StringComparison.Ordinal);
         Assert.Contains("RO-READ-OPEN", o, StringComparison.Ordinal);
         Assert.Contains("RO-WRITE-DENIED", o, StringComparison.Ordinal);
@@ -271,11 +282,16 @@ public sealed class CellWindowsProbeTests : IDisposable
         finally { listener.Stop(); }
     }
 
-    static IPAddress? OwnLanAddress() =>
-        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+    /// <summary>This host's own IPv4 address on an interface that is up: a private (RFC 1918) one first, else any but loopback and link-local.</summary>
+    static IPAddress? OwnLanAddress()
+    {
+        var all = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
             .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
             .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(u => u.Address)
-            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a) && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal));
+            .Where(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a) && a.GetAddressBytes()[0..2] is not [169, 254]).ToList();
+        static bool Private(IPAddress a) => a.GetAddressBytes() is [10, ..] or [192, 168, ..] || a.GetAddressBytes() is [172, var b, ..] && b is >= 16 and <= 31;
+        return all.FirstOrDefault(Private) ?? all.FirstOrDefault();
+    }
 
     /// <summary>EGRESS NONE: with no capability the cell reaches neither the internet on 443 nor this host's loopback.</summary>
     [WindowsFact]
