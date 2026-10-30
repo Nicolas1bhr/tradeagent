@@ -170,6 +170,32 @@ public class KitTests
         Assert.Equal(a!.Hash, b!.Hash);
     }
 
+    /// <summary>
+    /// PRESS TWO INSTALLS WHAT PRESS ONE SHOWED: the preview installs and records nothing, and an install bound to its hash is refused
+    /// when the kit changed in between — the kit already installed stays as it was.
+    /// </summary>
+    [Fact]
+    public void Press_one_shows_the_kit_and_installs_nothing_and_press_two_refuses_a_kit_that_changed_since()
+    {
+        var home = NewHome();
+        var src = Fixture(Source(home), ["alpha"], ["beta"]);
+        var (index, hash, refusal) = Kit.Preview(src, home);
+        Assert.Null(refusal);
+        Assert.Equal(["alpha"], index!.Skills.Select(s => s.Name));
+        Assert.True(Kit.Current(home).Empty);
+        Assert.Empty(Kit.Records(home));
+
+        File.AppendAllText(Path.Combine(src, Kit.ToolsDir, "beta"), "echo changed\n");
+        var (none, why) = Kit.Install(src, home, expectHash: hash);
+        Assert.Null(none);
+        Assert.Contains("changed after TradeAgent showed it to you", why, StringComparison.Ordinal);
+        Assert.True(Kit.Current(home).Empty);
+
+        var (_, fresh, _) = Kit.Preview(src, home);
+        var (view, _) = Kit.Install(src, home, expectHash: fresh);
+        Assert.Equal(fresh, view!.Hash);
+    }
+
     // ---- what no kit may hold -----------------------------------------------------------------------------------------------------
 
     [Theory]
@@ -264,6 +290,20 @@ public class KitTests
         Assert.Null(Kit.InstallBundled(home, bundle));                 // the owner removed it: a build never undoes that
         Assert.True(Kit.Current(home).Empty);
         Assert.Null(Kit.InstallBundled(NewHome(), Path.Combine(home, "no-bundle-here")));
+    }
+
+    [Fact]
+    public void A_newer_build_updates_a_bundled_kit_and_never_an_owners_own()
+    {
+        var home = NewHome();
+        Kit.InstallBundled(home, Fixture(Source(home), ["alpha"]));
+        Assert.NotNull(Kit.InstallBundled(home, Fixture(Source(home), ["alpha", "gamma"])));
+        Assert.Equal(["alpha", "gamma"], Kit.Granted(home)!.Index.Skills.Select(s => s.Name));
+        Assert.Null(Kit.InstallBundled(home, Fixture(Source(home), ["alpha", "gamma"])));      // the same bundle: nothing
+
+        Kit.Install(Fixture(Source(home), ["mine"]), home);
+        Assert.Null(Kit.InstallBundled(home, Fixture(Source(home), ["delta"])));
+        Assert.Equal(["mine"], Kit.Granted(home)!.Index.Skills.Select(s => s.Name));
     }
 
     // ---- what a cell is granted ----------------------------------------------------------------------------------------------------
