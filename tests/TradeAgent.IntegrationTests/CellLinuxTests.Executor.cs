@@ -128,8 +128,7 @@ public partial class CellLinuxTests
     sealed class CellSurface : ISurfaceProbe
     {
         public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>(
-            ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input",
-             "request_user_input_async", "clock.curr_time", "apply_patch", "view_image", "tool_search"]);
+            ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "clock.curr_time", "apply_patch", "view_image", "tool_search"]);
     }
 
     /// <summary>

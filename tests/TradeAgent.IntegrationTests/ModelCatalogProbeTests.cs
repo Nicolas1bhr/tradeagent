@@ -38,6 +38,9 @@ public class ModelCatalogProbeTests(Xunit.Abstractions.ITestOutputHelper output)
             var offered = await CodexSurfaceProbe.Instance.OfferedAsync(ask, default);
             output.WriteLine($"{seatClass} {BrokerSeat.Model} shipped catalog :: {string.Join(" ", offered)}");
             Assert.DoesNotContain("exec", offered.Select(BrokerSeat.ToolName));
+            // NO QUESTION NOBODY ANSWERS (U-broker-seat-fixes item 2): the deny set's key and the catalog's edit hold on the real codex.
+            Assert.DoesNotContain("request_user_input", offered.Select(BrokerSeat.ToolName));
+            Assert.DoesNotContain("request_user_input_async", offered.Select(BrokerSeat.ToolName));
             var verdict = BrokerSeat.SurfaceRefusal(BrokerSeat.Model, offered, codex.DisplayName, seatClass);
             Assert.True(verdict is null, $"{seatClass} on the shipped catalog: {verdict} (offered {string.Join(", ", offered)})");
 

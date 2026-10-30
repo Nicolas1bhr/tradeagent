@@ -907,6 +907,10 @@ public static class RuntimeCatalog
         "--disable", "code_mode_host",
         "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "view_image", "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
+        // NO QUESTION NOBODY ANSWERS (U-broker-seat-fixes item 2): no user answers a confined seat's exec turn, so request_user_input is
+        // switched off at its own key (vendor core/src/config/mod.rs:2705-2711 at rust-v0.160.1); its async form's gate is the model's
+        // metadata, which the app's catalog no longer names.
+        "-c", "tools.experimental_request_user_input.enabled=false",
         // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog): the catalog the app writes into the seat home.
         "-c", $"model_catalog_json={SeatPlan.CatalogSlot}",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
@@ -937,6 +941,8 @@ public static class RuntimeCatalog
         "--disable", "code_mode_host",
         "--disable", "sleep_tool",
         "-c", "agents.enabled=false",
+        // NO QUESTION NOBODY ANSWERS (U-broker-seat-fixes item 2), as the broker: no user answers a cell's turn either.
+        "-c", "tools.experimental_request_user_input.enabled=false",
         // THE PINNED MODEL'S METADATA, THE APP'S OWN (U-cell-model-catalog), read by the harness from the seat home — never the cell's.
         "-c", $"model_catalog_json={SeatPlan.CatalogSlot}",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
@@ -1119,7 +1125,7 @@ public static class RuntimeCatalog
                 // model_catalog_json the dry run and the live turn read these bytes (the static models manager, no account refresh).
                 ModelCatalog = "codex/model-catalog.json",
                 ModelCatalogSource = "SeatData/codex-model-catalog.json",
-                ModelCatalogSha256 = "088568a342fe92b0421f31aadedc3a43dfac969873a03c54bcddc8e4a755760d",
+                ModelCatalogSha256 = "a106e0d2c0ed2ce1c483aa8449277105fc2861d870b27a5eb930d3aa420cdc4a",
                 // WHERE CODEX 0.160.1 KEEPS A SECRET IN A FILE, read in its source at rust-v0.160.1: the sign-in in
                 // `codex_home.join("auth.json")` (login/src/auth/storage.rs:155) and MCP OAuth tokens in
                 // `FALLBACK_FILENAME: &str = ".credentials.json"` under CODEX_HOME (rmcp-client/src/oauth.rs:819, :1062) — both stores

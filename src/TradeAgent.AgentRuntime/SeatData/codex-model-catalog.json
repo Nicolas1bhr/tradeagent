@@ -3,7 +3,8 @@
     "source": "codex-cli 0.160.1 (the pinned package), `codex debug models --bundled` under a throwaway CODEX_HOME and HOME: the gpt-6-luna entry",
     "edits": [
       "tool_mode removed (the vendor's value: \"code_mode_only\")",
-      "use_responses_lite set to false (the vendor's value: true)"
+      "use_responses_lite set to false (the vendor's value: true)",
+      "send_user_message_async removed from experimental_supported_tools (the vendor's value: [\"send_user_message_async\", \"clock\"]) — no user answers a confined seat, so request_user_input_async is never offered (U-broker-seat-fixes)"
     ],
     "why": "A deliberate TradeAgent edit of vendor data (U-cell-model-catalog, option C): the broker and cell seats run gpt-6-luna with classic tools and code mode's host disabled, never code mode's exec. Every other field is the vendor's bundled value, unedited. Pinned by SHA-256 in SeatPlan.ModelCatalogSha256."
   },
@@ -115,7 +116,6 @@
       "comp_hash": "3000",
       "effective_context_window_percent": 95,
       "experimental_supported_tools": [
-        "send_user_message_async",
         "clock"
       ],
       "input_modalities": [

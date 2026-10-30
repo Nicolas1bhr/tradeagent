@@ -27,11 +27,10 @@ public class BrokerSeatTests : IDisposable
     /// <summary>
     /// What the real dry run captured for the pinned model under the broker class: gpt-6-luna on the app's catalog, RE-MEASURED
     /// 2026-10-25 on codex-cli 0.160.1 and the loopback mock (ModelCatalogProbeTests; gpt-5.5's 2026-10-17 set plus clock.curr_time and
-    /// request_user_input_async).
+    /// request_user_input_async), less both question tools since U-broker-seat-fixes switched them off — re-measured by that test on CI.
     /// </summary>
     internal static readonly string[] Classic =
-        ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input", "request_user_input_async",
-         "clock.curr_time", "tool_search[tool_search]"];
+        ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "clock.curr_time", "tool_search[tool_search]"];
 
     /// <summary>What it captured for gpt-6-astra under the same argv (x-gpt-6-astra): code mode's exec, inside the codex process.</summary>
     internal static readonly string[] CodeMode =
@@ -149,6 +148,55 @@ public class BrokerSeatTests : IDisposable
             await session.SendAsync("go");
             Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
             Assert.Equal(1, surface.Asks);
+        }
+    }
+
+    // ---- (b2) no question nobody answers (U-broker-seat-fixes item 2) ---------------------------------------------------
+
+    /// <summary>
+    /// (b2) NO VERIFIED SEAT IS OFFERED A QUESTION TO A USER, because no user answers a confined seat's exec turn: the first real chief
+    /// turn (2026-10-30 22:51Z, gpt-6-luna on the broker) was offered <c>request_user_input</c> and <c>request_user_input_async</c>. Both
+    /// classes' deny sets switch the first off at its own config key (<c>tools.experimental_request_user_input.enabled</c>, vendor
+    /// <c>core/src/config/mod.rs:2705-2711</c> at rust-v0.160.1), the app's catalog no longer names the async tool's gate
+    /// (<c>experimental_supported_tools</c> without <c>send_user_message_async</c>, vendor <c>core/src/tools/spec_plan.rs:1176-1203</c>), and
+    /// neither expected set names either — so a surface that still offers one differs from Expected and is refused before admission.
+    ///
+    /// <para>RED at base: <c>Expected</c> named both tools. The watched mutant — the deny pair dropped from the broker class — is red here,
+    /// quoted in the unit's report.</para>
+    /// </summary>
+    [Fact]
+    public void No_verified_seat_is_offered_a_question_nobody_answers()
+    {
+        string[] questions = ["request_user_input", "request_user_input_async"];
+        var codex = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
+        foreach (var seatClass in new[] { SeatPlan.BrokerClass, SeatPlan.CellClass })
+        {
+            var expected = BrokerSeat.ExpectedFor(seatClass, BrokerSeat.Model)!;
+            Assert.Empty(expected.Intersect(questions));
+
+            var args = codex.Seat!.ArgsFor(seatClass);
+            Assert.True(Enumerable.Range(0, args.Length - 1).Any(i => args[i] == "-c" && args[i + 1] == "tools.experimental_request_user_input.enabled=false"),
+                $"the {seatClass} class's deny set does not switch request_user_input off");
+
+            // A SURFACE STILL OFFERING EITHER IS REFUSED, naming it; the expected set itself is admitted.
+            Assert.Null(BrokerSeat.SurfaceRefusal(BrokerSeat.Model, expected, codex.DisplayName, seatClass));
+            foreach (var question in questions)
+            {
+                var refusal = BrokerSeat.SurfaceRefusal(BrokerSeat.Model, [.. expected, question], codex.DisplayName, seatClass);
+                Assert.True(refusal is not null && refusal.Contains($"'{question}'", StringComparison.Ordinal),
+                    $"a {seatClass} surface offering {question} was not refused naming it: {refusal}");
+            }
+        }
+
+        // THE ASYNC TOOL'S ONE GATE IS THE MODEL'S METADATA: the app's catalog names neither of its two names.
+        var (shipped, why) = SeatProfile.ShippedCatalog(codex.Seat!);
+        Assert.True(shipped is not null, why);
+        using var doc = System.Text.Json.JsonDocument.Parse(shipped!);
+        foreach (var model in doc.RootElement.GetProperty("models").EnumerateArray())
+        {
+            var tools = model.GetProperty("experimental_supported_tools").EnumerateArray().Select(t => t.GetString()).ToList();
+            Assert.DoesNotContain("send_user_message_async", tools);
+            Assert.DoesNotContain("request_user_input_async", tools);
         }
     }
 

@@ -16,8 +16,9 @@ public class ModelCatalogTests
 
     /// <summary>
     /// (1) THE DATA AND ITS PIN: the shipped catalog hashes to the pin the codex seat plan compiles, and its one model is the broker and
-    /// cell classes' pinned model, gpt-6-luna (option C, the re-brief of 2026-10-25): the vendor's bundled entry with exactly two
-    /// deliberate edits — no <c>tool_mode</c> (the vendor's <c>code_mode_only</c>) and <c>use_responses_lite: false</c> — named by the
+    /// cell classes' pinned model, gpt-6-luna (option C, the re-brief of 2026-10-25): the vendor's bundled entry with exactly three
+    /// deliberate edits — no <c>tool_mode</c> (the vendor's <c>code_mode_only</c>), <c>use_responses_lite: false</c> and no
+    /// <c>send_user_message_async</c> in <c>experimental_supported_tools</c> (<c>U-broker-seat-fixes</c>) — named by the
     /// file's own label, which cites only the bundled 0.160.1 catalog. RED on the gpt-5.5 catalog: its slug, no label, a tool_mode key.
     /// </summary>
     [Fact]
@@ -42,7 +43,7 @@ public class ModelCatalogTests
         Assert.True(doc.RootElement.TryGetProperty("_tradeagent", out var label), "the catalog does not label its edits of vendor data");
         Assert.Contains("codex-cli 0.160.1", label.GetProperty("source").GetString());
         Assert.Contains("--bundled", label.GetProperty("source").GetString());
-        Assert.Equal(2, label.GetProperty("edits").GetArrayLength());
+        Assert.Equal(3, label.GetProperty("edits").GetArrayLength());
 
         var (shipped, refusal) = SeatProfile.ShippedCatalog(seat);
         Assert.Null(refusal);

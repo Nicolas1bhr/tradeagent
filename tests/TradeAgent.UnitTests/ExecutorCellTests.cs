@@ -76,8 +76,7 @@ public class ExecutorCellTests : IDisposable
 
     /// <summary>The cell class's offered surface for the pinned model (gpt-6-luna on the app's catalog), as -c's verifier expects it (RouteATests).</summary>
     internal static readonly string[] CellSurface =
-        ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "request_user_input",
-         "request_user_input_async", "clock.curr_time", "apply_patch", "view_image", "tool_search"];
+        ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource", "clock.curr_time", "apply_patch", "view_image", "tool_search"];
 
     // ---- (a) the class rule ------------------------------------------------------------------------------------------
 

@@ -134,7 +134,7 @@ public class RouteATests
         Assert.Null(BrokerSeat.OverrideRefusal(Codex, SeatPlan.CellClass));
 
         string[] measured = ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
-                             "request_user_input", "request_user_input_async", "clock.curr_time", "apply_patch", "view_image", "tool_search"];
+                             "clock.curr_time", "apply_patch", "view_image", "tool_search"];
         Assert.Null(BrokerSeat.SurfaceRefusal(BrokerSeat.Model, measured, "Codex", SeatPlan.CellClass));
         Assert.Contains("exec", BrokerSeat.SurfaceRefusal(BrokerSeat.Model, [.. measured, "exec"], "Codex", SeatPlan.CellClass));
         Assert.Contains("spawn_agent", BrokerSeat.SurfaceRefusal(BrokerSeat.Model, [.. measured, "spawn_agent"], "Codex", SeatPlan.CellClass));
@@ -229,7 +229,7 @@ public class RouteATests
         var presence = new AgentPresence();
         IReadOnlyList<string> launcher = [Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host && File.Exists(host) ? host : Environment.ProcessPath!, TradeCliDll()];
         string[] measured = ["exec_command", "write_stdin", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
-                             "request_user_input", "request_user_input_async", "clock.curr_time", "apply_patch", "view_image", "tool_search"];
+                             "clock.curr_time", "apply_patch", "view_image", "tool_search"];
         var session = new AgentSession(codex, () => exe, () => dir, () => new Dictionary<string, string>(), presence: presence,
             attempt: () => "r2", grants: new AgentGrants(), seatProbe: BrokerSeatTests.BrokerProbe(), door: () => new Uri("http://127.0.0.1:1/mcp"),
             surfaceProbe: new BrokerSeatTests.FakeSurface(measured), cells: new CellRoute(db, cgroups, launcher))

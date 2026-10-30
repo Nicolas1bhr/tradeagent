@@ -53,13 +53,19 @@ public static class BrokerSeat
 
     /// <summary>
     /// THE TOOLS EACH PINNED MODEL IS OFFERED UNDER THE BROKER CLASS, compiled: the app's door's tools are deferred behind
-    /// <c>tool_search</c>, and the rest are codex's own MCP-resource and question tools, none of which reaches the computer. A set that
+    /// <c>tool_search</c>, and the rest are codex's own clock and MCP-resource tools, none of which reaches the computer. A set that
     /// differs refuses — a release, a key or a model that changed what is offered is a new set this build has not seen.
+    ///
+    /// <para><b>Why each stays</b> (<c>U-broker-seat-fixes</c> item 2): <c>tool_search</c> is how the model reaches the door's tools at all
+    /// (they are deferred behind it); <c>clock.curr_time</c> reads the time, which a seat that paces its own wakes needs, and reaches nothing;
+    /// <c>list_mcp_resources</c>, <c>list_mcp_resource_templates</c> and <c>read_mcp_resource</c> are registered by codex whenever any tool
+    /// server is configured (vendor <c>core/src/tools/spec_plan.rs:1132-1145</c>) and read only from that server — the app's door, which
+    /// serves no resources. <b>Gone:</b> <c>request_user_input</c> and <c>request_user_input_async</c> — no user answers a confined seat's
+    /// exec turn; the class's deny set and the app's catalog switch them off, and a surface still offering one is refused here.</para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
-        [Model] = ["clock.curr_time", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "request_user_input",
-                   "request_user_input_async", "tool_search"]
+        [Model] = ["clock.curr_time", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource", "tool_search"]
     };
 
     /// <summary>
@@ -69,8 +75,9 @@ public static class BrokerSeat
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> ExpectedInCell = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
+        // NO QUESTION NOBODY ANSWERS (U-broker-seat-fixes item 2): request_user_input and its async form are off for the cell as for the broker.
         [Model] = ["apply_patch", "clock.curr_time", "exec_command", "list_mcp_resource_templates", "list_mcp_resources", "read_mcp_resource",
-                   "request_user_input", "request_user_input_async", "tool_search", "view_image", "write_stdin"]
+                   "tool_search", "view_image", "write_stdin"]
     };
 
     /// <summary>The expected surface of <paramref name="seatClass"/> on <paramref name="model"/>, or null for none this build knows.</summary>
