@@ -233,6 +233,50 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
         if (runtime != RuntimeClass.Harness && place == OrgPlace.Head) Assert.Contains("mandate_assign", named);
     }
 
+    /// <summary>
+    /// (6) AN ORG SEAT'S GUIDE IS REFERENCE FOR ITS SEAT, AND THE PAIR'S IS UNCHANGED (<c>U-runway-fixes</c> item 1): the guide the start
+    /// writes every place, on its seat and the harness, is the organisation's — facts about tools, files and the loop, every verb and path
+    /// a slot rendered one its seat reaches — and carries none of the legacy pair's procedures, trading desk or money mission; its canon
+    /// calls it reference, never "procedures". The pair's guide template is byte for byte the one before this unit, and its canon still
+    /// calls it procedures and reference.
+    ///
+    /// <para>RED at base d55784e4: an org seat's GUIDE.md was the pair's — "Assert.Contains() Failure: Not found: This is reference" — with
+    /// "Read it first, every turn", "## Trading" and the loss-closure desk in it.</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Places))]
+    public void An_org_seats_guide_is_reference_for_its_seat_and_the_pairs_is_unchanged(string place, RuntimeClass runtime)
+    {
+        var ctx = Ctx(place);
+        var reach = AgentReach.For(Position, runtime);
+        var guide = Canon.Guide(ctx, reach);
+        var files = new AppFileManifest(Path.Combine(_root, $"guide-{place}-{runtime}.tsv"));
+        var home = WorkspaceBuilder.Build(ctx, Path.Combine(_root, $"guide-{place}-{runtime}"), files);
+        Assert.Equal(guide.Text, File.ReadAllText(Path.Combine(home, Canon.GuideFor(runtime).Replace('/', Path.DirectorySeparatorChar))));
+
+        Assert.StartsWith("# Guide\n\nThis is reference: what TradeAgent's tools, files and loop do. It holds no procedure", guide.Text, StringComparison.Ordinal);
+        foreach (var legacy in new[]
+                 {
+                     "Read it first, every turn", "Update it before you finish", "## Trading", "loss_day_closed_at", "pay for yourself",
+                     "Operations Director", "Research Director", "A turn spent asking to be allowed to trade", "These are defaults"
+                 })
+            Assert.DoesNotContain(legacy, guide.Text, StringComparison.Ordinal);
+        Assert.All(guide.Verbs, v => Assert.NotNull(reach.Verb(v)));
+        Assert.All(guide.Reads, p => Assert.True(CanonRules.Readable(p, reach), p));
+        Assert.All(guide.Writes, p => Assert.True(reach.WritesInto(p), p));
+        foreach (var op in new[] { Ops.DataList, Ops.Backtest, Ops.Verdict, Ops.LedgerAdd }) Assert.Contains(op, guide.Verbs);
+        Assert.Equal(runtime == RuntimeClass.Cell, guide.Text.Contains("TradeAgent ends everything your cell started", StringComparison.Ordinal));
+
+        var canon = Canon.Render(ctx, reach).Text;
+        Assert.Contains("holds TradeAgent's reference — what its tools, files and loop do", canon, StringComparison.Ordinal);
+        Assert.DoesNotContain("holds TradeAgent's procedures", canon, StringComparison.Ordinal);
+
+        // THE PAIR'S GUIDE, UNCHANGED: its template hashes as at base, and its canon's line is the one it read before.
+        Assert.Equal("9b54b1cf9535d1d1cb1718dfa4cbd9e3316bf97b97296f6827a152617dea86c4", Sha256Hex.Of(Canon.GuideTemplateFor(CouncilRoles.Research)));
+        Assert.Contains("holds TradeAgent's procedures and reference — defaults",
+            Canon.Render(Ctx(place) with { Role = CouncilRoles.Research, Kind = null, Place = null }, RuntimeClass.Cli), StringComparison.Ordinal);
+    }
+
     static string Heading(string place) => place switch
     {
         OrgPlace.Chief => "## Your role: the chief",
