@@ -1,3 +1,5 @@
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Provisioning;
 using Xunit;
@@ -147,5 +149,25 @@ public class UpdateChannelTests
         Assert.True(BuildContents.AtasAdapterIn(with));
         Assert.False(BuildContents.AtasAdapterIn(without));
         Assert.False(BuildContents.AtasAdapterIn(Path.Combine(root, "missing")));
+    }
+
+    /// <summary>
+    /// A build without the adapter refuses ATAS at the one switch every surface presses, in the installer's words, before anything is
+    /// written or torn down; onboarding offers TradeAgent's own paper venue in its place.
+    /// </summary>
+    [Fact]
+    public async Task A_build_without_the_adapter_refuses_ATAS_at_the_switch_in_the_installers_words()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            host.AtasInThisBuild = false;
+            var before = db.GetKv("connector");
+            var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SwitchConnectorAsync("atas"));
+            Assert.Equal("ATAS is not in this build; paper runs on TradeAgent's own venue.", refused.Message);
+            Assert.Equal(before, db.GetKv("connector"));
+        }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 }

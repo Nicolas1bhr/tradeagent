@@ -18,9 +18,11 @@ rules, and owns the emergency stop. The user never sees a console, and never ins
 > simulated, **no broker has ever been attached**, and fully automatic live trading is refused by
 > design on this platform because ATAS cannot serve order history.
 
-**Latest release: [v0.1.0](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.1.0)** —
-`TradeAgent-Setup-x64.exe`, per-user, no administrator. Cut by hand from a machine with ATAS, because
-a release built without one cannot trade through it; see `docs/RESUME-HERE.md` task 7.
+**Latest release: [v0.1.2](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.1.2)** —
+`TradeAgent-Setup-x64.exe`, per-user, no administrator, cut by hand from a machine with ATAS. Releases
+are now cut by CI as a draft (`.github/workflows/release.yml`; `docs/DEPLOYMENT.md` § 1): the installer
+`TradeAgent-Setup-x64-no-atas.exe` and the Linux kit — ATAS is not in that build; paper runs on
+TradeAgent's own venue.
 
 **Current state: [BUILD-STATUS.md](BUILD-STATUS.md).** Read it before trusting anything here — it
 lists exactly what is verified, what is not, and what cannot trade yet.

@@ -90,7 +90,7 @@ if ($SkipPublish) {
     }
     Write-Host "== skipping publish; packaging the existing stage in $stage =="
     # Clear the previous installer and checksum file so a failed run cannot leave yesterday's
-    # TradeAgent-Setup-x64.exe sitting next to today's checksums.
+    # installer sitting next to today's checksums.
     Get-ChildItem $OutputDir -File |
         Where-Object { $_.Extension -in '.exe', '.msi', '.txt' } |
         Remove-Item -Force
@@ -259,7 +259,17 @@ if ($iscc) {
     }
 }
 
-$installer = Join-Path $OutputDir 'TradeAgent-Setup-x64.exe'
+# THE INSTALLER IS NAMED FOR WHAT IS IN IT (U-windows-release), read from the binary above, never from the switch: the in-app
+# updater installs exactly its own kind (UpdateChannel in src/TradeAgent.Provisioning/UpdateService.cs), so a build without the
+# ATAS adapter must never ship under the name a build with it uses. The two names are spelled there and here, nowhere else.
+if ($adapterCompiledIn) {
+    $setupBase = 'TradeAgent-Setup-x64'
+    $atasWord = 'present'
+} else {
+    $setupBase = 'TradeAgent-Setup-x64-no-atas'
+    $atasWord = 'absent'
+}
+$installer = Join-Path $OutputDir "$setupBase.exe"
 $installerBuilt = $false
 
 if ($iscc) {
@@ -268,6 +278,8 @@ if ($iscc) {
         "/DStageDir=$((Resolve-Path $stage).Path)" `
         "/DOutDir=$((Resolve-Path $OutputDir).Path)" `
         "/DAppVersion=$version" `
+        "/DSetupBaseName=$setupBase" `
+        "/DAtasAdapter=$atasWord" `
         packaging/TradeAgent.iss
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
     # Inno Setup has been known to report success while writing somewhere unexpected. Prove the file.
@@ -279,7 +291,7 @@ if ($iscc) {
     throw 'Inno Setup 6 not found and -RequireInstaller was given. https://jrsoftware.org/isdl.php'
 } else {
     Write-Warning 'Inno Setup 6 not found; skipping installer. https://jrsoftware.org/isdl.php'
-    Write-Warning 'THIS RUN PRODUCED NO TradeAgent-Setup-x64.exe. Pass -RequireInstaller to make that an error.'
+    Write-Warning "THIS RUN PRODUCED NO $setupBase.exe. Pass -RequireInstaller to make that an error."
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -335,7 +347,7 @@ if ($installerBuilt) {
     $installerBytes = (Get-Item $installer).Length
     Write-Host "   installer         $installer  ($(Format-Size $installerBytes))" -ForegroundColor Green
 } else {
-    Write-Host '   installer         NONE - this run produced no TradeAgent-Setup-x64.exe' -ForegroundColor Yellow
+    Write-Host "   installer         NONE - this run produced no $setupBase.exe" -ForegroundColor Yellow
 }
 
 Write-Host ''

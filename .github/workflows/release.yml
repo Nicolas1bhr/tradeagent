@@ -1,0 +1,183 @@
+name: release
+
+# THE RELEASE PIPELINE (U-windows-release): the Windows installer and the Linux kit, built in CI from one commit, each checked against
+# the manifest its own build wrote, named in ONE SHA256SUMS(.txt), and handed to GitHub as a DRAFT release. Never published here:
+# a draft is invisible to the in-app updater (it reads /releases/latest, which never returns a draft, and refuses one besides), and
+# publishing it — the press that creates the tag and puts it in front of every installed TradeAgent — is the owner's word, made on
+# the draft's own page. docs/DEPLOYMENT.md § 1 is how a release is cut.
+#
+# WHAT IT BUILDS: CI has no ATAS, so the installer is a build WITHOUT the ATAS adapter, named TradeAgent-Setup-x64-no-atas.exe; its
+# welcome and last pages say "ATAS is not in this build; paper runs on TradeAgent's own venue.", and the app says the same words
+# wherever ATAS would be offered. A build that has been carrying ATAS is never updated to it (UpdateChannel, UpdateService.cs).
+#
+# A DRAFT IS MADE ONLY on a pushed tag v<version>, or on a workflow_dispatch from main with dry_run unticked — and only when the
+# version in Directory.Build.props matches, no release of that version exists, and a `build` run on this exact commit concluded
+# success. Every other run (a dry run, any branch) builds, checks and uploads the assets as this run's artifact, and stops there.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and check the assets, and create NO draft release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      draft: ${{ steps.plan.outputs.draft }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' Directory.Build.props)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Directory.Build.props names no release version ('$version')"; exit 1; }
+          draft=false
+          if [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]]; then
+            draft=true
+            [ "$REF" = "refs/tags/v$version" ] || { echo "::error::tag ${REF#refs/tags/} is not v$version, the version Directory.Build.props builds"; exit 1; }
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY" = false ]; then
+            draft=true
+            [ "$REF" = refs/heads/main ] || { echo "::error::a draft release is cut from main only, not $REF"; exit 1; }
+          fi
+          # THE GREEN GATE: a `build` run on this exact commit that concluded success. Asked on every run, so a dry run shows the answer.
+          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.total_count')"
+          echo "version $version · draft $draft · green build runs on ${GITHUB_SHA:0:10}: $green"
+          if [ "$draft" = true ] && [ "${green:-0}" -lt 1 ]; then
+            echo "::error::no successful build run on $GITHUB_SHA; a release is cut only from a commit CI built green"; exit 1
+          fi
+          { echo "version=$version"; echo "draft=$draft"; } >> "$GITHUB_OUTPUT"
+          echo "TradeAgent $version from ${GITHUB_SHA:0:10} — draft: $draft (green build runs: $green)" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: plan
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Ensure Inno Setup 6 is available
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
+          if (-not $iscc) {
+            choco install innosetup --no-progress --yes
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed with exit code $LASTEXITCODE" }
+          }
+      # No -AtasInstallDir: there is no ATAS here, so build.ps1 reads ABSENT out of the bridge and names the installer for it.
+      - name: Build the installer (without the ATAS adapter)
+        run: pwsh packaging/build.ps1 -SkipTests -RequireInstaller
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          if-no-files-found: error
+          path: |
+            artifacts/TradeAgent-Setup-x64-no-atas.exe
+            artifacts/SHA256SUMS.txt
+
+  linux:
+    needs: plan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.402'
+      - name: Pin the SDK
+        run: |
+          printf '{ "sdk": { "version": "10.0.402", "rollForward": "disable" } }\n' > global.json
+          dotnet --version
+      - name: Build the Linux kit
+        run: packaging/build-linux.sh --runtime linux-x64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          if-no-files-found: error
+          path: |
+            artifacts/linux/TradeAgent-*-linux-x64.tar.gz
+            artifacts/linux/SHA256SUMS
+
+  assets:
+    needs: [plan, windows, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-windows
+          path: in/windows
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux
+          path: in/linux
+      - name: Test the check, then check the assets
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          shellcheck .github/ci/release-assets.sh .github/ci/release-assets-test.sh
+          bash .github/ci/release-assets-test.sh
+          bash .github/ci/release-assets.sh "$VERSION" in/windows in/linux out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          if-no-files-found: error
+          path: out/*
+
+  draft:
+    needs: [plan, assets]
+    if: ${{ needs.plan.outputs.draft == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: out
+      - name: Create the DRAFT release (publishing it is the owner's press, on its page)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::a release v$VERSION already exists; nothing was changed. Raise the version in Directory.Build.props."; exit 1
+          fi
+          cat > notes.md <<EOF
+          TradeAgent $VERSION, built by CI from $GITHUB_SHA.
+
+          ATAS is not in this build; paper runs on TradeAgent's own venue.
+
+          A folder from TradeAgent 0.1.x is not opened by this version: TradeAgent says so and offers Start fresh, which keeps the old folder aside, whole.
+
+          The installer is not code-signed. Each file is named with its SHA-256 in SHA256SUMS.txt (the same file as SHA256SUMS, for the Linux kit).
+          EOF
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+            --title "TradeAgent $VERSION" --notes-file notes.md \
+            out/TradeAgent-Setup-x64-no-atas.exe "out/TradeAgent-$VERSION-linux-x64.tar.gz" out/SHA256SUMS.txt out/SHA256SUMS
+          echo "DRAFT release v$VERSION created — not published; no tag exists until it is." >> "$GITHUB_STEP_SUMMARY"

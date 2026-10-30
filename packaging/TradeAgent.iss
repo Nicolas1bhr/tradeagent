@@ -24,6 +24,19 @@
   #define AppVersion "0.1.0"
 #endif
 #define AppName "TradeAgent"
+; WHAT IS IN THIS BUILD (U-windows-release): build.ps1 reads the ATAS adapter out of the compiled bridge and passes "present" or
+; "absent", and the installer's name with it. Run by hand with neither, this script assumes the adapter is ABSENT and says so:
+; a build that cannot show its adapter is not one that offers ATAS.
+#ifndef AtasAdapter
+  #define AtasAdapter "absent"
+#endif
+#ifndef SetupBaseName
+  #if AtasAdapter == "present"
+    #define SetupBaseName "TradeAgent-Setup-x64"
+  #else
+    #define SetupBaseName "TradeAgent-Setup-x64-no-atas"
+  #endif
+#endif
 
 [Setup]
 AppId={{7B2F5C64-4C1E-4C7F-9C5E-1D3A2B7E9F10}
@@ -52,7 +65,7 @@ DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\TradeAgent.exe
 UninstallDisplayName={#AppName}
 OutputDir={#OutDir}
-OutputBaseFilename=TradeAgent-Setup-x64
+OutputBaseFilename={#SetupBaseName}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -86,8 +99,20 @@ RestartApplications=no
 ; contains no icon or bitmap, and naming a file that does not exist fails the ISCC compile. Setup
 ; and the application both use the default icons until real artwork exists.
 
+#if AtasAdapter != "present"
+; The welcome page is off by default in Inno Setup 6; it is turned on here so the sentence is read BEFORE anything is installed,
+; and it is said again on the last page. The app says the same words wherever ATAS would be offered (BuildContents.AtasNotInThisBuild).
+DisableWelcomePage=no
+#endif
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+#if AtasAdapter != "present"
+[Messages]
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nATAS is not in this build; paper runs on TradeAgent's own venue.%n%nIt is recommended that you close all other applications before continuing.
+FinishedLabel=Setup has finished installing [name] on your computer.%n%nATAS is not in this build; paper runs on TradeAgent's own venue.
+#endif
 
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
