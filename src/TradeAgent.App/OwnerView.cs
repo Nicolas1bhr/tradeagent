@@ -762,7 +762,7 @@ sealed class OwnerPage
 
         // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3): his, always, each two presses — the board only proposes them.
         _boardComposition = new BoardComposition(() => _host.Board, _host.Gateway.SetBoardBudgetShare, _host.Gateway.FoundBoardSeat,
-            _host.Gateway.RetireBoardSeat);
+            _host.Gateway.RetireBoardSeat, _host.ActivateBoardSeat);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
@@ -1265,7 +1265,8 @@ sealed class ChoiceBox : ComboBox
 /// <summary>
 /// THE SECURITY BOARD'S COMPOSITION AND BUDGET, THE OWNER'S (<c>U-org-surface-b</c> item 5; R24 § 4.3, Q6, Q7; CHANGE-001): the board's
 /// share of the plan's day in an <see cref="AmountField"/>, founding a seat from closed lists (its class from
-/// <see cref="BoardSeats.SeatClasses"/>, its model class from <see cref="BoardModelClass.All"/>) and retiring one — each TWO presses
+/// <see cref="BoardSeats.SeatClasses"/>, its model class from <see cref="BoardModelClass.All"/>), retiring one and activating a dormant one
+/// (<c>U-board-alive</c> item 1, refused in the host's words until this computer could seat it) — each TWO presses
 /// (<see cref="Ui.Confirm(string, string, Action, Func{string?}, Action{string})"/>), in-process only, the store's refusal shown verbatim.
 /// No choice changes on a scroll (<see cref="ChoiceBox"/>). Built once; <see cref="Update"/> writes text and the seat list in place.
 /// </summary>
@@ -1283,11 +1284,13 @@ sealed class BoardComposition
     public Button Found { get; }
     public ChoiceBox RetireSeat { get; } = new() { Width = Theme.FieldWidth };
     public Button Retire { get; }
+    public ChoiceBox ActivateSeat { get; } = new() { Width = Theme.FieldWidth };
+    public Button Activate { get; }
     public TextBlock ShareNow { get; } = Ui.Body("");
     public TextBlock Note { get; } = Ui.With(Ui.Micro(""), t => t.IsVisible = false);
 
     public BoardComposition(Func<BoardReader?> board, Func<decimal, decimal> setShare, Func<string, string, string, BoardSeat> found,
-        Func<string, BoardSeat> retire)
+        Func<string, BoardSeat> retire, Func<string, string> activate)
     {
         _board = board;
         Share = Ui.AmountField(null, AmountKind.Decimal, 0m, 1m);
@@ -1311,12 +1314,16 @@ sealed class BoardComposition
                 var seat = retire(RetireSeat.SelectedItem as string ?? "");
                 return $"Retired {seat.Id}. It acts no more.";
             }));
+        // ACTIVATING A DORMANT SEAT (U-board-alive item 1): the host's words — refused, verbatim, until this computer could seat it.
+        Activate = Ui.Confirm(Labels.ActivateBoardSeatPress, Labels.ActivateBoardSeatConfirm,
+            () => Done(() => activate(ActivateSeat.SelectedItem as string ?? "")));
+        ActivateSeat.SelectionChanged += (_, _) => Ui.DisarmConfirm(Activate);
         // A CHOICE THAT MOVED DISARMS THE PRESS ARMED FOR ANOTHER: the second press does what the first one showed, or nothing.
         SeatClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
         ModelClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
         Vendor.TextChanged += (_, _) => Ui.DisarmConfirm(Found);
         RetireSeat.SelectionChanged += (_, _) => Ui.DisarmConfirm(Retire);
-        foreach (var b in new[] { SetShare, Found, Retire }) b.HorizontalAlignment = HorizontalAlignment.Left;
+        foreach (var b in new[] { SetShare, Found, Retire, Activate }) b.HorizontalAlignment = HorizontalAlignment.Left;
 
         Root = Ui.Section(Labels.BoardCompositionTitle, Ui.Col(Theme.S2,
             Ui.Muted(Labels.BoardCompositionIsYours),
@@ -1332,6 +1339,9 @@ sealed class BoardComposition
             Ui.Spacer(Theme.S2),
             Ui.FieldRow("Seat", RetireSeat),
             Retire,
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow("Dormant seat", ActivateSeat),
+            Activate,
             Note));
         Update();
     }
@@ -1358,13 +1368,18 @@ sealed class BoardComposition
             OrgText.Set(ShareNow, share is { } s
                 ? $"The board's share of the plan's day now: {s.ToString(System.Globalization.CultureInfo.InvariantCulture)}."
                 : "The board's share of the plan's day could not be read.");
-            var open = board.Seats().Where(x => x.Status != BoardSeatStatus.Retired).Select(x => x.Id).ToList();
-            var signature = string.Join('|', open);
+            var seats = board.Seats();
+            var open = seats.Where(x => x.Status != BoardSeatStatus.Retired).Select(x => x.Id).ToList();
+            var dormant = seats.Where(x => x.Status == BoardSeatStatus.Dormant).Select(x => x.Id).ToList();
+            var signature = string.Join('|', open) + "/" + string.Join('|', dormant);
             if (signature == _seatSignature) return;
             _seatSignature = signature;
             var chosen = RetireSeat.SelectedItem as string;
             RetireSeat.ItemsSource = open;
             RetireSeat.SelectedItem = chosen is not null && open.Contains(chosen) ? chosen : open.FirstOrDefault();
+            var toActivate = ActivateSeat.SelectedItem as string;
+            ActivateSeat.ItemsSource = dormant;
+            ActivateSeat.SelectedItem = toActivate is not null && dormant.Contains(toActivate) ? toActivate : dormant.FirstOrDefault();
         }
         catch (Exception ex)
         {

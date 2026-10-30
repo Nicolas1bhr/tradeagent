@@ -65,8 +65,9 @@ public class OwnerPageTests
             // UPDATES (item 3).
             "Check for updates", "What's new", "Install update", "Turn off automatic checks",
             // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3, CHANGE-001): his, each two presses — the board only
-            // proposes them. Three presses: the share, founding a seat, retiring the seat chosen in its list.
-            Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress
+            // proposes them. Three presses: the share, founding a seat, retiring the seat chosen in its list — and (U-board-alive item 1)
+            // activating the dormant seat chosen in its own, refused in words until this computer could seat it.
+            Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress, Labels.ActivateBoardSeatPress
         ];
         // THE ACCOUNT LIST'S ROWS arrive when the platform answers; each is the account's own press and nothing else.
         Assert.Equal(string.Join(" | ", owners.Concat(choices).Order(StringComparer.Ordinal)),
@@ -87,6 +88,38 @@ public class OwnerPageTests
         var left = settings.Root.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string).ToList();
         foreach (var label in owners) Assert.DoesNotContain(label, left);
         Assert.Contains("Download 12 months", left);
+        return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// (U-board-alive 1) ACTIVATING A DORMANT BOARD SEAT TAKES TWO PRESSES AND REFUSES IN THE HOST'S WORDS (R24 § 4.1, CHANGE-001): its list
+    /// holds the dormant seats; the first press writes nothing; with no proven cell the second shows the refusal verbatim in caution colour
+    /// and the seat stays dormant; once this computer holds a proven cell (and the runtime he chose starts a board id on its founding class)
+    /// the same two presses make it active, and it leaves the dormant list. RED at base: no such press.
+    /// </summary>
+    [Fact]
+    public Task Activating_a_board_seat_takes_two_presses_and_refuses_in_words() => OnThePage((page, host) =>
+    {
+        static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var c = (BoardComposition)typeof(OwnerPage).GetField("_boardComposition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
+        Assert.IsType<ChoiceBox>(c.ActivateSeat);
+        Assert.Equal(TradeAgent.Core.Board.BoardSeats.Founding, (IEnumerable<string>)c.ActivateSeat.ItemsSource!);
+        host.Gateway.Update(s => s.SelectedRuntimeId = TradeAgent.AgentRuntime.BrokerDoor.CodexId);
+        c.ActivateSeat.SelectedItem = "board-1";
+
+        Press(c.Activate);
+        Assert.True(Ui.IsArmed(c.Activate));
+        Assert.False(host.Board.AnyActive);
+        Press(c.Activate);
+        Assert.False(host.Board.AnyActive);
+        Assert.Contains("no proven executor cell recorded", c.Note.Text, StringComparison.Ordinal);
+        Assert.Equal(Theme.Caution, c.Note.Foreground);
+
+        ThinkingSeatsTests.ProveCell(host.Db);
+        Press(c.Activate);
+        Press(c.Activate);
+        Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Active, host.Board.Seats().Single(s => s.Id == "board-1").Status);
+        Assert.DoesNotContain("board-1", (IEnumerable<string>)c.ActivateSeat.ItemsSource!);
         return Task.CompletedTask;
     });
 

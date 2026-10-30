@@ -184,7 +184,8 @@ public static partial class Labels
     /// <summary>The owner's presses over the board's own power (CHANGE-001), each two presses in his UI.</summary>
     public const string SetBoardBudgetSharePress = "Set the board's share of the day",
         FoundBoardSeatPress = "Found a board seat",
-        RetireBoardSeatPress = "Retire this seat";
+        RetireBoardSeatPress = "Retire this seat",
+        ActivateBoardSeatPress = "Activate this seat";
 
     /// <summary>The line under the seats while none of them is active.</summary>
     public const string BoardSeatsDormant =

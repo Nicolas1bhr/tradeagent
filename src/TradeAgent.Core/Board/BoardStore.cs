@@ -270,9 +270,9 @@ public sealed class BoardStore(Database db)
     public bool AnyActive() => Seats().Any(s => s.Status == BoardSeatStatus.Active);
 
     /// <summary>
-    /// THE TEST HOST'S SEAM OVER A SEAT'S STATE (<c>U-board-b1</c> item 6) — THE ONLY WRITER OF <c>active</c> in this build: internal,
-    /// visible to the test projects alone, called from nowhere in <c>src/</c> (the <c>…UnderTest</c> guard). Nothing in the product
-    /// activates a board seat before a RECORDED proven cell (<c>U-board-activate</c>); b1's tests stand in for that writer here.
+    /// THE TEST HOST'S SEAM OVER A SEAT'S STATE (<c>U-board-b1</c> item 6): internal, visible to the test projects alone, called from
+    /// nowhere in <c>src/</c> (the <c>…UnderTest</c> guard). The product's one writer of <c>active</c> is the owner's press
+    /// (<see cref="ActivateBoardSeat"/>), which never activates a real-model seat before a RECORDED proven cell.
     /// </summary>
     internal void SetSeatStateUnderTest(string seat, string state, DateTimeOffset at) => _db.Write(_ =>
     {
@@ -902,6 +902,25 @@ public sealed class BoardStore(Database db)
             VALUES($at, 'seat-retired', NULL, NULL, NULL, $id, $detail)
             """, ("$at", Sql.T(at)), ("$id", id), ("$detail", $"the owner retired {id}, which was {seat.Status}")))
             e.ExecuteNonQuery();
+        return Seat(id)!;
+    });
+
+    /// <summary>
+    /// THE OWNER ACTIVATES A DORMANT BOARD SEAT (<c>U-board-alive</c> item 1; R24 § 4.1, CHANGE-001) — his in-process press, the only
+    /// product writer of <c>active</c>: inside ONE write the seat is read again and must be DORMANT, and <paramref name="hostRefusal"/> —
+    /// the host's facts through <see cref="BoardSeatGate.ActivationRefusal"/>: the class it would start on, a proven cell — must admit it;
+    /// then an <c>active</c> state row by <c>app</c> (the rung's CHECK: the app writes <c>active</c>, after checking). Refused in words
+    /// with nothing written otherwise. It launches nothing: a turn is bought by a board wake alone, and every launch passes the gate again.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardSeat ActivateBoardSeat(string id, Func<BoardSeat, string?> hostRefusal, DateTimeOffset at) => _db.Write(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(hostRefusal);
+        var seat = Seat(id) ?? throw Refused($"'{id}' is no seat of the security board.");
+        if (seat.Status != BoardSeatStatus.Dormant) throw Refused($"board seat {id} is {seat.Status}: only a dormant seat is activated.");
+        if (hostRefusal(seat) is { } why) throw Refused(why);
+        using (var c = _db.Cmd("INSERT INTO board_seat_state(seat, state, by, at) VALUES($id, 'active', 'app', $at)", ("$id", id), ("$at", Sql.T(at))))
+            c.ExecuteNonQuery();
         return Seat(id)!;
     });
 
