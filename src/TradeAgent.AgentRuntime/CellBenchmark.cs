@@ -576,15 +576,18 @@ public sealed class ExecServerClient : IDisposable
         return null;
     }
 
-    /// <summary>Runs <paramref name="argv"/> through <c>process/start</c> and returns its exit code and output, or (-1, why).</summary>
-    public async Task<(int Exit, string Output)> RunAsync(string cwd, string[] argv, CancellationToken ct)
+    /// <summary>
+    /// Runs <paramref name="argv"/> through <c>process/start</c> and returns its exit code and output, or (-1, why). <paramref name="pipeStdin"/>:
+    /// the child's input a pipe the server holds, not the null device.
+    /// </summary>
+    public async Task<(int Exit, string Output)> RunAsync(string cwd, string[] argv, CancellationToken ct, bool pipeStdin = false)
     {
         var pid = "bench-" + Guid.NewGuid().ToString("n")[..12];
         var started = await CallAsync("process/start", new Dictionary<string, object?>
         {
             ["processId"] = pid, ["argv"] = argv, ["cwd"] = new Uri(cwd).AbsoluteUri,
             ["envPolicy"] = new { inherit = "all", ignoreDefaultExcludes = true, exclude = Array.Empty<string>(), set = new { }, includeOnly = Array.Empty<string>() },
-            ["env"] = new { }, ["tty"] = false, ["pipeStdin"] = false, ["arg0"] = null, ["sandbox"] = null, ["enforceManagedNetwork"] = false
+            ["env"] = new { }, ["tty"] = false, ["pipeStdin"] = pipeStdin, ["arg0"] = null, ["sandbox"] = null, ["enforceManagedNetwork"] = false
         }, ct);
         if (started is not { Ok: true }) return (-1, "process/start: " + Last);
         var until = DateTime.UtcNow.AddSeconds(30);

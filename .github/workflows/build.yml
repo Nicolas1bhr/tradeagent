@@ -301,8 +301,19 @@ jobs:
           TA_CELL_WINDOWS_ADMIN: '1'
         run: |
           set -euo pipefail
+          # THE SYSTEM DISK, AS THE APP'S HOME IS (%LOCALAPPDATA%\TradeAgent): not the work disk the steps above put the test homes on.
+          export TMP="$LOCALAPPDATA\Temp" TEMP="$LOCALAPPDATA\Temp"
+          echo "cell rows on $(cmd //c ver | tr -d '\r' | grep -v '^$'); test homes under $TMP"
           dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope=Windows" \
             --logger "trx;LogFileName=results-cell-windows.trx" --logger "console;verbosity=normal"
+          # EVERY ROW RAN AND HELD, read from the trx: a filter that matches nothing exits 0, and a skipped row is not a held one.
+          counts=$(cat tests/*/TestResults/results-cell-windows.trx | tr '\r\n' '  ' | grep -o '<Counters [^>]*>' \
+            | sed -E 's/.* total="([0-9]+)" executed="([0-9]+)" passed="([0-9]+)".*/\1 \2 \3/' \
+            | awk '{t+=$1; e+=$2; p+=$3} END {print t+0, e+0, p+0}')
+          read -r total executed passed <<< "$counts"
+          echo "Windows cell rows: $total total, $executed executed, $passed passed"
+          [ "$total" -ge 8 ] && [ "$executed" -eq "$total" ] && [ "$passed" -eq "$total" ] \
+            || { echo "::error title=Windows cell rows::$total total, $executed executed, $passed passed: every row must run and hold"; exit 1; }
 
       # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
       # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
