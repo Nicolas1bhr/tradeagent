@@ -149,6 +149,23 @@ public static class Canon
     public static CanonRender Render(WorkspaceContext ctx, AgentReach reach) =>
         Slots.Render(Template(ctx.Role, ctx.Place), new CanonModel(ctx, reach));
 
+    /// <summary>
+    /// HOW A POSITION'S PACKET NAMES A VERB TO THE SEAT THAT RECEIVES IT (<c>U-runway-fixes</c> item 3): exactly as its canon's slots do — a
+    /// tool call on a broker, cell or harness seat, a command line on a CLI seat — and null for an op that seat's reach does not carry,
+    /// which the packet says in words. So a broker seat whose tool is <c>lateral_list</c> is never told to run <c>trade lateral list</c>.
+    /// </summary>
+    public static PacketVerb PacketVerbs(AgentReach reach) => (op, args) =>
+        reach.Verb(op) is { } verb ? CanonModel.Spelled(reach.Runtime, verb, args) : null;
+
+    /// <summary>
+    /// EVERY GATEWAY OP AS ITS COMMAND LINE: the spelling of a puppet seat (<c>U-puppet-runtime</c>), a test host's scripted stand-in whose
+    /// scripts speak <c>trade …</c> whatever class it stands in for — never a real model's.
+    /// </summary>
+    public static PacketVerb CommandLineVerbs { get; } = (op, args) =>
+        GatewaySchema.Ops().FirstOrDefault(o => o.Op == op) is { } form
+            ? string.Join(' ', CanonRules.CommandWords(form.Cli)) + (args.Length == 0 ? "" : $" {args}")
+            : null;
+
     /// <summary>The guide for the seat <paramref name="ctx"/> names, rendered for one runtime class.</summary>
     public static string Guide(WorkspaceContext ctx, RuntimeClass runtime) =>
         Guide(ctx, AgentReach.For(ctx.Role, runtime, ctx.TurnsPerSession)).Text;
@@ -1290,15 +1307,24 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
 
         var verb = reach.Verb(op) ?? throw Lacks($"'{op}'");
         Verbs.Add(op);
-        if (reach.Runtime == RuntimeClass.Cli)
+        return Spelled(reach.Runtime, verb, args);
+    }
+
+    /// <summary>
+    /// ONE VERB AS A SEAT OF <paramref name="runtime"/> CALLS IT: on a CLI the command words of its form, then the arguments as written; on
+    /// every seat that acts through tools the tool that carries it, called with the same arguments as named fields.
+    /// </summary>
+    internal static string Spelled(RuntimeClass runtime, ReachVerb verb, string args)
+    {
+        if (runtime == RuntimeClass.Cli)
         {
             var words = string.Join(' ', CanonRules.CommandWords(verb.Invocation));
             return args.Length == 0 ? words : $"{words} {args}";
         }
 
         var fields = new List<string>();
-        if (GrantedWorkerTools.OpsOf(verb.Invocation).Count > 1) fields.Add($"op: {op}");
-        fields.AddRange(Fields(args, op));
+        if (GrantedWorkerTools.OpsOf(verb.Invocation).Count > 1) fields.Add($"op: {verb.Op}");
+        fields.AddRange(Fields(args, verb.Op));
         return $"{verb.Invocation}({string.Join(", ", fields)})";
     }
 

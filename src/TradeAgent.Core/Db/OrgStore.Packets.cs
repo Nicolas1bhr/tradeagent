@@ -54,7 +54,7 @@ public sealed partial class OrgStore
             }
             catch (Exception ex) when (ex is JsonException or InvalidCastException or FormatException)
             {
-                refused.Add($"note {id} cannot be read as TradeAgent writes a note: it is not shown, and `trade lateral list` lists it.");
+                refused.Add($"note {id} cannot be read as TradeAgent writes a note: it is not shown.");
             }
         }
         return new OrgList<LateralRow>(rows, refused);
@@ -202,7 +202,7 @@ public sealed partial class OrgStore
             try { rows.Add(ReadEscalation(r)); }
             catch (Exception ex) when (ex is JsonException or InvalidCastException or FormatException)
             {
-                refused.Add($"escalation {id} cannot be read as TradeAgent writes one: it is not shown, and `trade escalation list` lists it.");
+                refused.Add($"escalation {id} cannot be read as TradeAgent writes one: it is not shown.");
             }
         }
         return new OrgList<EscalationRow>(rows, refused);
@@ -229,8 +229,7 @@ public sealed partial class OrgStore
             }
             catch (Exception ex) when (ex is JsonException or InvalidCastException or FormatException)
             {
-                refused.Add($"the delivery on mandate {id} cannot be read as TradeAgent seals one: it is not shown, and "
-                            + $"`trade mandate show {id}` reads it.");
+                refused.Add($"the delivery on mandate {id} cannot be read as TradeAgent seals one: it is not shown.");
             }
         }
         return new OrgList<DeliveryToJudge>(rows, refused);

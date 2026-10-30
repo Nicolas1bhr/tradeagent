@@ -284,7 +284,8 @@ public partial class CouncilLoopTests
         public bool EndsTurns { get; set; }
 
         /// <summary>A position's organisation block, composed from the real records (<c>U-org-packets-b</c>).</summary>
-        public PositionPacket? PacketFor(string role, DateTimeOffset now) => PositionPacket.Compose(_db, role, now);
+        public PositionPacket? PacketFor(string role, DateTimeOffset now) =>
+            PositionPacket.Compose(_db, role, now, Canon.PacketVerbs(AgentReach.For(role, RuntimeClass.Broker)));
 
         /// <summary>While set, the turn's committed transition fails before anything of it is written — a launch the next start loses.</summary>
         public bool CommitThrows { get; set; }

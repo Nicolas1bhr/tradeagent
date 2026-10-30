@@ -689,6 +689,12 @@ public interface IMissionHost
     PositionPacket? PacketFor(string role, DateTimeOffset now) => null;
 
     /// <summary>
+    /// HOW <paramref name="role"/>'S SEAT CALLS THE GATEWAY'S VERBS this launch (<c>U-runway-fixes</c> item 3): the spelling its packet uses,
+    /// for the verbs its situation's wake lines name too — or null for a host that declares none, whose lines keep the command line's words.
+    /// </summary>
+    PacketVerb? VerbsFor(string role) => null;
+
+    /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
     /// (<c>U-board-b2</c> item 4): composed by the app from the board's records alone, or null for a host that composes none — whose
     /// board seats then launch nothing.
@@ -3187,6 +3193,7 @@ public sealed class MissionLoop
         else
         {
             var org = PacketOf(role);
+            var spell = VerbsOf(role);
             var believed = BeliefsOf(role);
             var situation = known! with
             {
@@ -3201,7 +3208,7 @@ public sealed class MissionLoop
                 Cut = CutBefore(role),
                 OwnerMessages = [.. OwnerWords(wake), .. typed],
                 Deliveries = Delivered(wake),
-                Wakes = Reasons(wake),
+                Wakes = Reasons(wake, spell),
                 // AN EXECUTOR'S MANDATE, WHOLE (U-org-packets-a): read once, at the rotation point that keyed its session by it.
                 Mandate = mandateView,
                 // THE POSITION'S ORGANISATION BLOCK AND WHAT IT SHOWED (U-org-packets-b): recorded as the attempt's input only with the
@@ -3212,7 +3219,7 @@ public sealed class MissionLoop
                 // THE PACKET (U-reconcile-packet): what changed, from this turn's wakes; what the role believes, from the
                 // ledger it wrote; what is wanted, from the rows the app recorded. Built here, from state, and never kept:
                 // the attempt keeps the prompt's hash and the wakes name their attempt.
-                WhatChanged = Observations(wake, windows ?? []),
+                WhatChanged = Observations(wake, windows ?? [], spell),
                 Believed = believed,
                 Wanted = OpenObjectives(role)
             };
@@ -4029,6 +4036,16 @@ public sealed class MissionLoop
     }
 
     /// <summary>
+    /// HOW <paramref name="role"/>'S SEAT CALLS A VERB, as the host declares it, or null. Never throws: a spelling nobody could read leaves the
+    /// wake lines in the command line's words.
+    /// </summary>
+    PacketVerb? VerbsOf(string role)
+    {
+        try { return _host.VerbsFor(role); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// A BOARD SEAT'S PACKET (<c>U-board-b2</c> item 4), composed by the host from the board's own records for the wakes this turn takes,
     /// or null where the host composes none or could not. Never throws: a packet not composed is said, and nothing launches.
     /// </summary>
@@ -4294,8 +4311,8 @@ public sealed class MissionLoop
     /// WHAT CHANGED: one line per wake, in the order taken, each with its entity — a tape wake counted and named under
     /// <paramref name="windows"/>, the holdout as the ledger holds it at the render.
     /// </summary>
-    static string[] Observations(IEnumerable<MissionEvent> wake, IReadOnlyList<TapeHoldoutWindow> windows) =>
-        [.. wake.Take(MissionEventStore.BatchLimit).Select(e => Observation(e, windows))];
+    static string[] Observations(IEnumerable<MissionEvent> wake, IReadOnlyList<TapeHoldoutWindow> windows, PacketVerb? spell) =>
+        [.. wake.Take(MissionEventStore.BatchLimit).Select(e => Observation(e, windows, spell))];
 
     /// <summary>
     /// THE HOLDOUT WINDOWS OF <paramref name="role"/> FROM THE HOST, read now, or null where it cannot say — and a host
@@ -4373,7 +4390,8 @@ public sealed class MissionLoop
     /// it names more than the id does, and the id otherwise. A tape wake says source, series, subject and count and
     /// never an item; a fill says what filled; a boundary says when TradeAgent decides it.
     /// </summary>
-    internal static string Observation(MissionEvent e, IReadOnlyList<TapeHoldoutWindow> windows)
+    /// <param name="spell">How the seat reading it calls a verb (<see cref="IMissionHost.VerbsFor"/>); null keeps the command line's words.</param>
+    internal static string Observation(MissionEvent e, IReadOnlyList<TapeHoldoutWindow> windows, PacketVerb? spell = null)
     {
         var id = e.Id.Split('#')[0];
         string? detail = null;
@@ -4395,13 +4413,15 @@ public sealed class MissionLoop
                 // THE REVIEW'S NUMBER, WHERE THE REVIEWER READS (U-org-scorecards-b fix pass 1): `review-answer` takes the review event's
                 // id, which is the wake's payload — the wake's own id names the rule, subject and period, never that number.
                 MissionEventKind.CutReview when long.TryParse(e.Payload, NumberStyles.None, CultureInfo.InvariantCulture, out var review) =>
-                    $"review {review.ToString(CultureInfo.InvariantCulture)} (`{id}`); answer it with "
-                    + $"`trade org review-answer {review.ToString(CultureInfo.InvariantCulture)} <choice> <rationale> --forecasts JSON`",
+                    $"review {review.ToString(CultureInfo.InvariantCulture)} (`{id}`)"
+                    + (Verb(spell, Ops.OrgReviewAnswer, $"{review.ToString(CultureInfo.InvariantCulture)} <choice> <rationale> --forecasts JSON",
+                        $"trade org review-answer {review.ToString(CultureInfo.InvariantCulture)} <choice> <rationale> --forecasts JSON") is { } answer
+                        ? $"; answer it with `{answer}`" : ""),
                 _ => null
             };
         }
         catch (Exception) { /* an unreadable payload is described by its id */ }
-        return $"{Reason(e)} — {detail ?? $"`{id}`"}";
+        return $"{Reason(e, spell)} — {detail ?? $"`{id}`"}";
     }
 
     /// <summary>The fill wake's payload as the gateway writes it.</summary>
@@ -4423,21 +4443,33 @@ public sealed class MissionLoop
     }
 
     /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>
-    static string[] Reasons(IEnumerable<MissionEvent> wake) =>
-        [.. wake.Select(Reason).Distinct()];
+    static string[] Reasons(IEnumerable<MissionEvent> wake, PacketVerb? spell) =>
+        [.. wake.Select(e => Reason(e, spell)).Distinct()];
+
+    /// <summary>
+    /// ONE VERB A WAKE LINE NAMES, as the seat reading it calls it (<c>U-runway-fixes</c> item 3): with no spelling declared, the command
+    /// line's words as they always read (<paramref name="cli"/>); with one, the seat's own form of <paramref name="op"/>, or null where it
+    /// cannot call it — and the line then names no verb.
+    /// </summary>
+    static string? Verb(PacketVerb? spell, string op, string args, string cli)
+    {
+        if (spell is null) return cli;
+        try { return spell(op, args); }
+        catch (Exception) { return null; }
+    }
 
     /// <summary>
     /// THE PHRASE FOR ONE WAKE. A note's phrase depends on which note it is, and its id says so —
     /// the app keys it by what it is about (<see cref="MissionEventIds.PaperAllocation"/>,
     /// <see cref="MissionEventIds.PaperRun"/>); every other kind's phrase is the kind's.
     /// </summary>
-    static string Reason(MissionEvent e) =>
+    static string Reason(MissionEvent e, PacketVerb? spell = null) =>
         // TRUE BY CONSTRUCTION: the app raises the inbox kind only for rows that arrived in the owner's inbox
         // (ScanResult.Arrived), and a role's own plan and journal never raise it. Named as THIS position's own folder
         // reaches it, computed from its home (AgentReach.InboxFrom), never a fixed `../inbox`.
         e.Kind == MissionEventKind.Inbox
             ? $"new material arrived in `{AgentReach.InboxFrom(e.Role ?? CouncilRoles.Default)}`"
-        : e.Kind != PublicationKind.Note ? Reason(e.Kind)
+        : e.Kind != PublicationKind.Note ? Reason(e.Kind, spell)
         : e.Id.StartsWith(PaperRunNote, StringComparison.Ordinal)
             ? "TradeAgent's forward-run note arrived in `in/`"
         : e.Id.StartsWith(PaperAllocationNote, StringComparison.Ordinal)
@@ -4449,13 +4481,13 @@ public sealed class MissionLoop
     static readonly string PaperRunNote = MissionEventIds.PaperRun("", "")[..^1];
     static readonly string PaperAllocationNote = MissionEventIds.PaperAllocation("");
 
-    static string Reason(string kind) => kind switch
+    static string Reason(string kind, PacketVerb? spell = null) => kind switch
     {
         MissionEventKind.Owner => "your owner typed something",
         // The card's words for an inbox wake (Waiting); a turn is told its own path by Reason(MissionEvent) above.
         MissionEventKind.Inbox => "new material arrived in `../inbox`",
-        MissionEventKind.Data => "TradeAgent collected and validated a dataset — the Data line below "
-                                 + "names it, and `trade data list` has its provenance",
+        MissionEventKind.Data => "TradeAgent collected and validated a dataset — the Data line below names it"
+                                 + (Verb(spell, Ops.DataList, "", "trade data list") is { } v ? $", and `{v}` has its provenance" : ""),
         MissionEventKind.Fill => "an order filled",
         MissionEventKind.Order => "an order reached a final state",
         MissionEventKind.Renewal => "the day turned over, so your spending allowance is a new one",
@@ -4467,19 +4499,26 @@ public sealed class MissionLoop
         MissionEventKind.Boundary => "a consequential boundary opened and it is waiting on your assessment",
         MissionEventKind.Deadline => "a consequential boundary you have not assessed is near its deadline",
         MissionEventKind.Tape => "TradeAgent stored something new on the tape that your work reads",
-        MissionEventKind.Mandate => "a mandate of yours is owed work — `trade mandate show` has it",
+        MissionEventKind.Mandate => "a mandate of yours is owed work"
+                                    + (Verb(spell, Ops.MandateShow, "<mandate>", "trade mandate show") is { } v ? $" — `{v}` has it" : ""),
         MissionEventKind.Delivery => "a delivery on a mandate you decide was sealed and waits on your judgment",
         MissionEventKind.Escalation => "an escalation reached you — code stopped retrying a mandate you decide, or a head below you "
-                                       + "raised one (`trade escalation list`)",
-        MissionEventKind.Proposal => "the holder of a mandate you decide proposed a finding beyond it — `trade mandate show` has "
-                                     + "it; the finding is its claim and grants nothing",
+                                       + "raised one" + (Verb(spell, Ops.EscalationList, "", "trade escalation list") is { } v ? $" (`{v}`)" : ""),
+        MissionEventKind.Proposal => "the holder of a mandate you decide proposed a finding beyond it — "
+                                     + (Verb(spell, Ops.MandateShow, "<mandate>", "trade mandate show") is { } v ? $"`{v}` has it; " : "")
+                                     + "the finding is its claim and grants nothing",
         MissionEventKind.CutReview => "a cut rule's review reached you — a unit you answer for spent half its day envelope with nothing "
                                       + "accepted, or a position you decide forecast worse than the base rate; it changed nothing, and you "
-                                      + "answer it with `trade org review-answer` (`trade org show` has the chart)",
-        MissionEventKind.Activated => "a position was activated — you, newly hired, or one you hired — and it runs from now; "
-                                      + "`trade org show` has the chart and `trade mandate list` your work",
+                                      + "answer it" + (Verb(spell, Ops.OrgReviewAnswer, "", "trade org review-answer") is { } v ? $" with `{v}`" : "")
+                                      + (Verb(spell, Ops.OrgShow, "", "trade org show") is { } show ? $" (`{show}` has the chart)" : ""),
+        MissionEventKind.Activated => "a position was activated — you, newly hired, or one you hired — and it runs from now"
+                                      + (Verb(spell, Ops.OrgShow, "", "trade org show") is { } show && Verb(spell, Ops.MandateList, "", "trade mandate list") is { } list
+                                          ? $"; `{show}` has the chart and `{list}` your work" : ""),
+        // HOW A SEAT ASKS FOR ITS WAKE IS ITS CANON'S TO SAY (U-runway-fixes item 3): a cell writes its wake file, a broker seat has none —
+        // so a line spelled for a seat names neither; the command line's words stay for a host that declares no spelling.
         MissionEventKind.OwnerWake => "your owner pressed \"Wake the chief once\" — one turn, now; after it you wake when you ask to "
-                                      + "(next.json or `trade org wake`), when work reaches you, or at your ceiling",
+                                      + (spell is null ? "(next.json or `trade org wake`), " : "")
+                                      + "when work reaches you, or at your ceiling",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
