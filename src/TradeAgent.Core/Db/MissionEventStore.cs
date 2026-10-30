@@ -1359,6 +1359,41 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// THE KINDS A POSITION IS TOLD SOMETHING BY (<c>U-loop-e2e</c>): a note and a verdict addressed to it — what a lost turn took and no clock
+    /// brings back to a position beyond the pair. Each consumed by a launch the restart's meter declared LOST, unsettled: what
+    /// <see cref="LostOwnerWords"/> is for the owner's words.
+    /// </summary>
+    public static readonly IReadOnlyList<string> ToldKinds = [MissionEventKind.Note, MissionEventKind.Verdict];
+
+    /// <summary>The wakes of <see cref="ToldKinds"/> a LOST launch consumed and nothing settled, oldest first.</summary>
+    public List<MissionEvent> LostTold() => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM mission_event e
+             WHERE e.kind IN ($note, $verdict) AND e.consumed_at IS NOT NULL AND e.disposition IS NULL
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by AND a.state = 'LOST')
+             ORDER BY e.created_at, e.rowid
+            """, ("$note", MissionEventKind.Note), ("$verdict", MissionEventKind.Verdict));
+        using var r = c.ExecuteReader();
+        var list = new List<MissionEvent>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    });
+
+    /// <summary>Settles one wake <see cref="LostTold"/> found <c>failed</c>, saying why — only while it still reads so. Answers whether this call did.</summary>
+    public bool SettleLostTold(string id, string detail) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition = $failed, disposition_detail = $detail
+             WHERE id = $id AND kind IN ($note, $verdict) AND consumed_at IS NOT NULL AND disposition IS NULL
+               AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = mission_event.consumed_by AND a.state = 'LOST')
+            """,
+            ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id),
+            ("$note", MissionEventKind.Note), ("$verdict", MissionEventKind.Verdict));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
     /// THE OWNER'S MESSAGES A FINISHED TURN LEFT WITHOUT AN OUTCOME (<c>U-owner-words-delegated</c>): consumed by a
     /// launch the ledger holds as ENDED — whose one committed transition (its close, its relay pass, its dispositions)
     /// has already landed — or by a launch with no row at all, a turn whose record could not be written, and settled

@@ -2899,6 +2899,7 @@ public sealed class MissionLoop
         if (events is null) return new Swept(null, []);
 
         RecoverLostOwnerWords(events);
+        RecoverLostTold(events);
         RecoverUnansweredOwnerWords(events);
         Schedule(events);
         return new Swept(events, WithdrawHeldTape(events));
@@ -4627,6 +4628,33 @@ public sealed class MissionLoop
                 });
         }
         catch (Exception) { /* the words stay consumed and unsettled; the next pass tries again */ }
+    }
+
+    /// <summary>What a retry of a told wake's id ends with: it is never raised again (<see cref="RecoverLostTold"/>).</summary>
+    internal const string AfterLost = ":after-lost";
+
+    /// <summary>
+    /// WHAT A LOST TURN WAS TOLD, TOLD AGAIN ONCE (<c>U-loop-e2e</c>): a note or a verdict addressed to a position, consumed by a launch the
+    /// restart's meter declared LOST, is settled <c>failed</c> with the lost turn's sentence and raised again under its own id plus
+    /// <see cref="AfterLost"/> — kind, payload and role unchanged, due now — in one commit, so the position's next turn takes it. A position
+    /// beyond the pair has no clock wake: without this, an author whose turn on its verdict or its allocation was lost never hears them. A
+    /// retry that is itself lost is settled and not raised again. Read off the app's own ledgers; never throws.
+    /// </summary>
+    void RecoverLostTold(MissionEventStore events)
+    {
+        try
+        {
+            foreach (var e in events.LostTold())
+                events.InOneCommit(() =>
+                {
+                    if (!events.SettleLostTold(e.Id, LostTurn)) return false;
+                    if (e.Id.EndsWith(AfterLost, StringComparison.Ordinal)) return true;
+                    if (!events.Raise(e.Id + AfterLost, e.Kind, _now(), e.Payload, e.Role))
+                        throw new InvalidOperationException($"the retry of {e.Id} was not written");
+                    return true;
+                });
+        }
+        catch (Exception) { /* the wakes stay consumed and unsettled; the next pass tries again */ }
     }
 
     /// <summary>The failure the retry of words a finished turn left unsettled carries.</summary>

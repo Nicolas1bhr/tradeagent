@@ -153,6 +153,44 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (d2) A RESTART MID-TURN RAISES AGAIN, ONCE, WHAT THE LOST TURN WAS TOLD (<c>U-loop-e2e</c>): an executor's turn takes a note and a
+    /// verdict addressed to it and hangs; the process dies. Each wake is settled <c>failed</c> with the lost turn's sentence and raised again
+    /// once, and the executor's next turn takes the two retries — so an author whose turn on its verdict and allocation was lost still hears
+    /// them (a position beyond the pair has no clock wake that would bring them back). RED at base: only the owner's words were recovered;
+    /// the told wakes stayed consumed by the LOST launch and the executor never turned again.
+    /// </summary>
+    [Fact]
+    public async Task A_restart_mid_turn_raises_what_the_lost_turn_was_told_again_once()
+    {
+        const string head = "pos-5e55ee000001", member = "pos-5e55ee000002", team = "team-5e55ee00";
+        await using var life = await PuppetLife.Begin("lost-told", seed: SeedTeam(team, head, member));
+        life.Script(member, ["signal took-them", "hang"], ["usage 40 0 4", "final Read them."]);
+        var told = new[] { MissionEventKind.Note, MissionEventKind.Verdict }
+            .Select(kind => MissionEventIds.ForRole($"{kind}:lost-told-{Guid.NewGuid():n}", member)).ToArray();
+        var kinds = new[] { MissionEventKind.Note, MissionEventKind.Verdict };
+        for (var i = 0; i < told.Length; i++)
+            Assert.True(life.Host.Wakes!.Raise(told[i], kinds[i], DateTimeOffset.UtcNow.AddSeconds(-1), role: member));
+        await life.RunUntil(() => life.Reached("took-them"), "the executor took what it was told and hung");
+        var hung = Assert.Single(life.AttemptsOf(member));
+        Assert.All(told, id => Assert.Equal(hung.Id, life.Host.Wakes!.Get(id)!.ConsumedBy));
+
+        await life.RestartMidTurn();
+        await life.RunUntil(() => life.AttemptsOf(member).Any(a => a.State == AiAttemptState.ENDED), "the executor's next turn ended");
+
+        var next = Assert.Single(life.AttemptsOf(member), a => a.State == AiAttemptState.ENDED);
+        foreach (var id in told)
+        {
+            var settled = life.Host.Wakes!.Get(id)!;
+            Assert.Equal((MissionEventDisposition.Failed, hung.Id), (settled.Disposition, settled.ConsumedBy));
+            var retry = life.Host.Wakes.Get(id + ":after-lost");
+            Assert.True(retry is not null, $"{id} was not raised again: {life.State()}");
+            Assert.Equal((settled.Kind, member, next.Id), (retry!.Kind, retry.Role, retry.ConsumedBy));
+        }
+        Assert.Equal(2, life.Events().Count(e => e.Id.EndsWith(":after-lost", StringComparison.Ordinal)));
+        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(life.Host.Db).Get(hung.Id)!.State);
+    }
+
+    /// <summary>
     /// (e) A POSITION BEYOND THE LEGACY PAIR, ACTIVE ON THE CHART AND WOKEN, IS STEPPED OVER BY THE ACTIVATION SEAM — no attempt,
     /// no process, its wake left due and unconsumed — while the legacy puppets keep turning around it. The puppets PLAY the harness
     /// class (<c>U-thinking-seats-a</c> fix pass 2, item 7): a real-model class, so with no proven executor cell recorded on this
