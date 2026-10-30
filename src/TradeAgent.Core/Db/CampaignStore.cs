@@ -733,8 +733,7 @@ public sealed class CampaignStore(Database db)
                + $"{IncubationsCharged(campaignId)} of them on inconclusive paper slots — so version {Short(versionId)} was "
                + "not given an inconclusive paper slot and nothing was written. A slot is charged one trial to the campaign its "
                + "verdict was taken under, once, and never refunded, so observing a version the referee could not judge is "
-               + "paid for out of the same budget as every other attempt. What is left is a renewal, which the account owner "
-               + "authorises in TradeAgent's own window.";
+               + "paid for out of the same budget as every other attempt. " + new CampaignRenewal(db).Next(campaignId);
     });
 
     /// <summary>
@@ -918,7 +917,7 @@ public sealed class CampaignStore(Database db)
     /// callers; <paramref name="made"/> only chooses the tense of the sentence, and <paramref name="through"/> is the
     /// sentence naming the months and the dataset read when the run campaign is not the run's own dataset's.
     /// </summary>
-    static string? Refusal(TrialAdmission rule, TrialCounts spent, bool made, string? through)
+    string? Refusal(TrialAdmission rule, TrialCounts spent, bool made, string? through)
     {
         if (!rule.Charged || rule.RunCampaign is not { } run) return null;
 
@@ -1167,7 +1166,7 @@ public sealed class CampaignStore(Database db)
     /// halves rather than two texts, because everything after the first clause is the same fact and a
     /// second copy of it is a second thing to keep true.
     /// </summary>
-    static string Spent(long campaignId, int budget, bool made, string? through) =>
+    string Spent(long campaignId, int budget, bool made, string? through) =>
         $"campaign {campaignId} has registered all {budget} of its research trials, so "
         + (made
             ? "this run is not recorded and its result is not served: the count is charged in the same "
@@ -1178,9 +1177,9 @@ public sealed class CampaignStore(Database db)
         + "A trial is one registered run of one version over one "
         + "dataset under one execution model, and the count is the CAMPAIGN's: it is keyed by the "
         + "campaign, the version and the run and by nothing about who asked, so it is not reset by a "
-        + "restart, by a fresh attempt or by a replacement team. What is left is a renewal, which the "
-        + "account owner authorises in TradeAgent's own window and which carries this campaign's "
-        + "holdout and its lineage forward. Runs over a fixture dataset are still free.";
+        + "restart, by a fresh attempt or by a replacement team. Runs over a fixture dataset are still free. "
+        // THE WAY ON IS THE APP'S RULE (U-evidence-campaign; R25 D7): a campaign over fresh months, never more attempts at these.
+        + new CampaignRenewal(db).Next(campaignId);
 
 
     // ---- verdicts ---------------------------------------------------------------------------------
@@ -1433,7 +1432,9 @@ public sealed class CampaignStore(Database db)
                 spent, campaign.VerdictBudget);
 
         if (spent >= campaign.VerdictBudget)
-            return new VerdictCharged(false, JudgementsGone(campaign, OverTheSameMonths(campaignId)),
+            return new VerdictCharged(false, JudgementsGone(campaign, OverTheSameMonths(campaignId))
+                    // AND WHAT FOLLOWS IT, BY RULE (U-evidence-campaign; R25 D7): the fresh months it waits for, in days.
+                    + " " + new CampaignRenewal(db).Next(campaignId),
                 spent, campaign.VerdictBudget);
 
         // AND EVERY UNIT'S OWN SHARE OF THEM, AFTER THE CAMPAIGN'S GATES AND IN THE SAME WRITE (`U-org-verbs-e`). See the summary.
@@ -1466,8 +1467,8 @@ public sealed class CampaignStore(Database db)
             ? ""
             : " (" + string.Join("; ", others.Select(o => $"campaign {o.Campaign.Id} over dataset {o.Campaign.HoldoutDatasetId} "
                 + $"({Named(o)}) has taken {o.Judgements}")) + ")")
-        + ". What is left is a holdout over OTHER months, which the account owner sets in TradeAgent's own window: a fresh "
-        + "copy of the history held back over these same months shares these judgements.";
+        + ". What is left is a holdout over OTHER months — a fresh copy of the history held back over these same months shares "
+        + "these judgements.";
 
     /// <summary>A short list of campaign ids for an IN clause. They are longs this code read itself.</summary>
     static string Ids(IReadOnlyList<long> ids) =>

@@ -260,10 +260,51 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
     /// <summary>
     /// The campaign ledger — the referee's protocol. READ ONLY from here in the sense that matters:
-    /// the only writer is the owner's own press (<see cref="SetHoldout"/>) and the referee's charge,
-    /// and there is no pipe op that opens, renews, closes or re-budgets a campaign.
+    /// the only writers are the owner's own press (<see cref="SetHoldout"/>), the app's rule that follows a
+    /// spent campaign with one over fresh months through that same press (<see cref="OpenForwardCampaign"/>),
+    /// and the referee's charge; there is no pipe op that opens, renews, closes or re-budgets a campaign.
     /// </summary>
     public CampaignStore Campaigns => _campaigns;
+
+    /// <summary>
+    /// THE RULE THAT FOLLOWS A SPENT CAMPAIGN WITH ONE OVER FRESH MONTHS (<c>U-evidence-campaign</c>; R25 D7): what it has armed,
+    /// what it waits for. Its writers are the app's own pass (<c>EvidenceCampaigns.RenewAsync</c>) and
+    /// <see cref="OpenForwardCampaign"/>; no pipe op reaches either.
+    /// </summary>
+    public CampaignRenewal Renewals => new(_db);
+
+    /// <summary>
+    /// OPENS THE CAMPAIGN THAT FOLLOWS A SPENT ONE, over <paramref name="freshDatasetId"/>, or refuses in words with NOTHING written.
+    ///
+    /// <para>The owner's own press, made by the app's rule: <see cref="CampaignRenewal.OpenRefusal"/> is asked first — a fresh download
+    /// of the same series, at least <see cref="CampaignRenewal.MinimumFreshDays"/> days of it from the armed cutoff, no other held
+    /// window past it — then <see cref="SetHoldout"/> writes the ARMED cutoff (never one chosen here) and opens the campaign with the
+    /// owner's budgets as they stand, and the successor is recorded write-once, all in ONE transaction. A cutoff written without its
+    /// campaign, or a successor recorded twice, throws, which rolls the whole write back: <c>Database.Write</c> rolls back only on an
+    /// exception.</para>
+    /// </summary>
+    public (bool Ok, string Why, CampaignRow? Campaign) OpenForwardCampaign(long spentCampaignId, long freshDatasetId) => _db.Write(_ =>
+    {
+        var renewals = Renewals;
+        if (renewals.OpenRefusal(spentCampaignId, _datasets.ById(freshDatasetId)) is { } no)
+            return (false, no, (CampaignRow?)null);
+
+        var held = renewals.Of(spentCampaignId)!;
+        var (done, campaign) = SetHoldout(freshDatasetId, held.Cutoff, Core.Data.EvaluationClass.Research);
+        if (!done.Ok) return (false, done.Why, null);
+        if (campaign is null || campaign.HoldoutFrom != held.Cutoff)
+            throw new InvalidOperationException(
+                $"dataset {freshDatasetId} was held back from {held.Cutoff:u} with no campaign opened over it; nothing is kept.");
+        if (!renewals.RecordSuccessor(spentCampaignId, campaign.Id))
+            throw new InvalidOperationException(
+                $"campaign {spentCampaignId} was followed by another campaign while this one opened; nothing is kept.");
+
+        return (true,
+            $"Campaign {spentCampaignId} had spent its {held.Spent}; campaign {campaign.Id} now judges strategies on fresh market data "
+            + $"from {held.Cutoff:u} on (dataset {freshDatasetId}), which no verdict and no research read had seen. "
+            + CampaignStore.PressNote(campaign, _campaigns.JudgementsSpent(campaign.Id), _campaigns.OverTheSameMonths(campaign.Id)),
+            campaign);
+    });
 
     /// <summary>
     /// THE REFEREE — IN PROCESS, AND THERE IS NO OP BEHIND IT.

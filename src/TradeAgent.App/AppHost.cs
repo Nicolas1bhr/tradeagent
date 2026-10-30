@@ -999,6 +999,16 @@ public sealed class AppHost : IAsyncDisposable
     MarketDataService? _marketData;
 
     /// <summary>
+    /// THE DATA, THE HOLDOUT AND THE CAMPAIGN (<c>U-evidence-campaign</c>; R25 D7): setup's one press, and the rule that follows a spent
+    /// campaign with one over fresh months on this loop's clock (<see cref="EvidencePass"/>). In-process only, like
+    /// <see cref="MarketData"/>, whose Download press it makes.
+    /// </summary>
+    public EvidenceCampaigns Evidence => _evidence
+        ?? throw new InvalidOperationException("the evidence campaigns are not available before startup");
+
+    EvidenceCampaigns? _evidence;
+
+    /// <summary>
     /// THE FORWARD BAR COLLECTOR — the one thing in this product that watches an advancing market.
     ///
     /// <para>Started with the app and stopped with it, and INDEPENDENT OF THE MISSION LOOP: a paused
@@ -1125,6 +1135,8 @@ public sealed class AppHost : IAsyncDisposable
             // collector's own transaction, and this only stops a sleeping loop from waiting for its
             // next scheduled look to find out.
             _marketData = new MarketDataService(_db, nudge: () => Mission?.Wake());
+            _evidence = new EvidenceCampaigns(() => Gateway,
+                (pair, now, progress, ct) => _marketData.CollectAsync(pair, now, progress, ct));
 
             // THE FORWARD COLLECTOR, STARTED WITH THE APP. Both functions are read at every look
             // rather than captured: the owner changes the pair and flips the toggle on the Settings
@@ -1871,6 +1883,27 @@ public sealed class AppHost : IAsyncDisposable
             ? SeatSignIn.RefreshAsync(ct).ContinueWith(_ => Changed?.Invoke(), TaskScheduler.Default)
             : Task.CompletedTask;
 
+    /// <summary>
+    /// THE RULE THAT FOLLOWS A SPENT CAMPAIGN, ON ONE PASS OF THE BACKGROUND LOOP (<c>U-evidence-campaign</c>; R25 D7): every five minutes,
+    /// off the pass — a download takes minutes and nothing waits for it. What it did is said in the activity log, once. A pass that
+    /// throws is said there too and changes nothing: the ledger is the state, and the next pass reads it again.
+    /// </summary>
+    internal Task EvidencePass(int pass, CancellationToken ct) =>
+        pass % 60 != 0 || _evidence is not { } evidence
+            ? Task.CompletedTask
+            : Task.Run(async () =>
+            {
+                try
+                {
+                    foreach (var line in await evidence.RenewAsync(DateTimeOffset.UtcNow, ct)) Gateway.Log.Activity(line);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    Gateway.Log.Activity("TradeAgent could not check its campaigns: " + ex.Message.ReplaceLineEndings(" "), "warn");
+                }
+            }, ct);
+
     async Task BackgroundAsync(CancellationToken ct)
     {
         var tick = 0;
@@ -1912,6 +1945,7 @@ public sealed class AppHost : IAsyncDisposable
                 if (pass % 6 == 0 || _scanOwed) _scanOwed = ScanMaterials(ct) is null;
 
                 _ = SeatSignInPass(pass, ct);
+                _ = EvidencePass(pass, ct);
 
                 // Once at startup, then every five minutes. A day that ended while this machine was
                 // asleep gets its report the first time the app is awake afterwards; a day that ends
