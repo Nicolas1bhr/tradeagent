@@ -705,6 +705,40 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE OWNER ACTIVATES A DORMANT SEAT OF THE SECURITY BOARD (<c>U-board-alive</c> item 1; R24 § 4.1, CHANGE-001): his press on the
+    /// Owner page, IN-PROCESS ONLY — no pipe op, door verb, <c>trade</c> verb or board act reaches it (a guard reads their sources). The
+    /// store writes <c>active</c> only when this host could seat it: the class it would start on is the one it was founded on, that class
+    /// carries the board's verbs on the app's door, and a real model never sits before a RECORDED proven cell — each read here, now
+    /// (<see cref="BoardSeatGate.ActivationRefusal"/>). It starts nothing: a board seat turns only when a proposal wakes it.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused in words; nothing was written.</exception>
+    public string ActivateBoardSeat(string seat)
+    {
+        if (_db is not { } db) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "TradeAgent has no database open yet. Nothing was written.");
+        var row = Gateway.ActivateBoardSeat(seat, s =>
+            BoardSeatGate.ActivationRefusal(s.Id, s, SeatClassItWouldStartOn(s.Id), TestHostPuppet(s.Id), new CellProofStore(db).HoldsProof()));
+        Changed?.Invoke();
+        return $"You activated {row.Id}. It sits on its {row.SeatClass} seat and turns only when a proposal wakes it.";
+    }
+
+    /// <summary>
+    /// THE CLASS OF THE SEAT <paramref name="role"/> WOULD START ON, read now: the declared class of the runtime object this host has
+    /// prepared (<see cref="DeclaredSeatClass"/>), or — before anything is prepared, as on the Owner page while the AI is stopped — the
+    /// class the runtime chosen for it would start (the harness where that is the harness, else its built-in manifest's own answer,
+    /// <see cref="RuntimeManifest.SessionSeatClassFor"/>). Code, never a field of <c>runtimes.json</c>. Null where nothing could say.
+    /// </summary>
+    string? SeatClassItWouldStartOn(string role)
+    {
+        if (DeclaredSeatClass(role) is { } declared) return declared;
+        string? runtime;
+        try { runtime = SeatRuntimeFor(role); }
+        catch (Exception) { return null; }
+        if (runtime is null) return null;
+        if (RuntimeCatalog.IsHarness(runtime)) return ApiAgentRuntime.Serves(role) ? SeatClasses.Harness : null;
+        return RuntimeCatalog.Find(runtime)?.SessionSeatClassFor(role, _seats.KindOf(role));
+    }
+
+    /// <summary>
     /// THE MODEL THE NEXT TURN OF ONE ROLE WILL RUN ON. The same fallback as
     /// <see cref="RequestedModel"/> — the prepared runtime first, the chosen runtime's manifest
     /// before one is prepared — over that role's own choice rather than the app-wide one, so the

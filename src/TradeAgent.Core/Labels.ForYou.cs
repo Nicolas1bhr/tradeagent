@@ -172,11 +172,18 @@ public static partial class Labels
     public const string BoardCompositionIsYours =
         "The board's seats and its share of your plan's day are yours, never the board's own: a seat may only propose a change "
         + "to them. Founding a seat starts nothing — it is dormant until a sealed workspace is proven; the board stays on at least two "
-        + "model classes.";
+        + "model classes. Activating a seat is refused, in words, until this computer could seat it; once one is active, your presses "
+        + "over the chief and the positions' activation are the board's.";
 
     public const string SetBoardBudgetShareConfirm = "Press again to set the board's share";
     public const string FoundBoardSeatConfirm = "Press again to found the seat, dormant";
     public const string RetireBoardSeatConfirm = "Press again to retire the seat — it acts no more";
+
+    /// <summary>
+    /// The activation's second press (<c>U-board-alive</c> item 1): what it does — and that, while a seat is active, his presses over the
+    /// chief and the positions' activation become the board's (U-org-chief Q1).
+    /// </summary>
+    public const string ActivateBoardSeatConfirm = "Press again to activate — it turns only when a proposal wakes it";
     public const string BoardShareLabel = "The board's share of the plan's day";
     public const string BoardVendorFamilyPlaceholder = "e.g. openai";
 }
