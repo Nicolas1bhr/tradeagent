@@ -75,6 +75,10 @@ public static class WindowsCellStage
         }
 
         if (CellPlatform.Read().Refusal() is { } refusal) return Refuse(refusal);
+        // THE STAGE RUNS ONLY INSIDE A JOB (Codex, landing 2): the app's, or the harness's the app made. A stage outside one — a harness
+        // that started it before Windows put the harness in its job — would outlive a cancel, and its cell and grants with it.
+        if (!IsProcessInJob(GetCurrentProcess(), IntPtr.Zero, out var inJob) || !inJob)
+            return Refuse("this stage is in no job of TradeAgent's, so nothing it started could be ended with the attempt");
         CellPolicy policy;
         try
         {
@@ -132,8 +136,13 @@ public static class WindowsCellStage
         var paths = new List<(string Path, FileSystemRights Rights)> { (policy.Workspace, FileSystemRights.Modify) };
         paths.AddRange(policy.ReadOnly.Concat(policy.Executable).Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(p => Directory.Exists(p) || File.Exists(p)).Select(p => (p, FileSystemRights.ReadAndExecute)));
+        foreach (var (path, _) in paths) Inspect(path);
         OwnerOnlyFile.Write(slot.Record, System.Text.Encoding.UTF8.GetBytes(string.Join('\n', paths.Select(p => p.Path))));
-        foreach (var (path, rights) in paths) AppContainerCell.Grant(path, sid, rights);
+        // ONE DACL WRITER AT A TIME (Codex, landing 2): slots share the program root, and two read-modify-writes of its DACL racing would
+        // let one put back an ACE the other took away.
+        lock (AclGate)
+            using (AclLock())
+                foreach (var (path, rights) in paths) AppContainerCell.Grant(path, sid, rights);
     }
 
     /// <summary>
@@ -144,28 +153,96 @@ public static class WindowsCellStage
     {
         if (File.Exists(slot.Record))
         {
-            foreach (var path in File.ReadAllLines(slot.Record).Where(l => l.Length > 0))
-                try { AppContainerCell.Revoke(path, sid); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { /* a path gone grants nothing */ }
+            // A REVOCATION THAT FAILED KEEPS ITS LINE (Codex, landing 2): the record shrinks to what is still granted, and a sweep that
+            // could not take everything back throws — the stage then refuses, and the next sweep tries again.
+            var left = new List<string>();
+            lock (AclGate)
+                using (AclLock())
+                    foreach (var path in File.ReadAllLines(slot.Record).Where(l => l.Length > 0))
+                        try { if (Directory.Exists(path) || File.Exists(path)) AppContainerCell.Revoke(path, sid); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or TradeAgentException) { left.Add(path); }
+            if (left.Count > 0)
+            {
+                OwnerOnlyFile.Write(slot.Record, System.Text.Encoding.UTF8.GetBytes(string.Join('\n', left)));
+                throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                    $"slot {slot.Number}'s last grants could not all be taken back ({string.Join(", ", left)}); no cell runs in it until they are");
+            }
             File.Delete(slot.Record);
         }
+        // THE CONTAINER'S OWN STORAGE, EMPTIED WITHOUT FOLLOWING A LINK (Codex, landing 2): a junction a cell left there is removed as a
+        // link, never walked — a recursive walk would have deleted, as the owner, whatever it pointed at.
         var ac = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", slot.Profile, "AC");
         if (Directory.Exists(ac))
-            foreach (var top in Directory.EnumerateDirectories(ac))
-            {
-                foreach (var f in Directory.EnumerateFiles(top, "*", SearchOption.AllDirectories))
-                    try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* in use by a process the job already ended */ }
-                foreach (var d in Directory.EnumerateDirectories(top))
-                    try { Directory.Delete(d, recursive: true); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* as above */ }
-            }
+            foreach (var top in new DirectoryInfo(ac).EnumerateDirectories())
+                if ((top.Attributes & FileAttributes.ReparsePoint) != 0) Unlink(top);
+                else foreach (var e in top.EnumerateFileSystemInfos()) Remove(e);
         using var storage = Registry.CurrentUser.OpenSubKey(StorageKey + sid, writable: true);
         if (storage is not null)
         {
             foreach (var sub in storage.GetSubKeyNames()) storage.DeleteSubKeyTree(sub, throwOnMissingSubKey: false);
             foreach (var value in storage.GetValueNames()) storage.DeleteValue(value, throwOnMissingValue: false);
         }
+    }
+
+    /// <summary>Removes <paramref name="e"/>: a link as a link, a file, or a folder after everything in it — never through a link.</summary>
+    static void Remove(FileSystemInfo e)
+    {
+        try
+        {
+            if ((e.Attributes & FileAttributes.ReparsePoint) != 0) { Unlink(e); return; }
+            if (e is DirectoryInfo d)
+            {
+                foreach (var child in d.EnumerateFileSystemInfos()) Remove(child);
+                d.Delete(recursive: false);
+                return;
+            }
+            e.Attributes = FileAttributes.Normal;
+            e.Delete();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* held by a process the job already ended; the next sweep */ }
+    }
+
+    static void Unlink(FileSystemInfo link)
+    {
+        try { if (link is DirectoryInfo d) d.Delete(recursive: false); else link.Delete(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the next sweep */ }
+    }
+
+    /// <summary>
+    /// SWEEPS EVERY SLOT NO CELL HOLDS (Codex, landing 2): a stage ended by its job — the cancel, the app's exit — never reaches its own
+    /// sweep, so the app sweeps the free slots whenever a cell's launch is let go. A slot a running stage holds is skipped. Never throws.
+    /// </summary>
+    public static void SweepFree()
+    {
+        if (!Directory.Exists(SlotDirectory) || Directory.GetFiles(SlotDirectory, "*.grants").Length == 0) return;
+        for (var i = 1; i <= Slots; i++)
+        {
+            using var slot = Slot.Take(i);
+            if (slot is null || !File.Exists(slot.Record)) continue;
+            try { Sweep(slot, AppContainerCell.SidOf(slot.Profile)); }
+            catch (Exception ex) when (ex is TradeAgentException or IOException or UnauthorizedAccessException) { /* kept for the next sweep, and refused at claim */ }
+        }
+    }
+
+    /// <summary>
+    /// NO LINK UNDER A GRANT (Codex, landing 2): granting a folder propagates its ACE to everything beneath it, and a junction or symlink
+    /// a cell left in its workspace would carry the next grant to whatever it points at. Every granted folder is walked — without
+    /// following a link — and a link anywhere beneath is a refusal naming it. On the same walk, an explicit ACE a cell wrote for an
+    /// AppContainer or capability SID (S-1-15-2-*, S-1-15-3-*) on something beneath is removed, so no file carries a grant past its cell.
+    /// </summary>
+    static void Inspect(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        var stack = new Stack<DirectoryInfo>([new DirectoryInfo(root)]);
+        while (stack.Count > 0)
+            foreach (var e in stack.Pop().EnumerateFileSystemInfos("*", new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false }))
+            {
+                if ((e.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                        $"{e.FullName} is a link (a junction or symlink) inside a folder a cell would be granted; a grant would reach through it");
+                AppContainerCell.PurgeContainerAces(e);
+                if (e is DirectoryInfo sub) stack.Push(sub);
+            }
     }
 
     /// <summary>Where Windows keeps an AppContainer's own registry, by SID, under the account's hive.</summary>
@@ -199,6 +276,18 @@ public static class WindowsCellStage
 
         public string Record => Path.Combine(SlotDirectory, Number.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".grants");
 
+        /// <summary>Slot <paramref name="number"/>, when no stage holds it.</summary>
+        public static Slot? Take(int number)
+        {
+            Directory.CreateDirectory(SlotDirectory);
+            try
+            {
+                return new Slot(number, new FileStream(Path.Combine(SlotDirectory, number.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
+            }
+            catch (IOException) { return null; }
+        }
+
         public static Slot? Claim()
         {
             Directory.CreateDirectory(SlotDirectory);
@@ -216,6 +305,25 @@ public static class WindowsCellStage
         public void Dispose() => _lock.Dispose();
     }
 
+    static readonly object AclGate = new();
+
+    /// <summary>The home's one DACL lock (a file held exclusively), waited for up to 30 s: across stages, one grant or revoke at a time.</summary>
+    static FileStream AclLock()
+    {
+        Directory.CreateDirectory(SlotDirectory);
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (true)
+            try { return new FileStream(Path.Combine(SlotDirectory, "acl.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (DateTime.UtcNow < until) { Thread.Sleep(20); }
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern IntPtr GetStdHandle(int which);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
 }

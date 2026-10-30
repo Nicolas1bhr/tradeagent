@@ -181,6 +181,53 @@ public sealed class CellWindowsTests : IDisposable
         Assert.All(targets, t => Assert.False(File.Exists(t), $"{t} was left"));
     }
 
+    static void Junction(string link, string target)
+    {
+        var psi = new ProcessStartInfo(Cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "/d", "/c", "mklink", "/J", link, target }) psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        p.WaitForExit(30_000);
+        Assert.True(p.ExitCode == 0 && Directory.Exists(link), "a junction for the row: " + p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd());
+    }
+
+    /// <summary>
+    /// NO GRANT THROUGH A LINK: a junction left in a workspace (here by the test, outside the cell) pointing at a folder of the account's
+    /// is a refusal naming it — nothing starts and the folder it points at gains no slot's ACE (a grant propagates through children).
+    /// </summary>
+    [WindowsFact]
+    public async Task A_link_inside_a_workspace_is_refused_and_its_target_gains_no_grant()
+    {
+        var w = NewWorld("link");
+        Junction(Path.Combine(w.Ws, "j"), w.Outside);
+        var o = await RunToEnd(w, "echo RAN");
+        Assert.DoesNotContain("RAN", o, StringComparison.Ordinal);
+        Assert.Contains("is a link", o, StringComparison.Ordinal);
+        var sids = WindowsCellStage.SlotSids();
+        var aces = new DirectoryInfo(w.Outside).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>().Select(r => r.IdentityReference.Value).Where(sids.Contains).ToList();
+        Assert.Empty(aces);
+    }
+
+    /// <summary>
+    /// THE SWEEP NEVER WALKS A LINK: a junction left in a slot's own storage (<c>AC\Temp</c>) pointing at a folder of the account's is
+    /// removed as a link; the folder and its file are still there after the next cell's sweeps.
+    /// </summary>
+    [WindowsFact]
+    public async Task The_sweep_removes_a_link_in_the_containers_storage_and_never_what_it_points_at()
+    {
+        var w = NewWorld("aclink");
+        await RunToEnd(w, "echo first");
+        var storage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages");
+        // SLOT 1'S: the lowest free slot is the one the next cell claims and sweeps, before it starts and after it ends.
+        var temps = new[] { Path.Combine(storage, WindowsCellStage.ProfileName(1), "AC", "Temp") }.Where(Directory.Exists).ToList();
+        Assert.NotEmpty(temps);
+        var keep = Path.Combine(w.Outside, "auth.json");
+        foreach (var t in temps) Junction(Path.Combine(t, "j"), w.Outside);
+        await RunToEnd(w, "echo second");
+        Assert.True(File.Exists(keep), "the sweep deleted through a link");
+        Assert.All(temps, t => Assert.False(Directory.Exists(Path.Combine(t, "j")), $"{t}\\j was left"));
+    }
+
     /// <summary>
     /// CANCELLING ENDS THE STAGE AND THE CELL: the app's job ends the stage, and the stage's job (nested in it) every process of the
     /// cell — the shell and a detached reader both wait on input the test holds open, so neither ends by itself.
