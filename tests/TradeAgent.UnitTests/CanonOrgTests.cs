@@ -201,6 +201,38 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
         }
     }
 
+    /// <summary>
+    /// (5) THE REACH SECTION'S TOOLS ARE THE PLACE'S, AS ITS ROLE PART'S VERBS ARE (<c>U-runway-fixes</c> item 2): the shared
+    /// <c>**Your tools:**</c> line names every organisation verb tool of the uses the place holds (<see cref="OrgVerbUse.NamedFor"/>) and no
+    /// other — an executor or staff no head's <c>mandate_assign</c>, the chief no holder's <c>mandate_deliver</c> — and every tool that
+    /// carries no organisation verb, on every place alike.
+    ///
+    /// <para>RED at base d55784e4: the line listed every door tool to every place — the executor's cell named <c>mandate_assign</c>,
+    /// <c>org_charter</c> and the rest of a head's verbs (the U-org-canon card).</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Places))]
+    public void The_reach_sections_tools_are_those_of_the_place(string place, RuntimeClass runtime)
+    {
+        var reach = AgentReach.For(Position, runtime);
+        var text = Canon.Render(Ctx(place), reach).Text;
+        var line = Assert.Single(text.Split('\n'), l => l.Contains("**Your tools:**", StringComparison.Ordinal));
+        var named = System.Text.RegularExpressions.Regex.Matches(line, "`([a-z_]+)`").Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+
+        string? OrgOp(string tool) => reach.Verbs.FirstOrDefault(v => v.Invocation == tool && Ops.IsOrganisation(v.Op))?.Op;
+        var owed = reach.Tools.Where(t => OrgOp(t) is not { } op || OrgVerbUse.NamedFor(place).Contains(OrgVerbUse.Of(op)))
+            .ToHashSet(StringComparer.Ordinal);
+        log.WriteLine($"{place}·{runtime}: {named.Count} of {reach.Tools.Count} tools named");
+        Assert.Equal(owed.Order(StringComparer.Ordinal), named.Order(StringComparer.Ordinal));
+        if (runtime != RuntimeClass.Harness && place is OrgPlace.Executor or OrgPlace.Staff)
+        {
+            Assert.DoesNotContain("mandate_assign", named);
+            Assert.Contains("mandate_deliver", named);
+        }
+        if (runtime != RuntimeClass.Harness && place == OrgPlace.Chief) Assert.DoesNotContain("mandate_deliver", named);
+        if (runtime != RuntimeClass.Harness && place == OrgPlace.Head) Assert.Contains("mandate_assign", named);
+    }
+
     static string Heading(string place) => place switch
     {
         OrgPlace.Chief => "## Your role: the chief",

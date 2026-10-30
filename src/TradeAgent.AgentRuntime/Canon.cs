@@ -1270,15 +1270,30 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
         }
     }
 
-    /// <summary>The tools of a seat that acts through tools — the harness, or the broker's door — each with the ops it carries.</summary>
+    /// <summary>
+    /// The tools of a seat that acts through tools — the harness, or the broker's door — each with the ops it carries; on an organisation
+    /// position whose place the chart gives, its organisation verbs only of the uses that place holds (<see cref="OrgVerbUse.NamedFor"/>),
+    /// as its role part names them (<c>U-runway-fixes</c> item 2): an executor is not told of a head's <c>mandate_assign</c>.
+    /// </summary>
     string HarnessTools()
     {
         if (reach.Runtime == RuntimeClass.Cli) throw Lacks("tools of its own");
-        return string.Join("; ", reach.Tools.Select(t =>
+        return string.Join("; ", reach.Tools.Where(ToolOfPlace).Select(t =>
         {
             var ops = reach.Verbs.Where(v => v.Invocation == t).Select(v => v.Op).ToList();
             return ops.Count == 0 ? $"`{t}`" : $"`{t}` — {string.Join(", ", ops)}";
         }));
+    }
+
+    /// <summary>
+    /// Whether the reach section names <paramref name="tool"/> to this seat: every tool of the legacy pair or of a position whose place
+    /// nobody could read, and on a position with a place every tool but an organisation verb of a use that place does not hold.
+    /// </summary>
+    bool ToolOfPlace(string tool)
+    {
+        if (c.Place is not { } place) return true;
+        var ops = reach.Verbs.Where(v => v.Invocation == tool).Select(v => v.Op).ToList();
+        return ops.Count == 0 || ops.Any(op => !Core.Ops.IsOrganisation(op) || OrgVerbUse.NamedFor(place).Contains(OrgVerbUse.Of(op)));
     }
 
     /// <summary>
