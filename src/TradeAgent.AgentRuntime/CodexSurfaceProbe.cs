@@ -33,6 +33,16 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
     /// request just before it (fix pass, review-2 finding 2); the product's probe is <see cref="Instance"/>, at sixty seconds.</summary>
     internal TimeSpan Deadline { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// A SEAM FOR THE ROW THAT PROVES THE DEADLINE ENDS THE WAIT, NEVER THE READING (<c>U-probe-test-timing</c>): called with the deadline's
+    /// own timer the moment the probe has SEEN the first model request, before the wait for codex to end. A row ends the deadline there —
+    /// <c>t =&gt; t.Cancel()</c> with <see cref="Deadline"/> infinite — so "the request landed in time and the deadline passed straight
+    /// after" is an ordering the probe itself fixes, not a race a test wins by sending a request a second and a half before a five-second
+    /// clock: that race was lost on a loaded runner whenever the client, the loopback server or the stand-in stalled for a second and a half.
+    /// Null in the product.
+    /// </summary>
+    internal Action<CancellationTokenSource>? OnFirstRequest { get; init; }
+
     public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
     {
         var seat = ask.Manifest.Seat ?? throw new InvalidOperationException($"{ask.Manifest.DisplayName} has no seat profile");
@@ -133,6 +143,7 @@ public sealed class CodexSurfaceProbe : ISurfaceProbe
             }
 
             var body = await mock.FirstBody;
+            OnFirstRequest?.Invoke(timer);
             // CODEX'S OWN WORDS ABOUT THE RUN, READ BEFORE ITS TOOLS COUNT (U-cell-model-catalog, rider (b)): the mock answers the request
             // with a finished response, so codex ends its turn on its own; its warnings — fallback metadata above all — are in what it
             // printed. One the manifest names (ToolsUnavailablePattern) refuses the seat, quoted, whatever tools were offered. However the
