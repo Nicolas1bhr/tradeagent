@@ -506,30 +506,47 @@ public static class CellBenchmark
 /// </summary>
 public sealed class ExecServerClient : IDisposable
 {
-    readonly Process _p;
+    readonly TextWriter _in;
+    readonly Action _end;
     readonly List<JsonElement> _seen = [];
+    readonly StringBuilder _stderr = new();
     readonly Task _pump;
     int _id;
 
     public ExecServerClient(Process process)
+        : this(process.StandardInput, process.StandardOutput, process.StandardError, () => process.WaitForExit(10_000)) { }
+
+    /// <summary>
+    /// Over any three streams (a Windows cell's pipes, <c>U-cell-windows</c>): <paramref name="end"/> runs on dispose, after the input
+    /// is closed, to wait for or end the server.
+    /// </summary>
+    public ExecServerClient(TextWriter input, TextReader output, TextReader error, Action end)
     {
-        _p = process;
+        _in = input;
+        _end = end;
         _pump = Task.Run(async () =>
         {
-            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            while (await output.ReadLineAsync() is { } line)
                 try { lock (_seen) _seen.Add(JsonDocument.Parse(line).RootElement.Clone()); }
                 catch (JsonException) { /* not a message */ }
         });
-        _ = Task.Run(async () => { while (await process.StandardError.ReadLineAsync() is not null) { } });
+        _ = Task.Run(async () =>
+        {
+            while (await error.ReadLineAsync() is { } line)
+                lock (_stderr) if (_stderr.Length < 16_384) _stderr.Append(line).Append('\n');
+        });
     }
+
+    /// <summary>What the server wrote to its standard error so far (the first 16 KiB).</summary>
+    public string Stderr { get { lock (_stderr) return _stderr.ToString(); } }
 
     /// <summary>The last error or non-answer, in words.</summary>
     public string Last { get; private set; } = "";
 
     void Send(object message)
     {
-        _p.StandardInput.WriteLine(JsonSerializer.Serialize(message));
-        _p.StandardInput.Flush();
+        _in.WriteLine(JsonSerializer.Serialize(message));
+        _in.Flush();
     }
 
     public void Notify(string method, object @params) => Send(new { method, @params });
@@ -596,7 +613,7 @@ public sealed class ExecServerClient : IDisposable
 
     public void Dispose()
     {
-        try { _p.StandardInput.Close(); } catch (Exception) { /* closed */ }
-        try { _p.WaitForExit(10_000); } catch (Exception) { /* gone */ }
+        try { _in.Close(); } catch (Exception) { /* closed */ }
+        try { _end(); } catch (Exception) { /* gone */ }
     }
 }
