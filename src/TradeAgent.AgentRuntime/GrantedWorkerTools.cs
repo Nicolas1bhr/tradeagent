@@ -136,7 +136,7 @@ public sealed class GrantedWorkerTools(
     [
         Ops.Status, Ops.Connectors, Ops.Accounts, Ops.Account, Ops.Instruments, Ops.Quote,
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
-        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.RunTrades, Ops.Verdict, Ops.VenueList,
+        Ops.MaterialList, Ops.MaterialNote, Ops.MaterialRead, Ops.Schema, Ops.Backtest, Ops.RunTrades, Ops.Verdict, Ops.VenueList,
         // THE PAPER RUNS A POSITION'S WORK CAUSED (U-org-autonomy item 5; R25 D9): listed — its subtree's own, for a position beyond the
         // legacy pair — and stopped, PAPER only and its subtree's own; the gateway decides both. Orders stay operations' alone.
         Ops.DeploymentList, Ops.DeploymentStop,

@@ -503,6 +503,12 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
   hash matches nothing in the ledger is refused rather than stored.
+- `material-read` (`U-chief-inbox-read`) is the read of the owner's drop folder for a position that has no folder holding it: one page
+  (at most 16 KiB; `offset` / `next_offset` continue it exactly) of ONE file the scanner recorded in the inbox (`inbox` or `inbox-unattested`)
+  and hashed, as DATA — the reply says so — beside the SHA-256 the scanner measured. The file is opened without following a link, re-hashed as
+  it is read and refused if it is no longer what was measured, refused if over 4 MiB or not text, and nothing is written (no material row, no
+  note). Served only to an active organisation position on a broker, harness or puppet seat; refused a cell (the wall keeps the inbox out), an
+  unconfined seat (it reads the folder itself) and every seat of the security board (not in `BoardSeatReads`). In the deadline table at **0**.
 - Every mutating op takes `request_id`. Reusing one returns the original outcome and dispatches nothing.
   **If it is omitted, the frame's own `id` is used in its place** — so the restriction below is
   enforced on whichever of the two is in effect, not on the optional field. (Until 2026-09-03 it was

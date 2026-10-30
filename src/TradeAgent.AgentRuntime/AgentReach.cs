@@ -293,7 +293,10 @@ public sealed record AgentReach
     public static bool CarriedBy(string op, string seatClass) =>
         (!Ops.IsOrganisation(op)
          || SeatClasses.AssuranceOf(seatClass) is { } assurance && assurance >= CapabilityPolicy.Minimum(Capability.DecisionVerbs))
-        && !(op == Ops.DataExport && seatClass == SeatClasses.Cli);
+        && !(op == Ops.DataExport && seatClass == SeatClasses.Cli)
+        // THE OWNER'S INBOX THROUGH THE DOOR is not for a CLI seat, which reads the folder itself. A cell is served the door's tools exactly as
+        // a broker seat is, and the gateway refuses it this one in words (its wall keeps the inbox out): the schema says so to the seat.
+        && !(op == Ops.MaterialRead && seatClass == SeatClasses.Cli);
 
     /// <summary>The first folder of a path relative to a seat's own folder.</summary>
     public static string TopFolder(string path) => path.Replace('\\', '/').Split('/')[0];
