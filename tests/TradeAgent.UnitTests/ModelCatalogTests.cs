@@ -15,14 +15,17 @@ public class ModelCatalogTests
     static SeatPlan CodexSeat() => RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Seat!;
 
     /// <summary>
-    /// (1) THE DATA AND ITS PIN: the shipped catalog hashes to the pin the codex seat plan compiles, and its one model is the broker and
-    /// cell classes' pinned model, gpt-6-luna (option C, the re-brief of 2026-10-25): the vendor's bundled entry with exactly three
-    /// deliberate edits — no <c>tool_mode</c> (the vendor's <c>code_mode_only</c>), <c>use_responses_lite: false</c> and no
-    /// <c>send_user_message_async</c> in <c>experimental_supported_tools</c> (<c>U-broker-seat-fixes</c>) — named by the
-    /// file's own label, which cites only the bundled 0.160.1 catalog. RED on the gpt-5.5 catalog: its slug, no label, a tool_mode key.
+    /// (1) THE DATA AND ITS PIN: the shipped catalog hashes to the pin the codex seat plan compiles, and its models are exactly the verified
+    /// catalog's, in order — gpt-6-luna, the broker and cell classes' default (option C, the re-brief of 2026-10-25), then gpt-6.1-sol, the
+    /// fallback (<c>U-seat-models</c>; R25 D8): each the vendor's bundled entry with exactly three deliberate edits — no <c>tool_mode</c>
+    /// (the vendor's <c>code_mode_only</c>), <c>use_responses_lite: false</c> and no <c>send_user_message_async</c> in
+    /// <c>experimental_supported_tools</c> (<c>U-broker-seat-fixes</c>) — named by the file's own label, which cites only the bundled
+    /// 0.160.1 catalog; and each has this build's expected surface for both verified classes. RED on the gpt-5.5 catalog: its slug, no
+    /// label, a tool_mode key; RED on the one-entry catalog of U-cell-model-catalog: no gpt-6.1-sol (renamed from
+    /// <c>…_holds_only_the_pinned_model</c> by U-seat-models, which added the second entry).
     /// </summary>
     [Fact]
-    public void The_shipped_catalog_hashes_to_its_pin_and_holds_only_the_pinned_model()
+    public void The_shipped_catalog_hashes_to_its_pin_and_holds_exactly_the_verified_models()
     {
         var seat = CodexSeat();
         var source = SeatProfile.CatalogSourcePath(seat);
@@ -34,12 +37,20 @@ public class ModelCatalogTests
 
         using var doc = JsonDocument.Parse(bytes);
         var slugs = doc.RootElement.GetProperty("models").EnumerateArray().Select(m => m.GetProperty("slug").GetString()).ToList();
-        Assert.Equal([BrokerSeat.Model], slugs);
+        Assert.Equal(BrokerSeat.Models, slugs.Select(s => s!).ToList());
+        Assert.Equal(["gpt-6-luna", "gpt-6.1-sol"], BrokerSeat.Models);
         Assert.Equal("gpt-6-luna", BrokerSeat.Model);
 
-        var entry = doc.RootElement.GetProperty("models")[0];
-        Assert.False(entry.TryGetProperty("tool_mode", out _), "the entry still carries the vendor's tool_mode");
-        Assert.False(entry.GetProperty("use_responses_lite").GetBoolean());
+        foreach (var entry in doc.RootElement.GetProperty("models").EnumerateArray())
+        {
+            var slug = entry.GetProperty("slug").GetString()!;
+            Assert.False(entry.TryGetProperty("tool_mode", out _), $"{slug} still carries the vendor's tool_mode");
+            Assert.False(entry.GetProperty("use_responses_lite").GetBoolean(), $"{slug} keeps use_responses_lite");
+            Assert.Equal(["clock"], entry.GetProperty("experimental_supported_tools").EnumerateArray().Select(t => t.GetString()));
+            Assert.True(BrokerSeat.IsCatalogModel(slug), $"{slug} has no expected surface for every verified class");
+            Assert.NotNull(BrokerSeat.ExpectedFor(SeatPlan.BrokerClass, slug));
+            Assert.NotNull(BrokerSeat.ExpectedFor(SeatPlan.CellClass, slug));
+        }
         Assert.True(doc.RootElement.TryGetProperty("_tradeagent", out var label), "the catalog does not label its edits of vendor data");
         Assert.Contains("codex-cli 0.160.1", label.GetProperty("source").GetString());
         Assert.Contains("--bundled", label.GetProperty("source").GetString());

@@ -340,10 +340,11 @@ public sealed class AgentSession(
     }
 
     /// <summary>
-    /// THE MODEL THE NEXT LAUNCH NAMES ON ITS COMMAND LINE: a broker seat's pin, whatever its account defaults to; otherwise the model
-    /// TradeAgent asks for (<see cref="RequestedModel"/>).
+    /// THE MODEL THE NEXT LAUNCH NAMES ON ITS COMMAND LINE: a broker seat's choice among the verified catalog's models, or its default,
+    /// whatever its account defaults to (<c>U-seat-models</c>; a choice outside the catalog is refused before any launch); otherwise the
+    /// model TradeAgent asks for (<see cref="RequestedModel"/>).
     /// </summary>
-    string? LaunchModel => Broker ? BrokerSeat.ModelOf(SeatClass) : RequestedModel;
+    string? LaunchModel => Broker ? BrokerSeat.ModelOf(SeatClass, RequestedModel) ?? BrokerSeat.ModelOf(SeatClass) : RequestedModel;
 
     /// <summary>
     /// HOW THIS LAUNCH'S SEAT IS VERIFIED: its class, the door, and — for a broker seat — the owner's own choice of model for the
@@ -981,8 +982,10 @@ public sealed class AgentSession(
         var launchSeat = Launch;
         // THE MODEL THIS TURN LAUNCHES WITH, READ ONCE (fix pass 1 of U-cli-code-mode): every use below — the argv, the seat's dry
         // run, the dead-seat check and the mark a turn whose tools could not run leaves — names this one, never a model chosen while
-        // the turn ran. A broker seat's is its pin; any other's is the one its verification was asked about.
-        var launchModel = BrokerSeat.IsVerified(seatClass) ? BrokerSeat.ModelOf(seatClass) : launchSeat.Model;
+        // the turn ran. A broker seat's is its catalog model (U-seat-models); any other's is the one its verification was asked about.
+        var launchModel = BrokerSeat.IsVerified(seatClass)
+            ? BrokerSeat.ModelOf(seatClass, launchSeat.Model) ?? BrokerSeat.ModelOf(seatClass)
+            : launchSeat.Model;
         var args = AgentArgs.For(manifest, message, resuming: Resumes(seatClass), model: launchModel, seatClass, launchSeat.Door,
             out var promptInArgv);
 

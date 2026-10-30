@@ -243,6 +243,65 @@ public class BrokerSeatTests : IDisposable
         Assert.Contains("cannot name the model", BrokerSeat.ModelRefusal(SeatPlan.BrokerClass, null, mute));
     }
 
+    /// <summary>
+    /// (c2) A POSITION'S MODEL IS A CHOICE AMONG THE VERIFIED CATALOG'S ENTRIES (<c>U-seat-models</c>; R25 D8): a broker seat whose position
+    /// chose gpt-6.1-sol, the fallback, launches on it — its argv names it and its offered surface is read and checked for IT, under the same
+    /// refusal rules as gpt-6-luna's (code mode's <c>exec</c> offered refuses) — and a choice of any model the catalog does not hold
+    /// (gpt-6-astra, gpt-6-sol, gpt-5.6-sol: each code-mode-only upstream, none with an entry) is refused in words naming it and the
+    /// catalog's entries, before any surface is read.
+    ///
+    /// <para>RED at base: the fallback was refused ("a broker-only seat runs only on gpt-6-luna"). The watched mutant — the catalog check
+    /// accepting any model — is red here, quoted in the unit's landing entry.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_broker_seat_runs_on_the_catalog_model_its_position_chose_and_any_other_model_is_refused()
+    {
+        using var db = TestEnv.NewDb();
+        var register = Position(db);
+        const string sol = "gpt-6.1-sol";
+
+        var (codex, exe, dump) = SeatHomeTests.Seat("catalog-sol");
+        var surface = new FakeSurface(Classic);
+        var session = Session(codex, exe, register, surface, model: sol);
+        var verdict = session.CheckSeat();
+        Assert.False(verdict.Refused, $"a broker seat chosen onto the catalog's fallback was refused: {verdict.Refusal}");
+        Assert.Equal([sol], surface.Models);
+
+        var meter = ThinkingSeatsTests.Meter(db, _ => SeatClasses.Broker);
+        using (meter.Attach(session, Pos))
+            await session.SendAsync("go");
+        var exec = Unquoted(Assert.Single(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal)));
+        Assert.True(exec.Contains($"-m {sol}", StringComparison.Ordinal), $"the fallback's turn did not name it: {exec}");
+        Assert.DoesNotContain("-m gpt-6-luna", exec, StringComparison.Ordinal);
+
+        // THE SAME REFUSAL RULES: the fallback offered code mode's exec is refused, naming it.
+        var (codex2, exe2, _) = SeatHomeTests.Seat("catalog-sol-exec");
+        var codeMode = Session(codex2, exe2, register, new FakeSurface(CodeMode), model: sol).CheckSeat();
+        Assert.True(codeMode.Refused, "the fallback offered code mode's exec was not refused");
+        Assert.Contains("'exec'", codeMode.Refusal);
+
+        // AN ARGV THAT NAMES ANOTHER MODEL THAN THE ONE CHOSEN IS REFUSED AS BUILT.
+        var home = Path.GetDirectoryName(exe)!;
+        var launch = new SeatLaunch(SeatPlan.BrokerClass, DoorAt, sol, new FakeSurface(Classic));
+        var lunaArgv = AgentArgs.For(codex, "", resuming: false, "gpt-6-luna", SeatPlan.BrokerClass, DoorAt, out _);
+        var wrong = await SeatProfile.VerifyAsync(codex, exe, lunaArgv, home, BrokerProbe(), launch, default);
+        Assert.True(wrong.Refused, "a broker argv naming gpt-6-luna was verified for a seat chosen onto the fallback");
+        Assert.Contains($"does not name {sol}", wrong.Refusal);
+
+        // NO MODEL OUTSIDE THE CATALOG, whatever its tools would be: refused naming it and the catalog's entries, no surface read.
+        foreach (var other in new[] { "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol" })
+        {
+            var (c, e, _) = SeatHomeTests.Seat("catalog-" + other);
+            var asked = new FakeSurface(Classic);
+            var refused = Session(c, e, register, asked, model: other).CheckSeat();
+            Assert.True(refused.Refused, $"a broker seat chosen onto {other}, outside the catalog, was not refused");
+            Assert.Contains(other, refused.Refusal);
+            Assert.Contains("gpt-6-luna", refused.Refusal);
+            Assert.Contains(sol, refused.Refusal);
+            Assert.Equal(0, asked.Asks);
+        }
+    }
+
     // ---- (d) runtimes.json cannot change the class ---------------------------------------------------------------------
 
     /// <summary>
@@ -614,9 +673,13 @@ public class BrokerSeatTests : IDisposable
     {
         public int Asks;
 
+        /// <summary>The model of each ask, in order.</summary>
+        public List<string> Models { get; } = [];
+
         public Task<IReadOnlyList<string>> OfferedAsync(SurfaceAsk ask, CancellationToken ct)
         {
             Interlocked.Increment(ref Asks);
+            lock (Models) Models.Add(ask.Model);
             return Task.FromResult<IReadOnlyList<string>>(offered);
         }
     }

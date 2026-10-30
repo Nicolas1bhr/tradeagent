@@ -193,6 +193,58 @@ public class OrgSeatsTests : IDisposable
         // A BROKER-ONLY SEAT: its model is the pin whatever was chosen, and the pin is what its session launches.
         Assert.Equal(BrokerSeat.Model, AppHost.SeatModelOn(SeatPlan.BrokerClass, chosen: "gpt-5.6-luna", resolved: "gpt-5.6-luna"));
         Assert.Equal("gpt-5.6-luna", AppHost.SeatModelOn(SeatClasses.Cli, chosen: "gpt-5.6-luna", resolved: "gpt-5.6-luna"));
+        // ...unless the choice is a model of the verified catalog (U-seat-models): the fallback is priced as the fallback, on both verified
+        // classes; no choice is the default.
+        foreach (var verified in new[] { SeatPlan.BrokerClass, SeatPlan.CellClass })
+        {
+            Assert.Equal(BrokerSeat.Fallback, AppHost.SeatModelOn(verified, chosen: BrokerSeat.Fallback, resolved: "gpt-5.6-sol"));
+            Assert.Equal(BrokerSeat.Model, AppHost.SeatModelOn(verified, chosen: null, resolved: "gpt-5.6-sol"));
+        }
+    }
+
+    // ---- (c2) the owner switches a position's model among the verified catalog's (U-seat-models) -------------------
+
+    /// <summary>
+    /// (c2) THE OWNER SWITCHES A POSITION'S MODEL, ONLY AMONG THE VERIFIED CATALOG'S AND ONLY WHILE NO BOARD SEAT IS ACTIVE (<c>U-seat-models</c>;
+    /// R25 D8): a position with no seat of its own is seated on the runtime its launch resolves to, at the policy's allowance, on the chosen
+    /// model, with one <c>org_event seated</c> decided by the owner; a second switch keeps that runtime and allowance. Refused in words, nothing
+    /// written: a model outside the catalog, the model it already runs on, the legacy pair, and anything once a board seat is active.
+    /// </summary>
+    [Fact]
+    public void The_owner_switches_a_positions_model_among_the_catalogs_only_while_no_board_seat_is_active()
+    {
+        using var db = TestEnv.NewDb();
+        Position(db);
+        var store = new OrgStore(db);
+        static bool Known(string id) => RuntimeCatalog.Find(id) is not null;
+        var now = DateTimeOffset.UtcNow;
+        long Events() => db.Read(_ => { using var c = db.Cmd("SELECT COUNT(*) FROM org_event WHERE kind='seated' AND decider='owner'"); return (long)c.ExecuteScalar()!; });
+
+        Assert.Null(store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now));
+        var policy = new TradeAgent.Core.Board.BoardReader(db).InForce().Policy;
+        var row = store.Position(Pos)!;
+        Assert.Equal(("codex", BrokerSeat.Fallback, policy.TurnAllowanceInput.ToString(), policy.TurnAllowanceOutput.ToString()),
+            (row.SeatRuntime, row.SeatModel, row.SeatAllowIn, row.SeatAllowOut));
+        Assert.Equal(1, Events());
+
+        foreach (var (model, said) in new[] { ("gpt-6-astra", "not a model of this build's verified catalog"), ("gpt-5.6-sol", "not a model"),
+                                               (BrokerSeat.Fallback, "already set to run on") })
+            Assert.Contains(said, Assert.Throws<TradeAgentException>(() => store.ChooseSeatModel(Pos, model, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message);
+        Assert.Contains("Owner page", Assert.Throws<TradeAgentException>(() =>
+            store.ChooseSeatModel(CouncilRoles.Research, BrokerSeat.Model, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message);
+        Assert.Equal(BrokerSeat.Fallback, store.Position(Pos)!.SeatModel);
+        Assert.Equal(1, Events());
+
+        store.SetSeat(Pos, Harness, BrokerSeat.Fallback, 300_000, 8_000, Known, now);
+        Assert.Equal(BrokerSeat.Fallback, store.ChooseSeatModel(Pos, BrokerSeat.Model, BrokerSeat.IsCatalogModel, "codex", Known, now));
+        row = store.Position(Pos)!;
+        Assert.Equal((Harness, BrokerSeat.Model, "300000", "8000"), (row.SeatRuntime, row.SeatModel, row.SeatAllowIn, row.SeatAllowOut));
+
+        new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest("board-2", TradeAgent.Core.Board.BoardSeatStatus.Active, now);
+        var refused = Assert.Throws<TradeAgentException>(() => store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message;
+        Assert.Contains("the security board's now that a board seat is active", refused);
+        Assert.Contains("Nothing was written", refused);
+        Assert.Equal(BrokerSeat.Model, store.Position(Pos)!.SeatModel);
     }
 
     // ---- (d) the harness never sends a request that could pass the seat allowance --------------------------------

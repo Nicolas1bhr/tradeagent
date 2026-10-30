@@ -79,6 +79,13 @@ public static partial class Labels
     public const string ChiefChooseSeat = "Choose the seat the chief runs on first. Nothing was written.";
     public static string ChiefSeatChoice(ChiefSeat seat) => $"{seat.Runtime} · {seat.Model}";
 
+    /// <summary>
+    /// THE OWNER'S SWITCH OF A POSITION'S MODEL (<c>U-seat-models</c>): one two-step press per model of the verified catalog the position is
+    /// not already on, on its row; <paramref name="model"/> is the model in the app's words ("gpt-6.1-sol (the fallback)").
+    /// </summary>
+    public static string SeatModelSwitch(string model) => $"Run on {model}";
+    public static string SeatModelSwitchConfirm(string model) => $"Press again: set this position to run on {model} from its next turn";
+
     public const string ChiefAppoint = "Appoint a chief";
     public const string ChiefAppointConfirm = "Press again: appoint a chief on the chosen seat, dormant until you activate it";
     public const string ChiefReplace = "Replace the chief";

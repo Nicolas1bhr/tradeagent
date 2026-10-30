@@ -335,7 +335,14 @@ public sealed class TradeAgentSettings
     /// predates the council, then null for the runtime's default.
     /// </summary>
     public string? ModelForRole(string role) =>
-        RoleModel.TryGetValue(role, out var m) && m.Length > 0 ? m : SelectedModelId;
+        OwnModelForRole(role) ?? SelectedModelId;
+
+    /// <summary>
+    /// The model chosen for this role itself, or null — never the app-wide choice (<c>U-seat-models</c>): a position on a verified seat runs
+    /// on its own choice among the catalog's models or the catalog's default, not on whatever the owner's chat was last set to.
+    /// </summary>
+    public string? OwnModelForRole(string role) =>
+        RoleModel.TryGetValue(role, out var m) && m.Length > 0 ? m : null;
 
 
     public string? SelectedConnectorId { get; set; }
