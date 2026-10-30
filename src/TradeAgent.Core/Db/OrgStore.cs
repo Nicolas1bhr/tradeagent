@@ -173,6 +173,14 @@ public static class OrgEventKind
     public const string ChiefAppointed = "chief-appointed", ChiefReplaced = "chief-replaced", ChiefVacated = "chief-vacated";
 
     /// <summary>
+    /// THE OWNER WOKE AN ACTIVE CHIEF ONCE (<c>U-chief-wake-once</c>): his two-press "Wake the chief once", decided by
+    /// <see cref="OrgDecider.Owner"/>, its detail the app's — the position, the seat, the wake's id. Written by
+    /// <see cref="OrgStore.WakeChiefOnce"/> alone, in the write that raises the one <see cref="MissionEventKind.OwnerWake"/>. It grants,
+    /// moves and changes nothing on the chart, the ceiling or the board.
+    /// </summary>
+    public const string WokenOnce = "woken-once";
+
+    /// <summary>
     /// THE LAUNCHES A MANDATE'S CANCELLATION OR RE-SCOPE TOOK AUTHORITY FROM (<c>U-org-verbs-d</c> fix pass; the Codex review, P2): the
     /// ones under it still open when that transition committed, read in its own write and named in app-composed detail — the record
     /// <see cref="OrgStore.FencedBy"/> reads, so which launch was cut mid-turn is commit order and never two stamps. Decided by the app;

@@ -1640,6 +1640,42 @@ public sealed class AppHost : IAsyncDisposable
                + "organisation's head is vacant. No one was restored in its place.";
     });
 
+    /// <summary>
+    /// WHAT THE WAKE-ONCE PRESS IS DECIDED ON (<c>U-chief-wake-once</c>), read from this app at each press: the AI started (an agent prepared),
+    /// working on its own (the loop running, not paused), this host's recorded proven cell, and the chief's ceiling as the policy in force
+    /// states it — the facts the store refuses on. Never read from a file or an agent.
+    /// </summary>
+    ChiefWakeFacts WakeFacts()
+    {
+        var state = Mission?.Status.State;
+        return new ChiefWakeFacts(
+            AgentStarted: state is not null and not MissionState.Stopped,
+            WorksOnItsOwn: state is MissionState.Waiting or MissionState.Working,
+            ProvenCell: CellProofHeld,
+            Ceiling: TimeSpan.FromHours(Math.Max(0, Gateway.Policy.HeadCeilingHours)));
+    }
+
+    /// <summary>"Wake the chief once", press one: what it would do now, or why it cannot. Reads only.</summary>
+    internal ChiefWakePreview PreviewChiefWake()
+    {
+        if (_db is not { } db)
+            return new ChiefWakePreview(null, null, "The organisation's records are not open, so nothing is woken.",
+                "The organisation's records are not open, so nothing is woken.");
+        return new OrgStore(db).PreviewChiefWake(WakeFacts());
+    }
+
+    /// <summary>
+    /// "WAKE THE CHIEF ONCE", PRESS TWO (<c>U-chief-wake-once</c>; AUTH-001: in-process only), handed what press one showed: one wake of the
+    /// active chief, raised with its <c>woken-once</c> event in one write — and the loop nudged, so the turn starts now. It launches nothing
+    /// itself: the wake is taken by the loop's next pass, through the activation gate and admission like every launch.
+    /// </summary>
+    internal string WakeChiefOnce(ChiefWakePreview asShown) => ChiefPress(org =>
+    {
+        var woken = org.WakeChiefOnce(asShown, WakeFacts(), DateTimeOffset.UtcNow);
+        Mission?.Wake();
+        return $"You woke the chief {woken.Chief} once: one turn now, on {asShown.Seat}. {asShown.After}";
+    });
+
     /// <summary>One press over the chief: its words, logged as his in the Activity log — or the refusal's words, nothing written.</summary>
     string ChiefPress(Func<OrgStore, string> press)
     {

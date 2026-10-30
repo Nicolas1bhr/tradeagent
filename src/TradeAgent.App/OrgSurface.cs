@@ -57,7 +57,11 @@ sealed record OrgSurfaceSources
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
-        Chief = new ChiefPresses(() => host.BoardActive, host.ChiefSeats, host.AppointChief, host.ReplaceChief, host.ActivateChief, host.RemoveChief),
+        Chief = new ChiefPresses(() => host.BoardActive, host.ChiefSeats, host.AppointChief, host.ReplaceChief, host.ActivateChief, host.RemoveChief)
+        {
+            PreviewWake = host.PreviewChiefWake,
+            WakeOnce = host.WakeChiefOnce
+        },
         SeatOf = host.ResolvedSeatOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
@@ -76,7 +80,20 @@ sealed record OrgSurfaceSources
 /// refused as moved when another sits. Each runs in-process, in the owner's own app; none is reachable from the pipe.
 /// </summary>
 sealed record ChiefPresses(Func<bool> BoardActive, Func<IReadOnlyList<ChiefSeat>> Seats, Func<ChiefSeat, string> Appoint,
-    Func<string?, ChiefSeat, string> Replace, Func<string?, string> Activate, Func<string?, string> Remove);
+    Func<string?, ChiefSeat, string> Replace, Func<string?, string> Activate, Func<string?, string> Remove)
+{
+    /// <summary>
+    /// "WAKE THE CHIEF ONCE", PRESS ONE (<c>U-chief-wake-once</c>): what the press would do now, or why it cannot — the store's preview over
+    /// the host's own facts. Reads only. Null: this card draws no wake press.
+    /// </summary>
+    public Func<ChiefWakePreview>? PreviewWake { get; init; }
+
+    /// <summary>
+    /// PRESS TWO, handed what press one showed: the words of what was done, or the refusal's — as moved when the press would now do anything
+    /// else, nothing written. In-process only; no pipe op, verb or board act reaches it.
+    /// </summary>
+    public Func<ChiefWakePreview, string>? WakeOnce { get; init; }
+}
 
 /// <summary>
 /// THE SENTENCES THE THREE PAGES SHARE. A claim — a rationale, a report, an objective, a probability — is always printed as someone's

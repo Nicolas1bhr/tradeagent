@@ -313,12 +313,16 @@ sealed class ChiefCard
     readonly List<(ChiefSeat Seat, Button Press)> _choices = [];
     ChiefSeat? _chosen;
     string? _shown;
+    readonly TextBlock _wakeWhat = Ui.Muted("");
+    ChiefWakePreview? _wakeShown;
 
     public Control Root { get; }
     internal Button Appoint { get; }
     internal Button Replace { get; }
     internal Button Activate { get; }
     internal Button Remove { get; }
+    internal Button WakeOnce { get; }
+    internal TextBlock WakeWhat => _wakeWhat;
     internal IReadOnlyList<Button> SeatChoices => [.. _choices.Select(c => c.Press)];
     internal Control SeatRow => _seatRow;
     internal TextBlock Done => _done;
@@ -327,7 +331,7 @@ sealed class ChiefCard
     {
         _presses = presses;
         _refresh = refresh;
-        foreach (var t in new[] { _sitting, _whose, _done, _seatPrompt }) t.FontSize = Theme.Small;
+        foreach (var t in new[] { _sitting, _whose, _done, _seatPrompt, _wakeWhat }) t.FontSize = Theme.Small;
         _done.IsVisible = false;
         _seatRow = Ui.Col(Theme.S1, _seatPrompt, _seats);
         Seats();
@@ -337,10 +341,27 @@ sealed class ChiefCard
         Replace = Ui.Confirm(Labels.ChiefReplace, Labels.ChiefReplaceConfirm, () => Said(_presses.Replace(_shown, _chosen!)), NoSeat, Said);
         Activate = Ui.Confirm(Labels.ChiefActivate, Labels.ChiefActivateConfirm, () => Said(_presses.Activate(_shown)));
         Remove = Ui.Confirm(Labels.ChiefRemove, Labels.ChiefRemoveConfirm, () => Said(_presses.Remove(_shown)));
+        // "WAKE THE CHIEF ONCE" (U-chief-wake-once): TWO presses always, as every paid start. Either press is refused in words on this card
+        // while the store's preview refuses; press one keeps the preview it showed and arms with its words; press two hands THAT preview
+        // back, and the store refuses as moved, nothing written, a press that would now do anything else.
+        WakeOnce = Ui.ConfirmIf(Labels.ChiefWakeOnce,
+            () =>
+            {
+                _wakeShown = WakePreview();
+                return Labels.ChiefWakeOnceConfirm(_wakeShown.Words);
+            },
+            () =>
+            {
+                var shown = _wakeShown;
+                _wakeShown = null;
+                Said(shown is not null && _presses.WakeOnce is { } wake ? wake(shown) : Labels.ChiefWakeOnceUnarmed);
+            },
+            () => WakePreview().Refusal,
+            Said);
 
         var title = Ui.With(Ui.Body(Labels.ChiefTitle), t => t.FontWeight = FontWeight.SemiBold);
-        var row = Ui.Wrap(Theme.S2, Appoint, Replace, Activate, Remove);
-        Root = Ui.Col(Theme.S2, title, _sitting, _whose, _seatRow, row, _done);
+        var row = Ui.Wrap(Theme.S2, Appoint, Replace, Activate, Remove, WakeOnce);
+        Root = Ui.Col(Theme.S2, title, _sitting, _whose, _seatRow, row, _wakeWhat, _done);
     }
 
     /// <summary>
@@ -367,6 +388,17 @@ sealed class ChiefCard
         OrgText.Set(_seatPrompt, seats.Count > 0 ? Labels.ChiefSeatPrompt : Labels.ChiefNoSeats);
     }
 
+    /// <summary>The store's preview of the wake-once press now; a source that throws or is absent reads as a refusal, never as a press.</summary>
+    ChiefWakePreview WakePreview()
+    {
+        try
+        {
+            if (_presses.PreviewWake?.Invoke() is { } preview) return preview;
+        }
+        catch (Exception ex) { return new ChiefWakePreview(null, null, ex.Message, Labels.ChiefWakeOnceUnreadable(ex.Message)); }
+        return new ChiefWakePreview(null, null, Labels.ChiefWakeOnceUnarmed, Labels.ChiefWakeOnceUnarmed);
+    }
+
     void Choose(ChiefSeat seat)
     {
         _chosen = seat;
@@ -388,7 +420,7 @@ sealed class ChiefCard
     {
         if (root.HeadId != _shown)
         {
-            foreach (var press in new[] { Appoint, Replace, Activate, Remove }) Ui.DisarmConfirm(press);
+            foreach (var press in new[] { Appoint, Replace, Activate, Remove, WakeOnce }) Ui.DisarmConfirm(press);
             _shown = root.HeadId;
         }
         bool board;
@@ -403,6 +435,16 @@ sealed class ChiefCard
         Show(Replace, !board && root.HeadId is not null);
         Show(Activate, !board && chief is { Status: OrgPositionStatus.Dormant });
         Show(Remove, root.HeadId is not null);
+
+        // THE WAKE-ONCE PRESS, while an active chief sits — whoever holds the appointment: his word on paid spend is his. A half-press whose
+        // preview no longer holds is disarmed here, so the armed sentence on screen is always what press two would do.
+        var wakeable = _presses.PreviewWake is not null && chief is { Status: OrgPositionStatus.Active };
+        Show(WakeOnce, wakeable);
+        Show(_wakeWhat, wakeable);
+        if (!wakeable) return;
+        var now = WakePreview();
+        OrgText.Set(_wakeWhat, $"{Labels.ChiefWakeOnceWhat} {now.After}".TrimEnd());
+        if (Ui.IsArmed(WakeOnce) && (_wakeShown is null || _wakeShown.WhatMoved(now) is not null)) Ui.DisarmConfirm(WakeOnce);
     }
 
     static void Show(Control c, bool visible)
