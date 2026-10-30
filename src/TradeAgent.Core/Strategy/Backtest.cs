@@ -454,6 +454,10 @@ public static class Backtest
 
         StrategyIntent? pending = null;
         var pendingQuantity = 0m;
+
+        // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar that reached the limit, or null while none
+        // is. It is an order of the run's and never an intent of the evaluator's, so the one-intent count stays true.
+        KlineBar? flattening = null;
         string? fault = null;
 
         // THE DECLARED BAR'S PLACE IN THE RUN, 1-based: every event of one declared bar shares it — its
@@ -530,6 +534,13 @@ public static class Backtest
             trace.Add(BacktestEvent.NoTrade(ordinal, waiting.Bar, pendingQuantity, waiting.ReferencePrice,
                 $"the run's window ended before the next bar, so this signal had no open to fill at"));
 
+        // A MAXIMUM HOLD WHOSE CLOSE NEVER FILLED leaves the position open at the end, as paper would show it: in the
+        // equity, outside net pnl, and said in words rather than closed at a price nothing could have filled at.
+        if (flattening is { } reached && position > 0m)
+            trace.Add(BacktestEvent.NoTrade(ordinal, reached.OpenTime, position, reached.Close,
+                $"the run's window ended before the next minute, so the maximum hold's market close had no open to fill "
+                + $"at and the position is still open at the end: it is in the equity and outside net pnl"));
+
         // WHAT EACH FEATURE CAME TO, ONE LINE EACH, LAST — under the trace's hash like every other line: its id, its
         // clean-history start as of the last close read, the bars evaluated before it, the bars it had no value at and
         // the worst class of the values read. A program that reads no feature writes none, so its trace is the one it
@@ -564,6 +575,12 @@ public static class Backtest
 
                 // 1. THE PENDING SIGNAL FILLS AT THIS MINUTE'S OPEN. It was decided at the previous
                 //    declared bar's close and this is the first price after that decision.
+                if (flattening is not null)
+                {
+                    if (position > 0m) Close(minute, ordinal, model.Sell(minute.Open), ExitReason.MaxHoldBars);
+                    flattening = null;
+                }
+
                 if (pending is { } intent)
                 {
                     if (intent.Kind == IntentKind.Enter)
@@ -638,21 +655,26 @@ public static class Backtest
 
             try
             {
-                // 3. THE MAXIMUM HOLD, AT THE CLOSE OF THE DECLARED BAR THAT REACHES IT — protection, and
-                //    before the evaluator is asked, so the account it reads is already flat.
-                if (position > 0m && program.MaxHoldBars is { } maximum && barOrdinal - entryOrdinal >= maximum)
-                    Close(lastMinute!, barOrdinal, model.Sell(bar.Close), ExitReason.MaxHoldBars);
+                // 3. THE MAXIMUM HOLD, DECIDED AT THE CLOSE OF THE DECLARED BAR THAT REACHES IT — protection, and
+                //    before the evaluator is asked. Its close is a MARKET SELL placed now and filled like any order,
+                //    never at this bar's close; while it is in flight the books still hold the position.
+                var holdReached = position > 0m && program.MaxHoldBars is { } maximum && barOrdinal - entryOrdinal >= maximum;
+                if (holdReached && flattening is null && pending is null) flattening = bar;
 
-                // 4. THE EVENT. The account reading is what this backtest's own books say, at this
-                //    bar's close, after its fills and its protection.
+                // 4. THE EVENT. The account reading is what this backtest's own books say, at this bar's close, after
+                //    its fills and its protection — read FLAT WITH AN ORDER PENDING on every event whose books hold the
+                //    position at or past the maximum hold, as the paper runner's `RunBooks.Flat` reads it: the close has
+                //    been sent and has not filled, so the program is not handed back a position it was told is over,
+                //    and no entry is taken while its close is in flight.
                 var equity = cash + position * bar.Close;
+                var held = position > 0m && !holdReached;
                 var account = new AccountReading(
-                    cash, equity, position > 0m ? PositionSide.Long : PositionSide.Flat, position,
-                    position > 0m ? entryPrice : 0m,
-                    // NOTHING IS EVER PENDING AT AN EVENT IN A BACKTEST: an intent emitted at the
-                    // previous close has already filled or been refused at the first minute after it.
-                    OrderPending: false,
-                    position > 0m ? (int)Math.Min(barOrdinal - entryOrdinal, int.MaxValue) : 0);
+                    cash, equity, held ? PositionSide.Long : PositionSide.Flat, held ? position : 0m,
+                    held ? entryPrice : 0m,
+                    // AN ORDER THE EVALUATOR ITSELF EMITTED IS NOT REPORTED PENDING: its own one-event hold covers the
+                    // minute it is placed in, and reporting it too would keep that hold past the fill.
+                    OrderPending: holdReached,
+                    held ? (int)Math.Min(barOrdinal - entryOrdinal, int.MaxValue) : 0);
 
                 // THE FEATURES AT THIS BAR'S CLOSE — the instant its decision is taken — as they had arrived by then.
                 // A day of them more than one read serves halts the run here, in words, before anything is decided.
