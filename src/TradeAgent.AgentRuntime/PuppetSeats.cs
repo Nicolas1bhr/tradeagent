@@ -14,6 +14,12 @@ internal static class PuppetSeats
     internal static bool TestHost { get; set; }
 
     /// <summary>
+    /// Whether <paramref name="runtime"/> is the puppet's reserved id in a test host — the one runtime a test host seats a position on that
+    /// no catalogue carries (<c>U-loop-e2e</c>: a chief appointed by the owner's own press, on the puppet the host runs). False in the product.
+    /// </summary>
+    internal static bool Seats(string runtime) => TestHost && runtime == RuntimeManifest.PuppetId;
+
+    /// <summary>
     /// The sentence refusing <paramref name="manifest"/>, naming it, when it is a puppet and this process is not a test host; null
     /// otherwise — and always null for a manifest that is not a puppet, whatever the flag says.
     /// </summary>

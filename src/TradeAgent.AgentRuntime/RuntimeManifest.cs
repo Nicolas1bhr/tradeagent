@@ -1632,6 +1632,12 @@ public static class RuntimeCatalog
     public static RuntimeManifest? Find(string id) => Read().Runtimes.FirstOrDefault(m => m.Id == id);
 
     /// <summary>
+    /// WHETHER A SEAT MAY NAME <paramref name="id"/>: a runtime the catalogue carries — or, in a test host only, the puppet's reserved id,
+    /// which no file can carry (<see cref="PuppetSeats.Seats"/>). The question a seat's runtime column and the chief's appointment ask.
+    /// </summary>
+    public static bool Knows(string id) => Find(id) is not null || PuppetSeats.Seats(id);
+
+    /// <summary>
     /// THE MANIFESTS THAT ARE HARNESSES — the ones TradeAgent runs itself rather than starting a
     /// vendor program. It is exactly the entries that carry a <see cref="RuntimeManifest.BaseUrl"/>,
     /// because that is what makes one: a runtime with an endpoint has no executable, no install and no

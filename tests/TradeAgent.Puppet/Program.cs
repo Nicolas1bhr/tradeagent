@@ -27,6 +27,8 @@ using System.Text.Json.Nodes;
 //   crash                  dies at once, with nothing flushed and no answer
 // In any step, {prompt:PATTERN} is replaced by PATTERN's first group as matched in this turn's prompt — what the seat was told, never
 // the database (U-org-scorecards-b fix pass 1); PATTERN holds no '}'. A pattern the prompt does not match ends the turn with code 4.
+// {out:PATTERN} is the same over what this turn's `trade` steps printed, the latest first — an id a verb answered, read back as a seat
+// reads its own command's output (U-loop-e2e); unmatched, code 4 likewise.
 // What it did is written beside the scripts: <key>.<n>.prompt (the prompt as received) and <key>.<n>.log (one JSON line per
 // step that has a result). <dir>/launches.log gains a line before anything else, on every start but the version probe.
 
@@ -60,9 +62,10 @@ File.WriteAllText(Path.Combine(scripts, $"{key}.{n}.prompt"), prompt, new UTF8En
 var log = Path.Combine(scripts, $"{key}.{n}.log");
 
 var items = 0;
+var printed = new List<string>();
 foreach (var scripted in StepsFor(scripts, key, n))
 {
-    if (FromPrompt(scripted, prompt) is not { } step)
+    if (FromPrompt(scripted, prompt) is not { } prompted || FromOutput(prompted, printed) is not { } step)
     {
         Log(log, new JsonObject { ["step"] = "prompt", ["unmatched"] = scripted });
         return 4;
@@ -74,6 +77,7 @@ foreach (var scripted in StepsFor(scripts, key, n))
         {
             var words = Words(rest);
             var (code, stdout, stderr) = Trade(words);
+            printed.Insert(0, stdout);
             var id = $"puppet_cmd_{++items}";
             Emit(new JsonObject
             {
@@ -176,6 +180,23 @@ static string? FromPrompt(string step, string prompt)
         if (end < 0) return null;
         var match = System.Text.RegularExpressions.Regex.Match(prompt, step[(at + open.Length)..end]);
         if (!match.Success || match.Groups.Count < 2) return null;
+        step = step[..at] + match.Groups[1].Value + step[(end + 1)..];
+    }
+    return step;
+}
+
+/// <summary>The step with each {out:PATTERN} replaced by PATTERN's first group in the latest `trade` output it matches, or null where none does.</summary>
+static string? FromOutput(string step, IReadOnlyList<string> printed)
+{
+    const string open = "{out:";
+    for (var at = step.IndexOf(open, StringComparison.Ordinal); at >= 0; at = step.IndexOf(open, StringComparison.Ordinal))
+    {
+        var end = step.IndexOf('}', at);
+        if (end < 0) return null;
+        var pattern = step[(at + open.Length)..end];
+        var match = printed.Select(o => System.Text.RegularExpressions.Regex.Match(o, pattern))
+            .FirstOrDefault(m => m.Success && m.Groups.Count >= 2);
+        if (match is null) return null;
         step = step[..at] + match.Groups[1].Value + step[(end + 1)..];
     }
     return step;

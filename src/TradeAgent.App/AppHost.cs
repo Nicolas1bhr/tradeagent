@@ -1742,7 +1742,7 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Whether this host's runtime catalogue names <paramref name="runtime"/> — the check a chief's seat is held to (<c>U-org-chief</c>).</summary>
     internal static bool KnownRuntime(string runtime)
     {
-        try { return RuntimeCatalog.Find(runtime) is not null; }
+        try { return RuntimeCatalog.Knows(runtime); }
         catch (Exception) { return false; }
     }
 
@@ -1932,6 +1932,35 @@ public sealed class AppHost : IAsyncDisposable
                 }
             }, ct);
 
+    /// <summary>
+    /// THE BACKGROUND LOOP'S TRADING PASS, the first thing each of its ticks does — and the one a test host drives itself, since
+    /// <see cref="Composed"/> runs no background loop (<c>U-loop-e2e</c>): the gateway's health (which grants the policy's standing
+    /// paper envelope), the reconcile of unconfirmed work, every paper deployment's settlement, and the forward runs.
+    /// </summary>
+    internal async Task TradingPassAsync(CancellationToken ct = default)
+    {
+        await Gateway.RefreshHealthAsync(ct);
+        ReportAtasHealth();
+        // The gateway's own count, not the raw flag: a record stranded in DISPATCHING is
+        // unconfirmed work the moment it outlives a dispatch, and reconciling is what turns
+        // it into a flagged row the rest of the screen can see.
+        if (Gateway.HasUnconfirmedWork()) await Gateway.ReconcileAsync(ct);
+
+        // AND EVERY PAPER DEPLOYMENT, at start-up and on every pass. This is where a run's
+        // own operations are settled from their order rows, where a platform, mode or account
+        // that moved suspends one, where a grant or a verdict that has gone ends one, and
+        // where an operation that was written down and never sent is dispatched — once. It is
+        // on the APP's clock rather than the AI's because none of it is a turn and a paused
+        // AI must not leave an order this gateway cannot account for.
+        await Gateway.ReconcilePaperDeploymentsAsync(ct: ct);
+
+        // AND THE RUNS THEMSELVES, over whatever has closed since. The runner rebuilds each
+        // deployment's evaluator from the forward bars and dispatches what the frozen program
+        // decided — on the app's clock, for the reason above: a strategy running forward is
+        // not a turn, and a paused AI or an exhausted ceiling must not stop protection.
+        await ForwardRunner.AdvanceAsync(ct);
+    }
+
     async Task BackgroundAsync(CancellationToken ct)
     {
         var tick = 0;
@@ -1939,26 +1968,7 @@ public sealed class AppHost : IAsyncDisposable
         {
             try
             {
-                await Gateway.RefreshHealthAsync(ct);
-                ReportAtasHealth();
-                // The gateway's own count, not the raw flag: a record stranded in DISPATCHING is
-                // unconfirmed work the moment it outlives a dispatch, and reconciling is what turns
-                // it into a flagged row the rest of the screen can see.
-                if (Gateway.HasUnconfirmedWork()) await Gateway.ReconcileAsync(ct);
-
-                // AND EVERY PAPER DEPLOYMENT, at start-up and on every pass. This is where a run's
-                // own operations are settled from their order rows, where a platform, mode or account
-                // that moved suspends one, where a grant or a verdict that has gone ends one, and
-                // where an operation that was written down and never sent is dispatched — once. It is
-                // on the APP's clock rather than the AI's because none of it is a turn and a paused
-                // AI must not leave an order this gateway cannot account for.
-                await Gateway.ReconcilePaperDeploymentsAsync(ct: ct);
-
-                // AND THE RUNS THEMSELVES, over whatever has closed since. The runner rebuilds each
-                // deployment's evaluator from the forward bars and dispatches what the frozen program
-                // decided — on the app's clock, for the reason above: a strategy running forward is
-                // not a turn, and a paused AI or an exhausted ceiling must not stop protection.
-                await ForwardRunner.AdvanceAsync(ct);
+                await TradingPassAsync(ct);
                 Gateway.Log.Rotate();
 
                 var pass = tick++;
