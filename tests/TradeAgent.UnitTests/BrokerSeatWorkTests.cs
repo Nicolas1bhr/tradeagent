@@ -118,16 +118,6 @@ public class BrokerSeatWorkTests : IDisposable
         var door = Door(workspace, Chief, new AgentGrants(), out var grant);
         using var _grant = grant;
 
-        foreach (var file in new[] { PlanFile, JournalFile, "trading/notes.md" })
-        {
-            var wrote = await Call(door, GrantedWorkerTools.WriteFile, new { path = file, content = $"{file} is mine\n" });
-            Assert.True(wrote.Served, $"{file}: {wrote.Content}");
-            var read = await Call(door, GrantedWorkerTools.ReadFile, new { path = file });
-            Assert.True(read.Served, read.Content);
-            Assert.Equal($"{file} is mine\n", read.Content);
-        }
-        Assert.True((await Call(door, GrantedWorkerTools.ReadFile, new { path = Canon.CliFile })).Served);
-
         var outside = new[]
         {
             $"org/{Other}/trading/PLAN.md", $"../{Other}/trading/PLAN.md", "../../../state.db", "../../../seat-home/codex/auth.json",
@@ -140,6 +130,16 @@ public class BrokerSeatWorkTests : IDisposable
             var wrote = await Call(door, GrantedWorkerTools.WriteFile, new { path, content = "overwritten\n" });
             Assert.False(wrote.Served, $"the door served a write of '{path}': {wrote.Content}");
         }
+        foreach (var file in new[] { PlanFile, JournalFile, "trading/notes.md" })
+        {
+            var wrote = await Call(door, GrantedWorkerTools.WriteFile, new { path = file, content = $"{file} is mine\n" });
+            Assert.True(wrote.Served, $"{file}: {wrote.Content}");
+            var read = await Call(door, GrantedWorkerTools.ReadFile, new { path = file });
+            Assert.True(read.Served, read.Content);
+            Assert.Equal($"{file} is mine\n", read.Content);
+        }
+        Assert.True((await Call(door, GrantedWorkerTools.ReadFile, new { path = Canon.CliFile })).Served);
+
         var canon = await Call(door, GrantedWorkerTools.WriteFile, new { path = Canon.CliFile, content = "my own instructions\n" });
         Assert.False(canon.Served, "the door let a position rewrite its own canon");
 
