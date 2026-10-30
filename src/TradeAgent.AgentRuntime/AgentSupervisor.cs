@@ -170,7 +170,8 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     /// </summary>
     Dictionary<string, string> BuildAll(WorkspaceContext ctx)
     {
-        var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: (seats ?? PositionActivation.Seats).KindOf);
+        var register = seats ?? PositionActivation.Seats;
+        var homes = WorkspaceBuilder.BuildAll(ctx, positions: Positions(), kindOf: register.KindOf, placeOf: register.PlaceOf);
         if (WorkspaceBuilder.RefusalFor(homes[CouncilRoles.Operations]) is { } why) throw new IOException(why);
         return homes;
     }

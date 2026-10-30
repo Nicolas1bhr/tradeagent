@@ -18,7 +18,7 @@ namespace TradeAgent.AgentRuntime;
 public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPaper, string? AccountId,
     TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk,
     bool ConnectorIsBuiltInSimulator = false, string Role = CouncilRoles.Operations, int? TurnsPerSession = null,
-    string? Kind = null);
+    string? Kind = null, string? Place = null);
 
 /// <summary>
 /// What the owner's repair of a home did (<see cref="WorkspaceBuilder.RepairHome"/>): whether the home was rebuilt, the words, and where the
@@ -150,6 +150,7 @@ public static class WorkspaceBuilder
     /// home is representable, never runnable: building one opens no conversation (<c>U-org-principals</c>).
     /// </summary>
     /// <param name="kindOf">Each position's kind as the chart derives it (<c>U-execution-environment</c>), which picks its canon's class.</param>
+    /// <param name="placeOf">Each position's place on the chart (<c>OrgPlace</c>; <c>U-org-canon</c>), which picks its canon's role part.</param>
     /// <remarks>
     /// <para><b>A HOME THAT CANNOT BE REBUILT REFUSES ITS OWN POSITION AND NO OTHER</b> (<c>U-execution-environment</c> fix pass 4, the
     /// second re-review's [P2] 5; the orchestrator's ruling). An executor's cell writes its whole home, so it can leave a real folder where
@@ -160,7 +161,8 @@ public static class WorkspaceBuilder
     /// <see cref="Build"/> replaces, and the next start that can rebuild the home clears the refusal.</para>
     /// </remarks>
     public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null,
-        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null)
+        AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null,
+        Func<string, string?>? placeOf = null)
     {
         var ws = root ?? Paths.Workspace;
         var homes = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -171,7 +173,7 @@ public static class WorkspaceBuilder
             {
                 homes[r] = Core.Board.BoardSeats.IsBoardId(r)
                     ? BuildBoardHome(r, root, appFiles)
-                    : Build(ctx with { Role = r, Kind = kindOf?.Invoke(r) }, root, appFiles);
+                    : Build(ctx with { Role = r, Kind = kindOf?.Invoke(r), Place = placeOf?.Invoke(r) }, root, appFiles);
                 Unbuilt.TryRemove(Key(homes[r]), out _);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

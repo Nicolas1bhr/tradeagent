@@ -17,7 +17,33 @@ public static class OrgPositionKind
 /// <see cref="IsLegacy"/> is whether the id is one of the two positions that ran before the chart (<c>operations</c>,
 /// <c>research</c>). Nothing here grants anything: what a position may run is <see cref="PositionActivation"/>'s answer.
 /// </summary>
-public sealed record PositionStanding(string Id, string UnitId, string Status, string Kind, bool IsLegacy, string HomeDir);
+/// <param name="Heads">The kind of the unit it heads (<see cref="OrgUnitKind"/>), or null when it heads none.</param>
+public sealed record PositionStanding(string Id, string UnitId, string Status, string Kind, bool IsLegacy, string HomeDir,
+    string? Heads = null);
+
+/// <summary>
+/// WHERE A POSITION SITS, AS ITS CANON IS WRITTEN FOR IT (<c>U-org-canon</c>): the chief (the head of the root), a head of any other
+/// unit, staff, or an executor — derived from its <see cref="PositionStanding"/>, never stored, and granting nothing: what a seat may
+/// do stays the gateway's and the chart's.
+/// </summary>
+public static class OrgPlace
+{
+    public const string Chief = "chief", Head = "head", Staff = "staff", Executor = "executor";
+
+    /// <summary>Every place a canon is written for.</summary>
+    public static readonly string[] All = [Chief, Head, Staff, Executor];
+
+    /// <summary>The place of a standing, or null for none (no position, or one of the legacy pair, whose canon is their own).</summary>
+    public static string? Of(PositionStanding? standing) => standing switch
+    {
+        null or { IsLegacy: true } => null,
+        { Kind: OrgPositionKind.Head, Heads: OrgUnitKind.Root } => Chief,
+        { Kind: OrgPositionKind.Head } => Head,
+        { Kind: OrgPositionKind.Staff } => Staff,
+        { Kind: OrgPositionKind.Member } => Executor,
+        _ => null
+    };
+}
 
 /// <summary>
 /// WHAT A REFUSAL TO TURN IS ABOUT (<c>docs/ORCHESTRATION.md</c> § 2.5, the orchestrator's ruling of 2026-10-11, <c>U-org-wakes</c>).
@@ -172,6 +198,17 @@ public sealed class SeatRegister
     public string? KindOf(string id)
     {
         try { return (Standing is { } standing ? standing(id) : Facts?.Invoke(id)?.Standing)?.Kind; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// THE PLACE OF <paramref name="id"/> ON THE CHART (<see cref="OrgPlace"/>), read as <see cref="KindOf"/> reads the kind — which
+    /// role part its canon carries (<c>U-org-canon</c>) — or null where nothing could say, and a position with no place is written
+    /// the organisation's shared canon alone.
+    /// </summary>
+    public string? PlaceOf(string id)
+    {
+        try { return OrgPlace.Of(Standing is { } standing ? standing(id) : Facts?.Invoke(id)?.Standing); }
         catch (Exception) { return null; }
     }
 

@@ -623,7 +623,7 @@ public sealed class AppHost : IAsyncDisposable
             return $"TradeAgent did not repair the folder of {role}: a launch of it is open (attempt {open}), and a folder is never moved from "
                    + "under a running seat. Nothing was changed; press again once it has ended.";
         HomeRepair result;
-        try { result = WorkspaceBuilder.RepairHome(WorkspaceContext() with { Kind = _seats.KindOf(role) }, role, null, null, () => DateTimeOffset.UtcNow); }
+        try { result = WorkspaceBuilder.RepairHome(WorkspaceContext() with { Kind = _seats.KindOf(role), Place = _seats.PlaceOf(role) }, role, null, null, () => DateTimeOffset.UtcNow); }
         catch (Exception ex) when (ex is TradeAgentException or IOException or UnauthorizedAccessException)
         {
             return $"TradeAgent did not repair the folder of {role} ({ex.Message}). Nothing was changed.";
