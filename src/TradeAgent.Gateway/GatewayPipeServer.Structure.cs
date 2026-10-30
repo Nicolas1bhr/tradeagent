@@ -381,6 +381,15 @@ public sealed partial class GatewayPipeServer
         var shares = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var unit in new[] { OrgIds.Operations, OrgIds.Research })
         {
+            // A PAIR THE GATE KEEPS ASLEEP HOLDS NONE OF IT (U-loop-e2e; R25 D4): while a position beyond the pair is active, the gate
+            // refuses the pair's unconfined seats every launch, so its split is spent by nobody — and on the founding policy's equal
+            // split the two would hold the whole root, leaving an active chief nothing to charter. A share is a slice of the ceiling,
+            // never an addition (BoardPolicy.ShareForRole): the pair woken again later still spends inside the day-total.
+            if (Asleep(OrgEnvelopes.LegacyRoleOf(unit)!))
+            {
+                shares[unit] = 0m;
+                continue;
+            }
             decimal? found = null;
             foreach (var ceiling in ceilings.Distinct(StringComparer.Ordinal))
             {
@@ -399,6 +408,21 @@ public sealed partial class GatewayPipeServer
             if (found is { } share) shares[unit] = share;
         }
         return shares;
+    }
+
+    /// <summary>
+    /// Whether the activation gate refuses legacy <paramref name="role"/> now because a position beyond the pair is active — its own rule over
+    /// the facts the host reads for every launch (<see cref="TradingGateway.SeatFactsOf"/>). Facts nobody could read are no proof of sleep.
+    /// </summary>
+    bool Asleep(string role)
+    {
+        try
+        {
+            return Gateway.SeatFactsOf?.Invoke(role) is { Standing: { IsLegacy: true } standing } facts
+                   && facts.ActiveBeyondLegacy.Count > 0
+                   && PositionActivation.Decide(role, standing, facts) is not null;
+        }
+        catch (Exception) { return false; }
     }
 
     /// <summary>
