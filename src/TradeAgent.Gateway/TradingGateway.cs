@@ -2493,6 +2493,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
     public Func<string, decimal?>? AiReservation { get; set; }
 
     /// <summary>
+    /// THE ACTIVATION GATE'S FACTS FOR ONE POSITION, as the host's register reads them (<c>U-org-autonomy</c> item 2; <c>SeatRegister.Read</c>):
+    /// what a hire that would activate itself is asked against — its declared seat, the proven cell, the unconfined seats. Null, or a null
+    /// answer, is unread — the hire stays dormant, never activated on a guess. A read the host hands in; nothing on the pipe reaches it.
+    /// </summary>
+    public Func<string, SeatFacts?>? SeatFactsOf { get; set; }
+
+    /// <summary>
     /// THE BILLING CLASS A POSITION'S SEAT IS HELD TO NOW (<c>plan</c>, <c>key</c> or <c>unknown</c>), as the host's meter reads it
     /// (<c>U-org-verbs-e</c>, fix pass 2): which ceilings an AI tilt judges that seated position in (<see cref="BillingClasses.CeilingsOf"/>)
     /// — its own, never the calling head's. Null, or a null answer, is unread — the tilt is refused, never guessed.

@@ -1674,6 +1674,9 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.AiReservation = role => Meter is { } meter ? meter.Reservation(role).Cost ?? 0m : null;
         // AND THE CLASS ITS SEAT BILLS NOW (fix pass 2): each seated position is judged in its own ceilings, never its head's.
         Gateway.AiClassOf = role => Meter?.ClassOf(role);
+        // THE ACTIVATION GATE'S FACTS, FOR A HIRE THAT WOULD ACTIVATE ITSELF (U-org-autonomy item 2): the register's own read, so a hire is
+        // asked exactly what its every launch will be asked.
+        Gateway.SeatFactsOf = role => _seats.Read(role);
         ReportAiActivity();
     }
 

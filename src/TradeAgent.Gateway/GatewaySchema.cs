@@ -808,8 +808,10 @@ public static class GatewaySchema
         new(Core.Ops.OrgHire, "trade org hire <unit> <rationale> --forecasts JSON [--head true] [--refs JSON] [--options JSON]", false,
             "HIRE A POSITION into a unit whose PARENT you head (a team's head does not grow its own team; its parent's head does), or "
             + "appoint one to that unit's VACANT head ('head': true — replacing a head is a different operation, not this one). The "
-            + "position is DORMANT: TradeAgent mints its id and home, gives it no seat, and it runs nothing until it is seated and "
-            + "activated, neither of which is an organisation verb's. Your 'rationale' and 'options' are claims; 'forecasts' carries at "
+            + "position ACTIVATES ITSELF in the same write when its seat is a broker or cell seat the activation gate admits (a proven "
+            + "cell on this host, its seat's assurance, the unconfined seats) and one turn of it fits its unit's AI envelope and the "
+            + "day-total today — TradeAgent then wakes it and you once each; otherwise it stays DORMANT and the answer says why. "
+            + "TradeAgent mints its id and home. Your 'rationale' and 'options' are claims; 'forecasts' carries at "
             + "least one (a 'unit-admissible' with its subject left empty is the unit). It must EARN its place: the unit's first "
             + "position, a hire inside a unit chartered as a bounded experiment before its collapse date, or current work of your subtree "
             + "cited in 'refs'. One write — or refused in words with nothing written: at most 10 positions that have not ended in the "
