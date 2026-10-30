@@ -43,10 +43,11 @@ public static partial class LaunchEvidence
 
     /// <summary>
     /// THE VALUE AFTER A WORD THAT NAMES A CREDENTIAL — however short or dotted (the Codex review: a pasted key echoed in an error line is
-    /// not always long): "api key", "key", "token", "password", "secret", "credential", "authorization", then an optional ":" or "=",
-    /// and the next run of non-space characters.
+    /// not always long): "api key", "key", "token", "password", "secret", "credential", "authorization", then an optional filler word
+    /// ("provided", "given", "supplied", "used", "value", "was", "is"), an optional ":" or "=", an optional opening quote, and the next run of
+    /// characters that is no space, quote or separator (the re-review: a quoted value, and "API key provided: …").
     /// </summary>
-    [GeneratedRegex(@"(?i)(\b(?:api[ _-]?key|key|token|password|passwd|secret|credential|authorization)\b\s*[:=]?\s*)(?!\[withheld\]|bearer\b)[^\s""',;]+")]
+    [GeneratedRegex(@"(?i)(\b(?:api[ _-]?key|key|token|password|passwd|secret|credential|authorization)\b(?>(?:\s+(?:provided|given|supplied|used|value|was|is))?\s*[:=]?\s*[""'`]?))(?!\[withheld\]|bearer\b)[^\s""'`,;]+")]
     private static partial Regex Named();
 
     [GeneratedRegex(@"(?i)(bearer\s+)[^\s""',;]+")]

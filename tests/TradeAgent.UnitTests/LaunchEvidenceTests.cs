@@ -75,11 +75,14 @@ public class LaunchEvidenceTests
             $"session {jwt} expired",
             "id 0123456789abcdef0123456789abcdef0123 unknown",
             "invalid API key: short.test.value",
+            "invalid API key: 'quoted.test.value'",
+            "Incorrect API key provided: given.test.value. You can find your key on the platform.",
             Refused
         ])!;
-        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value" })
+        foreach (var hidden in new[] { "abc.def-hidden-value", "sk-proj-AbCdEf0123456789xyz", jwt, "0123456789abcdef0123456789abcdef0123", "short.test.value", "quoted.test.value", "given.test.value" })
             Assert.DoesNotContain(hidden, said, StringComparison.Ordinal);
-        Assert.Contains("Bearer [withheld]", said, StringComparison.Ordinal);
+        Assert.Contains("Authorization: Bearer [withheld] was refused", said, StringComparison.Ordinal);
+        Assert.Contains("invalid API key: '[withheld]'", said, StringComparison.Ordinal);
         Assert.Contains("gpt-6-luna' model is not supported", said, StringComparison.Ordinal);
 
         var long_ = LaunchEvidence.VendorSaid([string.Join(' ', Enumerable.Repeat("refused", 1000))])!;
