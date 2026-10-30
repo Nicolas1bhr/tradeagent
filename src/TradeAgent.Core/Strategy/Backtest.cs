@@ -454,10 +454,22 @@ public static class Backtest
 
         StrategyIntent? pending = null;
         var pendingQuantity = 0m;
+        var pendingDue = default(DateTimeOffset);
 
         // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar that reached the limit, or null while none
-        // is. It is an order of the run's and never an intent of the evaluator's, so the one-intent count stays true.
+        // is, and the first minute it may fill at. It is an order of the run's and never an intent of the evaluator's,
+        // so the one-intent count stays true.
         KlineBar? flattening = null;
+        var flatteningDue = default(DateTimeOffset);
+
+        // THE MINUTES PROTECTION RESTS ON: from two minutes after the entry's fill minute, and before the minute after
+        // the one an exit or the maximum hold was decided on — when the paper runner places it and takes it off.
+        var restsFrom = DateTimeOffset.MaxValue;
+        var restsUntil = DateTimeOffset.MaxValue;
+
+        // THE MINUTE IN PROGRESS: what the run decides while it applies this minute is what the paper runner learns when
+        // it reads this minute, after it has closed — the minute an order is LEARNT on.
+        var learnt = default(DateTimeOffset);
         string? fault = null;
 
         // THE DECLARED BAR'S PLACE IN THE RUN, 1-based: every event of one declared bar shares it — its
@@ -473,6 +485,7 @@ public static class Backtest
         foreach (var minute in bars)
         {
             ordinal = evaluated + 1;
+            learnt = minute.OpenTime;
 
             if (stop.IsCancellationRequested)
             {
@@ -528,18 +541,20 @@ public static class Backtest
         // THE DATA ENDED INSIDE A DECLARED BAR: it closes, as the partial bar it is. See the summary.
         if (fault is null && resampler?.Flush() is { } last) Decide(last);
 
-        // AN INTENT THE RUN ENDED ON NEVER FILLED, and that is recorded rather than dropped: a
+        // AN ORDER DUE AT A MINUTE THE WINDOW NEVER REACHED NEVER FILLED, and that is recorded rather than dropped: a
         // strategy whose last signal had nowhere to execute took no trade there.
         if (pending is { } waiting)
             trace.Add(BacktestEvent.NoTrade(ordinal, waiting.Bar, pendingQuantity, waiting.ReferencePrice,
-                $"the run's window ended before the next bar, so this signal had no open to fill at"));
+                $"the run's window ended before {pendingDue:O}, the first minute this order could fill at: an order is "
+                + $"placed inside the minute after the one it was decided on and fills at the open of the minute after "
+                + $"that, as on paper"));
 
         // A MAXIMUM HOLD WHOSE CLOSE NEVER FILLED leaves the position open at the end, as paper would show it: in the
         // equity, outside net pnl, and said in words rather than closed at a price nothing could have filled at.
         if (flattening is { } reached && position > 0m)
             trace.Add(BacktestEvent.NoTrade(ordinal, reached.OpenTime, position, reached.Close,
-                $"the run's window ended before the next minute, so the maximum hold's market close had no open to fill "
-                + $"at and the position is still open at the end: it is in the equity and outside net pnl"));
+                $"the run's window ended before {flatteningDue:O}, the first minute the maximum hold's market close could "
+                + $"fill at, so the position is still open at the end: it is in the equity and outside net pnl"));
 
         // WHAT EACH FEATURE CAME TO, ONE LINE EACH, LAST — under the trace's hash like every other line: its id, its
         // clean-history start as of the last close read, the bars evaluated before it, the bars it had no value at and
@@ -573,15 +588,16 @@ public static class Backtest
                     lastMinute = null;
                 }
 
-                // 1. THE PENDING SIGNAL FILLS AT THIS MINUTE'S OPEN. It was decided at the previous
-                //    declared bar's close and this is the first price after that decision.
-                if (flattening is not null)
+                // 1. AN ORDER DUE BY THIS MINUTE FILLS AT ITS OPEN — the first open at or after two minutes past the
+                //    minute it was learnt on: placed inside the minute after, it fills on the first minute that opens
+                //    after it was placed, which is what the paper venue fills. An order not yet due waits.
+                if (flattening is not null && minute.OpenTime >= flatteningDue)
                 {
                     if (position > 0m) Close(minute, ordinal, model.Sell(minute.Open), ExitReason.MaxHoldBars);
                     flattening = null;
                 }
 
-                if (pending is { } intent)
+                if (pending is { } intent && minute.OpenTime >= pendingDue)
                 {
                     if (intent.Kind == IntentKind.Enter)
                     {
@@ -603,8 +619,14 @@ public static class Backtest
                             entryFees = fee;
                             entryBar = minute.OpenTime;
                             entryOrdinal = ordinal;
-                            stopPrice = intent.StopPrice;
-                            targetPrice = intent.TargetPrice;
+                            // A RELATIVE LEVEL IS MEASURED FROM THE PRICE PAID, as the paper runner places it; a fixed
+                            // one stays where the program declared it.
+                            stopPrice = Anchored(intent.StopPrice, program.Stop.Kind is StopKind.Percent or StopKind.EntryAtr,
+                                intent.ReferencePrice, price);
+                            targetPrice = Anchored(intent.TargetPrice, program.Target.Kind == TargetKind.Percent,
+                                intent.ReferencePrice, price);
+                            restsFrom = Placed(minute.OpenTime).AddMinutes(1);
+                            restsUntil = DateTimeOffset.MaxValue;
                             trace.Add(BacktestEvent.Fill(ordinal, minute.OpenTime, position, price, fee, cash));
                         }
                     }
@@ -617,8 +639,10 @@ public static class Backtest
                     pendingQuantity = 0m;
                 }
 
-                // 2. PROTECTION, ON THIS MINUTE'S OWN RANGE, BEFORE THE EVALUATOR IS ASKED ANYTHING.
-                if (position > 0m)
+                // 2. PROTECTION, ON THIS MINUTE'S OWN RANGE, BEFORE THE EVALUATOR IS ASKED ANYTHING — on a minute it
+                //    rests on: placed inside the minute after the entry's fill minute, it is at the venue from the one
+                //    after that, and once an exit is decided it is taken off inside the minute after the decision.
+                if (position > 0m && minute.OpenTime >= restsFrom && minute.OpenTime < restsUntil)
                 {
                     if (stopPrice is { } level && minute.Low <= level)
                         // A MINUTE THAT OPENED THROUGH THE STOP FILLS AT THAT OPEN. A market that gapped
@@ -659,7 +683,12 @@ public static class Backtest
                 //    before the evaluator is asked. Its close is a MARKET SELL placed now and filled like any order,
                 //    never at this bar's close; while it is in flight the books still hold the position.
                 var holdReached = position > 0m && program.MaxHoldBars is { } maximum && barOrdinal - entryOrdinal >= maximum;
-                if (holdReached && flattening is null && pending is null) flattening = bar;
+                if (holdReached && flattening is null && pending is null)
+                {
+                    flattening = bar;
+                    flatteningDue = Due(learnt);
+                    restsUntil = Placed(learnt);
+                }
 
                 // 4. THE EVENT. The account reading is what this backtest's own books say, at this bar's close, after
                 //    its fills and its protection — read FLAT WITH AN ORDER PENDING on every event whose books hold the
@@ -716,7 +745,13 @@ public static class Backtest
                 {
                     // An exit is not sized: it closes what is open, which is what the evaluator was
                     // told is open.
-                    if (position > 0m) { pending = signal; pendingQuantity = position; }
+                    if (position > 0m)
+                    {
+                        pending = signal;
+                        pendingQuantity = position;
+                        pendingDue = Due(learnt);
+                        restsUntil = Placed(learnt);
+                    }
                     return true;
                 }
 
@@ -732,6 +767,7 @@ public static class Backtest
 
                 pending = signal;
                 pendingQuantity = sized;
+                pendingDue = Due(learnt);
                 return true;
             }
             catch (OverflowException)
@@ -923,6 +959,27 @@ public static class Backtest
                + "every value were absent. TradeAgent opens the tape itself when it starts; the account owner's activity "
                + "log says why it is not open.";
     }
+
+    /// <summary>
+    /// THE MINUTE AN ORDER LEARNT ON <paramref name="learnt"/> IS PLACED IN: the next one. The paper runner reads a minute
+    /// after it has closed, so whatever it decides on that reading it sends while the following minute is in progress.
+    /// </summary>
+    static DateTimeOffset Placed(DateTimeOffset learnt) => learnt.AddMinutes(1);
+
+    /// <summary>
+    /// THE FIRST MINUTE WHOSE OPEN AN ORDER LEARNT ON <paramref name="learnt"/> MAY FILL AT: two on. The paper venue fills a
+    /// market order only on a minute that opens after it was placed (<c>PaperConnector</c>), and it was placed inside
+    /// <see cref="Placed"/>'s minute — so that minute's open is a price paper never pays.
+    /// </summary>
+    static DateTimeOffset Due(DateTimeOffset learnt) => Placed(learnt).AddMinutes(1);
+
+    /// <summary>
+    /// A LEVEL AS IT RESTS AT THE VENUE: a relative one (percent, ATR) at the distance the program declared from
+    /// <paramref name="reference"/>, measured from <paramref name="fill"/> — what <c>ForwardRuns.ProtectAsync</c> places, and
+    /// what <see cref="StrategyIntent"/> asks of an executor that fills at another price; a fixed one where it was declared.
+    /// </summary>
+    static decimal? Anchored(decimal? declared, bool relative, decimal reference, decimal fill) =>
+        declared is { } level && relative ? fill + (level - reference) : declared;
 
     static ExitReason Reason(IntentCause cause) => cause switch
     {
