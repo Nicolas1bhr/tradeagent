@@ -14,6 +14,12 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
   </ItemGroup>
   <ItemGroup>
+    <!-- THE HEAD-START KIT A BUILD CARRIES (U-kit-socket): the repository's kit/ — an empty index until the owner hands his kit over —
+         beside the app's programs, installed at the first start (Kit.InstallBundled) and never over the owner's own install or removal.
+         To bundle the owner's kit into a build, put it in kit/ at the repository's root, laid out as Kit.cs says. -->
+    <Content Include="../../kit/**" LinkBase="kit" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
     <InternalsVisibleTo Include="TradeAgent.UiTests" />
   </ItemGroup>

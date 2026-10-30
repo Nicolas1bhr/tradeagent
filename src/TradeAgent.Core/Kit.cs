@@ -213,7 +213,8 @@ public static class Kit
     /// bundle): staged, checked, made read-only, hashed, swapped in and recorded. The kit already installed is replaced only once the new
     /// one passed every check; a refusal leaves it as it was. Returns the installed view or the refusal in the owner's words.
     /// </summary>
-    public static (View? Installed, string? Refusal) Install(string source, string? home = null, string? recordedSource = null)
+    public static (View? Installed, string? Refusal) Install(string source, string? home = null, string? recordedSource = null,
+        string? expectHash = null)
     {
         lock (Gate)
         {
@@ -232,6 +233,9 @@ public static class Kit
                 if (problem is not null) return (null, problem);
                 SealReadOnly(root);
                 var hash = HashOf(root);
+                // PRESS TWO INSTALLS WHAT PRESS ONE SHOWED (Preview): a source that changed between them is refused, never installed.
+                if (expectHash is not null && hash != expectHash)
+                    return (null, "The kit changed after TradeAgent showed it to you; nothing was installed. Choose it again.");
 
                 var dir = Dir(home);
                 string? aside = null;
@@ -257,6 +261,37 @@ public static class Kit
             {
                 DeleteTree(staging);
             }
+        }
+    }
+
+    /// <summary>
+    /// WHAT <see cref="Install"/> WOULD INSTALL FROM <paramref name="source"/>, for the owner's first press: staged and checked exactly as
+    /// an install is, hashed as it would lie, and thrown away. Nothing is installed or recorded.
+    /// </summary>
+    public static (Index? Index, string? Hash, string? Refusal) Preview(string source, string? home = null)
+    {
+        lock (Gate)
+        {
+            var staging = Path.Combine(StagingDir(home), "look-" + Guid.NewGuid().ToString("n")[..12]);
+            try
+            {
+                Directory.CreateDirectory(staging);
+                string? why;
+                if (File.Exists(source) && source.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) why = Unzip(source, staging);
+                else if (Directory.Exists(source)) why = CopyTree(source, staging);
+                else why = $"{source} is neither a folder nor a .zip file";
+                if (why is not null) return (null, null, why);
+                var root = KitRoot(staging);
+                var (index, problem) = Check(root);
+                if (problem is not null) return (null, null, problem);
+                SealReadOnly(root);
+                return (index, HashOf(root), null);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return (null, null, $"TradeAgent could not read the kit ({ex.Message}).");
+            }
+            finally { DeleteTree(staging); }
         }
     }
 
@@ -298,15 +333,22 @@ public static class Kit
 
     /// <summary>
     /// THE FLEET'S BUNDLE (<c>U-kit-socket</c> item 3): a build that carries a kit in <see cref="BundledDir"/> installs it at start —
-    /// only while the record holds no act at all, so an owner's own install or removal is never undone by a build. Returns what was
-    /// done, for the activity line, or null for nothing.
+    /// while the record holds no act at all, or when the kit last installed was itself a build's bundle and this build's differs. An
+    /// owner's own install or removal is never undone by a build. Returns what was done, for the activity line, or null for nothing.
     /// </summary>
     public static string? InstallBundled(string? home = null, string? bundled = null)
     {
         var from = bundled ?? BundledDir;
         if (!File.Exists(Path.Combine(from, IndexFile))) return null;
-        try { if (Records(home).Count > 0) return null; }
+        Record? last;
+        try { last = Records(home).LastOrDefault(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
+        if (last is not null)
+        {
+            if (last.Act != Installed || last.Source != BundledSource) return null;
+            var (_, hash, _) = Preview(from, home);
+            if (hash is null || hash == last.Hash) return null;
+        }
         var (view, refusal) = Install(from, home, BundledSource);
         return view is not null
             ? $"Installed the head-start kit bundled with this build: {view.Index.Name} ({view.Index.Skills.Count} skills, {view.Index.Tools.Count} tools, {view.Hash[..12]})."

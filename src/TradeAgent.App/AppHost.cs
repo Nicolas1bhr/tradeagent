@@ -1315,6 +1315,9 @@ public sealed class AppHost : IAsyncDisposable
             _audit.Start();
 
             Gateway.Log.Activity("TradeAgent started");
+            // THE HEAD-START KIT A BUILD CARRIES (U-kit-socket item 3), installed before any seat starts — never over the owner's own.
+            try { if (Kit.InstallBundled() is { } bundled) Gateway.Log.Activity(bundled); }
+            catch (Exception ex) { Gateway.Log.Engineering("Kit", "bundled_kit_failed", "warn", ex: ex); }
             if (OperatingSystem.IsLinux())
                 Gateway.Log.Activity(cgroups.Held
                     ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
@@ -1970,6 +1973,33 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     public Task<DoctorReport> RunDoctorAsync(CancellationToken ct = default) => new Doctor(Gateway).RunAsync(ct);
+
+    /// <summary>
+    /// THE OWNER'S KIT ACTS (<c>U-kit-socket</c> item 3), in-process only — no verb, no pipe op reaches them. <see cref="InstallKit"/> is
+    /// press two of "Add a kit", bound to the hash press one was shown (<see cref="Kit.Preview"/>); <see cref="RemoveKit"/> press two of
+    /// "Remove the kit". Each says what it did in the activity log, with the kit's hash. Returns the refusal, or null.
+    /// </summary>
+    public string? InstallKit(string source, string shownHash)
+    {
+        var (view, refusal) = Kit.Install(source, expectHash: shownHash);
+        if (view is null) return refusal;
+        Gateway.Log.Activity($"You installed the head-start kit {view.Index.Name} ({view.Index.Skills.Count} skills, {view.Index.Tools.Count} tools, " +
+                             $"kit {view.Hash[..12]}) from {view.Source}. Executors' cells read it from their next turn; every seat is told of it " +
+                             "when the AI next starts.");
+        Changed?.Invoke();
+        return null;
+    }
+
+    /// <inheritdoc cref="InstallKit"/>
+    public string? RemoveKit()
+    {
+        var before = Kit.Current();
+        if (Kit.Remove() is { } refusal) return refusal;
+        Gateway.Log.Activity($"You removed the head-start kit{(before.Last is { } r ? $" {r.Name} (kit {r.Hash[..12]})" : "")}. No cell is given it " +
+                             "from its next turn; seats stop being told of it when the AI next starts.");
+        Changed?.Invoke();
+        return null;
+    }
 
     /// <summary>
     /// One slow loop: refresh health, reconcile only while something is unconfirmed, rotate logs,

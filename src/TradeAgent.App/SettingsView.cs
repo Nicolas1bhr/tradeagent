@@ -43,6 +43,9 @@ sealed class SettingsPage
 {
     readonly AppHost _host;
 
+    /// <summary>The owner's head-start kit card (<c>U-kit-socket</c>).</summary>
+    readonly KitCard _kit;
+
     // ---- platform ----
     readonly TextBlock _platformValue = Ui.Mono("—");
     readonly TextBlock _platformNote = Ui.Muted("");
@@ -459,9 +462,11 @@ sealed class SettingsPage
         Updates = updates;
         WhatTheseChange = explain;
 
+        // THE OWNER'S HEAD-START KIT (U-kit-socket): under the market data, the other thing the owner hands the AI to research with.
+        _kit = new KitCard(host);
         Root = Pages.Scroll(Ui.Col(0,
-            Pages.Header("Settings", "The market data TradeAgent collects for research."),
-            marketData));
+            Pages.Header("Settings", "The market data TradeAgent collects for research, and your head-start kit."),
+            Ui.Col(Theme.S6, marketData, _kit.Root)));
 
         EnsureAccounts();
         ApplyPaperFriction();
@@ -1055,6 +1060,7 @@ sealed class SettingsPage
         // tree was built once to avoid.
         ApplyHoldoutValue();
         ApplyUpdates();
+        _kit.Update();
     }
 
     void ApplyPlatform(string? id, string label)
