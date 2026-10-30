@@ -611,6 +611,33 @@ public class OrgPacketTests
             new MissionEvent { Id = "w:x", Kind = MissionEventKind.OwnerWake, Role = P1 }, []), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// (k) THE HOST PICKS EACH SEAT'S SPELLING BY ITS RUNTIME (<c>U-runway-fixes</c> item 3; Codex's review): through the app's own mission
+    /// host, with no runtime declared yet, the legacy Research Director — a CLI seat — is spelled the command line, a head the broker's tool
+    /// and an executor its cell's, and the packet the host composes for the executor names its verbs that way.
+    ///
+    /// <para>Mutant (VerbsFor always the broker's): the Research Director's `data-list` comes back "data(op: data-list)".</para>
+    /// </summary>
+    [Fact]
+    public async Task The_host_picks_each_seats_spelling_by_its_runtime()
+    {
+        using var db = TestEnv.NewDb();
+        Chart(db);
+        Note(db, P2, P1, "the funding skew held for a week");
+        var host = TradeAgent.App.AppHost.Composed(db, new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker()),
+            new AgentPresence());
+        try
+        {
+            var mission = new TradeAgent.App.AppHost.MissionHost(host);
+            Assert.Equal("trade data list", mission.VerbsFor(CouncilRoles.Research)(Ops.DataList, ""));
+            Assert.Null(mission.VerbsFor(CouncilRoles.Research)(Ops.LateralList, ""));
+            Assert.Equal("lateral_list()", mission.VerbsFor(Head)(Ops.LateralList, ""));
+            Assert.Equal("mandate_show(mandate: man-1)", mission.VerbsFor(P1)(Ops.MandateShow, "man-1"));
+            Assert.Contains("`lateral_list()` has it whole", mission.PacketFor(P1, DateTimeOffset.UtcNow)!.Text, StringComparison.Ordinal);
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
     // ---- item 4: the head's deliveries -------------------------------------------------------------------------------------
 
     /// <summary>

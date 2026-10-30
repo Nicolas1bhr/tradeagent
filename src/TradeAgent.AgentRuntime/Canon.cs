@@ -1105,9 +1105,10 @@ public static class Canon
 
         ## The research ledger
 
-        Each entry is a hypothesis, an experiment, a finding, a kill or a lesson, marked as a claim, an assumption or a
-        hypothesis — never a measurement — with a confidence from 0 to 1 or recorded as unknown. Only its author revises an
-        entry, each revision says why, and nothing edits or deletes one:
+        You add hypotheses, experiments, findings, kills and lessons, each marked as a claim, an assumption or a hypothesis —
+        never a measurement — with a confidence from 0 to 1 or recorded as unknown. Only its author revises an entry, each
+        revision says why, and nothing edits or deletes one; a decision's rationale is written by TradeAgent with its decision
+        record and is never revised:
 
         ```
         {{verb ledger-add hypothesis "breakouts above the 20-bar high pay after costs" --mark hypothesis [--confidence 0.6]}}
@@ -1126,9 +1127,10 @@ public static class Canon
 
         {{if writes:trading}}
         - TradeAgent keeps a copy of `{{write trading/}}PLAN.md` and `trading/JOURNAL.md` at the end of every turn, and holds
-          them to {{plan_lines}} and {{journal_lines}} non-empty lines and {{plan_bytes}} and {{journal_bytes}}. One over its limit is moved to
-          `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md`, the last accepted one returns, and your next `## Situation` says so.
-          Nothing caps `{{archive_dir}}/`.
+          them to {{plan_lines}} and {{journal_lines}} non-empty lines and {{plan_bytes}} and {{journal_bytes}}. One over its line
+          limit is copied to `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md` and the last accepted one returns in its place; one over
+          its bytes is not read at all, so nothing of it is recorded, copied or put back. Either way your next `## Situation` says
+          so. Nothing caps `{{archive_dir}}/`.
         {{end}}
         - TradeAgent records every file that appears in `trading/`, `research/`, `strategies/`, `data/` and `scripts/`, and in
           `{{read in/}}` and `out/` — its name, size, SHA-256 and when it showed up — in a ledger you cannot edit; `logs/` and
