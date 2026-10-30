@@ -349,4 +349,275 @@ public class BacktestExecutionTests(ITestOutputHelper log)
         Assert.False(ExecutionModel.Frictionless.Frictionful);
         Assert.Equal("fees=0;slippage=0;increment=1;capital=10000", ExecutionModel.Frictionless.Canonical);
     }
+
+    // ---- THE MINUTE PAPER FILLS ON (U-backtest-parity) ---------------------------------------------------------
+    //
+    // The paper runner reads minute X after it has closed and places what it decided inside X+1, and the paper venue
+    // fills a market order only on a minute that OPENS after it was placed — so an order learnt at minute X fills at
+    // the open of the first minute opening at or after X+2. Protection the runner places on the pass after the entry's
+    // fill minute F rests from F+2, and an exit or the maximum hold decided at X takes it off inside X+1. Every test
+    // below is RED on the base (`d55784e4`), where the backtest filled at X+1's open, let protection fire from F
+    // itself, closed the maximum hold at X's own close and measured a relative level from the signal's close.
+
+    /// <summary>
+    /// (a) A SIGNAL FILLS AT THE OPEN AFTER THE MINUTE IN PROGRESS — the minute it is placed in — and never in it.
+    ///
+    /// <para>The entry is learnt at 00:00 and placed inside 00:01, so 00:01's open (200) is a price paper never pays;
+    /// it fills at 00:02's, 210. The exit learnt at 00:03 fills at 00:05's open, 320, not 00:04's 300. And on the
+    /// exit's fill minute the account is flat at the close, so the entry rule signals again — and that order is due at
+    /// 00:07, which this window does not reach.</para>
+    ///
+    /// <para><b>RED on the base:</b> entry 00:01 @200, exit 00:04 @300. <b>RED through the mutant</b> "fill at X+1
+    /// again".</para>
+    /// </summary>
+    [Fact]
+    public void A_signal_fills_at_the_open_after_the_minute_in_progress()
+    {
+        var result = RunOn(EnterAbove100(), Bars(
+            [100m, 102m, 99m, 101m],        // 00:00 close 101 > 100: the entry is learnt here
+            [200m, 205m, 195m, 201m],       // 00:01 the minute it is placed in: nothing fills at 200
+            [210m, 215m, 205m, 211m],       // 00:02 it fills HERE, at 210
+            [211m, 212m, 88m, 89m],         // 00:03 close 89 < 90: the exit is learnt here
+            [300m, 305m, 295m, 299m],       // 00:04 placed: nothing fills at 300
+            [320m, 325m, 315m, 321m]));     // 00:05 it fills HERE, at 320 — and the entry signals again
+
+        var trade = Assert.Single(result.Trades);
+        Assert.Equal((Start.AddMinutes(2), 210m), (trade.EntryBar, trade.EntryPrice));
+        Assert.Equal((Start.AddMinutes(5), 320m), (trade.ExitBar, trade.ExitPrice));
+        Assert.Equal(ExitReason.Rule, trade.Reason);
+        Assert.Equal(220m, trade.Pnl);                       // (320 - 210) * 2
+
+        var fill = Assert.Single(result.Trace.Of(BacktestEventKind.Fill));
+        Assert.Equal((3L, Start.AddMinutes(2), 210m), (fill.Ordinal, fill.Bar, fill.Price!.Value));
+
+        Assert.Equal([(1L, "Enter"), (4L, "Exit"), (6L, "Enter")],
+            result.Trace.Of(BacktestEventKind.Signal).Select(s => (s.Ordinal, s.Status!)));
+
+        var refused = Assert.Single(result.Trace.Of(BacktestEventKind.NoTrade));
+        Assert.Contains($"ended before {Start.AddMinutes(7):O}", refused.Reason);
+    }
+
+    /// <summary>
+    /// (b) A STOP TOUCHED BEFORE IT RESTS AT THE VENUE NEVER FIRES.
+    ///
+    /// <para>The entry fills at 00:02's open, 100; the stop is placed by the pass after 00:02 closes, inside 00:03, so
+    /// it rests from 00:04. Its level is five percent below the FILL, 94.95, not below the signal's close (95.95).
+    /// 00:01, 00:02 and 00:03 all reach 94 and none of them fires it — on 00:01 there is no position, and on the other
+    /// two there is no stop at the venue yet. 00:05 reaches 90 with the stop resting: it fires, at 94.95.</para>
+    ///
+    /// <para><b>RED on the base:</b> filled at 00:01 and stopped on 00:01 at 95.95. <b>RED through the mutant</b>
+    /// "protection from F": stopped on 00:02.</para>
+    /// </summary>
+    [Fact]
+    public void A_stop_touched_before_it_rests_at_the_venue_never_fires()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            size fixed 1
+            stop percent 5
+            entry when close > 100
+            """);
+
+        var result = RunOn(program, Bars(
+            [100m, 102m, 99m, 101m],        // 00:00 the entry is learnt; five percent under 101 is 95.95
+            [101m, 101m, 94m, 100m],        // 00:01 placed; reaches 94 with nothing held
+            [100m, 100m, 94m, 99m],         // 00:02 fills at 100, the stop is 94.95 — reached, not yet resting
+            [99m, 99m, 94m, 98m],           // 00:03 the stop is placed inside this minute — reached, not resting
+            [98m, 99m, 97m, 98m],           // 00:04 resting from here: untouched
+            [98m, 99m, 90m, 92m]));         // 00:05 reached with the stop resting: it fires at 94.95
+
+        var trade = Assert.Single(result.Trades);
+        Assert.Equal((Start.AddMinutes(2), 100m), (trade.EntryBar, trade.EntryPrice));
+        Assert.Equal(ExitReason.Stop, trade.Reason);
+        Assert.Equal((Start.AddMinutes(5), 94.95m), (trade.ExitBar, trade.ExitPrice));
+    }
+
+    /// <summary>
+    /// (c) A MAXIMUM HOLD CLOSES AT MARKET TWO MINUTES ON, AND ENTERS AGAIN ON ITS FILL MINUTE.
+    ///
+    /// <para>The paper runner's rhythm, +2/+2/+0: the entry learnt at 00:00 fills at 00:02 (112); the two-bar hold is
+    /// reached at 00:04's close and its market close, placed inside 00:05, fills at 00:06's open (116) — never at
+    /// 00:04's close. On 00:04 and 00:05 the account the evaluator reads is FLAT with the close IN FLIGHT, as the
+    /// runner's <c>RunBooks.Flat</c> is, so the entry rule that is true on both is held; on 00:06 the close has filled
+    /// and the entry signals again. The second hold is reached at 00:10 and its close is due at 00:12, which the window
+    /// does not reach: the position is open at the end, outside net pnl, and the trace says so.</para>
+    ///
+    /// <para>The evaluator emits nothing for the hold: two intents in the run, both entries.</para>
+    ///
+    /// <para><b>RED on the base:</b> entry 00:01 @111, closed at 00:03's close @113, entered again at 00:03.
+    /// <b>RED through the mutant</b> <c>OrderPending: false</c> at the maximum hold: entered again at 00:04.</para>
+    /// </summary>
+    [Fact]
+    public void A_maximum_hold_closes_at_market_two_minutes_on_and_enters_again_on_its_fill_minute()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            size fixed 1
+            max_hold_bars 2
+            entry when close > 100
+            """);
+
+        var bars = Enumerable.Range(0, 12)
+            .Select(i => new KlineBar(Start.AddMinutes(i), 110m + i, 111m + i, 109m + i, 110m + i, 1m))
+            .ToList();
+        var result = RunOn(program, bars);
+
+        var trade = Assert.Single(result.Trades);
+        Assert.Equal((Start.AddMinutes(2), 112m), (trade.EntryBar, trade.EntryPrice));
+        Assert.Equal((Start.AddMinutes(6), 116m), (trade.ExitBar, trade.ExitPrice));
+        Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
+
+        Assert.Equal([Start, Start.AddMinutes(6)], result.Trace.Of(BacktestEventKind.Signal).Select(s => s.Bar));
+        Assert.All(result.Trace.Of(BacktestEventKind.Signal), s => Assert.Equal(nameof(IntentKind.Enter), s.Status));
+        Assert.Equal(2, result.Counters.Intents);
+        Assert.Equal([Start.AddMinutes(2), Start.AddMinutes(8)], result.Trace.Of(BacktestEventKind.Fill).Select(f => f.Bar));
+
+        // THE SECOND HOLD'S CLOSE IS DUE PAST THE WINDOW: the position stays open, and the words say why.
+        Assert.True(result.Metrics.PositionOpenAtEnd);
+        var refused = Assert.Single(result.Trace.Of(BacktestEventKind.NoTrade));
+        Assert.Contains($"ended before {Start.AddMinutes(12):O}", refused.Reason);
+        Assert.Contains("maximum hold", refused.Reason);
+        Assert.Contains("still open at the end", refused.Reason);
+    }
+
+    /// <summary>
+    /// (d) AN ENTRY ON THE MINUTE AN EXIT FILLS IS TAKEN — the guard against the over-fix.
+    ///
+    /// <para>An order the evaluator itself emitted is held by the evaluator for one event, and that covers the minute
+    /// it is placed in; the backtest does not ALSO report it pending, or the evaluator's held intent would outlive the
+    /// fill and swallow the entry the runner makes on the exit's fill minute. The exit learnt at 00:03 fills at 00:05's
+    /// open; 00:05 closes flat above 100, so the entry signals there and fills at 00:07.</para>
+    ///
+    /// <para><b>RED through the mutant</b> "<c>OrderPending</c> set for an evaluator order in flight": the entry slips
+    /// to 00:06 and fills at 00:08.</para>
+    /// </summary>
+    [Fact]
+    public void An_entry_on_the_minute_an_exit_fills_is_taken()
+    {
+        var result = RunOn(EnterAbove100(), Bars(
+            [100m, 102m, 99m, 101m],        // 00:00 entry learnt
+            [101m, 102m, 100m, 101m],       // 00:01 placed
+            [102m, 103m, 101m, 102m],       // 00:02 fills at 102
+            [102m, 103m, 88m, 89m],         // 00:03 exit learnt
+            [89m, 90m, 88m, 89m],           // 00:04 placed; closes under 100
+            [120m, 125m, 119m, 121m],       // 00:05 the exit fills at 120, and the close is above 100: entry learnt
+            [121m, 122m, 120m, 121m],       // 00:06 placed
+            [130m, 131m, 129m, 130m],       // 00:07 fills at 130
+            [130m, 131m, 129m, 130m]));
+
+        Assert.Equal([Start, Start.AddMinutes(3), Start.AddMinutes(5)],
+            result.Trace.Of(BacktestEventKind.Signal).Select(s => s.Bar));
+        Assert.Equal([(Start.AddMinutes(2), 102m), (Start.AddMinutes(7), 130m)],
+            result.Trace.Of(BacktestEventKind.Fill).Select(f => (f.Bar, f.Price!.Value)));
+        Assert.Equal((Start.AddMinutes(5), 120m), (result.Trades[0].ExitBar, result.Trades[0].ExitPrice));
+    }
+
+    /// <summary>
+    /// (e) A STOP OR A TARGET EXIT STILL ENTERS ON ITS OWN BAR. Protection is an order already at the venue: it fills
+    /// on the minute it is touched, and that minute closes flat with no order of the run in flight, so an entry rule
+    /// true at its close signals there, on the paper runner and in the backtest alike. Green on the base as well.
+    /// </summary>
+    [Fact]
+    public void A_stop_or_target_exit_still_enters_on_its_own_bar()
+    {
+        foreach (var (level, exit, reason) in new[]
+                 {
+                     ("stop percent 5", new[] { 101m, 102m, 90m, 105m }, ExitReason.Stop),
+                     ("target percent 5", new[] { 101m, 110m, 100m, 105m }, ExitReason.Target)
+                 })
+        {
+            var program = Program($"""
+                instrument BTCUSDT
+                size fixed 1
+                {level}
+                entry when close > 100
+                """);
+
+            var result = RunOn(program, Bars(
+                [100m, 102m, 99m, 101m],    // 00:00 entry learnt
+                [101m, 102m, 100m, 101m],
+                [101m, 102m, 100m, 101m],
+                [101m, 102m, 100m, 101m],
+                [101m, 102m, 100m, 101m],
+                exit,                       // 00:05 the level is touched, the minute closes at 105
+                [105m, 106m, 104m, 105m],
+                [106m, 107m, 105m, 106m]));
+
+            var first = result.Trades[0];
+            Assert.Equal(reason, first.Reason);
+            Assert.Equal(Start.AddMinutes(5), first.ExitBar);
+
+            var again = result.Trace.Of(BacktestEventKind.Signal).ElementAt(1);
+            Assert.Equal((Start.AddMinutes(5), nameof(IntentKind.Enter)), (again.Bar, again.Status!));
+        }
+    }
+
+    /// <summary>
+    /// (h) AN ORDER DUE AFTER THE WINDOW IS NO TRADE, IN WORDS. The entry learnt at 00:00 is due at 00:02's open and
+    /// the window's last minute is 00:01: nothing fills, and the line names the minute it was due and why.
+    ///
+    /// <para><b>RED on the base:</b> it filled at 00:01's open.</para>
+    /// </summary>
+    [Fact]
+    public void An_order_due_after_the_window_is_no_trade_in_words()
+    {
+        var result = RunOn(EnterAbove100(), Bars(
+            [100m, 102m, 99m, 101m],
+            [200m, 205m, 195m, 201m]));
+
+        Assert.Empty(result.Trace.Of(BacktestEventKind.Fill));
+        Assert.Empty(result.Trades);
+        var refused = Assert.Single(result.Trace.Of(BacktestEventKind.NoTrade));
+        Assert.Equal(
+            $"the run's window ended before {Start.AddMinutes(2):O}, the first minute this order could fill at: an order "
+            + "is placed inside the minute after the one it was decided on and fills at the open of the minute after that, "
+            + "as on paper",
+            refused.Reason);
+        Assert.Equal(Start, refused.Bar);
+    }
+
+    /// <summary>
+    /// (i) A RELATIVE LEVEL IS MEASURED FROM THE FILL, AND A FIXED ONE STAYS WHERE IT WAS DECLARED — what the paper
+    /// runner does with a percent or an ATR level (ruling Q1); its re-anchoring of a FIXED level is a suspected runner
+    /// defect of its own (<c>U-runner-fixed-levels</c>), not copied here.
+    ///
+    /// <para>The signal closes at 101 and the entry fills at 110. Five and ten percent of 101 are 5.05 and 10.1, so the
+    /// relative program's stop and target rest at 104.95 and 120.1: 00:04's 115 is not its target and 00:05's 104
+    /// is its stop. The fixed program's target, 111.1, is where it was declared: 00:04 reaches it.</para>
+    ///
+    /// <para><b>RED on the base</b> (levels from the signal's close): the relative program exits on its target at
+    /// 111.1. <b>RED through the mutant</b> "levels absolute from the signal's close" — the same.</para>
+    /// </summary>
+    [Fact]
+    public void A_relative_level_is_measured_from_the_fill_and_a_fixed_one_stays_where_it_was_declared()
+    {
+        var bars = Bars(
+            [100m, 102m, 99m, 101m],        // 00:00 entry learnt at 101: 95.95 and 111.1 as declared
+            [101m, 101m, 101m, 101m],       // 00:01 placed
+            [110m, 110m, 110m, 110m],       // 00:02 fills at 110
+            [110m, 110m, 110m, 110m],       // 00:03 protection placed
+            [110m, 115m, 110m, 112m],       // 00:04 resting: 111.1 reached, 120.1 not
+            [112m, 113m, 104m, 105m]);      // 00:05 104.95 reached
+
+        var relative = RunOn(Program("""
+            instrument BTCUSDT
+            size fixed 1
+            stop percent 5
+            target percent 10
+            entry when close > 100
+            """), bars);
+        var fixedLevels = RunOn(Program("""
+            instrument BTCUSDT
+            size fixed 1
+            stop fixed 95.95
+            target fixed 111.1
+            entry when close > 100
+            """), bars);
+
+        var measured = relative.Trades[0];
+        Assert.Equal((ExitReason.Stop, Start.AddMinutes(5), 104.95m), (measured.Reason, measured.ExitBar, measured.ExitPrice));
+
+        var declared = fixedLevels.Trades[0];
+        Assert.Equal((ExitReason.Target, Start.AddMinutes(4), 111.1m), (declared.Reason, declared.ExitBar, declared.ExitPrice));
+    }
 }

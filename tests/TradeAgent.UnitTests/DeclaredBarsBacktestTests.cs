@@ -483,4 +483,136 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
         return record with { Id = new DatasetStore(db).Record(record) };
     }
+
+    // ---- THE MINUTE PAPER FILLS ON, ON DECLARED BARS (U-backtest-parity) ----------------------------------------
+    //
+    // The decision is the declared bar's; the fill and the protection stay on the MINUTE, two minutes on, as on paper:
+    // an order learnt at minute X — the hour's last minute, or the first minute past an hour whose last minutes are
+    // missing — fills at the first minute opening at or after X+2, and the stop placed after the fill minute F rests
+    // from F+2. RED on the base (`d55784e4`) for each of the three below.
+
+    /// <summary>One minute at one price, for fixtures that only need the opens to say which minute filled.</summary>
+    static KlineBar At(int minute, decimal price) => M(minute, price, price, price, price);
+
+    /// <summary>
+    /// (f) AN HOURLY DECISION FILLS TWO MINUTES INTO THE NEXT HOUR, AND RESTS ITS STOP TWO MINUTES AFTER THAT.
+    ///
+    /// <para>Hour 1 closes at 101, above the two-hour mean: the entry is learnt on its last minute, 01:59, placed inside
+    /// 02:00 — whose open, 200, paper never pays — and filled at 02:01's open, 101.5. The stop, two percent of 101 below
+    /// the FILL (99.48), is placed inside 02:02 and rests from 02:03: 02:02 reaches 99 and does not fire it, 02:10 does,
+    /// at 99.48.</para>
+    ///
+    /// <para><b>RED on the base:</b> filled at 02:00's open, 200. <b>RED through the mutant</b> "fill at X+1 again".</para>
+    /// </summary>
+    [Fact]
+    public void An_hourly_decision_fills_two_minutes_into_the_next_hour_and_rests_its_stop_two_after_that()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            stop percent 2
+            indicator m = sma(close, 2)
+            entry when close > m
+            """);
+
+        var minutes = Flat(0, 60, 100m).Concat(Flat(60, 59, 100.5m)).Append(M(119, 100.5m, 101m, 100.5m, 101m))
+            .Append(At(120, 200m))                                  // 02:00 the minute the order is placed in
+            .Append(M(121, 101.5m, 101.6m, 101.4m, 101.5m))         // 02:01 the fill, at 101.5: the stop is 99.48
+            .Append(M(122, 101.5m, 101.5m, 99m, 99.5m))             // 02:02 reaches 99 — the stop is being placed
+            .Concat(Flat(123, 7, 101.5m))                           // 02:03.. resting, untouched
+            .Append(M(130, 101.5m, 101.5m, 99m, 99m))               // 02:10 reaches 99 with the stop resting
+            .Concat(Flat(131, 49, 98m))                             // hour 2 closes under its mean: no entry
+            .ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        var signal = Assert.Single(Of(run, BacktestEventKind.Signal));
+        Assert.Equal((Start.AddHours(1), 101m), (signal.Bar, signal.Price!.Value));
+
+        var fill = Assert.Single(Of(run, BacktestEventKind.Fill));
+        Assert.Equal((Start.AddMinutes(121), 101.5m, 3L), (fill.Bar, fill.Price!.Value, fill.Ordinal));
+
+        var trade = Assert.Single(run.Trades);
+        Assert.Equal(ExitReason.Stop, trade.Reason);
+        Assert.Equal((Start.AddMinutes(130), 99.48m), (trade.ExitBar, trade.ExitPrice));
+    }
+
+    /// <summary>
+    /// (f2) AN HOURLY MAXIMUM HOLD RE-ENTERS AT THE NEXT DECLARED CLOSE — the paper runner's reading on the hour its own
+    /// close is in flight.
+    ///
+    /// <para>Entered on hour 0's close and filled at 01:01, a one-bar hold is reached at hour 2's close. Its market
+    /// close is placed inside 03:00 and fills at 03:01's open, 103; at hour 2's close the evaluator reads FLAT with that
+    /// close IN FLIGHT and enters nothing, so the next entry is hour 3's, filled at 04:01. Its own hold is reached at
+    /// hour 5's close, the last of the window, and its close is due past it.</para>
+    ///
+    /// <para><b>RED on the base:</b> closed at hour 2's close and entered again on it. <b>RED through the mutant</b>
+    /// <c>OrderPending: false</c> at the maximum hold: entered again at hour 2.</para>
+    /// </summary>
+    [Fact]
+    public void An_hourly_maximum_hold_re_enters_at_the_next_declared_close()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            max_hold_bars 1
+            entry when close > 100
+            """);
+
+        var opens = new Dictionary<int, decimal> { [61] = 102m, [181] = 103m, [241] = 104m };
+        var minutes = Enumerable.Range(0, 360).Select(i => At(i, opens.GetValueOrDefault(i, 101m))).ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        Assert.Equal([Start, Start.AddHours(3)], Of(run, BacktestEventKind.Signal).Select(s => s.Bar));
+        Assert.Equal([(Start.AddMinutes(61), 102m), (Start.AddMinutes(241), 104m)],
+            Of(run, BacktestEventKind.Fill).Select(f => (f.Bar, f.Price!.Value)));
+
+        var trade = Assert.Single(run.Trades);
+        Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
+        Assert.Equal((Start.AddMinutes(181), 103m), (trade.ExitBar, trade.ExitPrice));
+        Assert.True(run.Metrics.PositionOpenAtEnd);
+    }
+
+    /// <summary>
+    /// (g) A BAR DECIDED PAST ITS MISSING MINUTES FILLS TWO MINUTES AFTER THE MINUTE THAT CLOSED IT.
+    ///
+    /// <para>Hour 1's last ten minutes are missing, so the runner learns that hour has closed only when it reads 02:00,
+    /// the first minute past it — and places the entry inside 02:01, filled at 02:02's open. 02:00's own open (150) is
+    /// two minutes earlier than paper could act, and 02:01's (160) one.</para>
+    ///
+    /// <para><b>RED on the base:</b> filled at 02:00's own open, 150.</para>
+    /// </summary>
+    [Fact]
+    public void A_bar_decided_past_its_missing_minutes_fills_two_minutes_after_the_minute_that_closed_it()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            indicator m = sma(close, 2)
+            exit when close < 1
+            entry when close > m
+            """);
+
+        var minutes = Flat(0, 60, 100m).Concat(Flat(60, 49, 100.5m)).Append(M(109, 100.5m, 101m, 100.5m, 101m))
+            .Append(At(120, 150m))                                  // 02:00 the first minute past hour 1: learnt here
+            .Append(At(121, 160m))                                  // 02:01 placed
+            .Concat(Flat(122, 58, 101.5m))                          // 02:02 the fill, at 101.5
+            .ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        var signal = Assert.Single(Of(run, BacktestEventKind.Signal));
+        Assert.Equal((Start.AddHours(1), 2L, 101m), (signal.Bar, signal.Ordinal, signal.Price!.Value));
+        Assert.Equal((2L, 10L), (Assert.Single(Of(run, BacktestEventKind.Gap)).Ordinal, Of(run, BacktestEventKind.Gap)[0].Minutes!.Value));
+
+        var fill = Assert.Single(Of(run, BacktestEventKind.Fill));
+        Assert.Equal((Start.AddMinutes(122), 101.5m, 3L), (fill.Bar, fill.Price!.Value, fill.Ordinal));
+    }
 }
