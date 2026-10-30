@@ -168,6 +168,13 @@ public sealed record CellPolicy
                 if (guarded.Refuses(form, executable: what == ProgramRoot) is { } why) return $"the cell's {what} {p} {why}";
         }
         if (!System.IO.Directory.Exists(Workspace)) return $"the cell's workspace {Workspace} is not a directory";
+        // THE OWNER'S KIT IS READ AND RUN, NEVER WRITTEN (U-kit-socket): a cell may be granted the kit, or a folder in it, as a read-only
+        // input or a program root, and never as the one folder it writes — nor a workspace that holds it, or the folder installs are
+        // staged in, in any spelling.
+        foreach (var kit in new[] { Kit.Dir(appHome), Kit.StagingDir(appHome) }.SelectMany(Forms))
+            foreach (var w in Forms(Workspace))
+                if (Within(w, kit) || Within(kit, w))
+                    return $"the cell's workspace {Workspace} is, lies inside or holds the owner's head-start kit {kit}, which no cell may write";
         // A READ-ONLY INPUT THAT OVERLAPS THE WORKSPACE IS NOT READ-ONLY (triage #4): Landlock adds up the rights of every rule along
         // a path, so an input inside the workspace keeps the workspace's write rights, and one that contains it is written through it.
         foreach (var ro in ReadOnly)
