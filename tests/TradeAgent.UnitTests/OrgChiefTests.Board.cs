@@ -173,7 +173,7 @@ public partial class OrgChiefTests
         Assert.Empty(preview.Fields);
         Assert.Equal(before, Written(db));
         var versions = Count(db, "board_policy");
-        var vetoed = board.VetoBoardAct(appointed.Act.Id, Now);
+        var vetoed = board.VetoBoardAct(appointed.Act.Id, Now, board.PreviewBoardVeto(appointed.Act.Id));
         Assert.Equal((BoardActEventKind.Vetoed, (int?)null), (vetoed.Status, vetoed.PolicyVersion));
         Assert.Null(org.Chief());
         Assert.Equal(OrgPositionStatus.Ended, org.Position(first)!.Status);
@@ -186,24 +186,24 @@ public partial class OrgChiefTests
         var b = org.Chief()!;
         var third = Confirmed(board, b, Codex);
         var c = org.Chief()!;
-        var stale = board.VetoBoardAct(second.Act.Id, Now);
+        var stale = board.VetoBoardAct(second.Act.Id, Now, board.PreviewBoardVeto(second.Act.Id));
         Assert.Contains("nothing is removed", stale.Words, StringComparison.Ordinal);
         Assert.Equal(c, org.Chief());
-        board.VetoBoardAct(third.Act.Id, Now);
+        board.VetoBoardAct(third.Act.Id, Now, board.PreviewBoardVeto(third.Act.Id));
         Assert.Null(org.Chief());
         Assert.Equal(OrgPositionStatus.Ended, org.Position(b)!.Status);
-        Assert.Contains("vetoed already", Assert.Throws<TradeAgentException>(() => board.VetoBoardAct(third.Act.Id, Now)).Message, StringComparison.Ordinal);
+        Assert.Contains("vetoed already", Assert.Throws<TradeAgentException>(() => board.VetoBoardAct(third.Act.Id, Now, board.PreviewBoardVeto(third.Act.Id))).Message, StringComparison.Ordinal);
 
         // A REMOVAL'S VETO RESTORES NO ONE; AN OPEN PROPOSAL'S VETO APPLIES NOTHING.
         var d = Confirmed(board, null, Puppet);
         var sitting = org.Chief()!;
         var removal = Confirmed(board, sitting, null);
         Assert.Null(org.Chief());
-        Assert.Contains("no one is restored", board.VetoBoardAct(removal.Act.Id, Now).Words, StringComparison.Ordinal);
+        Assert.Contains("no one is restored", board.VetoBoardAct(removal.Act.Id, Now, board.PreviewBoardVeto(removal.Act.Id)).Words, StringComparison.Ordinal);
         Assert.Null(org.Chief());
         Assert.Equal(OrgPositionStatus.Ended, org.Position(sitting)!.Status);
         var open = board.Propose(Act("board-1", ChiefIntent(null, Codex)), Now);
-        Assert.Equal(BoardActEventKind.Vetoed, board.VetoBoardAct(open.Act.Id, Now).Status);
+        Assert.Equal(BoardActEventKind.Vetoed, board.VetoBoardAct(open.Act.Id, Now, board.PreviewBoardVeto(open.Act.Id)).Status);
         Assert.Null(org.Chief());
         Assert.Contains("vetoed", Assert.Throws<TradeAgentException>(() =>
             board.Decide(open.Act.Id, "board-2", null, true, open.Act.IntentSha256, "my own reading", Now)).Message, StringComparison.Ordinal);

@@ -97,7 +97,7 @@ public partial class BoardActTests
                 var before = Values(db);
                 var preview = gw.PreviewBoardVeto(act.Act.Id);
                 Assert.True(preview.Allowed, preview.Words);
-                var vetoed = gw.VetoBoardAct(act.Act.Id);
+                var vetoed = gw.VetoBoardAct(act.Act.Id, gw.PreviewBoardVeto(act.Act.Id));
                 var after = Values(db);
                 log.WriteLine($"{field} superseded={superseded}: {before[field]} -> {after[field]} ({vetoed.Words})");
 
@@ -133,7 +133,7 @@ public partial class BoardActTests
         var preview = gw.PreviewBoardVeto(open.Act.Id);
         Assert.True(preview.Allowed);
         Assert.Contains("closes the proposal", preview.Words, StringComparison.Ordinal);
-        var vetoed = gw.VetoBoardAct(open.Act.Id);
+        var vetoed = gw.VetoBoardAct(open.Act.Id, gw.PreviewBoardVeto(open.Act.Id));
         Assert.Equal((BoardActEventKind.Vetoed, (int?)null), (vetoed.Status, vetoed.PolicyVersion));
         Assert.Equal(BoardDecider.Owner, new BoardStore(db).Events(open.Act.Id)[^1].Seat);
         Assert.Equal(1, new BoardReader(db).InForce().Version);
@@ -146,7 +146,7 @@ public partial class BoardActTests
         foreach (var (id, says) in new[] { (narrowed.Act.Id, "would WIDEN"), (open.Act.Id, "vetoed already"), (expired.Act.Id, "applied nothing") })
         {
             Assert.False(gw.PreviewBoardVeto(id).Allowed);
-            var refused = Assert.Throws<TradeAgentException>(() => gw.VetoBoardAct(id));
+            var refused = Assert.Throws<TradeAgentException>(() => gw.VetoBoardAct(id, gw.PreviewBoardVeto(id)));
             log.WriteLine(refused.Message);
             Assert.Contains(says, refused.Message, StringComparison.Ordinal);
         }
