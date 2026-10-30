@@ -163,9 +163,9 @@ public sealed class TapeHoldout
     public IReadOnlyList<TapeHoldoutWindow> Windows() =>
         Audience.MayReadHoldout || _ledger is null
             ? []
-            : ReferenceEquals(Audience, BarAudience.PaperRunner)
-                ? WindowsOf(_ledger.All())
-                : [.. WindowsOf(_ledger.All()), .. _ledger.ForwardWindows()];
+            // ONE READ OF THE LEDGER FOR BOTH (the Codex review's P1): a campaign opening over a fresh holdout between a read of the
+            // datasets and a read of the fresh holdouts would leave out both its dataset's new window and the retired fresh one.
+            : _ledger.HeldWindows(forward: !ReferenceEquals(Audience, BarAudience.PaperRunner));
 
     /// <summary>
     /// ONE DATASET'S ROW AS THE LEDGER HOLDS IT NOW — its cutoff included, read afresh as the windows are — or null for an
@@ -267,7 +267,8 @@ public sealed class TapeHoldout
     public string? Refusal(DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
     {
         ArgumentNullException.ThrowIfNull(set);
-        return BarRefusal($"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version})", set.Id, BarLength(set.Interval), from, to);
+        return BarRefusal($"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version})", set.Id, set.HoldoutFrom, BarLength(set.Interval),
+            from, to);
     }
 
     /// <summary>
@@ -276,9 +277,9 @@ public sealed class TapeHoldout
     /// already has: a forward bar does not post-date every freeze.
     /// </summary>
     public string? ForwardRefusal(string symbol, DateTimeOffset? from, DateTimeOffset? to) =>
-        BarRefusal($"the forward bars of {symbol}", null, ForwardBars.BarLength, from, to);
+        BarRefusal($"the forward bars of {symbol}", null, null, ForwardBars.BarLength, from, to);
 
-    string? BarRefusal(string read, long? own, TimeSpan? length, DateTimeOffset? from, DateTimeOffset? to)
+    string? BarRefusal(string read, long? own, DateTimeOffset? ownCutoff, TimeSpan? length, DateTimeOffset? from, DateTimeOffset? to)
     {
         if (Audience.MayReadHoldout) return null;
 
@@ -286,7 +287,11 @@ public sealed class TapeHoldout
         // 'to'. A bar length this build cannot read, or a close past the last instant there is, is a span with no end.
         DateTimeOffset? until = to is { } hi && length is { } bar && hi <= DateTimeOffset.MaxValue - bar ? hi + bar : null;
 
-        var reached = Windows().Where(w => w.DatasetId != own && w.Overlaps(from, until)).ToList();
+        // THE SET'S OWN WINDOW IS LEFT TO Holdout.Refusal ONLY WHEN THE CALLER'S ROW CARRIES THE CUTOFF THE LEDGER HOLDS NOW (the Codex
+        // review's P1): a row read before a cutoff was set — a fresh holdout's campaign opening over it between the caller's read and
+        // this one — asked its own cutoff as none, so its window is asked here like any other's.
+        var reached = Windows().Where(w => !(w.DatasetId == own && ownCutoff is { } cut && cut.ToUniversalTime() == w.From)
+                                           && w.Overlaps(from, until)).ToList();
         if (reached.Count == 0) return null;
 
         var asked = (from, to) switch

@@ -31,13 +31,17 @@ public static class DataExports
     /// <summary>The prefix of every export's file name — what the folder count counts.</summary>
     public const string Prefix = "export-";
 
-    /// <summary>The file one window of one dataset is written to, relative to the caller's home.</summary>
-    public static string FileName(DatasetRecord set, DateTimeOffset? from, DateTimeOffset to)
+    /// <summary>
+    /// The file the bars from <paramref name="first"/> to <paramref name="last"/> (their open times) of one dataset are written to,
+    /// relative to the caller's home: named by the bars it holds, to the second, so two exports share a name only when they hold the
+    /// same bars (the Codex review's P2: a name cut to the asked minutes made different windows overwrite each other).
+    /// </summary>
+    public static string FileName(DatasetRecord set, DateTimeOffset first, DateTimeOffset last)
     {
         ArgumentNullException.ThrowIfNull(set);
-        var start = from is { } lo ? lo.UtcDateTime.ToString("yyyyMMddTHHmm", CultureInfo.InvariantCulture) : "first";
-        return $"{Folder}/{Prefix}{set.Pair}-{set.Interval}-dataset{set.Id.ToString(CultureInfo.InvariantCulture)}-{start}-"
-               + $"{to.UtcDateTime.ToString("yyyyMMddTHHmm", CultureInfo.InvariantCulture)}.csv";
+        return $"{Folder}/{Prefix}{set.Pair}-{set.Interval}-dataset{set.Id.ToString(CultureInfo.InvariantCulture)}-"
+               + $"{first.UtcDateTime.ToString("yyyyMMddTHHmmss", CultureInfo.InvariantCulture)}-"
+               + $"{last.UtcDateTime.ToString("yyyyMMddTHHmmss", CultureInfo.InvariantCulture)}.csv";
     }
 
     /// <summary>The file's bytes: the dataset's own columns and each bar's quality, UTC, ascending, nothing filled in.</summary>

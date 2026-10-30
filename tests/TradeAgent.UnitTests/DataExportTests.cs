@@ -112,6 +112,14 @@ public class DataExportTests
         Assert.Equal(CouncilRoles.Research, row.Role);
         Assert.Contains(path, row.Argument, StringComparison.Ordinal);
         Assert.Equal(new FileInfo(Path.Combine(rig.Home, path)).Length, row.Bytes);
+
+        // A WINDOW ASKED IN THE SAME MINUTE BUT HOLDING OTHER BARS IS ANOTHER FILE (the Codex review's P2), and the first is untouched.
+        var later = await rig.ExportAsync(("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture)),
+            ("from", Iso(Start.AddMinutes(10).AddSeconds(30))), ("to", Iso(Cutoff.AddMinutes(-1))));
+        Assert.True(later.Ok, later.Error?.Message);
+        var second = JsonSerializer.SerializeToElement(later.Data, Json.Options).GetProperty("path").GetString()!;
+        Assert.NotEqual(path, second);
+        Assert.Equal(91, File.ReadAllLines(Path.Combine(rig.Home, path)).Length);
     }
 
     /// <summary>A FULL FOLDER IS REFUSED NAMING ITS EXPORTS AND WRITES NOTHING; THE SAME WINDOW AGAIN REWRITES ITS OWN FILE.</summary>
@@ -156,7 +164,7 @@ public class DataExportTests
         if (OperatingSystem.IsWindows()) return;
         await using var rig = await Ready();
         var to = Cutoff.AddMinutes(-1);
-        var relative = DataExports.FileName(rig.Set, null, to);
+        var relative = DataExports.FileName(rig.Set, Start, to);
         Directory.CreateDirectory(Path.Combine(rig.Home, DataExports.Folder));
         var victim = Path.Combine(TestEnv.Home, $"victim-{Guid.NewGuid():n}.txt");
         File.WriteAllText(victim, "not the gateway's to write");
