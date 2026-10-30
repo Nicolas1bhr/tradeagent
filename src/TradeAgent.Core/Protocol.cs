@@ -62,6 +62,16 @@ public static class Ops
     public const string DataTape = "data-tape";
 
     /// <summary>
+    /// THE RESEARCH MONTHS OF ONE DATASET, WRITTEN AS A FILE INTO THE CALLER'S OWN FOLDER (<c>U-evidence-campaign</c> item 3): so an
+    /// executor's own code can read bars at a scale no answer into a model's context can carry. Read by the same holdout refusal
+    /// <see cref="DataBars"/> and the evaluator take — a window reaching any held window, or the fresh holdout being collected, is refused
+    /// with nothing written — bounded by <c>DataExports.MaxBars</c> and <c>DataExports.MaxFiles</c>, and recorded in the observed-deliveries
+    /// ledger (<c>tool_call</c>) under the caller's attempt and position. It writes into the caller's home and nowhere else; it reaches no
+    /// ledger, no order and no other folder.
+    /// </summary>
+    public const string DataExport = "data-export";
+
+    /// <summary>
     /// THE VENUE CATALOGUE, AND IT IS A READ. What instruments this installation knows of, on which
     /// venue, with what price grid and what quantity step — and, on every row, who said so and whether
     /// anything has CONFIRMED it against the venue's own instrument definition.

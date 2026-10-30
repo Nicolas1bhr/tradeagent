@@ -274,6 +274,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
     public CampaignRenewal Renewals => new(_db);
 
     /// <summary>
+    /// THE OBSERVED-DELIVERIES LEDGER (<c>tool_call</c>), for the one gateway op that delivers a file rather than an answer:
+    /// <c>data-export</c> records its read of a position here (<c>U-evidence-campaign</c>). No op writes it otherwise.
+    /// </summary>
+    public ToolCallStore ToolCalls => new(_db);
+
+    /// <summary>
     /// OPENS THE CAMPAIGN THAT FOLLOWS A SPENT ONE, over <paramref name="freshDatasetId"/>, or refuses in words with NOTHING written.
     ///
     /// <para>The owner's own press, made by the app's rule: <see cref="CampaignRenewal.OpenRefusal"/> is asked first — a fresh download

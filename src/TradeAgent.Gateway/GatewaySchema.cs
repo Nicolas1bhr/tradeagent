@@ -271,6 +271,21 @@ public static class GatewaySchema
                     + "'forward' for the closed minutes TradeAgent collected itself. Any other word is refused.")
             ]),
 
+        new(Core.Ops.DataExport, "trade data export --dataset N [--from D] --to D", false,
+            "The research months of ONE dataset written as a file into YOUR OWN folder, for your own code to read at a scale no "
+            + "answer can carry: '" + Core.Data.DataExports.Folder + "/" + Core.Data.DataExports.Prefix + "…csv', rows '"
+            + Core.Data.KlineNormaliser.HeaderWithQuality + "' in UTC, ascending, nothing filled in. The answer names the file. "
+            + "Refused exactly as 'data bars' is — a window reaching the dataset's 'holdout_from', another dataset's holdout window or "
+            + "the fresh holdout being collected (all in 'trade data list') is HOLDOUT_WITHHELD and NOTHING is written, never cut "
+            + $"short. 'to' is required. At most {Core.Data.DataExports.MaxBars} bars a file and {Core.Data.DataExports.MaxFiles} "
+            + "export files in the folder — delete one of yours to make room; the same window again rewrites its file. Every export "
+            + "is recorded as a read of your position. A backtest still runs through 'trade backtest', which is what is charged.",
+            [
+                new("dataset", "number", true, "The dataset's ledger id, from 'trade data list'."),
+                new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("to", "string", true, "ISO-8601 date or instant, inclusive, before the dataset's 'holdout_from'.")
+            ]),
+
         new(Core.Ops.DataTape,
             "trade data tape --source S [--series S] [--subject X] [--from D] [--to D] [--as-of D] [--limit N] [--before ID]",
             false,

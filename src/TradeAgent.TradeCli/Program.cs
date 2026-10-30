@@ -240,6 +240,15 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
                 return (Ops.DataTape, a);
             }
 
+            // `trade data export --dataset N [--from D] --to D`: the research months of one dataset, written as a file into your own
+            // folder (U-evidence-campaign). A READ of the bars: nothing it writes is a ledger, and a window reaching a holdout is refused.
+            if (sub is "export")
+            {
+                a["dataset"] = flags.GetValueOrDefault("dataset") ?? pos.ElementAtOrDefault(1) ?? "";
+                Opt("from"); Opt("to");
+                return (Ops.DataExport, a);
+            }
+
             if (sub is not "bars") return (null, a);
 
             a["pair"] = flags.GetValueOrDefault("pair") ?? pos.ElementAtOrDefault(1) ?? "";
