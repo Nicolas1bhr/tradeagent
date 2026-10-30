@@ -136,8 +136,63 @@ public static class Canon
         Render(ctx, AgentReach.For(ctx.Role, runtime, ctx.TurnsPerSession)).Text;
 
     /// <summary>The canon rendered against an explicit reach, with every capability it named.</summary>
-    public static CanonRender Render(WorkspaceContext ctx, AgentReach reach) =>
-        Slots.Render(Template(ctx.Role, ctx.Place), new CanonModel(ctx, reach));
+    public static CanonRender Render(WorkspaceContext ctx, AgentReach reach)
+    {
+        var canon = Slots.Render(Template(ctx.Role, ctx.Place), new CanonModel(ctx, reach));
+        var kit = KitPart(ctx.Kit, reach.Runtime);
+        return kit.Length == 0 ? canon : canon with { Text = canon.Text.TrimEnd('\n') + "\n\n" + kit };
+    }
+
+    /// <summary>The most bytes <see cref="KitPart"/> may add to a canon: a growing kit never pushes a seat's canon toward the vendor's cut.</summary>
+    public const int KitPartMaxBytes = 2048;
+
+    /// <summary>
+    /// WHAT THE OWNER'S HEAD-START KIT HOLDS, NAMED IN THE CANON (<c>U-kit-socket</c> item 2): generated from the installed kit's index
+    /// (<see cref="Kit.Index"/>) and nothing else — like the reach, a change of kit changes this part, never the template's words — and
+    /// empty while no kit is granted, so a home without a kit reads the canon it read before. A seat that runs code (a cell or the CLI)
+    /// is told each skill's file and each tool, a cell its tools by name (its PATH holds them); a seat with no shell only what its
+    /// executors' cells hold. Held to <see cref="KitPartMaxBytes"/>: past it the descriptions go, then the names, never the bound.
+    /// </summary>
+    public static string KitPart(Kit.View? kit, RuntimeClass runtime)
+    {
+        if (kit is null || (kit.Index.Skills.Count == 0 && kit.Index.Tools.Count == 0)) return "";
+        var head = $"## The owner's head-start kit\n\n`{kit.Index.Name}` — skills and tools the account owner built and installed himself " +
+                   $"(kit {kit.Hash[..12]}). It is read-only: nothing you run can change it.";
+        var index = Path.Combine(kit.Dir, Kit.IndexFile);
+        if (runtime is not (RuntimeClass.Cell or RuntimeClass.Cli))
+        {
+            var held = string.Join("; ", new[]
+            {
+                kit.Index.Skills.Count > 0 ? "skills " + string.Join(", ", kit.Index.Skills.Select(s => $"`{s.Name}`")) : null,
+                kit.Index.Tools.Count > 0 ? "tools " + string.Join(", ", kit.Index.Tools.Select(t => $"`{t.Name}`")) : null
+            }.Where(x => x is not null));
+            var line = $"{head} Every executor's cell holds it: {held}.";
+            return Fits(line) ? line : $"{head} Every executor's cell holds it: {kit.Index.Skills.Count} skills and {kit.Index.Tools.Count} tools, listed in `{index}`.";
+        }
+        string Listing(bool described)
+        {
+            var sb = new StringBuilder(head).Append("\n");
+            if (kit.Index.Skills.Count > 0)
+            {
+                sb.Append("\n- **Skills** — read a skill's `SKILL.md` in full before you use it:\n");
+                foreach (var s in kit.Index.Skills)
+                    sb.Append("  - `").Append(s.Name).Append('`').Append(described ? " — " + s.Description : "").Append(" — `").Append(kit.SkillPath(s.Name)).Append("`\n");
+            }
+            if (kit.Index.Tools.Count > 0)
+            {
+                sb.Append(runtime == RuntimeClass.Cell ? "\n- **Tools** — on your PATH, run by name:\n" : "\n- **Tools** — run by their path:\n");
+                foreach (var t in kit.Index.Tools)
+                    sb.Append("  - `").Append(runtime == RuntimeClass.Cell ? t.Name : kit.ToolPath(t.Name)).Append('`').Append(described ? " — " + t.Description : "").Append('\n');
+            }
+            return sb.ToString();
+        }
+        foreach (var described in new[] { true, false })
+            if (Listing(described) is var text && Fits(text)) return text;
+        return $"{head} It holds {kit.Index.Skills.Count} skills and {kit.Index.Tools.Count} tools, listed in `{index}`" +
+               (runtime == RuntimeClass.Cell && kit.Tools is not null ? "; its tools are on your PATH.\n" : ".\n");
+
+        static bool Fits(string text) => Encoding.UTF8.GetByteCount(text) <= KitPartMaxBytes;
+    }
 
     /// <summary>The guide for the seat <paramref name="ctx"/> names, rendered for one runtime class.</summary>
     public static string Guide(WorkspaceContext ctx, RuntimeClass runtime) =>

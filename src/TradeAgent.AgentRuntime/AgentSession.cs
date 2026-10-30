@@ -1293,13 +1293,16 @@ public sealed class AgentSession(
         try
         {
             var layout = RouteA.LayoutFor(Path.GetFileName(attempt.Dir));
-            var policy = RouteA.Policy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome);
+            // THE OWNER'S KIT, READ ONCE FOR THIS LAUNCH (U-kit-socket): granted only while it hashes to its recorded install; the
+            // policy and the harness's skill root are made from this one reading.
+            var kit = Kit.Granted();
+            var policy = RouteA.Policy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome, kit);
             var launcher = cells.Launcher ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 "TradeAgent's own trade command, which starts a cell, is not installed; nothing was started");
             policyFile = policy.Write();
             homes = layout;
             RouteA.Make(layout, SeatProfile.ConfigBytes(seat), RouteA.EnvironmentsToml(launcher, attempt.Cell, policyFile, exe, Paths.Home),
-                Path.Combine(seat.Root, "codex", "auth.json"));
+                Path.Combine(seat.Root, "codex", "auth.json"), kit);
             psi.Environment["CODEX_HOME"] = layout.HarnessCodexHome;
             started = ProcessContainment.StartHarness(psi, attempt, launcher);
             cells.Assurance.Record(new CellAssurance(attemptId.Length > 0 ? attemptId : Path.GetFileName(attempt.Dir), RouteA.Provider,
