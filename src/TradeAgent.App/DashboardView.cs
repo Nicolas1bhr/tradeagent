@@ -238,6 +238,9 @@ sealed class DashboardPage
         _guidance.AcceptsReturn = true;
         _guidance.TextWrapping = TextWrapping.Wrap;
         _guidance.MinHeight = 72;
+        // THE WHOLE CARD'S WIDTH: the text field's default width is a figure box's, and guidance is sentences.
+        _guidance.Width = double.NaN;
+        _guidance.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         // THE SEAT HOME'S SIGN-IN, any time after onboarding (U-seat-signin): built once here, updated in place on the tick.
         _signIn = new SeatSignInCard(new SeatSignInSources

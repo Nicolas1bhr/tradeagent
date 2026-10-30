@@ -21,7 +21,14 @@ sealed record CostsRead(
 }
 
 /// <summary>One unit's day as the page says it: a line for each billing class, in the order plan, key, not established.</summary>
-sealed record CostUnitWords(string Id, int Depth, string Title, string Plan, string Key, string Unknown);
+sealed record CostUnitWords(string Id, int Depth, string Title, string Plan, string Key, string Unknown)
+{
+    /// <summary>
+    /// The lines a card shows: each class the unit has turns in today, or — when it has none in any — the one line that says so. Three
+    /// "none today" lines per unit hid the one figure that mattered among them.
+    /// </summary>
+    public IReadOnlyList<string> Shown { get; init; } = [Plan, Key, Unknown];
+}
 
 /// <summary>
 /// THE COSTS PAGE'S SENTENCES, SEPARATED FROM ITS CONTROLS (<c>U-org-surface-a</c>): <b>three figures, never one</b> (<c>docs/COUNCIL.md</c> rule 4) —
@@ -42,10 +49,18 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
         var byUnit = read.Day.ToLookup(d => d.UnitId, StringComparer.Ordinal);
         var units = tree
             .Where(t => t.Unit.Status != OrgUnitStatus.Closed || byUnit[t.Unit.Id].Any())   // a closed unit with no turns today has nothing to say
-            .Select(t => new CostUnitWords(t.Unit.Id, t.Depth, OrgText.UnitTitle(t.Unit),
-                Line(BillingClasses.Plan, byUnit[t.Unit.Id], read.Currency),
-                Line(BillingClasses.Key, byUnit[t.Unit.Id], read.Currency),
-                Line(BillingClasses.Unknown, byUnit[t.Unit.Id], read.Currency)))
+            .Select(t =>
+            {
+                var rows = byUnit[t.Unit.Id].ToList();
+                string[] classes = [BillingClasses.Plan, BillingClasses.Key, BillingClasses.Unknown];
+                var lines = classes.Select(c => Line(c, rows, read.Currency)).ToArray();
+                var shown = classes.Select((c, i) => (c, i)).Where(x => rows.Any(r => r.BillingClass == x.c && r.Totals is not null))
+                    .Select(x => lines[x.i]).ToList();
+                return new CostUnitWords(t.Unit.Id, t.Depth, OrgText.UnitTitle(t.Unit), lines[0], lines[1], lines[2])
+                {
+                    Shown = shown.Count > 0 ? shown : [Labels.CostsNothingToday]
+                };
+            })
             .ToList();
 
         return new CostsWords(
@@ -153,16 +168,17 @@ sealed class CostsPage
     static (Control Card, Action<CostUnitWords> Fill) MakeUnit(CostUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
-        var plan = Line();
-        var key = Line();
-        var unknown = Line();
-        var card = Ui.Card(Ui.Col(Theme.S2, title, plan, key, unknown));
+        TextBlock[] lines = [Line(), Line(), Line()];
+        var card = Ui.Card(Ui.Col(Theme.S2, [title, .. lines]));
         return (card, u =>
         {
             OrgText.Set(title, u.Title);
-            OrgText.Set(plan, u.Plan);
-            OrgText.Set(key, u.Key);
-            OrgText.Set(unknown, u.Unknown);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var text = i < u.Shown.Count ? u.Shown[i] : "";
+                OrgText.Set(lines[i], text);
+                if (lines[i].IsVisible != text.Length > 0) lines[i].IsVisible = text.Length > 0;
+            }
             var indent = new Avalonia.Thickness(u.Depth * Theme.S5, 0, 0, 0);
             if (card.Margin != indent) card.Margin = indent;
         });

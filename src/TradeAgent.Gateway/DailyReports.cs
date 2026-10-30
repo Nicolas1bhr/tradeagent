@@ -409,7 +409,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // WHAT A REPORT THAT TOUCHES NO PLATFORM CANNOT KNOW, said where the figure would have been.
         gaps.Add(new ReportGap("exposure, unrealised, loss allowance left",
             "this report is written from TradeAgent's own ledger and asks your platform nothing, so "
-            + "what is still OPEN is not valued in it; the Dashboard and 'trade pnl' do ask"));
+            + "what is still OPEN is not valued in it; the Dashboard's Performance card does ask"));
 
         // WHAT CAPITAL STANDS BEHIND A PROMOTED VERSION. Read at the snapshot instant, like everything
         // else in this document, and a ledger that cannot be read becomes a named gap rather than an

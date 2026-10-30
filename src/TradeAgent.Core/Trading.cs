@@ -994,12 +994,12 @@ public sealed record AiSpendToday
     public bool CapCannotFundATurn => OwnCannotFund || PlanReading is { CapCannotFundATurn: true };
 
     /// <summary>
-    /// THE CEILING THIS READING IS AGAINST, after "of a 10 USD": "daily limit of real money" or "daily plan-capacity limit — …, counted at
-    /// list price, not money" (<c>U-billing-classes</c>). <paramref name="whose"/> names whose plan: "your" to the owner, "your owner's"
+    /// THE CEILING THIS READING IS AGAINST, after "of a 10 USD": "daily limit of real money" or "daily plan-capacity limit (…, counted at
+    /// list price, not money)" (<c>U-billing-classes</c>). <paramref name="whose"/> names whose plan: "your" to the owner, "your owner's"
     /// to the AI.
     /// </summary>
     public string CeilingWords(string whose) => Class == Db.BillingClasses.Plan
-        ? $"daily plan-capacity limit — {whose} ChatGPT plan counted at list price, not money"
+        ? $"daily plan-capacity limit ({whose} ChatGPT plan counted at list price, not money)"
         : "daily limit of real money";
 }
 

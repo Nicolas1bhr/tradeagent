@@ -165,7 +165,8 @@ sealed class OversightPage
     readonly TextBlock _failures = Ui.Body("");
     bool _capRead;
     readonly Dictionary<string, (Control Card, TextBlock Ack)> _cards = new(StringComparer.Ordinal);
-    string _signature = "";
+    // NOT EMPTY: the first pass over no findings must draw "No findings." — an empty signature matched it and left the section blank.
+    string _signature = "\u0000";
 
     public Control Root { get; }
 
