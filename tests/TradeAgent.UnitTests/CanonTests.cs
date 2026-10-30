@@ -338,11 +338,11 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         // the chief, a head, staff, an executor — whose verb lists are generated from its seat's reach; the pair's words are v7's.
         (8, CouncilRoles.Operations, "815ea37b66e8a0f985031dc889c183452cd30c702e9444effb01b58beda080a1"),
         (8, CouncilRoles.Research, "1b8045fef4a3ad3ddb7703109086d991b4e09bee3361b49f2c26d6e6d414f9bc"),
-        (8, "org", "2993dcbfe67fd0b934ccc7d600c153598ec109abfedda9f95a05903c2382cd9f"),
-        (8, "org:chief", "ef2fea1fe457b3c473629c2e6e129d4dc8bc20c8a7bdb80e330bc9094698ae60"),
-        (8, "org:head", "cfc1f3dbfa515a0b46f36a659422699653c95c3df3bdf90f069eb29e28046774"),
-        (8, "org:staff", "c564cd8018c842fda1d22cf5ff4033b33f220c272e984ff52a18fc1081cc5708"),
-        (8, "org:executor", "02ef6f4ed26ccc64f355d083324571d0b08b7b22cd21c28ed23f14fa1d1e1487")
+        (8, "org", "639d8561a05bf4f59141b05391a72824d15658423e81f9129ff41d48789c2d0b"),
+        (8, "org:chief", "53301f0e6c92e2ac6fd7c158757643efd9db47bffe3d816ad24535d71cab5d04"),
+        (8, "org:head", "60145acc4dcaa2a1829eea2f82862a1e44059297c6b0396a567418c06b345cb9"),
+        (8, "org:staff", "60d62b2313dfc3407cca8bfec03f61c9c97f8311ceb13b5ee3b4d7ff01bd7ffa"),
+        (8, "org:executor", "a6d9ff00a4cdf01705499c6769a46178365278544418f68ce269978ad35cc19e")
     ];
 
     /// <summary>

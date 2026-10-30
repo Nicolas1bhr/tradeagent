@@ -546,9 +546,10 @@ public static class Canon
           run counted against the campaign's trial budget, which no restart resets. Bars come from `{{verb data-bars}}`;
           `{{verb data-list}}` shows a `holdout_from` where the owner holds months back as private evaluation evidence,
           and a window reaching it is refused.
-        - **Verdict:** `{{verb verdict --version <id>}}` has TradeAgent judge a version its caller ran on those held-back
-          months. Verdicts are few and counted per campaign: a division's head spends them, or a unit holding a verdict
-          share its parent's head delegated; anyone else is refused, and nothing is charged.
+        - **Verdict:** `{{verb verdict --version <id>}}` has TradeAgent judge, on the held-back months, a version its caller
+          already backtested on the visible ones. Verdicts are few and counted per campaign: a division's head spends them,
+          or a position in a unit under a verdict share its parent's head delegated; anyone else is refused, and nothing is
+          charged.
         - **Paper:** a favourable verdict goes to paper by TradeAgent's own policy and runs forward through its
           deterministic runner; nobody places those orders by hand. Fills, P&L and costs come back as notes to the
           version's author.
@@ -592,7 +593,7 @@ public static class Canon
         - **Verdicts are spent below you,** so a strategy reaches paper only through a division, or a unit you delegated
           a verdict share.
         - **Resources:** the organisation's AI envelope inside the board's day-total, and each campaign's trial and verdict
-          budget{{if verb:org-show}}; `{{verb org-show}}` shows every unit's envelope and today's spend{{end}}.
+          budget{{if verb:org-show}}; `{{verb org-show}}` shows your unit's envelope and today's spend{{end}}.
           Every turn is paid from it.
         - **Above you:** the security board, whose limits and capital are not yours; an escalation from the top of the
           chain is recorded for the owner.
@@ -611,10 +612,11 @@ public static class Canon
         {{else}}
         - **This seat carries none of the organisation's verbs:** what follows is your role, not what this runtime can do.
         {{end}}
-        - **Delegation:** hire executors (a division or subdivision may also charter a unit under it), give each a mandate
-          — a goal, a due time, an allocation — and judge what they deliver: accept, reject, re-scope or cancel. A hire
-          starts dormant and works once activated. What you cannot resolve inside your mandate, escalate; TradeAgent picks
-          the head above.
+        - **Delegation:** you staff the units below yours, never your own — a division charters subdivisions and teams
+          under it, appoints their heads and hires their members; a team's members are hired by the head above it. Give
+          each position in your subtree a mandate — a goal, a due time, an allocation — and judge what it delivers: accept,
+          reject, re-scope or cancel. A hire starts dormant and works once activated. What you cannot resolve inside your
+          mandate, escalate; TradeAgent picks the head above.
         - **Verdicts:** a division's head spends them; a parent's head may delegate a verdict share to a unit below, so
           the version is judged where it was run.
         - **Resources:** your unit's share of its parent's envelope, inside the board's day-total{{if verb:org-show}};
@@ -654,7 +656,8 @@ public static class Canon
           under it, which TradeAgent checks — or decline it with your reason; a finding beyond it is a proposal to your
           head. Your head accepts or rejects.
         - **Your work counts only as TradeAgent records it:** your program is a file in your folder, its backtest is
-          TradeAgent's run, and a verdict on it is spent only where your unit holds a verdict share. A version that reaches
+          TradeAgent's run, and a verdict on it is spent only under a verdict share delegated to your unit or one above it
+          inside your division. A version that reaches
           paper sends its fills and costs back to you.
         - **Resources:** your unit's envelope{{if verb:org-show}}, which `{{verb org-show}}` shows with today's spend{{end}};
           every turn is paid from it.
