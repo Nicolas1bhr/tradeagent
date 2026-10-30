@@ -1387,9 +1387,15 @@ public static class RuntimeCatalog
             // the middle: gpt-6.1-sol and gpt-6-sol list at 2.00/10.00, half its figure, and gpt-6-luna
             // at 0.10/0.50. And its own 4.00/20.00 is promotional — the only figure the page prints for
             // it, standing at least through 2026-11-21 (its row's comment in ListPrices). Which model a
-            // seat defaults to is the owner's decision, not this comment's, so DefaultModel is unchanged.
+            // seat defaults to is the owner's decision, not this comment's.
+            //
+            // THE OWNER'S DECISION, 2026-10-30 (R25 D8; U-seat-models): gpt-6-luna is the default, here for the legacy pair and the
+            // chat on the CLI class as for every org seat — moved because a test proves luna's code mode works on this class's own
+            // argv (CliCodeModeHostTests, U-cli-code-mode's check: the pinned 0.160.1, the mock model, a throwaway home — the nested
+            // exec_command ran and its output came back; NOT VERIFIED on the owner's account). About a fortieth of gpt-5.6-sol's
+            // promotional list price; the owner's own choice on the Owner page still beats it.
             ModelArgs = ["-m", "{model}"],
-            DefaultModel = "gpt-5.6-sol",
+            DefaultModel = "gpt-6-luna",
             InteractiveArgs = [],
             SelfContained = true,
             Verified = false,
