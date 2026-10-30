@@ -141,7 +141,8 @@ sealed class ChatView
     /// </summary>
     public void Update()
     {
-        var current = _host.Conversation;
+        // THE CHAIR'S CONVERSATION, OR — WHILE A CHIEF IS ACTIVE — THE CHIEF'S, the owner's words recorded to its queue (U-org-autonomy).
+        var current = _host.ChatConversation;
         if (!ReferenceEquals(current, _bound)) Rebind(current);
         RefreshState();
     }

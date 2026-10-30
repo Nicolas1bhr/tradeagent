@@ -210,6 +210,29 @@ public sealed class AppHost : IAsyncDisposable
     IDisposable? _metering;
 
     /// <summary>
+    /// THE CONVERSATION THE CHAT PAGE SHOWS (<c>U-org-autonomy</c> item 4; R25 D4): while a chief is ACTIVE, the chief's — its turns and
+    /// answers — behind a <see cref="RoutedChat"/> that RECORDS what the owner types to the chief's queue, as data, and runs no turn of its
+    /// own; otherwise the chair's, exactly as before. The legacy pair stay asleep while a chief is active (the activation gate refuses
+    /// them); his chat no longer goes to them. Null before anything is prepared.
+    /// </summary>
+    public IAgentConversation? ChatConversation
+    {
+        get
+        {
+            string? chief;
+            try { chief = _db is null ? null : new OrgStore(_db).ActiveChief(); }
+            catch (Exception) { chief = null; }
+            if (chief is null || Agent?.Current is null) return Conversation;
+            if (ConversationFor(chief) is not { } own) return Conversation;
+            if (_chiefChat is not { } held || !ReferenceEquals(held.Chief, own))
+                _chiefChat = new RoutedChat(own, RecordOwnerMessage, $"the chief ({chief})");
+            return _chiefChat;
+        }
+    }
+
+    RoutedChat? _chiefChat;
+
+    /// <summary>
     /// THE PROVIDER KEY FOR THE APP-OWNED HARNESS, held in memory for this session and written nowhere.
     ///
     /// The process-wide holder, for the reason <see cref="AgentGrants.Shared"/> is one: the Safety page
@@ -2115,8 +2138,9 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         if (InboxWake(result, at) is { } wake)
-            // THE CHAIR'S: the owner's material reaches the role the owner talks to first.
-            RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload, CouncilRoles.Operations);
+            // THE CHAIR'S — THE CHIEF'S WHILE ONE IS ACTIVE (U-org-autonomy item 4; R25 D4): the owner's material reaches the role the
+            // owner talks to first, as data (INBOX-001).
+            RaiseWake(wake.Id, MissionEventKind.Inbox, wake.Payload, Wakes?.OwnerRecipient() ?? CouncilRoles.Operations);
 
         return result;
     }

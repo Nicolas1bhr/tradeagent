@@ -23,6 +23,9 @@ public sealed partial class OrgStore
     /// <summary>The chief sitting now — the root's head — or null: the root is vacant.</summary>
     public string? Chief() => Units().FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
 
+    /// <summary>The chief while it is ACTIVE — the root's head with an active position — or null (<c>U-org-autonomy</c> item 4).</summary>
+    public string? ActiveChief() => db.Read(_ => Chief() is { } chief && Position(chief) is { Status: OrgPositionStatus.Active } ? chief : null);
+
     /// <summary>
     /// THE CHIEF A BOARD ACT SEATED (<c>U-org-chief</c> item 4): the position its <c>chief-appointed</c> or <c>chief-replaced</c> event names,
     /// read from the app-composed detail the chart's writer wrote, or null — the act seated no one. The owner's veto reads it.
