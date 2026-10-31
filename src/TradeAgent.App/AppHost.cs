@@ -268,19 +268,21 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>
     /// THE AUDIT LINE'S BUDGET OFF THE TOP (<c>U-org-audit-b</c>; the owner's Q1): both delegates above admit the organisation — every position,
     /// the board's seats and perception — against the ceiling LESS the line's figure in that class, read from the line's own file at every
-    /// admission. The line open but its file unreadable (refused, or closed by the quit) is null: no room, never a zero budget. A host composed
-    /// without the line at all (<see cref="Composed"/>, a test's) carves nothing; <see cref="StartAsync"/> composes it before the AI.
+    /// admission. A line not composed, refused, or closed by the quit is null: no room, never a zero budget. <see cref="StartAsync"/> and
+    /// <see cref="Composed"/> both compose the line before the AI, so no admission ever runs before it.
     /// </summary>
-    decimal? AuditBudgetOf(string billingClass) => _audit is { } line ? line.BudgetOf(billingClass) : _auditClosed ? null : 0m;
-
-    /// <summary>Set once the quit closed the audit line: from then on its budget is unreadable, never zero.</summary>
-    bool _auditClosed;
+    decimal? AuditBudgetOf(string billingClass) => _audit?.BudgetOf(billingClass);
 
     /// <summary>
     /// COMPOSES THE PUBLIC AUDIT LINE over this host's database, writing to <paramref name="auditFile"/> (null: <c>state/audit.db</c>) — its
     /// timer is started by <see cref="StartAsync"/>. Internal so a test composes the line the product composes.
     /// </summary>
-    internal AuditLine ComposeAuditLine(string? auditFile = null) => _audit = new AuditLine(_db!.FilePath, auditFile);
+    internal AuditLine ComposeAuditLine(string? auditFile = null)
+    {
+        // A LINE COMPOSED AGAIN (a test naming its own file) closes the one before it; neither had its timer started here.
+        if (_audit is { } before) before.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        return _audit = new AuditLine(_db!.FilePath, auditFile);
+    }
 
     /// <summary>The audit line's own file and refusal, for the owner's page alone (<c>U-org-audit-b</c>): App-internal, never on the pipe.</summary>
     internal AuditStore? AuditStore => _audit?.Store;
@@ -1601,6 +1603,8 @@ public sealed class AppHost : IAsyncDisposable
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
+        // THE AUDIT LINE BEFORE THE AI, as StartAsync composes it (U-org-audit-b) — its file, never its timer.
+        host.ComposeAuditLine();
         host.ComposeTheAi(db);
         return host;
     }
@@ -3240,7 +3244,7 @@ public sealed class AppHost : IAsyncDisposable
             _loop.Dispose();
         }
         if (_oversight is not null) { await _oversight.DisposeAsync(); _oversight = null; }
-        if (_audit is not null) { _auditClosed = true; await _audit.DisposeAsync(); _audit = null; }
+        if (_audit is not null) { await _audit.DisposeAsync(); _audit = null; }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":
