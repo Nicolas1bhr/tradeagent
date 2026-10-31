@@ -41,12 +41,12 @@ public sealed record HostIdentity(string Machine, string OsRelease)
 {
     /// <summary>
     /// A SHA-256 over this boot's id (<c>U-cell-linux-c</c> item 5) — <c>/proc/sys/kernel/random/boot_id</c> on Linux, never the id
-    /// itself — so a proof counts on the boot that measured it alone. Off Linux no cell runs and there is no binding: a fixed
-    /// word, said as such.
+    /// itself — and on Windows over the kernel's boot counter (<c>BootId</c>), so a proof counts on the boot that measured it alone.
+    /// Elsewhere no cell runs and there is no binding: a fixed word, said as such.
     /// </summary>
     public string Boot { get; init; } = NoBoot;
 
-    /// <summary>The boot word off Linux, where no cell runs and a proof binds no boot.</summary>
+    /// <summary>The boot word off Linux and Windows, where no cell runs and a proof binds no boot.</summary>
     public const string NoBoot = "no-boot-binding-off-linux";
 
     static readonly Lazy<HostIdentity?> Here = new(Read);
@@ -71,6 +71,13 @@ public sealed record HostIdentity(string Machine, string OsRelease)
                 if (bootId.Length == 0) return null;
                 boot = Sha256Hex.Of("tradeagent-cell-proof-boot:" + bootId);
             }
+            else if (OperatingSystem.IsWindows())
+            {
+                // THE WINDOWS BOOT (U-cell-windows, Codex on landing 3): the kernel's own boot counter, which every boot advances — a proof
+                // counts on the boot that measured it alone, as on Linux. Unreadable is no identity, so no proof: refuse, never guess.
+                if (WindowsBootId() is not { } bootId) return null;
+                boot = Sha256Hex.Of("tradeagent-cell-proof-boot-windows:" + bootId);
+            }
             return new HostIdentity(Sha256Hex.Of("tradeagent-cell-proof-machine:" + id), release) { Boot = boot };
         }
         catch (Exception) { return null; }
@@ -82,6 +89,13 @@ public sealed record HostIdentity(string Machine, string OsRelease)
         if (OperatingSystem.IsWindows()) return WindowsMachineGuid();
         if (OperatingSystem.IsMacOS()) return MacPlatformUuid();
         return null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    static string? WindowsBootId()
+    {
+        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters");
+        return key?.GetValue("BootId") is int id ? id.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
     }
 
     [SupportedOSPlatform("windows")]
