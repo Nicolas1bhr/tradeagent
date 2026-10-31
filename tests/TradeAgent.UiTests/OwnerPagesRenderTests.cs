@@ -363,13 +363,13 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// that says what is running, so the page's scrolling content is a fraction of what it was.
     /// </summary>
     [Fact]
-    public void The_owner_page_keeps_its_emergency_presses_in_view_above_shorter_sections()
+    public async Task The_owner_page_keeps_its_emergency_presses_in_view_above_shorter_sections()
     {
         using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"owner-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
         try
         {
-            var status = host.Gateway.StatusAsync().GetAwaiter().GetResult();
+            var status = await host.Gateway.StatusAsync();
             HeadlessUi.Run(() =>
             {
                 var page = new OwnerPage(host, new SettingsPage(host));
@@ -389,7 +389,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                 win.Close();
             });
         }
-        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 
     /// <summary>CLOSING A SECTION DISARMS A HALF-PRESS IN IT: a press out of sight is never left armed (the rule every hidden press keeps).</summary>
