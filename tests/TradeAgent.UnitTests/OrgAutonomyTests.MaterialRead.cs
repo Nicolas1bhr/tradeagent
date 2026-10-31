@@ -143,6 +143,18 @@ public partial class OrgAutonomyTests
         Assert.False(changed.Ok);
         Assert.Contains("changed since", changed.Error!.Message, StringComparison.Ordinal);
 
+        // NOT WELL-FORMED UTF-8 ("caf" and a lone Latin-1 byte): refused, never shown with the byte silently replaced.
+        var (_, latinSha) = Dropped(db, "", bytes: [0x63, 0x61, 0x66, 0xE9]);
+        var latin = await server.CallAsync(Read(latinSha), Head, Launch(db, Head));
+        Assert.False(latin.Ok);
+        Assert.Contains("not text", latin.Error!.Message, StringComparison.Ordinal);
+
+        // ONE BYTE THE JSON WRITES AS SIX: a page of '<' stays inside the door's result cap whole, so its pages are never cut mid-JSON.
+        var (_, angleSha) = Dropped(db, new string('<', 30000));
+        var angle = await server.CallAsync(Read(angleSha), Head, Launch(db, Head));
+        Assert.True(angle.Ok, angle.Error?.Message);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Json.Write(angle.Data)), 1, BrokerDoor.MaxResultBytes);
+
         var (_, binarySha) = Dropped(db, "", bytes: [0x4D, 0x5A, 0x00, 0x01, 0x02, 0x03]);
         var binary = await server.CallAsync(Read(binarySha), Head, Launch(db, Head));
         Assert.False(binary.Ok);

@@ -4319,8 +4319,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         };
     }
 
-    /// <summary>The most text one <c>material-read</c> returns, in bytes: well inside the door's result cap, so a page is never cut by the transport.</summary>
-    public const int MaterialReadPage = 16 * 1024;
+    /// <summary>The most text one <c>material-read</c> returns, in source bytes: JSON may write one byte as six (<c>&lt;</c> as a six-character escape), so six times this plus the reply's own fields stays inside the door's 64 KiB result cap and a page is never cut by the transport.</summary>
+    public const int MaterialReadPage = 8 * 1024;
 
     /// <summary>The largest file <c>material-read</c> opens at all: it re-hashes the whole file before it serves a page, so the bound is on the read.</summary>
     public const long MaterialReadMaxFile = 4L * 1024 * 1024;
@@ -4336,16 +4336,16 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// <see cref="MaterialOrigin.InboxUnattested"/>) and hashed, opened without following a link at any component, at most
     /// <see cref="MaterialReadMaxFile"/> bytes, re-hashed as read and refused if it is no longer the bytes the scanner measured, and only text.</para>
     /// </summary>
+    static bool IsUtf8(byte[] bytes)
+    {
+        try { _ = new UTF8Encoding(false, throwOnInvalidBytes: true).GetCharCount(bytes); return true; }
+        catch (ArgumentException) { return false; }
+    }
+
     object MaterialRead(AgentContext ctx, IpcRequest req)
     {
         OnlyDeclared(req, "Reading the owner's material changes nothing and takes no instruction from it. Nothing was read.");
-        var position = OrgVerbCaller(ctx, Capability.Reads);
-        var seatClass = Gateway.Attempt(ctx.AttemptId!)?.SeatClass;
-        if (seatClass is not (SeatClasses.Broker or SeatClasses.Harness or SeatClasses.Puppet))
-            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"the owner's inbox is read through the door by a position on a broker or harness seat, and this launch of {position} runs on a "
-                + $"{seatClass ?? "unrecorded"} seat: a cell's wall keeps the inbox out of it, and a seat with its own shell reads the folder itself. Nothing was read."));
-
+        // THE ARGUMENTS ARE READ BEFORE THE CALLER IS WEIGHED (the offered-schema test: a number is read, not refused past); reading them touches nothing.
         long offset = 0;
         if (req.Args?.ContainsKey("offset") == true)
         {
@@ -4355,6 +4355,13 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                     $"'offset' is a whole number of bytes from 0 to {MaterialReadMaxFile}, as a previous answer's 'next_offset' gave it. Nothing was read.");
             offset = (long)at;
         }
+
+        var position = OrgVerbCaller(ctx, Capability.Reads);
+        var seatClass = Gateway.Attempt(ctx.AttemptId!)?.SeatClass;
+        if (seatClass is not (SeatClasses.Broker or SeatClasses.Harness or SeatClasses.Puppet))
+            throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"the owner's inbox is read through the door by a position on a broker or harness seat, and this launch of {position} runs on a "
+                + $"{seatClass ?? "unrecorded"} seat: a cell's wall keeps the inbox out of it, and a seat with its own shell reads the folder itself. Nothing was read."));
 
         var named = Require(req, "sha");
         var hash = gateway.Materials.ByShaPrefix(named)?.Sha256
@@ -4385,11 +4392,15 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"'{row.RelPath}' has changed since TradeAgent measured it, so what is on disk is not the file {row.ShortSha} names. The next pass "
                 + "records the new version under its own hash. Nothing was read.");
-        if (Array.IndexOf(bytes, (byte)0) >= 0)
+        // TEXT MEANS WELL-FORMED UTF-8 WITH NO ZERO BYTE: a file in any other encoding is refused, never shown with its bytes silently replaced.
+        if (Array.IndexOf(bytes, (byte)0) >= 0 || !IsUtf8(bytes))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{row.RelPath}' is not text (it holds a zero byte), so there is nothing to show of it. Nothing was read.");
+                $"'{row.RelPath}' is not text (it holds a zero byte or is not well-formed UTF-8), so there is nothing to show of it without altering it. Nothing was read.");
 
         var start = (int)Math.Min(offset, bytes.Length);
+        if (start < bytes.Length && (bytes[start] & 0xC0) == 0x80)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'offset' {offset} is inside a character of '{row.RelPath}': continue from a previous answer's 'next_offset'. Nothing was read.");
         var end = Math.Min(bytes.Length, start + MaterialReadPage);
         // A PAGE ENDS ON A CHARACTER: a continuation byte (10xxxxxx) starts nothing, so the cut backs up to the lead byte it belongs to.
         if (end < bytes.Length) while (end > start + 1 && (bytes[end] & 0xC0) == 0x80) end--;
