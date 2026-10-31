@@ -55,7 +55,7 @@ public static class Kit
     public const int MaxFiles = 5000;
 
     /// <summary>The most bytes a kit may hold, all files together.</summary>
-    public const long MaxBytes = 256L * 1024 * 1024;
+    public const long MaxBytes = 64L * 1024 * 1024;
 
     /// <summary>The longest description the index may give a skill or a tool: the canon prints it.</summary>
     public const int MaxDescription = 300;
@@ -170,7 +170,7 @@ public static class Kit
     /// folders, and the folder hashing to the recorded hash. Anything else grants nothing; the problem says why, in the owner's words.
     /// Never throws.
     /// </summary>
-    public static State Current(string? home = null)
+    public static State Current(string? home = null, bool display = false)
     {
         Record? last;
         try { last = Records(home).LastOrDefault(); }
@@ -185,7 +185,9 @@ public static class Kit
         {
             var (index, problem) = Check(dir);
             if (problem is not null) return new State(null, $"The installed kit is no longer whole ({problem}), so no seat is given it. Add it again from Settings.", last);
-            var hash = HashOf(dir);
+            // A GRANT READS EVERY BYTE (the review's P1): a size and a write time are a writer's to restore. Only the Settings card's
+            // five-second tick may trust its cache, and it grants nothing.
+            var hash = HashOf(dir, trustCache: display);
             if (hash != last.Hash)
                 return new State(null, "The kit folder changed after you installed it, so no seat is given it. Add the kit again from Settings.", last);
             return new State(new View(dir, hash, index!, last.Source, last.At), null, last);
@@ -218,6 +220,7 @@ public static class Kit
     {
         lock (Gate)
         {
+            if (InsideHome(source, home) is { } inside) return (null, inside);
             var staging = Path.Combine(StagingDir(home), "in-" + Guid.NewGuid().ToString("n")[..12]);
             try
             {
@@ -249,7 +252,14 @@ public static class Kit
                 catch (Exception) when (aside is not null) { MoveDir(aside, dir); throw; }
                 var at = DateTimeOffset.UtcNow;
                 var src = recordedSource ?? Path.GetFullPath(source);
-                Append(home, new Record(at, Installed, hash, index!.Name, [.. index.Skills.Select(s => s.Name)], [.. index.Tools.Select(t => t.Name)], src));
+                try { Append(home, new Record(at, Installed, hash, index!.Name, [.. index.Skills.Select(s => s.Name)], [.. index.Tools.Select(t => t.Name)], src)); }
+                catch (Exception)
+                {
+                    // AN INSTALL NOT RECORDED IS NO INSTALL (the review's P2): the new kit goes back out and the old one back in.
+                    MoveDir(dir, Path.Combine(StagingDir(home), "unrecorded-" + Guid.NewGuid().ToString("n")[..12]));
+                    if (aside is not null) MoveDir(aside, dir);
+                    throw;
+                }
                 if (aside is not null) DeleteTree(aside);
                 return (new View(dir, hash, index, src, at), null);
             }
@@ -272,6 +282,7 @@ public static class Kit
     {
         lock (Gate)
         {
+            if (InsideHome(source, home) is { } inside) return (null, null, inside);
             var staging = Path.Combine(StagingDir(home), "look-" + Guid.NewGuid().ToString("n")[..12]);
             try
             {
@@ -355,6 +366,19 @@ public static class Kit
             : $"The head-start kit bundled with this build was not installed: {refusal}";
     }
 
+    /// <summary>
+    /// A KIT IS INSTALLED FROM THE OWNER'S OWN FOLDER, NEVER FROM INSIDE THE APP'S HOME (the review's P1): every folder an agent writes
+    /// lies there, and a source an agent controls could change under the copy. The bundled kit beside the app's programs is outside it.
+    /// </summary>
+    static string? InsideHome(string source, string? home)
+    {
+        var appHome = Path.TrimEndingDirectorySeparator(Path.GetFullPath(home ?? Paths.Home));
+        foreach (var form in new[] { Path.GetFullPath(source), CellNative.RealPath(source) }.OfType<string>())
+            if (CellPolicy.Within(Path.TrimEndingDirectorySeparator(form), appHome) || CellPolicy.Within(appHome, Path.TrimEndingDirectorySeparator(form)))
+                return $"{source} is inside TradeAgent's own folder, where the AI works; install a kit from a folder or zip of your own";
+        return null;
+    }
+
     static void Append(string? home, Record record)
     {
         var path = RecordFile(home);
@@ -405,6 +429,10 @@ public static class Kit
             if (!Directory.Exists(Path.Combine(skillsDir, s.Name)) || !File.Exists(file))
                 return (null, $"{IndexFile} lists the skill '{s.Name}', and {SkillsDir}/{s.Name}/{SkillFile} is not there");
             if (FrontmatterProblem(File.ReadAllText(file), s.Name) is { } fm) return (null, $"{SkillsDir}/{s.Name}/{SkillFile}: {fm}");
+            // ONE SKILL PER LISTED FOLDER (the review's P2): the pinned codex finds a SKILL.md at any depth, and one the index does not
+            // name would be listed to a seat that no canon told of it.
+            if (Directory.EnumerateFiles(Path.Combine(skillsDir, s.Name), SkillFile, SearchOption.AllDirectories).Count() > 1)
+                return (null, $"{SkillsDir}/{s.Name}/ holds a second {SkillFile} below its own: one skill per listed folder");
         }
         if (present.FirstOrDefault(p => !index.Skills.Any(s => s.Name == p)) is { } extraSkill)
             return (null, $"{SkillsDir}/ holds '{extraSkill}', which {IndexFile} does not list");
@@ -443,7 +471,7 @@ public static class Kit
             if (info.LinkTarget is not null || (info.Attributes & FileAttributes.ReparsePoint) != 0)
                 return $"'{rel}' is a link: a kit holds only real files and folders";
             var name = Path.GetFileName(path);
-            if (name.StartsWith('.') || name.Any(char.IsControl) || name.Length > 128)
+            if (name.StartsWith('.') || name.Any(char.IsControl) || name.Length > 128 || name.Contains('\\') || name.Contains(':'))
                 return $"'{rel}' is hidden or has a name a kit may not hold";
             if ((info.Attributes & FileAttributes.Directory) != 0) continue;
             if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & (UnixFileMode.SetUser | UnixFileMode.SetGroup)) != 0)
@@ -468,6 +496,7 @@ public static class Kit
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
         {
             var to = Path.Combine(into, Path.GetRelativePath(source, file));
+            if (new FileInfo(file).LinkTarget is not null) return $"'{Rel(source, file)}' is a link: a kit holds only real files and folders";
             File.Copy(file, to);
             if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(file) & UnixFileMode.UserExecute) != 0)
                 File.SetUnixFileMode(to, File.GetUnixFileMode(to) | UnixFileMode.UserExecute);
@@ -524,11 +553,21 @@ public static class Kit
     /// Whether a file of the kit is run: a top-level tool always, any other file when its source marked it runnable (a skill's
     /// script). Read off the installed tree, so the hash and the check agree.
     /// </summary>
-    static bool Runs(string root, string file)
+    static bool ShouldRun(string root, string file)
     {
-        if (Path.GetDirectoryName(Path.GetFullPath(file)) == Path.GetFullPath(Path.Combine(root, ToolsDir))) return true;
+        if (IsTopTool(root, file)) return true;
         return !OperatingSystem.IsWindows() && (File.GetUnixFileMode(file) & UnixFileMode.UserExecute) != 0;
     }
+
+    static bool IsTopTool(string root, string file) =>
+        Path.GetDirectoryName(Path.GetFullPath(file)) == Path.GetFullPath(Path.Combine(root, ToolsDir));
+
+    /// <summary>
+    /// Whether a file of the kit runs AS IT LIES — its own mode bit on Linux and macOS, so a run bit a cell or a seat takes away or adds
+    /// changes the hash (the review's P1); a top-level tool on Windows, which has no such bit.
+    /// </summary>
+    static bool Runs(string root, string file) =>
+        OperatingSystem.IsWindows() ? IsTopTool(root, file) : (File.GetUnixFileMode(file) & UnixFileMode.UserExecute) != 0;
 
     /// <summary>Every folder and file read-only for everyone, owner included; a file that <see cref="Runs"/> read and run.</summary>
     static void SealReadOnly(string root)
@@ -539,7 +578,7 @@ public static class Kit
             return;
         }
         foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-            File.SetUnixFileMode(f, Runs(root, f) ? ReadOnlyDir : ReadOnlyFile);
+            File.SetUnixFileMode(f, ShouldRun(root, f) ? ReadOnlyDir : ReadOnlyFile);
         foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
             File.SetUnixFileMode(d, ReadOnlyDir);
         File.SetUnixFileMode(root, ReadOnlyDir);
@@ -565,10 +604,10 @@ public static class Kit
 
     /// <summary>
     /// THE KIT'S HASH: SHA-256 over one line per folder (<c>d &lt;path&gt;</c>) and per file (<c>f &lt;path&gt; &lt;x|r&gt; &lt;sha256&gt;</c>),
-    /// paths relative with '/', in ordinal order. Whether a file runs is part of it. Cached against each file's size and write time, so a
-    /// grant rereads the bytes only when something under the kit moved.
+    /// paths relative with '/', in ordinal order. Whether a file runs, as it lies, is part of it. Every byte is read unless
+    /// <paramref name="trustCache"/> — the Settings card's tick alone, which grants nothing — lets a listing of sizes and write times stand in.
     /// </summary>
-    public static string HashOf(string root)
+    public static string HashOf(string root, bool trustCache = false)
     {
         var entries = Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
             .Select(p => (Rel: Rel(root, p), Path: p, Info: new FileInfo(p)))
@@ -577,8 +616,9 @@ public static class Kit
             ? "d " + e.Rel
             : $"f {e.Rel} {(Runs(root, e.Path) ? 'x' : 'r')} {e.Info.Length} {e.Info.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture)}"));
         var key = Path.GetFullPath(root);
-        lock (HashCache)
-            if (HashCache.TryGetValue(key, out var hit) && hit.Fingerprint == fingerprint) return hit.Hash;
+        if (trustCache)
+            lock (HashCache)
+                if (HashCache.TryGetValue(key, out var hit) && hit.Fingerprint == fingerprint) return hit.Hash;
 
         var sb = new StringBuilder();
         foreach (var e in entries)

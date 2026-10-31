@@ -323,7 +323,7 @@ public static class CellNative
                 // A PROGRAM ROOT IS JUDGED AS ONE HERE TOO (U-execution-environment item 0): the policy's path check lets a root lie
                 // strictly inside tools/ — the codex the app installs, read and run, never written — and this descriptor check, which
                 // judged it as any grant, refused every route (a) cell over the installed codex (CI run 39741425317).
-                : stat is null ? "could not be examined" : guarded.Refuses(target, executable: programRoot);
+                : stat is null ? "could not be examined" : guarded.Refuses(target, executable: programRoot, writable: required);
             // ANY CGROUP FILESYSTEM, BY THE DESCRIPTOR ITSELF (U-cell-linux-b fix pass 1, R2): a second mount of the hierarchy, or one
             // reached by a bind mount, has another path; the filesystem the descriptor is on does not lie.
             if (why is null && OnCgroupFs(parent) is not false)

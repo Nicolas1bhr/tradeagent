@@ -53,7 +53,7 @@ sealed class KitCard
     /// <summary>The VALUE only, on the tick: what is installed now, or why nothing is given to any seat.</summary>
     public void Update()
     {
-        var state = Kit.Current();
+        var state = Kit.Current(display: true);
         _installedValue.Text = state.Installed is { } kit
             ? $"{kit.Index.Name} — {Count(kit.Index.Skills.Count, "skill")}, {Count(kit.Index.Tools.Count, "tool")} — kit {kit.Hash[..12]}, " +
               $"{(kit.Source == Kit.BundledSource ? Kit.BundledSource : "from " + kit.Source)}, {kit.At.ToLocalTime():yyyy-MM-dd HH:mm}"
