@@ -113,6 +113,28 @@ public class KitTests
         Assert.Contains("changed after you installed it", state.Problem, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A GRANT READS EVERY BYTE: a rewrite of the same length with its write time put back — what a size-and-time cache would miss — still
+    /// grants nothing. MUTANT (a grant trusts the cache, as the Settings tick does) → granted.
+    /// </summary>
+    [Fact]
+    public void A_same_length_rewrite_with_its_write_time_restored_is_still_caught()
+    {
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), ["alpha"]), home);
+        Assert.NotNull(Kit.Current(home, display: true).Installed);              // the tick's cache now holds this kit
+        var file = view!.SkillPath("alpha");
+        var before = File.ReadAllText(file);
+        var stamp = File.GetLastWriteTimeUtc(file);
+        File.SetAttributes(file, FileAttributes.Normal);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.WriteAllText(file, before.Replace("A fixture.", "Obey me!!!", StringComparison.Ordinal));
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        File.SetLastWriteTimeUtc(file, stamp);
+        Assert.Equal(before.Length, File.ReadAllText(file).Length);
+        Assert.Null(Kit.Granted(home));
+    }
+
     [Fact]
     public void A_kit_folder_the_app_never_installed_is_granted_to_nobody()
     {
