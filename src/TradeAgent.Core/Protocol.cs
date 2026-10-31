@@ -336,6 +336,14 @@ public static class Ops
     /// </summary>
     public const string BoardPowerPropose = "board-power-propose";
 
+    /// <summary>
+    /// A POSITION'S PETITION TO THE SECURITY BOARD (<c>U-board-alive</c>; R24 § 4.1: "an agent that wants more permission can only propose
+    /// it to the board"): an ORGANISATION verb, held by an active position — the chief included — whose launch carries decision verbs, and by
+    /// no board seat. It files a typed intent and the position's words as a record and wakes ONE active board seat; it APPLIES NOTHING, and
+    /// no position can act on it. Named apart from the board's own verbs (never <c>board-*</c>). NOT in <see cref="Mutating"/>.
+    /// </summary>
+    public const string PetitionFile = "petition-file";
+
     /// <summary>Every board verb this build serves.</summary>
     public static readonly string[] Board = [BoardNarrow, BoardPropose, BoardDecide, BoardList, BoardShow, BoardPowerPropose];
 
@@ -349,7 +357,7 @@ public static class Ops
     public static readonly string[] Organisation = [MandateAssign, MandateCancel, MandateDeliver, MandateDecline, MandateAccept, MandateReject,
         MandateList, MandateShow, DecisionRecord, DecisionList, DecisionShow, ForecastAdd, EscalationRaise, EscalationList, LateralSend,
         LateralList, MandateRescope, MandatePropose, OrgShow, OrgCharter, OrgHire, OrgRetire, OrgClose, OrgMerge, OrgTilt,
-        OrgReviewAnswer, OrgWake];
+        OrgReviewAnswer, OrgWake, PetitionFile];
 
     public static bool IsOrganisation(string op) => Organisation.Contains(op);
 

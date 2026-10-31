@@ -507,8 +507,14 @@ public static class Versions
     /// <para><b>57 — the scorecards' two reads, indexed</b> (<c>U-perf-scan</c>, rung <see cref="ScorecardIndexRung"/>, after 56; R28 G3):
     /// <c>ix_forecast_forecaster</c> on <c>org_forecast(forecaster, at)</c> and <c>ix_mandate_event_kind</c> on
     /// <c>org_mandate_event(kind, at)</c>, the shapes a scorecard reads on every refresh. Indexes and nothing else: no row moves.</para>
+    ///
+    /// <para><b>58 — a position's petition to the security board</b> (<c>U-board-alive</c>, rung <see cref="BoardPetitionRung"/>, after
+    /// <c>U-perf-scan</c>'s 57): <c>board_petition</c> — an active position's request that the board change the policy (the chief's
+    /// included): its typed intent and hash, read strictly against the version in force, its direction, its words as a claim, and the one
+    /// active seat the app woke for it (<c>routed_to</c>). A RECORD THAT APPLIES NOTHING: only a board act changes the policy. Sealed: an
+    /// UPDATE, a DELETE and an insert over its key are refused by trigger. One writer, <c>BoardStore</c>.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ScorecardIndexRung;
+    public const int DatabaseSchemaVersion = BoardPetitionRung;
 
     /// <summary>The scorecard indexes' rung, spelled once (<c>U-perf-scan</c>); a unit overtaken renumbers it here.</summary>
     public const int ScorecardIndexRung = 57;
@@ -519,9 +525,11 @@ public static class Versions
     /// <summary>The board-forecast lineage rung, spelled once (<c>U-cards-2</c>); a unit overtaken renumbers it here.</summary>
     public const int BoardForecastLineageRung = 55;
 
-
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;
+
+    /// <summary>A position's petition to the board, spelled once (<c>U-board-alive</c>); a unit overtaken renumbers it here and nowhere else.</summary>
+    public const int BoardPetitionRung = 58;
 
     /// <summary>
     /// THE OLDEST HOME THIS BUILD OPENS (<c>U-windows-release</c>): a home stamped below this schema is REFUSED, untouched, in words

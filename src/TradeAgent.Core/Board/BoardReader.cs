@@ -58,6 +58,9 @@ public sealed class BoardReader(Database db)
     /// <summary>Every proposal a seat made of the board's own power (CHANGE-001), newest first: the owner's to read and act on — nothing applies one.</summary>
     public IReadOnlyList<BoardPowerProposalRow> PowerProposals() => _store.PowerProposals();
 
+    /// <summary>Every position's petition to the board, newest first (<c>U-board-alive</c>): records that applied nothing.</summary>
+    public IReadOnlyList<BoardPetitionRow> Petitions() => _store.Petitions();
+
     /// <summary>The board's share of the plan's AI day-total: the owner's latest press, else the founding share.</summary>
     public decimal? BudgetShare() => _store.BudgetShare();
 }
