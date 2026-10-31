@@ -289,6 +289,8 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     public LedgerRevisionRow Revise(string author, string? attempt, long entry, string text, string mark, string why,
         decimal? confidence, string? status)
     {
+        // A REVISION IS NEW TEXT, SO IT NAMES THE ATTEMPT THAT WROTE IT (U-lineage-check), as the entry's first revision does.
+        ArtifactLineage.Require(ArtifactKind.LedgerEntry, author, attempt);
         Author(author);
         Mark(mark);
         Confidence(confidence);

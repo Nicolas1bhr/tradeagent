@@ -63,7 +63,7 @@ public static class OversightSeed
                 {
                     id.CommandText = "SELECT last_insert_rowid()";
                     Insert(c, "ledger_revision", ("entry_id", (long)id.ExecuteScalar()!), ("revision", 1), ("at", T(now.AddHours(-2))),
-                        ("text", "it works"), ("mark", "claim"), ("status", "open"));
+                        ("text", "it works"), ("mark", "claim"), ("status", "open"), ("attempt", "turn-" + tag));
                 }
                 break;
             case "accepted-failed-check":

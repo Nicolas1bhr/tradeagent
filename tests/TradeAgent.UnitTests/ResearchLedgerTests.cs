@@ -264,7 +264,7 @@ public class ResearchLedgerTests
     {
         using var c = db.Cmd("""
             INSERT INTO ledger_revision(entry_id, revision, at, attempt, text, mark, confidence, status, why)
-            VALUES($e, $r, '2026-10-10T09:00:00.0000000Z', NULL, 'text', $m, $c, 'open', 'why')
+            VALUES($e, $r, '2026-10-10T09:00:00.0000000Z', 'turn-test', 'text', $m, $c, 'open', 'why')
             """, ("$e", entry), ("$r", revision), ("$m", mark), ("$c", confidence));
         return c.ExecuteNonQuery();
     });

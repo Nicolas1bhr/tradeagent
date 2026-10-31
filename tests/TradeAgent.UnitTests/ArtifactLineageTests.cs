@@ -124,13 +124,15 @@ public class ArtifactLineageTests
             });
             Assert.Contains(k.AuthorColumn, columns);
             Assert.Contains(k.AttemptColumn, columns);
-            Assert.Equal(1L, db.Read(_ =>
-            {
-                using var c = db.Cmd("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name=$n AND tbl_name=$t",
-                    ("$n", ArtifactLineage.TriggerName(k)), ("$t", k.Table));
-                return (long)c.ExecuteScalar()!;
-            }));
+            Assert.Equal(1L, Trigger(ArtifactLineage.TriggerName(k), k.Table));
         }
+        Assert.Equal(1L, Trigger(ArtifactLineage.RevisionTrigger, "ledger_revision"));
+
+        long Trigger(string name, string table) => db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name=$n AND tbl_name=$t", ("$n", name), ("$t", table));
+            return (long)c.ExecuteScalar()!;
+        });
     }
 
     /// <summary>
@@ -155,11 +157,19 @@ public class ArtifactLineageTests
         {
             Assert.Contains("lineage:", Insert(k, Member, null), StringComparison.Ordinal);
             Assert.Contains("lineage:", Insert(k, Member, "  "), StringComparison.Ordinal);
+            Assert.Contains("lineage:", Insert(k, Member, "\t\n"), StringComparison.Ordinal);
             Assert.Contains("lineage:", Insert(k, null, "turn-x"), StringComparison.Ordinal);
             Assert.Contains("lineage:", Insert(k, "pos-nobody", "turn-x"), StringComparison.Ordinal);
             Assert.DoesNotContain("lineage:", Insert(k, Member, "turn-x"), StringComparison.Ordinal);
             Assert.Equal(0L, Count(db, k.Table));
         }
+
+        // A REVISION IS NEW TEXT AND NAMES ITS OWN ATTEMPT, by its own trigger (its author is its entry's).
+        foreach (var blank in new[] { null, "", "\t\r\n" })
+            Assert.Contains("lineage:", Assert.Throws<SqliteException>(() => Exec(db,
+                "INSERT INTO ledger_revision(entry_id, attempt) VALUES(1, $x)", ("$x", blank))).Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("lineage:", Assert.Throws<SqliteException>(() => Exec(db,
+            "INSERT INTO ledger_revision(entry_id, attempt) VALUES(1, 'turn-x')")).Message, StringComparison.Ordinal);
 
         var run = ArtifactLineage.Spec(ArtifactKind.Run);
         Assert.DoesNotContain("lineage:", Insert(run, AppPrincipals.Referee, null), StringComparison.Ordinal);
@@ -198,8 +208,11 @@ public class ArtifactLineageTests
         Assert.Equal(AppPrincipals.Referee, strategies.RunById("run-referee")!.Role);
 
         Refused(() => new ResearchLedger(db).Add(Member, null, LedgerKind.Finding, "a finding", LedgerMark.Claim, null, null, null), "ledger_entry");
+        var kept = new ResearchLedger(db).Add(Member, turn, LedgerKind.Finding, "a finding", LedgerMark.Claim, null, null, null);
+        Refused(() => new ResearchLedger(db).Revise(Member, null, kept.Id, "a finding, restated", LedgerMark.Claim, "restated", null, null),
+            "ledger_revision");
         Refused(() => org.Decide(Member, null, OrgDecisionKind.Routine, ["a", "b"], "a", "why", [], [], DateTimeOffset.UtcNow), "org_decision");
-        Assert.Equal(0L, Count(db, "ledger_entry"));
+        Assert.Equal(1L, Count(db, "ledger_entry"));
         var decision = org.Decide(Member, turn, OrgDecisionKind.Routine, ["a", "b"], "a", "why", [], [], DateTimeOffset.UtcNow);
         Refused(() => org.Forecast(Member, null, decision.Id, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-ok", "promoted", Due, 0.3m),
             DateTimeOffset.UtcNow), "org_forecast");
@@ -252,6 +265,7 @@ public class ArtifactLineageTests
             Assert.True(l.State == LineageState.Recorded, $"{kind} {id}: {l.State} — {l.Label}");
             Assert.Equal((author, attempt), (l.Author, l.Attempt));
             Assert.Equal([new AttemptGiven("lateral", "lat-000000000009")], l.Given);
+            Assert.True(l.PacketRecorded);
             Assert.Equal(Ops.DataExport, Assert.Single(l.Read).Tool);
         }
 
@@ -291,6 +305,23 @@ public class ArtifactLineageTests
         Assert.Equal(Member, d.Author);
         Assert.Equal(Member, JsonDocument.Parse(gw.Org.Manifest(d.Id)!).RootElement.GetProperty("author").GetString());
         Recorded(ArtifactKind.Delivery, d.Id, Member, deliverTurn);
+
+        // AN EMPTY PACKET RECORD IS NEVER A ZERO: in flight it says the record comes with the commit; ended, it says unknown which.
+        var bare = $"turn-{Guid.NewGuid():n}"[..17];
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = bare, StartedAt = DateTimeOffset.UtcNow, Role = Member, ReservedCost = 0.10m, SeatClass = SeatClasses.Harness,
+            Assurance = SeatClasses.AssuranceOf(SeatClasses.Harness) is { } a ? SeatClasses.Name(a) : null
+        }).Admitted);
+        var lone = new ResearchLedger(db).Add(Member, bare, LedgerKind.Finding, "a lone finding", LedgerMark.Claim, null, null, null).Id
+            .ToString(CultureInfo.InvariantCulture);
+        var inFlight = ArtifactLineage.Of(db, ArtifactKind.LedgerEntry, lone)!;
+        Assert.Equal((LineageState.Recorded, false), (inFlight.State, inFlight.PacketRecorded));
+        Assert.Contains("has not committed", inFlight.Label, StringComparison.Ordinal);
+        Exec(db, "UPDATE ai_attempt SET state='ENDED' WHERE id=$a", ("$a", bare));
+        var ended = ArtifactLineage.Of(db, ArtifactKind.LedgerEntry, lone)!;
+        Assert.False(ended.PacketRecorded);
+        Assert.Contains("unknown which, never read as nothing shown", ended.Label, StringComparison.Ordinal);
 
         // The referee's run is the app's measurement, labelled so — not "not recorded".
         new StrategyStore(db).RecordRun(ARun("run-referee", ran.Program.StrategyId, set.Id, AppPrincipals.Referee, null), []);
