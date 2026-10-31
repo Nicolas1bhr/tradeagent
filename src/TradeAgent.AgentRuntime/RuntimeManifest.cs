@@ -2007,7 +2007,7 @@ public static class CostCatalog
                 ? new TurnPrice(charge.Of(highest), costs.Currency, null, Labels.PricedAtHighestListPrice)
                     { Basis = BasisOf(highest) }
                 : TurnPrice.Unknown(
-                    $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
+                    $"the AI tool did not say which model it used, and {Labels.PriceList} does not name one for it");
 
         var price = Applicable(costs, runtimeId)
             .FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));
@@ -2021,7 +2021,7 @@ public static class CostCatalog
                 return new TurnPrice(charge.Of(fallback), costs.Currency, null,
                     Labels.PricedAtHighestListPrice) { Basis = BasisOf(fallback) };
 
-            return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
+            return TurnPrice.Unknown($"{Labels.PriceList} has no price for {model}");
         }
 
         return new TurnPrice(charge.Of(price), costs.Currency, null,

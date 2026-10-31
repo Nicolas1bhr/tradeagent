@@ -961,6 +961,12 @@ public sealed record AiSpendToday
     public decimal RoleReserved { get; init; }
 
     /// <summary>
+    /// THIS ROLE'S OWN TURNS TODAY (<c>U-ui-glance</c>): the turns counted in <see cref="RoleSpent"/>, beside it — never the day's
+    /// <see cref="Turns"/>, which is every role's. Null where nothing read the role's rows, and then the report says it is unknown.
+    /// </summary>
+    public int? RoleTurns { get; init; }
+
+    /// <summary>
     /// THE SHARE IS A SECOND GATE, NOT A REPLACEMENT FOR THE FIRST. The global comparison above is
     /// what bounds the owner's day; this is what stops one role spending all of it.
     ///

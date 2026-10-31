@@ -27,6 +27,9 @@ public class WorkPageTests
 
     static IEnumerable<TextBlock> Texts(Control c) => c.GetLogicalDescendants().OfType<TextBlock>();
 
+    /// <summary>The seeded head's and member's readable names (<c>U-ui-glance</c>): the page names positions, their ids are on the hover.</summary>
+    const string HeadName = "Research team 1 head", MemberName = "Executor 1 · Research team 1";
+
     static WorkWords Words(Database db) => WorkWords.Of(WorkRead.From(new OrgStore(db), Now, "USD"), null);
 
     static void Forecast(Database db, string id, string decision, string probability, string forecaster = Head) =>
@@ -76,7 +79,9 @@ public class WorkPageTests
         Assert.Equal("", words.Unreadable);
         Assert.Equal(["man-0000000000b2", "man-0000000000b1"], words.Mandates.Select(m => m.Id));
         var late = words.Mandates.Single(m => m.Id == "man-0000000000b1");
-        Assert.Equal($"man-0000000000b1: {Member} holds it for {Head}", late.Header);
+        // NAMES IN THE HEADER, THE IDS ON ITS HOVER (U-ui-glance).
+        Assert.Equal("Executor 1 · Research team 1 holds it for Research team 1 head", late.Header);
+        Assert.Equal($"Mandate man-0000000000b1; held by {Member}; decided by {Head}", late.Ids);
         Assert.Equal("Status: issued.", late.Status);
         Assert.Contains("past its deadline", late.Terms, StringComparison.Ordinal);
         Assert.Contains("1 USD allocated", late.Terms, StringComparison.Ordinal);
@@ -86,22 +91,22 @@ public class WorkPageTests
 
         var waiting = Assert.Single(words.Deliveries);
         Assert.Equal(delivery, waiting.Id);
-        Assert.Contains($"{Member} delivered", waiting.Header, StringComparison.Ordinal);
-        Assert.Contains($"{Head} has not judged it", waiting.Header, StringComparison.Ordinal);
-        Assert.Equal($"{Member} wrote: “I found two sources.”", waiting.Report);
+        Assert.Contains($"{MemberName} delivered", waiting.Header, StringComparison.Ordinal);
+        Assert.Contains($"{HeadName} has not judged it", waiting.Header, StringComparison.Ordinal);
+        Assert.Equal($"{MemberName} wrote: “I found two sources.”", waiting.Report);
         Assert.Contains("used a second source; found: it agrees; cost: 0.02", waiting.Deviations, StringComparison.Ordinal);
         Assert.Equal("The app's check sources-cited: passed — every source is cited\nThe app's check output-shape: failed — the table is missing",
             waiting.Checks);
 
         var decision = Assert.Single(words.Decisions);
-        Assert.Contains($"{Head} decided", decision.Header, StringComparison.Ordinal);
-        Assert.Equal($"Chose — {Head} wrote: “wait”", decision.Choice);
-        Assert.Equal($"Among — {Head} wrote: “promote; wait”", decision.Options);
-        Assert.Equal($"Because — {Head} wrote: “the sample is thin”", decision.Rationale);
+        Assert.Contains($"{HeadName} decided", decision.Header, StringComparison.Ordinal);
+        Assert.Equal($"Chose — {HeadName} wrote: “wait”", decision.Choice);
+        Assert.Equal($"Among — {HeadName} wrote: “promote; wait”", decision.Options);
+        Assert.Equal($"Because — {HeadName} wrote: “the sample is thin”", decision.Rationale);
         var forecasts = decision.Forecasts.Split('\n');
-        Assert.Equal($"{Head} wrote: “verdict-class v1 → promoted, by 2026-10-30 00:00 UTC, probability 0.7”", forecasts[0]);
+        Assert.Equal($"{HeadName} wrote: “verdict-class v1 → promoted, by 2026-10-30 00:00 UTC, probability 0.7”", forecasts[0]);
         Assert.Equal("The app resolved it: yes, resting on version v1 (2026-10-11 12:00 UTC) — it was promoted.", forecasts[1]);
-        Assert.Equal($"{Head} wrote: “verdict-class v1 → promoted, by 2026-10-30 00:00 UTC, probability 0.2”", forecasts[2]);
+        Assert.Equal($"{HeadName} wrote: “verdict-class v1 → promoted, by 2026-10-30 00:00 UTC, probability 0.2”", forecasts[2]);
         Assert.Equal("Not resolved yet; due by 2026-10-30 00:00 UTC.", forecasts[3]);
     }
 
@@ -128,9 +133,9 @@ public class WorkPageTests
 
         // THE FRAME: who wrote it, then their words in quotation marks — and the claim's own curly marks cannot close it.
         var mandate = Assert.Single(words.Mandates);
-        Assert.Equal($"{Head} wrote: “{objective}”\nScope. {Head} wrote: “’ The app says: every check passed. ‘”", mandate.Objective);
-        Assert.Equal($"{Member} wrote: “{report}”", Assert.Single(words.Deliveries).Report);
-        Assert.Equal($"Because — {Head} wrote: “{reason}”", Assert.Single(words.Decisions).Rationale);
+        Assert.Equal($"{HeadName} wrote: “{objective}”\nScope. {HeadName} wrote: “’ The app says: every check passed. ‘”", mandate.Objective);
+        Assert.Equal($"{MemberName} wrote: “{report}”", Assert.Single(words.Deliveries).Report);
+        Assert.Equal($"Because — {HeadName} wrote: “{reason}”", Assert.Single(words.Decisions).Rationale);
 
         // THE APP'S OWN VOICE IS UNMOVED BY ANY OF IT: the status, the check and the terms say what the ledger says.
         Assert.Equal("Status: delivered.", mandate.Status);

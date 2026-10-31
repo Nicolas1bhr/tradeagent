@@ -40,7 +40,11 @@ sealed record OrganisationRead(
 /// One position as the page says it: where it sits, whether it is active, what it is set to run on, what it last ran on, who paid, its
 /// calibration as the app scores it at read (empty where no scorecard was read) and, where its home folder is refused, the refusal's sentence.
 /// </summary>
-sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null);
+sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null)
+{
+    /// <summary>The position's readable name (<see cref="OrgNames"/>); its id stays beside it on the page.</summary>
+    public string Name { get; init; } = Id;
+}
 
 /// <summary>One unit as the page says it, with the depth it is indented to, the positions in it and its head's id (the root's: the chief).</summary>
 sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IReadOnlyList<OrgPositionWords> Positions, string? HeadId = null);
@@ -63,15 +67,17 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
         if (damage is not null) return new OrganisationWords(Labels.ChartDamaged(damage), "", []);
 
         var byUnit = read.Positions.ToLookup(p => p.UnitId, StringComparer.Ordinal);
+        var names = OrgNames.Of(read.Units, read.Positions);
         var units = tree.Select(t =>
         {
             var (unit, depth) = t;
-            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved) with
+            var positions = byUnit[unit.Id].Select(p => PositionWords(unit, p, read.Seats, read.Resolved, names) with
             {
+                Name = names.Position(p.Id),
                 Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : "",
                 HomeRefusal = homeRefusal?.Invoke(p.Id)
             }).ToList();
-            return new OrgUnitWords(unit.Id, depth, OrgText.UnitTitle(unit), UnitLine(unit, byUnit[unit.Id]), positions, unit.HeadPositionId);
+            return new OrgUnitWords(unit.Id, depth, names.Unit(unit.Id), UnitLine(unit, byUnit[unit.Id], names), positions, unit.HeadPositionId);
         }).ToList();
 
         return new OrganisationWords(
@@ -80,12 +86,12 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             units);
     }
 
-    static string UnitLine(OrgUnitRow unit, IEnumerable<OrgPositionRow> positions)
+    static string UnitLine(OrgUnitRow unit, IEnumerable<OrgPositionRow> positions, OrgNames names)
     {
-        // THE ROOT'S HEAD IS THE CHIEF (U-org-chief); vacant, it is yours, in-process.
-        var head = unit.IsRoot && unit.HeadPositionId is { } chief ? $"headed by the chief {chief}"
+        // THE ROOT'S HEAD IS THE CHIEF (U-org-chief); vacant, it is yours, in-process. Heads by name (U-ui-glance); their ids are on their rows.
+        var head = unit.IsRoot && unit.HeadPositionId is not null ? "headed by the Chief"
             : unit.IsRoot ? "headed by you: no chief is appointed (vacant)"
-            : unit.HeadPositionId is { } id ? $"headed by {id}"
+            : unit.HeadPositionId is { } id ? $"headed by the {names.Position(id)}"
             : "its head is vacant";
         var active = positions.Count(p => p.Status == OrgPositionStatus.Active);
         var closed = unit.ClosedAt is { } at ? $", closed {OrgText.When(at)}" : "";
@@ -93,11 +99,11 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
     }
 
     static OrgPositionWords PositionWords(OrgUnitRow unit, OrgPositionRow p, IReadOnlyDictionary<string, RecordedSeat> seats,
-        IReadOnlyDictionary<string, ResolvedSeat>? resolved)
+        IReadOnlyDictionary<string, ResolvedSeat>? resolved, OrgNames names)
     {
-        var role = unit.HeadPositionId == p.Id ? (unit.IsRoot ? "chief of the organisation" : $"head of {OrgText.UnitTitle(unit)}")
-            : unit.Kind == OrgUnitKind.Staff ? $"staff of {OrgText.UnitTitle(unit)}"
-            : $"member of {OrgText.UnitTitle(unit)}";
+        var role = unit.HeadPositionId == p.Id ? (unit.IsRoot ? "chief of the organisation" : $"head of {names.Unit(unit.Id)}")
+            : unit.Kind == OrgUnitKind.Staff ? $"staff of {names.Unit(unit.Id)}"
+            : $"member of {names.Unit(unit.Id)}";
 
         string set;
         if (p.SeatRuntime is not null)
@@ -162,7 +168,9 @@ sealed class OrganisationPage
         _list = new LiveList<OrgUnitWords>(_units, Ui.Muted(Labels.OrganisationNoUnits), u => u.Id, MakeUnit);
         _status.Text = Labels.SurfaceNotRead;
 
-        var body = Ui.Col(Theme.S4, _status, _proof, _units);
+        // "AT A GLANCE" FIRST (U-ui-glance): who works, what waits on whom, what it costs and what happens next — then the chart.
+        Glance = sources.Glance is { } glance ? new GlanceCard(glance, compact: false) : null;
+        var body = Glance is null ? Ui.Col(Theme.S4, _status, _proof, _units) : Ui.Col(Theme.S4, Glance.Root, _status, _proof, _units);
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
@@ -174,9 +182,13 @@ sealed class OrganisationPage
     /// <summary>The card of <paramref name="unitId"/>, or null until the unit has been read — the same instance on every refresh.</summary>
     internal Control? CardOf(string unitId) => _list.CardOf(unitId);
 
+    /// <summary>The "At a glance" card at the top, or null where the sources draw none.</summary>
+    internal GlanceCard? Glance { get; }
+
     /// <summary>In place on every tick, touching nothing when nothing moved.</summary>
     public void Update()
     {
+        Glance?.Update();
         OrganisationWords words;
         var read = false;
         try
@@ -230,14 +242,16 @@ sealed class OrganisationPage
 
     (Control Card, Action<OrgPositionWords> Fill) MakePosition(OrgPositionWords first)
     {
-        var id = Ui.With(Ui.Mono(""), t => t.FontWeight = FontWeight.SemiBold);
+        // ITS NAME FIRST (U-ui-glance), then its state, then its id — the identity, kept beside the name in the code face.
+        var name = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
+        var id = Ui.With(Ui.Mono("", Theme.TextMuted), t => t.FontSize = Theme.Small);
         var status = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.FontWeight = FontWeight.SemiBold; });
         var role = Small();
         var seat = Small();
         var cell = Small();
         var billing = Small();
         var calibration = Small();
-        var head = Ui.Row(Theme.S3, id, status);
+        var head = Ui.Row(Theme.S3, name, status, id);
         head.VerticalAlignment = VerticalAlignment.Center;
         // THE OWNER'S REPAIR (U-repair-position-home): the refusal's sentence and its two-press button, made the first time this row's folder is
         // refused and kept — hidden, and disarmed, once the refusal is gone — and the words of the last repair under them.
@@ -250,6 +264,7 @@ sealed class OrganisationPage
 
         return (row, p =>
         {
+            OrgText.Set(name, p.Name);
             OrgText.Set(id, p.Id);
             OrgText.Set(status, p.Status);
             var tone = p.Status == OrgPositionStatus.Active ? Theme.Positive : Theme.TextMuted;
@@ -428,7 +443,7 @@ sealed class ChiefCard
         try { board = _presses.BoardActive(); }
         catch (Exception) { board = true; }
         var chief = root.HeadId is { } id ? root.Positions.FirstOrDefault(p => p.Id == id) : null;
-        OrgText.Set(_sitting, chief is null ? Labels.ChiefNone : $"{chief.Id}, {chief.Status}. {chief.Seat}");
+        OrgText.Set(_sitting, chief is null ? Labels.ChiefNone : $"{chief.Name} ({chief.Id}), {chief.Status}. {chief.Seat}");
         OrgText.Set(_whose, board ? Labels.ChiefIsTheBoards : Labels.ChiefYoursUntilBoard);
         Seats();
         Show(_seatRow, !board);

@@ -54,6 +54,12 @@ sealed record OrgSurfaceSources
     /// </summary>
     public ChiefPresses? Chief { get; init; }
 
+    /// <summary>
+    /// "AT A GLANCE" (<c>U-ui-glance</c>): one read of the organisation's state for the card at the top of the page, or null where there is no
+    /// host — and no card is drawn.
+    /// </summary>
+    public Func<GlanceRead?>? Glance { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
@@ -70,6 +76,7 @@ sealed record OrgSurfaceSources
         Currency = () => host.SpendToday.Currency,
         HomeRefusal = host.HomeRefusalFor,
         RepairHome = host.RepairHome,
+        Glance = () => GlanceRead.From(host, DateTimeOffset.UtcNow),
     };
 }
 
@@ -167,6 +174,92 @@ static class OrgText
     {
         if (t.Text != text) t.Text = text;
     }
+}
+
+/// <summary>
+/// READABLE NAMES FOR THE CHART (<c>U-ui-glance</c>): every position and unit named in the owner's words, COMPOSED BY THE APP FROM THE CHART'S
+/// OWN ROWS — never from a charter, a title or anything a position wrote (titles are claims, <see cref="OrgStore"/>). The ids stay the
+/// identity: a page keeps each one on a hover or a detail line.
+///
+/// <para><b>How a name is made.</b> A unit: the organisation, the two seeded divisions by name, any other division "Division N", a team or
+/// subdivision "&lt;its parent&gt; team N" / "subdivision N" (N counts its siblings of that kind under that parent, oldest first — a closed
+/// unit keeps its place, so no other name moves when one closes), staff "&lt;its parent&gt; staff" ("The chief's staff" at the root). A
+/// position: the root's head "Chief", a seeded division's legacy head by its title ("Research Director"), any other head "&lt;its unit&gt;
+/// head", and every other position "Executor N · &lt;its unit&gt;" ("Staff member N" on a staff), N counting the unit's non-head positions
+/// oldest first. An id the chart does not hold — an app principal, a board seat — is said as the app already says it.</para>
+/// </summary>
+sealed class OrgNames
+{
+    readonly Dictionary<string, string> _units = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _positions = new(StringComparer.Ordinal);
+
+    /// <summary>No chart read: every id is said as it is (legacy positions by their titles).</summary>
+    public static OrgNames None { get; } = new();
+
+    OrgNames() { }
+
+    /// <summary>The names of one read of the chart. <paramref name="positions"/> may be empty where only units are named.</summary>
+    public static OrgNames Of(IReadOnlyList<OrgUnitRow> units, IReadOnlyList<OrgPositionRow> positions)
+    {
+        var names = new OrgNames();
+        var byId = units.ToDictionary(u => u.Id, StringComparer.Ordinal);
+        string Ordinal<T>(IEnumerable<T> peers, Func<T, string> id, Func<T, DateTimeOffset> at, string me) =>
+            (peers.OrderBy(at).ThenBy(id, StringComparer.Ordinal).Select(id).ToList().IndexOf(me) + 1).ToString(CultureInfo.InvariantCulture);
+
+        string Unit(OrgUnitRow u, int guard)
+        {
+            if (names._units.TryGetValue(u.Id, out var known)) return known;
+            var parent = u.ParentId is { } pid && byId.TryGetValue(pid, out var p) && guard < 64 ? p : null;
+            string Short() => parent is null ? "" : parent.IsRoot ? "" : parent.Id switch
+            {
+                OrgIds.Operations => "Operations ",
+                OrgIds.Research => "Research ",
+                _ => Unit(parent, guard + 1) + " "
+            };
+            var n = parent is null ? "" : Ordinal(units.Where(x => x.ParentId == u.ParentId && x.Kind == u.Kind), x => x.Id, x => x.CreatedAt, u.Id);
+            var name = u.IsRoot || u.Id is OrgIds.Operations or OrgIds.Research ? OrgText.UnitTitle(u)
+                : u.Kind == OrgUnitKind.Staff ? (parent is { IsRoot: true } || parent is null ? "The chief's staff" : $"{Unit(parent, guard + 1)} staff")
+                : u.Kind == OrgUnitKind.Division ? $"Division {n}"
+                : u.Kind == OrgUnitKind.Subdivision ? Cap($"{Short()}subdivision {n}")
+                : u.Kind == OrgUnitKind.Team ? Cap($"{Short()}team {n}")
+                : OrgText.UnitTitle(u);
+            return names._units[u.Id] = name;
+        }
+        foreach (var u in units) Unit(u, 0);
+
+        var heads = units.Where(u => u.HeadPositionId is not null).ToDictionary(u => u.HeadPositionId!, StringComparer.Ordinal);
+        var byUnit = positions.ToLookup(p => p.UnitId, StringComparer.Ordinal);
+        foreach (var p in positions)
+        {
+            if (heads.TryGetValue(p.Id, out var headed))
+            {
+                names._positions[p.Id] = headed.IsRoot ? "Chief"
+                    : CouncilRoles.IsKnown(p.Id) ? CouncilRoles.Title(p.Id)
+                    : $"{names._units[headed.Id]} head";
+                continue;
+            }
+            var unit = byId.TryGetValue(p.UnitId, out var u) ? u : null;
+            var peers = byUnit[p.UnitId].Where(x => !heads.ContainsKey(x.Id));
+            var n = Ordinal(peers, x => x.Id, x => x.CreatedAt, p.Id);
+            names._positions[p.Id] = unit is null ? (CouncilRoles.IsKnown(p.Id) ? CouncilRoles.Title(p.Id) : p.Id)
+                : CouncilRoles.IsKnown(p.Id) ? CouncilRoles.Title(p.Id)
+                : unit.Kind == OrgUnitKind.Staff ? $"Staff member {n} · {names._units[unit.Id]}"
+                : $"Executor {n} · {names._units[unit.Id]}";
+        }
+        return names;
+    }
+
+    static string Cap(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    /// <summary>A unit's name, or the app's own words for one the chart does not hold.</summary>
+    public string Unit(string id) => _units.TryGetValue(id, out var n) ? n
+        : OrgEnvelopes.NameOf(id) is var named && named.StartsWith("the ", StringComparison.Ordinal) ? Cap(named["the ".Length..]) : id;
+
+    /// <summary>A position's name; an id the chart does not hold is said as the app says it elsewhere (a legacy role's title, else the id).</summary>
+    public string Position(string id) => _positions.TryGetValue(id, out var n) ? n : CouncilRoles.Title(id);
+
+    /// <summary>A position's name with its id after it, for a detail line or a hover.</summary>
+    public string WithId(string id) => Position(id) == id ? id : $"{Position(id)} ({id})";
 }
 
 /// <summary>

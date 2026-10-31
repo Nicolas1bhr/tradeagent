@@ -20,18 +20,36 @@ sealed record WorkRead(
     /// <summary>The most decisions the page lists.</summary>
     public const int DecisionLimit = 25;
 
+    /// <summary>The chart's readable names (<c>U-ui-glance</c>), read with the work; none where nothing read the chart.</summary>
+    public OrgNames Names { get; init; } = OrgNames.None;
+
     public static WorkRead From(OrgStore org, DateTimeOffset now, string currency) =>
-        new(org.MandatesOpen(), org.DeliveriesAwaiting(), org.DecisionsSince(now - DecisionWindow, DecisionLimit), now, currency);
+        new(org.MandatesOpen(), org.DeliveriesAwaiting(), org.DecisionsSince(now - DecisionWindow, DecisionLimit), now, currency)
+        {
+            Names = OrgNames.Of(org.Units(), org.Positions())
+        };
 }
 
 /// <summary>One open mandate as the page says it. <see cref="Objective"/> is its decider's claim; the rest is the app's record.</summary>
-sealed record MandateWords(string Id, string Header, string Status, string Terms, string Objective, string Spend, bool Late = false);
+sealed record MandateWords(string Id, string Header, string Status, string Terms, string Objective, string Spend, bool Late = false)
+{
+    /// <summary>The ids behind the header's names (<c>U-ui-glance</c>), for the header's hover.</summary>
+    public string Ids { get; init; } = "";
+}
 
 /// <summary>One delivery waiting to be judged. <see cref="Report"/> and <see cref="Deviations"/> are the holder's claims; <see cref="Checks"/> are the app's results.</summary>
-sealed record DeliveryWords(string Id, string Header, string Report, string Deviations, string Checks);
+sealed record DeliveryWords(string Id, string Header, string Report, string Deviations, string Checks)
+{
+    /// <summary>The ids behind the header's names, for the header's hover.</summary>
+    public string Ids { get; init; } = "";
+}
 
 /// <summary>One decision. <see cref="Choice"/>, <see cref="Options"/> and <see cref="Rationale"/> are its author's claims; <see cref="Forecasts"/> says each claim and then the app's resolution.</summary>
-sealed record DecisionWords(string Id, string Header, string Choice, string Options, string Rationale, string Forecasts);
+sealed record DecisionWords(string Id, string Header, string Choice, string Options, string Rationale, string Forecasts)
+{
+    /// <summary>The ids behind the header's names, for the header's hover.</summary>
+    public string Ids { get; init; } = "";
+}
 
 /// <summary>
 /// THE WORK PAGE'S SENTENCES, SEPARATED FROM ITS CONTROLS (<c>U-org-surface-a</c>): <b>measurement and claim stay apart.</b> A status, a deadline,
@@ -55,19 +73,20 @@ sealed record WorkWords(
         return new WorkWords(
             "",
             [.. read.Open.Rows.Select(o => Mandate(o, read))],
-            [.. read.Deliveries.Rows.Select(Delivery)],
-            [.. read.Decisions.Rows.Select(Decision)],
+            [.. read.Deliveries.Rows.Select(d => Delivery(d, read.Names))],
+            [.. read.Decisions.Rows.Select(d => Decision(d, read.Names))],
             string.Join("\n", refused));
     }
 
     static MandateWords Mandate(OpenMandate o, WorkRead read)
     {
         var m = o.Mandate;
+        var n = read.Names;
         var late = read.Now > m.Deadline ? ", past its deadline" : "";
         var terms = $"A {m.Kind} mandate, {Latitude(m.Latitude)}; due {OrgText.When(m.Deadline)}{late}; "
                     + $"{Labels.Money(m.Allocation, read.Currency)} allocated; up to {m.RetryLimit} {(m.RetryLimit == 1 ? "try" : "tries")}.";
-        var objective = OrgText.Claim(m.Decider, m.Objective)
-                        + (m.Scope is { Length: > 0 } scope ? "\nScope. " + OrgText.Claim(m.Decider, scope) : "");
+        var objective = OrgText.Claim(n.Position(m.Decider), m.Objective)
+                        + (m.Scope is { Length: > 0 } scope ? "\nScope. " + OrgText.Claim(n.Position(m.Decider), scope) : "");
 
         var spend = $"AI spend counted: {Labels.Money(o.Spend.Spent, read.Currency)} of {Labels.Money(m.Allocation, read.Currency)}, "
                     + $"over {Count(o.Spend.Launches, "launch", "launches")}";
@@ -79,8 +98,12 @@ sealed record WorkWords(
                      + "the reservation, so that figure is not a bill";
         spend += ".";
 
-        return new MandateWords(m.Id, $"{m.Id}: {m.Holder} holds it for {m.Decider}",
-            $"Status: {o.Status ?? "no status is recorded"}.", terms, objective, spend, late.Length > 0);
+        // NAMES IN THE HEADER (U-ui-glance), the ids on its hover: the mandate's, its holder's and its decider's.
+        return new MandateWords(m.Id, $"{n.Position(m.Holder)} holds it for {n.Position(m.Decider)}",
+            $"Status: {o.Status ?? "no status is recorded"}.", terms, objective, spend, late.Length > 0)
+        {
+            Ids = $"Mandate {m.Id}; held by {m.Holder}; decided by {m.Decider}"
+        };
     }
 
     /// <summary>A mandate's latitude in the owner's words: whether its holder may deliver something other than what was asked.</summary>
@@ -91,9 +114,9 @@ sealed record WorkWords(
         _ => $"latitude {latitude}"
     };
 
-    static DeliveryWords Delivery(DeliveryToJudge d)
+    static DeliveryWords Delivery(DeliveryToJudge d, OrgNames n)
     {
-        var holder = d.Mandate.Holder;
+        var holder = n.Position(d.Mandate.Holder);
         var deviations = d.Delivery.Deviations.Count == 0
             ? "No deviation is named."
             : string.Join("\n", d.Delivery.Deviations.Select(x =>
@@ -102,28 +125,35 @@ sealed record WorkWords(
             ? "The app ran no check on it."
             : string.Join("\n", d.Checks.Select(c => $"The app's check {c.Check}: {(c.Passed ? "passed" : "failed")} — {c.Reason}"));
         return new DeliveryWords(d.Delivery.Id,
-            $"{d.Mandate.Id}: {holder} delivered {OrgText.When(d.Delivery.At)}; {d.Mandate.Decider} has not judged it.",
-            OrgText.Claim(holder, d.Delivery.Report), deviations, checks);
+            $"{holder} delivered {OrgText.When(d.Delivery.At)}; {n.Position(d.Mandate.Decider)} has not judged it.",
+            OrgText.Claim(holder, d.Delivery.Report), deviations, checks)
+        {
+            Ids = $"Delivery {d.Delivery.Id} on mandate {d.Mandate.Id}; delivered by {d.Mandate.Holder}; to be judged by {d.Mandate.Decider}"
+        };
     }
 
-    static DecisionWords Decision(RecentDecision r)
+    static DecisionWords Decision(RecentDecision r, OrgNames n)
     {
         var d = r.Decision;
-        var rationale = r.Rationale is { Length: > 0 } text ? OrgText.Claim(d.Position, text) : "No rationale is recorded for it.";
+        var who = n.Position(d.Position);
+        var rationale = r.Rationale is { Length: > 0 } text ? OrgText.Claim(who, text) : "No rationale is recorded for it.";
         var forecasts = r.Forecasts.Count == 0
             ? "No forecast was made on it."
-            : string.Join("\n", r.Forecasts.Select(Forecast));
-        return new DecisionWords(d.Id, $"{d.Position} decided {OrgText.When(d.At)} ({d.Kind}).",
-            "Chose — " + OrgText.Claim(d.Position, d.Choice),
-            "Among — " + OrgText.Claim(d.Position, string.Join("; ", d.Options)),
+            : string.Join("\n", r.Forecasts.Select(f => Forecast(f, n)));
+        return new DecisionWords(d.Id, $"{who} decided {OrgText.When(d.At)} ({d.Kind}).",
+            "Chose — " + OrgText.Claim(who, d.Choice),
+            "Among — " + OrgText.Claim(who, string.Join("; ", d.Options)),
             "Because — " + rationale,
-            forecasts);
+            forecasts)
+        {
+            Ids = $"Decision {d.Id}; by {d.Position}"
+        };
     }
 
-    static string Forecast(RecentForecast f)
+    static string Forecast(RecentForecast f, OrgNames n)
     {
         var c = f.Forecast;
-        var said = OrgText.Claim(c.Forecaster,
+        var said = OrgText.Claim(n.Position(c.Forecaster),
             $"{c.Predicate} {c.Subject} → {c.Target}, by {OrgText.When(c.ResolveBy)}, probability {c.Probability.ToString(CultureInfo.InvariantCulture)}");
         var scored = c.Scored ? "" : $" The app does not score it: {c.UnscoredWhy}.";
         var outcome = f.Resolution is { } r
@@ -227,6 +257,13 @@ sealed class WorkPage
 
     static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
 
+    /// <summary>The ids behind a header's names, on its hover — set only when they changed.</summary>
+    static void Hover(Control c, string ids)
+    {
+        object? want = ids.Length == 0 ? null : ids;
+        if (!Equals(ToolTip.GetTip(c), want)) ToolTip.SetTip(c, want);
+    }
+
     /// <summary>An organisation's words on the page: the body size, in the text colour, and slanted — they are not the app's voice.</summary>
     static TextBlock Said() => Ui.With(Ui.Body(""), t => t.FontStyle = FontStyle.Italic);
 
@@ -241,6 +278,7 @@ sealed class WorkPage
         return (card, m =>
         {
             OrgText.Set(header, m.Header);
+            Hover(header, m.Ids);
             OrgText.Set(status, m.Status);
             OrgText.Set(terms, m.Terms);
             // A MANDATE PAST ITS DEADLINE IS SAID IN CAUTION COLOUR, so a late one is seen at a glance among the open ones.
@@ -261,6 +299,7 @@ sealed class WorkPage
         return (card, d =>
         {
             OrgText.Set(header, d.Header);
+            Hover(header, d.Ids);
             OrgText.Set(report, d.Report);
             OrgText.Set(deviations, d.Deviations);
             OrgText.Set(checks, d.Checks);
@@ -278,6 +317,7 @@ sealed class WorkPage
         return (card, d =>
         {
             OrgText.Set(header, d.Header);
+            Hover(header, d.Ids);
             OrgText.Set(choice, d.Choice);
             OrgText.Set(options, d.Options);
             OrgText.Set(rationale, d.Rationale);

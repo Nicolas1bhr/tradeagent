@@ -1752,6 +1752,7 @@ public sealed class TurnMeter
                 Class = ceiling,
                 RoleSpent = mine.Spent,
                 RoleReserved = mine.Reserved,
+                RoleTurns = mine.Turns,
                 RoleCap = share,
                 Spent = totals.Spent,
                 Reserved = totals.Reserved,

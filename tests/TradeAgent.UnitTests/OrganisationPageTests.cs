@@ -61,7 +61,11 @@ public class OrganisationPageTests
         var team = words.Units.Single(u => u.Id == Team);
         var head = team.Positions.Single(p => p.Id == Head);
         Assert.Equal("active", head.Status);
-        Assert.Equal("head of Team team-5ac0ffee", head.Role);
+        // READABLE NAMES (U-ui-glance): the team and its positions named from the chart's own rows, the id kept beside the name.
+        Assert.Equal("head of Research team 1", head.Role);
+        Assert.Equal("Research team 1 head", head.Name);
+        Assert.Equal("Executor 1 · Research team 1", team.Positions.Single(p => p.Id == Member).Name);
+        Assert.Equal("Research team 2", words.Units.Single(u => u.Id == Elsewhere).Title);
         Assert.Equal("Set to run on: codex, model gpt-6.", head.Seat);
         Assert.Contains("brokered: the app's own harness", head.Cell, StringComparison.Ordinal);
         Assert.Equal("Paid from: real money (an API key).", head.Billing);

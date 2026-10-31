@@ -310,6 +310,49 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// THE ORGANISATION AT A GLANCE, IN READABLE NAMES (<c>U-ui-glance</c>; the cards U-ui-pages left): positions and teams were named only by
+    /// ids on every org page; no page summed the organisation up; the daily report gave each director the day's TOTAL turns beside that
+    /// director's own spend; and the Dashboard said "costs.json". Each line failed on the pages as they were.
+    /// </summary>
+    [Fact]
+    public void The_owner_reads_his_organisation_at_a_glance_in_names_without_file_names()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"glance-{Guid.NewGuid():n}.db"));
+        var frames = RenderAll(db, "glance", 1280, 800, host => host.Gateway.Reports.WriteNow(host.ReportInputs())).ToDictionary(f => f.Page);
+        string All(string page) => string.Join("\n", frames[page].Texts);
+
+        // NAMES, COMPOSED FROM THE CHART — the ids kept beside them.
+        Assert.Contains("Research team 1", frames["organisation"].Texts);
+        Assert.Contains("Executor 2 · Research team 1", frames["organisation"].Texts);
+        Assert.Contains(OwnerPagesSeed.Executor2, frames["organisation"].Texts);
+        Assert.DoesNotContain("Team team-", All("organisation"), StringComparison.Ordinal);
+        Assert.Contains("Executor 2 · Research team 1 holds it for Research team 1 head", frames["work"].Texts);
+        Assert.DoesNotContain("pos-", All("work"), StringComparison.Ordinal);
+        Assert.Contains("Research team 2", frames["costs"].Texts);
+
+        // AT A GLANCE on the Organisation page, every figure the seeded ledgers hold.
+        Assert.Contains(Labels.GlanceTitle.ToUpperInvariant(), frames["organisation"].Texts.Select(t => t.ToUpperInvariant()));
+        Assert.Contains("1 mandate is past its deadline; 1 delivery waits to be judged.", frames["organisation"].Texts);
+        Assert.Contains(frames["organisation"].Texts, t => t.StartsWith("Executor 2 · Research team 1 owes Research team 1 head a delivery — due ", StringComparison.Ordinal));
+        Assert.Contains(frames["organisation"].Texts, t => t.Contains("Research team 1 head owes a judgement on Executor 1 · Research team 1's delivery", StringComparison.Ordinal));
+        Assert.Contains("1.42 USD of 5 USD in real money.", frames["organisation"].Texts);
+        Assert.Contains("Nobody: no AI turn is open right now.", frames["organisation"].Texts);
+        Assert.Contains("None is running: nothing is being tried on paper.", frames["organisation"].Texts);
+        Assert.Contains(frames["organisation"].Texts, t => t.Contains("Research team 1 head: nothing queued", StringComparison.Ordinal));
+        // …and compact on the Dashboard: the lines without their details.
+        Assert.Contains("1 mandate is past its deadline; 1 delivery waits to be judged.", frames["dashboard"].Texts);
+        Assert.DoesNotContain(frames["dashboard"].Texts, t => t.Contains("owes a judgement", StringComparison.Ordinal));
+
+        // NO INTERNAL FILE NAME ON ANY PAGE.
+        foreach (var f in frames.Values)
+            Assert.DoesNotContain(f.Texts, t => t.Contains(".json", StringComparison.Ordinal));
+
+        // EACH DIRECTOR'S OWN TURNS beside its own spend: Operations ran none of the five.
+        Assert.Contains("Operations Director: model —, 0 turns of its own", All("report"), StringComparison.Ordinal);
+        Assert.DoesNotContain("Operations Director: model —, 5 turns", All("report"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// ONBOARDING STEP 15 AT 1280x800 (seen on the owner's Linux screen, 2026-10-30): the back link beside the two presses read "← Back to
     /// “Choose your trading platfo" — cut. Built the way the window's setup surface holds it: a column at most 880 wide, padded.
     /// </summary>
