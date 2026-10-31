@@ -22,7 +22,7 @@ public sealed class CellWindowsProofTests
     public CellWindowsProofTests(ITestOutputHelper output) => _out = output;
 
     [WindowsFact]
-    public async Task Every_row_holds_the_proof_is_written_and_the_gate_then_admits_a_windows_cell()
+    public async Task The_benchmark_writes_a_proof_only_when_every_core_row_holds_and_the_gate_then_admits_a_windows_cell()
     {
         using var db = TestEnv.NewDb();
         // THE BUILD BINDING, as an install records it: the SHA-256 of the trade command it deployed (state/trade.sha256). The benchmark
@@ -37,18 +37,36 @@ public sealed class CellWindowsProofTests
         foreach (var r in result.Rows) _out.WriteLine($"  {(r.Held ? "held" : "FAIL")}{(r.Gap ? " (GAP)" : "")}  {r.Name}: {r.Seen}");
 
         Assert.Equal(CellBenchmark.WindowsRowNames, [.. result.Rows.Select(r => r.Name)]);
-        var failed = result.Rows.Where(r => !r.Held).ToList();
-        Assert.True(failed.Count == 0, "rows that did not hold: " + string.Join("; ", failed.Select(r => $"{r.Name} ({r.Seen})")));
+        var failedCore = result.Rows.Where(r => !r.Held && CellBenchmark.WindowsCoreRows.Contains(r.Name)).ToList();
+        var webHeld = CellBenchmark.WindowsWebRows.All(n => result.Rows.Single(r => r.Name == n).Held);
+
+        if (Edition == "Server")
+        {
+            // WINDOWS SERVER (CI's image) REFUSES THE PINNED CODEX ITS READ-ONLY HOME IN AN APPCONTAINER (the probe's row, measured): route (a)
+            // cannot hold there, so NO proof is written — the rule "any core row failing, nothing written" observed — and the gate stays shut.
+            Assert.Equal(["route-a-exec-server"], [.. failedCore.Select(r => r.Name)]);
+            Assert.Null(result.ProofId);
+            Assert.False(new CellProofStore(db).HoldsProof(), "a proof was written although a core row did not hold");
+            return;
+        }
+
+        Assert.True(failedCore.Count == 0, "core rows that did not hold: " + string.Join("; ", failedCore.Select(r => $"{r.Name} ({r.Seen})")));
         Assert.NotNull(result.ProofId);
 
-        // THE GATE'S FACT IS NOW TRUE, and the launch of a Windows cell is admitted under the proof just written.
+        // THE GATE'S FACT IS NOW TRUE, and a Windows cell launch is admitted under the proof just written — under web only where both web
+        // rows held (the firewall rule in force), else under none, which is what the AI's executors then run with.
         Assert.True(new CellProofStore(db).HoldsProof(), "the gate sees no proof after the benchmark wrote one");
         var (proof, egress, refusal) = RouteA.AdmissionOn(new CellRoute(db), Pin, CellPlatform.Read(), RouteA.Egress);
         Assert.Null(refusal);
         Assert.NotNull(proof);
         Assert.Equal(RouteA.WindowsProvider, proof!.Provider);
-        _out.WriteLine($"admission: proof {proof.Id} ({proof.Provider}), the cell would run egress {egress.Name}");
+        Assert.Equal(webHeld, proof.Egress.Contains(CellEgress.Web.Name));
+        Assert.Equal(webHeld ? CellEgress.Web.Name : CellEgress.None.Name, egress.Name);
+        _out.WriteLine($"admission: proof {proof.Id} ({proof.Provider}, egress {string.Join(",", proof.Egress)}), the cell would run egress {egress.Name}");
     }
+
+    /// <summary>"Client" or "Server", as Windows records its own installation type.</summary>
+    static string Edition => Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "InstallationType", "") as string ?? "";
 
     static string Pin => RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install.ExecutableSha256!;
 

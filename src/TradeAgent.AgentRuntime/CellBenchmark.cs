@@ -183,12 +183,24 @@ public static class CellBenchmark
     /// THE WINDOWS ROWS, by name, in the order they run (<c>U-cell-windows</c>; the survey's row set, its own and never the Linux rows):
     /// the profile names them, so a build that changes the list holds no proof.
     /// </summary>
-    public static readonly IReadOnlyList<string> WindowsRowNames =
+
+    /// <summary>The Windows rows every proof needs: any one failing, nothing is written.</summary>
+    public static readonly IReadOnlyList<string> WindowsCoreRows =
     [
-        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "owner-desktop-denied",
-        "no-egress", "web-443-granted", "web-nothing-else", "loopback-denied", "own-lan-address-denied", RouteA.WindowsLanGap,
-        "pipe-denied", "processes-denied", "job-escape-denied", "descendants-cancelled", "slot-leaves-nothing", "route-a-exec-server"
+        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
+        "loopback-denied", "own-lan-address-denied", "pipe-denied", "processes-denied", "descendants-cancelled", "slot-leaves-nothing",
+        "route-a-exec-server"
     ];
+
+    /// <summary>
+    /// The Windows rows that decide whether the proof names egress <c>web</c> (the egress decision of 2026-10-30): both held — 443 reached
+    /// and every other port refused, which only the firewall rule makes true — and the proof names <c>none</c> and <c>web</c>; otherwise
+    /// <c>none</c> alone, and a <c>web</c> launch runs under <c>none</c> (<see cref="RouteA.AdmissionOn"/>).
+    /// </summary>
+    public static readonly IReadOnlyList<string> WindowsWebRows = ["web-443-granted", "web-nothing-else"];
+
+    /// <summary>Every Windows row, core then web, in the order they run (declared after both, so neither is null when it is built).</summary>
+    public static readonly IReadOnlyList<string> WindowsRowNames = [.. WindowsCoreRows, .. WindowsWebRows];
 
     /// <summary>
     /// THE WINDOWS PROFILE: provider, platform, processor and build, the cell's mechanism as the stage sets it (the AppContainer, the job's
