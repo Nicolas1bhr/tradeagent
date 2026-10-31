@@ -4547,7 +4547,7 @@ public sealed class MissionLoop
                                       + (Verb(spell, Ops.OrgShow, "", "trade org show") is { } show && Verb(spell, Ops.MandateList, "", "trade mandate list") is { } list
                                           ? $"; `{show}` has the chart and `{list}` your work" : ""),
         MissionEventKind.Occupant => "you are this position's new occupant: your predecessor was retired, and you start from the position's "
-                                     + "memory — the takeover block below, `trading/PLAN.md`, `trading/JOURNAL.md` and your records — never "
+                                     + "memory — the takeover block in this packet, `trading/PLAN.md`, `trading/JOURNAL.md` and your records — never "
                                      + "its conversation",
         // HOW A SEAT ASKS FOR ITS WAKE IS ITS CANON'S TO SAY (U-runway-fixes item 3): a cell writes its wake file, a broker seat has none —
         // so a line spelled for a seat names neither; the command line's words stay for a host that declares no spelling.
