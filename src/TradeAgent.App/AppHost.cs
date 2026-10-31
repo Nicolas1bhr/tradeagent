@@ -717,17 +717,21 @@ public sealed class AppHost : IAsyncDisposable
     public string ActivateBoardSeat(string seat)
     {
         if (_db is not { } db) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "TradeAgent has no database open yet. Nothing was written.");
+        // ITS HOME FIRST (the review's P2, the re-review's P2): the last prepare built homes for the seats active then, so this one's board
+        // canon is written before it is made active — and a folder that cannot be built refuses the activation, nothing written.
+        if (BoardSeats.IsBoardId(seat) && new BoardStore(db).Seat(seat) is { Status: BoardSeatStatus.Dormant })
+        {
+            try { WorkspaceBuilder.BuildBoardHome(seat, Path.GetDirectoryName(Path.GetDirectoryName(HomeFor(seat)))); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+                    $"board seat {seat}'s folder could not be built ({ex.Message}), so it is not activated: a seat sits only with the board's "
+                    + "canon in its home. Nothing was written.");
+            }
+        }
         var row = Gateway.ActivateBoardSeat(seat, s =>
             BoardSeatGate.ActivationRefusal(s.Id, s, SeatClassItWouldStartOn(s.Id), TestHostPuppet(s.Id), new CellProofStore(db).HoldsProof(),
                 BrokerSeat.VendorFamilyOf(RuntimeIdItWouldStartOn(s.Id))));
-        // ITS HOME NOW (the review's P2): the last prepare built homes for the seats active then; this one gets the board's canon at once,
-        // not at the next start. A folder that cannot be built leaves the seat active and its launches refused until a start rebuilds it.
-        try { WorkspaceBuilder.BuildBoardHome(row.Id, Path.GetDirectoryName(Path.GetDirectoryName(HomeFor(row.Id)))); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Gateway.Log.Activity($"The security board's seat {row.Id} is active, and its folder could not be built now ({ex.Message}); its "
-                                 + "launches are refused until a start builds it.");
-        }
         Changed?.Invoke();
         return $"You activated {row.Id}. It sits on its {row.SeatClass} seat and turns only when a proposal wakes it.";
     }
