@@ -105,6 +105,12 @@ public class OrgSurfaceShellTests
                 const string repair = "Ui.Confirm(Labels.RepairHome, Labels.RepairHomeConfirm,";
                 Assert.Single(Regex.Matches(text, Regex.Escape(repair)));
                 text = text.Replace(repair, "", StringComparison.Ordinal);
+                // REVISITED, OUT LOUD, BY U-seat-models (R25 D8): the owner's switch of a position's model — one two-press per model of the
+                // verified catalog the position is not on, by its own labels, drawn only when the sources hand the page a ChooseModel press
+                // and a non-empty list (the walk above hands neither, so it still finds none). Exactly one, and nowhere else in these sources.
+                const string switchModel = "Ui.Confirm(Labels.SeatModelSwitch(words), Labels.SeatModelSwitchConfirm(words),";
+                Assert.Single(Regex.Matches(text, Regex.Escape(switchModel)));
+                text = text.Replace(switchModel, "", StringComparison.Ordinal);
                 // REVISITED, OUT LOUD, BY U-org-chief (item 7; its FILE SEAM gives it the organisation's card): the owner's presses over the
                 // chief, in their own class at the end of the file — the four two-press controls by their own labels, and the closed list of
                 // seats as plain presses — and nowhere else in the file. The walk above draws none: its sources hand the page no presses.
