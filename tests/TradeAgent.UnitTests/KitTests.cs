@@ -196,6 +196,27 @@ public class KitTests
         Assert.Equal(fresh, view!.Hash);
     }
 
+    [UnixFact]
+    public void A_run_bit_taken_from_a_tool_after_its_install_changes_the_kit_and_grants_nothing()
+    {
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), [], ["beta"]), home);
+        if (OperatingSystem.IsWindows()) return;
+        File.SetUnixFileMode(view!.ToolPath("beta"), UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        Assert.Null(Kit.Granted(home));
+    }
+
+    [Fact]
+    public void A_kit_is_never_installed_from_inside_the_apps_home_where_the_ai_works()
+    {
+        var home = NewHome();
+        var inside = Fixture(Path.Combine(home, "workspace", "org", "pos-x", "my-kit"), ["alpha"]);
+        var (view, refusal) = Kit.Install(inside, home);
+        Assert.Null(view);
+        Assert.Contains("inside TradeAgent's own folder", refusal, StringComparison.Ordinal);
+        Assert.Contains("inside TradeAgent's own folder", Kit.Preview(inside, home).Refusal, StringComparison.Ordinal);
+    }
+
     // ---- what no kit may hold -----------------------------------------------------------------------------------------------------
 
     [Theory]
@@ -206,6 +227,7 @@ public class KitTests
     [InlineData("no-frontmatter")]
     [InlineData("misnamed-skill")]
     [InlineData("bad-name")]
+    [InlineData("nested-skill")]
     public void A_kit_whose_index_and_folders_disagree_or_that_holds_what_no_kit_may_is_refused(string flaw)
     {
         var home = NewHome();
@@ -221,6 +243,10 @@ public class KitTests
             case "hidden": File.WriteAllText(Path.Combine(src, Kit.SkillsDir, "alpha", ".env"), "x"); break;
             case "no-frontmatter": File.WriteAllText(Path.Combine(src, Kit.SkillsDir, "alpha", Kit.SkillFile), "no frontmatter"); break;
             case "misnamed-skill": File.WriteAllText(Path.Combine(src, Kit.SkillsDir, "alpha", Kit.SkillFile), "---\nname: other\ndescription: d\n---\n"); break;
+            case "nested-skill":
+                Directory.CreateDirectory(Path.Combine(src, Kit.SkillsDir, "alpha", "inner"));
+                File.WriteAllText(Path.Combine(src, Kit.SkillsDir, "alpha", "inner", Kit.SkillFile), "---\ndescription: unlisted\n---\n");
+                break;
             case "bad-name": File.WriteAllText(Path.Combine(src, Kit.IndexFile), "{\"kit\": 1, \"name\": \"k\", \"skills\": [{\"name\": \"../up\", \"description\": \"d\"}], \"tools\": []}"); break;
         }
         var (view, refusal) = Kit.Install(src, home);

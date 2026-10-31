@@ -165,16 +165,9 @@ public sealed record CellPolicy
             if (OperatingSystem.IsWindows() && !(p.Length >= 3 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/' && p.IndexOf(':', 2) < 0))
                 return $"the cell's {what} '{p}' is not a plain drive path (X:\\…) on Windows";
             foreach (var form in Forms(p))
-                if (guarded.Refuses(form, executable: what == ProgramRoot) is { } why) return $"the cell's {what} {p} {why}";
+                if (guarded.Refuses(form, executable: what == ProgramRoot, writable: what == "workspace") is { } why) return $"the cell's {what} {p} {why}";
         }
         if (!System.IO.Directory.Exists(Workspace)) return $"the cell's workspace {Workspace} is not a directory";
-        // THE OWNER'S KIT IS READ AND RUN, NEVER WRITTEN (U-kit-socket): a cell may be granted the kit, or a folder in it, as a read-only
-        // input or a program root, and never as the one folder it writes — nor a workspace that holds it, or the folder installs are
-        // staged in, in any spelling.
-        foreach (var kit in new[] { Kit.Dir(appHome), Kit.StagingDir(appHome) }.SelectMany(Forms))
-            foreach (var w in Forms(Workspace))
-                if (Within(w, kit) || Within(kit, w))
-                    return $"the cell's workspace {Workspace} is, lies inside or holds the owner's head-start kit {kit}, which no cell may write";
         // A READ-ONLY INPUT THAT OVERLAPS THE WORKSPACE IS NOT READ-ONLY (triage #4): Landlock adds up the rights of every rule along
         // a path, so an input inside the workspace keeps the workspace's write rights, and one that contains it is written through it.
         foreach (var ro in ReadOnly)
@@ -226,6 +219,15 @@ public sealed record CellPolicy
     internal sealed record Guarded(IReadOnlyList<string> Homes, IReadOnlyList<string> Inside, IReadOnlyList<string> Inboxes,
         IReadOnlyList<string> Cgroups, IReadOnlyList<(string Path, string What)> Owned)
     {
+        /// <summary>
+        /// THE OWNER'S HEAD-START KIT IN EVERY SPELLING (<c>U-kit-socket</c>): read and run by a cell, never written — no WRITABLE grant (the
+        /// workspace) may be, lie inside or hold it, by path here and by descriptor in the cell stage.
+        /// </summary>
+        public IReadOnlyList<string> Kits { get; init; } = [];
+
+        /// <summary>The folder kit installs are staged in, in every spelling: no grant of any kind may reach it.</summary>
+        public IReadOnlyList<string> KitStaging { get; init; } = [];
+
         /// <summary>The app's own folders no grant may reach, each with the words its refusal names it by.</summary>
         static IEnumerable<(string Path, string What)> OwnFolders() =>
         [
@@ -263,7 +265,12 @@ public sealed record CellPolicy
             var tools = homes.Select(h => Path.Combine(h, Path.GetRelativePath(Paths.Home, Paths.Tools)))
                 .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, Paths.Tools)))).Concat(Forms(Paths.Tools))
                 .Distinct(StringComparer.Ordinal).ToList();
-            return new Guarded(homes, inside, inboxes, cgroups, owned) { ToolsForms = tools };
+            IEnumerable<string> Spell(Func<string?, string> of) =>
+                homes.Select(h => of(h)).Concat(Forms(of(home))).Concat(Forms(of(null))).Distinct(StringComparer.Ordinal);
+            return new Guarded(homes, inside, inboxes, cgroups, owned)
+            {
+                ToolsForms = tools, Kits = [.. Spell(Kit.Dir)], KitStaging = [.. Spell(Kit.StagingDir)]
+            };
         }
 
         /// <summary>
@@ -272,8 +279,15 @@ public sealed record CellPolicy
         /// inside <see cref="Paths.Tools"/> — the pinned runtime a route-(a) cell runs — and never <c>tools/</c> itself or anything
         /// holding it; every other folder stays refused for every kind of grant.
         /// </summary>
-        public string? Refuses(string form, bool executable = false)
+        public string? Refuses(string form, bool executable = false, bool writable = false)
         {
+            foreach (var staging in KitStaging)
+                if (Within(form, staging) || Within(staging, form))
+                    return $"would grant the folder the owner's head-start kit is staged in, {staging} (it is, lies inside or holds it): no cell's to reach";
+            if (writable)
+                foreach (var kit in Kits)
+                    if (Within(form, kit) || Within(kit, form))
+                        return $"is, lies inside or holds the owner's head-start kit {kit}, which no cell may write";
             foreach (var home in Homes)
                 if (Within(home, form))
                     return $"would grant TradeAgent's own home {home}, which holds its state and the owner's logins";
