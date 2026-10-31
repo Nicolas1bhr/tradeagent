@@ -54,6 +54,32 @@ public sealed record BoardIntent(IReadOnlyList<BoardChange> Changes, string Cano
     public bool Narrows => Direction == BoardDirectionKind.Narrows;
 
     /// <summary>
+    /// WHETHER <paramref name="json"/> REACHES FOR REAL MONEY (<c>U-board-alive</c> item 4): any change — read leniently, whatever else is
+    /// wrong with it — naming <c>live_activated</c>, or a <c>mode</c> whose <c>to</c> is a real-money mode. The strict read refuses both
+    /// too; this lets the gateway say WHY real money stays closed, in the venue's own terms, before anything else is weighed.
+    /// </summary>
+    public static bool ReachesRealMoney(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return false;
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("field", out var f) || f.ValueKind != JsonValueKind.String)
+                    continue;
+                if (f.GetString() == "live_activated") return true;
+                if (f.GetString() == "mode" && item.TryGetProperty("to", out var to) && to.ValueKind == JsonValueKind.String
+                    && to.GetString() is nameof(TradingMode.LIVE_CONFIRM) or nameof(TradingMode.LIVE_AUTONOMOUS))
+                    return true;
+            }
+            return false;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    /// <summary>
     /// THE STRICT READ: the intent <paramref name="json"/> states — a JSON list of objects with exactly <c>field</c>, <c>from</c> and
     /// <c>to</c> — or the sentence refusing it. Nothing is defaulted, cut or filled in.
     /// </summary>
