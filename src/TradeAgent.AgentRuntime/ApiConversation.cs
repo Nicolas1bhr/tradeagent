@@ -83,6 +83,14 @@ public sealed class ApiConversation(
     /// <inheritdoc />
     public void Unclaim() { }
 
+    /// <summary>
+    /// A HARNESS TURN REFUSED FOR ITS HOME — unbuilt, or stale — AT THE HARD LINE BEHIND THE LOOK (<c>U-home-on-hire</c> item 2): the launch
+    /// gate's typed refusal, about this host's folder (<see cref="RefusalKind.HostOrLaunch"/>), before any request. The loop gives back every
+    /// wake the launch took, the meter closes the row on these words charged nothing, and the look (<see cref="Barred"/>) refuses every later
+    /// launch in the same words, wakes kept, until the folder is rebuilt.
+    /// </summary>
+    static GateRefusedException HomeRefused(string words) => new(new TurnRefusal(RefusalKind.HostOrLaunch, words), beforeAnyWork: true);
+
     /// <summary>Why this position may not start because the last start could not rebuild its home, or null; a read that throws refuses.</summary>
     string? UnbuiltHome()
     {
@@ -485,21 +493,20 @@ public sealed class ApiConversation(
 
         // THE HARD LINE BEHIND THE LOOK (fix pass 5, D3): a home refused after the look above is still refused here, before its canon is
         // read — the first request is withheld, so nothing is sent, and the meter charges the turn nothing on that sentence.
-        if (UnbuiltHome() is { } unbuilt)
-        {
-            Append(new ChatTurn(ChatRole.System, unbuilt, _now()));
-            transcript.Note(unbuilt);
-            return (NotStarted, null, EndedNotStarted, null, null, unbuilt);
-        }
+        // AND ITS REFUSAL GIVES THE WAKES BACK (U-home-on-hire item 2): the launch gate's typed refusal before any work, so the loop releases
+        // every wake the launch took and the meter charges it nothing — a lasting home refusal used to burn them, one per turn.
+        if (UnbuiltHome() is { } unbuilt) throw HomeRefused(unbuilt);
         // THE APP'S CANON OR NO TURN (U-exec-env-fix item 2): a home built cleanly whose canon a cell rewrote afterwards is not caught by
         // the look above, so the text sent is the app's own (Mission), and one the app cannot vouch for is refused here, nothing sent.
+        // A STALE HOME, RECORDED SO THE NEXT LOOK HOLDS IT (U-home-on-hire item 2): its wakes are given back, and every later launch is
+        // refused before admission until a start or the owner's repair rebuilds the folder — never refused again launch after launch.
         if (Mission(out var unvouched) is not { } mission)
         {
-            var refused = $"TradeAgent did not start the position {role}: {unvouched}, so nothing was sent as its instructions. "
-                + "The next start writes the app's canon again.";
-            Append(new ChatTurn(ChatRole.System, refused, _now()));
-            transcript.Note(refused);
-            return (NotStarted, null, EndedNotStarted, null, null, refused);
+            var why = $"{unvouched}, so nothing was sent as its instructions";
+            string? home;
+            try { home = workspace(); }
+            catch (Exception) { home = null; }   // the look refuses a folder it cannot name, in words, as surely
+            throw HomeRefused(home is null ? $"TradeAgent did not start the position {role}: {why}." : WorkspaceBuilder.Refuse(home, role, why));
         }
         _canon = Canon.SeenByHarness(mission, role, appFiles ?? AppFileManifest.Shared);
         var messages = new List<ProviderMessage>
