@@ -284,7 +284,7 @@ public sealed class BoardStore(Database db)
     // ---- the acts ---------------------------------------------------------------------------------------------------------------
 
     /// <summary>The prefixes of the ids this store mints; a caller never names one.</summary>
-    public const string ActPrefix = "bact-", ForecastPrefix = "bfc-", PowerPrefix = "bpow-";
+    public const string ActPrefix = "bact-", ForecastPrefix = "bfc-", PowerPrefix = "bpow-", PetitionPrefix = "bpet-";
 
     static string Mint(string prefix) => prefix + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
 
@@ -904,6 +904,75 @@ public sealed class BoardStore(Database db)
             e.ExecuteNonQuery();
         return Seat(id)!;
     });
+
+    // ---- a position's petition (U-board-alive) ----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A POSITION PETITIONS THE BOARD (<c>U-board-alive</c> item 2; R24 § 4.1: "an agent that wants more permission can only propose it to the
+    /// board") — the chief's or any active position's request, filed through its broker verb. Inside ONE write: the petitioner is no board
+    /// seat; at least one board seat is ACTIVE — no one else could weigh it; it has filed fewer than <see cref="BoardLimits.PetitionsPerDay"/>
+    /// in the last 24 hours; the intent parses strictly and every <c>from</c> is the value in force; its words are within the bound. Then the
+    /// row and ONE board wake for the ONE active seat the app chooses — the one woken for the fewest petitions, then by id — and nothing else:
+    /// A PETITION APPLIES NOTHING. Only that seat's own act (a narrowing, or a proposal another seat confirms) changes the policy, and the
+    /// petition binds no seat to make one. Refused in words with nothing written otherwise.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    public BoardPetitionRow Petition(string position, string? attempt, string intentJson, string rationale, DateTimeOffset at) => _db.Write(_ =>
+    {
+        if (string.IsNullOrWhiteSpace(position) || BoardSeats.IsBoardId(position))
+            throw Forbidden($"'{position}' is a seat of the security board or no position: a board seat acts with its own verbs, and a petition "
+                            + "is a position's.");
+        var active = Seats().Where(s => s.Status == BoardSeatStatus.Active).ToList();
+        if (active.Count == 0)
+            throw Refused("no seat of the security board is active, so no one could weigh a petition: the founding policy governs, and nothing "
+                          + "a position files changes it.");
+        var filed = Petitions().Count(p => p.Position == position && p.At > at - TimeSpan.FromHours(24));
+        if (filed >= BoardLimits.PetitionsPerDay)
+            throw Refused($"{position} has filed {filed} petitions in the last 24 hours, and a position files at most "
+                          + $"{BoardLimits.PetitionsPerDay}: each one buys a board seat's turn on the board's own budget.");
+        var (intent, why) = BoardIntent.Parse(intentJson);
+        if (intent is null) throw Refused($"the intent is refused: {why}.");
+        var inForce = InForce();
+        if (inForce.CouldNotBeRead)
+            throw Refused($"the policy in force could not be read ({inForce.Why}), so no petition can be weighed against it.");
+        if (Moved(intent, BodyOf(inForce)) is { Count: > 0 } moved)
+            throw Refused($"the intent's 'from' is not what version {inForce.Version} holds: {string.Join("; ", moved)}. A petition names the "
+                          + "value in force.");
+        RequireRationale(rationale);
+
+        var routed = Petitions().GroupBy(p => p.RoutedTo).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+        var seat = active.OrderBy(s => routed.GetValueOrDefault(s.Id)).ThenBy(s => s.Id, StringComparer.Ordinal).First();
+        var row = new BoardPetitionRow(Mint(PetitionPrefix), position, attempt, intent.Canonical, intent.Sha256,
+            intent.Direction.ToString().ToLowerInvariant(), inForce.Version, rationale, seat.Id, at);
+        using (var c = _db.Cmd("""
+            INSERT INTO board_petition(id, position, attempt_id, intent, intent_sha256, direction, policy_version, rationale, routed_to, at)
+            VALUES($id, $position, $attempt, $intent, $sha, $direction, $version, $rationale, $seat, $at)
+            """, ("$id", row.Id), ("$position", position), ("$attempt", attempt), ("$intent", row.Intent), ("$sha", row.IntentSha256),
+            ("$direction", row.Direction), ("$version", row.PolicyVersion), ("$rationale", rationale), ("$seat", seat.Id), ("$at", Sql.T(at))))
+            c.ExecuteNonQuery();
+        // ONE WAKE, FOR THE ONE SEAT THE APP CHOSE, in the petition's own write: a petition is a proposal to the board, which is what wakes a
+        // board seat (U-board-b2), and the seat's own act wakes the second seat it needs.
+        new MissionEventStore(_db).Raise(MissionEventIds.Board(row.Id, seat.Id), MissionEventKind.Board, at, row.Id, seat.Id);
+        return row;
+    });
+
+    /// <summary>Every petition, newest first.</summary>
+    public IReadOnlyList<BoardPetitionRow> Petitions() => _db.Read(_ =>
+    {
+        using var c = _db.Cmd("""
+            SELECT id, position, attempt_id, intent, intent_sha256, direction, policy_version, rationale, routed_to, at
+              FROM board_petition ORDER BY at DESC, id DESC
+            """);
+        using var r = c.ExecuteReader();
+        var rows = new List<BoardPetitionRow>();
+        while (r.Read())
+            rows.Add(new BoardPetitionRow(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), r.GetString(4), r.GetString(5),
+                r.GetInt32(6), r.GetString(7), r.GetString(8), Sql.Time(r.GetValue(9))));
+        return (IReadOnlyList<BoardPetitionRow>)rows;
+    });
+
+    /// <summary>One petition, or null.</summary>
+    public BoardPetitionRow? PetitionRow(string id) => Petitions().FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.Ordinal));
 
     /// <summary>
     /// THE OWNER ACTIVATES A DORMANT BOARD SEAT (<c>U-board-alive</c> item 1; R24 § 4.1, CHANGE-001) — his in-process press, the only

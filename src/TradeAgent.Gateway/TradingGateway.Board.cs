@@ -98,6 +98,13 @@ public sealed partial class TradingGateway
     internal BoardActResult BoardDecide(string actId, string seat, string? attempt, bool confirm, string intentSha256, string rationale) =>
         Followed(() => _board.Decide(actId, seat, attempt, confirm, intentSha256, rationale, Now));
 
+    /// <summary>
+    /// A POSITION'S PETITION (<see cref="BoardStore.Petition"/>): a record that applies nothing, and one board seat's wake in its write.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
+    internal BoardPetitionRow BoardPetition(string position, string? attempt, string intent, string rationale) =>
+        _board.Petition(position, attempt, intent, rationale, Now);
+
     /// <summary>One act as <paramref name="seat"/> may read it — blind until its own word on it is sealed (<see cref="BoardStore.ShowTo"/>).</summary>
     internal (BoardActBlindView? Blind, BoardActRecord? Whole) BoardShow(string seat, string actId) => _board.ShowTo(seat, actId);
 

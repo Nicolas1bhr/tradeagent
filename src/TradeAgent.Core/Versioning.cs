@@ -483,8 +483,17 @@ public static class Versions
     /// the profile hash that covered them; written in the row's insert, an update that changes it refused by trigger) and
     /// <c>ai_attempt.vendor_said</c> (the turn's own error lines from the runtime's stream — a vendor's 4xx, a refused model — bounded, a
     /// credential-shaped run withheld; written once by the turn's close). Measurements only. No backfill: NULL before the rung.</para>
+    ///
+    /// <para><b>53 — a position's petition to the security board</b> (<c>U-board-alive</c>, rung <see cref="BoardPetitionRung"/>, after
+    /// <c>U-chief-wake-once</c>'s 52): <c>board_petition</c> — an active position's request that the board change the policy (the chief's
+    /// included): its typed intent and hash, read strictly against the version in force, its direction, its words as a claim, and the one
+    /// active seat the app woke for it (<c>routed_to</c>). A RECORD THAT APPLIES NOTHING: only a board act changes the policy. Sealed: an
+    /// UPDATE, a DELETE and an insert over its key are refused by trigger. One writer, <c>BoardStore</c>.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = LaunchEvidenceRung;
+    public const int DatabaseSchemaVersion = BoardPetitionRung;
+
+    /// <summary>A position's petition to the board, spelled once (<c>U-board-alive</c>); a unit overtaken renumbers it here and nowhere else.</summary>
+    public const int BoardPetitionRung = 53;
 
     /// <summary>
     /// THE OLDEST HOME THIS BUILD OPENS (<c>U-windows-release</c>): a home stamped below this schema is REFUSED, untouched, in words

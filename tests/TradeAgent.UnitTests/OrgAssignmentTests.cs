@@ -349,7 +349,8 @@ public partial class OrgAssignmentTests
             .Where(f => f.IsLiteral && f.FieldType == typeof(string)).ToList();
         // O5b (U-org-decisions, RULED Q1) JOINS IT: decision-*, forecast-*, escalation-*, lateral-* are organisation verbs too.
         // O6 PART A (U-org-verbs-a) JOINS IT: org-show, the first org-* verb.
-        string[] families = ["Mandate", "Decision", "Forecast", "Escalation", "Lateral", "Org"];
+        // U-board-alive JOINS IT: petition-file, a position's petition to the security board — never a board-* name (those are the board's own).
+        string[] families = ["Mandate", "Decision", "Forecast", "Escalation", "Lateral", "Org", "Petition"];
         bool Organisational(System.Reflection.FieldInfo f) => families.Any(p => f.Name.StartsWith(p, StringComparison.Ordinal));
         var organisation = fields.Where(Organisational)
             .Select(f => (string)f.GetRawConstantValue()!).ToHashSet(StringComparer.Ordinal);

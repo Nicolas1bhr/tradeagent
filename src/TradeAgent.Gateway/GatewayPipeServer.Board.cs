@@ -90,6 +90,28 @@ public sealed partial class GatewayPipeServer
         note = "Your rationale is your claim, sealed with the act; the hash, the checks, the version and every event are TradeAgent's."
     };
 
+    /// <summary>
+    /// A POSITION PETITIONS THE BOARD (<c>U-board-alive</c> item 2; <see cref="TradingGateway.BoardPetition"/>): an ORGANISATION verb — the
+    /// caller is the active position its launch grant proved, at decision-verb assurance (<see cref="OrgVerbCaller"/>, which refuses a board
+    /// id) — filing a record that applies nothing and wakes one active board seat. Which seat is TradeAgent's and is not said here.
+    /// </summary>
+    object PetitionFile(AgentContext ctx, IpcRequest req)
+    {
+        OnlyDeclared(req, "A petition's record is TradeAgent's: its id, its petitioner, its hash, the version it was read against and the "
+                          + "seat it wakes are written by TradeAgent from what it checked, never from an argument. Nothing was written.");
+        var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
+        var p = Gateway.BoardPetition(position, ctx.AttemptId, IntentOf(req), Require(req, "rationale"));
+        return new
+        {
+            petition = p.Id,
+            direction = p.Direction,
+            intent_sha256 = p.IntentSha256,
+            against_version = p.PolicyVersion,
+            note = "Filed, and one seat of the security board is woken to weigh it. It applies nothing: only that seat's own act — a "
+                   + "narrowing, or a widening another seat confirms — changes the policy, and nothing waits on it. Your rationale is your claim."
+        };
+    }
+
     /// <summary>ONE ACTIVE SEAT NARROWS, AT ONCE (<see cref="TradingGateway.BoardNarrow"/>).</summary>
     object BoardNarrow(AgentContext ctx, IpcRequest req)
     {
