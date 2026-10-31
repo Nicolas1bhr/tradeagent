@@ -100,10 +100,10 @@ public static class RouteA
         // ON WINDOWS NO KIT YET (U-kit-socket): the Windows cell grants exactly its policy's folders by ACL and its PATH is Windows-shaped;
         // granting the kit there is owed to the Windows cell track, so a Windows cell is given none.
         OperatingSystem.IsWindows() ? WindowsPolicy(workspace, codexExe, codexRoot, cellCodexHome, cellHome, Egress) :
-        new(workspace, [cellCodexHome, cellHome, .. kit is null ? [] : new[] { kit.Dir }],
-        [codexRoot, .. CellPolicy.SystemRoots, .. kit?.Tools is { } tools ? new[] { tools } : []],
+        new(workspace, [cellCodexHome, cellHome],
+        [codexRoot, .. CellPolicy.SystemRoots],
         [
-            new("PATH", Path.GetDirectoryName(codexExe) + ":/usr/local/bin:/usr/bin:/bin" + (kit?.Tools is { } t ? ":" + t : "")),
+            new("PATH", Path.GetDirectoryName(codexExe) + ":/usr/local/bin:/usr/bin:/bin"),
             new("HOME", cellHome),
             new("CODEX_HOME", cellCodexHome),
             new("LANG", "C.UTF-8"),

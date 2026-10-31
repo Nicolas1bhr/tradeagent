@@ -940,7 +940,7 @@ public static class RuntimeCatalog
         // THE OWNER'S KIT'S SKILLS ARE LISTED TO AN EXECUTOR (U-kit-socket): its harness's per-attempt codex home is app-written, and the
         // one skill root in it is the link RouteA.Make lays to the installed kit's skills/ — bundled skills stay off, HOME's and the
         // workspace's .agents stay forbidden (the seat plan's Forbidden and WorkspaceForbidden). Without a kit no root holds a skill.
-        "-c", "skills.include_instructions=true",
+        "-c", "skills.include_instructions=false",
         // CODE MODE'S HOST OFF, EXPLICITLY (U-cli-code-mode): its JavaScript would run in the HARNESS, outside the cell, beside the login.
         "--disable", "code_mode_host",
         "--disable", "sleep_tool",
