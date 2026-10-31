@@ -14,9 +14,10 @@ using Xunit.Abstractions;
 namespace TradeAgent.Tests.Integration;
 
 /// <summary>
-/// A CAMPAIGN IS ABOUT MARKET TIME FOR EVERY PAIR (<c>U-holdout-campaign</c>; seat A's decision of 2026-10-09): research over
-/// its development months is charged to it through any dataset of any pair, and a second press over months already held
-/// shares the judgements taken over them.
+/// A CAMPAIGN'S MONTHS ARE CHARGED THROUGH EVERY DOWNLOAD OF ITS PAIR (<c>U-holdout-campaign</c>; seat A's decision of
+/// 2026-10-09, narrowed to the pair by <c>U-evidence-breadth</c>): research over its development months is charged to it
+/// through any dataset of its pair — never to another pair's campaign, which is its own budget — and a second press over months
+/// already held shares the judgements taken over them.
 ///
 /// <para><b>What was wrong before this.</b> A run charged the campaign over its OWN dataset alone (<c>Backtests.Run</c>'s
 /// <c>OpenForDataset(ask.Dataset)</c>), while every Download press records a version of the pair with no cutoff. The
@@ -212,16 +213,17 @@ public class HoldoutCampaignOverPipeTests(ITestOutputHelper log)
         Assert.Contains($"This run reads dataset {read.Id} ({read.Pair} 1m {read.Version})", why, StringComparison.Ordinal);
         Assert.Contains($"the development months of campaign {campaign.Id}: the bars of dataset {held.Id} "
             + $"({held.Pair} 1m {held.Version}) from {Start:u} up to its cutoff at {Cutoff:u}", why, StringComparison.Ordinal);
-        Assert.Contains("charged to it through any dataset of any pair", why, StringComparison.Ordinal);
+        Assert.Contains($"charged to it through any dataset of its pair, {held.Pair}", why, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// (a) RESEARCH OVER A CAMPAIGN'S MONTHS THROUGH ANOTHER DATASET IS CHARGED TO IT — the probe's Q1.3 and Q1.4 over the
-    /// pipe, asserting the protection. With trials left, a run over B (BTCUSDT v2, A's minutes) and one over C (ETHUSDT, the
-    /// same minutes) inside A's development months are each charged to campaign 1, once — asking the same run again is the
-    /// same trial. Spent, the next of each is refused before it is made with <c>CAMPAIGN_BUDGET_REACHED</c> naming campaign
-    /// 1, its months and the dataset asked for, and nothing runs. RED on the base, where both were served and charged to no
-    /// campaign.
+    /// (a) RESEARCH OVER A CAMPAIGN'S MONTHS THROUGH ANOTHER DATASET OF ITS PAIR IS CHARGED TO IT — the probe's Q1.3 over the
+    /// pipe, asserting the protection. With trials left, a run over B (BTCUSDT v2, A's minutes) inside A's development months is
+    /// charged to campaign 1, once — asking the same run again is the same trial. Spent, the next is refused before it is made
+    /// with <c>CAMPAIGN_BUDGET_REACHED</c> naming campaign 1, its months and the dataset asked for, and nothing runs. RED on the
+    /// base, where it was served and charged to no campaign. A run over C (ETHUSDT, the same minutes) is research about
+    /// ETHUSDT: since <c>U-evidence-breadth</c> it is charged to no BTCUSDT campaign — before campaign 1 is spent or after — and
+    /// ETHUSDT's months would be charged to an ETHUSDT campaign of its own (<c>EvidenceBreadthTests</c>).
     /// </summary>
     [Fact]
     public async Task Research_over_a_campaigns_months_through_another_dataset_is_charged_to_it()
@@ -252,27 +254,33 @@ public class HoldoutCampaignOverPipeTests(ITestOutputHelper log)
         Assert.Equal(RunId(q13), RunId(again));
         Assert.Equal(1, rig.Gw.Campaigns.TrialsCharged(campaign.Id));
 
+        // ANOTHER PAIR: an ETHUSDT run over C costs BTCUSDT's campaign nothing (U-evidence-breadth).
         var p3 = Written(rig.Db, "4m", "ETHUSDT");
         var q14 = await Backtest(research, p3.File, c, Start, LastDev);
         log.WriteLine($"Q1.4 backtest P3 (ETHUSDT) over C, the same minutes: {Said(q14)}; trials charged {rig.Gw.Campaigns.TrialsCharged(campaign.Id)} of 2");
         Assert.True(q14.Ok, Json.Write(q14.Error));
+        Assert.Equal(1, rig.Gw.Campaigns.TrialsCharged(campaign.Id));
+
+        var p6 = Written(rig.Db, "7m");
+        var spending = await Backtest(research, p6.File, b, Start, LastDev);
+        Assert.True(spending.Ok, Json.Write(spending.Error));
         Assert.Equal(2, rig.Gw.Campaigns.TrialsCharged(campaign.Id));
         Assert.Equal(2, rig.Gw.Campaigns.Trials(campaign.Id).Count);
 
-        // SPENT: through B and through C alike, refused before anything runs, in words naming the campaign, its months and
-        // the dataset asked for.
+        // SPENT: through B, refused before anything runs, in words naming the campaign, its months and the dataset asked for.
         var runsBefore = rig.Gw.Strategies.Runs().Count;
         var p4 = Written(rig.Db, "5m");
         var spentB = await Backtest(research, p4.File, b, Start, LastDev);
         log.WriteLine($"Q1.3 spent, backtest P4 over B: {Said(spentB)}");
         NamesTheCampaignItsMonthsAndTheDatasetRead(spentB, campaign, rig.A, b, 2);
-
-        var p5 = Written(rig.Db, "6m", "ETHUSDT");
-        var spentC = await Backtest(research, p5.File, c, Start, LastDev);
-        log.WriteLine($"Q1.4 spent, backtest P5 (ETHUSDT) over C: {Said(spentC)}");
-        NamesTheCampaignItsMonthsAndTheDatasetRead(spentC, campaign, rig.A, c, 2);
-
         Assert.Equal(runsBefore, rig.Gw.Strategies.Runs().Count);
+
+        // AND THROUGH C, ANOTHER PAIR'S BARS: served, and charged to no BTCUSDT campaign — its spent budget is not ETHUSDT's.
+        var p5 = Written(rig.Db, "6m", "ETHUSDT");
+        var servedC = await Backtest(research, p5.File, c, Start, LastDev);
+        log.WriteLine($"Q1.4 campaign 1 spent, backtest P5 (ETHUSDT) over C: {Said(servedC)}");
+        Assert.True(servedC.Ok, Json.Write(servedC.Error));
+
         Assert.Equal(2, rig.Gw.Campaigns.TrialsCharged(campaign.Id));
         Assert.Null(rig.Gw.Campaigns.OpenForDataset(b.Id));
         Assert.Null(rig.Gw.Campaigns.OpenForDataset(c.Id));

@@ -253,7 +253,9 @@ public class EvidenceCampaignTests
     }
 
     /// <summary>
-    /// NO CAMPAIGN OPENS OVER MONTHS ANOTHER WINDOW STILL HOLDS PAST THE CUTOFF, nor over another series: those months are not fresh.
+    /// NO CAMPAIGN OPENS OVER MONTHS ANOTHER WINDOW OF ITS PAIR STILL HOLDS PAST THE CUTOFF, nor over another series: those months
+    /// are not fresh for that pair. Another pair's window past the cutoff does not stop it (<c>U-evidence-breadth</c>): its months
+    /// are that pair's campaign's budget, and still unread by research on every pair.
     /// </summary>
     [Fact]
     public async Task No_campaign_opens_over_months_another_window_holds_past_the_cutoff()
@@ -263,11 +265,16 @@ public class EvidenceCampaignTests
         using var owned = db;
         await using var gateway = gw;
         var armed = Assert.Single(gw.Renewals.Arm(Now));
-
-        var other = Recorded(db, TestEnv.NewPair(), First, armed.Cutoff.AddDays(60), "v1");
-        Assert.True(gw.Datasets.SetHoldout(other.Id, armed.Cutoff.AddDays(10), EvaluationClass.Research).Ok);
-
         var fresh = Recorded(db, pair, First.AddMonths(2), armed.Cutoff.AddDays(40), "v2");
+
+        // ANOTHER PAIR'S WINDOW PAST THE CUTOFF: not this pair's months, so no refusal.
+        var elsewhereHeld = Recorded(db, TestEnv.NewPair(), First, armed.Cutoff.AddDays(60), "v1");
+        Assert.True(gw.Datasets.SetHoldout(elsewhereHeld.Id, armed.Cutoff.AddDays(10), EvaluationClass.Research).Ok);
+        Assert.Null(gw.Renewals.OpenRefusal(k1.Id, gw.Datasets.ById(fresh.Id)));
+
+        // THE PAIR'S OWN OTHER WINDOW PAST THE CUTOFF: refused, naming it.
+        var other = Recorded(db, pair, First, armed.Cutoff.AddDays(60), "v9");
+        Assert.True(gw.Datasets.SetHoldout(other.Id, armed.Cutoff.AddDays(10), EvaluationClass.Research).Ok);
         var refused = gw.OpenForwardCampaign(k1.Id, fresh.Id);
         Assert.False(refused.Ok);
         Assert.Contains($"dataset {other.Id}", refused.Why, StringComparison.Ordinal);
@@ -276,6 +283,45 @@ public class EvidenceCampaignTests
         var elsewhere = Recorded(db, TestEnv.NewPair(), First.AddMonths(2), armed.Cutoff.AddDays(40), "v1");
         Assert.Contains("same series", gw.OpenForwardCampaign(k1.Id, elsewhere.Id).Why, StringComparison.Ordinal);
         Assert.Null(gw.Datasets.ById(fresh.Id)!.HoldoutFrom);
+    }
+
+    /// <summary>
+    /// EACH PAIR'S SPENT CAMPAIGN ARMS ITS OWN FRESH HOLDOUT, ONE WINDOW AT A TIME PER PAIR (<c>U-evidence-breadth</c>): a spent
+    /// campaign of a second pair arms in the same pass as the first pair's — never waiting a month for the first pair's successor —
+    /// at a cutoff after the first's, while a second campaign of the FIRST pair, spent by the judgement its pair already took, waits
+    /// for its pair's window. Every armed window still holds every pair's bars. RED on the base, where one window held them all
+    /// and the second pair's spent campaign was not armed.
+    /// </summary>
+    [Fact]
+    public async Task Each_pairs_spent_campaign_arms_its_own_fresh_holdout_one_window_at_a_time_per_pair()
+    {
+        var pair = TestEnv.NewPair();
+        var (gw, db, _, k1) = await SpentOnce(pair);
+        using var owned = db;
+        await using var gateway = gw;
+
+        var second = TestEnv.NewPair();
+        var (heldOther, j1) = gw.SetHoldout(Recorded(db, second, First, Last).Id, DefaultCutoff, EvaluationClass.Research);
+        Assert.True(heldOther.Ok, heldOther.Why);
+        Assert.True(gw.Campaigns.ChargeVerdict(j1!.Id, Version(db, "version-second-pair"), Now).Ok);
+
+        // A SECOND CAMPAIGN OF THE FIRST PAIR over the same months: spent already by the judgement its pair took.
+        var (heldAgain, k2) = gw.SetHoldout(Recorded(db, pair, First, Last, "v2").Id, DefaultCutoff, EvaluationClass.Research);
+        Assert.True(heldAgain.Ok, heldAgain.Why);
+        Assert.Equal(1, gw.Campaigns.JudgementsSpent(k2!.Id));
+
+        var armed = gw.Renewals.Arm(Now);
+        Assert.True(armed.Select(a => a.SpentCampaignId).SequenceEqual([k1.Id, j1.Id]),
+            $"one pass armed campaigns [{string.Join(", ", armed.Select(a => a.SpentCampaignId))}], not each pair's spent campaign "
+            + $"[{k1.Id}, {j1.Id}] with campaign {k2.Id} waiting for its pair's window");
+        Assert.True(armed[1].Cutoff > armed[0].Cutoff);
+        Assert.Null(gw.Renewals.Of(k2.Id));
+        Assert.Empty(gw.Renewals.Arm(Now.AddDays(1)));
+
+        // EVERY WINDOW STILL HOLDS EVERY PAIR: the first pair's fresh months are refused on the second pair's bars, and back.
+        var pipe = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets);
+        Assert.NotNull(pipe.ForwardRefusal(second, armed[0].Cutoff.AddHours(1), armed[0].Cutoff.AddHours(2)));
+        Assert.NotNull(pipe.ForwardRefusal(pair, armed[1].Cutoff.AddHours(1), armed[1].Cutoff.AddHours(2)));
     }
 
     /// <summary>

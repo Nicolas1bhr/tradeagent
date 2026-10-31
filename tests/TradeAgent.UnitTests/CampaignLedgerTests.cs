@@ -34,11 +34,11 @@ public class CampaignLedgerTests
 
     /// <summary>A dataset row with a real cutoff on it, written by the store the owner's window calls.</summary>
     static DatasetRecord Held(Database db, string pair = "BTCUSDT",
-        string evaluationClass = EvaluationClass.Research)
+        string evaluationClass = EvaluationClass.Research, string version = "v1")
     {
         var store = new DatasetStore(db);
         var record = new DatasetRecord(
-            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 12, [],
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, version, 12, 12, [],
             Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 1000,
             Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [], false, 0, 0, 0, At,
             DatasetState.ACCEPTED, null, []);
@@ -813,6 +813,9 @@ public class CampaignLedgerTests
     /// <para>The second leg is the gate's: X's last trial taken by the run's first row must not refuse the run's second row
     /// for X's own count — the run is already counted there, so it costs X nothing more. And over the gateway: a run over
     /// B, held by campaign Y, inside the months of A's campaign X, is one trial of each.</para>
+    ///
+    /// <para>X and Y are two downloads of ONE pair (<c>U-evidence-breadth</c>): a run is charged only to campaigns of its own
+    /// pair, and a family's home is on its pair, so two pairs' campaigns never stand under one run.</para>
     /// </summary>
     [Fact]
     public async Task One_run_charged_under_two_campaigns_counts_once_in_its_home()
@@ -822,8 +825,8 @@ public class CampaignLedgerTests
         {
             var campaigns = new CampaignStore(db);
             var x = Opened(db, Held(db), trials: 3);
-            var y = Opened(db, Held(db, "ETHUSDT"), trials: 3);
-            var version = Measured(db, Held(db, "XRPUSDT"), runs: 1);
+            var y = Opened(db, Held(db, version: "v2"), trials: 3);
+            var version = Measured(db, Held(db, version: "v3"), runs: 1);
 
             Assert.True(campaigns.RegisterTrial(x.Id, version, "run-0", EvaluationClass.Research, At).Ok);
             var second = campaigns.RegisterTrial(y.Id, version, "run-0", EvaluationClass.Research, At);
@@ -843,8 +846,8 @@ public class CampaignLedgerTests
         {
             var campaigns = new CampaignStore(db);
             var x = Opened(db, Held(db), trials: 1);
-            var y = Opened(db, Held(db, "ETHUSDT"), trials: 1);
-            var version = Measured(db, Held(db, "XRPUSDT"), runs: 2);
+            var y = Opened(db, Held(db, version: "v2"), trials: 1);
+            var version = Measured(db, Held(db, version: "v3"), runs: 2);
 
             Assert.True(campaigns.RegisterTrial(x.Id, version, "run-0", EvaluationClass.Research, At).Ok);
             var second = campaigns.RegisterTrial(y.Id, version, "run-0", EvaluationClass.Research, At);

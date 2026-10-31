@@ -43,7 +43,7 @@ public class VersionLineageTests
     }
 
     /// <summary>One held-back dataset with its own open campaign, in a database that may hold several.</summary>
-    static Ledger Holdout(Database db, string pair, int trialBudget = 10, int? exploration = null)
+    static Ledger Holdout(Database db, string pair, int trialBudget = 10, int? exploration = null, string version = "v1")
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"lineage-{Guid.NewGuid():n}.csv");
@@ -51,7 +51,7 @@ public class VersionLineageTests
         File.WriteAllText(file, KlineNormaliser.Header + "\n");
 
         var id = datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 12, [],
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, version, 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []));
 
@@ -59,7 +59,7 @@ public class VersionLineageTests
         var set = datasets.ById(id)!;
 
         var campaigns = new CampaignStore(db);
-        var opened = campaigns.Open($"{pair} 1m v1", set, trialBudget, 3, At, exploration: exploration);
+        var opened = campaigns.Open($"{pair} 1m {version}", set, trialBudget, 3, At, exploration: exploration);
         Assert.True(opened.Ok, opened.Why);
 
         return new Ledger(db, set, opened.Campaign!, new StrategyStore(db), campaigns);
@@ -156,13 +156,16 @@ public class VersionLineageTests
     /// <para><b>The mutant.</b> Charge the child to its own campaign — one line in
     /// <c>ChargedCampaignFor</c> — and the parent's lineage count is unmoved by the variant, which is
     /// the defect exactly.</para>
+    ///
+    /// <para>The second holdout is a second download of the SAME pair (<c>U-evidence-breadth</c>): a family's home is
+    /// on its own pair, and another pair's campaign is another budget — <c>EvidenceBreadthTests</c> holds that side.</para>
     /// </summary>
     [Fact]
     public void A_variant_run_against_a_second_holdout_is_charged_to_its_parents_campaign_as_well()
     {
         var first = Given();
         using var _ = first.Db;
-        var second = Holdout(first.Db, "ETHUSDT");
+        var second = Holdout(first.Db, "BTCUSDT", version: "v2");
 
         var parent = Record(first, 103, parent: null);
         Assert.True(first.Campaigns
@@ -199,7 +202,7 @@ public class VersionLineageTests
     {
         var first = Given(trialBudget: 1);
         using var _ = first.Db;
-        var second = Holdout(first.Db, "ETHUSDT");
+        var second = Holdout(first.Db, "BTCUSDT", version: "v2");
 
         var parent = Record(first, 103, parent: null);
         Assert.True(first.Campaigns

@@ -214,9 +214,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         // after twenty minutes of evaluation has spent the budget to learn that it was spent — and the
         // run it just made is a peek at the data that the count was supposed to bound. EVERY campaign the
         // run will be charged to is asked (`CampaignStore.ChargedBy`, U-holdout-campaign): the one over
-        // this dataset first, then every open campaign whose development months the run's bars overlap,
-        // through any dataset of any pair — a second download of a campaign's months is the same peek at
-        // them. Where no campaign's months are read, nothing is charged and nothing is refused; a
+        // this dataset first, then every open campaign of the same pair whose development months the run's
+        // bars overlap, through any dataset of that pair — a second download of a campaign's months is the
+        // same peek at them (U-evidence-breadth: another pair's campaign is another budget). Where no campaign's months are read, nothing is charged and nothing is refused; a
         // `fixture` run is free, so it is never refused here either.
         var set = gateway.Datasets.ById(ask.Dataset);
         var kind = EvaluationClass.Or(set?.EvaluationClass);

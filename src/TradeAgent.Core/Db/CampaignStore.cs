@@ -206,7 +206,7 @@ public sealed record TrialRow(
     /// run was made under.
     ///
     /// <para><see cref="CampaignId"/> is the PEEK: which campaign's development months this run read — through
-    /// its own dataset or, since <c>U-holdout-campaign</c>, through any dataset of any pair. This is the COST: which
+    /// its own dataset or, since <c>U-holdout-campaign</c>, through any dataset of its pair. This is the COST: which
     /// family of versions paid for it, the campaign lineage the family — the version and every parent it declares —
     /// was first charged to. They are the same number for the first trial of a family, and they differ for a
     /// variant — <c>docs/COUNCIL.md</c>:201's "comparable trials" — and for any later run of a family charged under
@@ -317,7 +317,7 @@ public sealed record VerdictRow(
 public sealed record VerdictCharged(bool Ok, string Why, int Spent, int Budget);
 
 /// <summary>
-/// ANOTHER CAMPAIGN WHOSE JUDGEMENTS READ THE SAME HELD MONTHS AS ONE CAMPAIGN'S — not of its renewal lineage — with its
+/// ANOTHER CAMPAIGN OF THE SAME PAIR WHOSE JUDGEMENTS READ THE SAME HELD MONTHS AS ONE CAMPAIGN'S — not of its renewal lineage — with its
 /// dataset as the ledger holds it now (null when it holds none), and the judgements it has taken over those months
 /// (<c>U-holdout-campaign</c>, rule 2). What the owner's press and a spent judgement budget name.
 /// </summary>
@@ -502,17 +502,27 @@ public sealed class CampaignStore(Database db)
     /// <summary>
     /// THE OPEN CAMPAIGNS A RESEARCH RUN OF <paramref name="set"/> FROM <paramref name="from"/> TO <paramref name="to"/>
     /// (both inclusive, either null) IS CHARGED TO: the campaign over its own dataset first, then, by id, every other open
-    /// campaign whose DEVELOPMENT MONTHS the run's bars overlap — through any dataset, of any pair
-    /// (<c>U-holdout-campaign</c>, rule 1; seat A's decision of 2026-10-09).
+    /// campaign OF THE SAME PAIR whose DEVELOPMENT MONTHS the run's bars overlap — through any dataset of that pair
+    /// (<c>U-holdout-campaign</c>, rule 1; narrowed to the pair by <c>U-evidence-breadth</c>).
     ///
-    /// <para><b>Why through any dataset.</b> A cutoff holds MARKET TIME for every pair (<c>U-bar-holdout</c>): every
-    /// Download press records a new version of the pair with no cutoff, a correlated pair carries the same months' regime,
-    /// and both say what those months did. So a campaign is about market time, and the months before its cutoff are what
-    /// its research is about whichever dataset serves them. Its own precommitted policy says so already —
-    /// <see cref="CampaignPolicy.V1"/>: "Research runs are made over bars before the campaign's holdout cutoff and every
-    /// one of them is charged" — and its sha is on every campaign row, so the code is brought up to the text rather than
-    /// the text edited. Charged to the dataset's own campaign alone, a run over a second download of the same months was
-    /// served past a spent budget and counted by nobody (the survey's probe, Q1.3 and Q1.4, RED at <c>ea88e72b</c>).</para>
+    /// <para><b>Why through any dataset of the pair.</b> Every Download press records a new version of the pair with no
+    /// cutoff, and a second download of a campaign's months says what those months did on that pair as surely as the
+    /// campaign's own bars. Its own precommitted policy says so already — <see cref="CampaignPolicy.V1"/>: "Research runs
+    /// are made over bars before the campaign's holdout cutoff and every one of them is charged". Charged to the dataset's
+    /// own campaign alone, a run over a second download of the same months was served past a spent budget and counted by
+    /// nobody (the survey's probe, Q1.3, RED at <c>ea88e72b</c>).</para>
+    ///
+    /// <para><b>Why the pair's campaigns and no other</b> (<c>U-evidence-breadth</c>, the orchestrator's brief of
+    /// 2026-10-31: "a version declares its pair; its backtests, trials and verdict are charged to that pair's campaign
+    /// only"). Each pair set up holds its own months back under its OWN campaign with its own trial and verdict budgets, so
+    /// that an organisation of several teams is not starved at one campaign's three judgements. A version names one
+    /// instrument and is measured only on that instrument's bars (<see cref="Strategy.InstrumentMatch"/>), so its research
+    /// is about that pair; charging it to every other pair's campaign as well made every campaign's budget one shared
+    /// budget, which is the accident this rule removes. What it does NOT narrow: the HOLDOUT. A cutoff still holds market
+    /// time for every pair (<c>U-bar-holdout</c>, <c>TapeHoldout</c>) — no caller reads any pair's bars inside any pair's
+    /// held window — so a pair's held months are read by no research of any pair. A campaign whose dataset this ledger no
+    /// longer holds has no pair to compare and is charged as before, through any dataset: unknown is never read as
+    /// "another pair".</para>
     ///
     /// <para><b>The two spans, both read from the ledger at each call.</b> A campaign's development months are its
     /// dataset's bars before the cutoff, <c>[first bar, holdout_from)</c> — a dataset that records no first bar reads as
@@ -560,6 +570,10 @@ public sealed class CampaignStore(Database db)
                     || held.State == DatasetState.REJECTED)
                     continue;
 
+                // THE PAIR'S CAMPAIGNS ONLY (U-evidence-breadth): another pair's campaign has its own budget, and a run over this
+                // pair's bars is research about this pair. Its held months stay held from this run by `TapeHoldout`.
+                if (!SamePair(held.Pair, set.Pair)) continue;
+
                 var months = (From: held.FirstBar, Until: held.HoldoutFrom ?? other.HoldoutFrom);
                 if (!Overlaps(span.From, span.Until, months.From, months.Until)) continue;
 
@@ -600,6 +614,17 @@ public sealed class CampaignStore(Database db)
     static bool Overlaps(DateTimeOffset? a, DateTimeOffset? b, DateTimeOffset? c, DateTimeOffset? d) =>
         (b is not { } hi || c is not { } lo || hi > lo) && (d is not { } end || a is not { } start || start < end);
 
+    /// <summary>
+    /// WHETHER TWO DATASETS' PAIRS ARE ONE PAIR FOR THE EVIDENCE BUDGETS (<c>U-evidence-breadth</c>): equal, ordinally — the
+    /// key the collector writes and a program's <c>instrument</c> line is compared to — or either unknown, because a campaign
+    /// whose dataset this ledger no longer holds cannot be shown to be another pair's, and is therefore counted as this one's.
+    /// </summary>
+    internal static bool SamePair(string? a, string? b) =>
+        a is null || b is null || string.Equals(a, b, StringComparison.Ordinal);
+
+    /// <summary>The pair of a campaign's holdout dataset, or null when this ledger no longer holds it. See <see cref="SamePair"/>.</summary>
+    string? PairOf(CampaignRow campaign) => new DatasetStore(db).ById(campaign.HoldoutDatasetId)?.Pair;
+
     /// <summary>The sentence a refusal adds for a campaign charged through another dataset. See <see cref="CampaignCharge"/>.</summary>
     static string Through(DatasetRecord read, (DateTimeOffset? From, DateTimeOffset? Until) span, CampaignRow campaign,
         DatasetRecord held, (DateTimeOffset? From, DateTimeOffset Until) months) =>
@@ -615,9 +640,9 @@ public sealed class CampaignStore(Database db)
         + $"({held.Pair} {held.Interval} {held.Version}) "
         + (months.From is { } first ? $"from {first:u}" : "from its first")
         + $" up to its cutoff at {months.Until:u}. Research over a campaign's months is charged to it through any dataset "
-        + "of any pair — another download of the same months, or a pair that moved with them, says what those months did "
-        + "as surely as the campaign's own bars — because its precommitted policy charges every research run made over bars "
-        + "before its cutoff. ";
+        + $"of its pair, {held.Pair} — another download of the same months says what those months did as surely as the "
+        + "campaign's own bars — because its precommitted policy charges every research run made over bars before its "
+        + "cutoff. ";
 
     /// <summary>
     /// THIS CAMPAIGN AND EVERY CAMPAIGN IT WAS RENEWED FROM, newest first — the chain
@@ -792,27 +817,41 @@ public sealed class CampaignStore(Database db)
     /// was: <see cref="TrialsCharged"/> counts a row under both numbers, and
     /// <see cref="RegisterTrial"/> refuses when EITHER budget is full. A declared parent therefore
     /// cannot buy a trial the run's own campaign would have refused.</para>
+    ///
+    /// <para><b>The family's home ON THIS PAIR</b> (<c>U-evidence-breadth</c>): only a charge to a campaign of the run
+    /// campaign's pair (<see cref="SamePair"/>) is a home here. A family first charged on BTCUSDT that ports a child to
+    /// ETHUSDT spends ETHUSDT's budget for that child, never BTCUSDT's — each pair's campaign is its own budget, and a
+    /// charge to another pair's would be the shared budget the brief forbids. Within a pair it is unchanged: a second
+    /// download, a fresh hash or a declared ancestry buys a family no untouched trials.</para>
     /// </summary>
     public long ChargedCampaignFor(string versionId, long campaignId)
     {
         var ancestry = new StrategyStore(db).Ancestry(versionId);
+        var pair = ById(campaignId) is { } run ? PairOf(run) : null;
 
         // ELDEST FIRST, so the whole family answers to where its root was charged rather than to
         // wherever its newest member happened to be run.
         for (var i = ancestry.Count - 1; i >= 0; i--)
-            if (ChargedCampaignOf(ancestry[i]) is { } home)
+            if (ChargedCampaignOf(ancestry[i], pair) is { } home)
                 return Current(home);
 
         return campaignId;
     }
 
-    /// <summary>The campaign the earliest charged trial of this version was charged to, or null.</summary>
-    long? ChargedCampaignOf(string versionId) => db.Read<long?>(_ =>
+    /// <summary>
+    /// The campaign the earliest charged trial of this version was charged to among the campaigns of <paramref name="pair"/>
+    /// — every campaign when the pair is unknown, and a campaign whose dataset is gone is of every pair (<see cref="SamePair"/>)
+    /// — or null.
+    /// </summary>
+    long? ChargedCampaignOf(string versionId, string? pair) => db.Read<long?>(_ =>
     {
         using var c = db.Cmd("""
-            SELECT COALESCE(charged_to, campaign_id) FROM strategy_trial
-             WHERE version_id=$v AND charged=1 ORDER BY registered_at, run_id LIMIT 1
-            """, ("$v", versionId));
+            SELECT COALESCE(t.charged_to, t.campaign_id) FROM strategy_trial t
+              JOIN strategy_campaign k ON k.id = COALESCE(t.charged_to, t.campaign_id)
+              LEFT JOIN dataset d ON d.id = k.holdout_dataset_id
+             WHERE t.version_id=$v AND t.charged=1 AND ($pair IS NULL OR d.pair IS NULL OR d.pair = $pair)
+             ORDER BY t.registered_at, t.run_id LIMIT 1
+            """, ("$v", versionId), ("$pair", pair));
         var o = c.ExecuteScalar();
         return o is null or DBNull ? null : Convert.ToInt64(o, CultureInfo.InvariantCulture);
     });
@@ -1088,7 +1127,7 @@ public sealed class CampaignStore(Database db)
 
         var budget = trials ? campaign.TrialBudget : campaign.VerdictBudget;
         // A UNIT'S JUDGEMENTS ARE COUNTED AS THE CAMPAIGN COUNTS ITS OWN (the fix pass, the Codex review's P1): every judgement over the
-        // same held-back months, its renewal lineage's and any other campaign's (`JudgementsSpent`) — so a second campaign over those
+        // same held-back months, its renewal lineage's and any other campaign's of its pair (`JudgementsSpent`) — so a second campaign over those
         // months never replenishes a delegated count.
         var counted = trials ? null : JudgedOverTheSameMonths(campaign);
         foreach (var (unit, text) in shares)
@@ -1141,14 +1180,14 @@ public sealed class CampaignStore(Database db)
 
     /// <summary>
     /// THE JUDGEMENTS <see cref="JudgementsSpent"/> COUNTS FOR <paramref name="campaign"/>, by campaign and version: its renewal lineage's
-    /// and every other campaign's over months its own judgements read. One predicate with <see cref="JudgementsSpent"/>'s.
+    /// and every other campaign's of its pair over months its own judgements read. One predicate with <see cref="JudgementsSpent"/>'s.
     /// </summary>
     HashSet<(long, string)> JudgedOverTheSameMonths(CampaignRow campaign)
     {
         var lineage = Lineage(campaign.Id).ToHashSet();
         var closes = new Dictionary<long, DateTimeOffset?>();
-        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
-        return [.. JudgementSpans(closes).Where(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until))
+        var (from, until, pair) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes), PairOf(campaign));
+        return [.. JudgementSpans(closes).Where(v => Counts(v, lineage, from, until, pair))
             .Select(v => (v.CampaignId, v.VersionId))];
     }
 
@@ -1193,7 +1232,7 @@ public sealed class CampaignStore(Database db)
     /// same months, so every verdict already taken still counts.</para>
     ///
     /// <para><b>It is no longer the judgement budget's count</b> (<c>U-holdout-campaign</c>): that is
-    /// <see cref="JudgementsSpent"/>, which also counts every other campaign's judgements over the same months. One
+    /// <see cref="JudgementsSpent"/>, which also counts every other campaign's judgements of the same pair over the same months. One
     /// question still wants this one — <c>Referee</c>'s legacy cost-model pin, "was THIS lineage already judged
     /// frictionless", because another campaign's verdicts were judged under that campaign's own pin.</para>
     /// </summary>
@@ -1211,18 +1250,27 @@ public sealed class CampaignStore(Database db)
     }
 
     /// <summary>
-    /// THE FINAL JUDGEMENTS THIS CAMPAIGN HAS SPENT: every verdict, of any campaign and any pair, whose read span overlaps
-    /// the span this campaign's own judgements read — its renewal lineage's included (<c>U-holdout-campaign</c>, rule 2;
-    /// seat A's decision of 2026-10-09).
+    /// THE FINAL JUDGEMENTS THIS CAMPAIGN HAS SPENT: every verdict, of any campaign OF THE SAME PAIR, whose read span
+    /// overlaps the span this campaign's own judgements read — its renewal lineage's included (<c>U-holdout-campaign</c>,
+    /// rule 2; narrowed to the pair by <c>U-evidence-breadth</c>).
     ///
-    /// <para><b>Why across campaigns.</b> A judgement reads the held months themselves — <c>Referee.Verdict</c> runs from
-    /// the cutoff on its row to the close of its dataset's last bar — and its answer tells the research process something
-    /// about those months, whichever campaign took it. A cutoff holds market time for every pair, so a second download of
-    /// the same months held back by a second press opens a second campaign over months already judged: counted over its
-    /// own lineage alone, its budget started untouched and one version stood judged twice over one held hour, "1 of 3"
-    /// each time (the survey's probe, S.5-S.9). A second press over held months is TOLD and COUNTED — never refused,
-    /// because a REJECTED dataset's window stays held (<c>TapeHoldout.WindowsOf</c>, "whatever its state") and a refusal
-    /// would leave its months nothing but a dead end.</para>
+    /// <para><b>Why across campaigns of the pair.</b> A judgement reads the held months themselves — <c>Referee.Verdict</c>
+    /// runs from the cutoff on its row to the close of its dataset's last bar — and its answer tells the research process
+    /// something about those months on that pair, whichever campaign took it. A second download of the same months held
+    /// back by a second press opens a second campaign over months already judged: counted over its own lineage alone, its
+    /// budget started untouched and one version stood judged twice over one held hour, "1 of 3" each time (the survey's
+    /// probe, S.5-S.9). A second press over held months is TOLD and COUNTED — never refused, because a REJECTED dataset's
+    /// window stays held (<c>TapeHoldout.WindowsOf</c>, "whatever its state") and a refusal would leave its months nothing
+    /// but a dead end.</para>
+    ///
+    /// <para><b>Why not another pair's</b> (<c>U-evidence-breadth</c>): each pair set up holds its months back under its
+    /// own campaign with its own verdict budget — the brief's "verdict and trial budgets per campaign", so that several
+    /// teams are not starved at one campaign's three judgements. A judgement of an ETHUSDT version reads ETHUSDT's held
+    /// bars, never BTCUSDT's (<see cref="Strategy.InstrumentMatch"/>), and is charged to ETHUSDT's campaign alone. What
+    /// stays shared, stated: two pairs held over the same months are judged over the same market regime, so the research
+    /// process can learn more about that regime from five pairs' judgements than from one's. That is the price of breadth
+    /// the brief chose; the held bars themselves stay unread by research on every pair (<c>TapeHoldout</c>). A campaign
+    /// whose dataset this ledger no longer holds is of every pair (<see cref="SamePair"/>).</para>
     ///
     /// <para><b>The spans, from recorded facts only.</b> A verdict's read span is <c>[holdout_from on its row, the close
     /// of its campaign's dataset's last bar)</c>; this campaign's is the same from its own row's cutoff. A dataset whose
@@ -1235,16 +1283,26 @@ public sealed class CampaignStore(Database db)
 
         var lineage = Lineage(campaignId).ToHashSet();
         var closes = new Dictionary<long, DateTimeOffset?>();
-        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+        var (from, until, pair) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes), PairOf(campaign));
 
-        return JudgementSpans(closes).Count(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until));
+        return JudgementSpans(closes).Count(v => Counts(v, lineage, from, until, pair));
     });
 
     /// <summary>
-    /// EVERY OTHER CAMPAIGN OVER THE MONTHS THIS ONE JUDGES — not this campaign and not its renewal lineage — oldest
-    /// first, each with its dataset and the judgements it has taken over them: a campaign whose own read span overlaps
+    /// THE ONE PREDICATE <see cref="JudgementsSpent"/>, <see cref="JudgementsCharged"/> and the unit shares count a judgement by:
+    /// its campaign is of this campaign's renewal lineage, or it is of the same pair (<see cref="SamePair"/>) and its read span
+    /// overlaps this campaign's.
+    /// </summary>
+    static bool Counts((long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, DateTimeOffset? Until,
+            long Charge, string? Pair) v, HashSet<long> lineage, DateTimeOffset from, DateTimeOffset? until, string? pair) =>
+        lineage.Contains(v.CampaignId) || (SamePair(v.Pair, pair) && Overlaps(v.From, v.Until, from, until));
+
+    /// <summary>
+    /// EVERY OTHER CAMPAIGN OF THE SAME PAIR OVER THE MONTHS THIS ONE JUDGES — not this campaign and not its renewal lineage —
+    /// oldest first, each with its dataset and the judgements it has taken over them: a campaign whose own read span overlaps
     /// this one's, counting its verdicts whose spans do (<see cref="JudgementsSpent"/>). What the owner's press names, and
-    /// what a spent judgement budget names.
+    /// what a spent judgement budget names. Another pair's campaign over the same months is not here: its judgements are its
+    /// own budget's (<c>U-evidence-breadth</c>).
     /// </summary>
     public IReadOnlyList<CampaignOverMonths> OverTheSameMonths(long campaignId) => db.Read(_ =>
     {
@@ -1252,7 +1310,7 @@ public sealed class CampaignStore(Database db)
 
         var lineage = Lineage(campaignId).ToHashSet();
         var closes = new Dictionary<long, DateTimeOffset?>();
-        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+        var (from, until, pair) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes), PairOf(campaign));
         var judged = JudgementSpans(closes);
         var datasets = new DatasetStore(db);
 
@@ -1260,6 +1318,7 @@ public sealed class CampaignStore(Database db)
         foreach (var other in All().OrderBy(c => c.Id))
         {
             if (lineage.Contains(other.Id)) continue;
+            if (!SamePair(PairOf(other), pair)) continue;
             if (!Overlaps(other.HoldoutFrom, Close(other.HoldoutDatasetId, closes), from, until)) continue;
 
             shared.Add(new CampaignOverMonths(other, datasets.ById(other.HoldoutDatasetId),
@@ -1271,8 +1330,8 @@ public sealed class CampaignStore(Database db)
 
     /// <summary>
     /// THE JUDGEMENTS <see cref="JudgementsSpent"/> COUNTS, ONE ROW EACH, IN CHARGE ORDER (<c>U-referee-v2c</c>): the order
-    /// the holdout's α-wealth is spent in, lineage-wide and across every campaign over the same months, so a renewal never
-    /// resets it.
+    /// the holdout's α-wealth is spent in, lineage-wide and across every campaign of the same pair over the same months, so a
+    /// renewal never resets it (another pair's judgements spend that pair's α-wealth: <c>U-evidence-breadth</c>).
     ///
     /// <para><b>Charge order is the order the charges were INSERTED</b> — the ledger's own rowid, which an append-only table
     /// only ever raises: <see cref="ChargeVerdict"/> is the one statement that writes <c>strategy_verdict</c> and nothing
@@ -1287,31 +1346,33 @@ public sealed class CampaignStore(Database db)
 
         var lineage = Lineage(campaignId).ToHashSet();
         var closes = new Dictionary<long, DateTimeOffset?>();
-        var (from, until) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes));
+        var (from, until, pair) = (campaign.HoldoutFrom, Close(campaign.HoldoutDatasetId, closes), PairOf(campaign));
 
         return [.. JudgementSpans(closes)
-            .Where(v => lineage.Contains(v.CampaignId) || Overlaps(v.From, v.Until, from, until))
+            .Where(v => Counts(v, lineage, from, until, pair))
             .OrderBy(v => v.Charge)
             .Select(v => new VerdictRow(v.CampaignId, v.VersionId, v.RequestedAt, v.From))];
     });
 
-    /// <summary>Every verdict ever charged, as the market time it read: its campaign, its row's cutoff, its dataset's close, and
-    /// its charge's place in the ledger (the rowid, which only rises — see <see cref="JudgementsCharged"/>).</summary>
-    List<(long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, DateTimeOffset? Until, long Charge)>
-        JudgementSpans(Dictionary<long, DateTimeOffset?> closes)
+    /// <summary>Every verdict ever charged, as the market time it read: its campaign, its row's cutoff, its dataset's close, its
+    /// charge's place in the ledger (the rowid, which only rises — see <see cref="JudgementsCharged"/>), and its dataset's pair —
+    /// null when the ledger no longer holds the dataset, which <see cref="SamePair"/> counts as every pair's.</summary>
+    List<(long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, DateTimeOffset? Until, long Charge,
+        string? Pair)> JudgementSpans(Dictionary<long, DateTimeOffset?> closes)
     {
         var rows = new List<(long CampaignId, string VersionId, DateTimeOffset RequestedAt, DateTimeOffset From, long Dataset,
-            long Charge)>();
+            long Charge, string? Pair)>();
         using (var c = db.Cmd("""
-            SELECT v.campaign_id, v.version_id, v.requested_at, v.holdout_from, c.holdout_dataset_id, v.rowid
+            SELECT v.campaign_id, v.version_id, v.requested_at, v.holdout_from, c.holdout_dataset_id, v.rowid, d.pair
               FROM strategy_verdict v JOIN strategy_campaign c ON c.id = v.campaign_id
+              LEFT JOIN dataset d ON d.id = c.holdout_dataset_id
             """))
         using (var r = c.ExecuteReader())
             while (r.Read())
                 rows.Add((r.GetInt64(0), r.GetString(1), Sql.Time(r.GetString(2)), Sql.Time(r.GetString(3)), r.GetInt64(4),
-                    r.GetInt64(5)));
+                    r.GetInt64(5), r.IsDBNull(6) ? null : r.GetString(6)));
 
-        return [.. rows.Select(v => (v.CampaignId, v.VersionId, v.RequestedAt, v.From, Close(v.Dataset, closes), v.Charge))];
+        return [.. rows.Select(v => (v.CampaignId, v.VersionId, v.RequestedAt, v.From, Close(v.Dataset, closes), v.Charge, v.Pair))];
     }
 
     /// <summary>
@@ -1355,9 +1416,9 @@ public sealed class CampaignStore(Database db)
                 ? $"none of campaign {campaign.Id}'s {campaign.VerdictBudget:N0} final judgements is spent yet"
                 : $"{spent:N0} of campaign {campaign.Id}'s {campaign.VerdictBudget:N0} final judgements "
                   + (spent == 1 ? "is" : "are") + " already spent")
-            + ": a judgement over months already held counts against every campaign that holds them, and research over "
-            + "them is charged to each — a fresh download buys no fresh look at them. To judge strategies on months no "
-            + "judgement has read, hold back OTHER months.";
+            + ": a judgement over months already held counts against every campaign of the same pair that holds them, and "
+            + "research over them is charged to each — a fresh download buys no fresh look at them. To judge strategies on "
+            + "months no judgement has read, hold back OTHER months.";
     }
 
     /// <summary>A campaign's dataset as a refusal or a note names it: its pair, interval and version, or its id when the ledger holds none.</summary>
@@ -1411,7 +1472,7 @@ public sealed class CampaignStore(Database db)
         if (ById(campaignId) is not { } campaign)
             return new VerdictCharged(false, $"there is no campaign {campaignId}.", 0, 0);
 
-        // EVERY JUDGEMENT OVER THE MONTHS THIS CAMPAIGN HOLDS, its lineage's and every other campaign's alike
+        // EVERY JUDGEMENT OVER THE MONTHS THIS CAMPAIGN HOLDS, its lineage's and every other campaign's of its pair alike
         // (U-holdout-campaign, rule 2), read inside the write that adds one.
         var spent = JudgementsSpent(campaignId);
 
@@ -1462,7 +1523,7 @@ public sealed class CampaignStore(Database db)
         + "BEFORE anything is computed over the held-back bars. Every verdict leaks: its answer tells the research process "
         + "something about months it was never shown, which is why the number is small and why it is counted across every "
         + "renewal of this campaign — a renewal buys attempts and never holdout access — and across every judgement any "
-        + "other campaign has taken over the same held months, whichever download of them it holds"
+        + "other campaign of the same pair has taken over the same held months, whichever download of them it holds"
         + (others.Count == 0
             ? ""
             : " (" + string.Join("; ", others.Select(o => $"campaign {o.Campaign.Id} over dataset {o.Campaign.HoldoutDatasetId} "
