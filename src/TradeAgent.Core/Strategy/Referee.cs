@@ -139,8 +139,17 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// close and handed the evaluator an account with nothing pending — so an entry on that bar was counted that paper
     /// never makes. Every one of those moves a trade toward what the paper run it promotes into does, and every verdict
     /// taken under 2 is withdrawn with it, by design: a figure 2 measured is more optimistic than paper.</para>
+    ///
+    /// <para><b>backtest=4</b> (<c>U-backtest-parity-2</c>): across missing minutes the backtest reads what the paper runner
+    /// reads. The maximum hold is counted in the program's bars ELAPSED on its grid through the last one closed by the end
+    /// of each minute and asked on every minute — the runner's <c>BarsSince</c> through <c>BarGrid.ClosedThrough</c> — where
+    /// 3 counted the bars the run happened to evaluate and asked only at a declared close, so across a gap it held longer
+    /// than paper does; and a bar decided past its missing minutes reads the books after that minute's own fills and stops,
+    /// where 3 read them before — handing the program a position a stop had already closed, or none where an entry had
+    /// filled. Over whole data nothing moves (none of the seventeen golden vectors did); over data with gaps a run can, so
+    /// every verdict taken under 3 is withdrawn with it, by design.</para>
     /// </summary>
-    public const string EvaluatorVersion = "backtest=3;metrics=1;scoring=1";
+    public const string EvaluatorVersion = "backtest=4;metrics=1;scoring=1";
 
     /// <summary>An id as it is printed for a person. The same twelve characters everything else uses.</summary>
     static string Short(string id) => id.Length <= 12 ? id : id[..12];

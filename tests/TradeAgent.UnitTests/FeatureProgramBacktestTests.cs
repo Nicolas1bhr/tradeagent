@@ -562,10 +562,11 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
     /// <summary>
     /// The run id of `ma-crossover.strategy` over the fixture request above: SHA-256 of the five lines main's
-    /// <c>RunIdFor</c> hashed (at <c>18a7ab10</c>) and the evaluator line <c>backtest=3;metrics=1;scoring=1</c> it hashes
+    /// <c>RunIdFor</c> hashed (at <c>18a7ab10</c>) and the evaluator line <c>backtest=4;metrics=1;scoring=1</c> it hashes
     /// since <c>U-evidence-evaluator-label</c>, computed outside this build, with Python's hashlib (the five lines alone
     /// still give <c>1cf789735c32…</c>, the figure pinned before; under <c>backtest=2</c>, until <c>U-backtest-parity</c>'s
-    /// bump, <c>593be2d99b53…</c>).
+    /// bump, <c>593be2d99b53…</c>; under <c>backtest=3</c>, until <c>U-backtest-parity-2</c>'s, <c>f2bf5e99ace4…</c>, which
+    /// the same computation reproduced first).
     /// </summary>
-    const string PinnedV1RunId = "f2bf5e99ace4d9754cbf227d7806736ae803d0c3883c08dcff36dc22066a44ae";
+    const string PinnedV1RunId = "075a2dd69b12a63ff9191f4159ba9d02fe69715ae1d7d037c2b354809b13fa08";
 }
