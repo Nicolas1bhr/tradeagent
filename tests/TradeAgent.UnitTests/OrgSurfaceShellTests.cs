@@ -111,6 +111,12 @@ public class OrgSurfaceShellTests
                 const string switchModel = "Ui.Confirm(Labels.SeatModelSwitch(words), Labels.SeatModelSwitchConfirm(words),";
                 Assert.Single(Regex.Matches(text, Regex.Escape(switchModel)));
                 text = text.Replace(switchModel, "", StringComparison.Ordinal);
+                // REVISITED, OUT LOUD, BY U-worker-replace: the owner's two-press "Replace the occupant" on an active position's row, drawn only
+                // when the sources hand the page his occupant presses — so the walk above, handed none, still finds none. Exactly one, by its own
+                // label (OccupantReplaceTests.Replacing_an_occupant_on_the_organisation_page_takes_two_presses holds it).
+                const string occupant = "Ui.ConfirmIf(Labels.ReplaceOccupant,";
+                Assert.Single(Regex.Matches(text, Regex.Escape(occupant)));
+                text = text.Replace(occupant, "", StringComparison.Ordinal);
                 // REVISITED, OUT LOUD, BY U-org-chief (item 7; its FILE SEAM gives it the organisation's card): the owner's presses over the
                 // chief, in their own class at the end of the file — the four two-press controls by their own labels, and the closed list of
                 // seats as plain presses — and nowhere else in the file. The walk above draws none: its sources hand the page no presses.
