@@ -199,8 +199,14 @@ public static class CellBenchmark
     /// </summary>
     public static readonly IReadOnlyList<string> WindowsWebRows = ["web-443-granted", "web-nothing-else"];
 
-    /// <summary>Every Windows row, core then web, in the order they run (declared after both, so neither is null when it is built).</summary>
-    public static readonly IReadOnlyList<string> WindowsRowNames = [.. WindowsCoreRows, .. WindowsWebRows];
+    /// <summary>
+    /// Every Windows row IN THE ORDER THEY RUN: <c>slot-leaves-nothing</c> runs LAST, after the web launches, so a grant a web cell leaves
+    /// is caught by it too. Declared after both sets so neither is null when it is built.
+    /// </summary>
+    public static readonly IReadOnlyList<string> WindowsRowNames =
+    [
+        .. WindowsCoreRows.Where(n => n != "slot-leaves-nothing"), .. WindowsWebRows, "slot-leaves-nothing"
+    ];
 
     /// <summary>
     /// THE WINDOWS PROFILE: provider, platform, processor and build, the cell's mechanism as the stage sets it (the AppContainer, the job's
