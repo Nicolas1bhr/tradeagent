@@ -1207,8 +1207,9 @@ ones yet" and "any of them" are different sentences, and only one of them is a d
 ## Letting TradeAgent run its own paper experiments
 
 **The paper envelope is the security board's grant**, shown on the **Board** page. Until a board seat is
-active it is the app's founding envelope: one instrument on TradeAgent's own paper venue, with a size and a
-value limit, and no end date until the first active board sets its life. It is the one thing TradeAgent is
+active it is the app's founding envelopes: one for each pair under evidence (BTC, ETH, SOL, BNB and XRP against
+USDT) on TradeAgent's own paper venue, each worth at most 5,000 USDT in all across up to three runs, and no end date
+until the first active board sets its life. A version only ever goes into the envelope of the pair it trades. It is the one thing TradeAgent is
 handed without any money. Under it, whenever TradeAgent's own referee finds a version favourable
 on months it was never shown, TradeAgent puts that version into the grant by itself and tells its
 research role, without asking you again: that is the whole point of the card, because a strategy
@@ -1216,7 +1217,7 @@ cannot earn the forward evidence that promotes it until something runs it forwar
 with the stronger research record goes first, and one whose held-back months the AI that wrote it may already have read
 about (the report says "may be remembered") goes after every one whose months it cannot have. A version the referee could not judge
 either way — it traded nothing on the held-back months, or lost over less than a year of them — may also go in, but only
-inside a grant of three or more runs at a time (the founding envelope carries one, so not today): at most a third of the runs, one per
+inside a grant of three or more runs at a time (each founding envelope carries three, so one per pair): at most a third of the runs, one per
 line of research at a time, once, for 90 days, each charged one of its campaign's research trials, and its verdict stays
 refused. What it cannot do
 is anything else. The account must be a practice account on **both** your platform's word and the
