@@ -2625,7 +2625,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             result.FaultReason,
             "This is a measurement over BARS, and bars establish no actual fill, no queue position and "
             + "no intrabar ordering: what a run says is a reason to test something and never a record "
-            + "of a trade. Fills are modelled at the next bar's open plus slippage and a fee is charged "
+            + "of a trade. Fills are modelled on the minute paper fills them — an order decided at minute X at the "
+            + "open of the first minute at or after X+2, plus slippage — and a fee is charged "
             + "on every fill — each the number you declared or, where you declared none, TradeAgent's "
             + "venue cost model's for this dataset's venue — a bar that touched both the stop and the "
             + "target counts as the stop, and a size is rounded DOWN to the increment. Read the nulls "

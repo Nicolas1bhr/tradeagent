@@ -2703,27 +2703,46 @@ the trial**, in words naming both and the two repairs; nothing is recorded and n
 dataset that records no instrument is not refused for this. The referee asks the same question of the
 same helper before a verdict is charged.
 
-**Signals fill at the next bar's open. Protection fills where protection fires.** A signal is computed
-from a bar's CLOSE, so the earliest price it can be acted on is the next bar's open plus adverse
-slippage, with a fee on every fill. A stop or a target is not a decision taken at a close — it is an
-order already resting at the venue — so it fires intrabar at its own price; a bar that OPENED through
-the stop fills at that open, and a bar that touched BOTH the stop and the target counts as the **stop**,
-because bars carry no intrabar ordering and the other reading invents a winning trade. The maximum
-holding time is protection too, taken at the close of the bar that reaches the limit and checked BEFORE
-the evaluator is asked anything on that bar — so the account it reads is already flat and the evaluator
-emits nothing for it. A size that rounds down to nothing, an entry the declared capital cannot pay for
-and a signal the window ended before are each **no trade with the reason**, on the record.
+**Every order fills on the minute paper fills it. Protection fills where protection fires**
+(`U-backtest-parity`, `backtest=3`). An order learnt at minute X fills at the open of the first minute opening at or
+after X+2, plus adverse slippage, with a fee on every fill — which is what paper fills: the runner reads minute X after
+it has closed and places the order while X+1 is in progress, and the paper venue fills a market order only on a minute
+that opens after it was placed. That covers an entry, an exit, a `session_exit` and the maximum hold, whether X is a
+declared bar's last minute or the first minute past one whose last minutes are missing. A stop or a target is not a
+decision taken at a close — it is an order resting at the venue — so it fires intrabar at its own price, on the minutes
+it rests: from the entry's fill minute F+2 (the runner places it on the pass after F) and no later than X once an exit
+or the maximum hold is decided at X (it is taken off inside X+1). A relative level (percent, ATR) rests at its declared
+distance from the price PAID, as the runner places it; a fixed one stays where it was declared. A minute that OPENED
+through the stop fills at that open, and a minute that touched BOTH the stop and the target counts as the **stop**,
+because bars carry no intrabar ordering and the other reading invents a winning trade. The maximum holding time is
+protection too, decided at the close of the bar that reaches the limit and checked BEFORE the evaluator is asked
+anything on that bar: its close is a **market sell at that open, never X's close**, and on every event while it is in
+flight the evaluator reads FLAT with an order pending — the runner's `RunBooks.Flat` — so it emits nothing for the hold
+and takes no entry until the close has filled. An order the evaluator itself emitted keeps `OrderPending: false`: its
+own one-event hold covers X+1, as the runner's replay does, and reporting it pending too would swallow the entry the
+runner makes on an exit's fill minute. A size that rounds down to nothing, an entry the declared capital cannot pay for
+and an order due at a minute the window never reaches are each **no trade with the reason**, on the record; a maximum
+hold whose close is due past the window leaves the position open at the end — in the equity, outside net pnl — in
+words. Every verdict measured under `backtest=2`, which filled at X+1's open (a bar decided past its missing minutes at
+X's own), let protection fire from F, measured relative levels from the signal's close and closed the maximum hold at
+X's close with nothing pending, is withdrawn by the bump **by design**: those figures were more optimistic than the
+paper run they promote into. **Not claimed:** a runner pass that runs late (catch-up, restart) fills later still — the
+backtest models the on-time runner, the floor; friction parity (paper fills a stop or a limit without slippage, the
+backtest slips it — the backtest is the less optimistic); the runner's re-anchoring of a FIXED level
+(`U-runner-fixed-levels`); its re-fire at X+1 (`U-runner-maxhold-refire`).
 
 **Two clocks for a program on declared bars** (`U-timeframe-a`). `Backtest.Run` walks closed MINUTES: on every
-minute a waiting signal fills at that minute's open and the stop and target fire on that minute's range — the rules
-above, minute by minute, exactly as before. Only at a DECLARED bar's close is the maximum hold taken (counting
-declared bars, at that bar's close, stamped with its last minute) and the evaluator asked, on the resampled bar. The
+minute an order due by then fills at that minute's open and the resting stop and target fire on that minute's range —
+the rules above, minute by minute. Only at a DECLARED bar's close is the maximum hold decided (counting declared bars,
+its close sent then and filled two minutes on like any order) and the evaluator asked, on the resampled bar; an order
+from that close is learnt on the bar's last minute, or on the first minute past a bar whose last minutes are missing —
+the minute the runner learns of the close. The
 trace holds one `Bar` line per evaluated bar plus every fill, exit and refusal — never one per minute — and every event
 of one declared bar shares its ordinal, a fill or exit carrying the minute it happened on. `MaxTracedBars` counts
 EVALUATED bars, so a year of hourly bars (8,760) is one run. There is no bar parameter: `Run` reads `program.Bars`,
 so `Backtest.Over`, `trade backtest` and the referee judge what was declared. A run that ends inside a declared bar
 closes it as a partial bar — history: its last minutes happened and the data does not have them — and a signal from it
-is the usual no-trade. A program that declares nothing is the case where the two clocks are one, and its trace is the
+is the usual no-trade, due after the last minute there is. A program that declares nothing is the case where the two clocks are one, and its trace is the
 one it always had, byte for byte.
 
 **A program that reads features is handed them as they had arrived** (`U-language-v2a`). At each evaluated bar's
@@ -2819,7 +2838,11 @@ campaign section) rather than a promise. **And they mean the same on every machi
 every vector runs again under nl-BE's and fr-BE's number formats and must write the same bytes, its fault
 included. That is what moved `Referee.EvaluatorVersion` to `backtest=2`: under 1 a fault's words carried a decimal
 in the machine's culture and with its own scale — `divided 1026,70 by zero` on a Belgian machine,
-`divided 1026.70 by zero` on CI — where the trace line beside them reads `1026.7`.
+`divided 1026.70 by zero` on CI — where the trace line beside them reads `1026.7`. **`backtest=3`** (`U-backtest-parity`,
+the fill rule above) re-pinned thirteen of the seventeen — every vector whose run filled an order; the size that
+rounds to nothing, the operation-budget fault and the two decimal faults never fill one — and
+`history-arithmetic-stop-and-target` went from Met / MetOnHistory to NotProfitable; `FeatureProgramGoldenVectorTests`
+re-pinned all four (the run id hashes the evaluator, and every fill moved).
 
 **Every number the evaluation path writes or reads names its culture** (`U-invariant-traces`), as a price read
 off the pipe does — "writes" meaning into what a run records. A decimal in a trace line, a canonical text, an

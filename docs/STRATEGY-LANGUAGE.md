@@ -66,10 +66,11 @@ as missing, exactly as a missing minute always was.
 **What counts declared bars**: indicator periods, warm-up, history (`close[3]` is three declared bars back),
 `max_hold_bars`, every bar limit below — 500 hourly bars is about 21 days — and a backtest's run cap, so a
 year of hourly bars is one run. **What stays on the minute**: a decision taken at a declared bar's close
-fills at the **next minute's open**; a stop and a target fire on each minute's own range, with the
+fills on the minute paper fills it — the open **two minutes after** the bar's last minute (or after the first
+minute past a bar whose last minutes are missing); a stop and a target fire on each minute's own range, with the
 conservative ordering applied minute by minute — an hour whose range touched both levels is a target if a
-minute inside it reached the target first and alone; and `max_hold_bars` is taken at the close of the
-declared bar that reaches it. **Time filters read the declared bar's open time**, so on hourly bars an
+minute inside it reached the target first and alone; and `max_hold_bars` is reached at the close of the
+declared bar that reaches it, its market close filled two minutes on like any order. **Time filters read the declared bar's open time**, so on hourly bars an
 `entry_window` or `opening_range` must contain an hour's open (`10:00`) to admit that hour: declare them on
 the bar's boundaries.
 
@@ -377,14 +378,19 @@ The four numbers a run DECLARES — fees and slippage as fractions, the quantity
 rounded down to, the capital it starts with — are part of the run's identity, because every figure
 depends on them.
 
-The rules that decide a result, stated once here: a signal from a bar's close fills at the **next bar's
-open** plus adverse slippage, with a fee on every fill; a stop or a target fires **intrabar** at its own
-price, and a bar that touched both counts as the **stop**; a bar that opened through the stop fills at
-that open; `max_hold_bars` is taken at the close of the bar that reaches it, by the backtest's own
-protection, before the evaluator is asked anything on that bar — so the evaluator emits nothing for it.
-A size that rounds down to nothing is no trade, with the reason. On a program that declares `bars`, the
-decision and `max_hold_bars` are the declared bar's and everything else here is the minute's: the fill at
-the next MINUTE's open, the stop and the target on each minute's range — the "Bars" section above. The
+The rules that decide a result, stated once here: an order decided at minute X fills at the open of the first
+minute opening at or after **X+2** — the minute paper fills it on, because the paper runner reads X after it has
+closed and places the order inside X+1 — plus adverse slippage, with a fee on every fill; a stop or a target
+fires **intrabar** at its own price, from two minutes after the entry filled (when it is resting at the venue)
+until the minute an exit is decided, measured from the price paid for a `percent` or `atr` level and where it
+was declared for a `fixed` one; a minute that touched both counts as the **stop**; a minute that opened
+through the stop fills at that open; `max_hold_bars` is reached at the close of the bar that reaches it, by the
+backtest's own protection, before the evaluator is asked anything on that bar — so the evaluator emits nothing
+for it — and its market close fills two minutes on, never at that close; until it has, the program reads a flat
+account with an order pending and enters nothing. A size that rounds down to nothing is no trade, with the
+reason, and so is an order due after the window's last minute. On a program that declares `bars`, the
+decision and `max_hold_bars` are the declared bar's and everything else here is the minute's: the fill two
+minutes on, the stop and the target on each minute's range — the "Bars" section above. The
 dataset still serves minutes; the run builds the declared bars from them, and a run that ends inside one
 closes it as a partial bar. A program that reads a feature is handed each feature's value at each evaluated
 bar's close, as it had arrived; the values read are part of the run's identity, and the run ends with one

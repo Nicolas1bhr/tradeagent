@@ -8,11 +8,13 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// ITEM 2 — THE DECLARED EXECUTION MODEL.
 ///
-/// <para><b>The one that matters most.</b> An intent from bar n fills at bar n+1's OPEN. A backtest
-/// that filled at the signal bar's own close would be buying at a price the decision had not been
-/// taken at yet, and the result would be wrong in the flattering direction on every single trade —
-/// which is the single most common way a backtest lies. Every fixture below is built so that the two
-/// readings give visibly different numbers, rather than numbers that differ in the fourth decimal.</para>
+/// <para><b>The one that matters most.</b> An order learnt at minute n fills at the OPEN of the first minute at or
+/// after n+2 — the minute paper fills it on (<c>U-backtest-parity</c>). A backtest that filled at the signal bar's
+/// own close would be buying at a price the decision had not been taken at yet, and one that filled at n+1's open
+/// at a price paper never pays: both are wrong in the flattering direction on every single trade — which is the
+/// single most common way a backtest lies. Every fixture below is built so that the readings give visibly
+/// different numbers, rather than numbers that differ in the fourth decimal; the minute between a decision and its
+/// fill is in each, marked "placed".</para>
 ///
 /// <para><b>And the ordering nobody can derive from the data.</b> A bar whose low touched the stop and
 /// whose high touched the target counts as the STOP. Bars carry no intrabar ordering

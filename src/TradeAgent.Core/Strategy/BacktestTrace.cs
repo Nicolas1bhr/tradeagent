@@ -21,7 +21,7 @@ public enum BacktestEventKind
     /// <summary>The evaluator emitted an intent at that bar's close.</summary>
     Signal,
 
-    /// <summary>An entry filled, at the next bar's open plus slippage.</summary>
+    /// <summary>An entry filled, at the open of the minute paper fills it on plus slippage.</summary>
     Fill,
 
     /// <summary>A position closed, with the reason it closed. Its gross result and both fills' fees.</summary>
