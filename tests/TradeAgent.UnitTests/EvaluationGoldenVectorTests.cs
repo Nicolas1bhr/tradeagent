@@ -27,7 +27,7 @@ namespace TradeAgent.Tests.Unit;
 /// figure every <c>strategy_run</c> row records), the SHA-256 of the metrics and the closed trades as
 /// <see cref="MetricsText"/> spells them, and the answers of <see cref="ScoringPolicyV1"/> and
 /// <see cref="PaperPolicyV1"/> over that run — the backtest, the metrics and the scoring, the three
-/// parts of <c>backtest=3;metrics=1;scoring=1</c>.</para>
+/// parts of <c>backtest=4;metrics=1;scoring=1</c>.</para>
 ///
 /// <para><b>What every vector declares.</b> Its program, the series it runs over, and all four numbers of
 /// its execution model. Nothing is left to a default — a research default or a venue fee edited elsewhere
@@ -56,6 +56,13 @@ namespace TradeAgent.Tests.Unit;
 /// every one whose run reached an order's fill: all but <c>size-rounds-to-nothing</c>, <c>operation-budget-fault</c> and
 /// the two <c>-fault</c> vectors, which never fill anything — and <c>history-arithmetic-stop-and-target</c> went from
 /// Met / MetOnHistory to NotProfitable on both policies: under 2 its edge was the minute paper never trades on.</para>
+///
+/// <para><b>Under <c>backtest=4</c></b> (<c>U-backtest-parity-2</c>: the maximum hold counted in bars elapsed and asked on
+/// every minute, a bar past its missing minutes decided from the books after that minute's fills and stops): none of
+/// those seventeen moved — every one is a one-minute program, and no hold of theirs spans a gap — so the bump would have
+/// been invisible here. <c>five-minute-always-in-across-gaps</c> was added with it, the first vector on declared bars: it
+/// crosses trend-utc's three gaps, and its trace hashed <c>07bbe3c0fb42…</c> under 3 — 22 trades, net 16.21 — where
+/// 4 pins <c>ddac7b33db2c…</c>, 24 trades, net 2.70; reverting either of the two rules moves it off this pin.</para>
 /// </summary>
 public class EvaluationGoldenVectorTests(ITestOutputHelper log)
 {
@@ -65,7 +72,7 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
     /// on its first check; re-pinning means computing the vectors again under the new numbers and writing
     /// both numbers and every pin here, in the commit that moved them.
     /// </summary>
-    const string PinnedEvaluator = "backtest=3;metrics=1;scoring=1";
+    const string PinnedEvaluator = "backtest=4;metrics=1;scoring=1";
 
     /// <inheritdoc cref="PinnedEvaluator"/>
     const string PinnedManifest = "language=1;indicators=1;calendar=1";
@@ -307,6 +314,20 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
             entry when crosses_above(f, s)
             """, Fees: 0.001m, Slippage: 0.0001m, Increment: 0.001m, Capital: 10_000m),
 
+        // Always in on five-minute bars, a tight stop and a two-bar hold, across trend-utc's three gaps — the paper
+        // runner's readings across missing minutes (U-backtest-parity-2): the 01:40 bar has only its first minute, so it
+        // is decided at 01:45 from the books after that minute's own fill and stop; and 04:00..04:09 is two bars with no
+        // minute at all, which the hold counts as held and reaches on the first minute past them. It moved under
+        // backtest=4 where the seventeen above did not, so the bump is one these vectors can see.
+        new("five-minute-always-in-across-gaps", "trend-utc", """
+            instrument BTCUSDT
+            bars 5m
+            size fixed 1
+            stop percent 0.3
+            max_hold_bars 2
+            entry when close > 0
+            """, Fees: 0.001m, Slippage: 0.0005m, Increment: 0.001m, Capital: 10_000m),
+
         // A division by zero under a dividend with a trailing zero: `close * 10` is 1026.70 on the first
         // bar, and the fault names it the way the trace spells every number — 1026.7, never 1026.70 or
         // 1026,70 — so this pin is the same on a machine set to any culture.
@@ -364,6 +385,8 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
             "89c436833f5f9c582aae4845e7a3711a296f954be55f3f34223e6be154bf1522", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
         new("london-summer-time-window", "a4d76eb05c25647fc2a2de9a897dac36c3ca53444b0df541a3e892a4d522f325",
             "fa32322a832690a0bb022a3b68b9feb93c0e235da385e7d55c04337f0897d82b", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("five-minute-always-in-across-gaps", "ddac7b33db2cba51dd9ab43077d01e390b3351bd9f1f7b971ecd7ca7930f54a7",
+            "bfe4881ed5eab26091ca4b722594ea6533c98cd4aff2abf71411043f9697981c", PromotionReason.Met, PromotionReason.MetOnHistory),
         new("zero-divisor-under-a-trailing-zero-fault", "d7720e8bfcf708177e9fe67dfd639bdae80575daaf03830543fa71d69369c5a3",
             "f2f987d0bbd47b20982605f3970de962212a0fece1c6c14c4d0ac04f90fb43ef", PromotionReason.DidNotComplete, PromotionReason.DidNotComplete),
         new("risk-sizing-under-a-stop-above-every-close-fault", "7eb8a46a76cb522552ff497716ea452d769cf4d6a0d3ab478396a732f89fd5b8",
