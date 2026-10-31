@@ -65,6 +65,16 @@ Real money stays closed in both: the board's live path exists in code, no live v
 - **D10 The head-start socket:** a read-only kit folder (skills + tools) the owner's kit is installed into, visible in every seat home and cell, named in
   the canon. The kit itself is his to build.
 
+## 4b. Decided on the owner's behalf, 2026-10-31 (his to overrule)
+- **D11 (amended the same morning) — the founding paper envelope covers every pair under evidence:** 5,000 USDT notional and THREE paper deployments
+  per pair (quantity ceilings set so the notional binds); live stays closed; the board's acts later narrow or widen it. One deployment was the first
+  ruling; it was amended because `Allocations.RecordPaper` holds inconclusive versions under `AllocationPolicy.InconclusiveV1` only below
+  ⌊max_deployments / 3⌋ rows (CONTRACTS "One INCONCLUSIVE path into paper") — one deployment left that honest path to paper at zero.
+- **D12 — a holdout long enough for a conclusive verdict:** setup downloads 36 months per pair and holds back the last 12, because the referee's α-test
+  runs only over ≥ 365 known days (CONTRACTS, the α-wealth step) and R27 (`docs/research/2026-10-31/R27-alpha-split.md`) found every verdict under the
+  12-and-3 default inconclusive. The scorer is not lowered; the data meets it. Successor campaigns keep ≥ 30 fresh days and reach paper, when
+  inconclusive, through the inconclusive path.
+
 ## 5. Order
 Wave 1: `U-chief-wake-once` · `U-ci-fast-fixes` (gaps 8, 14) · `U-cell-windows` (gap 13, the provider and proof) · `U-org-canon` (gap 5).
 Wave 2: `U-org-autonomy` (gaps 3, 4, 6, 9, 10; D3–D6, D9) · `U-evidence-campaign` (gap 7; D7) · `U-seat-models` (D8) · `U-kit-socket` (gap 12; D10) ·
