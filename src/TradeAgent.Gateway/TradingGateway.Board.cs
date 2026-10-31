@@ -82,13 +82,40 @@ public sealed partial class TradingGateway
         }
     }
 
+    /// <summary>
+    /// REAL MONEY STAYS CLOSED (<c>U-board-alive</c> item 4; R24 §§ 0.6, 4.5, SIGNAL-001): an intent that reaches for a real-money mode or
+    /// real money's switch is refused HERE, before any store is asked, in words that say why from the facts now — which venue is connected,
+    /// and whether it is a practice platform — whoever asks: one seat, two seats, or a position's petition. No act of this build selects a
+    /// live mode or switches real money on; the frozen runner has no live path. The store's strict read and the policy's CHECK refuse both
+    /// as well; this is the sentence the owner and the seat read.
+    /// </summary>
+    /// <exception cref="TradeAgentException">Always, for such an intent; nothing was written.</exception>
+    void RealMoneyStaysClosed(string intent)
+    {
+        if (!BoardIntent.ReachesRealMoney(intent)) return;
+        var venue = Connector.Capabilities.IsPaper
+            ? $"the connected venue, {Connector.DisplayName}, is a practice platform, so no live venue is connected"
+            : $"{Connector.DisplayName} is connected, and this build trades no live venue";
+        throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+            $"Real money stays closed: {venue}. No act of this build — one seat, two seats or a petition — selects a real-money mode or "
+            + "switches real money on, and the frozen runner has no live path yet. Nothing was written.");
+    }
+
     /// <summary>ONE ACTIVE SEAT NARROWS (<see cref="BoardStore.Narrow"/>), and the gateway holds the next order to it.</summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    internal BoardActResult BoardNarrow(BoardActRequest request) => Followed(() => _board.Narrow(request, Now));
+    internal BoardActResult BoardNarrow(BoardActRequest request)
+    {
+        RealMoneyStaysClosed(request.Intent);
+        return Followed(() => _board.Narrow(request, Now));
+    }
 
     /// <summary>ONE ACTIVE SEAT PROPOSES A WIDENING (<see cref="BoardStore.Propose"/>): a record; nothing changes.</summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    internal BoardActResult BoardPropose(BoardActRequest request) => _board.Propose(request, Now);
+    internal BoardActResult BoardPropose(BoardActRequest request)
+    {
+        RealMoneyStaysClosed(request.Intent);
+        return _board.Propose(request, Now);
+    }
 
     /// <summary>
     /// ANOTHER ACTIVE SEAT DECIDES A PROPOSAL (<see cref="BoardStore.Decide"/>) — a confirmation writes the version in the decision's own
@@ -102,8 +129,11 @@ public sealed partial class TradingGateway
     /// A POSITION'S PETITION (<see cref="BoardStore.Petition"/>): a record that applies nothing, and one board seat's wake in its write.
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    internal BoardPetitionRow BoardPetition(string position, string? attempt, string intent, string rationale) =>
-        _board.Petition(position, attempt, intent, rationale, Now);
+    internal BoardPetitionRow BoardPetition(string position, string? attempt, string intent, string rationale)
+    {
+        RealMoneyStaysClosed(intent);
+        return _board.Petition(position, attempt, intent, rationale, Now);
+    }
 
     /// <summary>One act as <paramref name="seat"/> may read it — blind until its own word on it is sealed (<see cref="BoardStore.ShowTo"/>).</summary>
     internal (BoardActBlindView? Blind, BoardActRecord? Whole) BoardShow(string seat, string actId) => _board.ShowTo(seat, actId);
