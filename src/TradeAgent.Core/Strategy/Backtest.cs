@@ -403,11 +403,19 @@ public static class Backtest
     /// then fills at that minute's open, and the stop and the target fire on that minute's range while they
     /// rest — the rules of the type's summary, applied minute by minute. The
     /// DECLARED clock is the program's: only when one of its bars has closed (<see cref="BarResampler"/>)
-    /// is the maximum hold decided at that bar's close and the evaluator asked, on that bar — so its
-    /// indicators, lookback, history and `max_hold_bars` count declared bars, and the trace has one line
-    /// per evaluated bar plus a line for every fill, exit and refusal, never one per minute. A program that
-    /// declares no `bars` is the case where the two clocks are one: its declared bar IS the minute, and
-    /// the loop below is the loop this build has always had, line for line in its trace.</para>
+    /// is the evaluator asked, on that bar — so its indicators, lookback, history and `max_hold_bars` count
+    /// declared bars, and the trace has one line per evaluated bar plus a line for every fill, exit and
+    /// refusal, never one per minute. A program that declares no `bars` is the case where the two clocks are
+    /// one: its declared bar IS the minute.</para>
+    ///
+    /// <para><b>Where the two clocks meet, the paper runner's reading</b> (<c>U-backtest-parity-2</c>; the runner is
+    /// the truth). The maximum hold is counted in the program's bars ELAPSED on its grid from the one the entry
+    /// filled in to the last one closed by the end of the minute in progress (<see cref="BarGrid.ClosedThrough"/>),
+    /// whether or not the data has a minute in them, and asked on every minute — so on whole data it is reached
+    /// at the close of the declared bar that reaches it, and across missing minutes on the first minute past it,
+    /// which may close no bar at all. And every bar is decided from the books at the close of the minute the run
+    /// learns of that close on — a bar past its missing minutes included, after that minute's own fills, its
+    /// protection and the maximum hold — while that bar's own trace line stays the account at ITS close.</para>
     ///
     /// <para><b>The declared bar is the program's and never the caller's.</b> There is no parameter for
     /// it: <see cref="Over"/>, the referee behind it and every test run a program on the bar it declared,
@@ -464,7 +472,6 @@ public static class Backtest
         var entryPrice = 0m;
         var entryFees = 0m;
         var entryBar = default(DateTimeOffset);
-        var entryOrdinal = 0L;
         decimal? stopPrice = null;
         decimal? targetPrice = null;
 
@@ -472,11 +479,15 @@ public static class Backtest
         var pendingQuantity = 0m;
         var pendingDue = default(DateTimeOffset);
 
-        // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar that reached the limit, or null while none
-        // is, and the first minute it may fill at. It is an order of the run's and never an intent of the evaluator's,
-        // so the one-intent count stays true.
-        KlineBar? flattening = null;
+        // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar it was reached through and the price of the
+        // minute it was sent on, or null while none is, and the first minute it may fill at. It is an order of the run's
+        // and never an intent of the evaluator's, so the one-intent count stays true.
+        (DateTimeOffset Bar, decimal Price)? flattening = null;
         var flatteningDue = default(DateTimeOffset);
+
+        // THE LAST OF THE PROGRAM'S BARS CLOSED BY THE END OF THE MINUTE IN PROGRESS (`BarGrid.ClosedThrough`), whether
+        // or not the data has a minute in it — what the maximum hold is counted through, as the paper runner counts it.
+        var through = default(DateTimeOffset);
 
         // THE MINUTES PROTECTION RESTS ON: from two minutes after the entry's fill minute, and before the minute after
         // the one an exit or the maximum hold was decided on — when the paper runner places it and takes it off.
@@ -493,10 +504,8 @@ public static class Backtest
         var ordinal = 0L;
         var evaluated = 0L;
 
-        // THE DECLARED BAR STILL FORMING: whether the position was open at any point in it, and the last
-        // minute it has had, which is the minute its maximum hold is taken on.
+        // THE DECLARED BAR STILL FORMING: whether the position was open at any point in it.
         var exposed = false;
-        KlineBar? lastMinute = null;
 
         foreach (var minute in bars)
         {
@@ -510,6 +519,7 @@ public static class Backtest
                 break;
             }
 
+            KlineBar? passed = null;
             if (resampler is not null)
             {
                 // The resampler's words were spelled as trace words where it made them; carried, not spelled twice.
@@ -519,21 +529,27 @@ public static class Backtest
                     break;
                 }
 
-                // A DECLARED BAR WHOSE LAST MINUTES THE DATA DOES NOT HAVE HAS CLOSED BY NOW — this minute
-                // is past its end — and it is decided BEFORE this minute is applied. This is the minute the
-                // runner learns of that close on, so an order from it is due two minutes on, like any other.
-                if (resampler.CloseBefore(minute.OpenTime) is { } passed)
-                {
-                    if (!Decide(passed)) break;
-                    ordinal = evaluated + 1;
-                }
+                // A DECLARED BAR WHOSE LAST MINUTES THE DATA DOES NOT HAVE HAS CLOSED BY NOW — this minute is past its
+                // end. This is the minute the runner learns of that close on, and it decides that bar from its books AT
+                // THE CLOSE OF THIS MINUTE — after this minute's own fills and protection — so the bar is decided below,
+                // once this minute is applied, and an order from it is due two minutes on, like any other.
+                passed = resampler.CloseBefore(minute.OpenTime);
             }
 
             var opens = resampler is null || !resampler.Forming;
 
-            // A NEW DECLARED BAR OPENS ON THIS MINUTE, AND THE CAP COUNTS THE BARS EVALUATED.
-            if (opens && evaluated >= MaxTracedBars)
+            // A NEW DECLARED BAR OPENS ON THIS MINUTE, AND THE CAP COUNTS THE BARS EVALUATED — the bar this minute is past
+            // among them. The run halts BEFORE this minute is applied, so that bar is decided on the books as they stand.
+            if (opens && evaluated + (passed is null ? 0 : 1) >= MaxTracedBars)
             {
+                if (passed is { } before)
+                {
+                    through = before.OpenTime;
+                    Hold(before.Close);
+                    if (!Decide(before, before.Close)) break;
+                    ordinal = evaluated + 1;
+                }
+
                 if (resampler is null)
                     Halt(ordinal, minute.OpenTime,
                         $"this window holds more than the {MaxTracedBars} bars one run may trace " +
@@ -548,14 +564,35 @@ public static class Backtest
                 break;
             }
 
+            // THIS MINUTE'S FILLS AND EXITS BELONG TO THE DECLARED BAR IT OPENS OR CONTINUES — the one after the bar it is
+            // past, when there is one — and the bar it is past keeps the account at ITS OWN close on its line: taken here,
+            // before this minute moves it.
+            ordinal = evaluated + (passed is null ? 1 : 2);
+            var passedBooks = Books();
+
             if (!OnMinute(minute, opens)) break;
 
+            // 3. THE MAXIMUM HOLD, ON EVERY MINUTE, AFTER ITS FILLS AND PROTECTION AND BEFORE ANY BAR IS DECIDED —
+            //    counted in the program's bars elapsed on its grid through the last one closed by the end of this minute,
+            //    as the paper runner counts it. On whole data that is the close of the declared bar that reaches it;
+            //    across missing minutes, the first minute past it, which may close no bar at all.
+            through = state.Grid.ClosedThrough(minute.OpenTime);
+            Hold(minute.Close);
+
+            if (passed is { } past && !Decide(past, minute.Close, passedBooks)) break;
+
             var closed = resampler is null ? minute : resampler.Add(minute);
-            if (closed is { } bar && !Decide(bar)) break;
+            if (closed is { } bar && !Decide(bar, minute.Close)) break;
         }
 
-        // THE DATA ENDED INSIDE A DECLARED BAR: it closes, as the partial bar it is. See the summary.
-        if (fault is null && resampler?.Flush() is { } last) Decide(last);
+        // THE DATA ENDED INSIDE A DECLARED BAR: it closes, as the partial bar it is, its maximum hold counted through it.
+        // See the summary.
+        if (fault is null && resampler?.Flush() is { } last)
+        {
+            through = last.OpenTime;
+            Hold(last.Close);
+            Decide(last, last.Close);
+        }
 
         // AN ORDER DUE AT A MINUTE THE WINDOW NEVER REACHED NEVER FILLED, and that is recorded rather than dropped: a
         // strategy whose last signal had nowhere to execute took no trade there.
@@ -568,7 +605,7 @@ public static class Backtest
         // A MAXIMUM HOLD WHOSE CLOSE NEVER FILLED leaves the position open at the end, as paper would show it: in the
         // equity, outside net pnl, and said in words rather than closed at a price nothing could have filled at.
         if (flattening is { } reached && position > 0m)
-            trace.Add(BacktestEvent.NoTrade(ordinal, reached.OpenTime, position, reached.Close,
+            trace.Add(BacktestEvent.NoTrade(ordinal, reached.Bar, position, reached.Price,
                 $"the run's window ended before {flatteningDue:O}, the first minute the maximum hold's market close could "
                 + $"fill at, so the position is still open at the end: it is in the equity and outside net pnl"));
 
@@ -601,7 +638,6 @@ public static class Backtest
                 if (opens)
                 {
                     exposed = position > 0m;
-                    lastMinute = null;
                 }
 
                 // 1. AN ORDER DUE BY THIS MINUTE FILLS AT ITS OPEN — the first open at or after two minutes past the
@@ -634,7 +670,6 @@ public static class Backtest
                             entryPrice = price;
                             entryFees = fee;
                             entryBar = minute.OpenTime;
-                            entryOrdinal = ordinal;
                             // A RELATIVE LEVEL IS MEASURED FROM THE PRICE PAID, as the paper runner places it; a fixed
                             // one stays where the program declared it.
                             stopPrice = Anchored(intent.StopPrice, program.Stop.Kind is StopKind.Percent or StopKind.EntryAtr,
@@ -672,7 +707,6 @@ public static class Backtest
                 }
 
                 exposed |= position > 0m;
-                lastMinute = minute;
                 return true;
             }
             catch (OverflowException)
@@ -687,39 +721,59 @@ public static class Backtest
             }
         }
 
-        // THE DECLARED CLOCK: one of the program's bars has closed. The maximum hold is decided at its close,
-        // then the evaluator is asked, on that bar. False when the run halted on it.
-        bool Decide(KlineBar bar)
+        // THE MAXIMUM HOLD, DECIDED ON THE MINUTE THE BARS HELD REACH IT — protection, before the evaluator is asked
+        // anything on this minute. Its close is a MARKET SELL placed now and filled like any order, never at a close;
+        // while it is in flight the books still hold the position. `price` is what the minute it was sent on closed at.
+        void Hold(decimal price)
+        {
+            if (!HoldReached() || flattening is not null || pending is not null) return;
+
+            flattening = (through, price);
+            flatteningDue = Due(learnt);
+            restsUntil = Placed(learnt);
+        }
+
+        // WHETHER THE BOOKS HOLD THE POSITION AT OR PAST THE MAXIMUM HOLD, through the last bar closed by now.
+        bool HoldReached() =>
+            position > 0m && program.MaxHoldBars is { } maximum && Held(through) >= maximum;
+
+        // THE BARS HELD: whole bars of the program's grid between the one the entry filled in and the one `to` falls in,
+        // whether or not the data has a minute in them — the paper runner's `RunBooks.BarsSince`, never the bars this run
+        // happened to evaluate.
+        long Held(DateTimeOffset to) => Math.Max(0L, state.Grid.Between(entryBar, to));
+
+        // THE BOOKS A DECLARED BAR'S OWN LINE IS WRITTEN FROM — cash and the position at its close, and whether the
+        // position was open at any point in it — as they stand now.
+        (decimal Cash, decimal Position, bool Exposed) Books() => (cash, position, exposed || position > 0m);
+
+        // THE DECLARED CLOCK: one of the program's bars has closed, and the run is at the close of the minute it learnt
+        // that on, `mark` being that minute's close. The evaluator is asked on that bar from the books as they stand at
+        // that minute's close — after its fills, its protection and the maximum hold — as the paper runner reads them.
+        // `line` is the books the bar's own line is written from when it closed before this minute moved them; null when
+        // it closes on this minute. False when the run halted on it.
+        bool Decide(KlineBar bar, decimal mark, (decimal Cash, decimal Position, bool Exposed)? line = null)
         {
             var barOrdinal = evaluated + 1;
 
             try
             {
-                // 3. THE MAXIMUM HOLD, DECIDED AT THE CLOSE OF THE DECLARED BAR THAT REACHES IT — protection, and
-                //    before the evaluator is asked. Its close is a MARKET SELL placed now and filled like any order,
-                //    never at this bar's close; while it is in flight the books still hold the position.
-                var holdReached = position > 0m && program.MaxHoldBars is { } maximum && barOrdinal - entryOrdinal >= maximum;
-                if (holdReached && flattening is null && pending is null)
-                {
-                    flattening = bar;
-                    flatteningDue = Due(learnt);
-                    restsUntil = Placed(learnt);
-                }
-
-                // 4. THE EVENT. The account reading is what this backtest's own books say, at this bar's close, after
-                //    its fills and its protection — read FLAT WITH AN ORDER PENDING on every event whose books hold the
-                //    position at or past the maximum hold, as the paper runner's `RunBooks.Flat` reads it: the close has
-                //    been sent and has not filled, so the program is not handed back a position it was told is over,
-                //    and no entry is taken while its close is in flight.
-                var equity = cash + position * bar.Close;
-                var held = position > 0m && !holdReached;
+                // 4. THE EVENT. The account reading is what this backtest's own books say at the close of the minute the
+                //    bar is decided on, after its fills, its protection and the maximum hold, marked at that minute's close
+                //    — read FLAT WITH AN ORDER PENDING on every event whose books hold the position at or past the maximum
+                //    hold, as the paper runner's `RunBooks.Flat` reads it: the close has been sent and has not filled, so
+                //    the program is not handed back a position it was told is over, and no entry is taken while its close
+                //    is in flight. The bar's own line is the account at ITS close: cash and the position then, marked there.
+                var (lineCash, held, exposedIn) = line ?? Books();
+                var equity = lineCash + held * bar.Close;
+                var holdReached = HoldReached();
+                var holding = position > 0m && !holdReached;
                 var account = new AccountReading(
-                    cash, equity, held ? PositionSide.Long : PositionSide.Flat, held ? position : 0m,
-                    held ? entryPrice : 0m,
+                    cash, cash + position * mark, holding ? PositionSide.Long : PositionSide.Flat, holding ? position : 0m,
+                    holding ? entryPrice : 0m,
                     // AN ORDER THE EVALUATOR ITSELF EMITTED IS NOT REPORTED PENDING: its own one-event hold covers the
                     // minute it is placed in, and reporting it too would keep that hold past the fill.
                     OrderPending: holdReached,
-                    held ? (int)Math.Min(barOrdinal - entryOrdinal, int.MaxValue) : 0);
+                    holding ? (int)Math.Min(Held(bar.OpenTime), int.MaxValue) : 0);
 
                 // THE FEATURES AT THIS BAR'S CLOSE — the instant its decision is taken — as they had arrived by then.
                 // A day of them more than one read serves halts the run here, in words, before anything is decided.
@@ -743,7 +797,7 @@ public static class Backtest
                     trace.Add(BacktestEvent.Gap(barOrdinal, bar.OpenTime, state.MissingMinutes - missingBefore));
 
                 trace.Add(BacktestEvent.Closed(barOrdinal, bar.OpenTime, outcome.Status.ToString(),
-                    equity, position, exposed || position > 0m));
+                    equity, held, exposedIn));
 
                 if (outcome.Status == EvaluationStatus.Faulted)
                 {

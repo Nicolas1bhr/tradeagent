@@ -103,6 +103,19 @@ public sealed class BarGrid
         (to - from).Ticks / TimeSpan.TicksPerMinute;
 
     /// <summary>
+    /// THE START OF THE LAST BAR OF THIS GRID THAT HAS CLOSED BY THE END OF THE MINUTE OPENING AT <paramref name="minute"/>:
+    /// the bar this minute completes when it is the bar's last minute — the rule <see cref="BarResampler.Add"/> closes a
+    /// bar by — and otherwise the bar before the one this minute is in, whether or not the data has a minute in it. On
+    /// one-minute bars it is the minute. The paper runner counts a position's bars held through it on every minute it
+    /// reads, and the backtest counts the maximum hold through it on every minute it steps, so the two count alike.
+    /// </summary>
+    public DateTimeOffset ClosedThrough(DateTimeOffset minute)
+    {
+        var start = StartOf(minute);
+        return minute + StrategyBars.OneMinute >= EndOf(start) ? start : PreviousStart(start);
+    }
+
+    /// <summary>
     /// HOW MANY BARS OF THIS GRID THE ONE <paramref name="to"/> FALLS IN COMES AFTER THE ONE <paramref name="from"/>
     /// FALLS IN — whole windows counted on the grid, whether or not the data has a minute in them, and negative
     /// when it comes before. A zone's daily bars are counted in its own dates, so a 23- or 25-hour day is one bar.
