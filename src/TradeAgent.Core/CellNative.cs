@@ -351,7 +351,7 @@ public static class CellNative
 
         var ok = Grant(policy.Workspace, handled, required: true);
         foreach (var p in policy.ReadOnly) ok = ok && Grant(p, FsReadFile | FsReadDir, required: false, readOnly: true);
-        foreach (var p in policy.Executable) ok = ok && Grant(p, FsExecute | FsReadFile | FsReadDir, required: false, programRoot: true);
+        foreach (var p in policy.Executable) ok = ok && Grant(p, handled, required: false, programRoot: true);
         foreach (var (p, rights) in Devices) ok = ok && Grant(p, rights, required: false);
         foreach (var port in policy.TcpPorts)
         {
