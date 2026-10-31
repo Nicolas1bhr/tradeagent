@@ -1125,16 +1125,15 @@ public static class Canon
 
         ## Your files
 
-        {{if writes:trading}}
-        - TradeAgent keeps a copy of `{{write trading/}}PLAN.md` and `trading/JOURNAL.md` at the end of every turn, and holds
+        {{if keeps_plan}}
+        - TradeAgent keeps a copy of `{{plan_file}}` and `{{journal_file}}` at the end of every turn, and holds
           them to {{plan_lines}} and {{journal_lines}} non-empty lines and {{plan_bytes}} and {{journal_bytes}}. One over its line
           limit is copied to `{{archive_dir}}/<PLAN|JOURNAL>-refused-….md` and the last accepted one returns in its place; one over
           its bytes is not read at all, so nothing of it is recorded, copied or put back. Either way your next `## Situation` says
           so. Nothing caps `{{archive_dir}}/`.
         {{end}}
-        - TradeAgent records every file that appears in `trading/`, `research/`, `strategies/`, `data/` and `scripts/`, and in
-          `{{read in/}}` and `out/` — its name, size, SHA-256 and when it showed up — in a ledger you cannot edit; `logs/` and
-          `scratch/` are not recorded.
+        - TradeAgent records every file that appears in {{tracked_dirs}} — its name, size, SHA-256 and when it showed up — in a
+          ledger you cannot edit; {{untracked_dirs}} are not recorded.
         - `{{read in/}}` is what TradeAgent delivered to you; `out/` is what you hand back, as your canon says.
         {{if cell}}
 
@@ -1200,6 +1199,9 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             "org_verbs" => reach.Verbs.Any(v => Core.Ops.IsOrganisation(v.Op)),
             // A POSITION OF THE ORGANISATION (U-runway-fixes item 1): every seat but the legacy pair, whose guide is reference only.
             "org" => !CouncilRoles.IsKnown(c.Role),
+            // A SEAT WHOSE TOOLS WRITE BOTH FILES WorkspaceRevisions KEEPS (U-runway-fixes item 1): their paths, never a folder typed here.
+            "keeps_plan" => reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Plan))
+                            && reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Journal)),
             "simulator" => c.ConnectorIsBuiltInSimulator,
             "paper" => c.ConnectorIsPaper,
             "account" => c.AccountId is { Length: > 0 },
@@ -1252,6 +1254,9 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             // write slot — so a seat whose tools cannot write it fails the render rather than being told a file it cannot keep.
             "plan_file" => Write(WorkspaceRevisions.PathOf(PublicationKind.Plan)),
             "journal_file" => Write(WorkspaceRevisions.PathOf(PublicationKind.Journal)),
+            // THE FOLDERS THE SCANNER RECORDS AND THE ONES IT DOES NOT (U-runway-fixes item 1), from its own list and the home's: named, never typed.
+            "tracked_dirs" => Joined(MaterialScanner.TrackedRoleDirs),
+            "untracked_dirs" => Joined(WorkspaceBuilder.SubDirs.Except(MaterialScanner.TrackedRoleDirs)),
             "plan_lines" => $"{WorkspaceRevisions.PlanLines}",
             "journal_lines" => $"{WorkspaceRevisions.JournalLines}",
             "plan_bytes" => $"{WorkspaceRevisions.PlanBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes",
@@ -1285,8 +1290,15 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
         "max_open_positions", "max_orders_per_minute", "max_loss_per_trade", "max_daily_loss", "allowlist", "plan_file", "journal_file", "plan_lines",
         "journal_lines", "plan_bytes", "journal_bytes", "archive_dir", "reference_path", "examples_dir", "first_example", "inbox_dir", "agenda_lines", "report_lines",
         "assessment_lines", "challenge_lines", "wake_file", "wake_cap", "turns_per_session", "guide", "verbs", "tools",
-        "writes", "handbacks"
+        "writes", "handbacks", "tracked_dirs", "untracked_dirs"
     };
+
+    /// <summary>Folders of a seat's own home, each backticked and read-checked, joined in prose.</summary>
+    string Joined(IEnumerable<string> dirs)
+    {
+        var named = dirs.Select(d => $"`{Read(d + "/")}`").ToList();
+        return named.Count <= 1 ? string.Concat(named) : $"{string.Join(", ", named[..^1])} and {named[^1]}";
+    }
 
     static InvalidOperationException Unknown(string kind) =>
         new($"the canon template has a slot this build does not know: '{kind}'");
