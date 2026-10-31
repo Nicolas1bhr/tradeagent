@@ -28,7 +28,7 @@ namespace TradeAgent.Tests.Unit;
 /// for both, and an installation where the two disagree is one where nobody can say which of them is
 /// wrong.</para>
 /// </summary>
-public class PaperEnvelopeTests
+public class PaperEnvelopeTests(Xunit.Abstractions.ITestOutputHelper log)
 {
     static readonly DateTimeOffset At = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
 
@@ -102,6 +102,35 @@ public class PaperEnvelopeTests
         Assert.Equal(first.Envelope!.Id, again.Envelope!.Id);
         Assert.Equal(first.Envelope.ComputedId, first.Envelope.Id);
         Assert.Single(gw.Envelopes.All());
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// ONE ENVELOPE STANDS FOR A PAIR AT A TIME (<c>U-evidence-breadth-paper</c>): a second grant for an instrument that already has
+    /// one standing on the platform and account is refused in words, nothing written — while another pair's is granted beside it, the
+    /// same grant re-recorded is the same row, and the pair's next grant is written once its last is withdrawn. RED before: the
+    /// second ES grant was written, and which of the two the app spent was the order two rows sorted in. Watched red with the
+    /// check removed.
+    /// </summary>
+    [Fact]
+    public async Task One_envelope_stands_for_a_pair_at_a_time()
+    {
+        var (gw, _, db) = await Ready();
+        using var _1 = db;
+
+        var es = await gw.GrantPaperEnvelopeAsync("ES", 2m, null, At.AddDays(30), At);
+        Assert.True(es.Ok, es.Why);
+        var second = await gw.GrantPaperEnvelopeAsync("ES", 3m, null, At.AddDays(30), At);
+        log.WriteLine($"a second ES grant: {second.Ok} — {second.Why}");
+        Assert.False(second.Ok, "a second envelope was written for a pair that already has one standing");
+        Assert.Contains("already stands", second.Why, StringComparison.Ordinal);
+        Assert.True((await gw.GrantPaperEnvelopeAsync("ES", 2m, null, At.AddDays(30), At)).Ok);
+        Assert.True((await gw.GrantPaperEnvelopeAsync("NQ", 1m, null, At.AddDays(30), At)).Ok);
+        Assert.Equal(2, gw.Envelopes.All().Count);
+
+        Assert.True(gw.WithdrawPaperEnvelope(es.Envelope!.Id, At).Ok);
+        Assert.True((await gw.GrantPaperEnvelopeAsync("ES", 3m, null, At.AddDays(30), At)).Ok);
+        Assert.Equal(3, gw.Envelopes.All().Count);
         await gw.DisposeAsync();
     }
 

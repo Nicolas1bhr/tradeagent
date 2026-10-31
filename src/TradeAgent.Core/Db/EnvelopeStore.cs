@@ -152,6 +152,20 @@ public sealed class Envelopes(Database db)
 
         var row = envelope with { Id = envelope.ComputedId, WithdrawnAt = null };
 
+        // ONE STANDING ENVELOPE PER PAIR ON AN ACCOUNT (U-evidence-breadth-paper), asked inside this write: a second grant for
+        // an instrument that already has one standing on this platform and account is refused — two would leave which one the
+        // app spends, and so how many runs the pair may carry, to the order two rows happen to sort in. Re-recording the row
+        // that is already there is the same grant and is not refused. A pair's next grant waits for its last to end or be
+        // withdrawn.
+        using var same = StandingCmd(row.ConnectorId, row.AccountId);
+        if (Read(same).FirstOrDefault(e => e.StandsAt(row.GrantedAt)
+                && string.Equals(e.Symbol, row.Symbol, StringComparison.Ordinal)
+                && !string.Equals(e.Id, row.Id, StringComparison.Ordinal)) is { } standing)
+            return new EnvelopeResult(false,
+                $"a paper envelope for {row.Symbol} already stands on account {row.AccountId} at {row.ConnectorId} "
+                + $"({Short(standing.Id)}, {standing.Reason}), so nothing was written: one envelope stands for a pair at a time, "
+                + "and the next one waits for it to end or be withdrawn.", null);
+
         using var c = db.Cmd($"""
             INSERT INTO paper_envelope({Cols})
             VALUES($id,$conn,$acct,$sym,$ccy,$qty,$notional,$deploy,$from,$to,$reason,NULL)
@@ -231,15 +245,17 @@ public sealed class Envelopes(Database db)
     /// </summary>
     public IReadOnlyList<PaperEnvelopeRow> StandingOn(string connectorId, string accountId, DateTimeOffset now) => db.Read(_ =>
     {
-        using var c = db.Cmd(
-            $"SELECT {Cols} FROM paper_envelope WHERE connector_id=$conn AND account_id=$acct "
-            + "ORDER BY granted_at DESC, id DESC",
-            ("$conn", connectorId), ("$acct", accountId));
+        using var c = StandingCmd(connectorId, accountId);
         return (IReadOnlyList<PaperEnvelopeRow>)[.. Read(c).Where(e => e.StandsAt(now))
             .GroupBy(e => e.Symbol, StringComparer.Ordinal)
             .Select(g => g.First())
             .OrderBy(e => e.Symbol, StringComparer.Ordinal)];
     });
+
+    /// <summary>Every grant on one (platform, account), newest first: what <see cref="StandingOn"/> and the grant's own check read.</summary>
+    SqliteCommand StandingCmd(string connectorId, string accountId) => db.Cmd(
+        $"SELECT {Cols} FROM paper_envelope WHERE connector_id=$conn AND account_id=$acct ORDER BY granted_at DESC, id DESC",
+        ("$conn", connectorId), ("$acct", accountId));
 
     /// <summary>
     /// Whether ANY grant stands on this account right now, whatever platform it was granted on. The
