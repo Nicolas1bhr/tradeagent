@@ -27,8 +27,13 @@ public class OwnerPageTests
     }
 
     /// <summary>Every press in the built tree, by the words it wears at rest.</summary>
+    /// <summary>
+    /// Every press on the page but a section's header (<c>U-ui-glance</c>): a header only shows or hides the same controls — it grants,
+    /// widens and takes away nothing — and is counted on its own in the test below.
+    /// </summary>
     static List<string> Presses(OwnerPage page) =>
-        [.. page.Root.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string ?? $"<{b.Content?.GetType().Name}>")];
+        [.. page.Root.GetLogicalDescendants().OfType<Button>().Where(b => !Ui.IsFold(b, out _))
+            .Select(b => b.Content as string ?? $"<{b.Content?.GetType().Name}>")];
 
     /// <summary>
     /// THE OWNER'S PAGE HOLDS EXACTLY THE OWNER'S PRESSES (R24 § 4.3; AUTH-001): a label allowlist over the tree the window builds — the
@@ -41,6 +46,8 @@ public class OwnerPageTests
     public Task The_owners_page_holds_exactly_the_owners_presses() => OnThePage((page, host) =>
     {
         var presses = Presses(page);
+        // THE SECTIONS' HEADERS (U-ui-glance): seven, each only showing or hiding the controls under it.
+        Assert.Equal(7, page.Root.GetLogicalDescendants().OfType<Button>().Count(b => Ui.IsFold(b, out _)));
         var card = (PerceptionCard)typeof(OwnerPage).GetField("_perception", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
         var choices = card.Choices.Select(b => (string)b.Content!).ToList();
 
