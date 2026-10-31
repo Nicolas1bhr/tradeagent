@@ -41,8 +41,11 @@ public sealed record AttemptRead(string Tool, string? Argument, long Bytes, bool
 /// ONE ARTIFACT'S LINEAGE AS RECORDED: its author position, the attempt that made it, what that attempt's packet gave it and what it
 /// read through the app. <see cref="Label"/> is the sentence a reader shows; for a row written before the rung it says so.
 /// </summary>
+/// <param name="PacketRecorded">Whether the attempt's packet record is held. It is written only with the turn's committed outcome, so
+/// false with <see cref="Given"/> empty is UNKNOWN (the packet showed nothing, the turn has not committed, or it ended before its
+/// commit) and never "nothing was shown".</param>
 public sealed record ArtifactLineageRow(string Kind, string Id, string? Author, string? Attempt, string State, string Label,
-    IReadOnlyList<AttemptGiven> Given, IReadOnlyList<AttemptRead> Read);
+    IReadOnlyList<AttemptGiven> Given, IReadOnlyList<AttemptRead> Read, bool PacketRecorded = false);
 
 /// <summary>
 /// EVERY ARTIFACT NAMES ITS AUTHOR POSITION AND THE ATTEMPT WHOSE READS PRODUCED IT (<c>U-lineage-check</c>; VISION § 7.2: "Lineage
@@ -94,7 +97,7 @@ public static class ArtifactLineage
         ["ai_attempt_input"] = "what an attempt was given: the attempt's own reads",
         ["tool_call"] = "what an attempt asked the app for: the attempt's own reads",
         ["ai_attempt_funding"] = "the launch's funding chain: the launch ledger's own record",
-        ["ledger_revision"] = "a revision of an entry, whose entry is the artifact; it names its own attempt",
+        ["ledger_revision"] = "a revision of an entry, whose entry is the artifact; its own attempt is required by trigger " + RevisionTrigger,
         ["ledger_link"] = "the app's link from an entry to a record it answered: a measurement, not authored",
         ["org_mandate"] = "an assignment: the decider's instruction, not work product",
         ["org_mandate_event"] = "a mandate's transition: a log row",
@@ -113,6 +116,24 @@ public static class ArtifactLineage
     /// <summary>The spec of <paramref name="kind"/>; an unknown kind is a programming error.</summary>
     public static ArtifactKindSpec Spec(string kind) =>
         Kinds.FirstOrDefault(k => k.Kind == kind) ?? throw new ArgumentOutOfRangeException(nameof(kind), kind, "no such artifact kind");
+
+    /// <summary>The trigger on <c>ledger_revision</c>: a revision is new text, so it names the attempt that wrote it (its author is its entry's).</summary>
+    public const string RevisionTrigger = "lineage_ledger_revision";
+
+    /// <summary>What counts as no value at all, in the triggers and in <see cref="Of"/> alike: NULL, or nothing but ASCII whitespace.</summary>
+    static readonly char[] Space = [' ', '\t', '\n', '\v', '\f', '\r'];
+
+    /// <summary>The SQL spelling of "blank" for <paramref name="column"/>, the same set as <see cref="Space"/>.</summary>
+    static string BlankSql(string column) => $"({column} IS NULL OR trim({column}, ' ' || char(9, 10, 11, 12, 13)) = '')";
+
+    static bool Blank(string? value) => value is null || value.Trim(Space).Length == 0;
+
+    /// <summary>The revision trigger, from this assembly's constants only.</summary>
+    internal static string RevisionTriggerSql() => $"""
+        CREATE TRIGGER IF NOT EXISTS {RevisionTrigger} BEFORE INSERT ON ledger_revision
+        WHEN {BlankSql("NEW.attempt")}
+        BEGIN SELECT RAISE(ABORT, 'lineage: a ledger revision names the attempt that wrote it'); END;
+        """;
 
     /// <summary>The trigger rung <see cref="Versions.ArtifactLineageRung"/> puts on <paramref name="k"/>'s table.</summary>
     public static string TriggerName(ArtifactKindSpec k) => $"lineage_{k.Table}";
@@ -146,9 +167,9 @@ public static class ArtifactLineage
         var notApp = apps.Length == 0 ? "1" : $"{a} NOT IN ({apps})";
         return $"""
             CREATE TRIGGER IF NOT EXISTS {TriggerName(k)} BEFORE INSERT ON {k.Table}
-            WHEN {a} IS NULL OR trim({a}) = ''
+            WHEN {BlankSql(a)}
               OR ({notApp} AND NOT EXISTS (SELECT 1 FROM org_position WHERE id = {a}))
-              OR ({notApp} AND ({x} IS NULL OR trim({x}) = ''))
+              OR ({notApp} AND {BlankSql(x)})
             BEGIN SELECT RAISE(ABORT, 'lineage: a {k.Kind} names the position that authored it and the attempt that made it'); END;
             """;
     }
@@ -176,15 +197,17 @@ public static class ArtifactLineage
                 attempt = r.IsDBNull(1) ? null : r.GetString(1);
             }
 
-            var noAttempt = string.IsNullOrWhiteSpace(attempt);
+            var noAttempt = Blank(attempt);
             if (author is not null && noAttempt && k.AppAuthors.Contains(author, StringComparer.Ordinal))
                 return new ArtifactLineageRow(kind, id, author, null, LineageState.AppMeasured,
                     $"this {kind} is the app's own measurement ({author}): no attempt made it.", [], []);
-            if (string.IsNullOrWhiteSpace(author) || noAttempt)
+            if (Blank(author) || noAttempt)
                 return new ArtifactLineageRow(kind, id, author, attempt, LineageState.NotRecorded, NotRecordedLabel(kind), [], []);
 
-            using (var c = db.Cmd("SELECT COUNT(*) FROM ai_attempt WHERE id = $a", ("$a", attempt)))
-                if (Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0)
+            string? state;
+            using (var c = db.Cmd("SELECT state FROM ai_attempt WHERE id = $a", ("$a", attempt)))
+                state = c.ExecuteScalar() as string;
+            if (state is null)
                     return new ArtifactLineageRow(kind, id, author, attempt, LineageState.Dangling,
                         $"this {kind} names attempt {attempt}, which the launch ledger does not hold: what it read cannot be shown.", [], []);
 
@@ -199,10 +222,16 @@ public static class ArtifactLineage
                 while (r.Read())
                     read.Add(new AttemptRead(r.GetString(0), r.IsDBNull(1) ? null : r.GetString(1), r.GetInt64(2), r.GetInt64(3) != 0));
 
+            // THE PACKET RECORD IS WRITTEN ONLY WITH THE TURN'S COMMITTED OUTCOME (MissionLoop.Commit), so an empty one is not a zero.
+            var packet = given.Count > 0
+                ? $"{given.Count} record(s) its packet gave it"
+                : state == nameof(AiAttemptState.LAUNCHED)
+                    ? "its turn has not committed, and what its packet gave it is recorded only with the committed outcome"
+                    : "no packet record is held: its packet showed nothing, or its turn ended before its commit; unknown which, never read as nothing shown";
             return new ArtifactLineageRow(kind, id, author, attempt, LineageState.Recorded,
-                $"this {kind} was authored by {author} in attempt {attempt}: {given.Count} record(s) its packet gave it, "
+                $"this {kind} was authored by {author} in attempt {attempt}: {packet}; "
                 + $"{read.Count} call(s) it made through TradeAgent; reads in its own folder outside TradeAgent are not observed.",
-                given, read);
+                given, read, PacketRecorded: given.Count > 0);
         });
     }
 }

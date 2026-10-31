@@ -449,6 +449,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
         var whole = Accepted(org, now, "the honest answer", attempt: "turn-honest-1");
         var rehashed = Accepted(org, now, "the first answer", attempt: "turn-first-1");
         var column = Accepted(org, now, "the second answer", attempt: "turn-second-1");
+        var authored = Accepted(org, now, "the third answer", attempt: "turn-third-1");
         const string forged = "a better answer written later";
         using (var c = OversightSeed.Open(db.FilePath))
         using (var cmd = c.CreateCommand())
@@ -457,7 +458,10 @@ public partial class AuditLineTests(ITestOutputHelper log)
                 DROP TRIGGER org_delivery_sealed_u;
                 UPDATE org_delivery SET report = $forged, manifest = json_set(manifest, '$.report', $forged) WHERE id = $rehashed;
                 UPDATE org_delivery SET report = $forged WHERE id = $column;
+                UPDATE org_delivery SET author = $head WHERE id = $authored;
                 """;
+            cmd.Parameters.AddWithValue("$head", Head);
+            cmd.Parameters.AddWithValue("$authored", authored);
             cmd.Parameters.AddWithValue("$forged", forged);
             cmd.Parameters.AddWithValue("$rehashed", rehashed);
             cmd.Parameters.AddWithValue("$column", column);
@@ -469,11 +473,13 @@ public partial class AuditLineTests(ITestOutputHelper log)
         using var store = new AuditStore(file, now);
         var swept = new AuditSweep(db.FilePath, store, rate: 1).Run(now);
         Assert.Null(swept.Failure);
-        Assert.Equal(3, swept.Drawn.Count);
+        Assert.Equal(4, swept.Drawn.Count);
         foreach (var k in store.Checks().Where(k => k.Name == AuditCheckName.Seal)) log.WriteLine($"{k.DeliveryId[..12]} seal {k.Passed}: {k.Reason}");
 
         Assert.True(Assert.Single(store.Checks(whole), k => k.Name == AuditCheckName.Seal).Passed);
-        foreach (var (rewritten, attempt) in new[] { (rehashed, "turn-first-1"), (column, "turn-second-1") })
+        // THE AUTHOR IS SEALED TOO (U-lineage-check): a delivery whose author column was rewritten fails the seal, naming the author.
+        Assert.Contains("author", Assert.Single(store.Checks(authored), k => k.Name == AuditCheckName.Seal && !k.Passed).Reason, StringComparison.Ordinal);
+        foreach (var (rewritten, attempt) in new[] { (rehashed, "turn-first-1"), (column, "turn-second-1"), (authored, "turn-third-1") })
         {
             Assert.False(Assert.Single(store.Checks(rewritten), k => k.Name == AuditCheckName.Seal).Passed);
             var finding = Assert.Single(store.Findings(), f => f.DeliveryId == rewritten && f.Check == AuditCheckName.Seal);

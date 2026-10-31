@@ -3298,6 +3298,7 @@ public sealed class Database : IDisposable
             // statement and the stamp runs this again over what it made.
             AddColumnIfMissing("org_delivery", "author", "TEXT REFERENCES org_position(id)");
             foreach (var kind in ArtifactLineage.Kinds) Exec(ArtifactLineage.TriggerSql(kind));
+            Exec(ArtifactLineage.RevisionTriggerSql());
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{artifactLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{artifactLineageRung}';");
         }
