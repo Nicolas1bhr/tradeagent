@@ -634,6 +634,22 @@ public static partial class Labels
     public static string RaiseOversightCapArmed(string amount) =>
         $"Confirm: let your private line spend up to {amount} a day";
 
+    /// <summary>
+    /// The presses that write the owner's budget for the public audit line, one per billing class — carved OFF THE TOP of that class's daily
+    /// ceiling, never the board's or the chief's to set (<c>U-org-audit-b</c>; the owner's Q1). On his Owner page alone.
+    /// </summary>
+    public const string SaveAuditMoneyBudget = "Save the audit line's real-money budget";
+
+    /// <inheritdoc cref="SaveAuditMoneyBudget"/>
+    public const string SaveAuditPlanBudget = "Save the audit line's plan budget";
+
+    /// <summary>
+    /// What the second press of an audit budget's save will do. RAISING it keeps more of the day for the audit line — and so leaves the
+    /// organisation less — so it asks twice and names the figure; LOWERING it, or zero, is one press (the owner's Q1: "two presses to raise").
+    /// </summary>
+    public static string RaiseAuditBudgetArmed(string amount, string ofWhat) =>
+        $"Confirm: keep {amount} a day of {ofWhat} for the audit line";
+
     /// <summary>The one press that asks the decision model one fixed question, to see that it answers and what it costs.</summary>
     public const string PerceptionTest = "Ask a test question";
 

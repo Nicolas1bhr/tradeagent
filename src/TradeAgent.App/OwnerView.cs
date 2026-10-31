@@ -595,9 +595,13 @@ sealed class OwnerPage
     static string Rate((decimal In, decimal Out) rate, string currency) =>
         $"{Amount.ExactMoney(rate.In, currency)} in and {Amount.ExactMoney(rate.Out, currency)} out";
 
+    /// <summary>The public audit line's budget and catch rates (<c>U-org-audit-b</c>), his alone to set and read.</summary>
+    internal AuditSection AuditLine { get; }
+
     public OwnerPage(AppHost host, SettingsPage settings)
     {
         _host = host;
+        AuditLine = new AuditSection(AuditSources.For(host));
 
         // THE EMERGENCY BLOCK. STOP is one press because a mis-press that removes the AI's permission costs nothing and hesitation here
         // costs money; RESUME is two, because that direction gives the permission back.
@@ -771,7 +775,7 @@ sealed class OwnerPage
         grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
             _unreadableCard, _releaseCard, running, _boardComposition.Root,
             Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, _seatChoices.Root, settings.Bridge,
-            Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
+            Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root, AuditLine.Root,
             Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns, standings,
             Ui.H2(Labels.OwnerGroupUpdates), settings.Updates)));
         grid.Children.Add(Pages.Column(1, Ui.With(Ui.Col(Theme.S6, emergency, settings.WhatTheseChange),
@@ -785,6 +789,7 @@ sealed class OwnerPage
     public void Update(GatewayStatus status)
     {
         _boardComposition.Update();
+        AuditLine.Update();
         // Read from the gateway, not from `status`: GatewayStatus is the agent-facing shape and this is a fact about the row this build read.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
 

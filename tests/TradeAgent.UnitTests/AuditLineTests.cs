@@ -171,7 +171,17 @@ public partial class AuditLineTests(ITestOutputHelper log)
         using (var c = new SqliteConnection($"Data Source={file};Pooling=False"))
         {
             c.Open();
-            Assert.Equal("1", Scalar(c, "SELECT value FROM audit_meta WHERE key='schema'"));
+            Assert.Equal("2", Scalar(c, "SELECT value FROM audit_meta WHERE key='schema'"));
+            using (var seed = c.CreateCommand())
+            {
+                seed.CommandText = """
+                    INSERT INTO audit_budget(class, amount, set_at) VALUES('key', '1', 'x');
+                    INSERT INTO audit_trap(mandate_id, kind, at) VALUES('man-x', 'impossible', 'x');
+                    INSERT INTO audit_canary_run(at) VALUES('x');
+                    INSERT INTO audit_catch(run_seq, detector, planted, caught, controls, false_alarms) VALUES(1, 'seal', 1, 1, 3, 0);
+                    """;
+                seed.ExecuteNonQuery();
+            }
             foreach (var edit in new[]
                      {
                          "UPDATE audit_salt SET at='x'", "DELETE FROM audit_salt",
@@ -181,6 +191,10 @@ public partial class AuditLineTests(ITestOutputHelper log)
                          "UPDATE audit_finding SET severity='info'", "DELETE FROM audit_finding",
                          "UPDATE audit_flag SET what='x'", "DELETE FROM audit_flag",
                          "UPDATE audit_failure SET what='x'", "DELETE FROM audit_failure",
+                         "UPDATE audit_budget SET amount='9'", "DELETE FROM audit_budget",
+                         "UPDATE audit_trap SET at='y'", "DELETE FROM audit_trap",
+                         "UPDATE audit_canary_run SET failure='y'", "DELETE FROM audit_canary_run",
+                         "UPDATE audit_catch SET caught=0", "DELETE FROM audit_catch",
                      })
             {
                 using var cmd = c.CreateCommand();
@@ -243,7 +257,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
         }
         using var check = new SqliteConnection($"Data Source={file};Pooling=False");
         check.Open();
-        Assert.Equal("1", Scalar(check, "SELECT value FROM audit_meta WHERE key='schema'"));
+        Assert.Equal(AuditStore.Schema.ToString(System.Globalization.CultureInfo.InvariantCulture), Scalar(check, "SELECT value FROM audit_meta WHERE key='schema'"));
         Assert.Equal("1", Scalar(check, "SELECT COUNT(*) FROM audit_salt"));
     }
 
