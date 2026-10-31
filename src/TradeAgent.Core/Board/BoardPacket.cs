@@ -93,7 +93,11 @@ public static class BoardPacket
     {
         var b = new StringBuilder(s.Length);
         foreach (var ch in s)
-            if (char.IsControl(ch)) b.Append("\\u").Append(((int)ch).ToString("x4", CultureInfo.InvariantCulture));
+            // CONTROL CHARACTERS, AND THE LINE AND PARAGRAPH SEPARATORS AND FORMAT CHARACTERS (U+2028, U+2029, bidi overrides — the re-review's
+            // P1) that a reader may break or reorder a line on.
+            if (char.IsControl(ch) || char.GetUnicodeCategory(ch) is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator
+                    or UnicodeCategory.Format)
+                b.Append("\\u").Append(((int)ch).ToString("x4", CultureInfo.InvariantCulture));
             else b.Append(ch);
         return b.ToString();
     }
