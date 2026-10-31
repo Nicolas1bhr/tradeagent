@@ -222,7 +222,9 @@ sealed class OversightPage
             Ui.Section("How hidden it is, by seat", seats),
             Ui.Section("Thresholds", thresholds),
             Ui.Section("Oversight cap", Ui.Col(Theme.S3, CapText,
-                Ui.FieldRow(CapLabel, CapBox), CapSave, CapNote)));
+                Ui.FieldRow(CapLabel, CapBox), CapSave, CapNote)),
+            // THE PROTECTIONS (U-invariant-registry): read-only and built once — the registry is compiled in and never changes while the app runs.
+            ProtectionsSection.Build(InvariantRegistry.All));
 
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
