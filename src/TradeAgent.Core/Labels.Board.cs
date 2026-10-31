@@ -283,6 +283,24 @@ public static partial class Labels
     public const string OwnerGroupEvidence = "Evidence";
     public const string OwnerGroupUpdates = "Updates";
 
+    // ---- the Owner page in sections (U-ui-glance): the emergency presses stay above them, always in view ----
+
+    public const string OwnerGroupRunning = "What TradeAgent is running";
+    public const string OwnerGroupBoard = "The security board";
+    public const string OwnerGroupExplained = "What these settings change";
+
+    public const string OwnerGroupBoardSummary = "The board's seats and its share of your plan's day: yours, two presses each.";
+    public const string OwnerGroupConnectionsSummary =
+        "Your trading platform and account, the key for TradeAgent's own worker, which model each seat runs on, and the ATAS bridge.";
+    public const string OwnerGroupEvidenceSummary =
+        "What a turn is priced at, what trading costs are assumed, the held-back data and what a research campaign may spend.";
+    public const string OwnerGroupUpdatesSummary = "Updating TradeAgent itself.";
+    public const string OwnerGroupExplainedSummary = "What the platform, the account and each limit on this page change.";
+
+    /// <summary>A section's header press, closed and open. Closing a section disarms every half-pressed button in it.</summary>
+    public const string FoldShow = "Show";
+    public const string FoldHide = "Hide";
+
     /// <summary>Under the campaign budgets: what they are, and why there is no box.</summary>
     public const string CampaignBudgetsAreEvidence =
         "What each research campaign may spend, and the account the judge pretends to have. Evidence, not limits: each campaign copies "

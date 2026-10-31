@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Headless;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
@@ -186,6 +187,10 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                     // home — and the armed sentence, the longest words a button carries, must fit the page as the resting label did.
                     if (armed)
                     {
+                        // EVERY SECTION OPEN FIRST (U-ui-glance): a press in a closed section is out of sight, and is armed and checked here.
+                        foreach (var fold in page.GetSelfAndVisualDescendants().OfType<Button>().ToList())
+                            if (Ui.IsFold(fold, out var open) && !open) Ui.SetFold(fold, true);
+                        win.UpdateLayout();
                         foreach (var two in page.GetSelfAndVisualDescendants().OfType<Button>()
                                      .Where(x => x.IsEffectivelyVisible && x.IsEnabled && x.Tag?.GetType().Name == "ConfirmState").ToList())
                             two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
@@ -350,6 +355,63 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         // EACH DIRECTOR'S OWN TURNS beside its own spend: Operations ran none of the five.
         Assert.Contains("Operations Director: model —, 0 turns of its own", All("report"), StringComparison.Ordinal);
         Assert.DoesNotContain("Operations Director: model —, 5 turns", All("report"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE OWNER PAGE, SHORTER, ITS EMERGENCY PRESSES ALWAYS IN VIEW (<c>U-ui-glance</c>; U-ui-pages' card: ~7,600 px tall at 1280x800). The
+    /// stop, cancel-all and close-all presses sit above the page's scroll — never inside it — and the rest is in sections, closed but the one
+    /// that says what is running, so the page's scrolling content is a fraction of what it was.
+    /// </summary>
+    [Fact]
+    public void The_owner_page_keeps_its_emergency_presses_in_view_above_shorter_sections()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"owner-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            var status = host.Gateway.StatusAsync().GetAwaiter().GetResult();
+            HeadlessUi.Run(() =>
+            {
+                var page = new OwnerPage(host, new SettingsPage(host));
+                page.Update(status);
+                var win = Framed(page.Root, 1280, 800);
+                win.Show();
+                win.UpdateLayout();
+
+                var presses = page.EmergencyStrip.GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible).ToList();
+                Assert.Equal(3, presses.Count);
+                Assert.All(presses, b => Assert.Empty(b.GetVisualAncestors().OfType<ScrollViewer>()));
+                Assert.All(presses, b => Assert.True(Pixels(b, win).Bottom < 800, "an emergency press is below the first screen"));
+
+                var scroll = page.Root.GetVisualDescendants().OfType<ScrollViewer>().First(s => s.TemplatedParent is null);
+                output.WriteLine($"the owner page's scrolling content: {scroll.Extent.Height:0} px");
+                Assert.True(scroll.Extent.Height < 1500, $"the owner page's scrolling content is {scroll.Extent.Height:0} px tall");
+                win.Close();
+            });
+        }
+        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+    }
+
+    /// <summary>CLOSING A SECTION DISARMS A HALF-PRESS IN IT: a press out of sight is never left armed (the rule every hidden press keeps).</summary>
+    [Fact]
+    public void Closing_a_section_disarms_a_half_pressed_button_inside_it()
+    {
+        HeadlessUi.Run(() =>
+        {
+            var pressed = 0;
+            var two = Ui.Confirm("Close all positions", "Confirm: close all positions with market orders", () => pressed++);
+            var fold = Ui.Fold("Emergency", Ui.Col(Theme.S2, two), open: true);
+            var header = fold.GetLogicalDescendants().OfType<Button>().Single(b => Ui.IsFold(b, out _));
+            two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.True(Ui.IsArmed(two));
+            header.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.False(Ui.IsArmed(two));
+            Assert.False(((Control)two.Parent!).IsVisible);   // the body is hidden, the same control kept
+            header.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(0, pressed);   // reopened, the first press only arms again
+            Assert.True(Ui.IsArmed(two));
+        });
     }
 
     /// <summary>

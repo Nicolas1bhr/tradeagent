@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
@@ -152,6 +153,56 @@ static class Ui
     /// <summary>A card with a named region above it. The standard unit of the dashboard.</summary>
     public static Control Section(string eyebrow, Control body) =>
         Col(Theme.S2, Eyebrow(eyebrow), Card(body));
+
+    /// <summary>A section that opens and closes (<see cref="Fold"/>): whether it is open, its body and its header's word.</summary>
+    internal sealed class FoldState
+    {
+        public bool Open;
+        public required Control Body;
+        public required TextBlock Mark;
+    }
+
+    /// <summary>
+    /// A SECTION THAT OPENS AND CLOSES (<c>U-ui-glance</c>): its title, an optional summary the page keeps current, and a press across the whole
+    /// header that shows or hides the body. <b>Closing disarms every half-pressed button inside it</b> — a press out of sight is never left
+    /// armed, the rule every hidden press keeps — and nothing is rebuilt: the body is the same control, only its visibility changes.
+    /// </summary>
+    public static Control Fold(string title, Control body, bool open, TextBlock? summary = null)
+    {
+        var mark = With(Micro(open ? Labels.FoldHide : Labels.FoldShow), t => t.VerticalAlignment = VerticalAlignment.Center);
+        mark[Grid.ColumnProperty] = 1;
+        if (summary is not null) summary.FontWeight = FontWeight.Normal;
+        var words = summary is null ? Col(Theme.S1, Eyebrow(title)) : Col(Theme.S1, Eyebrow(title), summary);
+        var head = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { words, mark } };
+        var state = new FoldState { Open = open, Body = body, Mark = mark };
+        var press = new Button
+        {
+            Content = head, Classes = { "secondary" }, Tag = state, Padding = new Thickness(Theme.S5, Theme.S3),
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        press.Click += (_, _) => SetFold(press, !state.Open);
+        body.IsVisible = open;
+        return Col(Theme.S2, press, body);
+    }
+
+    /// <summary>Opens or closes a <see cref="Fold"/> by its header press; closing disarms every two-press inside it first.</summary>
+    public static void SetFold(Button press, bool open)
+    {
+        if (press.Tag is not FoldState state || state.Open == open) return;
+        if (!open)
+            foreach (var b in state.Body.GetLogicalDescendants().OfType<Button>().Where(x => x.Tag is ConfirmState { Armed: true }))
+                Disarm(b);
+        state.Open = open;
+        state.Body.IsVisible = open;
+        state.Mark.Text = open ? Labels.FoldHide : Labels.FoldShow;
+    }
+
+    /// <summary>Whether <paramref name="b"/> is a <see cref="Fold"/>'s header press, and whether it is open.</summary>
+    public static bool IsFold(Button b, out bool open)
+    {
+        open = b.Tag is FoldState { Open: true };
+        return b.Tag is FoldState;
+    }
 
     public static Control Divider() => new Border
     {

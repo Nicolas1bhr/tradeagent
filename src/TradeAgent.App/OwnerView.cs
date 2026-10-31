@@ -606,21 +606,22 @@ sealed class OwnerPage
             () => _host.Gateway.StopAiTrading($"you pressed {Labels.StopAiTrading}"),
             () => _host.Gateway.EnableAiTrading());
 
-        var emergency = Ui.Section("Emergency", Ui.Col(Theme.S4,
-            _stopButton,
-            Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
-                + "Stopping takes one press; letting it trade again takes two."),
-            _lossClosedNote,
-            _lossFlattenNote,
-            Ui.Divider(),
-            // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON: the gateway writes a flagged row per target before the wire, pauses
-            // trading on them, and refuses the next press until they are resolved on the Dashboard.
-            Ui.With(Ui.Confirm(Labels.CancelAllWorkingOrders, "Confirm: cancel all working orders",
+        // THE EMERGENCY PRESSES, ALWAYS IN VIEW (U-ui-glance): a strip above the page's scroll, so stop, cancel all and close all are
+        // never more than a glance away however far down the owner has read. Each keeps its count.
+        var emergency = Ui.Section("Emergency", Ui.Col(Theme.S2,
+            Ui.Wrap(Theme.S3,
+                _stopButton,
+                // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON: the gateway writes a flagged row per target before the wire, pauses
+                // trading on them, and refuses the next press until they are resolved on the Dashboard.
+                Ui.Confirm(Labels.CancelAllWorkingOrders, "Confirm: cancel all working orders",
                     () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), Labels.CancelAllWorkingOrders)),
-                b => b.HorizontalAlignment = HorizontalAlignment.Stretch),
-            Ui.With(Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
-                    () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions)),
-                b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
+                Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
+                    () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions))),
+            Ui.With(Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
+                + "Stopping takes one press; letting it trade again takes two. Cancelling all orders or closing all positions takes two."),
+                t => t.FontSize = Theme.Small),
+            _lossClosedNote,
+            _lossFlattenNote));
 
         _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
 
@@ -702,7 +703,8 @@ sealed class OwnerPage
         _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
         _stopDeployment = BuildDeploymentStopConfirm(RunningDeploymentId, ApplyDeploymentStop);
 
-        var running = Ui.Section("What TradeAgent is running", Ui.Col(Theme.S2,
+        // A CARD, NOT A SECTION: its section header (U-ui-glance) carries the title.
+        var running = Ui.Card(Ui.Col(Theme.S2,
             Ui.KeyValueLive("Capital allocated now", _allocationValue),
             Ui.KeyValueLive("Paper experiments allowed", _envelopeValue),
             Ui.KeyValueLive("Running now", _deploymentValue),
@@ -767,20 +769,40 @@ sealed class OwnerPage
         _boardComposition = new BoardComposition(() => _host.Board, _host.Gateway.SetBoardBudgetShare, _host.Gateway.FoundBoardSeat,
             _host.Gateway.RetireBoardSeat);
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
-            _unreadableCard, _releaseCard, running, _boardComposition.Root,
-            Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, _seatChoices.Root, settings.Bridge,
-            Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
-            Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns, standings,
-            Ui.H2(Labels.OwnerGroupUpdates), settings.Updates)));
-        grid.Children.Add(Pages.Column(1, Ui.With(Ui.Col(Theme.S6, emergency, settings.WhatTheseChange),
-            c => c.Margin = new Thickness(Theme.S5, 0, 0, 0))));
+        // THE PAGE IN SECTIONS (U-ui-glance; it was ~7,600 px of cards): what is running open, everything else closed under a header
+        // that says what is in it — the real money's with today's figure. A caution card (held for review, settings unreadable) stays
+        // above the sections, never inside one. Nothing is rebuilt: a section shows or hides the same controls.
+        var sections = Ui.Col(Theme.S5,
+            _unreadableCard, _releaseCard,
+            Ui.Fold(Labels.OwnerGroupRunning, running, open: true),
+            Ui.Fold(Labels.OwnerGroupMoney, Ui.Col(Theme.S6, spending, _perception.Root), open: false, _moneySummary),
+            Ui.Fold(Labels.OwnerGroupBoard, _boardComposition.Root, open: false, Summary(Labels.OwnerGroupBoardSummary)),
+            Ui.Fold(Labels.OwnerGroupConnections, Ui.Col(Theme.S6, settings.Platform, settings.Account, connections, _seatChoices.Root,
+                settings.Bridge), open: false, Summary(Labels.OwnerGroupConnectionsSummary)),
+            Ui.Fold(Labels.OwnerGroupEvidence, Ui.Col(Theme.S6, evidence, settings.Friction, settings.Holdout, campaigns, standings), open: false,
+                Summary(Labels.OwnerGroupEvidenceSummary)),
+            Ui.Fold(Labels.OwnerGroupUpdates, settings.Updates, open: false, Summary(Labels.OwnerGroupUpdatesSummary)),
+            Ui.Fold(Labels.OwnerGroupExplained, settings.WhatTheseChange, open: false, Summary(Labels.OwnerGroupExplainedSummary)));
 
-        Root = Pages.Scroll(Ui.Col(0,
-            Pages.Header(Labels.OwnerPage, Labels.OwnerPageSubtitle),
-            grid));
+        var scroll = Pages.Scroll(sections);
+        scroll[Grid.RowProperty] = 2;
+        emergency.Margin = new Thickness(0, 0, Theme.S3, Theme.S5);   // its right edge with the cards below, beside their scrollbar
+        emergency[Grid.RowProperty] = 1;
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
+        root.Children.Add(Pages.Header(Labels.OwnerPage, Labels.OwnerPageSubtitle));
+        root.Children.Add(emergency);
+        root.Children.Add(scroll);
+        Root = root;
+        EmergencyStrip = emergency;
+
+        static TextBlock Summary(string text) => Ui.With(Ui.Muted(text), t => t.FontSize = Theme.Small);
     }
+
+    /// <summary>The emergency presses' strip, above the page's scroll — for a test to hold that it is never inside it.</summary>
+    internal Control EmergencyStrip { get; }
+
+    /// <summary>The real-money section's header line: today's figure, kept current with the section's own.</summary>
+    readonly TextBlock _moneySummary = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
 
     public void Update(GatewayStatus status)
     {
@@ -790,6 +812,7 @@ sealed class OwnerPage
 
         var (moneyToday, planToday) = TodayLines(_host.SpendToday);
         _moneyToday.Text = moneyToday;
+        OrgText.Set(_moneySummary, moneyToday);
         _planToday.Text = planToday;
         _seatClasses.Text = SeatClassesLine(CouncilRoles.All.Select(r => (CouncilRoles.Title(r), _host.BillingClassOf(r))));
 
