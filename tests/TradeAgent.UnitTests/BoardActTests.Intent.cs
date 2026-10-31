@@ -8,7 +8,7 @@ public partial class BoardActTests
 {
     // ---- item 2: the typed intent and its direction ---------------------------------------------------------------------------
 
-    const string Envelope = "{\"account\":\"PAPER-1\",\"connector\":\"paper\",\"days\":null,\"deployments\":1,\"instrument\":\"BTCUSDT\",\"max_notional\":5000,\"max_quantity\":0.05}";
+    const string Envelope = "{\"account\":\"PAPER-1\",\"connector\":\"paper\",\"days\":null,\"deployments\":3,\"instrument\":\"BTCUSDT\",\"max_notional\":5000,\"max_quantity\":0.1}";
 
     static string EnvelopeWith(string key, string value)
     {
@@ -23,7 +23,7 @@ public partial class BoardActTests
     /// switched ON from "none", a share that rises because it was removed, a floor that falls to its default, an envelope granted,
     /// enlarged or made to last for ever.
     /// </summary>
-    static readonly Dictionary<string, (string Narrow, string Wide)[]> Pairs = new()
+    static readonly Dictionary<string, (string Narrow, string Wide)[]> Pairs = new Dictionary<string, (string Narrow, string Wide)[]>
     {
         ["mode"] = [("\"OBSERVE\"", "\"PAPER\"")],
         ["risk.max_order_quantity"] = [("0.5", "1"), ("0", "1")],
@@ -46,12 +46,23 @@ public partial class BoardActTests
         ["review_minutes"] = [("60", "30"), ("0", "30")],
         ["head_ceiling_hours"] = [("48", "24"), ("0", "24")],
         ["rewake_floor_minutes"] = [("{\"team\":120}", "{\"team\":60}"), ("{\"team\":120}", "{}"), ("{\"executor\":30}", "{\"executor\":0}")],
-        ["paper_envelope"] =
-        [
-            ("null", Envelope), (EnvelopeWith("max_quantity", "0.01"), Envelope), (EnvelopeWith("max_notional", "1000"), Envelope),
-            (EnvelopeWith("deployments", "1"), EnvelopeWith("deployments", "2")), (EnvelopeWith("days", "7"), Envelope)
-        ]
-    };
+        // EACH PAIR'S ENVELOPE ITS OWN FIELD (U-evidence-breadth-paper): the same pairs, written for each founding pair.
+    }.Concat(BoardFounding.PaperPairs.Select(p => KeyValuePair.Create($"paper_envelopes.{p.Instrument}", new[]
+    {
+        ("null", For(p.Instrument, Envelope)), (For(p.Instrument, EnvelopeWith("max_quantity", "0.01")), For(p.Instrument, Envelope)),
+        (For(p.Instrument, EnvelopeWith("max_notional", "1000")), For(p.Instrument, Envelope)),
+        (For(p.Instrument, EnvelopeWith("deployments", "1")), For(p.Instrument, EnvelopeWith("deployments", "2"))),
+        (For(p.Instrument, EnvelopeWith("days", "7")), For(p.Instrument, Envelope))
+    }))).ToDictionary(StringComparer.Ordinal);
+
+    /// <summary><paramref name="terms"/> made <paramref name="pair"/>'s: the same terms with its instrument.</summary>
+    static string For(string pair, string terms)
+    {
+        if (terms == "null") return terms;
+        var o = System.Text.Json.Nodes.JsonNode.Parse(terms)!.AsObject();
+        o["instrument"] = pair;
+        return TradeAgent.Core.Data.TapeJson.Canonical(o.ToJsonString());
+    }
 
     /// <summary>
     /// A RAISE IS NEVER A NARROWING, ON EVERY FIELD, BOTH WAYS: for every field the board's acts change — the table's own list, so a
@@ -76,8 +87,8 @@ public partial class BoardActTests
                      ("risk.instrument_allowlist", "[\"BTCUSDT\"]", "[\"ETHUSDT\"]"),
                      ("role_shares", "{\"research\":0.25,\"operations\":0.5}", "{\"research\":0.5,\"operations\":0.25}"),
                      ("rewake_floor_minutes", "{\"team\":120,\"executor\":15}", "{\"team\":60,\"executor\":30}"),
-                     ("paper_envelope", Envelope, EnvelopeWith("account", "\"PAPER-2\"")),
-                     ("paper_envelope", Envelope.Replace("\"deployments\":1", "\"deployments\":2").Replace("0.05", "0.01"), Envelope)
+                     ("paper_envelopes.BTCUSDT", Envelope, EnvelopeWith("account", "\"PAPER-2\"")),
+                     ("paper_envelopes.BTCUSDT", Envelope.Replace("\"deployments\":3", "\"deployments\":4").Replace("0.1", "0.01"), Envelope)
                  })
         {
             Assert.Equal(BoardDirectionKind.Widens, BoardDirection.Of(field, a, b));
@@ -104,7 +115,8 @@ public partial class BoardActTests
     {
         foreach (var (field, a, b) in new[]
                  {
-                     ("live_activated", "true", "false"), ("paper_envelope.max_quantity", "0.05", "0.01"),
+                     ("live_activated", "true", "false"), ("paper_envelopes.BTCUSDT.max_quantity", "0.1", "0.01"),
+                     ("paper_envelope", Envelope, "null"), ("paper_envelopes", "{}", "{}"),
                      ("risk.max_slippage", "1", "0"), ("holdout_cutoff", "\"2026-01-01\"", "\"2025-01-01\"")
                  })
         {
@@ -115,7 +127,9 @@ public partial class BoardActTests
         foreach (var (json, says) in new[]
                  {
                      ("[{\"field\":\"live_activated\",\"from\":false,\"to\":true}]", "real money"),
-                     ("[{\"field\":\"paper_envelope.max_quantity\",\"from\":0.05,\"to\":0.01}]", "changes whole"),
+                     ("[{\"field\":\"paper_envelopes.BTCUSDT.max_quantity\",\"from\":0.1,\"to\":0.01}]", "changes whole"),
+                     ("[{\"field\":\"paper_envelopes\",\"from\":{},\"to\":{}}]", "the pair it changes"),
+                     ("[{\"field\":\"paper_envelope\",\"from\":null,\"to\":null}]", "no field"),
                      ("[{\"field\":\"risk.max_slippage\",\"from\":1,\"to\":0}]", "no field"),
                      ("[{\"field\":\"mode\",\"from\":\"PAPER\",\"to\":\"LIVE_CONFIRM\"}]", "real-money mode"),
                      ("[{\"field\":\"mode\",\"from\":\"PAPER\",\"to\":\"LIVE_AUTONOMOUS\"}]", "real-money mode"),
@@ -125,7 +139,7 @@ public partial class BoardActTests
                      ("[{\"field\":\"lanes\",\"from\":1,\"to\":0}]", "or more"),
                      ("[{\"field\":\"role_shares\",\"from\":{},\"to\":{\"research\":1.5}}]", "fraction"),
                      ("[{\"field\":\"rewake_floor_minutes\",\"from\":{},\"to\":{\"chief\":5}}]", "no level"),
-                     ("[{\"field\":\"paper_envelope\",\"from\":null,\"to\":{\"connector\":\"paper\"}}]", "exactly"),
+                     ("[{\"field\":\"paper_envelopes.BTCUSDT\",\"from\":null,\"to\":{\"connector\":\"paper\"}}]", "exactly"),
                      ("[{\"field\":\"plan_day_total\",\"from\":40,\"to\":40.0}]", "changes nothing"),
                      ("[{\"field\":\"lanes\",\"from\":2,\"to\":1},{\"field\":\"lanes\",\"from\":2,\"to\":1}]", "twice"),
                      ("[{\"field\":\"lanes\",\"from\":2,\"to\":1,\"why\":\"x\"}]", "nothing else"),

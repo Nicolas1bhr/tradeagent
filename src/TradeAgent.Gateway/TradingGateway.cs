@@ -513,12 +513,29 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// </summary>
     internal void GrantPolicyEnvelopeIfDue(AccountInfo account)
     {
+        List<string> pairs;
         try
         {
             // NOT ON A HOME THAT CANNOT TRADE: an earlier armed row, or a settings row or policy nobody could read, grants nothing new.
             if (!ReadableForExecution) return;
-            if (Policy.CouldNotBeRead || Policy.PaperEnvelope is null) return;
+            if (Policy.CouldNotBeRead || Policy.PaperEnvelopes.Count == 0) return;
+            pairs = [.. Policy.PaperEnvelopes.Keys.Order(StringComparer.Ordinal)];
             PolicyEnvelopeTermsRead?.Invoke();
+        }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "policy_envelope_failed", "error", ex: ex); return; }
+
+        // EACH PAIR ITS OWN ENVELOPE, EACH IN ITS OWN WRITE (U-evidence-breadth-paper): a pair that could not be granted leaves every
+        // other pair's alone, and every rule below — once per decision, a narrowing never lengthening a life, a veto renewing nothing —
+        // is read along THAT pair's terms and THAT pair's grants only.
+        foreach (var pair in pairs) GrantPairEnvelopeIfDue(account, pair);
+    }
+
+    /// <summary>One pair's turn of <see cref="GrantPolicyEnvelopeIfDue"/>: the policy's terms for <paramref name="pair"/>, granted when due.</summary>
+    void GrantPairEnvelopeIfDue(AccountInfo account, string pair)
+    {
+        var field = BoardDirection.EnvelopeField(pair);
+        try
+        {
 
             // THE TERMS, WHO SET THEM, THE LOOK AND THE GRANT ARE ONE TRANSACTION. The look and the grant (fix pass 1 of U-board-a2, the
             // review's P2): two health passes at once would otherwise both find none and both grant. The TERMS (U-board-b1 fix pass,
@@ -531,12 +548,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
             var result = _db.Write(_ =>
             {
                 var inForce = _board.InForce();
-                if (inForce.CouldNotBeRead || inForce.Policy.PaperEnvelope is not { } stated) return null;
+                if (inForce.CouldNotBeRead || inForce.Policy.PaperEnvelopeFor(pair) is not { } stated) return null;
                 if (!string.Equals(Connector.Id, stated.Connector, StringComparison.Ordinal)
                     || !string.Equals(account.Id, stated.Account, StringComparison.Ordinal)) return null;
 
                 // WHO SET THESE TERMS: the version that last changed any of them, and its decider.
-                setBy = inForce.Fields.Where(f => f.Name == "paper_envelope" || f.Name.StartsWith("paper_envelope.", StringComparison.Ordinal))
+                setBy = inForce.Fields.Where(f => f.Name == field || f.Name.StartsWith(field + ".", StringComparison.Ordinal))
                     .Select(f => f.SetByVersion).DefaultIfEmpty(inForce.Version).Max();
                 var setter = setBy;
                 decider = setBy == inForce.Version ? inForce.Decider : _board.History().FirstOrDefault(v => v.Version == setter)?.Decider;
@@ -548,6 +565,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 var now = Now;
                 if (_envelopes.All(int.MaxValue).Any(e => string.Equals(e.ConnectorId, stated.Connector, StringComparison.Ordinal)
                                                           && string.Equals(e.AccountId, stated.Account, StringComparison.Ordinal)
+                                                          && string.Equals(e.Symbol, pair, StringComparison.Ordinal)
                                                           && (e.StandsAt(now) || string.Equals(e.Reason, reason, StringComparison.Ordinal))))
                     return null;
                 FoundingEnvelopeFoundNone?.Invoke();
@@ -564,8 +582,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 // A VETOED WIDENING RENEWS NOTHING (U-board-b2 fix pass, the review's P1-2 and its re-reviews): the life a narrowing may
                 // keep is the AUTHORISED life of the policy's grants on this pair (AuthorisedLife), and the terms are fresh only when every
                 // act since the last grant stands and one of them widened (WidenedSince).
-                var (authorised, lastGrant) = AuthorisedLife(stated.Connector, stated.Account);
-                var widened = WidenedSince(lastGrant, setBy);
+                var (authorised, lastGrant) = AuthorisedLife(stated.Connector, stated.Account, pair);
+                var widened = WidenedSince(lastGrant, setBy, pair);
                 if (!widened && authorised is { } life && life < until)
                 {
                     until = life;
@@ -579,7 +597,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             if (!result.Ok)
             {
                 _log.TryEngineering("Gateway", "policy_envelope_not_granted", "warn",
-                    metadataJson: Json.Write(new { version = setBy, why = result.Why }));
+                    metadataJson: Json.Write(new { version = setBy, pair, why = result.Why }));
                 return;
             }
             var by = decider == BoardDecider.App
@@ -602,11 +620,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// version authorises none). So an envelope that kept a vetoed widening's life — itself, or through any narrowing granted after it —
     /// keeps none of it, and a life that cannot be split between a standing act and a vetoed one errs SHORT. Null with no grant on the pair.
     /// </summary>
-    (DateTimeOffset? Authorised, int? LastGrant) AuthorisedLife(string connector, string account)
+    (DateTimeOffset? Authorised, int? LastGrant) AuthorisedLife(string connector, string account, string symbol)
     {
         var granted = _envelopes.All(int.MaxValue)
             .Where(e => string.Equals(e.ConnectorId, connector, StringComparison.Ordinal)
-                        && string.Equals(e.AccountId, account, StringComparison.Ordinal) && PolicyGranted(e))
+                        && string.Equals(e.AccountId, account, StringComparison.Ordinal)
+                        && string.Equals(e.Symbol, symbol, StringComparison.Ordinal) && PolicyGranted(e))
             .OrderBy(e => e.GrantedAt).ThenBy(e => e.Id, StringComparer.Ordinal).ToList();
         DateTimeOffset? authorised = null;
         int? lastGrant = null;
@@ -616,7 +635,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             var under = GrantedUnder(e);
             var fresh = i == 0
                 ? !(under is { } u && _board.VetoedVersion(u))
-                : under is { } u2 && WidenedSince(lastGrant, u2);
+                : under is { } u2 && WidenedSince(lastGrant, u2, symbol);
             authorised = fresh ? e.ExpiresAt
                 : authorised is { } a ? (a < e.ExpiresAt ? a : e.ExpiresAt)
                 : e.GrantedAt;
@@ -636,11 +655,11 @@ public sealed partial class TradingGateway : IAsyncDisposable
         var now = Now;
         foreach (var envelope in _envelopes.All(int.MaxValue).Where(e => e.StandsAt(now) && PolicyGranted(e)).ToList())
         {
-            var (authorised, _) = AuthorisedLife(envelope.ConnectorId, envelope.AccountId);
+            var (authorised, _) = AuthorisedLife(envelope.ConnectorId, envelope.AccountId, envelope.Symbol);
             if (authorised is { } life && envelope.ExpiresAt <= life) continue;
             var withdrawn = _envelopes.Withdraw(envelope.Id, now);
             if (!withdrawn.Ok) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, withdrawn.Why + " Nothing was written.");
-            _log.Activity($"Your veto of {actId} took back the life it had given the standing paper envelope on account {envelope.AccountId}, "
+            _log.Activity($"Your veto of {actId} took back the life it had given the standing paper envelope for {envelope.Symbol} on account {envelope.AccountId}, "
                           + "so that envelope is withdrawn: nothing new starts under it, and what was allocated under it may trade nothing. "
                           + "A veto grants nothing in its place.");
         }
@@ -654,15 +673,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// vetoed renews nothing — revoked authority renews no life, and a life that cannot be split between a standing widening and a vetoed
     /// one errs short.
     /// </summary>
-    bool WidenedSince(int? grantedUnder, int setBy)
+    bool WidenedSince(int? grantedUnder, int setBy, string pair)
     {
+        var field = BoardDirection.EnvelopeField(pair);
         var from = grantedUnder is { } g && g < setBy ? g : setBy - 1;
         var widened = false;
         for (var v = from + 1; v <= setBy; v++)
         {
             if (_board.VetoedVersion(v)) return false;
-            if (_board.EnvelopeTermsAt(v - 1) is { } before && _board.EnvelopeTermsAt(v) is { } after
-                && BoardDirection.Of("paper_envelope", before, after) == BoardDirectionKind.Widens)
+            if (_board.EnvelopeTermsAt(v - 1, pair) is { } before && _board.EnvelopeTermsAt(v, pair) is { } after
+                && BoardDirection.Of(field, before, after) == BoardDirectionKind.Widens)
                 widened = true;
         }
         return widened;
@@ -809,7 +829,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     int AllocatePaperDueCore(DateTimeOffset now)
     {
         if (ClosureAccountId is not { Length: > 0 } account) return 0;
-        if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
+        // EVERY PAIR'S STANDING ENVELOPE ON THIS ACCOUNT (U-evidence-breadth-paper): a version goes into its own pair's, or nowhere.
+        var envelopes = _envelopes.StandingOn(Connector.Id, account, now);
+        if (envelopes.Count == 0) return 0;
 
         var written = 0;
 
@@ -836,8 +858,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
             if (standing is not { Promotion: { } promotion } || (!standing.IsPromoted && !standing.IsPaperEligible))
                 continue;
 
+            // ITS OWN PAIR'S ENVELOPE, or none: a version trading a pair with no envelope standing is not put in another pair's
+            // (`RecordPaper` asks the same inside its write).
             if (InstrumentOf(versionId) is not { } instrument
-                || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
+                || envelopes.FirstOrDefault(e => string.Equals(e.Symbol, instrument, StringComparison.Ordinal)) is not { } envelope)
                 continue;
 
             // EACH VERSION'S SHARE OF THE GRANT, never the whole of it twice (U-paper-books): the envelope's ceilings
@@ -867,7 +891,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
                           + "came with it.");
         }
 
-        return written + AllocateInconclusiveDue(envelope, account, now);
+        return written + AllocateInconclusiveDue(envelopes, account, now);
     }
 
     /// <summary>
@@ -910,7 +934,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <para><b>The refusal stays refused.</b> Nothing here re-judges a verdict, widens a ceiling or reaches a live mode:
     /// the row is the envelope's share, scoped to paper, and no live reader reads it.</para>
     /// </summary>
-    int AllocateInconclusiveDue(PaperEnvelopeRow envelope, string account, DateTimeOffset now)
+    int AllocateInconclusiveDue(IReadOnlyList<PaperEnvelopeRow> envelopes, string account, DateTimeOffset now)
     {
         var written = 0;
 
@@ -937,7 +961,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 continue;
 
             if (InstrumentOf(versionId) is not { } instrument
-                || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
+                || envelopes.FirstOrDefault(e => string.Equals(e.Symbol, instrument, StringComparison.Ordinal)) is not { } envelope)
                 continue;
 
             if (Campaigns.LineageRoot(promotion.CampaignId) is not { } lineage) continue;
@@ -1108,6 +1132,25 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// agent-facing side is ENDING one, which only ever removes exposure.</para>
     /// </summary>
     public Deployments Deployments => _deployments;
+
+    /// <summary>
+    /// EVERY PAIR A PAPER RUN IS ON (<c>U-evidence-breadth-paper</c>): the instruments of the deployments not yet accounted for —
+    /// running, suspended, or ended with an operation or a close still owed — distinct, in order. What the forward collector records
+    /// beside the Settings pair, so each deployed pair has its minutes. Never throws: an unreadable ledger answers none.
+    /// </summary>
+    public IReadOnlyList<string> DeployedPairs()
+    {
+        try
+        {
+            return [.. _deployments.All(DeploymentsLookedAt).Where(HoldsItsSlot).Select(d => d.Symbol)
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "deployed_pairs_not_read", "warn", ex: ex);
+            return [];
+        }
+    }
 
     /// <summary>How many deployments a sweep looks at. The ledger is small; this is a bound, not a filter.</summary>
     const int DeploymentsLookedAt = 200;
@@ -1323,10 +1366,19 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // is not PAPER, and starting an experiment under one would be the software guessing.
         if (Policy.Mode != TradingMode.PAPER) return 0;
         if (ClosureAccountId is not { Length: > 0 } account) return 0;
-        if (_envelopes.Standing(Connector.Id, account, now) is not { } envelope) return 0;
 
-        // ON THIS PLATFORM, ACCOUNT AND INSTRUMENT, WHICHEVER GRANT A RUN WAS STARTED UNDER. One envelope stands on
-        // an account at a time, so these are this envelope's runs plus what an earlier grant left there: an END
+        // EACH PAIR'S ENVELOPE ITS OWN SLOTS (U-evidence-breadth-paper): a run started for one pair never uses another pair's room.
+        var started = 0;
+        foreach (var envelope in _envelopes.StandingOn(Connector.Id, account, now))
+            started += StartPaperDeploymentsIn(envelope, account, now);
+        return started;
+    }
+
+    /// <summary>One pair's turn of <see cref="StartPaperDeploymentsDue"/>: runs started inside <paramref name="envelope"/>, while it has room.</summary>
+    int StartPaperDeploymentsIn(PaperEnvelopeRow envelope, string account, DateTimeOffset now)
+    {
+        // ON THIS PLATFORM, ACCOUNT AND INSTRUMENT, WHICHEVER GRANT A RUN WAS STARTED UNDER. One envelope stands for
+        // a pair on an account at a time, so these are this envelope's runs plus what an earlier grant of the pair left there: an END
         // of a withdrawn grant still owing its close is a position nobody has closed, and a run of the new grant
         // started over it is the replacement that waits for a flat end.
         var occupied = _deployments.OnInstrument(Connector.Id, account, envelope.Symbol).Count(HoldsItsSlot);

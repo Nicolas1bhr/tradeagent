@@ -95,43 +95,50 @@ public class BoardReadersTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE FOUNDING ENVELOPE IS THE APP'S AND ONLY ON THE PAPER VENUE (item 10): on <c>paper</c> / <c>PAPER-1</c>, one standing
-    /// envelope with the founding terms — BTCUSDT, at most 0.05 and 5,000 of notional, one deployment, no end date — whose reason
-    /// and Activity line name the founding policy and never the owner; written once, and not again after it is withdrawn. On the
-    /// simulator, on another venue holding an account of the same name, and on a "paper" venue whose account is not provably a
-    /// simulation, none. RED before item 10: no envelope was granted by anyone but the owner.
+    /// THE FOUNDING ENVELOPES ARE THE APP'S AND ONLY ON THE PAPER VENUE (item 10; one per pair since <c>U-evidence-breadth-paper</c>): on
+    /// <c>paper</c> / <c>PAPER-1</c>, one standing envelope PER PAIR under evidence with that pair's founding terms — BTC, ETH, SOL, BNB and
+    /// XRP against USDT, each at most 5,000 of notional with its own quantity ceiling, one deployment, no end date — whose reason and
+    /// Activity line name the founding policy and never the owner; written once, and not again after it is withdrawn, and withdrawing one
+    /// pair's leaves every other pair's standing. On the simulator, on another venue holding an account of the same name, and on a "paper"
+    /// venue whose account is not provably a simulation, none. RED before item 10: no envelope was granted by anyone but the owner.
     /// </summary>
     [Fact]
     public async Task The_founding_envelope_is_the_apps_and_only_on_the_paper_venue()
     {
-        var terms = BoardFounding.V1.PaperEnvelope!;
-
-        // ON THE APP'S OWN PAPER VENUE AND ACCOUNT: one, with the founding terms, the app's.
+        // ON THE APP'S OWN PAPER VENUE AND ACCOUNT: one per pair, each with its pair's founding terms, the app's.
         var (gw, db) = await Gateway(BoardFounding.PaperVenue, BoardFounding.PaperAccount, simulated: true);
         await using (gw)
         using (db)
         {
-            var standing = gw.Envelopes.All().Where(e => e.StandsAt(DateTimeOffset.UtcNow)).ToList();
+            var standing = gw.Envelopes.All().Where(e => e.StandsAt(DateTimeOffset.UtcNow)).OrderBy(e => e.Symbol, StringComparer.Ordinal).ToList();
             foreach (var e in standing) log.WriteLine($"standing: {e.ConnectorId}/{e.AccountId} {e.Symbol} {e.MaxQuantity} {e.MaxNotional} ×{e.MaxDeployments} until {e.ExpiresAt:O} — {e.Reason}");
-            var envelope = Assert.Single(standing);
-            Assert.Equal((terms.Connector, terms.Account, terms.Instrument, terms.MaxQuantity, (decimal?)terms.MaxNotional, terms.Deployments),
-                (envelope.ConnectorId, envelope.AccountId, envelope.Symbol, envelope.MaxQuantity, envelope.MaxNotional, envelope.MaxDeployments));
-            Assert.Equal(DateTimeOffset.MaxValue.UtcDateTime, envelope.ExpiresAt.UtcDateTime);
-            Assert.Equal("granted by the app under the security board's founding policy, version 1", envelope.Reason);
-            Assert.DoesNotContain("owner", envelope.Reason, StringComparison.OrdinalIgnoreCase);
-            var said = Assert.Single(new LogStore(db).RecentActivity(200).Select(a => a.Text), t => t.Contains("founding policy", StringComparison.Ordinal));
-            log.WriteLine($"activity: {said}");
-            Assert.DoesNotContain("You ", said, StringComparison.Ordinal);
-            Assert.DoesNotContain("you granted", said, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(BoardFounding.V1.PaperEnvelopes.Keys.Order(StringComparer.Ordinal), standing.Select(e => e.Symbol));
+            foreach (var envelope in standing)
+            {
+                var terms = BoardFounding.V1.PaperEnvelopeFor(envelope.Symbol)!;
+                Assert.Equal((terms.Connector, terms.Account, terms.Instrument, terms.MaxQuantity, (decimal?)terms.MaxNotional, terms.Deployments),
+                    (envelope.ConnectorId, envelope.AccountId, envelope.Symbol, envelope.MaxQuantity, envelope.MaxNotional, envelope.MaxDeployments));
+                Assert.Equal(DateTimeOffset.MaxValue.UtcDateTime, envelope.ExpiresAt.UtcDateTime);
+                Assert.Equal("granted by the app under the security board's founding policy, version 1", envelope.Reason);
+                Assert.DoesNotContain("owner", envelope.Reason, StringComparison.OrdinalIgnoreCase);
+            }
+            var said = new LogStore(db).RecentActivity(200).Select(a => a.Text).Where(t => t.Contains("founding policy", StringComparison.Ordinal)).ToList();
+            foreach (var t in said) log.WriteLine($"activity: {t}");
+            Assert.Equal(standing.Count, said.Count);
+            Assert.All(said, t => Assert.DoesNotContain("You ", t, StringComparison.Ordinal));
+            Assert.All(said, t => Assert.DoesNotContain("you granted", t, StringComparison.OrdinalIgnoreCase));
 
-            // ONCE: the next pass grants nothing more, and the owner's withdrawal holds — the next pass does not undo it.
+            // ONCE: the next pass grants nothing more, and the owner's withdrawal of one pair's holds — the next pass does not undo it,
+            // and every other pair's stands on.
             await gw.RefreshHealthAsync();
-            Assert.Single(gw.Envelopes.All());
-            Assert.True(gw.WithdrawPaperEnvelope(envelope.Id).Ok);
+            Assert.Equal(standing.Count, gw.Envelopes.All().Count);
+            var btc = Assert.Single(standing, e => e.Symbol == "BTCUSDT");
+            Assert.True(gw.WithdrawPaperEnvelope(btc.Id).Ok);
             await gw.RefreshHealthAsync();
             await gw.RefreshHealthAsync();
-            Assert.Single(gw.Envelopes.All());
-            Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow));
+            Assert.Equal(standing.Count, gw.Envelopes.All().Count);
+            Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow) && e.Symbol == "BTCUSDT");
+            Assert.Equal(standing.Count - 1, gw.Envelopes.All().Count(e => e.StandsAt(DateTimeOffset.UtcNow)));
         }
 
         // ON THE SIMULATOR, ON ANOTHER VENUE WITH AN ACCOUNT OF THE SAME NAME, AND ON A PAPER VENUE THAT CANNOT PROVE ITS ACCOUNT: none.
@@ -155,7 +162,7 @@ public class BoardReadersTests(ITestOutputHelper log)
     /// <summary>
     /// TWO HEALTH PASSES AT ONCE GRANT THE FOUNDING ENVELOPE ONCE (fix pass 1 of <c>U-board-a2</c>, the review's P2 on item 10): two
     /// passes on the paper venue, held together just after the read that found no envelope, on a clock that moves between them —
-    /// so two grants would hash to two ids — leave exactly one envelope, and the owner's one withdrawal leaves none standing. RED
+    /// so two grants would hash to two ids — leave exactly one envelope per pair, and the owner's withdrawals leave none standing. RED
     /// before the fix: the read and the write were two transactions, both passes found none, and two envelopes were granted.
     /// </summary>
     [Fact]
@@ -181,8 +188,9 @@ public class BoardReadersTests(ITestOutputHelper log)
         var all = gw.Envelopes.All();
         foreach (var e in all) log.WriteLine($"envelope {e.Id[..12]} granted {e.GrantedAt:O} — {e.Reason}");
         log.WriteLine($"passes that met after the empty read: {metThere}");
-        var envelope = Assert.Single(all);
-        Assert.True(gw.WithdrawPaperEnvelope(envelope.Id).Ok);
+        // ONE PER PAIR, NEVER TWO (U-evidence-breadth-paper): each pair's look and grant are one write of their own.
+        Assert.Equal(BoardFounding.V1.PaperEnvelopes.Keys.Order(StringComparer.Ordinal), all.Select(e => e.Symbol).Order(StringComparer.Ordinal));
+        foreach (var envelope in all) Assert.True(gw.WithdrawPaperEnvelope(envelope.Id).Ok);
         Assert.DoesNotContain(gw.Envelopes.All(), e => e.StandsAt(clock.GetUtcNow()));
     }
 

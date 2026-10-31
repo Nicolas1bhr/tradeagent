@@ -327,8 +327,8 @@ sealed class BoardPage
         "risk.instrument_allowlist" => value == "none" ? "none — " + Labels.NoInstrumentAllowedHere : value,
         "plan_day_total" => $"{value} a day, counted at list price — not money",
         "role_shares" => value == "none" ? "none — each role an equal share" : value,
-        "paper_envelope" => value == "none" ? "none — TradeAgent starts no paper experiment of its own" : value,
-        "paper_envelope.days" => value == "none" ? "no end date" : $"{value} days",
+        "paper_envelopes" => value == "none" ? "none — TradeAgent starts no paper experiment of its own" : value,
+        _ when Labels.EnvelopeTermOf(words.Path) is (_, "days") => value == "none" ? "no end date" : $"{value} days",
         _ => words.Unit is { } unit ? $"{value} {unit}" : value
     };
 

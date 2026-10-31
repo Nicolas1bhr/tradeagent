@@ -1,3 +1,4 @@
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core.Board;
@@ -8,17 +9,50 @@ namespace TradeAgent.Core.Board;
 /// basis <see cref="BoardBasis.Founding"/> — never attributed to the owner, and never written from what an older settings row held.
 ///
 /// <para><b>The values are the build's current defaults</b> (<c>Core/Trading.cs</c>; a test holds them equal to the settings'
-/// own while those fields still live there). Where today has no default — the instrument allowlist and the standing paper envelope
-/// — the values are the ones the orchestrator ruled on 2026-10-23 (R24 § 4.5, Q3): the values the owner chose for M0 attempt 4's
-/// paper loop, so the next attempt stays comparable. They are the APP'S founding values, decided by <c>app</c>, never attributed to
-/// him: <c>BTCUSDT</c> alone; one standing envelope on the app's own paper venue only (<c>paper</c>, <c>PAPER-1</c>), each
-/// deployment at most 0.05 BTC AND at most 5,000 USDT of notional — the notional cap is the one that binds whenever BTC's price
-/// makes 0.05 BTC worth more than 5,000 USDT — the build's one deployment per envelope, and no expiry while no board seat is active
-/// (the first active board sets its life). Nothing here authorises anything live.</para>
+/// own while those fields still live there). Where today has no default — the instrument allowlist and the standing paper envelopes
+/// — the values are the orchestrator's rulings (R24 § 4.5, Q3, 2026-10-23; widened to every pair under evidence by R25 D11,
+/// 2026-10-31, decided on the owner's behalf and his to overrule). They are the APP'S founding values, decided by <c>app</c>, never
+/// attributed to him: the allowlist <c>BTCUSDT</c> alone off the app's own paper venues; and on the app's own paper venue only
+/// (<c>paper</c>, <c>PAPER-1</c>) ONE standing envelope PER PAIR set up under evidence (<see cref="EvidenceDefaults.Pairs"/>: BTC,
+/// ETH, SOL, BNB and XRP against USDT), each at most 5,000 USDT of notional in all and THREE deployments (D11 amended the same day:
+/// <see cref="PaperDeployments"/>), no expiry while no board seat is active (the first active board sets its life), with a quantity
+/// ceiling per pair set so the NOTIONAL is the ceiling that binds (<see cref="PaperPairs"/>). Nothing here authorises anything live.</para>
 /// </summary>
 public static class BoardFounding
 {
-    /// <summary>The founding policy, version 1.</summary>
+    /// <summary>
+    /// Each pair's founding notional ceiling, in USDT (R24 Q3; R25 D11): the TOTAL its runs may hold together — each run is allocated
+    /// its share, the ceiling divided by <see cref="PaperDeployments"/> rounded down (<see cref="Db.PaperEnvelopeRow.ShareOf"/>).
+    /// </summary>
+    public const decimal PaperNotional = 5_000m;
+
+    /// <summary>
+    /// EACH PAIR'S FOUNDING DEPLOYMENTS: THREE (R25 D11 as amended by the orchestrator on the owner's behalf, 2026-10-31). The
+    /// inconclusive path into paper may hold a third of an envelope's slots, rounded down, none below three
+    /// (<see cref="Strategy.Inconclusive.Slots"/>): with one deployment that third is zero and no inconclusive version could ever be
+    /// observed forward, while every verdict under today's holdout defaults is inconclusive (R27). Three gives each pair one
+    /// inconclusive slot beside two favourable ones, inside the same 5,000 USDT.
+    /// </summary>
+    public const int PaperDeployments = 3;
+
+    /// <summary>
+    /// EACH PAIR'S FOUNDING QUANTITY CEILING, SET SO THE NOTIONAL BINDS (R25 D11): <see cref="PaperNotional"/> divided by a floor
+    /// price at about half the pair's 2026 level — BTC 50,000, ETH 2,000, SOL 100, BNB 500, XRP 1 USDT. Above its floor a pair's
+    /// 5,000 USDT is reached first, so the notional is what binds; below it the quantity binds, at LESS than 5,000 — so neither
+    /// ceiling can ever let a pair's runs hold more than 5,000 USDT together (each run's share is both ceilings divided by three, so
+    /// the same holds per run). The pairs are exactly the ones set up under evidence (a test
+    /// holds them equal to <see cref="EvidenceDefaults.Pairs"/>).
+    /// </summary>
+    public static IReadOnlyList<(string Instrument, decimal MaxQuantity)> PaperPairs { get; } =
+    [
+        ("BTCUSDT", 0.1m),
+        ("ETHUSDT", 2.5m),
+        ("SOLUSDT", 50m),
+        ("BNBUSDT", 10m),
+        ("XRPUSDT", 5_000m)
+    ];
+
+    /// <summary>The founding policy, version 1. (Declared after <see cref="PaperPairs"/>: static fields initialise in order.)</summary>
     public static BoardPolicy V1 { get; } = new()
     {
         Mode = TradingMode.PAPER,
@@ -46,9 +80,11 @@ public static class BoardFounding
         ReviewMinutes = 30,
         HeadCeilingHours = 24,
         RewakeFloorMinutes = new Dictionary<string, int>(RewakeFloors.DefaultMinutes, StringComparer.Ordinal),
-        PaperEnvelope = new PaperEnvelopeTerms(PaperVenue, PaperAccount, PaperInstrument, MaxQuantity: 0.05m, MaxNotional: 5_000m,
-            Deployments: 1, Days: null)
+        PaperEnvelopes = PaperPairs.ToDictionary(p => p.Instrument,
+            p => new PaperEnvelopeTerms(PaperVenue, PaperAccount, p.Instrument, p.MaxQuantity, PaperNotional, PaperDeployments, Days: null),
+            StringComparer.Ordinal)
     };
+
 
     /// <summary>The app's own paper venue and its one account (<c>PaperConnector.ConnectorId</c>, <c>TheAccount</c>; a test holds them equal).</summary>
     public const string PaperVenue = "paper", PaperAccount = "PAPER-1";
@@ -61,14 +97,16 @@ public static class BoardFounding
     /// </summary>
     public static readonly IReadOnlyList<string> AppPaperVenues = ["fake", PaperVenue];
 
-    /// <summary>The one instrument the founding policy allows: the one the paper venue lists and the tape records.</summary>
+    /// <summary>The one instrument the founding ALLOWLIST names: what the founding policy allows off the app's own paper venues.</summary>
     public const string PaperInstrument = "BTCUSDT";
 
     /// <summary>Where the founding paper values come from, as the founding event records it — the app's decision, citing its source.</summary>
     public const string PaperValuesSource =
-        "the allowlist and the paper envelope are the values the owner chose for M0 attempt 4's paper loop, set here by the app as its "
-        + "founding values: BTCUSDT; each deployment at most 0.05 BTC and at most 5,000 USDT notional, the notional cap binding whenever "
-        + "BTC's price makes 0.05 BTC worth more; one deployment; no expiry while no board seat is active";
+        "the allowlist is the value the owner chose for M0 attempt 4's paper loop (BTCUSDT), and the paper envelopes the orchestrator's "
+        + "ruling on his behalf (R25 D11), set here by the app as its founding values: one standing envelope per pair under evidence — "
+        + "BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000 — each pair at most 5,000 USDT notional in all, the "
+        + "notional cap binding above each pair's floor price; three deployments per pair, each its third (D11 amended: one inconclusive "
+        + "slot beside two favourable); no expiry while no board seat is active";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family

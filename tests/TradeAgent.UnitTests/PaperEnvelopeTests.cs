@@ -120,14 +120,15 @@ public class PaperEnvelopeTests
         var granted = await gw.GrantPaperEnvelopeAsync("ES", 2m, null, At.AddDays(30), At);
         Assert.True(granted.Ok, granted.Why);
 
-        Assert.NotNull(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, At.AddDays(1)));
-        Assert.Null(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, At.AddDays(31)));
-        Assert.Null(gw.Envelopes.Standing(conn.Id, "another-account", At.AddDays(1)));
-        Assert.Null(gw.Envelopes.Standing("another-platform", conn.Broker.AccountId, At.AddDays(1)));
+        Assert.NotNull(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, "ES", At.AddDays(1)));
+        Assert.Null(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, "ES", At.AddDays(31)));
+        Assert.Null(gw.Envelopes.Standing(conn.Id, "another-account", "ES", At.AddDays(1)));
+        Assert.Null(gw.Envelopes.Standing("another-platform", conn.Broker.AccountId, "ES", At.AddDays(1)));
+        Assert.Null(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, "NQ", At.AddDays(1)));
 
         var withdrawn = gw.WithdrawPaperEnvelope(granted.Envelope!.Id, At.AddDays(2));
         Assert.True(withdrawn.Ok, withdrawn.Why);
-        Assert.Null(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, At.AddDays(3)));
+        Assert.Null(gw.Envelopes.Standing(conn.Id, conn.Broker.AccountId, "ES", At.AddDays(3)));
 
         gw.WithdrawPaperEnvelope(granted.Envelope.Id, At.AddDays(9));
         Assert.Equal(At.AddDays(2), gw.Envelopes.ById(granted.Envelope.Id)!.WithdrawnAt);

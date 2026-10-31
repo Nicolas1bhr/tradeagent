@@ -1169,18 +1169,22 @@ sealed class OwnerPage
     }
 
     /// <summary>
-    /// The envelope the withdrawal press is about: the one standing on the platform and account connected now, or null. A ledger this
-    /// build cannot read answers null, so the press does nothing rather than guessing.
+    /// The envelopes the withdrawal press is about: every pair's standing on the platform and account connected now (one per pair,
+    /// <c>U-evidence-breadth-paper</c>), empty for none. A ledger this build cannot read answers empty, so the press does nothing
+    /// rather than guessing.
     /// </summary>
-    string? StandingEnvelopeId()
+    IReadOnlyList<string> StandingEnvelopeIds()
     {
         try
         {
-            return _host.Gateway.Envelopes.Standing(
-                _host.Gateway.Connector.Id, _host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow)?.Id;
+            return [.. _host.Gateway.Envelopes.StandingOn(
+                _host.Gateway.Connector.Id, _host.Gateway.ClosureAccountId, DateTimeOffset.UtcNow).Select(e => e.Id)];
         }
-        catch (Exception) { return null; }
+        catch (Exception) { return []; }
     }
+
+    /// <summary>The first of <see cref="StandingEnvelopeIds"/>, or null: what arms the press — something stands to withdraw.</summary>
+    string? StandingEnvelopeId() => StandingEnvelopeIds().FirstOrDefault();
 
     /// <summary>The run the stop press is about: the one deployment on the platform and account connected now that is not over, or null.</summary>
     string? RunningDeploymentId()
@@ -1215,13 +1219,31 @@ sealed class OwnerPage
         ShowEnvelopes();
     }
 
-    void ApplyEnvelopeWithdrawal(string id)
+    /// <summary>
+    /// THE OWNER'S WITHDRAWAL, OVER EVERY PAIR (<c>U-evidence-breadth-paper</c>): it only ever takes authority away, so the one press
+    /// withdraws every pair's standing envelope on the connected account — read again at the press — and says each outcome.
+    /// </summary>
+    void ApplyEnvelopeWithdrawal(string _)
     {
-        var result = _host.Gateway.WithdrawPaperEnvelope(id);
-        _envelopeNote.Text = result.Why;
-        _envelopeNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+        var results = StandingEnvelopeIds().Select(id => _host.Gateway.WithdrawPaperEnvelope(id)).ToList();
+        _envelopeNote.Text = results.Count == 0 ? "no paper envelope stands on this account, so nothing was withdrawn."
+            : string.Join(" ", results.Select(r => r.Why));
+        _envelopeNote.Foreground = results.Count > 0 && results.All(r => r.Ok) ? Theme.Positive : Theme.Caution;
         _envelopeNote.IsVisible = true;
         ShowEnvelopes();
+    }
+
+    /// <summary>One pair's envelope as the owner reads it: its pair, account and platform, both ceilings, its runs and their use, and its end.</summary>
+    internal static string EnvelopeLine(PaperEnvelopeRow e, IReadOnlyList<TradingGateway.DeploymentReading> outstanding)
+    {
+        var mine = outstanding.Where(d => d.EnvelopeId == e.Id || (d.Symbol == e.Symbol && d.ConnectorId == e.ConnectorId && d.AccountId == e.AccountId))
+            .ToList();
+        return $"{e.Symbol} on {e.AccountId} at {e.ConnectorId}: up to {AllocationRow.Num(e.MaxQuantity)}"
+               + (e.MaxNotional is { } n ? $" and {Labels.Money(n, e.Currency)}" : "")
+               + $", {e.MaxDeployments} run{(e.MaxDeployments == 1 ? "" : "s")} at most — in use: "
+               + (mine.Count == 0 ? "none" : $"{mine.Count} ({string.Join(", ", mine.Select(d => d.VersionId[..Math.Min(12, d.VersionId.Length)]))})")
+               + (e.ExpiresAt == DateTimeOffset.MaxValue ? ", no end date" : $", until {e.ExpiresAt:yyyy-MM-dd}")
+               + " — no capital, no live authority";
     }
 
     /// <summary>
@@ -1232,16 +1254,18 @@ sealed class OwnerPage
     {
         try
         {
+            var now = DateTimeOffset.UtcNow;
             var standing = _host.Gateway.Envelopes.All()
-                .Where(e => e.StandsAt(DateTimeOffset.UtcNow))
+                .Where(e => e.StandsAt(now))
+                .OrderBy(e => e.Symbol, StringComparer.Ordinal)
                 .ToList();
 
+            // EACH PAIR'S ENVELOPE AND ITS USE (U-evidence-breadth-paper): the pair's ceilings, then how many of its runs are taken
+            // and by which versions — read from the deployment ledger, the runs not yet accounted for included.
+            var runs = _host.Gateway.DeploymentReadings().Where(d => d.Outstanding).ToList();
             _envelopeValue.Text = standing.Count == 0
                 ? "nothing — TradeAgent may start no paper experiments of its own"
-                : string.Join("; ", standing.Select(e =>
-                    $"{e.Symbol} on {e.AccountId} at {e.ConnectorId}, up to "
-                    + $"{AllocationRow.Num(e.MaxQuantity)}, until {e.ExpiresAt:yyyy-MM-dd} — "
-                    + "no capital, no live authority"));
+                : string.Join("; ", standing.Select(e => EnvelopeLine(e, runs)));
 
             _withdrawEnvelope.IsEnabled = standing.Count > 0;
         }

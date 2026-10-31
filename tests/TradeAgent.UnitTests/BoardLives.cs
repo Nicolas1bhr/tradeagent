@@ -70,7 +70,13 @@ static class BoardLives
 
     /// <summary>The policy's standing paper envelope on the life's own simulated venue and account (<c>fake</c>, <c>SIM-001</c>).</summary>
     public static BoardPolicy EnvelopeHere(BoardPolicy p) =>
-        p with { PaperEnvelope = new PaperEnvelopeTerms(Connectors.Fake.FakeConnector.ConnectorId, "SIM-001", "BTCUSDT", 0.05m, 5_000m, 1, null) };
+        p with
+        {
+            PaperEnvelopes = new Dictionary<string, PaperEnvelopeTerms>(StringComparer.Ordinal)
+            {
+                ["BTCUSDT"] = new(Connectors.Fake.FakeConnector.ConnectorId, "SIM-001", "BTCUSDT", 0.1m, 5_000m, 1, null)
+            }
+        };
 
     /// <summary>
     /// NO REAL MODEL RAN IN <paramref name="life"/> (<c>U-board-b2</c> item 7): its manifest is a puppet, and every launch the ledger recorded

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -101,9 +102,16 @@ public class BoardTests(ITestOutputHelper log)
         var defaults = new TradeAgentSettings();
         Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(new RiskPolicy(), BoardFounding.V1.Risk));
         Assert.Equal(["BTCUSDT"], BoardFounding.V1.Risk.InstrumentAllowlist);
-        Assert.Equal(new PaperEnvelopeTerms(TradeAgent.Connectors.Paper.PaperConnector.ConnectorId, TradeAgent.Connectors.Paper.PaperConnector.TheAccount,
-            "BTCUSDT", 0.05m, 5_000m, TradingGateway.PaperDeploymentsPerEnvelope, null), BoardFounding.V1.PaperEnvelope);
-        Assert.Contains("0.05 BTC", Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'"), StringComparison.Ordinal);
+        // ONE ENVELOPE PER PAIR UNDER EVIDENCE (R25 D11 as amended; U-evidence-breadth-paper): 5,000 USDT and three deployments each, on the paper
+        // venue only, no expiry — and each pair's quantity ceiling worth at least 5,000 USDT at its floor price, so the notional binds.
+        Assert.Equal(EvidenceDefaults.Pairs.Order(StringComparer.Ordinal), BoardFounding.V1.PaperEnvelopes.Keys.Order(StringComparer.Ordinal));
+        foreach (var (pair, quantity) in BoardFounding.PaperPairs)
+            Assert.Equal(new PaperEnvelopeTerms(TradeAgent.Connectors.Paper.PaperConnector.ConnectorId, TradeAgent.Connectors.Paper.PaperConnector.TheAccount,
+                pair, quantity, 5_000m, 3, null), BoardFounding.V1.PaperEnvelopeFor(pair));
+        Assert.Equal((0.1m, 2.5m, 50m, 10m, 5_000m), (BoardFounding.PaperPairs[0].MaxQuantity, BoardFounding.PaperPairs[1].MaxQuantity,
+            BoardFounding.PaperPairs[2].MaxQuantity, BoardFounding.PaperPairs[3].MaxQuantity, BoardFounding.PaperPairs[4].MaxQuantity));
+        Assert.Contains("BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000",
+            Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'"), StringComparison.Ordinal);
         // THE METER'S AND THE LOOP'S VALUES are the ones the settings shipped until U-board-a2 moved them here (item 9): the plan's 40,
         // a 30-minute review, 24 hours a head, one lane each, the shipped allowance and the shipped re-wake floors.
         Assert.Equal((40m, 30, 24, 1, 1, 1, TurnAllowance.Default.InputTokens, TurnAllowance.Default.OutputTokens),

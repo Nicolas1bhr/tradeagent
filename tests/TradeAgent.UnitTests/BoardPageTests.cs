@@ -22,7 +22,10 @@ public class BoardPageTests
     /// <summary>A policy whose standing paper envelope is set with an end, so its seven terms are flattened too.</summary>
     static BoardPolicy WithEnvelope() => BoardFounding.V1 with
     {
-        PaperEnvelope = new PaperEnvelopeTerms("paper", "acct", "BTCUSDT", 1m, 100m, 2, 30)
+        PaperEnvelopes = new Dictionary<string, PaperEnvelopeTerms>(StringComparer.Ordinal)
+        {
+            ["BTCUSDT"] = new("paper", "acct", "BTCUSDT", 1m, 100m, 2, 30)
+        }
     };
 
     static IEnumerable<string> PathsOf(BoardPolicy policy) =>
@@ -36,11 +39,12 @@ public class BoardPageTests
     [Fact]
     public void Every_policy_key_has_a_plain_label()
     {
-        var paths = PathsOf(BoardFounding.V1).Concat(PathsOf(WithEnvelope())).Concat(PathsOf(BoardFounding.V1 with { PaperEnvelope = null }))
+        var paths = PathsOf(BoardFounding.V1).Concat(PathsOf(WithEnvelope())).Concat(PathsOf(BoardFounding.V1 with { PaperEnvelopes = new Dictionary<string, PaperEnvelopeTerms>() }))
             .Distinct().ToList();
         Assert.Contains("mode", paths);
         Assert.Contains("risk.max_order_quantity", paths);
-        Assert.Contains("paper_envelope.instrument", paths);
+        Assert.Contains("paper_envelopes", paths);
+        foreach (var (pair, _) in BoardFounding.PaperPairs) Assert.Contains($"paper_envelopes.{pair}.max_notional", paths);
 
         foreach (var path in paths)
         {

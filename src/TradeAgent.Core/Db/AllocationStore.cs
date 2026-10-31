@@ -537,6 +537,17 @@ public sealed class Allocations(Database db)
                 + $"{envelope.ConnectorId} and this allocation names {account} at {connector}, so "
                 + "nothing was written.", null);
 
+        // ITS OWN PAIR'S ENVELOPE ONLY (U-evidence-breadth-paper): the instrument the version's frozen program trades — re-parsed
+        // from its recorded source inside this write, never a column somebody restated — must be the instrument this envelope was
+        // granted for. One pair's grant is never another pair's room: a version trading ETHUSDT is not put in BTCUSDT's envelope,
+        // whatever the sweep that asked believed. A version whose source cannot be read is refused (refuse, never guess).
+        if (InstrumentOf(allocation.VersionId) is not { } instrument
+            || !string.Equals(instrument, envelope.Symbol, StringComparison.Ordinal))
+            return new AllocationResult(false,
+                $"version {Short(allocation.VersionId)} trades {InstrumentOf(allocation.VersionId) ?? "an instrument its source does not say"} "
+                + $"and the paper envelope {Short(envelopeId)} was granted for {envelope.Symbol}, so nothing was written: a version is "
+                + "put on paper only inside the envelope of the pair it trades.", null);
+
         if (allocation.MaxQuantity < 0m || allocation.MaxQuantity > envelope.MaxQuantity)
             return new AllocationResult(false,
                 $"the paper envelope on account {envelope.AccountId} allows "
@@ -711,6 +722,21 @@ public sealed class Allocations(Database db)
                 : null,
             ReadAt = now
         };
+    }
+
+    /// <summary>
+    /// THE INSTRUMENT A VERSION'S FROZEN PROGRAM TRADES, re-parsed from its recorded source, or null when the row is gone or no
+    /// longer parses — which refuses the paper allocation rather than guessing at its pair.
+    /// </summary>
+    string? InstrumentOf(string versionId)
+    {
+        try
+        {
+            return new StrategyStore(db).VersionById(versionId) is { } version
+                ? Strategy.StrategyParser.Parse(version.Source).Program?.Instrument
+                : null;
+        }
+        catch (Exception) { return null; }
     }
 
     void Insert(AllocationRow row)
