@@ -105,6 +105,11 @@ sealed class DashboardPage
     readonly Button _agentButton;
 
     readonly PerformanceCard _performance = new();
+
+    /// <summary>The organisation at a glance, compact (<c>U-ui-glance</c>).</summary>
+    readonly GlanceCard _glance;
+
+    internal GlanceCard Glance => _glance;
     readonly SeatSignInCard _signIn;
 
     /// <summary>The "AI sign-in" card on this page (<c>U-seat-signin</c>), for a test to read and press.</summary>
@@ -274,10 +279,14 @@ sealed class DashboardPage
                 r => r.Margin = new Thickness(0, Theme.S2, 0, 0)),
             Ui.With(_signIn.SignedIn, c => c.Margin = new Thickness(0, Theme.S4, 0, 0)));
 
+        // THE ORGANISATION AT A GLANCE, COMPACT (U-ui-glance): built once like the rest, its lines rewritten on the tick.
+        _glance = new GlanceCard(() => GlanceRead.From(_host, DateTimeOffset.UtcNow), compact: true);
+
         var left = Ui.Col(Theme.S6,
             _unconfirmedCard,
             _signIn.Root,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
+            _glance.Root,
             Ui.Section("The AI's own work", aiCard),
             _performance.Root);
 
@@ -310,6 +319,7 @@ sealed class DashboardPage
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
         RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
+        _glance.Update();
         _signIn.Update();
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a

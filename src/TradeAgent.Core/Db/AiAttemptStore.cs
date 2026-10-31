@@ -289,6 +289,7 @@ public sealed record AiAdmissionRule
         Reserved = day.Reserved,
         RoleSpent = mine.Spent,
         RoleReserved = mine.Reserved,
+        RoleTurns = mine.Turns,
         NextTurnReservation = Reservation,
         Cap = CapOf(ceiling),
         // A ROLE'S OWN CAP IS A SLICE OF THE MONEY CAP (perception's budget): under the plan's ceiling only the day's limit binds.

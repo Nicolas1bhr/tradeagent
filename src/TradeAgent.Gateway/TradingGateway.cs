@@ -1137,6 +1137,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
         public bool Outstanding =>
             !string.Equals(State, DeploymentState.Ended, StringComparison.Ordinal)
             || Unresolved > 0 || CloseOwed is not null;
+
+        /// <summary>
+        /// THE RUN'S OWN BOOK (<c>U-ui-glance</c>), the same walk <see cref="Line"/> says in words — for a surface that states its result
+        /// apart (a paper run's result is a simulation, and says so); null where none was read.
+        /// </summary>
+        public RunBook? Book { get; init; }
     }
 
     /// <summary>
@@ -1161,12 +1167,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
             var ops = _deployments.OpsOf(d.Id);
             var unresolved = ops.Count(o => !o.IsSettled);
             var owed = CloseOwedBecause(d, ops);
+            var book = _deployments.BookOf(d, ops, ledger);
             return new DeploymentReading(
                 d.Id, d.VersionId, d.AllocationId, d.EnvelopeId, d.ConnectorId, d.AccountId, d.Symbol,
                 d.Mode, d.State, d.StartedAt, d.CursorOpenTime, d.SuspendedReason, d.EndedAt,
                 d.EndReason, ops.Count, unresolved, owed,
-                DeploymentLine(d, ops.Count, unresolved, owed, _deployments.BookOf(d, ops, ledger),
-                    ClosedOutsideBy(d, ops)));
+                DeploymentLine(d, ops.Count, unresolved, owed, book, ClosedOutsideBy(d, ops))) { Book = book };
         })];
     }
 

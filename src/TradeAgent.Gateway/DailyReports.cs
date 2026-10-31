@@ -1184,7 +1184,8 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// capacity and say so; a role nobody has read carries the money's figures and the class <c>unknown</c>, both ceilings.
     /// </summary>
     static ReportRole RoleOf(AiSpendToday s) => new(
-        CouncilRoles.Title(s.Role!), s.Model, s.Turns,
+        // THE ROLE'S OWN TURNS beside the role's own spend (U-ui-glance): the day's total stood beside each director's figure.
+        CouncilRoles.Title(s.Role!), s.Model, s.RoleTurns,
         s.CanPrice ? s.RoleSpent : null, s.RoleReserved, s.RoleCap, s.Estimated,
         s.PlanReading is null ? BillingClasses.Of(s.Class) : BillingClasses.Unknown);
 

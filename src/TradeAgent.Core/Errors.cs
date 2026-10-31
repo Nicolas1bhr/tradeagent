@@ -938,6 +938,12 @@ public static partial class Labels
     public const string CostsFile = "costs.json";
 
     /// <summary>
+    /// <see cref="CostsFile"/> AS THE OWNER READS IT (<c>U-ui-glance</c>): no page names an internal file — the Dashboard said "costs.json"
+    /// to an owner who never opens a folder. The file keeps its name for the engineer's route (docs/USER-GUIDE.md); the sentences say this.
+    /// </summary>
+    public const string PriceList = "TradeAgent's price list for the AI";
+
+    /// <summary>
     /// WHAT THE OWNER READS WHEN <see cref="RuntimesFile"/> EXISTS AND CANNOT BE PARSED. It is the
     /// <c>Agent runtime</c> health row's detail, the Checks page's row, and the refusal to start the
     /// AI — one sentence in all three, which is why <see cref="Errors"/> quotes this rather than
@@ -968,7 +974,7 @@ public static partial class Labels
     /// told exactly that rather than shown a limit that is holding nothing back.
     /// </summary>
     public static string CostsCouldNotBeRead(string? why = null) =>
-        CostsFile + " could not be read, so TradeAgent cannot say what the AI is costing and cannot "
+        PriceList + " could not be read, so TradeAgent cannot say what the AI is costing and cannot "
         + "hold it to your daily limit." + Because(why);
 
     /// <summary>The same, for <see cref="AtasFile"/>: both ATAS rows and the Checks page.</summary>

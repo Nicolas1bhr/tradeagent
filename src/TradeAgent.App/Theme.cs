@@ -113,6 +113,9 @@ static class Theme
     /// <summary>The width of a box the owner types a short value into: a figure, an id, a key.</summary>
     public const double FieldWidth = 150;
 
+    /// <summary>The label column of the "At a glance" card (<c>U-ui-glance</c>): wide enough for "Paper runs (simulations)" at the small size.</summary>
+    public const double GlanceLabelWidth = 170;
+
     public static readonly CornerRadius RadiusSm = new(6);
     public static readonly CornerRadius Radius = new(10);
     public static readonly CornerRadius RadiusLg = new(14);

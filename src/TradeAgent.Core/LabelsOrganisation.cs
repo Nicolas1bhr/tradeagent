@@ -35,6 +35,13 @@ public static partial class Labels
 
     // ---- Organisation ----------------------------------------------------------------------------
 
+    /// <summary>The "At a glance" card's heading (<c>U-ui-glance</c>), on the Organisation page and, compact, on the Dashboard.</summary>
+    public const string GlanceTitle = "At a glance";
+
+    /// <summary>Under the compact card on the Dashboard: where its details are.</summary>
+    public const string GlanceCompactMore =
+        "The Organisation page has this card with its details: who owes what to whom, today's spend, and each position's next wake.";
+
     public const string OrganisationSubtitle =
         "The organisation as it stands now: its units, the positions in them, and what each position last ran on.";
 

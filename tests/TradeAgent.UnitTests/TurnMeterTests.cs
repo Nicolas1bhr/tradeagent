@@ -518,7 +518,7 @@ public class TurnRecordTests : IDisposable
         var usage = new TurnUsage(17232, 12928, 0, 6, 0, null);
 
         Assert.Null(CostCatalog.Price(usage, "custom").Cost);
-        Assert.Contains(Labels.CostsFile, CostCatalog.Price(usage, "custom").Unpriced);
+        Assert.Contains(Labels.PriceList, CostCatalog.Price(usage, "custom").Unpriced);
         Assert.NotNull(CostCatalog.Price(usage, "probe").Cost);
     }
 
@@ -550,7 +550,7 @@ public class TurnRecordTests : IDisposable
 
             var price = CostCatalog.Price(new TurnUsage(1, 0, 0, 1, 0, "test-model"), "probe");
             Assert.Null(price.Cost);
-            Assert.Contains(Labels.CostsFile, price.Unpriced);
+            Assert.Contains(Labels.PriceList, price.Unpriced);
             Assert.Contains("daily limit", price.Unpriced);
         }
         finally { NoCosts(); }

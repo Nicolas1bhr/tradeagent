@@ -1337,7 +1337,8 @@ So, concretely:
 - **`costs.json`** — the AI keeps working, and TradeAgent stops being able to say what it costs. This
   one is deliberately gentler than the other two, because it only prices work that has already
   happened and stopping the AI over it would be the wrong trade. What it does mean is that your daily
-  spending limit cannot be applied, and the AI card says exactly that. Note that a file which cannot
+  spending limit cannot be applied, and the AI card says exactly that — in words, *"TradeAgent's price
+  list for the AI could not be read"*, since no page names a file (U-ui-glance). Note that a file which cannot
   be read is **not** the same as no file: with no file at all, the prices TradeAgent ships with
   apply and the limit works normally. A broken one is you having said something TradeAgent cannot
   make out, so it stops pricing rather than guessing which half you meant.

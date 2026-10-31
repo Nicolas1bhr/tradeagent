@@ -909,6 +909,21 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
+    /// EACH POSITION'S NEXT WAKE (<c>U-ui-glance</c>): the earliest due instant among its unconsumed events — past for a wake already
+    /// due, future for one queued — by role (a row with no role is the chair's, as <see cref="Queue"/> reads it). A position with no
+    /// unconsumed event is absent: nothing is queued for it. Reads only.
+    /// </summary>
+    public IReadOnlyDictionary<string, DateTimeOffset> NextDueByRole() => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COALESCE(role,$chair), MIN(due_at) FROM mission_event WHERE consumed_at IS NULL GROUP BY COALESCE(role,$chair)",
+            ("$chair", CouncilRoles.Default));
+        using var r = c.ExecuteReader();
+        var next = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        while (r.Read()) next[r.GetString(0)] = Sql.Time(r.GetValue(1));
+        return (IReadOnlyDictionary<string, DateTimeOffset>)next;
+    });
+
+    /// <summary>
     /// Whether a wake of this kind is already queued and untaken. What keeps the scheduled kinds —
     /// the review tick and the day's renewal — to exactly one pending row each: without it every
     /// early wake would leave another review behind it, and a burst of owner messages would buy a

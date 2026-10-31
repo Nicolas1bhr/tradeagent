@@ -599,7 +599,7 @@ public static class DailyReportText
         Kv(b, "next eligible wake", Instant(r.Mission.NextEligibleWake));
         foreach (var role in r.Mission.Roles)
             Kv(b, role.Role, $"model {role.Model ?? Unknown}, "
-                             + $"{role.Turns?.ToString(CultureInfo.InvariantCulture) ?? Unknown} turns");
+                             + (role.Turns is int own ? $"{own.ToString(CultureInfo.InvariantCulture)} {(own == 1 ? "turn" : "turns")} of its own" : $"{Unknown} turns"));
         Gaps(b, r.Mission.Missing);
 
         Section(b, "3. Trading readiness");
