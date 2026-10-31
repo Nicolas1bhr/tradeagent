@@ -1,5 +1,6 @@
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 
 namespace TradeAgent.App;
 
@@ -30,6 +31,10 @@ public static class AtasHome
     public const string ConfirmPaper =
         "Yes — run this TradeAgent on its own paper venue (no money; your ATAS choice is kept for a TradeAgent with ATAS)";
 
+    /// <summary>What the second press says it will do, for an unfinished setup.</summary>
+    public const string ConfirmSetupAgain =
+        "Yes — finish setup in this TradeAgent, which has no ATAS (you choose its platform again)";
+
     /// <summary>
     /// The platform this start builds, from the home's saved choice, or null with <paramref name="refused"/> set: a home whose saved
     /// platform is ATAS, in a build without the adapter, before the owner chose the paper venue for it. Writes nothing.
@@ -40,12 +45,48 @@ public static class AtasHome
         var saved = db.GetKv("connector") ?? Platforms.Connectors.Simulator;
         if (saved != Platforms.Connectors.Atas || atasInThisBuild) return saved;
         if (db.GetKv(StandInKey) == Platforms.Connectors.Paper) return Platforms.Connectors.Paper;
-        refused = new AtasHomeRefusal(UnsettledOnAtas(db));
+        refused = new AtasHomeRefusal(UnsettledOnAtas(db), new OnboardingStore(db).IsComplete());
         return null;
     }
 
     /// <summary>The owner's second press: TradeAgent's paper venue for this build. Writes <see cref="StandInKey"/> and nothing else.</summary>
-    public static void ChoosePaper(Database db) => db.SetKv(StandInKey, Platforms.Connectors.Paper);
+    ///
+    /// <para>An UNFINISHED setup is also sent back to its platform step (<see cref="OnboardingStep.TRADING_PLATFORM_SELECTED"/>): on the
+    /// stand-in its ATAS steps would pass as "not using ATAS", and a build with ATAS would then skip them. The owner chooses this build's
+    /// platform again in setup, and that choice is his.</para>
+    public static void ChoosePaper(Database db)
+    {
+        db.SetKv(StandInKey, Platforms.Connectors.Paper);
+        var setup = new OnboardingStore(db);
+        if (!setup.IsComplete()) setup.Clear(OnboardingStep.TRADING_PLATFORM_SELECTED);
+    }
+
+    /// <summary>
+    /// Where the stand-in holds the ATAS account aside: <c>=</c> followed by the account id (empty when none was chosen) while held;
+    /// absent or empty when nothing is held.
+    /// </summary>
+    public const string HeldAccountKey = "connector.no_atas_held_account";
+
+    /// <summary>
+    /// THE ATAS ACCOUNT, HELD ASIDE ON THE STAND-IN AND HANDED BACK TO ATAS. An account id is issued by one platform and names nothing
+    /// on another, so the first start on the paper stand-in moves the chosen account into <see cref="HeldAccountKey"/> and starts with
+    /// none chosen (the owner chooses paper's on the Settings page; nothing trades until he does). Later stand-in starts keep his paper
+    /// choice. A start on ATAS hands the held account back and empties the key. Called by the start right after the gateway is built.
+    /// </summary>
+    public static void HoldTheAtasAccount(Database db, TradingGateway gateway, string running)
+    {
+        var held = db.GetKv(HeldAccountKey);
+        if (running == Platforms.Connectors.Atas)
+        {
+            if (held is not ['=', .. var id]) return;
+            gateway.Update(s => s.SelectedAccountId = id.Length > 0 ? id : null);
+            db.SetKv(HeldAccountKey, "");
+            return;
+        }
+        if (db.GetKv("connector") != Platforms.Connectors.Atas || held is { Length: > 0 }) return;
+        db.SetKv(HeldAccountKey, "=" + (gateway.Settings.SelectedAccountId ?? ""));
+        gateway.Update(s => s.SelectedAccountId = null);
+    }
 
     /// <summary>Every order TradeAgent sent to ATAS that is not settled: not final, or flagged for reconciliation. Read-only.</summary>
     public static IReadOnlyList<ExecutionRequest> UnsettledOnAtas(Database db) =>
@@ -56,7 +97,7 @@ public static class AtasHome
 /// <summary>
 /// THE START'S REFUSAL OF AN ATAS HOME BY A BUILD WITHOUT THE ADAPTER, and what it found: the orders sent to ATAS that are not settled.
 /// </summary>
-public sealed class AtasHomeRefusal(IReadOnlyList<ExecutionRequest> unsettled)
+public sealed class AtasHomeRefusal(IReadOnlyList<ExecutionRequest> unsettled, bool setupFinished)
 {
     /// <summary>Every order sent to ATAS that is not settled, as recorded.</summary>
     public IReadOnlyList<ExecutionRequest> Unsettled { get; } = unsettled;
@@ -64,6 +105,9 @@ public sealed class AtasHomeRefusal(IReadOnlyList<ExecutionRequest> unsettled)
     /// <summary>Those of them whose outcome is not confirmed: UNKNOWN, mid-question, or flagged. Trading stays paused over these.</summary>
     public int Unconfirmed => Unsettled.Count(r => r.NeedsReconciliation
         || r.State is ExecutionState.UNKNOWN or ExecutionState.RECONCILING or ExecutionState.DISPATCHING);
+
+    /// <summary>Whether the home's setup was finished; an unfinished one is sent back to its platform step by the press.</summary>
+    public bool SetupFinished { get; } = setupFinished;
 
     /// <summary>What the owner reads.</summary>
     public string Message
