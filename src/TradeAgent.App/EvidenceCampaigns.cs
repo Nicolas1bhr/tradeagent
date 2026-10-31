@@ -13,6 +13,36 @@ namespace TradeAgent.App;
 public sealed record EvidenceSetup(bool Ok, string Words, IReadOnlyList<CampaignRow> Campaigns);
 
 /// <summary>
+/// ONE OPEN CAMPAIGN OVER REAL HISTORY AS THE OWNER'S PAGE SHOWS IT (<c>U-evidence-breadth</c> item 4): its pair, the judgements and
+/// research runs it has spent — counted as the budgets count them (<see cref="CampaignStore.JudgementsSpent"/>,
+/// <see cref="CampaignStore.TrialsCharged(long)"/>) — and the fresh holdout armed for it, if any.
+/// </summary>
+public sealed record CampaignStanding(string Pair, CampaignRow Campaign, int Judgements, int Trials, string? Spent,
+    ForwardHoldout? Renewal, string Next)
+{
+    public int JudgementsLeft => Math.Max(0, Campaign.VerdictBudget - Judgements);
+    public int TrialsLeft => Math.Max(0, Campaign.TrialBudget - Trials);
+
+    /// <summary>The line the owner reads: what is left, and — once spent — what the next campaign of this pair waits for and until when.</summary>
+    public string Line(DateTimeOffset now)
+    {
+        var line = $"{Pair}, campaign {Campaign.Id}, held back from {Campaign.HoldoutFrom.UtcDateTime:yyyy-MM-dd} UTC: "
+            + $"{JudgementsLeft:N0} of {Campaign.VerdictBudget:N0} final judgements and {TrialsLeft:N0} of {Campaign.TrialBudget:N0} "
+            + "research runs left.";
+        if (Spent is null) return line;
+        if (Renewal is { Successor: { } next }) return line + $" Its {Spent} are spent; campaign {next} follows it over fresh months.";
+        if (Renewal is { } held)
+        {
+            var days = Math.Max(0, Math.Ceiling((held.Earliest - now).TotalDays));
+            return line + $" Its {Spent} are spent; the next {Pair} campaign waits for fresh bars from "
+                + $"{held.Cutoff.UtcDateTime:yyyy-MM-dd} UTC — at least {CampaignRenewal.MinimumFreshDays} days of them — so it opens no "
+                + $"earlier than {held.Earliest.UtcDateTime:yyyy-MM-dd} ({days:N0} days from now).";
+        }
+        return line + $" Its {Spent} are spent. {Next}";
+    }
+}
+
+/// <summary>
 /// THE DATA, THE HOLDOUT AND THE CAMPAIGN — SET UP IN ONE PRESS AND FOLLOWED BY RULE, UNATTENDED (<c>U-evidence-campaign</c>; R25 D7).
 ///
 /// <para><b>In-process only.</b> It calls the Download press's own code (<see cref="MarketDataService.CollectAsync(string,
@@ -58,6 +88,27 @@ public sealed class EvidenceCampaigns(
             .Where(set => set is not null && EvaluationClass.Or(set.EvaluationClass) == EvaluationClass.Research)
             .Select(set => set!.Pair)
             .Distinct(StringComparer.Ordinal)];
+    }
+
+    /// <summary>
+    /// EVERY OPEN CAMPAIGN OVER REAL HISTORY, ONE PER LINE ON THE OWNER'S PAGE (<c>U-evidence-breadth</c> item 4): by pair, then oldest
+    /// first, each with what it has left and what its renewal waits for. Read off the ledger at each call.
+    /// </summary>
+    public IReadOnlyList<CampaignStanding> Standings()
+    {
+        var gw = gateway();
+        var renewals = gw.Renewals;
+        var rows = new List<CampaignStanding>();
+        foreach (var campaign in gw.Campaigns.All().Where(c => c.IsOpen))
+        {
+            if (gw.Datasets.ById(campaign.HoldoutDatasetId) is not { } set
+                || EvaluationClass.Or(set.EvaluationClass) != EvaluationClass.Research) continue;
+            var spent = renewals.SpentOn(campaign);
+            rows.Add(new CampaignStanding(set.Pair, campaign, gw.Campaigns.JudgementsSpent(campaign.Id),
+                gw.Campaigns.TrialsCharged(campaign.Id), spent, renewals.Of(campaign.Id),
+                spent is null ? "" : renewals.Next(campaign.Id)));
+        }
+        return [.. rows.OrderBy(r => r.Pair, StringComparer.Ordinal).ThenBy(r => r.Campaign.Id)];
     }
 
     /// <summary>
