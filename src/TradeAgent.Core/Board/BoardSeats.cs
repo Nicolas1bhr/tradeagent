@@ -94,7 +94,8 @@ public static class BoardSeatGate
     /// verbs — which only the app's door serves (a broker-only or confined seat), never the harness's own surface — and, running a real
     /// model, never before a proven cell (containment). Activation launches nothing: every turn still passes <see cref="Decide"/>.
     /// </summary>
-    public static string? ActivationRefusal(string id, BoardSeat? seat, string? declaredClass, bool puppet, bool provenCell)
+    public static string? ActivationRefusal(string id, BoardSeat? seat, string? declaredClass, bool puppet, bool provenCell,
+        string? runtimeFamily = null)
     {
         if (seat is null || seat.Id != id) return $"'{id}' is no seat of the security board.";
         if (seat.Status == BoardSeatStatus.Retired) return $"board seat {id} is retired, and a retired seat never acts again.";
@@ -111,6 +112,14 @@ public static class BoardSeatGate
         if (!puppet && !provenCell)
             return $"board seat {id} would run a real model ({seat.SeatClass}) and this host has no proven executor cell recorded: no board "
                    + "seat is activated before one (R24 § 4.1, ORCHESTRATION § 2.3).";
+        // ITS VENDOR FAMILY IS THE RUNTIME'S (the review's P1): the two-seat rule weighs a confirmer's recorded family, so a seat founded as
+        // one family is never activated on another's runtime — that would buy a "cross-vendor" confirmation from the same vendor.
+        if (!puppet && runtimeFamily is null)
+            return $"board seat {id} would start on a runtime whose vendor family this build does not know, so its recorded family "
+                   + $"'{seat.VendorFamily}' could not be checked against it.";
+        if (!puppet && !string.Equals(runtimeFamily, seat.VendorFamily, StringComparison.Ordinal))
+            return $"board seat {id} is founded on the vendor family '{seat.VendorFamily}' and this host would start it on a runtime of "
+                   + $"'{runtimeFamily}': a seat runs on the family it was founded on, so the two-seat rule's families stay true.";
         return null;
     }
 
