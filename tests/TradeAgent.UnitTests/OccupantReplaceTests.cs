@@ -25,6 +25,10 @@ public class OccupantReplaceTests(ITestOutputHelper log)
 {
     static readonly DateTimeOffset Now = new(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
 
+    /// <summary>The verbs as a broker seat calls them (<c>U-runway-fixes</c>): the packet spells each for its seat.</summary>
+    static readonly PacketVerb Broker = TradeAgent.AgentRuntime.Canon.PacketVerbs(
+        TradeAgent.AgentRuntime.AgentReach.For(Worker, TradeAgent.AgentRuntime.RuntimeClass.Broker));
+
     static MandateRow Give(Database db, DateTimeOffset at) => new OrgStore(db).Assign(new MandateIssue(TeamHead, null, Worker, MandateKind.Task,
         "find out whether the funding skew predicts the next hour", null, MandateShape.Report, false, at.AddDays(7), 5m, 2), at);
 
@@ -276,11 +280,11 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         var note = org.SendLateral(TeamHead, null, Worker, "the funding skew looks venue-specific", [], Now.AddHours(-2));
         Launch(db, "turn-mem-0001", m.Id, Now.AddHours(-1), cost: 0.2m);
         new AiAttemptStore(db).RecordInputs("turn-mem-0001", [new PacketInput(PacketInputKind.Lateral, note.Id)]);
-        Assert.DoesNotContain(note.Id, PositionPacket.Compose(db, Worker, Now)!.Text, StringComparison.Ordinal);
-        Assert.DoesNotContain("occupant", PositionPacket.Compose(db, Worker, Now)!.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(note.Id, PositionPacket.Compose(db, Worker, Now, Broker)!.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("occupant", PositionPacket.Compose(db, Worker, Now, Broker)!.Text, StringComparison.Ordinal);
 
         org.ReplaceOccupant(org.PreviewReplaceOccupant(Worker), Now);
-        var text = PositionPacket.Compose(db, Worker, Now.AddMinutes(1))!.Text;
+        var text = PositionPacket.Compose(db, Worker, Now.AddMinutes(1), Broker)!.Text;
         log.WriteLine(text);
         Assert.StartsWith("- You are this position's occupant 2, since 2026-11-04 12:00 UTC. Occupant 1 was retired by your owner's press. You do "
                           + "not have its conversation", text, StringComparison.Ordinal);
@@ -294,7 +298,7 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         Assert.True(Encoding.UTF8.GetByteCount(text) <= PacketBounds.Default.Executor);
 
         Launch(db, "turn-mem-0002", m.Id, Now.AddMinutes(2), cost: 0.1m);
-        Assert.DoesNotContain("You are this position's occupant", PositionPacket.Compose(db, Worker, Now.AddMinutes(5))!.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("You are this position's occupant", PositionPacket.Compose(db, Worker, Now.AddMinutes(5), Broker)!.Text, StringComparison.Ordinal);
     }
 
     static string Src() => Path.Combine(DayOnePrograms.RepoRoot(), "src");
