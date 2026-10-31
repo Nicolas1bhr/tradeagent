@@ -155,17 +155,20 @@ public static class WindowsCellBenchmark
             {
                 Directory.CreateDirectory(Paths.Inbox);
                 var probe = Path.Combine(Paths.Inbox, ".cell-bench-" + Guid.NewGuid().ToString("n")[..8]);
-                var (_, o) = await Script(none, "inbox", $"echo x> \"{probe}\" && (echo OPEN) || (echo DENIED)");
-                var made = File.Exists(probe);
-                if (made) File.Delete(probe);
-                return (o.Contains("DENIED", StringComparison.Ordinal) && !o.Contains("OPEN", StringComparison.Ordinal) && !made, Trim(o));
+                try
+                {
+                    var (_, o) = await Script(none, "inbox", $"echo x> \"{probe}\" && (echo OPEN) || (echo DENIED)");
+                    return (o.Contains("DENIED", StringComparison.Ordinal) && !o.Contains("OPEN", StringComparison.Ordinal) && !File.Exists(probe), Trim(o));
+                }
+                finally { File.Delete(probe); }   // a timeout or a broken boundary never leaves the planted file for the real scanner (Codex, landing 3)
             });
 
-            // EGRESS NONE REACHES NOTHING (Codex, landing 3): the internet on 443 by name, not loopback alone.
+            // EGRESS NONE REACHES NOTHING (Codex, landing 3): the internet on 443 by name — and the failure is curl's own resolve/connect
+            // (exit 6/7/28), not the launcher's, so a missing or unstartable curl fails the row instead of passing it.
             await Row("no-egress", async () =>
             {
                 var (code, o) = await Run(none, curl, "-sS", "-o", Path.Combine(ws, "n.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", $"https://{Remote}/");
-                return (code != 0 && !Reached(o), $"{Remote}:443 with no capability: {Trim(o)}");
+                return (CurlFailedToReach(code) && !Reached(o), $"{Remote}:443 with no capability: {Trim(o)}");
             });
 
             // LOOPBACK AND THIS HOST'S OWN LAN ADDRESS, ON 443 AND ON ANOTHER PORT (Codex, landing 3), from a web cell: the listener sees nothing.
@@ -207,15 +210,24 @@ public static class WindowsCellBenchmark
             });
             await Row("processes-denied", async () =>
             {
-                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED from inside it: the cell's taskkill on a helper started here is refused and the
-                // helper still runs. Never the app's own pid: a row must never risk ending the app.
+                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it: the cell's `taskkill /F` (PROCESS_TERMINATE,
+                // unambiguous — not a graceful WM_CLOSE) on a helper is refused and the helper still runs. A POSITIVE CONTROL first: the app,
+                // outside any cell, `taskkill /F`s a second helper and it dies — so the cell's denial is the cell's, not an unkillable helper.
+                // Never the app's own pid: a row must never risk ending the app.
+                var killable = Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+                using var control = Process.Start(new ProcessStartInfo(Path.Combine(system32, "taskkill.exe"), $"/F /pid {killable.Id}") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true })!;
+                control.WaitForExit(10_000);
+                await Task.Delay(200, ct);
+                if (!killable.HasExited) { try { killable.Kill(); } catch (Exception) { } killable.Dispose(); return (false, "the control could not kill the helper from outside a cell, so the row proves nothing"); }
+                killable.Dispose();
                 using var helper = Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1")
                     { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
                 try
                 {
-                    var (_, o) = await Script(none, "proc", $"taskkill /pid {helper.Id} > {Sink("k")} 2>&1 && (echo KILL-OPEN) || (echo KILL-DENIED)");
+                    var (_, o) = await Script(none, "proc", $"taskkill /F /pid {helper.Id} > {Sink("k")} 2>&1 && (echo KILL-OPEN) || (echo KILL-DENIED)");
                     var alive = !helper.HasExited;
-                    return (o.Contains("KILL-DENIED", StringComparison.Ordinal) && alive, $"{Trim(o)}; the helper is {(alive ? "still running" : "GONE")}");
+                    return (o.Contains("KILL-DENIED", StringComparison.Ordinal) && !o.Contains("KILL-OPEN", StringComparison.Ordinal) && alive,
+                        $"{Trim(o)}; the helper is {(alive ? "still running" : "GONE")} (a control killed its twin from outside)");
                 }
                 finally { try { helper.Kill(); } catch (Exception) { /* gone */ } }
             });
@@ -242,16 +254,6 @@ public static class WindowsCellBenchmark
                 }
                 return (alive.Count == 0, alive.Count == 0 ? $"{mine.Count} live descendants, every one ended with the cancel" : "OUTLIVED the cancel: " + string.Join(", ", alive));
             });
-            await Row("slot-leaves-nothing", async () =>
-            {
-                await Script(none, "slot", "echo done");
-                WindowsCellStage.SweepFree();
-                var sids = WindowsCellStage.SlotSids().Select(s => new SecurityIdentifier(s)).ToHashSet();
-                var left = new[] { ws, codexHome, home }.Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
-                    .Cast<FileSystemAccessRule>().Count(r => sids.Contains((SecurityIdentifier)r.IdentityReference)));
-                var records = Directory.Exists(WindowsCellStage.SlotDirectory) ? Directory.GetFiles(WindowsCellStage.SlotDirectory, "*.grants").Length : 0;
-                return (left == 0 && records == 0, $"after the cells: {left} slot ACE(s) on the bench folders, {records} grant record(s)");
-            });
             await Row("route-a-exec-server", async () =>
             {
                 if (codex is null) return (false, "codex is not installed, so route (a) could not be measured");
@@ -276,9 +278,26 @@ public static class WindowsCellBenchmark
             });
             await Row("web-nothing-else", async () =>
             {
-                // ANOTHER PORT OF THE SAME REMOTE HOST (Codex, landing 3): refused only where the firewall rule holds web to 443.
+                // ANOTHER PORT OF THE SAME REMOTE HOST (Codex, landing 3): refused only where the firewall rule holds web to 443. A POSITIVE
+                // CONTROL first — the app, outside any cell, reaches that port — so an UPSTREAM block on 80 does not masquerade as the rule's
+                // work: without the control the row is inconclusive, not held.
+                var control = await OutsideReaches($"http://{Remote}:80/");
+                if (!control) return (false, $"port 80 of {Remote} is not reachable even from outside a cell, so a cell's failure to reach it proves nothing");
                 var (code, o) = await Run(web, curl, "-sS", "-o", Path.Combine(ws, "e.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", $"http://{Remote}:80/");
-                return (code != 0 && !Reached(o), $"{Remote}:80 from a web cell: {Trim(o)}{(Reached(o) ? " — no rule holds web to 443 on this host" : "")}");
+                return (CurlFailedToReach(code) && !Reached(o), $"{Remote}:80 from a web cell: {Trim(o)} (reachable from outside); {(Reached(o) ? "no rule holds web to 443 on this host" : "the rule holds")}");
+            });
+
+            // LAST, SO IT CATCHES A WEB CELL'S LEAK TOO (Codex, landing 3): after every launch above, no slot's SID holds an ACE on the
+            // bench folders and no grant record is left.
+            await Row("slot-leaves-nothing", async () =>
+            {
+                await Script(none, "slot", "echo done");
+                WindowsCellStage.SweepFree();
+                var sids = WindowsCellStage.SlotSids().Select(s => new SecurityIdentifier(s)).ToHashSet();
+                var left = new[] { ws, codexHome, home }.Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
+                    .Cast<FileSystemAccessRule>().Count(r => sids.Contains((SecurityIdentifier)r.IdentityReference)));
+                var records = Directory.Exists(WindowsCellStage.SlotDirectory) ? Directory.GetFiles(WindowsCellStage.SlotDirectory, "*.grants").Length : 0;
+                return (left == 0 && records == 0, $"after every cell: {left} slot ACE(s) on the bench folders, {records} grant record(s)");
             });
         }
         finally
@@ -317,6 +336,25 @@ public static class WindowsCellBenchmark
     {
         var (p, f) = (Path.TrimEndingDirectorySeparator(path), Path.TrimEndingDirectorySeparator(folder));
         return p.Equals(f, StringComparison.OrdinalIgnoreCase) || p.StartsWith(f + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>curl's exit for a connect/resolve/timeout failure (6 host, 7 connect, 28 timeout, 35 TLS) — a real attempt that did not reach, not a launcher error.</summary>
+    static bool CurlFailedToReach(int code) => code is 6 or 7 or 28 or 35;
+
+    /// <summary>Whether <paramref name="url"/> is reachable from OUTSIDE any cell (the app's own curl): a positive control for a denial row.</summary>
+    static async Task<bool> OutsideReaches(string url)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "curl.exe"))
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in new[] { "-sS", "-o", "NUL", "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", url }) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            var o = await p.StandardOutput.ReadToEndAsync();
+            p.WaitForExit(20_000);
+            return Reached(o);
+        }
+        catch (Exception) { return false; }
     }
 
     static bool Reached(string curlOut) => curlOut.Contains("HTTP=", StringComparison.Ordinal) && !curlOut.Contains("HTTP=000", StringComparison.Ordinal);
