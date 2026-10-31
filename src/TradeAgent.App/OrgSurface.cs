@@ -66,6 +66,12 @@ sealed record OrgSurfaceSources
     /// </summary>
     public Func<string, string, string>? ChooseModel { get; init; }
 
+    /// <summary>
+    /// THE OWNER'S "REPLACE THE OCCUPANT" (<c>U-worker-replace</c>), drawn on each active position's row — in-process only, never the pipe's
+    /// — or null where there is no host, and none is drawn: press one's preview for a position, and press two handed that preview back.
+    /// </summary>
+    public OccupantPresses? Occupant { get; init; }
+
     /// <summary>The sources over the running app.</summary>
     public static OrgSurfaceSources For(AppHost host) => new()
     {
@@ -74,6 +80,7 @@ sealed record OrgSurfaceSources
             PreviewWake = host.PreviewChiefWake,
             WakeOnce = host.WakeChiefOnce
         },
+        Occupant = new OccupantPresses(host.PreviewReplaceOccupant, host.ReplaceOccupant),
         SeatOf = host.ResolvedSeatOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
@@ -108,6 +115,13 @@ sealed record ChiefPresses(Func<bool> BoardActive, Func<IReadOnlyList<ChiefSeat>
     /// </summary>
     public Func<ChiefWakePreview, string>? WakeOnce { get; init; }
 }
+
+/// <summary>
+/// THE OWNER'S PRESSES OVER A POSITION'S OCCUPANT (<c>U-worker-replace</c>): press one's preview — what replacing the occupant of a position would
+/// do now, or why it cannot — and press two, handed that preview, answering the app's words of what it did or why it was refused, as moved when
+/// the press would now do anything else. In-process, in the owner's own app; no pipe op, verb or board act reaches either.
+/// </summary>
+sealed record OccupantPresses(Func<string, OccupantPreview> Preview, Func<OccupantPreview, string> Replace);
 
 /// <summary>
 /// THE SENTENCES THE THREE PAGES SHARE. A claim — a rationale, a report, an objective, a probability — is always printed as someone's

@@ -52,6 +52,15 @@ public static partial class Labels
     /// <summary>The repair press at rest, on the row of a position whose folder the last start could not rebuild.</summary>
     public const string RepairHome = "Repair its folder";
 
+    /// <summary>THE OWNER'S "REPLACE THE OCCUPANT" on an active position's row (<c>U-worker-replace</c>): two presses, the second carrying out what the first showed.</summary>
+    public const string ReplaceOccupant = "Replace the occupant";
+
+    /// <summary>The armed sentence: the preview's own words, after "Press again".</summary>
+    public static string ReplaceOccupantConfirm(string words) => $"Press again: {words}";
+
+    /// <summary>A second press that arrives with no first press shown — no occupant is replaced.</summary>
+    public const string ReplaceOccupantUnarmed = "The press could not show what it would do, so no occupant was replaced.";
+
     /// <summary>The repair press armed: what the second press does, in full — nothing is deleted.</summary>
     public const string RepairHomeConfirm = "Press again: move the folder aside, kept whole, and build it afresh";
 

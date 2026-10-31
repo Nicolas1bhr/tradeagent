@@ -1843,6 +1843,26 @@ public sealed class AppHost : IAsyncDisposable
         return $"You woke the chief {woken.Chief} once: one turn now, on {asShown.Seat}. {asShown.After}";
     });
 
+    /// <summary>"Replace the occupant" of <paramref name="position"/>, press one (<c>U-worker-replace</c>): what it would do now, or why it cannot. Reads only.</summary>
+    internal OccupantPreview PreviewReplaceOccupant(string position) =>
+        _db is { } db
+            ? new OrgStore(db).PreviewReplaceOccupant(position)
+            : new OccupantPreview(null, null, "The organisation's records are not open, so no occupant is replaced.",
+                "The organisation's records are not open, so no occupant is replaced.");
+
+    /// <summary>
+    /// "REPLACE THE OCCUPANT", PRESS TWO (<c>U-worker-replace</c>; AUTH-001: in-process only), handed what press one showed: the occupant
+    /// retired and a new one seated, in one write (event, fence, one wake) — and the loop nudged, so the new occupant's first turn starts now,
+    /// fresh, from the position's memory. It launches nothing itself: the wake is taken through the activation gate and admission.
+    /// </summary>
+    internal string ReplaceOccupant(OccupantPreview asShown) => ChiefPress(org =>
+    {
+        var done = org.ReplaceOccupant(asShown, DateTimeOffset.UtcNow);
+        Mission?.Wake();
+        return $"You retired occupant {done.Retired} of {done.Position}. Occupant {done.Seated} starts now, in a fresh session, from the "
+               + "position's memory; its seat, open mandates, spend, reservations and trial counts carried over.";
+    });
+
     /// <summary>One press over the chief: its words, logged as his in the Activity log — or the refusal's words, nothing written.</summary>
     string ChiefPress(Func<OrgStore, string> press)
     {

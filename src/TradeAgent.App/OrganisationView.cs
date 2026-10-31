@@ -264,7 +264,40 @@ sealed class OrganisationPage
         var models = new WrapPanel { Orientation = Orientation.Horizontal };
         var switched = Small();
         IReadOnlyList<string> offered = [];
+        // THE OWNER'S "REPLACE THE OCCUPANT" (U-worker-replace): made once with the row, shown only while the position is active and beyond the
+        // council's pair; TWO presses, press one keeping the preview it armed with and press two handing THAT back — the store refuses as moved,
+        // nothing written, a press that would now retire another occupant. Its words (done or refused) under it.
+        var replacedSaid = Small();
+        OccupantPreview? shown = null;
+        Button? replace = null;
+        if (_src.Occupant is { } occupant)
+        {
+            var who = first.Id;
+            replace = Ui.ConfirmIf(Labels.ReplaceOccupant,
+                () =>
+                {
+                    shown = occupant.Preview(who);
+                    return Labels.ReplaceOccupantConfirm(shown.Words);
+                },
+                () =>
+                {
+                    var asShown = shown;
+                    shown = null;
+                    OrgText.Set(replacedSaid, asShown is not null ? occupant.Replace(asShown) : Labels.ReplaceOccupantUnarmed);
+                    replacedSaid.IsVisible = true;
+                },
+                () => occupant.Preview(who).Refusal,
+                why =>
+                {
+                    OrgText.Set(replacedSaid, why);
+                    replacedSaid.IsVisible = true;
+                });
+            replace.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+        replacedSaid.IsVisible = false;
         var row = Ui.Col(Theme.S1, head, role, seat, models, switched, cell, billing, calibration, refusal, repair, repaired);
+        if (replace is not null) row.Children.Add(replace);
+        row.Children.Add(replacedSaid);
         row.Margin = new Thickness(Theme.S3, 0, 0, 0);
 
         return (row, p =>
@@ -328,6 +361,15 @@ sealed class OrganisationPage
             }
             models.IsVisible = models.Children.Count > 0;
             switched.IsVisible = switched.Text is { Length: > 0 };
+            if (replace is not null)
+            {
+                var occupantOffered = p.Status == OrgPositionStatus.Active && !CouncilRoles.IsKnown(p.Id);
+                if (replace.IsVisible != occupantOffered)
+                {
+                    if (!occupantOffered) Ui.DisarmConfirm(replace);
+                    replace.IsVisible = occupantOffered;
+                }
+            }
         });
 
         static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);

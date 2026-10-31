@@ -1,6 +1,11 @@
 using System.Globalization;
 using System.Text;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
+using TradeAgent.App;
 using TradeAgent.Core;
+using TradeAgent.Gateway;
 using TradeAgent.Core.Db;
 using Xunit;
 using Xunit.Abstractions;
@@ -290,5 +295,88 @@ public class OccupantReplaceTests(ITestOutputHelper log)
 
         Launch(db, "turn-mem-0002", m.Id, Now.AddMinutes(2), cost: 0.1m);
         Assert.DoesNotContain("You are this position's occupant", PositionPacket.Compose(db, Worker, Now.AddMinutes(5))!.Text, StringComparison.Ordinal);
+    }
+
+    static string Src() => Path.Combine(DayOnePrograms.RepoRoot(), "src");
+
+    static bool Built(string f) => f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                                   || f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
+
+    static string[] Naming(string text) =>
+        [.. Directory.GetFiles(Src(), "*.cs", SearchOption.AllDirectories).Where(f => !Built(f))
+            .Where(f => File.ReadAllText(f).Contains(text, StringComparison.Ordinal))
+            .Select(f => Path.GetRelativePath(Src(), f).Replace('\\', '/')).Order(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// GUARD (AUTH-001; ORG-001 — "never let an agent retire itself or another occupant outside the rule or the owner's press"): NO OP OR VERB
+    /// REACHES AN OCCUPANT'S REPLACEMENT. No source of the pipe server, the broker door, the worker's tools, the schema, the CLI or the board
+    /// names the owner's press, its preview, the app's sweep, the wake kind it raises or the event it writes, and no op of the pipe is named for
+    /// an occupant; the press and the sweep are called by the host alone, and the wake kind is raised by the store file alone (the wake table
+    /// and the loop's phrase name it).
+    /// </summary>
+    [Fact]
+    public void No_op_or_verb_reaches_an_occupants_replacement()
+    {
+        string[] seams = ["ReplaceOccupant", "PreviewReplaceOccupant", "OccupantSweep", "MissionEventKind.Occupant", "occupant-replaced", "OccupantReplaced"];
+        var src = Src();
+        var agentFacing = Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.Gateway"), "GatewayPipeServer*.cs")
+            .Concat(Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.Gateway"), "TradingGateway*.cs"))
+            .Concat(Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.AgentRuntime"), "BrokerDoor*.cs"))
+            .Concat(Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.AgentRuntime"), "WorkerTools*.cs"))
+            .Concat(Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.TradeCli"), "*.cs", SearchOption.AllDirectories))
+            .Concat(Directory.EnumerateFiles(Path.Combine(src, "TradeAgent.Core", "Board"), "*.cs"))
+            .Concat([Path.Combine(src, "TradeAgent.Gateway", "GatewaySchema.cs")])
+            .Where(f => !Built(f)).ToList();
+        Assert.Contains(agentFacing, f => f.EndsWith("BrokerDoor.cs", StringComparison.Ordinal));
+        var hits = agentFacing.SelectMany(f => File.ReadLines(f).Select((line, i) => (f, i, line)))
+            .Where(l => seams.Any(x => l.line.Contains(x, StringComparison.Ordinal)))
+            .Select(l => $"{Path.GetFileName(l.f)}:{l.i + 1}: {l.line.Trim()}")
+            .ToList();
+        foreach (var h in hits) log.WriteLine(h);
+        Assert.Empty(hits);
+        Assert.DoesNotContain(GatewaySchema.Ops(), op => op.Op.Contains("occupant", StringComparison.OrdinalIgnoreCase)
+                                                          || op.Op.Contains("replace", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(["TradeAgent.App/AppHost.cs", "TradeAgent.Core/Db/OrgStore.Occupants.cs"],
+            Naming(".ReplaceOccupant(").Concat(Naming(" ReplaceOccupant(")).Concat(Naming(".OccupantSweep(")).Distinct().Order(StringComparer.Ordinal));
+        Assert.Equal(["TradeAgent.AgentRuntime/MissionLoop.cs", "TradeAgent.Core/Db/MissionEventStore.cs", "TradeAgent.Core/Db/OrgStore.Occupants.cs"],
+            Naming("MissionEventKind.Occupant"));
+    }
+
+    /// <summary>
+    /// THE OWNER'S PRESS ON A POSITION'S ROW TAKES TWO PRESSES: the organisation page draws "Replace the occupant" on the worker's row; press
+    /// one arms with the preview's words and writes nothing; press two replaces occupant 1 and says so on the row. A council seat's row and a
+    /// dormant row carry none that shows.
+    /// </summary>
+    [Fact]
+    public void Replacing_an_occupant_on_the_organisation_page_takes_two_presses()
+    {
+        using var db = Chart();
+        var page = new OrganisationPage(new OrgSurfaceSources
+        {
+            Org = () => new OrgStore(db),
+            Attempts = () => new AiAttemptStore(db),
+            Currency = () => "USD",
+            Occupant = new OccupantPresses(p => new OrgStore(db).PreviewReplaceOccupant(p), shown =>
+            {
+                try { return $"replaced: occupant {new OrgStore(db).ReplaceOccupant(shown, Now).Seated}"; }
+                catch (TradeAgentException ex) { return ex.Message; }
+            })
+        });
+        page.Update();
+        var shownPresses = page.Root.GetLogicalDescendants().OfType<Button>()
+            .Where(b => b.IsVisible && (b.Content as string) == Labels.ReplaceOccupant).ToList();
+        Assert.Equal(4, shownPresses.Count);                         // the four active positions of the chart — never research's or operations' row
+        var row = page.Root.GetLogicalDescendants().OfType<StackPanel>()
+            .First(p => p.Children.OfType<StackPanel>().Any(h => h.Children.OfType<TextBlock>().Any(t => t.Text == Worker)));
+        var press = row.Children.OfType<Button>().Single(b => (b.Content as string) == Labels.ReplaceOccupant);
+        var events = LastEvent(db);
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(Ui.IsArmed(press));
+        Assert.Contains($"Replace {Worker}'s occupant 1 with occupant 2", press.Content as string, StringComparison.Ordinal);
+        Assert.Equal(events, LastEvent(db));
+        press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Contains(row.Children.OfType<TextBlock>(), t => t.Text == "replaced: occupant 2");
+        Assert.Equal(2, new OrgStore(db).OccupancyOf(Worker).Ordinal);
     }
 }
