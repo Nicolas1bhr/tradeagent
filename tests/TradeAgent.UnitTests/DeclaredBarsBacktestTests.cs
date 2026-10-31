@@ -619,4 +619,135 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
         var fill = Assert.Single(Of(run, BacktestEventKind.Fill));
         Assert.Equal((Start.AddMinutes(122), 101.5m, 3L), (fill.Bar, fill.Price!.Value, fill.Ordinal));
     }
+
+    // ---- WHERE THE BACKTEST READS WHAT THE PAPER RUNNER READS, ACROSS MISSING MINUTES (U-backtest-parity-2) ------
+    //
+    // The runner is the truth (ruling Q1). It counts the maximum hold in the program's bars ELAPSED on its grid from the
+    // entry's fill to the last bar closed by the end of the minute it reads, asks it on EVERY minute
+    // (`ForwardRuns.RunBooks.BarsSince`, `BarGrid.ClosedThrough`), and decides a bar past its missing minutes from the
+    // books after that minute's own fills and protection. RED on the base (`8b2b44b4`) for each of the three below.
+
+    /// <summary>
+    /// (h) THE MAXIMUM HOLD COUNTS THE MINUTES THAT ELAPSED, NOT THE MINUTES THE DATA HAS.
+    ///
+    /// <para>A one-minute program filled at 00:02's open; 00:03 and 00:04 are missing. Three bars have elapsed on its grid
+    /// when the runner reads 00:05, so its three-bar hold is reached there: the close is placed inside 00:06 and fills at
+    /// 00:07's open, 99.7. Counted in the minutes the data has, 00:05 is the first bar held and the hold would be reached
+    /// at 00:07, its close filling at 00:09's open, 99.9 — two minutes longer than paper holds it.</para>
+    ///
+    /// <para><b>RED on the base:</b> closed at 00:09 @ 99.9. <b>RED through the mutant</b> "count the bars decided since
+    /// the entry": the same.</para>
+    /// </summary>
+    [Fact]
+    public void The_maximum_hold_counts_the_bars_that_elapsed_across_missing_minutes()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            size fixed 1
+            max_hold_bars 3
+            entry when close > 100
+            """);
+
+        var opens = new Dictionary<int, decimal> { [7] = 99.7m, [9] = 99.9m };
+        var minutes = new List<KlineBar>
+        {
+            M(0, 100m, 101m, 100m, 101m),                           // 00:00 the entry, learnt
+            At(1, 100m),                                            // 00:01 placed
+            M(2, 100.2m, 100.2m, 100m, 100m)                        // 00:02 filled at 100.2; 00:03 and 00:04 missing
+        };
+        minutes.AddRange(Enumerable.Range(5, 6).Select(i =>
+            opens.TryGetValue(i, out var open) ? M(i, open, 100m, open, 100m) : At(i, 100m)));
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        var trade = Assert.Single(run.Trades);
+        Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
+        Assert.Equal((Start.AddMinutes(2), 100.2m), (trade.EntryBar, trade.EntryPrice));
+        Assert.Equal((Start.AddMinutes(7), 99.7m), (trade.ExitBar, trade.ExitPrice));
+    }
+
+    /// <summary>
+    /// (h2) ACROSS A WHOLLY MISSING HOUR, THE HOLD IS REACHED ON THE FIRST MINUTE PAST IT — a minute that closes no bar.
+    ///
+    /// <para>An hourly two-bar hold, filled at 01:01. Hour 2 closes one bar after the entry's; hour 3 has no minute at all.
+    /// When the runner reads 04:00 the last bar closed is hour 3 — two bars after the entry's — so the hold is reached on
+    /// that minute, though it closes no bar of the program's, and its close fills at 04:02's open, 99.2. Decided only at
+    /// a declared close it would wait for hour 4's, its close filling at 05:01's open, 99.5.</para>
+    ///
+    /// <para><b>RED on the base:</b> closed at 05:01 @ 99.5. <b>RED through the mutant</b> "the hold asked only at a
+    /// declared close": the same.</para>
+    /// </summary>
+    [Fact]
+    public void Across_a_wholly_missing_hour_the_maximum_hold_is_reached_on_the_first_minute_past_it()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            max_hold_bars 2
+            entry when close > 100
+            """);
+
+        var opens = new Dictionary<int, decimal> { [61] = 100.1m, [242] = 99.2m, [301] = 99.5m };
+        var minutes = Enumerable.Range(0, 180).Concat(Enumerable.Range(240, 120))   // 03:00..03:59 missing
+            .Select(i => i == 59 ? M(59, 100m, 101m, 100m, 101m) : At(i, opens.GetValueOrDefault(i, 100m)))
+            .ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        var trade = Assert.Single(run.Trades);
+        Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
+        Assert.Equal((Start.AddMinutes(61), 100.1m), (trade.EntryBar, trade.EntryPrice));
+        Assert.Equal((Start.AddMinutes(242), 99.2m), (trade.ExitBar, trade.ExitPrice));
+    }
+
+    /// <summary>
+    /// (i) A BAR DECIDED PAST ITS MISSING MINUTES READS THE BOOKS AFTER THAT MINUTE'S OWN FILLS AND STOPS.
+    ///
+    /// <para>Filled at 01:01 at 101.5, its stop four percent under the fill (97.44). Hour 2's last forty minutes are
+    /// missing, so the runner learns that hour has closed when it reads 03:00 — a minute that opens at 95, through the
+    /// stop, which fills there. The runner's books at 03:00 hold that stop, so it decides hour 2 FLAT and enters on its
+    /// close of 101: placed inside 03:01, filled at 03:02's open, 101.2. Decided from the books before 03:00 it would read
+    /// the position the stop was about to close, enter nothing on hour 2, and enter on hour 3's close at 04:01's open.</para>
+    ///
+    /// <para><b>The trace stays true about the hour.</b> Hour 2's own line is the account at ITS close, when the position
+    /// was still held (one, marked at 101); the stop is 03:00's, on hour 3's ordinal, written before hour 2's line
+    /// because it happened before the runner learnt that hour had closed.</para>
+    ///
+    /// <para><b>RED on the base:</b> entries on hours 0 and 3, filled at 01:01 and 04:01. <b>RED through the mutant</b>
+    /// "decide the passed bar before the minute is applied": the same.</para>
+    /// </summary>
+    [Fact]
+    public void A_bar_decided_past_its_missing_minutes_reads_the_books_after_that_minutes_fills_and_stops()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            stop percent 4
+            entry when close > 100
+            """);
+
+        var opens = new Dictionary<int, decimal> { [61] = 101.5m, [180] = 95m, [182] = 101.2m, [241] = 101.3m };
+        var minutes = Enumerable.Range(0, 140).Concat(Enumerable.Range(180, 120))   // 02:20..02:59 missing
+            .Select(i => At(i, opens.GetValueOrDefault(i, 101m)))
+            .ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        Assert.Equal([(Start, 1L), (Start.AddHours(2), 3L)],
+            Of(run, BacktestEventKind.Signal).Select(s => (s.Bar, s.Ordinal)));
+        Assert.Equal([(Start.AddMinutes(61), 101.5m), (Start.AddMinutes(182), 101.2m)],
+            Of(run, BacktestEventKind.Fill).Select(f => (f.Bar, f.Price!.Value)));
+
+        var stopped = run.Trades[0];
+        Assert.Equal((ExitReason.Stop, Start.AddMinutes(180), 95m), (stopped.Reason, stopped.ExitBar, stopped.ExitPrice));
+        Assert.Equal(4L, Of(run, BacktestEventKind.Exit)[0].Ordinal);
+
+        var hour2 = Of(run, BacktestEventKind.Bar).Single(b => b.Bar == Start.AddHours(2));
+        Assert.Equal((1m, true, 10_000m - 101.5m + 101m), (hour2.Position!.Value, hour2.Exposed, hour2.Equity!.Value));
+    }
 }
