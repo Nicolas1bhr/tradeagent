@@ -307,7 +307,7 @@ public sealed class ForwardRuns
             // THE ACCOUNT AT THIS MINUTE, WITH THE BARS HELD COUNTED IN THE PROGRAM'S OWN BARS: through the
             // last of them that has closed by the end of this minute. On one-minute bars that is this minute.
             last = bar.OpenTime;
-            account = books.At(bar, ClosedThrough(grid, bar.OpenTime));
+            account = books.At(bar, grid.ClosedThrough(bar.OpenTime));
             var opening = account;
             var seq = 0;
             var planned = false;
@@ -797,7 +797,7 @@ public sealed class ForwardRuns
             || !Deployments.RefusedBeforeTheWire(exit, _gateway.Requests.Get(exit.RequestId)))
             return false;
 
-        var held = Books(deployment, bars, grid).At(bar, ClosedThrough(grid, bar.OpenTime));
+        var held = Books(deployment, bars, grid).At(bar, grid.ClosedThrough(bar.OpenTime));
         if (held.Position != PositionSide.Long) return false;
         if (program.MaxHoldBars is { } hold && held.BarsSinceEntry >= hold) return false;
 
@@ -926,17 +926,6 @@ public sealed class ForwardRuns
             {
                 deployment = deployment.Id, bar = bar.OpenTime, quantity, why
             }));
-
-    /// <summary>
-    /// THE START OF THE LAST OF THE PROGRAM'S BARS THAT HAS CLOSED BY THE END OF THIS MINUTE: the bar this
-    /// minute completes when it is the bar's last minute — the rule <see cref="BarResampler.Add"/> closes a
-    /// bar by — and otherwise the bar before the one still forming. On one-minute bars it is the minute.
-    /// </summary>
-    static DateTimeOffset ClosedThrough(BarGrid grid, DateTimeOffset minute)
-    {
-        var start = grid.StartOf(minute);
-        return minute + StrategyBars.OneMinute >= grid.EndOf(start) ? start : grid.PreviousStart(start);
-    }
 
     /// <summary>
     /// WHY THIS BUILD'S RUNNER CANNOT RUN A DEPLOYMENT OF A VERSION STARTED AT <paramref name="now"/>, IN WORDS — or null
@@ -1074,14 +1063,14 @@ public sealed class ForwardRuns
 
     /// <summary>
     /// THE LAST CLOSE THIS PASS CAN DECIDE: that of the last of the program's bars that has closed by the end of the newest
-    /// minute read (<see cref="ClosedThrough"/>) — and the first close while there is none, so a pass with no closed bar
+    /// minute read (<see cref="BarGrid.ClosedThrough"/>) — and the first close while there is none, so a pass with no closed bar
     /// still asks the holdout about the first one.
     /// </summary>
     static DateTimeOffset LastClose(BarGrid grid, DateTimeOffset start, IReadOnlyList<ForwardBar> bars)
     {
         var first = FirstClose(grid, start);
         if (bars.Count == 0) return first;
-        var last = grid.EndOf(ClosedThrough(grid, bars[^1].OpenTime));
+        var last = grid.EndOf(grid.ClosedThrough(bars[^1].OpenTime));
         return last > first ? last : first;
     }
 
@@ -1419,8 +1408,9 @@ public sealed class ForwardRuns
         /// <summary>
         /// HOW MANY BARS THIS POSITION HAS BEEN HELD, counted in the PROGRAM'S OWN BARS. Whole bars of its
         /// grid between the one the entry filled in and the one <paramref name="through"/> falls in, which
-        /// is the count `max_hold_bars` is stated in and the count the backtest's `ordinal - entryOrdinal`
-        /// is: on one-minute bars the minutes between the two, on hourly bars the hours.
+        /// is the count `max_hold_bars` is stated in and the count the backtest's maximum hold is taken on
+        /// (<c>Backtest.Run</c>, <c>U-backtest-parity-2</c>): on one-minute bars the minutes between the two, on
+        /// hourly bars the hours — whether or not the data has a minute in them.
         /// </summary>
         int BarsSince(DateTimeOffset entry, DateTimeOffset through)
         {
