@@ -281,13 +281,6 @@ public sealed record CellPolicy
         /// </summary>
         public string? Refuses(string form, bool executable = false, bool writable = false)
         {
-            foreach (var staging in KitStaging)
-                if (Within(form, staging) || Within(staging, form))
-                    return $"would grant the folder the owner's head-start kit is staged in, {staging} (it is, lies inside or holds it): no cell's to reach";
-            if (writable)
-                foreach (var kit in Kits)
-                    if (Within(form, kit) || Within(kit, form))
-                        return $"is, lies inside or holds the owner's head-start kit {kit}, which no cell may write";
             foreach (var home in Homes)
                 if (Within(home, form))
                     return $"would grant TradeAgent's own home {home}, which holds its state and the owner's logins";
@@ -306,6 +299,14 @@ public sealed record CellPolicy
                 if (Within(form, cgroup) || Within(cgroup, form))
                     return $"would grant the cgroup filesystem {cgroup} (it is, lies inside or holds it): a cell there could move itself out " +
                            "of its attempt's cgroup or lift its own ceilings";
+            // LAST, so a grant of the home or anything else above is refused in those words first (CellPolicyTests).
+            foreach (var staging in KitStaging)
+                if (Within(form, staging) || Within(staging, form))
+                    return $"would grant the folder the owner's head-start kit is staged in, {staging} (it is, lies inside or holds it): no cell's to reach";
+            if (writable)
+                foreach (var kit in Kits)
+                    if (Within(form, kit) || Within(kit, form))
+                        return $"is, lies inside or holds the owner's head-start kit {kit}, which no cell may write";
             return null;
         }
     }
