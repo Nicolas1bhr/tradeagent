@@ -55,14 +55,14 @@ public partial class CouncilLoopTests(ITestOutputHelper log)
             "holdout run 1", now).Row;
 
         // WHAT EACH ROLE SAID IT BELIEVES: two of Research's open, one it dropped, and one of the chair's.
-        var hypothesis = ledger.Add(research, null, LedgerKind.Hypothesis, "Funding below -0.05% mean-reverts within 8h.",
+        var hypothesis = ledger.Add(research, "turn-test", LedgerKind.Hypothesis, "Funding below -0.05% mean-reverts within 8h.",
             LedgerMark.Hypothesis, 0.6m, null, null);
-        var finding = ledger.Add(research, null, LedgerKind.Finding, "The 1h close breakout lost money over 2025.",
+        var finding = ledger.Add(research, "turn-test", LedgerKind.Finding, "The 1h close breakout lost money over 2025.",
             LedgerMark.Claim, null, null, "run abc");
-        var dropped = ledger.Add(research, null, LedgerKind.Lesson, "DROPPED-ONE", LedgerMark.Assumption, null, null, null);
-        ledger.Revise(research, null, dropped.Id, "DROPPED-ONE", LedgerMark.Assumption, "no longer held", null,
+        var dropped = ledger.Add(research, "turn-test", LedgerKind.Lesson, "DROPPED-ONE", LedgerMark.Assumption, null, null, null);
+        ledger.Revise(research, "turn-test", dropped.Id, "DROPPED-ONE", LedgerMark.Assumption, "no longer held", null,
             LedgerStatus.Dropped);
-        var chairs = ledger.Add(chair, null, LedgerKind.Lesson, "CHAIR-ONE", LedgerMark.Claim, null, null, null);
+        var chairs = ledger.Add(chair, "turn-test", LedgerKind.Lesson, "CHAIR-ONE", LedgerMark.Claim, null, null, null);
 
         await loop.TurnAsync();
         await loop.TurnAsync();

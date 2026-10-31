@@ -483,8 +483,17 @@ public static class Versions
     /// the profile hash that covered them; written in the row's insert, an update that changes it refused by trigger) and
     /// <c>ai_attempt.vendor_said</c> (the turn's own error lines from the runtime's stream — a vendor's 4xx, a refused model — bounded, a
     /// credential-shaped run withheld; written once by the turn's close). Measurements only. No backfill: NULL before the rung.</para>
+    ///
+    /// <para><b>53 — every artifact names its author and its attempt</b> (<c>U-lineage-check</c>, rung <see cref="ArtifactLineageRung"/>,
+    /// after <c>U-chief-wake-once</c>'s 52): <c>org_delivery.author</c> (the delivering position, sealed into the manifest) and one BEFORE
+    /// INSERT trigger per artifact table in <c>ArtifactLineage.Kinds</c> — version, run, delivery, ledger entry, decision, forecast —
+    /// refusing a row with no author position, or no attempt while a position wrote it. No backfill: a row before the rung reads
+    /// "not recorded".</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = LaunchEvidenceRung;
+    public const int DatabaseSchemaVersion = ArtifactLineageRung;
+
+    /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
+    public const int ArtifactLineageRung = 53;
 
     /// <summary>
     /// THE OLDEST HOME THIS BUILD OPENS (<c>U-windows-release</c>): a home stamped below this schema is REFUSED, untouched, in words

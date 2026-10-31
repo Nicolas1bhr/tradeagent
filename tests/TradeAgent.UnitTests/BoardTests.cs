@@ -326,7 +326,7 @@ public class BoardTests(ITestOutputHelper log)
         Assert.Contains("security board", to.Message, StringComparison.Ordinal);
         var from = Assert.Throws<TradeAgentException>(() => org.SendLateral(Board, null, Member, "a note", [], now));
         Assert.Contains("security board", from.Message, StringComparison.Ordinal);
-        var decided = Assert.Throws<TradeAgentException>(() => org.Decide(Board, null, OrgDecisionKind.Routine,
+        var decided = Assert.Throws<TradeAgentException>(() => org.Decide(Board, "turn-test", OrgDecisionKind.Routine,
             ["a", "b"], "a", "because", [], [], now));
         Assert.Contains("security board", decided.Message, StringComparison.Ordinal);
         Assert.Equal("0", Scalar(db, "SELECT (SELECT COUNT(*) FROM org_lateral) + (SELECT COUNT(*) FROM org_decision) + (SELECT COUNT(*) FROM org_mandate)"));

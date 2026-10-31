@@ -34,7 +34,7 @@ public class FreshnessLedgerTests
 
     static StrategyVersionRow RowFor(StrategyProgram p) =>
         new(p.StrategyId, p.Source, p.Canonical, p.Manifest, StrategyStore.InterpreterBuild,
-            ParseVerdict.Accepted, p.WarmUpBars, At, null, null)
+            ParseVerdict.Accepted, p.WarmUpBars, At, CouncilRoles.Research, "turn-test")
         {
             Timeframe = p.Freshness?.Timeframe,
             DataFreshness = p.Freshness?.DataFreshness,

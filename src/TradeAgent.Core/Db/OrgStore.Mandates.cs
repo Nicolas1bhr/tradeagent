@@ -249,7 +249,11 @@ public sealed record MandateRef(
 /// <summary>A sealed delivery (<c>org_delivery</c>): its id is the SHA-256 of its manifest; never updated.</summary>
 public sealed record DeliveryRow(
     string Id, string MandateId, string? Attempt, string Report, IReadOnlyList<MandateDeviation> Deviations,
-    IReadOnlyList<MandateRef> Refs, DateTimeOffset At);
+    IReadOnlyList<MandateRef> Refs, DateTimeOffset At)
+{
+    /// <summary>The position that delivered (<c>U-lineage-check</c>, rung 53); null on a delivery sealed before the rung — unknown.</summary>
+    public string? Author { get; init; }
+}
 
 /// <summary>The app's result of one check on one delivery (<c>org_check</c>).</summary>
 public sealed record CheckRow(string DeliveryId, string Check, bool Passed, string Reason);
@@ -679,6 +683,8 @@ public sealed partial class OrgStore
         Func<string, int, LensOrigin?>? lensOf = null) => db.Write(_ =>
     {
         var m = HeldBy(mandateId, caller);
+        // THE DELIVERING POSITION AND ITS ATTEMPT, OR NOTHING (U-lineage-check): the holder, admitted just above, is the author.
+        ArtifactLineage.Require(ArtifactKind.Delivery, caller, attempt);
         if (report.Length > MandateLimits.MaxReportChars)
             throw Refused($"a report holds at most {MandateLimits.MaxReportChars:N0} characters; longer is refused, never cut.");
         if (deviations.Count > MandateLimits.MaxDeviations || refs.Count > MandateLimits.MaxRefs)
@@ -698,17 +704,17 @@ public sealed partial class OrgStore
             ordinal = Convert.ToInt64(n.ExecuteScalar(), CultureInfo.InvariantCulture) + 1;
         var manifest = JsonSerializer.Serialize(new
         {
-            mandate = m.Id, attempt, ordinal, at = Sql.T(now), report,
+            mandate = m.Id, author = caller, attempt, ordinal, at = Sql.T(now), report,
             deviations = deviations.Select(d => new { what = d.What, found = d.Found, cost = d.Cost }),
             refs = refs.Select(r => new { kind = r.Kind, id = r.Id })
         });
-        var delivery = new DeliveryRow(Sha256Hex(manifest), m.Id, attempt, report, deviations, refs, now);
+        var delivery = new DeliveryRow(Sha256Hex(manifest), m.Id, attempt, report, deviations, refs, now) { Author = caller };
 
         using (var c = db.Cmd("""
-            INSERT INTO org_delivery(id, mandate_id, attempt_id, report, deviations, refs, manifest, at)
-            VALUES($id,$m,$attempt,$report,$deviations,$refs,$manifest,$at)
+            INSERT INTO org_delivery(id, mandate_id, author, attempt_id, report, deviations, refs, manifest, at)
+            VALUES($id,$m,$author,$attempt,$report,$deviations,$refs,$manifest,$at)
             """,
-            ("$id", delivery.Id), ("$m", m.Id), ("$attempt", attempt), ("$report", report),
+            ("$id", delivery.Id), ("$m", m.Id), ("$author", caller), ("$attempt", attempt), ("$report", report),
             ("$deviations", JsonSerializer.Serialize(deviations)), ("$refs", JsonSerializer.Serialize(refs)),
             ("$manifest", manifest), ("$at", Sql.T(now))))
             c.ExecuteNonQuery();
@@ -1276,14 +1282,14 @@ public sealed partial class OrgStore
     /// <summary>A mandate's sealed deliveries, oldest first.</summary>
     public IReadOnlyList<DeliveryRow> Deliveries(string mandateId) => db.Read(_ =>
     {
-        using var c = db.Cmd("SELECT id, mandate_id, attempt_id, report, deviations, refs, at FROM org_delivery WHERE mandate_id=$m ORDER BY rowid",
+        using var c = db.Cmd("SELECT id, mandate_id, attempt_id, report, deviations, refs, at, author FROM org_delivery WHERE mandate_id=$m ORDER BY rowid",
             ("$m", mandateId));
         using var r = c.ExecuteReader();
         var rows = new List<DeliveryRow>();
         while (r.Read())
             rows.Add(new DeliveryRow(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3),
                 JsonSerializer.Deserialize<MandateDeviation[]>(r.GetString(4)) ?? [],
-                JsonSerializer.Deserialize<MandateRef[]>(r.GetString(5)) ?? [], Sql.Time(r.GetValue(6))));
+                JsonSerializer.Deserialize<MandateRef[]>(r.GetString(5)) ?? [], Sql.Time(r.GetValue(6))) { Author = Sql.S(r.GetValue(7)) });
         return (IReadOnlyList<DeliveryRow>)rows;
     });
 

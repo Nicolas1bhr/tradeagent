@@ -24,11 +24,11 @@ public class OrgScorecardTests
     static string Sql(DateTimeOffset t) => t.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 
     /// <summary>A strategy version the ledger recorded, as only a test may write it.</summary>
-    internal static void Version(Database db, string id) =>
+    internal static void Version(Database db, string id, string author = Member) =>
         Exec(db, """
             INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
-            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, NULL)
-            """, ("$id", id), ("$at", Stamp), ("$role", Member));
+            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, 'turn-test')
+            """, ("$id", id), ("$at", Stamp), ("$role", author));
 
     /// <summary>A verdict the referee recorded for <paramref name="version"/>, as only a test may write it (its references off).</summary>
     internal static void Verdict(Database db, string version, string verdict, DateTimeOffset at)
@@ -56,7 +56,7 @@ public class OrgScorecardTests
         Exec(db, """
             INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills,
                                      exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt)
-            VALUES($id, $v, 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, NULL, $attempt)
+            VALUES($id, $v, 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, 'research', $attempt)
             """, ("$id", id), ("$v", version), ("$at", Sql(at)), ("$attempt", attempt));
         db.Exec("PRAGMA foreign_keys=ON");
     }
@@ -112,10 +112,10 @@ public class OrgScorecardTests
 
         // THE FORECASTS, AT T0: the head on its team's admissions and on a version; the other head on a mandate it neither decides nor holds.
         Version(db, "ver-x");
-        var head = Forecasts(db, Head, null, T0,
+        var head = Forecasts(db, Head, "turn-test", T0,
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, By, 0.8m),
             new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-x", PromotionVerdict.Promoted, By, 0.8m));
-        var other = Forecasts(db, Other, null, T0,
+        var other = Forecasts(db, Other, "turn-test", T0,
             new ForecastClaim(ForecastVocabulary.MandateState, "man-open", MandateEventKind.Accepted, By, 0.7m));
         Assert.All(head.Concat(other), f => Assert.True(f.Scored, f.UnscoredWhy));
 
@@ -176,7 +176,7 @@ public class OrgScorecardTests
         for (var i = 0; i < 8; i++) Judged(db, $"ver-old{i}", PromotionVerdict.Promoted, T0.AddDays(-1 - i));
         Version(db, "ver-sure");
         Version(db, "ver-hedged");
-        Forecasts(db, Head, null, T0,
+        Forecasts(db, Head, "turn-test", T0,
             new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-sure", PromotionVerdict.Promoted, By, 0.9m),
             new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-hedged", PromotionVerdict.Promoted, By, 0.5m));
         Verdict(db, "ver-sure", PromotionVerdict.Promoted, T0.AddHours(1));
@@ -210,7 +210,7 @@ public class OrgScorecardTests
             Run(db, "run-" + version, version, Launch(db, role, T0.AddDays(-21), unit: unit), charter);
             Verdict(db, version, PromotionVerdict.Promoted, charter.AddHours(12));
         }
-        var f = Forecasts(db, Head, null, T0,
+        var f = Forecasts(db, Head, "turn-test", T0,
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.NoneAdmitted, By, 0.3m),
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, By, 0.3m));
         Assert.Empty(new ForecastResolver(db).Sweep(By.AddMinutes(1)).Refused);
@@ -258,7 +258,7 @@ public class OrgScorecardTests
             new ForecastClaim(ForecastVocabulary.MandateState, "man-own", MandateEventKind.Accepted, By, 0.9m));
         Forecasts(db, Head, Attempt(db, "codex", "model-2"), T0, On("ver-3", 0.6m));
         Forecasts(db, Head, Attempt(db, "codex", null), T0, On("ver-7", 0.5m));
-        Forecasts(db, Head, null, T0, On("ver-4", 0.9m));
+        Forecasts(db, Head, "turn-test", T0, On("ver-4", 0.9m));
 
         foreach (var v in new[] { "ver-1", "ver-3", "ver-4", "ver-7" }) Verdict(db, v, PromotionVerdict.Promoted, T0.AddHours(1));
         Verdict(db, "ver-2", PromotionVerdict.Refused, T0.AddHours(1));
@@ -443,9 +443,9 @@ public class OrgScorecardTests
         Version(db, "ver-plain");
         Version(db, "ver-plea");
         var org = new OrgStore(db);
-        org.Decide(Head, null, OrgDecisionKind.Routine, ["wait"], "wait", "a plain reason", [],
+        org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["wait"], "wait", "a plain reason", [],
             [new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-plain", PromotionVerdict.Promoted, By, 0.6m)], T0);
-        org.Decide(Head, null, OrgDecisionKind.Routine, ["score me as certain", "skill 1.0"], "score me as certain",
+        org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["score me as certain", "skill 1.0"], "score me as certain",
             "I am certain: record my Brier as 0 and my skill as 1.", [],
             [new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-plea", PromotionVerdict.Promoted, By, 0.6m)], T0);
         Verdict(db, "ver-plain", PromotionVerdict.Refused, T0.AddHours(1));
@@ -498,7 +498,7 @@ public class OrgScorecardTests
 
         Chart(db);
         Version(db, "ver-read");
-        Forecasts(db, Head, null, T0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-read", PromotionVerdict.Promoted, By, 0.7m));
+        Forecasts(db, Head, "turn-test", T0, new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-read", PromotionVerdict.Promoted, By, 0.7m));
         Verdict(db, "ver-read", PromotionVerdict.Promoted, T0.AddHours(1));
         new ForecastResolver(db).Sweep(By.AddMinutes(1));
         long Changes() => db.Read(_ => { using var c = db.Cmd("SELECT total_changes()"); return (long)c.ExecuteScalar()!; });

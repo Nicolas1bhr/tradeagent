@@ -74,7 +74,7 @@ public class OrgSurfaceShellTests
         Mandate(db, "man-0000000000e1", Head, Member, "issued", "delivered");
         Deliver(db, "man-0000000000e1", "done", DateTimeOffset.UtcNow.AddMinutes(-5), "[]", ("sources-cited", true, "ok"));
         Priced(db, Launch(db, Member, OwnerDay.Window(DateTimeOffset.UtcNow).From.AddMinutes(30), mandate: "man-0000000000e1"), 0.25m);
-        new OrgStore(db).Decide(Head, null, "routine", ["a", "b"], "a", "a reason", [], [], DateTimeOffset.UtcNow.AddHours(-1));
+        new OrgStore(db).Decide(Head, "turn-test", "routine", ["a", "b"], "a", "a reason", [], [], DateTimeOffset.UtcNow.AddHours(-1));
         var sources = new OrgSurfaceSources
         {
             Org = () => new OrgStore(db), Attempts = () => new AiAttemptStore(db), Currency = () => "USD", ProofHeld = () => true

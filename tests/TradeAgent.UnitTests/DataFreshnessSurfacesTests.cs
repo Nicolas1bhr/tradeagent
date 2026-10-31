@@ -68,7 +68,7 @@ public class DataFreshnessSurfacesTests
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
-            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, null, null)
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, CouncilRoles.Research, "turn-test")
         {
             Timeframe = program.Freshness!.Timeframe,
             DataFreshness = program.Freshness.DataFreshness,

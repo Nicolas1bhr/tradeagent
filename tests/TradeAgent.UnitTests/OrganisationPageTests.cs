@@ -238,7 +238,7 @@ public class OrganisationPageTests
         var at = DateTimeOffset.UtcNow.AddDays(-10);
         OrgScorecardTests.Version(db, "ver-cal");
         OrgScorecardTests.Version(db, "ver-later");
-        new OrgStore(db).Decide(Head, null, OrgDecisionKind.Routine, ["forecast it"], "forecast it", "a reason", [],
+        new OrgStore(db).Decide(Head, "turn-test", OrgDecisionKind.Routine, ["forecast it"], "forecast it", "a reason", [],
             [
                 new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-cal", PromotionVerdict.Promoted, at.AddDays(2), 0.8m),
                 new ForecastClaim(ForecastVocabulary.VerdictClass, "ver-later", PromotionVerdict.Promoted, at.AddDays(300), 0.35m)

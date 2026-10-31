@@ -89,7 +89,7 @@ public class AllocationGateTests(ITestOutputHelper log)
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars,
-            Cutoff.AddDays(-1), null, null));
+            Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test"));
 
         var model = ExecutionModel.Declare(0.001m, 0m, 0.0001m, 10_000m).Model!;
         var runId = new BacktestRequest(set.Id, set.NormalisedSha256, model, Cutoff, null)

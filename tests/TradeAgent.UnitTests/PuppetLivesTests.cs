@@ -403,7 +403,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         var old = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour",
             null, MandateShape.Report, false, now.AddDays(7), 5m, 2), now);
         var tooLong = string.Join("\n", Enumerable.Range(1, MandateLimits.ReportLines + 1).Select(i => $"line {i}"));
-        for (var i = 0; i < 2; i++) org.Deliver(old.Id, member, null, tooLong, [], [], DateTimeOffset.UtcNow);
+        for (var i = 0; i < 2; i++) org.Deliver(old.Id, member, "turn-test", tooLong, [], [], DateTimeOffset.UtcNow);
         Assert.Equal(MandateEventKind.Escalated, org.MandateStatus(old.Id));
         var failed = org.Deliveries(old.Id)[^1].Id;
 
@@ -628,7 +628,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal((AiAttemptState.LAUNCHED, m.Id), (running.State, running.MandateId));
 
         var since = System.Diagnostics.Stopwatch.StartNew();
-        var retired = org.Retire(new RetireRequest(divisionHead, null, member, "the question is answered elsewhere", ["retire", "keep"], [],
+        var retired = org.Retire(new RetireRequest(divisionHead, "turn-test", member, "the question is answered elsewhere", ["retire", "keep"], [],
             [new(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, DateTimeOffset.UtcNow.AddDays(45), 0.4m)]), DateTimeOffset.UtcNow);
         life.Host.Gateway.Fenced();
 

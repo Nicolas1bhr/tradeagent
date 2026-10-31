@@ -71,7 +71,7 @@ public class VersionLineageTests
         var program = StrategyParser.Parse(Text(entry)).Program!;
         l.Strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
-            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, At, role, null)
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, At, role, "turn-test")
         {
             ParentVersionId = parent
         });
@@ -87,7 +87,7 @@ public class VersionLineageTests
         l.Strategies.RecordRun(new StrategyRunRow(
             runId, versionId, l.Set.Id, l.Set.NormalisedSha256, Cutoff, null, model.Canonical,
             BacktestOutcome.COMPLETED.ToString(), null, 500, 4, 3, 4, 4, 100, 0, 0,
-            12m, 2m, 10m, 3m, "trace-sha", At, CouncilRoles.Research, null), []);
+            12m, 2m, 10m, 3m, "trace-sha", At, CouncilRoles.Research, "turn-test"), []);
         return runId;
     }
 

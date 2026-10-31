@@ -79,7 +79,7 @@ public partial class OrgStructureTests
     // ---- item 2: org-retire -------------------------------------------------------------------------------------------
 
     static RetireRequest RetireAsk(string position, string caller = Head) =>
-        new(caller, null, position, "the member's line of work is answered", ["retire", "keep"], [], [Admissible()]);
+        new(caller, "turn-test", position, "the member's line of work is answered", ["retire", "keep"], [], [Admissible()]);
 
     /// <summary>One refusal of a retirement: the target, the caller, and the words it is refused in.</summary>
     public static TheoryData<string> RetireRefusals => new()
@@ -166,10 +166,10 @@ public partial class OrgStructureTests
     }
 
     static CloseRequest CloseAsk(string unit, string caller = Head) =>
-        new(caller, null, unit, "the team's question is answered", ["close", "keep"], [], [Admissible()]);
+        new(caller, "turn-test", unit, "the team's question is answered", ["close", "keep"], [], [Admissible()]);
 
     static MergeRequest MergeAsk(string unit, string into, string caller = Head) =>
-        new(caller, null, unit, into, "two teams chase one question", ["merge", "keep both"], [], [Admissible()]);
+        new(caller, "turn-test", unit, into, "two teams chase one question", ["merge", "keep both"], [], [Admissible()]);
 
     const string Old = "team-0ld0c0ffee", Young = "team-y0un9c0ffee", OldHead = "pos-01dc0ffee001", OldMember = "pos-01dc0ffee002";
 
@@ -386,7 +386,7 @@ public partial class OrgStructureTests
         var made = org.Charter(Ask(refs: [CurrentRun(db)]), Metered, Now);
         Assert.Equal([made.Unit.Id], org.Veto(made.EventId, Now).Ended);
         Assert.Equal(OrgUnitStatus.Closed, org.Units().Single(u => u.Id == made.Unit.Id).Status);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "one more pair of hands", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "one more pair of hands", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         Assert.Equal([hired.Position.Id], org.Veto(hired.EventId, Now).Ended);
         Assert.Equal(OrgPositionStatus.Ended, org.Position(hired.Position.Id)!.Status);
         var retired = org.Retire(RetireAsk(SubHead), Now);
@@ -416,8 +416,8 @@ public partial class OrgStructureTests
         using var db = Chart();
         var org = new OrgStore(db);
         Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
-        var dormant = org.Hire(new HireRequest(Head, null, Old, false, "a second member", ["hire"], [CurrentRun(db)],
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var dormant = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a second member", ["hire"], [CurrentRun(db)],
             [Admissible()]), Now);
 
         Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Puppets, 3, Now).Status);
@@ -522,7 +522,7 @@ public partial class OrgStructureTests
         // THE OWNER'S ACTIVATION: the chart's own count — the legacy pair and every active position here on a CLI seat — is past
         // three already, so a dormant hire is refused whatever the setting; with only the pair counted, a third activates.
         Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         var before = Written(db);
         var words = Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Cli, 99, Now)).Message;
         Assert.Contains("unconfined-seat ceiling is 3 (his setting 99", words, StringComparison.Ordinal);
@@ -561,7 +561,7 @@ public partial class OrgStructureTests
             Assert.True(UnconfinedSeatCeiling.Counts(counted), $"a {counted ?? "undeclared"} seat was not counted");
 
         Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, Harness, 99, Now).Status);
     }
 
@@ -802,7 +802,7 @@ public partial class OrgStructureTests
         for (var i = 0; i < 40; i++)
         {
             var at = Now.AddDays(4 * i);
-            org.Merge(new MergeRequest(Head, null, units[i], units[i + 1], "two subdivisions chase one question", ["merge", "keep both"],
+            org.Merge(new MergeRequest(Head, "turn-test", units[i], units[i + 1], "two subdivisions chase one question", ["merge", "keep both"],
                 [], [Admissible(at.AddDays(45))]), at);
         }
 
@@ -829,8 +829,8 @@ public partial class OrgStructureTests
         void Resolved(string id, string predicate, string subject, DateTimeOffset at)
         {
             Exec(db, """
-                INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
-                VALUES($id, $d, $f, 2, $p, $s, 'admitted', $by, '0.5', 1, $at)
+                INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+                VALUES($id, $d, $f, 'turn-test', 2, $p, $s, 'admitted', $by, '0.5', 1, $at)
                 """, ("$id", id), ("$d", made.Decision.Id), ("$f", Head), ("$p", predicate), ("$s", subject),
                 ("$by", Now.AddDays(1).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$at", at.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
             Exec(db, "INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES($f, 'no', 'verdict', 'v-1', 'x', $at)",

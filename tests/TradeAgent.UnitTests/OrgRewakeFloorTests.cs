@@ -152,13 +152,13 @@ public partial class OrgAssignmentTests
 
         // A CLEAN FAILURE, delivered by a turn its own wake started: code's retry is due at once.
         var at = t.AddMinutes(1);
-        var failed = org.Deliver(m.Id, Member, null, TooLong, [], [], at);
+        var failed = org.Deliver(m.Id, Member, "turn-test", TooLong, [], [], at);
         Assert.Equal(MandateEventKind.Retry, failed.Status);
         org.Sweep(at, floors);
         Assert.Contains(events.DueFor(Member, at), e => e.Id == failed.Wake);
 
         // A DELIVERY THE DECIDER REJECTS: the rejection's wake is due at once.
-        var delivered = org.Deliver(m.Id, Member, null, "the skew predicts nothing", [], [], at);
+        var delivered = org.Deliver(m.Id, Member, "turn-test", "the skew predicts nothing", [], [], at);
         Assert.Equal(MandateEventKind.Delivered, delivered.Status);
         var rejected = org.Reject(delivered.Delivery.Id, Head, null, null, "use four hours", at);
         org.Sweep(at, floors);
@@ -386,7 +386,7 @@ public partial class OrgAssignmentTests
         var pending = Reraise(db, org, m, launch)!;
         Assert.False(pending.Consumed);
 
-        var failed = org.Deliver(m.Id, Member, null, TooLong, [], [], t.AddMinutes(5));
+        var failed = org.Deliver(m.Id, Member, "turn-test", TooLong, [], [], t.AddMinutes(5));
         var closed = events.Get(pending.Id)!;
         Assert.True(closed.Consumed);
         Assert.Equal((MissionEventStore.NoLaunch, MissionEventDisposition.Withdrawn), (closed.ConsumedBy, closed.Disposition));
@@ -397,7 +397,7 @@ public partial class OrgAssignmentTests
         var turned = TurnOn(db, Member, other, t);
         org.Sweep(t, Shipped);
         Assert.False(Reraise(db, org, other, turned)!.Consumed);
-        Assert.Equal(MandateEventKind.Delivered, org.Deliver(other.Id, Member, null, "the answer", [], [], t.AddMinutes(5)).Status);
+        Assert.Equal(MandateEventKind.Delivered, org.Deliver(other.Id, Member, "turn-test", "the answer", [], [], t.AddMinutes(5)).Status);
         Assert.DoesNotContain(events.OfKind(MissionEventKind.Mandate), e => e.Payload == other.Id && !e.Consumed);
     }
 

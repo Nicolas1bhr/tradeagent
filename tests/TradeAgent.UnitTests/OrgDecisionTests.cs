@@ -111,15 +111,15 @@ public partial class OrgDecisionTests
         Assert.Equal(Versions.DatabaseSchemaVersion.ToString(CultureInfo.InvariantCulture),
             db.Read(_ => { using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'"); return c.ExecuteScalar() as string; }));
 
-        var entry = new ResearchLedger(db).Add(Head, null, LedgerKind.Finding, "a rationale", LedgerMark.Claim, null, null, null).Id;
+        var entry = new ResearchLedger(db).Add(Head, "turn-test", LedgerKind.Finding, "a rationale", LedgerMark.Claim, null, null, null).Id;
         Exec(db, """
-            INSERT INTO org_decision(id, position, kind, options, choice, refs, ledger_entry_id, at)
-            VALUES('dec-000000000001', $p, 'routine', '["a","b"]', 'a', '[]', $e, $at)
+            INSERT INTO org_decision(id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at)
+            VALUES('dec-000000000001', $p, 'turn-test', 'routine', '["a","b"]', 'a', '[]', $e, $at)
             """, ("$p", Head), ("$e", entry), ("$at", Stamp));
         const string forecast = """
-            INSERT INTO org_forecast(id, decision_id, mandate_id, forecaster, vocabulary, predicate, subject, target, resolve_by,
+            INSERT INTO org_forecast(id, decision_id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by,
                                      probability, scored, unscored_why, at)
-            VALUES($id, $d, $m, $p, 1, 'verdict-class', 'v', 'promoted', $at, $prob, $scored, $why, $at)
+            VALUES($id, $d, $m, $p, 'turn-test', 1, 'verdict-class', 'v', 'promoted', $at, $prob, $scored, $why, $at)
             """;
         Exec(db, forecast, ("$id", "fc-000000000001"), ("$d", "dec-000000000001"), ("$m", null), ("$p", Head), ("$at", Stamp),
             ("$prob", "0.7"), ("$scored", 1), ("$why", null));
@@ -178,7 +178,7 @@ public partial class OrgDecisionTests
     static void Version(Database db, string id) =>
         Exec(db, """
             INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
-            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, NULL)
+            VALUES($id, 'x', 'x', '{}', 'test', 'ok', 0, $at, $role, 'turn-test')
             """, ("$id", id), ("$at", Stamp), ("$role", Member));
 
     /// <summary>
@@ -290,7 +290,7 @@ public partial class OrgDecisionTests
             Assert.Contains("only 'decision-record' writes one", refused.Error!.Message, StringComparison.Ordinal);
         }
         Assert.Contains("only 'decision-record' writes one", Assert.Throws<TradeAgentException>(() =>
-            gw.Ledger.Add(Member, null, LedgerKind.Decision, "we decided", LedgerMark.Claim, null, null, null)).Message, StringComparison.Ordinal);
+            gw.Ledger.Add(Member, "turn-test", LedgerKind.Decision, "we decided", LedgerMark.Claim, null, null, null)).Message, StringComparison.Ordinal);
         Assert.Equal(0L, Count(db, "ledger_entry"));
 
         // AND A DECISION'S ENTRY IS NEVER REVISED, by its own author either.
@@ -361,7 +361,7 @@ public partial class OrgDecisionTests
 
         // A STATE ALREADY REACHED: a rejection recorded before the forecast.
         var open = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
-        var delivered = gw.Org.Deliver(open.Id, Member, null, "found nothing", [], [], DateTimeOffset.UtcNow);
+        var delivered = gw.Org.Deliver(open.Id, Member, "turn-test", "found nothing", [], [], DateTimeOffset.UtcNow);
         gw.Org.Reject(delivered.Delivery.Id, Head, null, null, "the report says nothing", DateTimeOffset.UtcNow);
         var reached = await server.CallAsync(ForecastFrame(decision, open.Id, MandateEventKind.Rejected, 0.9m), Head, Launch(db, Head));
         Assert.Contains("has already been rejected", reached.Error!.Message, StringComparison.Ordinal);
@@ -466,7 +466,7 @@ public partial class OrgDecisionTests
 
     /// <summary>A decision of <see cref="Head"/>'s carrying <paramref name="forecasts"/>, by the store — the pipe is tested above.</summary>
     static DecisionRow Decided(Database db, DateTimeOffset at, params ForecastClaim[] forecasts) =>
-        new OrgStore(db).Decide(Head, null, OrgDecisionKind.Routine, ["a", "b"], "a", "because", [], forecasts, at);
+        new OrgStore(db).Decide(Head, "turn-test", OrgDecisionKind.Routine, ["a", "b"], "a", "because", [], forecasts, at);
 
     /// <summary>
     /// (d) A VERDICT RESOLVES A VERDICT-CLASS FORECAST YES OR NO, AND NONE BY THE DATE RESOLVES VOID (RULINGS Q3, Q4): the first
@@ -563,7 +563,7 @@ public partial class OrgDecisionTests
             new ForecastClaim(ForecastVocabulary.MandateState, idle.Id, MandateEventKind.Rejected, by, 0.2m));
         var f = org.ForecastsOn(d.Id).ToDictionary(x => x.Subject);
 
-        var delivery = org.Deliver(accepted.Id, Member, null, "the skew leads by four minutes", [], [], t0.AddHours(1));
+        var delivery = org.Deliver(accepted.Id, Member, "turn-test", "the skew leads by four minutes", [], [], t0.AddHours(1));
         org.Accept(delivery.Delivery.Id, Head, null, t0.AddHours(2));
         org.Cancel(cancelled.Id, Head, null, "answered elsewhere", t0.AddHours(2));
         Assert.Equal(2, new ForecastResolver(db).Sweep(t0.AddHours(3)).Resolved);
@@ -656,8 +656,8 @@ public partial class OrgDecisionTests
         // so the version this build does not know is the next one.)
         var unknown = ForecastVocabulary.Version + 1;
         Exec(db, """
-            INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
-            VALUES('fc-0000000000v3', $d, $p, $v, 'verdict-class', 'ver-twice', 'promoted', $by, '0.5', 1, $at)
+            INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+            VALUES('fc-0000000000v3', $d, $p, 'turn-test', $v, 'verdict-class', 'ver-twice', 'promoted', $by, '0.5', 1, $at)
             """, ("$d", d.Id), ("$p", Head), ("$v", unknown), ("$by", Sql(t0.AddDays(1))), ("$at", Sql(t0)));
         var sweep = new ForecastResolver(db).Sweep(t0.AddDays(5));
         Assert.Contains(sweep.Refused, w => w.Contains("fc-0000000000v3", StringComparison.Ordinal)
@@ -668,8 +668,8 @@ public partial class OrgDecisionTests
     // ---- U-forecast-nul: a probability with a NUL inside it, and a row the reader cannot parse ----------------------------
 
     const string RawForecast = """
-        INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
-        VALUES($id, $d, $p, 1, 'verdict-class', $v, 'promoted', $by, $prob, 1, $at)
+        INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, at)
+        VALUES($id, $d, $p, 'turn-test', 1, 'verdict-class', $v, 'promoted', $by, $prob, 1, $at)
         """;
 
     /// <summary>
@@ -1045,7 +1045,7 @@ public partial class OrgDecisionTests
         using var _db = db;
         await using var _server = server;
         var m = gw.Org.Assign(Issue(), DateTimeOffset.UtcNow);
-        var d = gw.Org.Decide(Head, null, OrgDecisionKind.Routine, ["a"], "a", "why", [], [], DateTimeOffset.UtcNow);
+        var d = gw.Org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["a"], "a", "why", [], [], DateTimeOffset.UtcNow);
         var tables = new[] { "org_decision", "org_forecast", "org_escalation", "org_lateral", "ledger_entry", "mission_event" };
         var before = tables.Select(t => Count(db, t)).ToArray();
         Assert.Equal(OrgPositionKind.Head, gw.Org.Standing(CouncilRoles.Research)!.Kind);

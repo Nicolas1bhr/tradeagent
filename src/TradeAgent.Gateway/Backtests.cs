@@ -106,6 +106,12 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         ArgumentNullException.ThrowIfNull(ask);
 
         var role = RoleOf(caller);
+        // THE ATTEMPT, BEFORE THE COMPUTE (U-lineage-check): the version and the run record the attempt whose reads produced them, and
+        // the store refuses both without one — so a launch that carries none is told now, not after a run it cannot keep.
+        if (string.IsNullOrWhiteSpace(caller.AttemptId))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "a backtest records the attempt whose reads produced its version and its run, and this connection's launch grant "
+                + "names no attempt. TradeAgent stamps the attempt on the grant of every launch it admits; ask again from that launch.");
         var (home, path) = Resolve(role, ask.Strategy);
 
         // WHAT THE CALLER DECLARED IS CHECKED FIRST, AND ON ITS OWN. `Increment` can refuse — an

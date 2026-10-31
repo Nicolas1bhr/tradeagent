@@ -23,7 +23,7 @@ public partial class OrgStructureTests
         Exec(db, "UPDATE org_event SET at = $at WHERE id = $id",
             ("$at", Now.AddDays(-8).UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$id", merged.EventId));
         var chartered = org.Charter(Ask(refs: [CurrentRun(db)]), Metered, Now);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "one more pair of hands", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "one more pair of hands", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         var retired = org.Retire(RetireAsk(SubHead), Now);
         Aged(db, Closing, Div, OrgUnitKind.Team, 20);
         var closed = org.Close(CloseAsk(Closing), Now);

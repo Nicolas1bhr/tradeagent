@@ -67,7 +67,7 @@ public class AllocationLedgerTests
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars,
-            Cutoff.AddDays(-1), null, null));
+            Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test"));
 
         var model = ExecutionModel.Declare(0.001m, 0m, 0.0001m, 10_000m).Model!;
         var request = new BacktestRequest(set.Id, set.NormalisedSha256, model, Cutoff, null);
@@ -90,7 +90,7 @@ public class AllocationLedgerTests
         strategies.RecordVersion(new StrategyVersionRow(
             unjudged.StrategyId, unjudged.Source, unjudged.Canonical, unjudged.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, unjudged.WarmUpBars,
-            Cutoff.AddDays(-1), null, null));
+            Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test"));
 
         return new Allocated(db, set, program.StrategyId, promotion, unjudged.StrategyId);
     }

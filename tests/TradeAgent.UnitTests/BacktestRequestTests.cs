@@ -43,7 +43,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         AgentContext.ForAgent(role, role, attempt);
 
     /// <summary>Writes a program into one role's own folder and answers the path the agent would type.</summary>
-    static string GivenProgram(string role = CouncilRoles.Operations, string text = Text, string name = "x.strategy")
+    internal static string GivenProgram(string role = CouncilRoles.Operations, string text = Text, string name = "x.strategy")
     {
         var dir = Path.Combine(Paths.RoleHome(role), "strategies");
         Directory.CreateDirectory(dir);
@@ -52,7 +52,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
     }
 
     /// <summary>A dataset the ledger really recorded, with a sawtooth that crosses 103 every ten minutes.</summary>
-    static DatasetRecord GivenData(Database db, int bars = 120, string pair = "BTCUSDT")
+    internal static DatasetRecord GivenData(Database db, int bars = 120, string pair = "BTCUSDT")
     {
         var dir = BinanceArchive.DatasetDir(pair);
         Directory.CreateDirectory(Path.Combine(dir, "raw"));

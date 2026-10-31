@@ -247,6 +247,8 @@ public sealed class ResearchLedger(Database db, Func<DateTimeOffset>? now = null
     LedgerEntryRow Insert(string author, string? attempt, string kind, string text, string mark, decimal? confidence,
         long? about, string? source)
     {
+        // THE AUTHOR AND ITS ATTEMPT, OR NOTHING (U-lineage-check): an entry is a claim, and a claim names the turn that made it.
+        ArtifactLineage.Require(ArtifactKind.LedgerEntry, author, attempt);
         Mark(mark);
         Confidence(confidence);
         var said = Text(text, "text", MaxTextChars);

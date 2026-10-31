@@ -252,6 +252,7 @@ public class VenueCatalogTests
                 DROP TABLE forward_bar;
                 DROP TABLE forward_gap;
                 DROP TABLE forward_fetch;
+                DROP TRIGGER IF EXISTS lineage_strategy_version; DROP TRIGGER IF EXISTS lineage_strategy_run; DROP TRIGGER IF EXISTS lineage_org_delivery; DROP TRIGGER IF EXISTS lineage_ledger_entry; DROP TRIGGER IF EXISTS lineage_org_decision; DROP TRIGGER IF EXISTS lineage_org_forecast;
                 DROP TABLE org_event;
                 DROP TABLE org_position;
                 DROP TABLE org_unit;
