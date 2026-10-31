@@ -2715,8 +2715,12 @@ or the maximum hold is decided at X (it is taken off inside X+1). A relative lev
 distance from the price PAID, as the runner places it; a fixed one stays where it was declared. A minute that OPENED
 through the stop fills at that open, and a minute that touched BOTH the stop and the target counts as the **stop**,
 because bars carry no intrabar ordering and the other reading invents a winning trade. The maximum holding time is
-protection too, decided at the close of the bar that reaches the limit and checked BEFORE the evaluator is asked
-anything on that bar: its close is a **market sell at that open, never X's close**, and on every event while it is in
+protection too, counted in the program's bars ELAPSED on its grid — from the one the entry filled in to the last one
+closed by the end of the minute in progress (`BarGrid.ClosedThrough`), whether or not the data has a minute in them,
+as the runner's `RunBooks.BarsSince` counts it — and asked on every minute, so it is decided at the close of the bar
+that reaches the limit on whole data and on the first minute past it across missing minutes, which may close no bar at
+all (`U-backtest-parity-2`, `backtest=4`); it is checked BEFORE the evaluator is asked anything on that minute: its
+close is a **market sell at that open, never X's close**, and on every event while it is in
 flight the evaluator reads FLAT with an order pending — the runner's `RunBooks.Flat` — so it emits nothing for the hold
 and takes no entry until the close has filled. An order the evaluator itself emitted keeps `OrderPending: false`: its
 own one-event hold covers X+1, as the runner's replay does, and reporting it pending too would swallow the entry the
@@ -2729,14 +2733,19 @@ X's close with nothing pending, is withdrawn by the bump **by design**: those fi
 paper run they promote into. **Not claimed:** a runner pass that runs late (catch-up, restart) fills later still — the
 backtest models the on-time runner, the floor; friction parity (paper fills a stop or a limit without slippage, the
 backtest slips it — the backtest is the less optimistic); the runner's re-anchoring of a FIXED level
-(`U-runner-fixed-levels`); its re-fire at X+1 (`U-runner-maxhold-refire`).
+(`U-runner-fixed-levels`); its re-fire at X+1 (`U-runner-maxhold-refire`). Every verdict measured under `backtest=3`,
+which counted the hold in the bars the run happened to evaluate, asked it only at a declared close and decided a bar
+past its missing minutes from the books before that minute's own fills and stops, is withdrawn by the bump **by
+design**: across a gap 3 held longer than paper and could hand the program a position a stop had already closed.
 
 **Two clocks for a program on declared bars** (`U-timeframe-a`). `Backtest.Run` walks closed MINUTES: on every
 minute an order due by then fills at that minute's open and the resting stop and target fire on that minute's range —
-the rules above, minute by minute. Only at a DECLARED bar's close is the maximum hold decided (counting declared bars,
-its close sent then and filled two minutes on like any order) and the evaluator asked, on the resampled bar; an order
-from that close is learnt on the bar's last minute, or on the first minute past a bar whose last minutes are missing —
-the minute the runner learns of the close. The
+the rules above, minute by minute, and the maximum hold is asked on every minute, counted in declared bars elapsed (the
+rule above). Only at a DECLARED bar's close is the evaluator asked, on the resampled bar; an order from that close is
+learnt on the bar's last minute, or on the first minute past a bar whose last minutes are missing — the minute the
+runner learns of the close — and the evaluator reads the books **at the close of that minute**, after its own fills, its
+protection and the maximum hold, as the runner reads them (`U-backtest-parity-2`), while that bar's own `Bar` line stays
+the account at ITS close; a fill on that minute carries the next bar's ordinal and is written before it. The
 trace holds one `Bar` line per evaluated bar plus every fill, exit and refusal — never one per minute — and every event
 of one declared bar shares its ordinal, a fill or exit carrying the minute it happened on. `MaxTracedBars` counts
 EVALUATED bars, so a year of hourly bars (8,760) is one run. There is no bar parameter: `Run` reads `program.Bars`,
@@ -2842,7 +2851,11 @@ in the machine's culture and with its own scale — `divided 1026,70 by zero` on
 the fill rule above) re-pinned thirteen of the seventeen — every vector whose run filled an order; the size that
 rounds to nothing, the operation-budget fault and the two decimal faults never fill one — and
 `history-arithmetic-stop-and-target` went from Met / MetOnHistory to NotProfitable; `FeatureProgramGoldenVectorTests`
-re-pinned all four (the run id hashes the evaluator, and every fill moved).
+re-pinned all four (the run id hashes the evaluator, and every fill moved). **`backtest=4`** (`U-backtest-parity-2`,
+the elapsed hold and the books after the minute, above) moved none of the seventeen — all one-minute programs, no hold
+of theirs across a gap — so `five-minute-always-in-across-gaps` was added with it, the first golden vector on declared
+bars, crossing `trend-utc`'s three gaps (its trace `07bbe3c0fb42…` under 3, `ddac7b33db2c…` under 4); the four feature
+vectors re-pinned their run ids only.
 
 **Every number the evaluation path writes or reads names its culture** (`U-invariant-traces`), as a price read
 off the pipe does — "writes" meaning into what a run records. A decimal in a trace line, a canonical text, an

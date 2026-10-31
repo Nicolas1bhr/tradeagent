@@ -69,8 +69,10 @@ year of hourly bars is one run. **What stays on the minute**: a decision taken a
 fills on the minute paper fills it — the open **two minutes after** the bar's last minute (or after the first
 minute past a bar whose last minutes are missing); a stop and a target fire on each minute's own range, with the
 conservative ordering applied minute by minute — an hour whose range touched both levels is a target if a
-minute inside it reached the target first and alone; and `max_hold_bars` is reached at the close of the
-declared bar that reaches it, its market close filled two minutes on like any order. **Time filters read the declared bar's open time**, so on hourly bars an
+minute inside it reached the target first and alone; and `max_hold_bars` counts the declared bars that have
+ELAPSED since the entry filled — whether or not the data has a minute in them — and is reached on the first minute
+by whose end that many have closed: the close of the declared bar that reaches it, or, across missing minutes, the
+first minute past it; its market close fills two minutes on like any order. **Time filters read the declared bar's open time**, so on hourly bars an
 `entry_window` or `opening_range` must contain an hour's open (`10:00`) to admit that hour: declare them on
 the bar's boundaries.
 
@@ -84,8 +86,8 @@ evaluated on.
 it builds from the minutes the same way, and sends what they decide at that bar's close. Everything that
 protects a position stays on the minute: the stop and the target go to the venue in the pass after the
 minute the entry filled on, the other one is cancelled in the pass after the minute one of them filled on,
-and `max_hold_bars` — counted in declared bars — closes the position at the close of the declared bar that
-reaches it. A run's first bar is the partial bar it saw from its start, its missing minutes counted as
+and `max_hold_bars` — counted in declared bars elapsed, on every minute — closes the position at the close of the
+declared bar that reaches it, or on the first minute past it when its last minutes are missing. A run's first bar is the partial bar it saw from its start, its missing minutes counted as
 missing.
 
 ## Features — a program reads the tape
@@ -384,11 +386,14 @@ closed and places the order inside X+1 — plus adverse slippage, with a fee on 
 fires **intrabar** at its own price, from two minutes after the entry filled (when it is resting at the venue)
 until the minute an exit is decided, measured from the price paid for a `percent` or `atr` level and where it
 was declared for a `fixed` one; a minute that touched both counts as the **stop**; a minute that opened
-through the stop fills at that open; `max_hold_bars` is reached at the close of the bar that reaches it, by the
-backtest's own protection, before the evaluator is asked anything on that bar — so the evaluator emits nothing
+through the stop fills at that open; `max_hold_bars` is reached at the close of the bar that reaches it — counted in
+bars elapsed, so across missing minutes on the first minute past it — by the backtest's own protection, before the
+evaluator is asked anything — so the evaluator emits nothing
 for it — and its market close fills two minutes on, never at that close; until it has, the program reads a flat
 account with an order pending and enters nothing. A size that rounds down to nothing is no trade, with the
-reason, and so is an order due after the window's last minute. On a program that declares `bars`, the
+reason, and so is an order due after the window's last minute. A bar whose last minutes are missing is decided on
+the first minute past it, from the account as that minute left it — its own fills and stops included — as paper
+decides it. On a program that declares `bars`, the
 decision and `max_hold_bars` are the declared bar's and everything else here is the minute's: the fill two
 minutes on, the stop and the target on each minute's range — the "Bars" section above. The
 dataset still serves minutes; the run builds the declared bars from them, and a run that ends inside one
