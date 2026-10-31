@@ -68,6 +68,37 @@ public class GlanceWordsTests
             Line(r with { Spend = AiSpendToday.NotMetered }, GlanceWords.Spend).Line);
     }
 
+    /// <summary>(Codex review) Turns that reported no cost or no usage are named beside today's figure, never folded into it as zero.</summary>
+    [Fact]
+    public void Todays_spend_names_the_turns_its_figure_does_not_hold()
+    {
+        var spend = new AiSpendToday
+        {
+            Metered = true, CanPrice = true, Class = BillingClasses.Key, Spent = 0m, Cap = 5m, Currency = "USD", Turns = 3,
+            UnpricedTurns = 2, UnreportedTurns = 1
+        };
+        var line = Line(Read() with { Spend = spend }, GlanceWords.Spend);
+        Assert.Contains("2 turns reported no cost and are not in that figure.", line.Details, StringComparison.Ordinal);
+        Assert.Contains("1 turn reported no usage and is charged the reservation, so that figure is not a bill.", line.Details, StringComparison.Ordinal);
+        Assert.True(line.Caution);
+    }
+
+    /// <summary>(Codex review) The board unread, or a work row refused, never reads as "nothing waits on anyone".</summary>
+    [Fact]
+    public void Waiting_with_a_part_unread_says_it_may_not_be_all()
+    {
+        var r = Read(u => u["board"] = "the board's table is missing") with
+        {
+            Mandates = OrgList<OpenMandate>.Empty, Deliveries = new OrgList<DeliveryToJudge>([], ["a delivery row could not be read"]), BoardOpen = null
+        };
+        var line = Line(r, GlanceWords.Waiting);
+        Assert.Equal("Nothing waits on anyone: no mandate is open and no delivery waits to be judged. Not everything could be read, so this may "
+                     + "not be all of it.", line.Line);
+        Assert.Contains("The board's open proposals could not be read: the board's table is missing", line.Details, StringComparison.Ordinal);
+        Assert.Contains("a delivery row could not be read", line.Details, StringComparison.Ordinal);
+        Assert.True(line.Caution);
+    }
+
     [Fact]
     public void Next_wakes_name_each_active_position_and_a_stopped_loop_says_none_runs()
     {

@@ -189,7 +189,10 @@ static class GlanceWords
         var line = parts.Count > 0 ? Cap(string.Join("; ", parts)) + "."
             : due.Count > 0 ? $"Nothing is overdue: {Count(due.Count, "mandate is", "mandates are")} open and on time."
             : "Nothing waits on anyone: no mandate is open and no delivery waits to be judged.";
-        return new(Waiting, "Waiting", line, string.Join("\n", details), late.Count > 0);
+        // A PART NOT READ IS NOT "NOTHING" (Codex review): the board unread or a row refused, and the line says it may not be all.
+        var incomplete = r.BoardOpen is null || mandates.Refused.Count + deliveries.Refused.Count > 0;
+        if (incomplete) line += " Not everything could be read, so this may not be all of it.";
+        return new(Waiting, "Waiting", line, string.Join("\n", details), late.Count > 0 || incomplete);
     }
 
     static GlanceLine SpendLine(GlanceRead r)
@@ -201,7 +204,13 @@ static class GlanceWords
         var details = plan.StartsWith("Today: ", StringComparison.Ordinal) ? "Plan: " + plan["Today: ".Length..] : plan;
         if (!s.CanPrice)
             details += $"\nNeither figure is complete: TradeAgent cannot price this AI's turns ({s.WhyNoPrice ?? "no reason recorded"}).";
-        return new(Spend, "AI spend today", line, details, !s.AdmitsAnotherTurn || !s.CanPrice);
+        // TURNS NOT IN THE FIGURE ARE NAMED BESIDE IT (Codex review): unknown is never folded into a total as zero.
+        if (s.UnpricedTurns > 0)
+            details += $"\n{Count(s.UnpricedTurns, "turn", "turns")} reported no cost and {(s.UnpricedTurns == 1 ? "is" : "are")} not in that figure.";
+        if (s.UnreportedTurns > 0)
+            details += $"\n{Count(s.UnreportedTurns, "turn", "turns")} reported no usage and {(s.UnreportedTurns == 1 ? "is" : "are")} charged "
+                       + "the reservation, so that figure is not a bill.";
+        return new(Spend, "AI spend today", line, details, !s.AdmitsAnotherTurn || !s.CanPrice || s.UnpricedTurns > 0);
     }
 
     static GlanceLine CampaignsLine(GlanceRead r)
