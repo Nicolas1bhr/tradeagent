@@ -6,8 +6,11 @@ using TradeAgent.Provisioning;
 
 namespace TradeAgent.App;
 
-/// <summary>What the setup step's one press did, or why it did nothing, in the owner's words.</summary>
-public sealed record EvidenceSetup(bool Ok, string Words, CampaignRow? Campaign);
+/// <summary>
+/// What the setup step's one press did, or why it did nothing, in the owner's words: one sentence per pair asked for, and the
+/// campaigns it opened — one per pair (<c>U-evidence-breadth</c>).
+/// </summary>
+public sealed record EvidenceSetup(bool Ok, string Words, IReadOnlyList<CampaignRow> Campaigns);
 
 /// <summary>
 /// THE DATA, THE HOLDOUT AND THE CAMPAIGN — SET UP IN ONE PRESS AND FOLLOWED BY RULE, UNATTENDED (<c>U-evidence-campaign</c>; R25 D7).
@@ -19,9 +22,14 @@ public sealed record EvidenceSetup(bool Ok, string Words, CampaignRow? Campaign)
 /// </summary>
 /// <param name="gateway">The gateway as it is now — read at each call, because a platform switch replaces it.</param>
 /// <param name="collect">The Download press: a pair and the instant it is asked at, to what it recorded.</param>
+/// <param name="check">
+/// The instrument check for a pair (<c>AppHost.CheckInstrumentAsync</c>): the venue's own step, without which no campaign can pin
+/// its judge's cost model and no run can round a size. Asked before each pair is held back; null asks nothing.
+/// </param>
 public sealed class EvidenceCampaigns(
     Func<TradingGateway> gateway,
-    Func<string, DateTimeOffset, IProgress<ProvisionProgress>?, CancellationToken, Task<DataCollection>> collect)
+    Func<string, DateTimeOffset, IProgress<ProvisionProgress>?, CancellationToken, Task<DataCollection>> collect,
+    Func<string, CancellationToken, Task>? check = null)
 {
     /// <summary>How long after a download that did not hold the minimum the next one is asked for.</summary>
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(24);
@@ -39,41 +47,81 @@ public sealed class EvidenceCampaigns(
     }
 
     /// <summary>
-    /// THE SETUP STEP'S ONE PRESS: the newest accepted download of the owner's pair (collected now when there is none), held back
-    /// from <see cref="EvidenceDefaults.Cutoff"/> — or from the cutoff it already has, which is never moved — and its campaign
-    /// opened with the owner's budgets, through <see cref="TradingGateway.SetHoldout"/>. A press when a campaign is already open
-    /// changes nothing.
+    /// THE PAIRS UNDER EVIDENCE NOW: every pair with an open campaign over real history, oldest campaign first, each once
+    /// (<c>U-evidence-breadth</c>). What the instrument check keeps verified and the pages list.
     /// </summary>
-    public async Task<EvidenceSetup> SetUpAsync(DateTimeOffset now, IProgress<ProvisionProgress>? progress = null,
-        CancellationToken ct = default)
+    public IReadOnlyList<string> Pairs()
     {
         var gw = gateway();
-        if (Ready())
-            return new EvidenceSetup(true, "A campaign is already open over real history, so nothing was changed.", null);
+        return [.. gw.Campaigns.All().Where(c => c.IsOpen).OrderBy(c => c.Id)
+            .Select(c => gw.Datasets.ById(c.HoldoutDatasetId))
+            .Where(set => set is not null && EvaluationClass.Or(set.EvaluationClass) == EvaluationClass.Research)
+            .Select(set => set!.Pair)
+            .Distinct(StringComparer.Ordinal)];
+    }
 
-        var pair = gw.Settings.MarketDataPair;
+    /// <summary>
+    /// THE SETUP STEP'S ONE PRESS, OVER THE PAIRS THE OWNER LEFT TICKED (<c>U-evidence-breadth</c> item 1): each pair in turn —
+    /// one already under a campaign over real history is left alone — gets its newest accepted download (collected now when there
+    /// is none), its instrument check, and its own holdout from <see cref="EvidenceDefaults.Cutoff"/> — or from the cutoff it already
+    /// has, which is never moved — with its OWN campaign opened with the owner's budgets, through
+    /// <see cref="TradingGateway.SetHoldout"/>. Ok when a campaign over real history is open afterwards; one sentence per pair says
+    /// what happened to it, a pair that failed included, so the owner can finish it from Settings.
+    /// </summary>
+    public async Task<EvidenceSetup> SetUpAsync(DateTimeOffset now, IReadOnlyList<string> pairs,
+        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(pairs);
+        var asked = pairs.Distinct(StringComparer.Ordinal).ToList();
+        if (asked.Count == 0)
+            return new EvidenceSetup(Ready(), "No pair was ticked, so nothing was downloaded or held back.", []);
+
+        var words = new List<string>();
+        var opened = new List<CampaignRow>();
+        foreach (var pair in asked)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (said, campaign) = await SetUpPairAsync(pair, now, progress, ct);
+            words.Add(said);
+            if (campaign is not null) opened.Add(campaign);
+        }
+        return new EvidenceSetup(Ready(), string.Join(" ", words), opened);
+    }
+
+    /// <summary>One pair of <see cref="SetUpAsync"/>: its sentence, and the campaign it opened or null.</summary>
+    async Task<(string Words, CampaignRow? Campaign)> SetUpPairAsync(string pair, DateTimeOffset now,
+        IProgress<ProvisionProgress>? progress, CancellationToken ct)
+    {
+        var gw = gateway();
+        if (!BinanceArchive.IsPair(pair))
+            return ($"“{pair}” is not a pair as Binance writes one, so nothing was held back for it.", null);
+        if (Pairs().Contains(pair, StringComparer.Ordinal))
+            return ($"{pair}: a campaign is already open over real history, so nothing was changed.", null);
+
         var set = gw.Datasets.Newest(pair) is { } newest ? gw.Datasets.Checked(newest) : null;
         if (set is null || set.State != DatasetState.ACCEPTED)
         {
             var collected = await collect(pair, now, progress, ct);
             if (collected.Dataset is not { } fresh || fresh.State != DatasetState.ACCEPTED)
-                return new EvidenceSetup(false, $"Nothing was held back: {collected.Summary}", null);
+                return ($"{pair}: nothing was held back: {collected.Summary}", null);
             set = fresh;
         }
+
+        // THE VENUE'S OWN STEP FOR THIS PAIR, read before the holdout: the campaign pins its judge from it, and a press on a pair
+        // whose step is unconfirmed is refused by SetHoldout in its own words, writing nothing.
+        if (check is not null) await check(pair, ct);
 
         // A CUTOFF ALREADY THERE IS THE OWNER'S AND IS KEPT: moving it later with no campaign holding it would release months he
         // held back, and the store refuses earlier. The default is chosen only for a download that holds none.
         if ((set.HoldoutFrom ?? EvidenceDefaults.Cutoff(set)) is not { } cutoff)
-            return new EvidenceSetup(false,
-                $"Nothing was held back: the {set.Pair} download holds too few months to keep the last {EvidenceDefaults.HoldoutMonths} "
-                + "back and still leave a month to research.", null);
+            return ($"{pair}: nothing was held back: the download holds too few months to keep the last "
+                + $"{EvidenceDefaults.HoldoutMonths} back and still leave a month to research.", null);
 
         var (done, campaign) = gw.SetHoldout(set.Id, cutoff, EvaluationClass.Research);
-        if (!done.Ok || campaign is null) return new EvidenceSetup(false, done.Why, null);
+        if (!done.Ok || campaign is null) return ($"{pair}: {done.Why}", null);
 
-        return new EvidenceSetup(true,
-            $"{set.Pair} bars from {cutoff.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC on are held "
-            + "back: the AI cannot read them or backtest over them, and this date can no longer be moved. "
+        return ($"{set.Pair} bars from {cutoff.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC on are "
+            + "held back: the AI cannot read them or backtest over them, and this date can no longer be moved. "
             + CampaignStore.PressNote(campaign, gw.Campaigns.JudgementsSpent(campaign.Id), gw.Campaigns.OverTheSameMonths(campaign.Id)),
             campaign);
     }

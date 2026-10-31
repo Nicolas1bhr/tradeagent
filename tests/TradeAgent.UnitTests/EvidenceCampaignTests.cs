@@ -120,10 +120,10 @@ public class EvidenceCampaignTests
         Assert.True(gw.Datasets.SetHoldout(set.Id, his, EvaluationClass.Research).Ok);
 
         var evidence = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
-        var done = await evidence.SetUpAsync(Now);
+        var done = await evidence.SetUpAsync(Now, [gw.Settings.MarketDataPair]);
 
         Assert.True(done.Ok, done.Words);
-        Assert.Equal(his, done.Campaign!.HoldoutFrom);
+        Assert.Equal(his, Assert.Single(done.Campaigns).HoldoutFrom);
         Assert.Equal(his, gw.Datasets.ById(set.Id)!.HoldoutFrom);
         Assert.True(evidence.Ready());
     }
@@ -145,16 +145,73 @@ public class EvidenceCampaignTests
             return Task.FromResult(new DataCollection(OnDisk(db, pair, First, Last), [], "collected"));
         });
 
-        var first = await evidence.SetUpAsync(Now);
+        var first = await evidence.SetUpAsync(Now, [gw.Settings.MarketDataPair]);
         Assert.True(first.Ok, first.Words);
-        Assert.Equal(DefaultCutoff, first.Campaign!.HoldoutFrom);
+        Assert.Equal(DefaultCutoff, Assert.Single(first.Campaigns).HoldoutFrom);
         Assert.Contains("final judgements", first.Words, StringComparison.Ordinal);
 
-        var second = await evidence.SetUpAsync(Now);
+        var second = await evidence.SetUpAsync(Now, [gw.Settings.MarketDataPair]);
         Assert.True(second.Ok);
-        Assert.Null(second.Campaign);
+        Assert.Empty(second.Campaigns);
         Assert.Equal(1, asked);
         Assert.Single(gw.Campaigns.All());
+    }
+
+    /// <summary>
+    /// SETUP HOLDS BACK EACH TICKED PAIR UNDER ITS OWN CAMPAIGN (<c>U-evidence-breadth</c> item 1): two pairs ticked of three — each
+    /// downloaded, its instrument checked BEFORE its holdout, held back from its own default and given its own campaign with the
+    /// owner's budgets; the unticked pair is neither downloaded nor held. A judgement on one spends none of the other's. A second
+    /// press with all three ticked sets up only the third: a pair already under a campaign is left alone. RED on the base, which
+    /// had one pair and no list (CS1729: no constructor taking the instrument check).
+    /// </summary>
+    [Fact]
+    public async Task Setup_holds_back_each_ticked_pair_under_its_own_campaign_and_leaves_the_rest()
+    {
+        var (gw, _, db) = await TestEnv.Ready(s => { s.CampaignTrialBudget = 7; s.CampaignVerdictBudget = 2; });
+        using var owned = db;
+        await using var gateway = gw;
+        var (a, b, c) = (TestEnv.NewPair(), TestEnv.NewPair(), TestEnv.NewPair());
+        var said = new List<string>();
+        var evidence = new EvidenceCampaigns(() => gw,
+            (pair, _, _, _) =>
+            {
+                said.Add("collect " + pair);
+                return Task.FromResult(new DataCollection(OnDisk(db, pair, First, Last), [], "collected"));
+            },
+            (pair, _) =>
+            {
+                said.Add($"check {pair} held={gw.Campaigns.All().Any(k => gw.Datasets.ById(k.HoldoutDatasetId)?.Pair == pair)}");
+                return Task.CompletedTask;
+            });
+
+        var first = await evidence.SetUpAsync(Now, [a, b]);
+        Assert.True(first.Ok, first.Words);
+        Assert.Equal([$"collect {a}", $"check {a} held=False", $"collect {b}", $"check {b} held=False"], said);
+        Assert.Equal(2, first.Campaigns.Count);
+        Assert.Equal([a, b], first.Campaigns.Select(k => gw.Datasets.ById(k.HoldoutDatasetId)!.Pair));
+        Assert.All(first.Campaigns, k => Assert.Equal((DefaultCutoff, 7, 2), (k.HoldoutFrom, k.TrialBudget, k.VerdictBudget)));
+        Assert.Null(gw.Datasets.Newest(c));
+        Assert.Equal([a, b], evidence.Pairs());
+
+        Assert.True(gw.Campaigns.ChargeVerdict(first.Campaigns[1].Id, Version(db, "version-b"), Now).Ok);
+        Assert.Equal(0, gw.Campaigns.JudgementsSpent(first.Campaigns[0].Id));
+
+        said.Clear();
+        var second = await evidence.SetUpAsync(Now, [a, b, c]);
+        Assert.True(second.Ok, second.Words);
+        Assert.Equal(c, gw.Datasets.ById(Assert.Single(second.Campaigns).HoldoutDatasetId)!.Pair);
+        Assert.Equal([$"collect {c}", $"check {c} held=False"], said);
+        Assert.Contains($"{a}: a campaign is already open", second.Words, StringComparison.Ordinal);
+        Assert.Equal(3, gw.Campaigns.All().Count);
+    }
+
+    /// <summary>WHAT SETUP OFFERS: the owner's Settings pair first, then the five default pairs, each once.</summary>
+    [Fact]
+    public void Setup_offers_the_settings_pair_first_then_the_default_pairs_once_each()
+    {
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"], EvidenceDefaults.Offered("BTCUSDT"));
+        Assert.Equal(["ADAUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"], EvidenceDefaults.Offered("ADAUSDT"));
+        Assert.Equal(EvidenceDefaults.Pairs, EvidenceDefaults.Offered("not a pair"));
     }
 
     // ---- item 2: the fresh holdout ----------------------------------------------------------------
