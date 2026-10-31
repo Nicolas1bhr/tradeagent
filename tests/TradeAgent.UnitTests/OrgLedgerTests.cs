@@ -490,6 +490,13 @@ public class OrgLedgerTests
         // model outside the catalog, the legacy pair, an ended position and a seat written in part. No op, door verb or trade verb reaches
         // it (OrgSeatsTests.The_owner_switches_a_positions_model_among_the_catalogs_only_while_no_board_seat_is_active).
         mandate = [.. mandate, "ChooseSeatModel"];
+        // REVISITED, OUT LOUD, BY U-worker-replace: ReplaceOccupant — the owner's in-process press two (AUTH-001), and OccupantSweep — the app's
+        // four retirement rules on the organisation's tick. Each writes one `occupant-replaced` org_event and one `fenced` org_event through the
+        // verbs' own Event and FencePosition helpers and one `occupant` wake, in one write, and NOTHING else — no org_unit, no org_position, no
+        // mandate, attempt, trial or seat (OccupantReplaceTests.The_owners_press_replaces_the_occupant_and_resets_nothing holds it, table by
+        // table). PreviewReplaceOccupant, OccupancyOf, TakeoverOwed and UnresolvedBefore are READS. No op, verb or board act reaches any of them
+        // (OccupantReplaceTests.No_op_or_verb_reaches_an_occupants_replacement); OrgStore.Occupants.cs holds no SQL that writes.
+        mandate = [.. mandate, "OccupancyOf", "OccupantSweep", "PreviewReplaceOccupant", "ReplaceOccupant", "TakeoverOwed", "UnresolvedBefore"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
