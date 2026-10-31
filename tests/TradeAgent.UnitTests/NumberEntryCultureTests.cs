@@ -217,11 +217,12 @@ public class NumberEntryCultureTests
     {
         var all = page.Root.GetLogicalDescendants().ToList();
         Assert.Empty(all.OfType<NumericUpDown>());
-        // FIVE since U-org-surface-b: the board's share of the plan's day joined the owner's four (R24 § 4.3, his to set).
-        Assert.Equal(5, all.OfType<AmountField>().Count());
+        // FIVE since U-org-surface-b: the board's share of the plan's day joined the owner's four (R24 § 4.3, his to set); SEVEN since
+        // U-org-audit-b: the audit line's two budgets, real money and plan capacity (the owner's Q1, his to set).
+        Assert.Equal(7, all.OfType<AmountField>().Count());
         Assert.True(new HashSet<AmountField>([Field<AmountField>(page, "_dailyCap"), Field<AmountField>(page, "_priceIn"),
                 Field<AmountField>(page, "_priceOut"), Field<PerceptionCard>(page, "_perception").BudgetBox,
-                Field<BoardComposition>(page, "_boardComposition").Share])
+                Field<BoardComposition>(page, "_boardComposition").Share, page.AuditLine.MoneyBox, page.AuditLine.PlanBox])
             .SetEquals(all.OfType<AmountField>()));
 
         // AND THE OVERSIGHT PAGE'S CAP (fix pass 2): the one money box there, built the way the window builds the page.
@@ -665,7 +666,7 @@ public class NumberEntryCultureTests
     public Task A_scroll_over_a_money_box_never_changes_its_value_and_scrolls_the_page() => OnThePage((page, _) =>
     {
         var fields = page.Root.GetLogicalDescendants().OfType<AmountField>().ToList();
-        Assert.Equal(5, fields.Count);   // the owner's four and, since U-org-surface-b, the board's share
+        Assert.Equal(7, fields.Count);   // the owner's four, since U-org-surface-b the board's share, since U-org-audit-b the audit line's two
         Field<AmountField>(page, "_dailyCap").Box.Text = "0,05";
 
         foreach (var field in fields)

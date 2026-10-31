@@ -66,7 +66,10 @@ public class OwnerPageTests
             "Check for updates", "What's new", "Install update", "Turn off automatic checks",
             // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3, CHANGE-001): his, each two presses — the board only
             // proposes them. Three presses: the share, founding a seat, retiring the seat chosen in its list.
-            Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress
+            Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress,
+            // THE AUDIT LINE'S BUDGET (U-org-audit-b; the owner's Q1): his, off the top of each ceiling, two presses to raise — never the
+            // board's or the chief's.
+            Labels.SaveAuditMoneyBudget, Labels.SaveAuditPlanBudget
         ];
         // THE ACCOUNT LIST'S ROWS arrive when the platform answers; each is the account's own press and nothing else.
         Assert.Equal(string.Join(" | ", owners.Concat(choices).Order(StringComparer.Ordinal)),
