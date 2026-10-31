@@ -167,4 +167,117 @@ public class AtasHomeNoAtasBuildTests
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
+
+    /// <summary>A gateway on the paper stand-in (a fake venue here), healthy and allowed to trade.</summary>
+    static async Task<TradingGateway> OnTheStandIn(Database db, FakeConnector venue)
+    {
+        var gw = new TradingGateway(db, venue, new HealthRegistry());
+        gw.Update(s => s.SelectedAccountId = "SIM-001");
+        gw.UpdateRiskUnderTest(r =>
+        {
+            r.InstrumentAllowlist = [.. TestEnv.Instruments];
+            r.MaxOrderQuantity = 10m;
+            r.MaxNotionalPerOrder = 10_000_000m;
+            r.MaxOpenPositions = 10;
+            r.MaxOrdersPerMinute = 100;
+        });
+        await venue.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        return gw;
+    }
+
+    /// <summary>
+    /// AN ORDER SENT TO ATAS IS NEVER CANCELLED OR CHANGED THROUGH THE VENUE THAT STANDS IN FOR IT (Codex review, P1): its broker id means
+    /// nothing on paper — sent there, it cancels nothing or, on a collision, one of paper's own orders. Refused in words; nothing is written.
+    /// </summary>
+    [Fact]
+    public async Task An_order_sent_to_ATAS_is_not_cancelled_or_changed_through_the_stand_in()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new ExecutionRequestStore(db);
+        store.TryCreate(OnAtas("working-1", DateTimeOffset.UtcNow));
+        store.Transition("working-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition("working-1", ExecutionState.DISPATCHING, ExecutionState.WORKING, connectorOrderId: "ATAS-77");
+        await using var gw = await OnTheStandIn(db, new FakeConnector(new FakeBroker()));
+
+        var cancel = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.CancelAsync(new AgentContext("a"), "c-1", "working-1"));
+        Assert.Contains("was placed on atas", cancel.Message);
+        var modify = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.ModifyAsync(new AgentContext("a"), "m-1", "working-1", 1m, 100m, null));
+        Assert.Contains("was placed on atas", modify.Message);
+
+        Assert.Null(gw.GetRequest("c-1"));
+        Assert.Null(gw.GetRequest("m-1"));
+        Assert.Equal(ExecutionState.WORKING, gw.GetRequest("working-1")!.State);
+    }
+
+    /// <summary>
+    /// AN EMERGENCY PRESS MADE ON ATAS IS NOT JUDGED BY THE STAND-IN'S BOOK (Codex review, P2): paper's empty account would have told the
+    /// Dashboard an unconfirmed ATAS close left the instrument "now flat". The card shows no position, and the press is not complete.
+    /// </summary>
+    [Fact]
+    public async Task An_ATAS_press_is_not_judged_by_the_stand_in_book()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new ExecutionRequestStore(db);
+        var row = OnAtas($"{TradingGateway.ClosePress}-n1-BTCUSDT", DateTimeOffset.UtcNow);
+        store.TryCreate(row);
+        store.Transition(row.RequestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition(row.RequestId, ExecutionState.DISPATCHING, ExecutionState.UNKNOWN, needsReconciliation: true);
+        await using var gw = await OnTheStandIn(db, new FakeConnector(new FakeBroker()));
+
+        var outcome = await gw.PressOutcomeAsync(TradingGateway.ClosePress, "n1");
+
+        Assert.Null(Assert.Single(outcome.Targets).PositionNow);
+        Assert.False(outcome.Complete);
+        Assert.Contains("sent to atas", outcome.Summary);
+    }
+
+    /// <summary>
+    /// THE ATAS ACCOUNT IS HELD ASIDE ON THE STAND-IN AND HANDED BACK TO ATAS (Codex review, P2): an ATAS account id names nothing on
+    /// paper, so the stand-in starts with none chosen (the owner chooses paper's on the Settings page) and a build with ATAS gets it back.
+    /// </summary>
+    [Fact]
+    public async Task The_ATAS_account_is_held_aside_on_the_stand_in_and_handed_back_to_ATAS()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("connector", Platform.Atas);
+        await using (var atas = new TradingGateway(db, new FakeConnector(new FakeBroker())))
+            atas.Update(s => s.SelectedAccountId = "ATAS-ACCOUNT-1");
+        AtasHome.ChoosePaper(db);
+
+        await using (var paper = new TradingGateway(db, new FakeConnector(new FakeBroker())))
+        {
+            AtasHome.HoldTheAtasAccount(db, paper, Platform.Paper);
+            Assert.Null(paper.Settings.SelectedAccountId);
+            paper.Update(s => s.SelectedAccountId = "SIM-001");
+            AtasHome.HoldTheAtasAccount(db, paper, Platform.Paper);   // the next start on paper keeps the paper account
+            Assert.Equal("SIM-001", paper.Settings.SelectedAccountId);
+        }
+
+        await using var back = new TradingGateway(db, new FakeConnector(new FakeBroker()));
+        AtasHome.HoldTheAtasAccount(db, back, Platform.Atas);
+        Assert.Equal("ATAS-ACCOUNT-1", back.Settings.SelectedAccountId);
+    }
+
+    /// <summary>
+    /// AN UNFINISHED ATAS SETUP ASKS ITS PLATFORM AGAIN (Codex review, P2): on the stand-in the ATAS steps would pass as "not using ATAS"
+    /// and a later build with ATAS would skip them. The press sends the owner back to the platform step instead.
+    /// </summary>
+    [Fact]
+    public void Choosing_paper_on_an_unfinished_ATAS_setup_asks_the_platform_again()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("connector", Platform.Atas);
+        var setup = new OnboardingStore(db);
+        foreach (var step in Enum.GetValues<OnboardingStep>().TakeWhile(s => s != OnboardingStep.ATAS_INSTALLED)) setup.Complete(step);
+        Assert.Equal(OnboardingStep.ATAS_INSTALLED, setup.Current());
+        AtasHome.PlatformAtStart(db, atasInThisBuild: false, out var refused);
+        Assert.False(refused!.SetupFinished);
+
+        AtasHome.ChoosePaper(db);
+
+        Assert.Equal(OnboardingStep.TRADING_PLATFORM_SELECTED, setup.Current());
+        Assert.Equal(Platform.Paper, AtasHome.PlatformAtStart(db, atasInThisBuild: false, out _));
+    }
 }
