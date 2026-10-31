@@ -80,6 +80,56 @@ public class HomeOnHireTests(ITestOutputHelper output) : IDisposable
         Assert.Equal((attempt.Id, MissionEventDisposition.Answered), (woke.ConsumedBy, woke.Disposition));
     }
 
+    /// <summary>
+    /// (2b) THE HARD LINE BEHIND THE LOOK, ON BOTH RUNTIMES (U-runway-fixes' card: ApiConversation's and AgentSession's): a home the last
+    /// start could not rebuild, met by a launch the look did not stop — the race the hard line exists for — is refused as the launch gate's
+    /// typed refusal before any work (so the loop gives its wakes back and the meter charges nothing), in words naming the position; the
+    /// CLI starts no program and the harness sends no request. RED at base: an untyped failure (the CLI's a CELL_UNAVAILABLE exception's
+    /// words, the harness's a "first request withheld") — a lasting refusal that burned the launch's wakes, turn after turn.
+    /// </summary>
+    [Fact]
+    public async Task A_launch_meeting_an_unbuilt_home_at_its_hard_line_is_refused_as_the_gates_typed_refusal_on_both_runtimes()
+    {
+        var root = Path.Combine(TestEnv.Home, "unbuilt-hard-line", Guid.NewGuid().ToString("n"));
+        var ctx = new WorkspaceContext("Simulator (built in)", ConnectorIsPaper: true, "SIM-001", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] });
+        var files = new AppFileManifest(Path.Combine(root, "..", $"files-{Guid.NewGuid():n}.tsv"));
+        var homes = WorkspaceBuilder.BuildAll(ctx, root, files);
+        foreach (var role in new[] { CouncilRoles.Operations, CouncilRoles.Research })
+        {
+            var canon = Path.Combine(homes[role], Canon.CliFile);
+            File.Delete(canon);
+            Directory.CreateDirectory(canon);                                   // a folder where the app's canon belongs
+        }
+        WorkspaceBuilder.BuildAll(ctx, root, files);                            // the start that cannot rebuild either home
+
+        // THE CLI: a session over a fake codex, sent its turn directly — as after a look that passed.
+        var (codex, exe, dump) = SeatHomeTests.Seat("unbuilt-hard-line");
+        var cli = await SeatHomeTests.Turn(SeatHomeTests.Session(codex, exe, homes[CouncilRoles.Operations], new SeatHomeTests.FakeProbe()));
+        Assert.True(cli.GateRefused is { BeforeAnyWork: true, Refusal.Kind: RefusalKind.HostOrLaunch },
+            $"the CLI's hard line was not the gate's typed refusal: gate {cli.GateRefused?.Refusal.Kind}; '{cli.Raw}'");
+        Assert.Contains(CouncilRoles.Operations, cli.GateRefused!.Refusal.Words, StringComparison.Ordinal);
+        Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
+
+        // THE HARNESS: a conversation over the loopback fake, sent its turn directly.
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.Message("nothing to do.", input: 10, output: 2));
+        var manifest = new RuntimeManifest
+        {
+            Id = ApiAgentRuntime.RuntimeId, DisplayName = "Loopback harness", BaseUrl = provider.BaseUrl,
+            CompletionsPath = "chat/completions", DefaultModel = "loopback-model"
+        };
+        using var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"), requestTimeout: TimeSpan.FromSeconds(10));
+        var harness = runtime.OpenConversation(CouncilRoles.Research, () => homes[CouncilRoles.Research], () => new Dictionary<string, string>(), () => null);
+        AgentTurnEnded? api = null;
+        harness.TurnEnded += e => api = e;
+        await harness.SendMissionAsync("## Situation\nnothing has happened.");
+        Assert.True(api?.GateRefused is { BeforeAnyWork: true, Refusal.Kind: RefusalKind.HostOrLaunch },
+            $"the harness's hard line was not the gate's typed refusal: gate {api?.GateRefused?.Refusal.Kind}; withheld '{api?.FirstRequestWithheld}'");
+        Assert.Contains(CouncilRoles.Research, api!.GateRefused!.Refusal.Words, StringComparison.Ordinal);
+        Assert.Empty(provider.Requests);
+    }
+
     /// <summary>A division under the root with its head, each active — as only a test may write the chart.</summary>
     static Action<Database> SeedDivision(string division, string head) => db => db.Write(_ =>
     {

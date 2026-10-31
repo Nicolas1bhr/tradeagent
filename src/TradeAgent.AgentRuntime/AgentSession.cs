@@ -448,11 +448,20 @@ public sealed class AgentSession(
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
-                $"TradeAgent did not start the AI as a cell seat: it could not put its own canon back in the position's folder ({ex.Message}). " +
-                "Nothing was started; the next turn tries again.", ex);
+            // A STALE HOME, RECORDED SO THE NEXT LOOK HOLDS IT (U-home-on-hire item 2): its wakes are given back, and every later launch is
+            // refused before admission until a start or the owner's repair rebuilds the folder — never refused again launch after launch.
+            throw HomeRefused(WorkspaceBuilder.Refuse(home, role,
+                $"TradeAgent could not put its own canon back in the position's folder ({ex.Message}), so nothing was started"));
         }
     }
+
+    /// <summary>
+    /// A LAUNCH REFUSED FOR ITS HOME — unbuilt, or stale — AT THE HARD LINE BEHIND THE LOOK (<c>U-home-on-hire</c> item 2): the launch gate's
+    /// typed refusal, about this host's folder (<see cref="RefusalKind.HostOrLaunch"/>), before any work. The loop gives back every wake the
+    /// launch took (<see cref="MissionLoop"/>'s unworked refusal), the meter closes the row on these words charged nothing, and the look
+    /// (<see cref="Barred"/>) refuses every later launch in the same words, wakes kept, until the folder is rebuilt.
+    /// </summary>
+    static GateRefusedException HomeRefused(string words) => new(new TurnRefusal(RefusalKind.HostOrLaunch, words), beforeAnyWork: true);
 
     /// <summary>Why this position may not start because the last start could not rebuild its home (<see cref="WorkspaceBuilder.RefusalFor"/>), or null.</summary>
     string? UnbuiltHome()
@@ -1095,7 +1104,9 @@ public sealed class AgentSession(
         // AN EXECUTOR'S CANON IS THE APP'S AGAIN BEFORE ITS TURN (U-execution-environment item 3): its cell writes its whole home,
         // AGENTS.md included, so the text the app last wrote there is put back — the record below then reads the app's own.
         // AND NEVER IN A HOME THE LAST START COULD NOT REBUILD (fix pass 4): the look in Barred is only a look; this is its hard line.
-        if (WorkspaceBuilder.RefusalFor(psi.WorkingDirectory) is { } unbuilt) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, unbuilt);
+        // AND ITS REFUSAL GIVES THE WAKES BACK (U-home-on-hire item 2): it travels as the launch gate's typed refusal before any work, so the
+        // loop releases every wake the launch took and the meter charges it nothing — a lasting home refusal used to burn them, one per turn.
+        if (WorkspaceBuilder.RefusalFor(psi.WorkingDirectory) is { } unbuilt) throw HomeRefused(unbuilt);
         if (seatClass == SeatPlan.CellClass) RestoreCanon(psi.WorkingDirectory);
 
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it

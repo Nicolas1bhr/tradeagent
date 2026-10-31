@@ -397,7 +397,9 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// had admitted it and its wakes were consumed — or null (review of <c>U-thinking-seats-a</c>, item 1). Set by the conversation
     /// that refused, never inferred from words: the refusal's <see cref="RefusalKind"/> travels as data, so the loop gives back every
     /// wake the launch took and keeps the owner's words owed (<see cref="MissionLoop"/>), and the meter closes the row as refused
-    /// with the kind on it — charged nothing when <see cref="LateRefusal.BeforeAnyWork"/>, since nothing started.
+    /// with the kind on it — charged nothing when <see cref="LateRefusal.BeforeAnyWork"/>, since nothing started. THE LAUNCH GATE'S HARD
+    /// LINE ON THE POSITION'S HOME TRAVELS HERE TOO (<c>U-home-on-hire</c> item 2): a home unbuilt or stale at the launch is a
+    /// <see cref="RefusalKind.HostOrLaunch"/> refusal before any work, so its wakes are given back rather than burned.
     /// </summary>
     public LateRefusal? GateRefused { get; init; }
 
