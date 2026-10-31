@@ -83,13 +83,10 @@ sealed record GlanceRead
             unread["board"] = ex.Message;
             board = null;
         }
-        var campaigns = Part("campaigns", () =>
-        {
-            var store = host.Gateway.Campaigns;
-            return store.All().Where(c => c.IsOpen)
-                .Select(c => new GlanceCampaign(c.Name, store.TrialsCharged(c.Id), c.TrialBudget, store.JudgementsSpent(c.Id), c.VerdictBudget))
-                .ToList();
-        });
+        // THE OWNER PAGE'S OWN READER of each pair's campaign (U-evidence-breadth item 4), so the two pages cannot count differently.
+        var campaigns = Part("campaigns", () => host.Evidence.Standings()
+            .Select(c => new GlanceCampaign($"{c.Pair}, campaign {c.Campaign.Id}", c.Trials, c.Campaign.TrialBudget, c.Judgements, c.Campaign.VerdictBudget))
+            .ToList());
         var paper = Part("paper", () => host.Gateway.DeploymentReadings().Where(d => d.Outstanding)
             .Select(d => new GlancePaperRun(StrategyDeploymentRow.Short(d.VersionId), d.Symbol, d.State, d.Book)).ToList());
         var wakes = Part("wakes", () => host.Db is { } db ? new MissionEventStore(db).NextDueByRole() : null);
@@ -216,10 +213,11 @@ static class GlanceWords
     static GlanceLine CampaignsLine(GlanceRead r)
     {
         if (r.Campaigns is not { } campaigns) return new(Campaigns, "Research campaigns", Unread(r, "campaigns", "The campaigns"), Caution: true);
-        if (campaigns.Count == 0) return new(Campaigns, "Research campaigns", "None is open, so no trial or verdict is being spent.");
+        if (campaigns.Count == 0)
+            return new(Campaigns, "Research campaigns", "None is open over real history, so no research run or final judgement is being spent.");
         var lines = campaigns.Select(c =>
-            $"{c.Name}: {Left(c.TrialBudget - c.TrialsUsed, "trial")} of {c.TrialBudget} ({c.TrialsUsed} used); "
-            + $"{Left(c.VerdictBudget - c.VerdictsUsed, "verdict")} of {c.VerdictBudget} ({c.VerdictsUsed} used).").ToList();
+            $"{c.Name}: {Left(c.TrialBudget - c.TrialsUsed, "research run")} of {c.TrialBudget} ({c.TrialsUsed} used); "
+            + $"{Left(c.VerdictBudget - c.VerdictsUsed, "final judgement")} of {c.VerdictBudget} ({c.VerdictsUsed} used).").ToList();
         return new(Campaigns, "Research campaigns", lines[0], string.Join("\n", lines.Skip(1)),
             campaigns.Any(c => c.TrialsUsed >= c.TrialBudget || c.VerdictsUsed >= c.VerdictBudget));
 

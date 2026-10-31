@@ -28,10 +28,10 @@ public class GlanceWordsTests
     [Fact]
     public void Each_campaign_says_its_trials_and_verdicts_left_from_its_ledger()
     {
-        var r = Read() with { Campaigns = [new GlanceCampaign("btc-4h", 3, 40, 1, 3), new GlanceCampaign("es-open", 40, 40, 3, 3)] };
+        var r = Read() with { Campaigns = [new GlanceCampaign("BTCUSDT, campaign 4", 3, 40, 1, 3), new GlanceCampaign("ETHUSDT, campaign 5", 40, 40, 3, 3)] };
         var line = Line(r, GlanceWords.Campaigns);
-        Assert.Equal("btc-4h: 37 trials left of 40 (3 used); 2 verdicts left of 3 (1 used).", line.Line);
-        Assert.Equal("es-open: 0 trials left of 40 (40 used); 0 verdicts left of 3 (3 used).", line.Details);
+        Assert.Equal("BTCUSDT, campaign 4: 37 research runs left of 40 (3 used); 2 final judgements left of 3 (1 used).", line.Line);
+        Assert.Equal("ETHUSDT, campaign 5: 0 research runs left of 40 (40 used); 0 final judgements left of 3 (3 used).", line.Details);
         Assert.True(line.Caution);   // a spent budget is said in caution
     }
 
