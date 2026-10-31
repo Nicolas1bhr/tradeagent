@@ -2660,6 +2660,15 @@ public sealed class AppHost : IAsyncDisposable
             if (unjudged.Length > 0 && unjudged != _unjudgedReviews)
                 host.Gateway?.Log.Activity($"Reviews not judged: {unjudged}", "warn");
             _unjudgedReviews = unjudged;
+
+            // AND THE OCCUPANT RULES (U-worker-replace), after the reviews: a stall, repeated failed checks or calibration below the base rate
+            // on the CURRENT occupant's own record retires that occupant — the position, its seat, mandates, spend and trial counts stay.
+            // THE AUDIT RULE IS NOT RELAYED HERE: the public audit line's findings are shown to no organisation reader until its part c
+            // relays them (U-org-audit-a; ORCHESTRATION § 2.13), so this host hands the sweep none (its one unjudged sentence, always the same, is not logged).
+            var occupants = org.OccupantSweep(now, OccupantThresholds.Default, findings: null);
+            foreach (var r in occupants.Replaced)
+                host.Gateway?.Log.Activity($"TradeAgent retired occupant {r.Retired} of {r.Position} ({r.Rule}: {r.Measurement}); occupant {r.Seated} "
+                                           + "starts from the position's memory.", "warn");
         }
 
         string _unjudgedReviews = "";
@@ -2729,6 +2738,11 @@ public sealed class AppHost : IAsyncDisposable
             ? Canon.CommandLineVerbs   // a test host's puppet, whatever class it declares: its scripts speak the command line
             : Canon.PacketVerbs(AgentReach.For(role,
                 AgentReach.RuntimeOf(host.DeclaredSeatClass(role)) ?? WorkspaceBuilder.RuntimesOf(role, host._seats.KindOf(role))[0]));
+
+        /// <summary>Who sits in a position of the chart now (<c>U-worker-replace</c>): its occupant's ordinal; null for the legacy pair and off-chart roles.</summary>
+        public int? OccupantOf(string role) =>
+            host._db is { } db && !CouncilRoles.IsKnown(role) && new OrgStore(db).Position(role) is not null
+                ? new OrgStore(db).OccupancyOf(role).Ordinal : null;
 
         /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
         internal static MandateView View(OrgStore org, MandateRow m)

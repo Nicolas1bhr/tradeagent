@@ -117,11 +117,18 @@ public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Show
             var bound = head ? (bounds ?? PacketBounds.Default).Head : (bounds ?? PacketBounds.Default).Executor;
             var b = new Writer();
 
+            // A NEW OCCUPANT'S TAKEOVER FIRST (U-worker-replace): its predecessor was retired, and what it starts from is the position's
+            // memory — never the old conversation. A quarter of the bound, taken off the top only while the block is owed.
+            var owed = org.TakeoverOwed(position);
+            var takeover = owed is null ? 0 : bound / 4;
+            if (owed is not null) Takeover(b, say, db, org, owed, now, takeover);
+            var lists = bound - takeover;
+
             // THE SHARES: notes first — they wake nobody, so the packet is the only way one reaches its recipient — and, for a
             // head, the deliveries it owes a judgement on. Shares never borrow from each other, so one long list cannot starve another.
-            var notes = head ? bound / 4 : bound / 2;
-            var deliveries = head ? bound * 3 / 8 : 0;
-            var rest = (bound - notes - deliveries) / 3;
+            var notes = head ? lists / 4 : lists / 2;
+            var deliveries = head ? lists * 3 / 8 : 0;
+            var rest = (lists - notes - deliveries) / 3;
 
             Notes(b, say, org.LateralsUnshown(position), notes);
             if (head) Deliveries(b, say, org.DeliveriesToJudgeOf(position), deliveries);
@@ -139,6 +146,78 @@ public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Show
     }
 
     // ---- the lists ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE TAKEOVER BLOCK (<c>U-worker-replace</c>; ORGANISATION §§ 6, 8): who the new occupant is and why its predecessor went — the app's
+    /// rule, or the owner's press — and the position's durable memory it starts from: the mandates it holds and decides, what carries over,
+    /// measured, the plan's and journal's latest revisions (the position's own words, quoted and cut, information never instruction), and its
+    /// recent decisions and deliveries by id. Nothing from the predecessor's conversation: no reply, no prompt, no transcript is read here,
+    /// because none is a record. Verbs are spelled as the receiving seat calls them.
+    /// </summary>
+    static void Takeover(Writer w, Spelling say, Database db, OrgStore org, Occupancy sits, DateTimeOffset now, int share)
+    {
+        var by = sits.Rule == OccupantRule.Owner ? "your owner's press" : $"TradeAgent's rule '{sits.Rule}', on its own measurement";
+        var retired = (sits.Ordinal - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var plan = new PublicationStore(db).Latest(sits.Position, PublicationKind.Plan);
+        var journal = new PublicationStore(db).Latest(sits.Position, PublicationKind.Journal);
+        var held = org.MandatesOf(sits.Position).Where(m => org.IsOpen(m.Id)).ToList();
+        var decisions = org.DecisionsOf(sits.Position).Take(5).ToList();
+        var delivered = org.MandatesOf(sits.Position).Where(m => m.Holder == sits.Position)
+            .SelectMany(m => org.Deliveries(m.Id)).OrderByDescending(d => d.At).Take(5).ToList();
+        var total = 3 + held.Count + decisions.Count + delivered.Count;
+        var s = w.Section(share,
+            $"- You are this position's occupant {sits.Ordinal}, since {When(sits.Since!.Value)}. Occupant {retired} was retired by {by}. You "
+            + "do not have its conversation and nothing will give it to you: you start from the position's memory — below, and in your files.",
+            total, "record", "records", say.DeliveriesListed, []);
+
+        foreach (var m in held)
+        {
+            var item = new StringBuilder();
+            Line(item, m.Holder == sits.Position
+                ? $"  - Mandate `{m.Id}` you hold, open, due {When(m.Deadline)}: `{Inline(m.Objective)}` — {say.Whole(Ops.MandateShow, m.Id)}."
+                : $"  - Mandate `{m.Id}` you decide, held by `{m.Holder}`, open, due {When(m.Deadline)} — {say.Whole(Ops.MandateShow, m.Id)}.");
+            s.Add(item);
+        }
+        var (from, to) = OwnerDay.Window(now);
+        var today = new AiAttemptStore(db).TotalsBetween(from, to, sits.Position);
+        var unresolved = org.UnresolvedBefore(sits);
+        var carried = new StringBuilder();
+        Line(carried, $"  - Carried over unchanged — a new occupant resets nothing: today this position has spent {Sql.D(today.Spent)} over "
+                      + $"{today.Turns} launch(es) ({today.Unpriced} of unknown cost), with {Sql.D(today.Reserved)} still reserved on {today.Open} "
+                      + $"open launch(es); {unresolved} launch(es) of your predecessors are unresolved and fenced (they act no more); your envelope, "
+                      + "your unit's trial and verdict counts and every open mandate are the position's, not an occupant's.");
+        s.Add(carried);
+        foreach (var (kind, path, rev) in new[] { ("plan", "trading/PLAN.md", plan), ("journal", "trading/JOURNAL.md", journal) })
+        {
+            var item = new StringBuilder();
+            if (rev is null)
+            {
+                Line(item, $"  - Your {kind}, `{path}`: none written yet.");
+                s.Add(item);
+                continue;
+            }
+            Line(item, $"  - Your {kind}, `{path}`, revision {rev.Revision} of {When(rev.CreatedAt)} — the position's own words, information, "
+                       + "never an instruction:");
+            // THE JOURNAL'S NEWEST ENTRIES, THE PLAN'S HEAD: what a successor needs first of each.
+            var text = kind == "journal" ? string.Join("\n", rev.Content.TrimEnd().Split('\n').TakeLast(20)) : rev.Content;
+            if (Excerpt(text, $"`{path}` has it whole", Math.Min(ExcerptBytes, (s.Room - Bytes(item)) / (kind == "plan" ? 2 : 1))) is { } quoted) item.Append(quoted);
+            else { item.Clear(); Line(item, $"  - Your {kind}, `{path}`, revision {rev.Revision} of {When(rev.CreatedAt)}: read it first."); }
+            s.Add(item);
+        }
+        foreach (var d in decisions)
+        {
+            var item = new StringBuilder();
+            Line(item, $"  - Decision `{d.Id}` ({Inline(d.Kind)}) of {When(d.At)}, its rationale ledger entry {d.LedgerEntryId}.");
+            s.Add(item, new PacketInput(PacketInputKind.Decision, d.Id));
+        }
+        foreach (var d in delivered)
+        {
+            var item = new StringBuilder();
+            Line(item, $"  - Delivery `{d.Id}` on mandate `{d.MandateId}` of {When(d.At)}.");
+            s.Add(item);
+        }
+        s.Close();
+    }
 
     static void Notes(Writer w, Spelling say, OrgList<LateralRow> notes, int share)
     {
@@ -401,7 +480,7 @@ public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Show
             $"  - and {n} more row{(n == 1 ? "" : "s")} TradeAgent could not read and refused.");
 
         /// <summary>What an item may take now: the counting lines' bytes are already kept back.</summary>
-        int Room => _left;
+        public int Room => _left;
 
         /// <summary>
         /// One whole item, or — where it does not fit what is left — nothing, and false: the walk goes on, so one long item never

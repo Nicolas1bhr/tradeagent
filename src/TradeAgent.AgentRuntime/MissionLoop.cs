@@ -147,6 +147,12 @@ public static class SessionWhy
     /// <summary>The seat's verified profile changed, and a rollout written under another profile is never continued.</summary>
     public const string Profile = "profile";
 
+    /// <summary>
+    /// The position's occupant was retired and a new one seated (<c>U-worker-replace</c>): the predecessor's session is never continued —
+    /// the new occupant starts from the position's memory, never its conversation.
+    /// </summary>
+    public const string Replaced = "replaced";
+
     /// <summary>The session was ended by a stop no rotation ordered — the owner's Stop, or a new conversation.</summary>
     public const string Restart = "restart";
 
@@ -678,6 +684,13 @@ public interface IMissionHost
     /// host keeps no ledger or holds no such mandate; a host that throws is a mandate nobody could read, and the loop says so.
     /// </summary>
     MandateView? MandateFor(string mandateId) => null;
+
+    /// <summary>
+    /// WHO SITS IN <paramref name="role"/> NOW (<c>U-worker-replace</c>): its occupant's ordinal, from the organisation's records, or null
+    /// where this host keeps no ledger or the role is no position of the chart. The loop rotates the session when it changes: a new occupant
+    /// never resumes its predecessor's conversation. A host that throws is an occupant nobody could read, and the loop says so.
+    /// </summary>
+    int? OccupantOf(string role) => null;
 
     /// <summary>
     /// A POSITION'S ORGANISATION BLOCK (<c>U-org-packets-b</c>; ORCHESTRATION §§ 2.6, 2.10): the notes sent to it since its last
@@ -2361,6 +2374,21 @@ public sealed class MissionLoop
         var turns = Sessions(role);
         string? why = null;
         view = null;
+
+        // A NEW OCCUPANT NEVER RESUMES ITS PREDECESSOR'S SESSION (U-worker-replace): the occupant this loop last launched the role under,
+        // against the one the chart seats now. Unread is never a guess: what was known stands.
+        var replaced = false;
+        int? occupant = null;
+        try { occupant = _host.OccupantOf(role); }
+        catch (Exception ex) { Said(role, $"who sits in {role} could not be read ({ex.Message}), so its session is not rotated for a new occupant"); }
+        lock (_gate)
+        {
+            if (occupant is { } seated)
+            {
+                replaced = _sessionOccupants.TryGetValue(role, out var before) && before != seated;
+                _sessionOccupants[role] = seated;
+            }
+        }
         if (mandateId is not null && Executor(role, mandateId))
         {
             var read = true;
@@ -2389,6 +2417,7 @@ public sealed class MissionLoop
             else if (had.SentBack != key.SentBack) why = SessionWhy.Retry;
         }
 
+        if (replaced) return SessionWhy.Replaced;
         return why ?? (turns >= _options.TurnsPerSession ? SessionWhy.Turns
             : TokensReached(role) ? SessionWhy.Tokens
             : null);
@@ -2446,6 +2475,9 @@ public sealed class MissionLoop
     sealed record SessionKey(string Mandate, long? SentBack);
 
     readonly Dictionary<string, SessionKey> _sessionKeys = new(StringComparer.Ordinal);
+
+    /// <summary>The occupant each role's session was last launched under (<c>U-worker-replace</c>; <see cref="SessionWhy.Replaced"/>).</summary>
+    readonly Dictionary<string, int> _sessionOccupants = new(StringComparer.Ordinal);
 
     /// <summary>
     /// THE POSITION A COUNTER IS KEPT FOR: its exact id, and the chair's only where nothing is named — never a name
@@ -4514,6 +4546,9 @@ public sealed class MissionLoop
         MissionEventKind.Activated => "a position was activated — you, newly hired, or one you hired — and it runs from now"
                                       + (Verb(spell, Ops.OrgShow, "", "trade org show") is { } show && Verb(spell, Ops.MandateList, "", "trade mandate list") is { } list
                                           ? $"; `{show}` has the chart and `{list}` your work" : ""),
+        MissionEventKind.Occupant => "you are this position's new occupant: your predecessor was retired, and you start from the position's "
+                                     + "memory — the takeover block below, `trading/PLAN.md`, `trading/JOURNAL.md` and your records — never "
+                                     + "its conversation",
         // HOW A SEAT ASKS FOR ITS WAKE IS ITS CANON'S TO SAY (U-runway-fixes item 3): a cell writes its wake file, a broker seat has none —
         // so a line spelled for a seat names neither; the command line's words stay for a host that declares no spelling.
         MissionEventKind.OwnerWake => "your owner pressed \"Wake the chief once\" — one turn, now; after it you wake when you ask to "
