@@ -22,7 +22,7 @@ public sealed record DeliveryToJudge(MandateRow Mandate, DeliveryRow Delivery, I
 /// <summary>
 /// THE READS A POSITION'S PACKET IS BUILT FROM (<c>U-org-packets-b</c>; ORCHESTRATION §§ 2.6, 2.10, 2.11): each one by position —
 /// the position's own forecasts, resolutions and escalations, notes TO it — and never another's. "Since the last packet" is read off
-/// <c>ai_attempt_input</c>: a record with a lineage row on an attempt OF THIS POSITION was shown to a launch whose outcome committed,
+/// <c>ai_attempt_input</c>: a record with a lineage row on an attempt OF THIS POSITION'S CURRENT OCCUPANT (<c>U-worker-replace</c>) was shown to a launch whose outcome committed,
 /// and a record with none was not — a launch lost, or refused by the gate at its last check, wrote none, so its records come again.
 /// Reads only; nothing here writes.
 /// </summary>
@@ -34,13 +34,15 @@ public sealed partial class OrgStore
     /// </summary>
     public OrgList<LateralRow> LateralsUnshown(string position) => db.Read(_ =>
     {
+        // SHOWN TO THIS OCCUPANT (U-worker-replace): a launch of a predecessor — at or before the current occupant's mark — showed it to
+        // an occupant that is gone, whose conversation the new one never has; so for the new occupant it was not shown.
         using var c = db.Cmd($"""
             SELECT {LateralCols} FROM org_lateral l
              WHERE l.to_position = $p AND l.sender <> $p
                AND NOT EXISTS (SELECT 1 FROM ai_attempt_input i JOIN ai_attempt a ON a.id = i.attempt_id
-                                WHERE i.kind = $kind AND i.ref_id = l.id AND a.role = $p)
+                                WHERE i.kind = $kind AND i.ref_id = l.id AND a.role = $p AND a.rowid > $through)
              ORDER BY l.at, l.rowid
-            """, ("$p", position), ("$kind", PacketInputKind.Lateral));
+            """, ("$p", position), ("$kind", PacketInputKind.Lateral), ("$through", OccupancyOf(position).Through));
         using var r = c.ExecuteReader();
         var rows = new List<LateralRow>();
         var refused = new List<string>();
@@ -87,9 +89,9 @@ public sealed partial class OrgStore
               FROM org_forecast f JOIN org_forecast_resolution r ON r.forecast_id = f.id
              WHERE f.forecaster = $p
                AND NOT EXISTS (SELECT 1 FROM ai_attempt_input i JOIN ai_attempt a ON a.id = i.attempt_id
-                                WHERE i.kind = $kind AND i.ref_id = f.id AND a.role = $p)
+                                WHERE i.kind = $kind AND i.ref_id = f.id AND a.role = $p AND a.rowid > $through)
              ORDER BY r.at, r.rowid
-            """, ("$p", position), ("$kind", PacketInputKind.Resolution));
+            """, ("$p", position), ("$kind", PacketInputKind.Resolution), ("$through", OccupancyOf(position).Through));
         var rows = new List<ResolvedForecast>();
         var refused = new List<string>();
         using (var r = c.ExecuteReader())

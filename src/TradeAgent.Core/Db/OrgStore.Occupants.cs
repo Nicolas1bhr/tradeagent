@@ -120,6 +120,30 @@ public sealed partial class OrgStore
         return new Occupancy(position, count + 1, id, Sql.Time(r.GetValue(1)), through, r.GetString(2), rule);
     });
 
+    /// <summary>
+    /// THE OCCUPANT WHOSE PACKET STILL OWES ITS TAKEOVER BLOCK, or null: a successor (never a position's first occupant) none of whose launches
+    /// has yet ENDED — so a first launch that was lost or refused leaves the block standing for the next, and a restart changes nothing.
+    /// </summary>
+    public Occupancy? TakeoverOwed(string position) => db.Read(_ =>
+    {
+        var sits = OccupancyOf(position);
+        if (sits.First) return null;
+        using var c = db.Cmd("SELECT EXISTS (SELECT 1 FROM ai_attempt WHERE role = $p AND rowid > $through AND state = 'ENDED')",
+            ("$p", position), ("$through", sits.Through));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) == 0 ? sits : null;
+    });
+
+    /// <summary>
+    /// The launches of <paramref name="position"/>'s PREDECESSORS still unresolved — recorded before the current occupant's mark and neither
+    /// ended nor lost: fenced, so they act no more, and their reservations stand until each resolves.
+    /// </summary>
+    public int UnresolvedBefore(Occupancy sits) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM ai_attempt WHERE role = $p AND rowid <= $through AND state = 'LAUNCHED'",
+            ("$p", sits.Position), ("$through", sits.Through));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
     /// <summary>PRESS ONE: what "Replace the occupant" of <paramref name="position"/> would do now, or why it cannot. Reads only.</summary>
     public OccupantPreview PreviewReplaceOccupant(string position) => db.Read(_ => ReplaceNow(position));
 
