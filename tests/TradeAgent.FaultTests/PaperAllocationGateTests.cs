@@ -30,7 +30,7 @@ namespace TradeAgent.Tests.Fault;
 /// <para>Everything is measured over <see cref="RecordingConnector"/> and the built-in simulator.
 /// Nothing here reaches a venue and no real money is involved.</para>
 /// </summary>
-public class PaperAllocationGateTests(ITestOutputHelper log)
+public partial class PaperAllocationGateTests(ITestOutputHelper log)
 {
     static readonly DateTimeOffset Cutoff = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
     static readonly DateTimeOffset At = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
@@ -39,8 +39,8 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     /// A DIFFERENT THRESHOLD IS A DIFFERENT PROGRAM AND THEREFORE A DIFFERENT VERSION ID. A comment
     /// would NOT be: the id is the hash of the CANONICAL form, which is the whole point of it.
     /// </summary>
-    static string ProgramText(int threshold) =>
-        $"instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > {threshold}\n";
+    static string ProgramText(int threshold, string pair = "BTCUSDT") =>
+        $"instrument {pair}\nsize fixed 1\nexit when close < 97\nentry when close > {threshold}\n";
 
     /// <summary>A clock this suite owns, so the gateway's own <c>Now</c> is the instant the rows say.</summary>
     sealed class TestClock(DateTimeOffset at) : TimeProvider
@@ -93,15 +93,15 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     /// instant, which orders the inconclusive quota's queue (<c>U-referee-v2b</c>).</para>
     /// </summary>
     static string Judged(Database db, string verdict, int threshold = 103, string? reason = null,
-        long? under = null, DateTimeOffset? at = null, int trialBudget = 10)
+        long? under = null, DateTimeOffset? at = null, int trialBudget = 10, string pair = "BTCUSDT")
     {
         var datasets = new DatasetStore(db);
         var campaigns = new CampaignStore(db);
         var (set, campaignId) = under is { } existing
             ? (datasets.ById(campaigns.ById(existing)!.HoldoutDatasetId)!, existing)
-            : Opened(db, threshold, trialBudget);
+            : Opened(db, threshold, trialBudget, pair);
 
-        var program = StrategyParser.Parse(ProgramText(threshold)).Program!;
+        var program = StrategyParser.Parse(ProgramText(threshold, pair)).Program!;
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
@@ -133,7 +133,7 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
     }
 
     /// <summary>A fresh dataset held back at <see cref="Cutoff"/> and the campaign opened over it.</summary>
-    static (DatasetRecord Set, long Campaign) Opened(Database db, int threshold, int trialBudget)
+    static (DatasetRecord Set, long Campaign) Opened(Database db, int threshold, int trialBudget, string pair = "BTCUSDT")
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"paper-envelope-{Guid.NewGuid():n}.csv");
@@ -146,22 +146,22 @@ public class PaperAllocationGateTests(ITestOutputHelper log)
         // THE NEXT LABEL IN THIS LEDGER: a test judges two versions over one ledger, and the ledger refuses a
         // second row under a (pair, interval, version) it holds.
         var id = datasets.Record(new DatasetRecord(
-            0, TestEnv.FirstPartySource, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
+            0, TestEnv.FirstPartySource, pair, BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []) { Licence = TestEnv.FirstParty });
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
         var set = datasets.ById(id)!;
 
-        var campaign = new CampaignStore(db).Open($"BTCUSDT 1m v{threshold}", set, trialBudget, 3, At);
+        var campaign = new CampaignStore(db).Open($"{pair} 1m v{threshold}", set, trialBudget, 3, At);
         Assert.True(campaign.Ok, campaign.Why);
         return (set, campaign.Campaign!.Id);
     }
 
     static async Task<PaperEnvelopeRow> Envelope(TradingGateway gw, decimal quantity = 5m,
-        decimal? notional = null, DateTimeOffset? until = null)
+        decimal? notional = null, DateTimeOffset? until = null, string pair = "BTCUSDT")
     {
         var granted = await gw.GrantPaperEnvelopeAsync(
-            "BTCUSDT", quantity, notional, until ?? At.AddDays(30), At);
+            pair, quantity, notional, until ?? At.AddDays(30), At);
         Assert.True(granted.Ok, granted.Why);
         return granted.Envelope!;
     }

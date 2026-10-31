@@ -57,28 +57,33 @@ public sealed partial class TradingGateway
     }
 
     /// <summary>
-    /// A NEW VERSION WHOSE ENVELOPE TERMS DIFFER FROM THE ONE BEFORE WITHDRAWS THE POLICY'S STANDING ENVELOPE on the old terms' venue and
-    /// account — the founding one or a board act's, never one the owner granted himself — inside the act's write. Said in the security
-    /// board's name and the version's, never the owner's.
+    /// A NEW VERSION WHOSE TERMS FOR A PAIR DIFFER FROM THE ONE BEFORE WITHDRAWS THE POLICY'S STANDING ENVELOPE FOR THAT PAIR on the old
+    /// terms' venue and account — the founding one or a board act's, never one the owner granted himself — inside the act's write. Each
+    /// pair alone (<c>U-evidence-breadth-paper</c>): an act that changes one pair's terms leaves every other pair's envelope standing.
+    /// Said in the security board's name and the version's, never the owner's.
     /// </summary>
     void WithdrawEnvelopeIfTermsMoved(BoardPolicyInForce before, BoardPolicyInForce after, int version)
     {
-        if (before.CouldNotBeRead || before.Policy.PaperEnvelope is not { } old) return;
-        if (!after.CouldNotBeRead && Equals(after.Policy.PaperEnvelope, old)) return;
-        var now = Now;
-        foreach (var envelope in _envelopes.All(int.MaxValue).Where(e => e.StandsAt(now) && PolicyGranted(e)
-                     && string.Equals(e.ConnectorId, old.Connector, StringComparison.Ordinal)
-                     && string.Equals(e.AccountId, old.Account, StringComparison.Ordinal)).ToList())
+        if (before.CouldNotBeRead) return;
+        foreach (var (pair, old) in before.Policy.PaperEnvelopes)
         {
-            var withdrawn = _envelopes.Withdraw(envelope.Id, now);
-            if (!withdrawn.Ok) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, withdrawn.Why + " Nothing was written.");
-            _log.Activity(after.Decider == BoardDecider.Owner
-                ? $"Your veto (version {version}) narrowed the standing paper envelope's terms, so the envelope on account "
-                  + $"{envelope.AccountId} is withdrawn: nothing new starts under it, and what was allocated under it may trade nothing. "
-                  + "A veto grants nothing in its place."
-                : $"The security board's version {version} changed the standing paper envelope's terms, so the envelope on account "
-                  + $"{envelope.AccountId} granted under the earlier terms is withdrawn: nothing new starts under it, and what was "
-                  + "allocated under it may trade nothing. The new terms, if any, are granted on the next pass.");
+            if (!after.CouldNotBeRead && Equals(after.Policy.PaperEnvelopeFor(pair), old)) continue;
+            var now = Now;
+            foreach (var envelope in _envelopes.All(int.MaxValue).Where(e => e.StandsAt(now) && PolicyGranted(e)
+                         && string.Equals(e.ConnectorId, old.Connector, StringComparison.Ordinal)
+                         && string.Equals(e.AccountId, old.Account, StringComparison.Ordinal)
+                         && string.Equals(e.Symbol, pair, StringComparison.Ordinal)).ToList())
+            {
+                var withdrawn = _envelopes.Withdraw(envelope.Id, now);
+                if (!withdrawn.Ok) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, withdrawn.Why + " Nothing was written.");
+                _log.Activity(after.Decider == BoardDecider.Owner
+                    ? $"Your veto (version {version}) narrowed the standing paper envelope's terms for {pair}, so its envelope on account "
+                      + $"{envelope.AccountId} is withdrawn: nothing new starts under it, and what was allocated under it may trade nothing. "
+                      + "A veto grants nothing in its place."
+                    : $"The security board's version {version} changed the standing paper envelope's terms for {pair}, so its envelope on "
+                      + $"account {envelope.AccountId} granted under the earlier terms is withdrawn: nothing new starts under it, and what was "
+                      + "allocated under it may trade nothing. The new terms, if any, are granted on the next pass.");
+            }
         }
     }
 

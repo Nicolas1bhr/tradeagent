@@ -83,13 +83,13 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
     static string EnvelopeJson(PuppetLife life, decimal? maxQuantity = null)
     {
         var store = new BoardStore(life.Host.Db);
-        var terms = JsonNode.Parse(store.EnvelopeTermsAt(store.InForce().Version)!)!.AsObject();
+        var terms = JsonNode.Parse(store.EnvelopeTermsAt(store.InForce().Version, "BTCUSDT")!)!.AsObject();
         if (maxQuantity is { } q) terms["max_quantity"] = q;
         return terms.ToJsonString();
     }
 
     static string EnvelopeChange(string from, string to) =>
-        new JsonArray(new JsonObject { ["field"] = "paper_envelope", ["from"] = JsonNode.Parse(from), ["to"] = JsonNode.Parse(to) }).ToJsonString();
+        new JsonArray(new JsonObject { ["field"] = "paper_envelopes.BTCUSDT", ["from"] = JsonNode.Parse(from), ["to"] = JsonNode.Parse(to) }).ToJsonString();
 
     /// <summary>
     /// A NARROWING BY ONE SEAT REFUSES THE NEXT ORDER ABOVE IT: on a tradable policy (quantity ten), the chair's puppet buys three through
@@ -148,9 +148,9 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         await using var life = await BoardLives.Begin("board-envelope", db => seeded = BoardLives.Seed(db, BoardLives.EnvelopeHere), "board-1", "board-2");
         await life.Host.Gateway.RefreshHealthAsync();
         var before = Assert.Single(life.Host.Gateway.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow));
-        Assert.Equal(0.05m, before.MaxQuantity);
+        Assert.Equal(0.1m, before.MaxQuantity);
 
-        var intent = EnvelopeChange(EnvelopeJson(life), EnvelopeJson(life, 0.1m));
+        var intent = EnvelopeChange(EnvelopeJson(life), EnvelopeJson(life, 0.2m));
         life.Script("board-1", [BoardLives.Propose(intent, BoardLives.Rationale), "signal proposed", "await confirmer-scripted",
             "usage 100 0 10", "final Proposed."]);
         life.Wake("board-1");
@@ -164,10 +164,10 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.True((int?)decide["exit"] == 0, $"the confirmation was refused: {BoardLives.Said(decide)}");
 
         Assert.Equal((seeded + 1, BoardDecider.Board), (new BoardStore(life.Host.Db).InForce().Version, new BoardStore(life.Host.Db).InForce().Decider));
-        Assert.Equal(0.1m, life.Host.Gateway.Policy.PaperEnvelope!.MaxQuantity);
+        Assert.Equal(0.2m, life.Host.Gateway.Policy.PaperEnvelopeFor("BTCUSDT")!.MaxQuantity);
         await life.Host.Gateway.RefreshHealthAsync();
         var granted = Assert.Single(life.Host.Gateway.Envelopes.All(), e => e.StandsAt(DateTimeOffset.UtcNow));
-        Assert.Equal((0.1m, $"granted by the app under the security board's act, version {seeded + 1}"), (granted.MaxQuantity, granted.Reason));
+        Assert.Equal((0.2m, $"granted by the app under the security board's act, version {seeded + 1}"), (granted.MaxQuantity, granted.Reason));
         Assert.Equal(2, BoardLives.AssertNoModel(life));
     }
 

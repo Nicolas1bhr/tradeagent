@@ -27,8 +27,8 @@ public static partial class Labels
 
     /// <summary>
     /// EVERY FIELD THE PAGE HAS WORDS FOR, in the order it shows them. A field of the policy in force that is not here is NOT shown as a
-    /// decision: the page names it as one this version has no words for (refuse, never guess). The envelope's terms appear as one row
-    /// while there are none and as their seven rows while there are.
+    /// decision: the page names it as one this version has no words for (refuse, never guess). The envelopes appear as one row
+    /// while there are none, and each founding pair's as its seven rows while it has terms; a pair a later act adds is named, not shown.
     /// </summary>
     public static readonly IReadOnlyList<BoardFieldWords> BoardFields =
     [
@@ -59,18 +59,39 @@ public static partial class Labels
         new("head_ceiling_hours", BoardGroupWork, "The longest a head waits between looks", "hours"),
         new("rewake_floor_minutes", BoardGroupWork, "The shortest wait before a seat is woken again, by level", "minutes"),
 
-        new("paper_envelope", BoardGroupPaper, "Standing paper envelope", null),
-        new("paper_envelope.connector", BoardGroupPaper, "Paper envelope: platform", null),
-        new("paper_envelope.account", BoardGroupPaper, "Paper envelope: account", null),
-        new("paper_envelope.instrument", BoardGroupPaper, "Paper envelope: instrument", null),
-        new("paper_envelope.max_quantity", BoardGroupPaper, "Paper envelope: most it may hold at once", null),
-        new("paper_envelope.max_notional", BoardGroupPaper, "Paper envelope: most it may be worth", null),
-        new("paper_envelope.deployments", BoardGroupPaper, "Paper envelope: runs it may carry", null),
-        new("paper_envelope.days", BoardGroupPaper, "Paper envelope: for how long", "days")
+        new("paper_envelopes", BoardGroupPaper, "Standing paper envelopes", null),
+        .. Board.BoardFounding.PaperPairs.SelectMany(p => EnvelopeWords(p.Instrument))
     ];
 
     /// <summary>The words for <paramref name="path"/>, or null — and then the page refuses to show it as a decision.</summary>
-    public static BoardFieldWords? BoardField(string path) => BoardFields.FirstOrDefault(f => string.Equals(f.Path, path, StringComparison.Ordinal));
+    public static BoardFieldWords? BoardField(string path) =>
+        BoardFields.FirstOrDefault(f => string.Equals(f.Path, path, StringComparison.Ordinal))
+        ?? (EnvelopeTermOf(path) is var (pair, _) ? EnvelopeWords(pair).FirstOrDefault(f => string.Equals(f.Path, path, StringComparison.Ordinal)) : null);
+
+    /// <summary>
+    /// ONE PAIR'S ENVELOPE, IN WORDS (<c>U-evidence-breadth-paper</c>): the pair's own row while the policy states no terms for it is
+    /// never shown (the group's "none" says it), and its seven terms each named with the pair — so the page shows each pair's envelope.
+    /// </summary>
+    static IEnumerable<BoardFieldWords> EnvelopeWords(string pair)
+    {
+        var at = $"{Board.BoardDirection.PaperEnvelopes}.{pair}";
+        yield return new($"{at}.connector", BoardGroupPaper, $"{pair} envelope: platform", null);
+        yield return new($"{at}.account", BoardGroupPaper, $"{pair} envelope: account", null);
+        yield return new($"{at}.instrument", BoardGroupPaper, $"{pair} envelope: instrument", null);
+        yield return new($"{at}.max_quantity", BoardGroupPaper, $"{pair} envelope: most it may hold at once", null);
+        yield return new($"{at}.max_notional", BoardGroupPaper, $"{pair} envelope: most it may be worth", null);
+        yield return new($"{at}.deployments", BoardGroupPaper, $"{pair} envelope: runs it may carry", null);
+        yield return new($"{at}.days", BoardGroupPaper, $"{pair} envelope: for how long", "days");
+    }
+
+    /// <summary>The pair and the term a path names when it is one of a pair's envelope terms (<c>paper_envelopes.BTCUSDT.days</c>), else null.</summary>
+    public static (string Pair, string Term)? EnvelopeTermOf(string path)
+    {
+        var parts = path.Split('.');
+        return parts.Length == 3 && parts[0] == Board.BoardDirection.PaperEnvelopes && Data.BinanceArchive.IsPair(parts[1])
+            ? (parts[1], parts[2])
+            : null;
+    }
 
     /// <summary>A field of the policy in force that this version has no words for: named, and never shown as decided.</summary>
     public static string BoardFieldUnnamed(IEnumerable<string> paths) =>

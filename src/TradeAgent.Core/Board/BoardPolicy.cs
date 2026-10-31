@@ -5,10 +5,11 @@ using TradeAgent.Core.Data;
 namespace TradeAgent.Core.Board;
 
 /// <summary>
-/// THE STANDING PAPER ENVELOPE'S TERMS AS A POLICY STATES THEM (R24 § 4.5): on the app's own paper venue only, one instrument, a
-/// quantity and a value ceiling — BOTH bind each deployment, so the value ceiling is the one that binds whenever the instrument's
-/// price makes the quantity worth more — how many deployments it carries, and for how many days, or null for no expiry. Terms, not
-/// an envelope: the paper allocator grants one from them through the gateway's own grant path (<c>U-board-a2</c>).
+/// ONE PAIR'S STANDING PAPER ENVELOPE TERMS AS A POLICY STATES THEM (R24 § 4.5; per pair since <c>U-evidence-breadth-paper</c>): on
+/// the app's own paper venue only, the ONE instrument they are for, a quantity and a value ceiling — BOTH bind each deployment, so
+/// the value ceiling is the one that binds whenever the instrument's price makes the quantity worth more — how many deployments it
+/// carries, and for how many days, or null for no expiry. Terms, not an envelope: the paper allocator grants one from them through
+/// the gateway's own grant path (<c>U-board-a2</c>), and a version is admitted only into the envelope of the instrument it trades.
 /// </summary>
 public sealed record PaperEnvelopeTerms(string Connector, string Account, string Instrument, decimal MaxQuantity, decimal MaxNotional,
     int Deployments, int? Days);
@@ -69,8 +70,16 @@ public sealed record BoardPolicy
     /// <summary>The re-wake floors by level, in minutes (the wake policy).</summary>
     public required IReadOnlyDictionary<string, int> RewakeFloorMinutes { get; init; }
 
-    /// <summary>The standing paper envelope's terms, or null for none.</summary>
-    public required PaperEnvelopeTerms? PaperEnvelope { get; init; }
+    /// <summary>
+    /// EACH PAIR'S STANDING PAPER ENVELOPE TERMS, by the instrument they are for (<c>U-evidence-breadth-paper</c>): every entry's key
+    /// IS its terms' <see cref="PaperEnvelopeTerms.Instrument"/> (the strict read refuses a body where it is not), so one pair's terms
+    /// can never stand under another's name. Empty for none. Ordinal keys.
+    /// </summary>
+    public required IReadOnlyDictionary<string, PaperEnvelopeTerms> PaperEnvelopes { get; init; }
+
+    /// <summary>The terms the policy states for <paramref name="instrument"/>, or null for none.</summary>
+    public PaperEnvelopeTerms? PaperEnvelopeFor(string instrument) =>
+        PaperEnvelopes.TryGetValue(instrument, out var terms) ? terms : null;
 
     /// <summary>
     /// TRUE ONLY ON <see cref="Unreadable"/>: no value here came from a record that verified. Not stored, never in the body — a fact
@@ -84,7 +93,7 @@ public sealed record BoardPolicy
     /// <summary>
     /// THE POLICY A BUILD USES WHEN THE ONE IN FORCE CANNOT BE READ (<c>U-board-a1</c> item 6) — <see cref="TradeAgentSettings.Unreadable"/>'s
     /// shape: OBSERVE, real money off, a quantity, position and rate limit of zero over an allowlist that allows nothing, a plan
-    /// day-total of zero so no plan turn is admitted, and no envelope. Never the founding defaults re-derived: a record that failed to
+    /// day-total of zero so no plan turn is admitted, and no envelope on any pair. Never the founding defaults re-derived: a record that failed to
     /// verify is not a fresh home, and treating it as one would be the failure handing out authority nobody decided.
     /// </summary>
     public static BoardPolicy Unreadable() => new()
@@ -103,7 +112,7 @@ public sealed record BoardPolicy
         ReviewMinutes = 30,
         HeadCeilingHours = 24,
         RewakeFloorMinutes = new Dictionary<string, int>(Db.RewakeFloors.DefaultMinutes, StringComparer.Ordinal),
-        PaperEnvelope = null
+        PaperEnvelopes = new Dictionary<string, PaperEnvelopeTerms>(StringComparer.Ordinal)
     };
 
     static RiskPolicy Copy(RiskPolicy r) => new()
@@ -138,7 +147,7 @@ public static class BoardPolicyBody
     sealed record Body(
         TradingMode Mode, bool LiveActivated, RiskBody Risk, decimal PlanDayTotal, Dictionary<string, decimal> RoleShares,
         long TurnAllowanceInput, long TurnAllowanceOutput, int Lanes, int LanesPerPool, int LanesPerCellClass, int ReviewMinutes,
-        int HeadCeilingHours, Dictionary<string, int> RewakeFloorMinutes, EnvelopeBody? PaperEnvelope);
+        int HeadCeilingHours, Dictionary<string, int> RewakeFloorMinutes, Dictionary<string, EnvelopeBody> PaperEnvelopes);
 
     sealed record RiskBody(
         decimal MaxOrderQuantity, decimal MaxNotionalPerOrder, int MaxOpenPositions, int MaxOrdersPerMinute, decimal MaxLossPerTrade,
@@ -173,9 +182,9 @@ public static class BoardPolicyBody
             policy.PlanDayTotal, new Dictionary<string, decimal>(policy.RoleShares, StringComparer.Ordinal),
             policy.TurnAllowanceInput, policy.TurnAllowanceOutput, policy.Lanes, policy.LanesPerPool, policy.LanesPerCellClass,
             policy.ReviewMinutes, policy.HeadCeilingHours, new Dictionary<string, int>(policy.RewakeFloorMinutes, StringComparer.Ordinal),
-            policy.PaperEnvelope is { } e
-                ? new EnvelopeBody(e.Connector, e.Account, e.Instrument, e.MaxQuantity, e.MaxNotional, e.Deployments, e.Days)
-                : null);
+            policy.PaperEnvelopes.ToDictionary(p => p.Key,
+                p => new EnvelopeBody(p.Value.Connector, p.Value.Account, p.Value.Instrument, p.Value.MaxQuantity, p.Value.MaxNotional,
+                    p.Value.Deployments, p.Value.Days), StringComparer.Ordinal));
         return TapeJson.Canonical(JsonSerializer.Serialize(body, Strict));
     }
 
@@ -206,6 +215,14 @@ public static class BoardPolicyBody
         if (!Enum.IsDefined(read.Mode)) return (null, "its mode is not one this build knows");
         if (read.Risk.InstrumentAllowlist.Any(string.IsNullOrWhiteSpace))
             return (null, "its instrument allowlist names an empty instrument");
+        // ONE PAIR'S TERMS UNDER ITS OWN NAME ONLY (U-evidence-breadth-paper): a key that is not a pair, or terms for another
+        // instrument than the key that holds them, is a body this build never writes — refused, never read as either pair's.
+        foreach (var (pair, terms) in read.PaperEnvelopes)
+        {
+            if (!BinanceArchive.IsPair(pair)) return (null, $"its paper envelopes name '{pair}', which is not a pair");
+            if (!string.Equals(pair, terms.Instrument, StringComparison.Ordinal))
+                return (null, $"its paper envelope under {pair} states terms for {terms.Instrument}");
+        }
 
         var policy = new BoardPolicy
         {
@@ -234,9 +251,9 @@ public static class BoardPolicyBody
             ReviewMinutes = read.ReviewMinutes,
             HeadCeilingHours = read.HeadCeilingHours,
             RewakeFloorMinutes = new Dictionary<string, int>(read.RewakeFloorMinutes, StringComparer.Ordinal),
-            PaperEnvelope = read.PaperEnvelope is { } e
-                ? new PaperEnvelopeTerms(e.Connector, e.Account, e.Instrument, e.MaxQuantity, e.MaxNotional, e.Deployments, e.Days)
-                : null
+            PaperEnvelopes = read.PaperEnvelopes.ToDictionary(p => p.Key,
+                p => new PaperEnvelopeTerms(p.Value.Connector, p.Value.Account, p.Value.Instrument, p.Value.MaxQuantity,
+                    p.Value.MaxNotional, p.Value.Deployments, p.Value.Days), StringComparer.Ordinal)
         };
 
         // AND BACK: the policy read must write the very body it was read from — a number spelled another way, a key in another
@@ -259,7 +276,8 @@ public static class BoardPolicyBody
 
         static void Walk(JsonElement e, string path, List<(string, string)> into)
         {
-            if (e.ValueKind == JsonValueKind.Object && !IsMap(path))
+            // AN EMPTY GROUP IS ONE FIELD, "none" (a policy with no paper envelope on any pair still shows that it holds none).
+            if (e.ValueKind == JsonValueKind.Object && !IsMap(path) && (path.Length == 0 || e.EnumerateObject().Any()))
             {
                 foreach (var p in e.EnumerateObject())
                     Walk(p.Value, path.Length == 0 ? p.Name : $"{path}.{p.Name}", into);

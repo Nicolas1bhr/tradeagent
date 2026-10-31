@@ -136,9 +136,12 @@ public sealed record BoardIntent(IReadOnlyList<BoardChange> Changes, string Cano
 /// NARROWEST value each has (<c>MissionLoop</c> and <c>AppHost.LevelCeilings</c>);</item>
 /// <item>the turn allowance: a figure at or below zero is the app's default, and is compared as that default (<see cref="TurnAllowance.From"/>);</item>
 /// <item>the allowlist narrows only by removal; the shares only if no role's share — an absent or invalid one read as the equal
-/// share <see cref="BoardPolicy.ShareForRole"/> gives it — rises; the envelope to none, or on the same venue, account and instrument
-/// with no ceiling, count or life larger (no expiry is the longest); PAPER to OBSERVE.</item>
+/// share <see cref="BoardPolicy.ShareForRole"/> gives it — rises; a pair's envelope to none, or on the same venue, account and
+/// instrument with no ceiling, count or life larger (no expiry is the longest); PAPER to OBSERVE.</item>
 /// </list>
+/// <b>EACH PAIR'S ENVELOPE IS ITS OWN FIELD</b> (<c>U-evidence-breadth-paper</c>): <c>paper_envelopes.&lt;PAIR&gt;</c>, whose terms name
+/// that pair and no other — an act names the pair it changes, a widening of any one pair takes two seats, a narrowing one, and terms
+/// for another instrument under a pair's name are refused at the parse (and again by the body's strict read).
 /// A FIELD NOT IN THE TABLE, OR ANY CHANGE THAT IS NOT A NARROWING, IS A WIDENING: this table only ever lets one seat through when it
 /// can show less authority. Pure; read by the store, the veto and the guards.
 /// </summary>
@@ -234,7 +237,24 @@ public static class BoardDirection
             to.ValueKind == JsonValueKind.Null ? null : new ChiefSeat(to.GetProperty("runtime").GetString()!, to.GetProperty("model").GetString()!));
     }
 
-    /// <summary>THE TABLE — every field of the policy one board act may change, and nothing else (the chief, <see cref="Chief"/>, is the chart's).</summary>
+    /// <summary>The group in the policy's body that holds each pair's paper envelope terms, by pair.</summary>
+    public const string PaperEnvelopes = "paper_envelopes";
+
+    /// <summary>The field an act names to change <paramref name="pair"/>'s paper envelope: <c>paper_envelopes.&lt;PAIR&gt;</c>.</summary>
+    public static string EnvelopeField(string pair) => $"{PaperEnvelopes}.{pair}";
+
+    /// <summary>The pair <paramref name="field"/> names when it is one pair's envelope field (a pair, nothing below it), else null.</summary>
+    public static string? EnvelopePair(string? field) =>
+        field is not null && field.StartsWith(PaperEnvelopes + ".", StringComparison.Ordinal)
+        && field[(PaperEnvelopes.Length + 1)..] is var pair && BinanceArchive.IsPair(pair)
+            ? pair
+            : null;
+
+    /// <summary>
+    /// THE TABLE — every field of the policy one board act may change, and nothing else (the chief, <see cref="Chief"/>, is the chart's).
+    /// The envelope rows are the founding pairs' (<see cref="BoardFounding.PaperPairs"/>); another pair's envelope field has the same
+    /// row (<see cref="Spec"/>), so a pair the founding policy does not name can be granted — a widening, two seats.
+    /// </summary>
     public static readonly IReadOnlyList<FieldSpec> Fields =
     [
         new("mode", Order.Mode, Number.None, 0),
@@ -258,18 +278,22 @@ public static class BoardDirection
         new("review_minutes", Order.HigherZeroNone, Number.Int, 0),
         new("head_ceiling_hours", Order.HigherZeroNone, Number.Int, 0),
         new("rewake_floor_minutes", Order.Floors, Number.None, 0),
-        new("paper_envelope", Order.Envelope, Number.None, 0)
+        .. BoardFounding.PaperPairs.Select(p => new FieldSpec(EnvelopeField(p.Instrument), Order.Envelope, Number.None, 0))
     ];
 
     /// <summary>The row for <paramref name="field"/>, or null — and then every change of it is a widening, and no intent may name it.</summary>
-    public static FieldSpec? Spec(string? field) => Fields.FirstOrDefault(f => string.Equals(f.Path, field, StringComparison.Ordinal));
+    public static FieldSpec? Spec(string? field) =>
+        Fields.FirstOrDefault(f => string.Equals(f.Path, field, StringComparison.Ordinal))
+        ?? (EnvelopePair(field) is not null ? new FieldSpec(field!, Order.Envelope, Number.None, 0) : null);
 
     /// <summary>Why <paramref name="field"/> cannot be named in an intent, or null when it can.</summary>
     public static string? Refusal(string field) => field switch
     {
         "live_activated" => "real money is switched on by no act of this build: 'live_activated' is not a field an intent may name",
-        _ when field.StartsWith("paper_envelope.", StringComparison.Ordinal) =>
-            $"'{field}' is part of the envelope, which an act changes whole: name 'paper_envelope' with its terms, or null for none",
+        PaperEnvelopes =>
+            $"each pair's paper envelope is its own field: name '{PaperEnvelopes}.<PAIR>' — the pair it changes — with its terms, or null for none",
+        _ when field.StartsWith(PaperEnvelopes + ".", StringComparison.Ordinal) && EnvelopePair(field) is null =>
+            $"'{field}' is part of a pair's envelope, which an act changes whole: name '{PaperEnvelopes}.<PAIR>' with its terms, or null for none",
         _ when Spec(field) is null =>
             $"'{field}' is no field the board's acts change: {string.Join(", ", Fields.Select(f => f.Path).Append(Chief))}",
         _ => null
@@ -441,6 +465,11 @@ public static class BoardDirection
                     if (e.GetProperty(k).ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(e.GetProperty(k).GetString())
                         || e.GetProperty(k).GetString()!.Length > 64)
                         return (null, $"the envelope's {k} is a name of 1 to 64 characters");
+                // ONE PAIR'S FIELD, THAT PAIR'S TERMS (U-evidence-breadth-paper): terms for another instrument under this pair's name
+                // would move the other pair's authority by an act that names only this one — refused, never read as either.
+                if (EnvelopePair(spec.Path) is not { } pair || !string.Equals(e.GetProperty("instrument").GetString(), pair, StringComparison.Ordinal))
+                    return (null, $"'{spec.Path}' changes {EnvelopePair(spec.Path) ?? "no pair"}'s envelope, and these terms are for "
+                                  + $"{e.GetProperty("instrument").GetString()}: an act changes a pair's envelope by that pair's own field, never another's");
                 foreach (var k in new[] { "max_quantity", "max_notional" })
                     if (e.GetProperty(k).ValueKind != JsonValueKind.Number || !e.GetProperty(k).TryGetDecimal(out var d) || d <= 0m)
                         return (null, $"the envelope's {k} is a number above 0");

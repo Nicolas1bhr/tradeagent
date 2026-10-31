@@ -26,7 +26,9 @@ public partial class BoardActTests
 
     static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
-    static List<PaperEnvelopeRow> Standing(TradingGateway gw) => [.. gw.Envelopes.All().Where(e => e.StandsAt(DateTimeOffset.UtcNow))];
+    /// <summary>BTCUSDT's standing envelopes — the pair these acts change; every other pair's stands on, untouched (<c>U-evidence-breadth-paper</c>).</summary>
+    static List<PaperEnvelopeRow> Standing(TradingGateway gw) =>
+        [.. gw.Envelopes.All().Where(e => e.StandsAt(DateTimeOffset.UtcNow) && e.Symbol == "BTCUSDT")];
 
     /// <summary>
     /// A NARROWED ENVELOPE IS WITHDRAWN IN THE ACT'S WRITE: one seat lowers the standing envelope's ceiling, and the founding envelope
@@ -46,19 +48,19 @@ public partial class BoardActTests
         Assert.Equal("granted by the app under the security board's founding policy, version 1", founding.Reason);
 
         var refused = Assert.Throws<TradeAgentException>(() => gw.BoardNarrow(Act("board-1",
-            Change("paper_envelope", Json(EnvelopeWith("max_quantity", "0.04")), Json(EnvelopeWith("max_quantity", "0.01"))))));
+            Change("paper_envelopes.BTCUSDT", Json(EnvelopeWith("max_quantity", "0.08")), Json(EnvelopeWith("max_quantity", "0.02"))))));
         log.WriteLine(refused.Message);
         Assert.Equal(founding.Id, Assert.Single(Standing(gw)).Id);
 
-        var narrowed = gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.01")))));
+        var narrowed = gw.BoardNarrow(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.02")))));
         Assert.Equal(2, narrowed.PolicyVersion);
         Assert.Empty(Standing(gw));
         Assert.NotNull(gw.Envelopes.ById(founding.Id)!.WithdrawnAt);
-        Assert.Equal(0.01m, gw.Policy.PaperEnvelope!.MaxQuantity);
+        Assert.Equal(0.02m, gw.Policy.PaperEnvelopeFor("BTCUSDT")!.MaxQuantity);
 
         await gw.RefreshHealthAsync();
         var granted = Assert.Single(Standing(gw));
-        Assert.Equal((0.01m, "granted by the app under the security board's act, version 2"), (granted.MaxQuantity, granted.Reason));
+        Assert.Equal((0.02m, "granted by the app under the security board's act, version 2"), (granted.MaxQuantity, granted.Reason));
         var said = new LogStore(db).RecentActivity(200).Select(a => a.Text).Where(t => t.Contains("security board", StringComparison.Ordinal)).ToList();
         foreach (var line in said) log.WriteLine(line);
         Assert.Contains(said, t => t.Contains("version 2 changed the standing paper envelope's terms", StringComparison.Ordinal));
@@ -76,7 +78,7 @@ public partial class BoardActTests
         await gw.RefreshHealthAsync();
         await gw.RefreshHealthAsync();
         Assert.Empty(Standing(gw));
-        Assert.Equal(2, gw.Envelopes.All().Count);
+        Assert.Equal(2, gw.Envelopes.All().Count(e => e.Symbol == "BTCUSDT"));
     }
 
     /// <summary>
@@ -93,19 +95,19 @@ public partial class BoardActTests
         await using var gw = await PaperGateway(db);
         var founding = Assert.Single(Standing(gw));
 
-        var proposed = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.1")))));
+        var proposed = gw.BoardPropose(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.2")))));
         await gw.RefreshHealthAsync();
         Assert.Equal(founding.Id, Assert.Single(Standing(gw)).Id);
 
         var confirmed = gw.BoardDecide(proposed.Act.Id, "board-2", null, true, proposed.Act.IntentSha256, "the paper book has room");
         Assert.Equal((BoardActEventKind.Confirmed, 2), (confirmed.Status, confirmed.PolicyVersion));
         Assert.Empty(Standing(gw));
-        Assert.Equal(0.1m, gw.Policy.PaperEnvelope!.MaxQuantity);
+        Assert.Equal(0.2m, gw.Policy.PaperEnvelopeFor("BTCUSDT")!.MaxQuantity);
 
         await gw.RefreshHealthAsync();
         var granted = Assert.Single(Standing(gw));
         log.WriteLine($"{granted.MaxQuantity} — {granted.Reason}");
-        Assert.Equal((0.1m, "granted by the app under the security board's act, version 2"), (granted.MaxQuantity, granted.Reason));
+        Assert.Equal((0.2m, "granted by the app under the security board's act, version 2"), (granted.MaxQuantity, granted.Reason));
         Assert.Contains(new LogStore(db).RecentActivity(200).Select(a => a.Text),
             t => t.StartsWith("The security board's version 2 lets TradeAgent run paper experiments", StringComparison.Ordinal));
     }

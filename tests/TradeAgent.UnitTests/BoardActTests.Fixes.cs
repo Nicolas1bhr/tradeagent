@@ -85,19 +85,19 @@ public partial class BoardActTests
         using var db = TestEnv.NewDb();
         Activate(db, "board-1");
         await using var gw = await PaperGateway(db);
-        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.01")))));
+        gw.BoardNarrow(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(Envelope), Json(EnvelopeWith("max_quantity", "0.02")))));
         Assert.Empty(Standing(gw));
 
         var armed = 1;
         gw.PolicyEnvelopeTermsRead = () =>
         {
             if (Interlocked.Exchange(ref armed, 0) == 1)
-                gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(EnvelopeWith("max_quantity", "0.01")), Json("null"))));
+                gw.BoardNarrow(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(EnvelopeWith("max_quantity", "0.02")), Json("null"))));
         };
         await gw.RefreshHealthAsync();
 
         Assert.Equal(0, armed);
-        Assert.Null(gw.Policy.PaperEnvelope);
+        Assert.Null(gw.Policy.PaperEnvelopeFor("BTCUSDT"));
         foreach (var e in gw.Envelopes.All()) log.WriteLine($"{e.MaxQuantity} until {e.ExpiresAt:O} withdrawn {e.WithdrawnAt:O} — {e.Reason}");
         Assert.Empty(Standing(gw));
         await gw.RefreshHealthAsync();
@@ -124,7 +124,7 @@ public partial class BoardActTests
     public async Task A_narrowing_never_lengthens_an_envelopes_life()
     {
         using var db = TestEnv.NewDb();
-        SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
+        SeedField(db, "paper_envelopes.BTCUSDT", EnvelopeWith("days", "10"));
         Activate(db, "board-1", "board-2");
         var clock = new Settable(DateTimeOffset.UtcNow);
         var inner = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker
@@ -134,25 +134,25 @@ public partial class BoardActTests
         gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
-        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now);
+        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now) && e.Symbol == "BTCUSDT";
         var first = Assert.Single(gw.Envelopes.All(), Stands);
         Assert.Equal(clock.Now.AddDays(10), first.ExpiresAt);
 
         clock.Now = clock.Now.AddDays(9);
         var ten = EnvelopeWith("days", "10");
         var lower = System.Text.Json.Nodes.JsonNode.Parse(ten)!.AsObject();
-        lower["max_quantity"] = 0.01m;
-        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(ten), Json(lower.ToJsonString()))));
+        lower["max_quantity"] = 0.02m;
+        gw.BoardNarrow(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(ten), Json(lower.ToJsonString()))));
         await gw.RefreshHealthAsync();
         var replaced = Assert.Single(gw.Envelopes.All(), Stands);
         log.WriteLine($"first until {first.ExpiresAt:O}; replacement {replaced.MaxQuantity} until {replaced.ExpiresAt:O}");
-        Assert.Equal(0.01m, replaced.MaxQuantity);
+        Assert.Equal(0.02m, replaced.MaxQuantity);
         Assert.True(replaced.ExpiresAt <= first.ExpiresAt, $"the narrowing ran the envelope to {replaced.ExpiresAt:O}, past {first.ExpiresAt:O}");
 
         // A TWO-SEAT WIDENING OF THE DAYS gives its full new life.
         var twenty = System.Text.Json.Nodes.JsonNode.Parse(lower.ToJsonString())!.AsObject();
         twenty["days"] = 20;
-        var proposed = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(lower.ToJsonString()), Json(twenty.ToJsonString()))));
+        var proposed = gw.BoardPropose(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(lower.ToJsonString()), Json(twenty.ToJsonString()))));
         gw.BoardDecide(proposed.Act.Id, "board-2", null, true, proposed.Act.IntentSha256, "a longer run is earned");
         await gw.RefreshHealthAsync();
         Assert.Equal(clock.Now.AddDays(20), Assert.Single(gw.Envelopes.All(), Stands).ExpiresAt);
@@ -187,8 +187,8 @@ public partial class BoardActTests
 {
     /// <summary>
     /// A TWO-SEAT WIDENING AFTER A NARROWING GETS ITS AUTHORISED LIFE (<c>U-board-b1</c> fix pass 2, the re-review's P2): an envelope of
-    /// 0.05 for ten days; on day nine one seat narrows it to 0.01, and two seats then widen it to 0.02 — with no health pass between —
-    /// and the one pass after grants the 0.02 envelope its full ten days from now (day nineteen): whether a life may be lengthened is
+    /// 0.1 for ten days; on day nine one seat narrows it to 0.02, and two seats then widen it to 0.04 — with no health pass between —
+    /// and the one pass after grants the 0.04 envelope its full ten days from now (day nineteen): whether a life may be lengthened is
     /// read from the act that SET the terms, never from the last envelope granted. RED before the fix: day ten. Watched red with the
     /// terms before that act read from the act's own version.
     /// </summary>
@@ -196,7 +196,7 @@ public partial class BoardActTests
     public async Task A_two_seat_widening_after_a_narrowing_gets_its_authorised_life()
     {
         using var db = TestEnv.NewDb();
-        SeedField(db, "paper_envelope", EnvelopeWith("days", "10"));
+        SeedField(db, "paper_envelopes.BTCUSDT", EnvelopeWith("days", "10"));
         Activate(db, "board-1", "board-2");
         var clock = new Settable(DateTimeOffset.UtcNow);
         var inner = new TradeAgent.Connectors.Fake.FakeConnector(new TradeAgent.Connectors.Fake.FakeBroker
@@ -206,7 +206,7 @@ public partial class BoardActTests
         gw.Update(s => s.SelectedAccountId = BoardFounding.PaperAccount);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
-        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now);
+        bool Stands(PaperEnvelopeRow e) => e.StandsAt(clock.Now) && e.Symbol == "BTCUSDT";
         var first = Assert.Single(gw.Envelopes.All(), Stands);
         Assert.Equal(clock.Now.AddDays(10), first.ExpiresAt);
 
@@ -217,14 +217,14 @@ public partial class BoardActTests
             o["max_quantity"] = quantity;
             return o.ToJsonString();
         }
-        gw.BoardNarrow(Act("board-1", Change("paper_envelope", Json(With(0.05m)), Json(With(0.01m)))));
-        var widened = gw.BoardPropose(Act("board-1", Change("paper_envelope", Json(With(0.01m)), Json(With(0.02m)))));
+        gw.BoardNarrow(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(With(0.1m)), Json(With(0.02m)))));
+        var widened = gw.BoardPropose(Act("board-1", Change("paper_envelopes.BTCUSDT", Json(With(0.02m)), Json(With(0.04m)))));
         gw.BoardDecide(widened.Act.Id, "board-2", null, true, widened.Act.IntentSha256, "the book has room again");
         await gw.RefreshHealthAsync();
 
         var granted = Assert.Single(gw.Envelopes.All(), Stands);
-        log.WriteLine($"0.02 envelope until {granted.ExpiresAt:O}; first until {first.ExpiresAt:O}");
-        Assert.Equal((0.02m, clock.Now.AddDays(10)), (granted.MaxQuantity, granted.ExpiresAt));
+        log.WriteLine($"0.04 envelope until {granted.ExpiresAt:O}; first until {first.ExpiresAt:O}");
+        Assert.Equal((0.04m, clock.Now.AddDays(10)), (granted.MaxQuantity, granted.ExpiresAt));
     }
 }
 

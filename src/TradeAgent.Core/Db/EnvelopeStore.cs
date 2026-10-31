@@ -215,20 +215,30 @@ public sealed class Envelopes(Database db)
     });
 
     /// <summary>
-    /// THE GRANT IN FORCE ON ONE (PLATFORM, ACCOUNT) PAIR AT <paramref name="now"/>, or null because
-    /// none is.
+    /// THE GRANT IN FORCE FOR ONE INSTRUMENT ON ONE (PLATFORM, ACCOUNT) AT <paramref name="now"/>, or null because none is
+    /// (<c>U-evidence-breadth-paper</c>: one standing envelope per pair).
     ///
-    /// <para>The pair is matched exactly and ordinally. An envelope granted on the simulator does not
-    /// stand on a broker that happens to be connected under the same account name, and vice versa:
-    /// which platform an order would actually reach is the fact the whole grant is about.</para>
+    /// <para>All three are matched exactly and ordinally. An envelope granted on the simulator does not stand on a broker that
+    /// happens to be connected under the same account name, and vice versa: which platform an order would actually reach is the
+    /// fact the whole grant is about — and one pair's grant is never another pair's room.</para>
     /// </summary>
-    public PaperEnvelopeRow? Standing(string connectorId, string accountId, DateTimeOffset now) => db.Read(_ =>
+    public PaperEnvelopeRow? Standing(string connectorId, string accountId, string symbol, DateTimeOffset now) =>
+        StandingOn(connectorId, accountId, now).FirstOrDefault(e => string.Equals(e.Symbol, symbol, StringComparison.Ordinal));
+
+    /// <summary>
+    /// EVERY PAIR'S GRANT IN FORCE ON ONE (PLATFORM, ACCOUNT) AT <paramref name="now"/>: for each instrument, the newest grant that
+    /// stands — one per pair, in instrument order. Empty when none stands.
+    /// </summary>
+    public IReadOnlyList<PaperEnvelopeRow> StandingOn(string connectorId, string accountId, DateTimeOffset now) => db.Read(_ =>
     {
         using var c = db.Cmd(
             $"SELECT {Cols} FROM paper_envelope WHERE connector_id=$conn AND account_id=$acct "
             + "ORDER BY granted_at DESC, id DESC",
             ("$conn", connectorId), ("$acct", accountId));
-        return Read(c).FirstOrDefault(e => e.StandsAt(now));
+        return (IReadOnlyList<PaperEnvelopeRow>)[.. Read(c).Where(e => e.StandsAt(now))
+            .GroupBy(e => e.Symbol, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .OrderBy(e => e.Symbol, StringComparer.Ordinal)];
     });
 
     /// <summary>

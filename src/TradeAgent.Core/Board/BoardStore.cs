@@ -512,9 +512,12 @@ public sealed class BoardStore(Database db)
         return (intent, inForce);
     }
 
-    /// <summary>The standing paper envelope's terms <paramref name="version"/> states, as canonical JSON (<c>null</c> for none), or null for no such version.</summary>
-    public string? EnvelopeTermsAt(int version) =>
-        Rows().FirstOrDefault(r => r.Version == version) is { } row ? ValueAt(row.Body, "paper_envelope") : null;
+    /// <summary>
+    /// <paramref name="pair"/>'s standing paper envelope terms as <paramref name="version"/> states them, as canonical JSON (<c>null</c> for
+    /// none on that pair), or null for no such version.
+    /// </summary>
+    public string? EnvelopeTermsAt(int version, string pair) =>
+        Rows().FirstOrDefault(r => r.Version == version) is { } row ? ValueAt(row.Body, BoardDirection.EnvelopeField(pair)) : null;
 
     /// <summary>
     /// WHETHER <paramref name="version"/>'S AUTHORITY WAS REVOKED BY THE OWNER'S VETO (<c>U-board-b2</c> fix pass, the review's P1-2): true for a
@@ -575,6 +578,11 @@ public sealed class BoardStore(Database db)
     /// <summary>The canonical text of the value at <paramref name="field"/> in <paramref name="body"/> (<c>null</c> where it holds none).</summary>
     internal static string ValueAt(string body, string field)
     {
+        // A PAIR'S ENVELOPE: its terms, or null where the policy states none for that pair (an act may grant one — a widening).
+        if (BoardDirection.EnvelopePair(field) is { } pair)
+            return JsonNode.Parse(body) is JsonObject root && root[BoardDirection.PaperEnvelopes] is JsonObject envelopes
+                ? envelopes.TryGetPropertyValue(pair, out var terms) && terms is not null ? TapeJson.Canonical(terms.ToJsonString()) : "null"
+                : throw Refused($"the policy's body holds no '{BoardDirection.PaperEnvelopes}'.");
         JsonNode? node = JsonNode.Parse(body);
         foreach (var part in field.Split('.'))
             node = node is JsonObject o && o.TryGetPropertyValue(part, out var next)
@@ -593,6 +601,16 @@ public sealed class BoardStore(Database db)
         var root = JsonNode.Parse(body)!.AsObject();
         foreach (var c in changes)
         {
+            // A PAIR'S ENVELOPE: set under that pair's own key, or removed for null — never another pair's (the strict read below
+            // refuses terms whose instrument is not their key, so a mis-keyed write cannot be stored either).
+            if (BoardDirection.EnvelopePair(c.Field) is { } pair)
+            {
+                if (root[BoardDirection.PaperEnvelopes] is not JsonObject envelopes)
+                    throw Refused($"the policy's body holds no '{BoardDirection.PaperEnvelopes}'.");
+                if (JsonNode.Parse(c.To) is { } to) envelopes[pair] = to;
+                else envelopes.Remove(pair);
+                continue;
+            }
             var parts = c.Field.Split('.');
             var parent = root;
             foreach (var part in parts[..^1])

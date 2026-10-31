@@ -245,10 +245,10 @@ public static partial class Labels
 
     public const string GrantEnvelope = "Let TradeAgent run paper experiments";
 
-    public const string WithdrawEnvelope = "Withdraw this paper envelope";
+    public const string WithdrawEnvelope = "Withdraw the paper envelopes";
 
     public const string WithdrawEnvelopeArmed =
-        "Confirm: stop all paper experiments under this grant";
+        "Confirm: stop all paper experiments under every pair's envelope";
 
     /// <summary>
     /// ONE PRESS PLUS A CONFIRM, the withdrawal's rule and not the grant's: ending a paper deployment

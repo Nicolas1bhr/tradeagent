@@ -59,7 +59,9 @@ public partial class BoardActTests
         ("review_minutes", "30", "15", "0"),
         ("head_ceiling_hours", "24", "12", "0"),
         ("rewake_floor_minutes", "{\"team\":120}", "{\"team\":60}", "{\"team\":240}"),
-        ("paper_envelope", Envelope, EnvelopeWith("max_quantity", "0.1"), EnvelopeWith("max_quantity", "0.01"))
+        // EACH PAIR'S ENVELOPE ITS OWN FIELD (U-evidence-breadth-paper): the same triple for each founding pair.
+        .. BoardFounding.PaperPairs.Select(p => ($"paper_envelopes.{p.Instrument}", For(p.Instrument, Envelope),
+            For(p.Instrument, EnvelopeWith("max_quantity", "0.2")), For(p.Instrument, EnvelopeWith("max_quantity", "0.02"))))
     ];
 
     /// <summary>Every field's value in force, by path.</summary>
