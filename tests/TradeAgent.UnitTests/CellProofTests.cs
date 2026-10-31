@@ -71,6 +71,13 @@ public class CellProofTests
             Assert.Equal(File.ReadAllText("/proc/sys/kernel/osrelease").Trim(), HostIdentity.This!.OsRelease);
             Assert.Equal(64, HostIdentity.This.Boot.Length);
         }
+        // ON WINDOWS A PROOF IS BOUND TO THE BOOT TOO (U-cell-windows, Codex on landing 3): a hash of the kernel's boot counter, never the
+        // fixed word — a proof measured before a reboot no longer counts after it.
+        else if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(64, HostIdentity.This!.Boot.Length);
+            Assert.NotEqual(HostIdentity.NoBoot, HostIdentity.This.Boot);
+        }
         else Assert.Equal(HostIdentity.NoBoot, HostIdentity.This!.Boot);
     }
 
