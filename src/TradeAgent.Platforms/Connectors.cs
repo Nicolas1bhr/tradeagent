@@ -61,6 +61,13 @@ public sealed record ConnectorChoice
     /// catalogue file once when it is built — which never verifies anything the app has checked.
     /// </summary>
     public Func<VenueCatalogRead>? PaperInstruments { get; init; }
+
+    /// <summary>
+    /// WHETHER THE HOST'S BUILD CARRIES THE ATAS ADAPTER (<c>U-atas-home-no-atas-build</c>) — the host's own reading of
+    /// <see cref="TradeAgent.Core.BuildContents.AtasAdapterInThisBuild"/>. False, the default, is a build that cannot reach ATAS:
+    /// <see cref="Connectors.Create"/> refuses to build the ATAS connector rather than start one nothing can connect it to.
+    /// </summary>
+    public bool AtasAdapterInThisBuild { get; init; }
 }
 
 /// <summary>
@@ -94,7 +101,11 @@ public static class Connectors
 
     public static ITradingConnector Create(string? id, ConnectorChoice? choice = null) => id switch
     {
-        Atas => new AtasConnector(),
+        // ONLY IN A BUILD THAT CARRIES THE ADAPTER (U-atas-home-no-atas-build): every host that names "atas" — a saved home, a
+        // switch, the headless gateway's argument — comes through here, so a build that cannot reach ATAS never starts its connector.
+        Atas => choice?.AtasAdapterInThisBuild == true
+            ? new AtasConnector()
+            : throw new InvalidOperationException(TradeAgent.Core.BuildContents.AtasNotInThisBuild),
         Paper => new PaperConnector(new PaperConnectorOptions
         {
             Source = PaperBarsFor(choice),

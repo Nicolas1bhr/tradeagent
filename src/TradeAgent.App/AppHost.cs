@@ -1193,6 +1193,19 @@ public sealed class AppHost : IAsyncDisposable
             Paths.EnsureAllVerbose();
             _db = new Database();
             Onboarding = new OnboardingStore(_db);
+
+            // WHICH PLATFORM, DECIDED BEFORE ANYTHING ELSE STARTS (U-atas-home-no-atas-build): a home whose saved platform is ATAS, in a
+            // build without the adapter, is refused here — no connector, gateway, reconciler, collector or AI exists yet, so nothing
+            // reaches any venue about an order sent to ATAS. The window shows the words and the owner's two presses onto paper.
+            var chosen = AtasHome.PlatformAtStart(_db, AtasInThisBuild, out var atasRefused);
+            if (chosen is null)
+            {
+                AtasRefusal = atasRefused;
+                StartupProblem = atasRefused!.Message;
+                _db.Dispose();
+                _db = null;
+                return false;
+            }
             Health.Set(Components.App, HealthState.READY, Versions.App);
 
             ToolDeployer.EnsureTradeCli();
@@ -1206,9 +1219,8 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.TradeCli,
                 ToolDeployer.TradeCliReady(out var cliReason) ? HealthState.READY : HealthState.FAILED, cliReason);
 
-            // Which backend to talk to is a persisted choice; the simulator is the safe default.
-            var chosen = _db.GetKv("connector") ?? Platforms.Connectors.Simulator;
-            Connector = Platforms.Connectors.Create(chosen, PaperChoice());
+            // Which backend to talk to is a persisted choice (AtasHome.PlatformAtStart, above); the simulator is the safe default.
+            Connector = Platforms.Connectors.Create(chosen, ConnectorChoiceNow());
 
             Gateway = new TradingGateway(_db, Connector, Health);
             // THE COLLECTOR RAISES THE `data` WAKE ITSELF and this is what pokes the loop, the way
@@ -1364,6 +1376,9 @@ public sealed class AppHost : IAsyncDisposable
             // THE HEAD-START KIT A BUILD CARRIES (U-kit-socket item 3), installed before any seat starts — never over the owner's own.
             try { if (Kit.InstallBundled() is { } bundled) Gateway.Log.Activity(bundled); }
             catch (Exception ex) { Gateway.Log.Engineering("Kit", "bundled_kit_failed", "warn", ex: ex); }
+            if (_db!.GetKv("connector") == Platforms.Connectors.Atas && chosen != Platforms.Connectors.Atas)
+                Gateway.Log.Activity(AtasHome.Refused + " TradeAgent runs on its own paper venue, as you chose; your ATAS choice is kept, "
+                                     + "and a TradeAgent with ATAS goes back to it. Orders sent to ATAS stay as recorded until then.", "warn");
             if (OperatingSystem.IsLinux())
                 Gateway.Log.Activity(cgroups.Held
                     ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
@@ -1456,6 +1471,40 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Why the last start-fresh press moved nothing, in the owner's words; null when it has not been refused.</summary>
     public string? StartFreshProblem { get; private set; }
+
+    /// <summary>
+    /// The refusal this start gave a home whose saved platform is ATAS, in a build without the adapter (<see cref="AtasHome"/>), while it
+    /// stands; null otherwise.
+    /// </summary>
+    public AtasHomeRefusal? AtasRefusal { get; private set; }
+
+    /// <summary>
+    /// THE OWNER'S PAPER PRESS, the second of two (<c>U-atas-home-no-atas-build</c>): reachable only from the refusal screen this start
+    /// put up, in-process, never from the pipe or a verb. Writes <see cref="AtasHome.StandInKey"/> — the saved platform stays ATAS and no
+    /// order is touched — lets go of the single-instance lock and starts again, on TradeAgent's paper venue. Returns
+    /// <see cref="StartAsync"/>'s answer.
+    /// </summary>
+    public async Task<bool> RunOnPaperInsteadAsync()
+    {
+        if (AtasRefusal is null) return false;
+        try
+        {
+            using var db = new Database();
+            AtasHome.ChoosePaper(db);
+        }
+        catch (Exception ex)
+        {
+            // The key could not be written: nothing started and nothing changed. The window says why; the next start asks again.
+            AtasRefusal = null;
+            StartupProblem = ex is TradeAgentException t ? t.Info.UserMessage : ex.Message;
+            return false;
+        }
+        AtasRefusal = null;
+        StartupProblem = null;
+        _lock?.Dispose();
+        _lock = null;
+        return await StartAsync();
+    }
 
     /// <summary>
     /// EVERYTHING ABOVE THE GATEWAY THAT THE AI WORKS THROUGH: the supervisor, the meter, the wake
@@ -1675,7 +1724,7 @@ public sealed class AppHost : IAsyncDisposable
     /// exists, and the owner can change the override while it is running — a fill has to record what it
     /// was actually simulated under, not what the app was started with.
     /// </summary>
-    ConnectorChoice PaperChoice() => new()
+    internal ConnectorChoice ConnectorChoiceNow() => new()
     {
         PaperFrictionNow = () => PaperFrictionFor(Gateway?.Settings),
 
@@ -1689,7 +1738,10 @@ public sealed class AppHost : IAsyncDisposable
         // catalogue overlaid by the latest successful instrument check of seven days or less, on the
         // gateway's clock. Read through the property, so a connector switch that replaces the gateway reads
         // the new one; before the gateway exists the same database answers on the machine clock.
-        PaperInstruments = _db is { } venues ? () => (Gateway?.Venues ?? new VenueStore(venues)).Catalogue() : null
+        PaperInstruments = _db is { } venues ? () => (Gateway?.Venues ?? new VenueStore(venues)).Catalogue() : null,
+
+        // THE BUILD'S OWN FACT, read from its installed bridge (U-atas-home-no-atas-build): the factory builds ATAS only where it is true.
+        AtasAdapterInThisBuild = AtasInThisBuild
     };
 
     public async Task SwitchConnectorAsync(string id)
@@ -1700,6 +1752,8 @@ public sealed class AppHost : IAsyncDisposable
         if (id == Platforms.Connectors.Atas && !AtasInThisBuild) throw new InvalidOperationException(BuildContents.AtasNotInThisBuild);
         var current = _db.GetKv("connector") ?? "fake";
         _db.SetKv("connector", id);
+        // AN EXPLICIT CHOICE ENDS THE PAPER STAND-IN FOR ATAS (U-atas-home-no-atas-build): the next no-ATAS build that finds ATAS saved asks again.
+        if (_db.GetKv(AtasHome.StandInKey) is { Length: > 0 }) _db.SetKv(AtasHome.StandInKey, "");
         if (current == id && Gateway is not null) return;
 
         // The chosen account belongs to the platform it was chosen on. Carrying it across turns
@@ -1717,7 +1771,7 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         Health.Set(Components.TradingConnection, HealthState.STARTING);
-        Connector = Platforms.Connectors.Create(id, PaperChoice());
+        Connector = Platforms.Connectors.Create(id, ConnectorChoiceNow());
         Gateway = new TradingGateway(_db, Connector, Health);
         Gateway.StateChanged += OnGatewayStateChanged;
         // A new gateway is a new object and the sink is on the object, exactly like the hook below.

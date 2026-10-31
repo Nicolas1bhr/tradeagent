@@ -198,6 +198,7 @@ public sealed class MainWindow : Window
         if (!started)
         {
             if (_host.OlderHome is not null) ShowOlderHome();
+            else if (_host.AtasRefusal is not null) ShowAtasNotInThisBuild();
             else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
             return;
         }
@@ -260,6 +261,28 @@ public sealed class MainWindow : Window
                 {
                     if (await _host.StartFreshAsync()) { await AfterStartAsync(); return; }
                     if (_host.OlderHome is not null) ShowOlderHome();
+                    else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
+                })));
+        _setupSurface.IsVisible = true;
+        _shellSurface.IsVisible = false;
+    }
+
+    /// <summary>
+    /// A HOME WHOSE SAVED PLATFORM IS ATAS, REFUSED BY A BUILD WITHOUT THE ADAPTER, AND THE OWNER'S WAY ON (<c>U-atas-home-no-atas-build</c>):
+    /// the words, what became of his ATAS orders, and "Run on TradeAgent paper" — two presses, the second saying in full what it does.
+    /// </summary>
+    void ShowAtasNotInThisBuild()
+    {
+        _setupSlot.Content = Ui.Col(Tokens.S4,
+            Ui.H1("This TradeAgent has no ATAS"),
+            Ui.Body(_host.AtasRefusal!.Message),
+            Ui.Body("You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
+                    + "is kept, and a TradeAgent with ATAS goes back to it."),
+            Ui.Row(Tokens.S3,
+                Ui.Confirm("Run on TradeAgent paper", AtasHome.ConfirmPaper, async () =>
+                {
+                    if (await _host.RunOnPaperInsteadAsync()) { await AfterStartAsync(); return; }
+                    if (_host.AtasRefusal is not null) ShowAtasNotInThisBuild();
                     else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
                 })));
         _setupSurface.IsVisible = true;
