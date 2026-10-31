@@ -70,7 +70,7 @@ static class OwnerPagesSeed
     static string Deliver(Database db, string mandate, string report, DateTimeOffset at, params (string Check, bool Passed, string Reason)[] checks)
     {
         var id = "dlv-" + Guid.NewGuid().ToString("n")[..12];
-        Exec(db, "INSERT INTO org_delivery(id, mandate_id, report, deviations, refs, manifest, at) VALUES($id,$m,$r,'[]','[]','{}',$at)",
+        Exec(db, "INSERT INTO org_delivery(id, mandate_id, author, attempt_id, report, deviations, refs, manifest, at) VALUES($id,$m,(SELECT holder FROM org_mandate WHERE id=$m),'turn-test',$r,'[]','[]','{}',$at)",
             ("$id", id), ("$m", mandate), ("$r", report), ("$at", T(at)));
         foreach (var (check, passed, reason) in checks)
             Exec(db, "INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($d,$c,$p,$r)",
@@ -117,11 +117,11 @@ static class OwnerPagesSeed
             Ended(5), ("sources-cited", true, "every source is cited"), ("output-shape", true, "the table has the columns asked for"));
 
         // A DECISION WITH ITS FORECAST.
-        var decision = org.Decide(Head, null, "routine", ["keep testing the skew", "drop it"], "keep testing the skew",
+        var decision = org.Decide(Head, "turn-test", "routine", ["keep testing the skew", "drop it"], "keep testing the skew",
             "the first week is thin but not negative", [], [], Now.AddHours(-4));
         Exec(db, """
-            INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
-            VALUES('fc-a1c0ffee0001', $d, $p, 1, 'verdict-class', 'v1', 'promoted', $by, '0.35', 1, NULL, $at)
+            INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
+            VALUES('fc-a1c0ffee0001', $d, $p, 'turn-test', 1, 'verdict-class', 'v1', 'promoted', $by, '0.35', 1, NULL, $at)
             """, ("$d", decision.Id), ("$p", Head), ("$by", T(Now.AddDays(10))), ("$at", T(Now.AddHours(-4))));
 
         // WHAT REACHED THE OWNER: words he sent that are still owed an answer.
