@@ -16,6 +16,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
     <InternalsVisibleTo Include="TradeAgent.UiTests" />
+    <!-- THE PROVING HOST (U-proving-ground-c): a test program, never packaged, that sets the proving and puppet flags first. -->
+    <InternalsVisibleTo Include="TradeAgent.ProvingHost" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />

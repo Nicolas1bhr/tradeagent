@@ -29,5 +29,7 @@
          arrangement TradeAgent.App already has, rather than a public member the product could use. -->
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
     <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
+    <!-- THE PROVING HOST (U-proving-ground-c): a test program, never packaged, that sets the proving and puppet flags first. -->
+    <InternalsVisibleTo Include="TradeAgent.ProvingHost" />
   </ItemGroup>
 </Project>

@@ -30,7 +30,8 @@ public sealed record ProvingPosition(string Id, string Unit, IReadOnlyList<IRead
 /// <param name="Name">A short name, which names its home's folder: letters, digits and '-' only.</param>
 /// <param name="Kind">The floor or a chart of seats.</param>
 /// <param name="Units">The chart template's units, by id.</param>
-/// <param name="Positions">The chart template's positions, each with its puppet script.</param>
+/// <param name="Positions">The chart template's positions, each with its puppet script. The brief — a wake per scripted turn — goes to
+/// the first; every other plays its script when the kernel's own records wake it.</param>
 /// <param name="AiEnvelope">The root unit's AI envelope, in the price list's currency.</param>
 /// <param name="TrialBudget">Trials per market's campaign.</param>
 /// <param name="VerdictBudget">Verdicts per market's campaign.</param>

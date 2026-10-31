@@ -12,6 +12,8 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+    <!-- THE PROVING HOST (U-proving-ground-c): a test program, never packaged, that sets the proving and puppet flags first. -->
+    <InternalsVisibleTo Include="TradeAgent.ProvingHost" />
     <!-- The Linux cell rows (U-cell-linux-d) grant ephemeral ports through CellEgress.ForTests, a table no product code can name. -->
     <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
   </ItemGroup>

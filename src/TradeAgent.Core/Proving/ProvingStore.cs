@@ -25,7 +25,8 @@ namespace TradeAgent.Core.Proving;
 /// <param name="TrialsSpent">Trials the campaigns charged.</param>
 /// <param name="VerdictsSpent">Verdicts the campaigns charged.</param>
 /// <param name="AiDollarsMetered">What the meter priced the configuration's turns at, or null where one was not priced — never a zero standing for unknown.</param>
-/// <param name="EnvelopeRefusals">Wakes the envelope refused: raised, never consumed, while the meter admitted no further turn.</param>
+/// <param name="EnvelopeRefusals">Positions whose launch the envelope refused: wakes due and never consumed when the configuration went
+/// quiet, while the meter admitted no further turn for them.</param>
 /// <param name="FirstPassSeconds">Seconds from the configuration's start to its first PASS, or null for none.</param>
 /// <param name="Sources">The rows each figure was read from, by table and id.</param>
 public sealed record ProvingScore(
@@ -44,7 +45,7 @@ public sealed record ProvingScore(
     /// <summary>The score in one sentence, labelled.</summary>
     public string Sentence => string.Create(CultureInfo.InvariantCulture,
         $"{Label} — {Configuration} ({Kind}): planted found {PlantedFound}/{PlantedExpressible}, false discoveries on noise {FalseDiscoveries}, "
-        + $"traps fallen for {TrapsFallenFor} ({TrapVerdicts} trap verdict(s)), trials {TrialsSpent}/{TrialBudget} per market, verdicts "
+        + $"traps fallen for {TrapsFallenFor} ({TrapVerdicts} trap verdict(s)), trials {TrialsSpent} ({TrialBudget} per market), verdicts "
         + $"{VerdictsSpent} ({VerdictBudget} per market), AI dollars metered {(AiDollarsMetered is { } d ? d.ToString(CultureInfo.InvariantCulture) : "UNKNOWN")} "
         + $"of an envelope of {AiEnvelope}, real dollars {RealDollars}, envelope refusals {EnvelopeRefusals}, first PASS "
         + $"{(FirstPassSeconds is { } s ? $"{s:0.0} s" : "none")}; home {HomeSha256[..Math.Min(12, HomeSha256.Length)]}");
@@ -266,8 +267,11 @@ public sealed record MarketTruth(string Instrument, string NormalisedSha256, int
     }
 }
 
-/// <summary>An envelope refusal the host saw: the wake it raised, never consumed, and the meter's reading when it gave up on it.</summary>
-public sealed record EnvelopeRefusal(string WakeId, string Role, decimal Spent, decimal Cap);
+/// <summary>
+/// AN ENVELOPE REFUSAL THE HOST SAW: a position left with wakes due and never consumed when its configuration went quiet, while the
+/// meter admitted no further turn for it — the launch its envelope refused — with those wakes and the meter's reading.
+/// </summary>
+public sealed record EnvelopeRefusal(string Role, IReadOnlyList<string> WakeIds, decimal Spent, decimal Cap);
 
 /// <summary>
 /// SCORES ONE CONFIGURATION (<c>U-proving-ground-c</c> item 4) from the stores of the home it worked in, after its process has
@@ -330,12 +334,12 @@ public static class ProvingScorer
         });
         decimal? metered = attempts.All(a => a.Cost is not null) ? attempts.Sum(a => a.Cost!.Value) : null;
 
-        // A REFUSAL COUNTS ONLY WHERE THE HOME'S OWN ROWS AGREE: the wake is there, and nothing consumed it.
-        var refused = refusals.Where(f => db.Read(_ =>
+        // A REFUSAL COUNTS ONLY WHERE THE HOME'S OWN ROWS AGREE: every wake it names is there, and nothing consumed it.
+        var refused = refusals.Where(f => f.WakeIds.Count > 0 && f.WakeIds.All(id => db.Read(_ =>
         {
-            using var c = db.Cmd("SELECT COUNT(*) FROM mission_event WHERE id=$i AND consumed_by IS NULL", ("$i", f.WakeId));
+            using var c = db.Cmd("SELECT COUNT(*) FROM mission_event WHERE id=$i AND consumed_by IS NULL", ("$i", id));
             return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
-        })).ToList();
+        }))).ToList();
 
         double? firstPass = passes.Count == 0 ? null : (passes.Min(p => p.At) - startedAt).TotalSeconds;
         var sources = JsonSerializer.Serialize(new
@@ -347,7 +351,7 @@ public static class ProvingScorer
             trials = "strategy_trial where charged, per campaign (CampaignStore.TrialsCharged)",
             verdicts = "strategy_verdict per campaign (CampaignStore.Verdicts)",
             ai_attempts = attempts.Select(a => a.Id).ToList(),
-            refused_wakes = refused.Select(f => f.WakeId).ToList(),
+            refused = refused.Select(f => new { role = f.Role, wakes = f.WakeIds }).ToList(),
             real_dollars = "the proving host composes FakeConnector only: no path reaches money"
         });
 

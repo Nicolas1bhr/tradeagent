@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- THE PROVING HOST (U-proving-ground-c; docs/ORCHESTRATION.md § 2.14: "a separate app process with its own home, pipe and
+       registers"): a console program that runs proving configurations in proving homes of their own, with puppet seats. It lives
+       under tests/, never under src/; no packaging script publishes it and no src project references it (a test says so). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TradeAgent.ProvingHost</AssemblyName>
+    <RootNamespace>TradeAgent.ProvingHost</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.App/TradeAgent.App.csproj" />
+    <!-- Programs a configuration's seats run, built first and never referenced as libraries. -->
+    <ProjectReference Include="../TradeAgent.Puppet/TradeAgent.Puppet.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Where this build's puppet and trade command are, in THIS configuration (the unit tests' arrangement). -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>PuppetDll</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../TradeAgent.Puppet/bin/$(Configuration)/$(TargetFramework)/TradeAgent.Puppet.dll</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TradeCliDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../../src/TradeAgent.TradeCli/bin/$(Configuration)/$(TargetFramework)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
