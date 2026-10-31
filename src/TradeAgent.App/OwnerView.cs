@@ -617,11 +617,11 @@ sealed class OwnerPage
                     () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), Labels.CancelAllWorkingOrders)),
                 Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
                     () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions))),
+            _lossClosedNote,
+            _lossFlattenNote,
             Ui.With(Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
                 + "Stopping takes one press; letting it trade again takes two. Cancelling all orders or closing all positions takes two."),
-                t => t.FontSize = Theme.Small),
-            _lossClosedNote,
-            _lossFlattenNote));
+                t => t.FontSize = Theme.Small)));
 
         _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
 
