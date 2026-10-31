@@ -271,7 +271,7 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
-            ParseVerdict.Accepted, program.WarmUpBars, Cutoff.AddDays(-1), null, null)
+            ParseVerdict.Accepted, program.WarmUpBars, Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test")
         {
             Timeframe = program.Freshness?.Timeframe,
             DataFreshness = program.Freshness?.DataFreshness,

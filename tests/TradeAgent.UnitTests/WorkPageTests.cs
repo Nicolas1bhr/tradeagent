@@ -31,8 +31,8 @@ public class WorkPageTests
 
     static void Forecast(Database db, string id, string decision, string probability, string forecaster = Head) =>
         Exec(db, """
-            INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
-            VALUES($id, $d, $p, 1, 'verdict-class', 'v1', 'promoted', $by, $prob, 1, NULL, $at)
+            INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
+            VALUES($id, $d, $p, 'turn-test', 1, 'verdict-class', 'v1', 'promoted', $by, $prob, 1, NULL, $at)
             """, ("$id", id), ("$d", decision), ("$p", forecaster), ("$by", "2026-10-30T00:00:00.0000000Z"), ("$prob", probability), ("$at", Stamp));
 
     /// <summary>The seeded work, in one place so the tests below read the same records.</summary>
@@ -48,8 +48,8 @@ public class WorkPageTests
             """[{"what":"used a second source","found":"it agrees","cost":"0.02"}]""",
             ("sources-cited", true, "every source is cited"), ("output-shape", false, "the table is missing"));
         var org = new OrgStore(db);
-        var first = org.Decide(Head, null, "routine", ["promote", "wait"], "wait", "the sample is thin", [], [], Now.AddHours(-1));
-        org.Decide(Head, null, "routine", ["a"], "a", "too old to list", [], [], Now.AddDays(-9));
+        var first = org.Decide(Head, "turn-test", "routine", ["promote", "wait"], "wait", "the sample is thin", [], [], Now.AddHours(-1));
+        org.Decide(Head, "turn-test", "routine", ["a"], "a", "too old to list", [], [], Now.AddDays(-9));
         Forecast(db, "fc-0000000000b1", first.Id, "0.7");
         Forecast(db, "fc-0000000000b2", first.Id, "0.2");
         Exec(db, "INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES('fc-0000000000b1','yes','version','v1','it was promoted',$at)",
@@ -122,7 +122,7 @@ public class WorkPageTests
         Chart(db);
         MandateSaying(db, "man-0000000000c1", "2026-12-01T00:00:00.0000000Z", objective, scope, Head, Member, "issued", "delivered");
         Deliver(db, "man-0000000000c1", report, Now.AddMinutes(-5), "[]", ("output-shape", false, "the table is missing"));
-        new OrgStore(db).Decide(Head, null, "routine", ["x"], "x", reason, [], [], Now.AddHours(-1));
+        new OrgStore(db).Decide(Head, "turn-test", "routine", ["x"], "x", reason, [], [], Now.AddHours(-1));
 
         var words = Words(db);
 
@@ -161,7 +161,7 @@ public class WorkPageTests
     {
         using var db = TestEnv.NewDb();
         Chart(db);
-        var decision = new OrgStore(db).Decide(Head, null, "routine", ["a"], "a", "a reason", [], [], Now.AddHours(-1));
+        var decision = new OrgStore(db).Decide(Head, "turn-test", "routine", ["a"], "a", "a reason", [], [], Now.AddHours(-1));
         Forecast(db, "fc-0000000000f1", decision.Id, "0.99999");
         Forecast(db, "fc-0000000000f2", decision.Id, "0.70");
 
@@ -209,7 +209,7 @@ public class WorkPageTests
         Deliver(db, "man-0000000000b1", "done at last", Now.AddMinutes(-1));
         Exec(db, "INSERT INTO org_mandate_event(mandate_id, at, kind, actor) VALUES('man-0000000000b1',$at,'delivered',$a)", ("$at", Stamp), ("$a", Member));
         Priced(db, Launch(db, Member, Now.AddMinutes(-2), mandate: "man-0000000000b1"), 0.30m);
-        new OrgStore(db).Decide(Member, null, "routine", ["y"], "y", "a fresh reason", [], [], Now.AddMinutes(-3));
+        new OrgStore(db).Decide(Member, "turn-test", "routine", ["y"], "y", "a fresh reason", [], [], Now.AddMinutes(-3));
         page.Update();
 
         Assert.Same(root, page.Root);
@@ -259,9 +259,9 @@ public class WorkPageTests
         using var db = TestEnv.NewDb();
         Chart(db);
         var org = new OrgStore(db);
-        org.Decide(Head, null, "routine", ["a"], "a", "a good one", [], [], Now.AddHours(-1));
-        var entry = new ResearchLedger(db).Add(Head, null, LedgerKind.Finding, "a note", LedgerMark.Claim, null, null, null).Id;
-        Exec(db, "INSERT INTO org_decision(id, position, kind, options, choice, refs, ledger_entry_id, at) VALUES('dec-0000000000d1',$p,'routine','not json','a','[]',$e,$at)",
+        org.Decide(Head, "turn-test", "routine", ["a"], "a", "a good one", [], [], Now.AddHours(-1));
+        var entry = new ResearchLedger(db).Add(Head, "turn-test", LedgerKind.Finding, "a note", LedgerMark.Claim, null, null, null).Id;
+        Exec(db, "INSERT INTO org_decision(id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at) VALUES('dec-0000000000d1',$p,'turn-test','routine','not json','a','[]',$e,$at)",
             ("$p", Head), ("$e", entry), ("$at", TradeAgent.Core.Db.Sql.T(Now.AddHours(-2))));
 
         var words = Words(db);

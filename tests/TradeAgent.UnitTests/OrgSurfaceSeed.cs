@@ -86,7 +86,7 @@ internal static class OrgSurfaceSeed
         string deviations = "[]", params (string Check, bool Passed, string Reason)[] checks)
     {
         var id = "dlv-" + Guid.NewGuid().ToString("n")[..12];
-        Exec(db, "INSERT INTO org_delivery(id, mandate_id, report, deviations, refs, manifest, at) VALUES($id,$m,$r,$d,'[]','{}',$at)",
+        Exec(db, "INSERT INTO org_delivery(id, mandate_id, author, attempt_id, report, deviations, refs, manifest, at) VALUES($id,$m,(SELECT holder FROM org_mandate WHERE id=$m),'turn-test',$r,$d,'[]','{}',$at)",
             ("$id", id), ("$m", mandate), ("$r", report), ("$d", deviations), ("$at", TradeAgent.Core.Db.Sql.T(at)));
         foreach (var (check, passed, reason) in checks)
             Exec(db, "INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($d,$c,$p,$r)",

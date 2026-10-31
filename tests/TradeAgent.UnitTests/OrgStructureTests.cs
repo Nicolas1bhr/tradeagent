@@ -84,7 +84,7 @@ public partial class OrgStructureTests
         Exec(db, """
             INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills,
                                      exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt)
-            VALUES($id, 'ver-x', 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, NULL, $attempt)
+            VALUES($id, 'ver-x', 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, 'research', $attempt)
             """, ("$id", id), ("$at", at.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$attempt", attempt));
         db.Exec("PRAGMA foreign_keys=ON");
         return id;
@@ -98,7 +98,7 @@ public partial class OrgStructureTests
 
     static CharterRequest Ask(string caller = Head, string kind = OrgUnitKind.Team, decimal share = 0.2m, IReadOnlyList<OrgRef>? refs = null,
         IReadOnlyList<ForecastClaim>? forecasts = null, DateTimeOffset? collapse = null) =>
-        new(caller, null, kind, share, "the funding skew has a family worth its own team", ["a team", "a mandate to the member"],
+        new(caller, "turn-test", kind, share, "the funding skew has a family worth its own team", ["a team", "a mandate to the member"],
             refs ?? [], forecasts ?? [Admissible()], collapse);
 
     /// <summary>Every row a charter or a hire writes, counted: a refusal leaves each count where it was.</summary>
@@ -157,7 +157,7 @@ public partial class OrgStructureTests
 
         // THE DECISION IS MANDATORY: decision-record still refuses a charter kind in words.
         Assert.Contains("written by the verb that performs it", Assert.Throws<TradeAgentException>(() =>
-            org.Decide(Head, null, OrgDecisionKind.Charter, ["a"], "a", "b", [], [], Now)).Message, StringComparison.Ordinal);
+            org.Decide(Head, "turn-test", OrgDecisionKind.Charter, ["a"], "a", "b", [], [], Now)).Message, StringComparison.Ordinal);
     }
 
     /// <summary>One refusal of a charter: its name, how the chart is set up for it, the request, and the words it is refused in.</summary>

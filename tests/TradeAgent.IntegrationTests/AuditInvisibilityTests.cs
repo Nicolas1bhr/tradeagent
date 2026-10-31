@@ -43,7 +43,7 @@ public class AuditInvisibilityTests(ITestOutputHelper log)
         var org = new OrgStore(db);
         var m = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "an objective", null, MandateShape.Report, false,
             now.AddDays(7), 5m, 2), now);
-        var d = org.Deliver(m.Id, member, null, "the answer", [new MandateDeviation("widened it", "it holds", "one run")], [], now);
+        var d = org.Deliver(m.Id, member, "turn-test", "the answer", [new MandateDeviation("widened it", "it holds", "one run")], [], now);
         org.Accept(d.Delivery.Id, head, null, now);
     }
 

@@ -122,8 +122,8 @@ public class OrgReviewTests
         for (var i = 0; i < 10; i++)
         {
             var version = $"ver-4e71e{i:00}";
-            OrgScorecardTests.Version(db, version);
-            org.Decide(Worker, null, OrgDecisionKind.Routine, ["forecast it"], "forecast it", "my reasons", [],
+            OrgScorecardTests.Version(db, version, Worker);
+            org.Decide(Worker, "turn-test", OrgDecisionKind.Routine, ["forecast it"], "forecast it", "my reasons", [],
                 [new ForecastClaim(ForecastVocabulary.VerdictClass, version, PromotionVerdict.Promoted, t0.AddDays(2), 0.9m)], t0);
             if (i < 9) OrgScorecardTests.Verdict(db, version, PromotionVerdict.Refused, t0.AddHours(1));
         }
@@ -247,7 +247,7 @@ public class OrgReviewTests
     static ForecastClaim Admissible() => new(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, Now.AddDays(30), 0.3m);
 
     static ReviewAnswerRequest Answer(string caller, long eventId, IReadOnlyList<ForecastClaim>? forecasts = null) =>
-        new(caller, null, eventId, "keep the team's share a week and watch its next delivery", "the spend bought two runs that are still being judged",
+        new(caller, "turn-test", eventId, "keep the team's share a week and watch its next delivery", "the spend bought two runs that are still being judged",
             [], [], forecasts ?? [Admissible()]);
 
     /// <summary>
@@ -277,7 +277,7 @@ public class OrgReviewTests
         Assert.Contains("no review of the organisation's", Assert.Throws<TradeAgentException>(() => org.AnswerReview(Answer(Head, seeded), Now)).Message,
             StringComparison.Ordinal);
         Assert.Contains($"'{OrgDecisionKind.ReviewAnswer}' decision is written by the verb that performs it", Assert.Throws<TradeAgentException>(() =>
-            org.Decide(Head, null, OrgDecisionKind.ReviewAnswer, ["keep"], "keep", "why", [new OrgRef(OrgRefKind.Event, review.ToString(CultureInfo.InvariantCulture))],
+            org.Decide(Head, "turn-test", OrgDecisionKind.ReviewAnswer, ["keep"], "keep", "why", [new OrgRef(OrgRefKind.Event, review.ToString(CultureInfo.InvariantCulture))],
                 [Admissible()], Now)).Message, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
         Assert.Null(Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.CutReview)).ConsumedAt);

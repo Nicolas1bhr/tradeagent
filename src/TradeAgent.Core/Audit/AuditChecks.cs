@@ -87,7 +87,7 @@ public static class AuditChecks
     static Outcome Checked(AuditEvidence evidence, AuditSample sample, DateTimeOffset now)
     {
         var d = sample.DeliveryId;
-        var rows = evidence.Rows("SELECT mandate_id, attempt_id, report, deviations, refs, manifest, at FROM org_delivery WHERE id = $id", ("$id", d));
+        var rows = evidence.Rows("SELECT mandate_id, attempt_id, report, deviations, refs, manifest, at, author FROM org_delivery WHERE id = $id", ("$id", d));
         if (rows.Count == 0)
         {
             const string gone = "no sealed delivery is in the app's database under the id its acceptance names";
@@ -97,6 +97,7 @@ public static class AuditChecks
         var row = rows[0];
         var (mandate, attempt, report, deviations, refs, manifest, at) =
             ((string)row[0]!, (string?)row[1], (string)row[2]!, (string)row[3]!, (string)row[4]!, (string)row[5]!, (string)row[6]!);
+        var author = (string?)row[7];
 
         // A COLUMN NOT IN THE SHAPE TRADEAGENT WRITES — rewritten past the triggers — fails the checks that read it, in the app's words;
         // it never stops the sweep, which would leave every later acceptance unaudited.
@@ -105,7 +106,7 @@ public static class AuditChecks
         const string unreadable = "the delivery's {0} are not in the shape TradeAgent writes";
         var checks = new List<AuditCheck>
         {
-            Seal(d, sample.MandateId, mandate, attempt, report, deviations, refs, manifest, at),
+            Seal(d, sample.MandateId, mandate, author, attempt, report, deviations, refs, manifest, at),
             named is null
                 ? new AuditCheck(d, AuditCheckName.RefsExistNow, false, string.Format(CultureInfo.InvariantCulture, unreadable, "refs"))
                 : RefsExistNow(evidence, d, named),
@@ -133,7 +134,7 @@ public static class AuditChecks
         check == AuditCheckName.Seal ? AuditSeverity.Severe : AuditSeverity.Info, now);
 
     /// <summary>THE SEAL: re-hash the stored manifest and compare it with the id; compare each of its parts with the row's column.</summary>
-    static AuditCheck Seal(string id, string acceptedOn, string mandate, string? attempt, string report, string deviations, string refs,
+    static AuditCheck Seal(string id, string acceptedOn, string mandate, string? author, string? attempt, string report, string deviations, string refs,
         string manifest, string at)
     {
         if (Sha256Hex.Of(manifest) != id)
@@ -150,6 +151,8 @@ public static class AuditChecks
         var differ = new List<string>();
         if (mandate != acceptedOn) differ.Add("the mandate its acceptance was recorded on");
         if (Text(sealedParts["mandate"]) != mandate) differ.Add("mandate");
+        // THE AUTHOR (U-lineage-check, rung 53): sealed beside the attempt; absent from both on a delivery sealed before the rung.
+        if (Text(sealedParts["author"]) != author) differ.Add("author");
         if (Text(sealedParts["attempt"]) != attempt) differ.Add("attempt");
         if (Text(sealedParts["at"]) != at) differ.Add("time");
         if (Text(sealedParts["report"]) != report) differ.Add("report");
@@ -157,7 +160,7 @@ public static class AuditChecks
         if (!Same(sealedParts["refs"], refs)) differ.Add("refs");
         return differ.Count == 0
             ? new AuditCheck(id, AuditCheckName.Seal, true,
-                "the SHA-256 of the stored manifest is the delivery's id, and its mandate, attempt, time, report, deviations and refs are the row's")
+                "the SHA-256 of the stored manifest is the delivery's id, and its mandate, author, attempt, time, report, deviations and refs are the row's")
             : new AuditCheck(id, AuditCheckName.Seal, false, $"the row differs from its sealed manifest in: {string.Join(", ", differ)}");
 
         static string? Text(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;

@@ -312,6 +312,8 @@ public sealed partial class OrgStore
     DecisionRow WriteDecision(string position, string? attempt, string kind, IReadOnlyList<string> options, string choice,
         string rationale, IReadOnlyList<OrgRef> refs, DateTimeOffset now)
     {
+        // THE DECIDING POSITION AND ITS ATTEMPT, OR NOTHING (U-lineage-check), before the rationale entry is written.
+        ArtifactLineage.Require(ArtifactKind.Decision, position, attempt);
         if (options.Count is 0 or > DecisionLimits.MaxOptions)
             throw Refused($"a decision names the options it considered, 1 to {DecisionLimits.MaxOptions}.");
         foreach (var o in options.Append(choice))
@@ -366,6 +368,8 @@ public sealed partial class OrgStore
     ForecastRow AddForecast(string forecaster, string? attempt, string? decisionId, string? mandateId, ForecastClaim claim, DateTimeOffset now,
         string? subjectByDefault = null)
     {
+        // THE FORECASTER AND ITS ATTEMPT, OR NOTHING (U-lineage-check): the scored record names who claimed it and what that turn read.
+        ArtifactLineage.Require(ArtifactKind.Forecast, forecaster, attempt);
         var (subject, unscored) = CheckForecast(forecaster, claim, now, mandateId ?? subjectByDefault);
 
         var on = decisionId ?? mandateId!;

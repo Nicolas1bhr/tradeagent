@@ -509,7 +509,7 @@ public partial class CouncilLoopTests
 
         new StrategyStore(db).RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
-            ParseVerdict.Accepted, program.WarmUpBars, at.AddDays(-1), CouncilRoles.Research, null));
+            ParseVerdict.Accepted, program.WarmUpBars, at.AddDays(-1), CouncilRoles.Research, "turn-test"));
         var run = new Deployments(db).Start(new StrategyDeploymentRow(
             "", program.StrategyId, "allocation-1", "envelope-1", "paper", "account-1", "BTCUSDT",
             TradingMode.PAPER.ToString(), DeploymentState.Active, null, at, null, null, null));

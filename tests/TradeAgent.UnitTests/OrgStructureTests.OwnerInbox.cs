@@ -202,7 +202,7 @@ public partial class OrgStructureTests
         org.RaiseEscalation(Head, null, "nobody below can take this", null, Now);
         Assert.True(new MissionEventStore(db).RecordOwnerMessage("chair, a question", Now.AddMinutes(-5)));
         Aged(db, Old, Div, OrgUnitKind.Team, 15, OldHead);
-        var hired = org.Hire(new HireRequest(Head, null, Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now).Position.Id;
+        var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now).Position.Id;
         Aged(db, Closing, Div, OrgUnitKind.Team, 15);
         var closed = org.Close(CloseAsk(Closing), Now);
         var board = new BoardStore(db);

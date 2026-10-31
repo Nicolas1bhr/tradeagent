@@ -141,7 +141,7 @@ public class AlphaWealthTests
             + $"exit when close > {exitAbove}\nentry when close < 97\n").Program!;
         new StrategyStore(w.Db).RecordVersion(new StrategyVersionRow(parsed.StrategyId, parsed.Source, parsed.Canonical,
             parsed.Manifest, StrategyStore.InterpreterBuild, ParseVerdict.Accepted, parsed.WarmUpBars,
-            new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), null, null));
+            new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), TradeAgent.Core.CouncilRoles.Research, "turn-test"));
         return parsed.StrategyId;
     }
 }

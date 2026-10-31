@@ -308,6 +308,8 @@ public sealed class StrategyStore(Database db)
     /// </summary>
     public string RecordVersion(StrategyVersionRow version) => db.Write(_ =>
     {
+        // ITS AUTHOR POSITION AND ITS ATTEMPT, OR NOTHING (U-lineage-check): the contribution ledger flows back along these two.
+        ArtifactLineage.Require(ArtifactKind.Version, version.Role, version.Attempt);
         using var c = db.Cmd($"""
             INSERT INTO strategy_version({VersionCols})
             VALUES($id,$src,$canon,$man,$build,$verdict,$warm,$at,$role,$attempt,$tf,$fresh,$age,$parent)
@@ -437,6 +439,8 @@ public sealed class StrategyStore(Database db)
 
     string Record(StrategyRunRow run, IReadOnlyList<StrategyTradeRow> trades, IReadOnlyList<StrategyStreamRow> streams) => db.Write(_ =>
     {
+        // ITS AUTHOR AND ITS ATTEMPT, OR NOTHING (U-lineage-check) — the referee's holdout run alone is the app's, with no attempt.
+        ArtifactLineage.Require(ArtifactKind.Run, run.Role, run.Attempt);
         using var insert = db.Cmd($"""
             INSERT INTO strategy_run({RunCols})
             VALUES($id,$ver,$ds,$sha,$from,$to,$model,$outcome,$fault,$bars,$trades,$wins,$intents,

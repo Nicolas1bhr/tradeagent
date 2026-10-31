@@ -81,7 +81,7 @@ public class OrgTiltTests
         new(ForecastVocabulary.UnitAdmissible, subject, ForecastVocabulary.Admitted, Now.AddDays(45), 0.4m);
 
     static TiltRequest Ask(string currency, decimal share, string caller = Head, string unit = Team, IReadOnlyList<ForecastClaim>? forecasts = null) =>
-        new(caller, null, unit, currency, share, "the skew family earns more of the division's room", ["hold", "tilt"], [],
+        new(caller, "turn-test", unit, currency, share, "the skew family earns more of the division's room", ["hold", "tilt"], [],
             forecasts ?? [Admissible()]);
 
     static string? ShareOf(Database db, string unit, string currency) =>
@@ -189,7 +189,7 @@ public class OrgTiltTests
     {
         using var db = Chart();
         var org = new OrgStore(db);
-        CharterRequest Charter(decimal trials) => new(Head, null, OrgUnitKind.Team, 0.1m, "a third family", ["a team"], [], [Admissible()],
+        CharterRequest Charter(decimal trials) => new(Head, "turn-test", OrgUnitKind.Team, 0.1m, "a third family", ["a team"], [], [Admissible()],
             Now.AddDays(30), TrialShare: trials, VerdictShare: 0.4m);
 
         var made = org.Charter(Charter(0.3m), Metered, Now);
@@ -252,7 +252,7 @@ public class OrgTiltTests
         Assert.Equal("0.2", ShareOf(db, Team, OrgCurrency.Ai));
         Assert.Equal("0.125", org.Tilt(Ask(OrgCurrency.Ai, 0.125m), Metered, Now, Cheap).To);
 
-        CharterRequest Charter(decimal ai) => new(Head, null, OrgUnitKind.Team, ai, "a third family", ["a team"], [], [Admissible()], Now.AddDays(30));
+        CharterRequest Charter(decimal ai) => new(Head, "turn-test", OrgUnitKind.Team, ai, "a third family", ["a team"], [], [Admissible()], Now.AddDays(30));
         var low = Assert.Throws<TradeAgentException>(() => org.Charter(Charter(0.05m), Metered, Now));
         Assert.Contains("would leave the new unit below the exploration floor", low.Message, StringComparison.Ordinal);
         Assert.Contains("its 3 active units, new ones included — 0.0834 each", low.Message, StringComparison.Ordinal);

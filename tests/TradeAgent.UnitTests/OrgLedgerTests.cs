@@ -555,9 +555,9 @@ public class OrgLedgerTests
         {
             Run(raw, "PRAGMA foreign_keys=ON");
             Run(raw, """
-                INSERT INTO ledger_entry(id, kind, author, created_at) VALUES(990001, 'decision', 'research', '2026-10-23T00:00:00Z');
-                INSERT INTO org_decision(id, position, kind, options, choice, refs, ledger_entry_id, at)
-                VALUES('dec-000000000048', 'research', 'charter', '["a"]', 'a', '[]', 990001, '2026-10-23T00:00:00Z');
+                INSERT INTO ledger_entry(id, kind, author, created_at, attempt) VALUES(990001, 'decision', 'research', '2026-10-23T00:00:00Z', 'turn-test');
+                INSERT INTO org_decision(id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at)
+                VALUES('dec-000000000048', 'research', 'turn-test', 'charter', '["a"]', 'a', '[]', 990001, '2026-10-23T00:00:00Z');
                 INSERT INTO org_unit(id, parent_id, kind, status, charter_decision_id, created_at)
                 VALUES('team-rung48', 'div-research', 'team', 'active', 'dec-000000000048', '2026-10-23T00:00:00Z');
                 """);
@@ -816,7 +816,7 @@ public class OrgLedgerTests
         string role, DateTimeOffset at) =>
         store.RecordRun(new StrategyRunRow(
             id, versionId, datasetId, datasetSha, null, null, "model", BacktestOutcome.COMPLETED.ToString(), null,
-            0, 0, 0, 0, 0, 0, 0, 0, null, null, null, null, "trace", at, role, null), []);
+            0, 0, 0, 0, 0, 0, 0, 0, null, null, null, null, "trace", at, role, "turn-test"), []);
 
     static void Publish(PublicationStore store, string role, string kind, string recipients, DateTimeOffset at)
     {
@@ -861,7 +861,8 @@ public class OrgLedgerTests
     {
         using var raw = Raw(file);
         using var c = raw.CreateCommand();
-        c.CommandText = (dropLedger ? "DROP TABLE org_event; DROP TABLE org_position; DROP TABLE org_unit; " : "")
+        c.CommandText = "DROP TRIGGER IF EXISTS lineage_strategy_version; DROP TRIGGER IF EXISTS lineage_strategy_run; DROP TRIGGER IF EXISTS lineage_org_delivery; DROP TRIGGER IF EXISTS lineage_ledger_entry; DROP TRIGGER IF EXISTS lineage_org_decision; DROP TRIGGER IF EXISTS lineage_org_forecast; "
+                        + (dropLedger ? "DROP TABLE org_event; DROP TABLE org_position; DROP TABLE org_unit; " : "")
                         + "DROP TABLE instrument_check; "
                         + "ALTER TABLE dataset DROP COLUMN licence_class; ALTER TABLE dataset DROP COLUMN terms_url; "
                         + "ALTER TABLE dataset DROP COLUMN terms_version; ALTER TABLE dataset DROP COLUMN terms_read_on; "

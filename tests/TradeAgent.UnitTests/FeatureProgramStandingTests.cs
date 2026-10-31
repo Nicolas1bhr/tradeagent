@@ -55,7 +55,7 @@ public class FeatureProgramStandingTests(ITestOutputHelper log)
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
             recorded, program.Source, canonical ?? program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
-            ParseVerdict.Accepted, program.WarmUpBars, Cutoff.AddDays(-1), null, null)
+            ParseVerdict.Accepted, program.WarmUpBars, Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test")
         {
             Timeframe = program.Freshness?.Timeframe,
             DataFreshness = program.Freshness?.DataFreshness,
@@ -145,7 +145,7 @@ public class FeatureProgramStandingTests(ITestOutputHelper log)
         var refused = Promote(db, Text, versionId: goneId);
         new StrategyStore(db).RecordVersion(new StrategyVersionRow(
             Sha256Hex.Of("another"), gone, program.Canonical, program.Manifest, StrategyStore.InterpreterBuild,
-            ParseVerdict.Accepted, 1, Cutoff, null, null));
+            ParseVerdict.Accepted, 1, Cutoff, CouncilRoles.Research, "turn-test"));
         db.Write(_ =>
         {
             using var c = db.Cmd("UPDATE strategy_version SET source=$s WHERE id=$id", ("$s", gone), ("$id", goneId));

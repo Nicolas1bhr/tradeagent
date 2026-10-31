@@ -93,7 +93,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
         Assert.Contains("app's own principals", to.Message, StringComparison.Ordinal);
         var from = Assert.Throws<TradeAgentException>(() => org.SendLateral(Audit, null, Member, "a note", [], now));
         Assert.Contains("no active position", from.Message, StringComparison.Ordinal);
-        var decided = Assert.Throws<TradeAgentException>(() => org.Decide(Audit, null, OrgDecisionKind.Routine,
+        var decided = Assert.Throws<TradeAgentException>(() => org.Decide(Audit, "turn-test", OrgDecisionKind.Routine,
             ["a", "b"], "a", "because", [], [], now));
         Assert.Contains("no active position", decided.Message, StringComparison.Ordinal);
         Assert.Equal(0L, db.Read(_ =>
@@ -312,7 +312,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
 
     /// <summary>A delivery the member sealed and the head accepted: its id.</summary>
     static string Accepted(OrgStore org, DateTimeOffset now, string report = "the answer", IReadOnlyList<MandateDeviation>? deviations = null,
-        IReadOnlyList<MandateRef>? refs = null, string? attempt = null)
+        IReadOnlyList<MandateRef>? refs = null, string? attempt = "turn-test")
     {
         var m = Issued(org, now);
         var d = org.Deliver(m.Id, Member, attempt, report, deviations ?? [], refs ?? [], now).Delivery.Id;
@@ -324,7 +324,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
     static string Rejected(OrgStore org, DateTimeOffset now)
     {
         var m = Issued(org, now);
-        var d = org.Deliver(m.Id, Member, null, "a rejected answer", [], [], now).Delivery.Id;
+        var d = org.Deliver(m.Id, Member, "turn-test", "a rejected answer", [], [], now).Delivery.Id;
         org.Reject(d, Head, null, null, "it answers another question", now);
         return d;
     }
@@ -333,7 +333,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
     static string Unjudged(OrgStore org, DateTimeOffset now)
     {
         var m = Issued(org, now);
-        return org.Deliver(m.Id, Member, null, "an unjudged answer", [], [], now).Delivery.Id;
+        return org.Deliver(m.Id, Member, "turn-test", "an unjudged answer", [], [], now).Delivery.Id;
     }
 
     static long Count(string file, string table)
@@ -720,7 +720,7 @@ public partial class AuditLineTests(ITestOutputHelper log)
         var elsewhere = Issued(org, now);
         var mine = Issued(org, now);
         VersionOf(db.FilePath, "ver-other", "turn-other-1", elsewhere.Id);
-        var borrowed = org.Deliver(mine.Id, Member, null, "the version", [new MandateDeviation("used a version made elsewhere", "it fits", "none")],
+        var borrowed = org.Deliver(mine.Id, Member, "turn-test", "the version", [new MandateDeviation("used a version made elsewhere", "it fits", "none")],
             [new MandateRef(MandateRefKind.Version, "ver-other")], now);
         org.Accept(borrowed.Delivery.Id, Head, null, now);
 

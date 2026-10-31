@@ -109,20 +109,20 @@ public partial class OrgChiefTests
         var funding = new CharterFunding(SeatClasses.Harness, 0.10m, [new(BillingClasses.Plan, 10m)],
             new Dictionary<string, decimal> { [OrgIds.Operations] = 0m, [OrgIds.Research] = 0m });
 
-        var chartered = org.Charter(new CharterRequest(chief, null, OrgUnitKind.Division, 0.2m, "a division for the funding family",
+        var chartered = org.Charter(new CharterRequest(chief, "turn-test", OrgUnitKind.Division, 0.2m, "a division for the funding family",
             ["a division"], [], [Admissible()], Now.AddDays(30)), funding, Now);
         Assert.Equal((OrgIds.Root, OrgUnitKind.Division), (chartered.Unit.ParentId, chartered.Unit.Kind));
-        var head = org.Hire(new HireRequest(chief, null, chartered.Unit.Id, true, "its first head", ["appoint"], [], [Admissible()]), Now);
+        var head = org.Hire(new HireRequest(chief, "turn-test", chartered.Unit.Id, true, "its first head", ["appoint"], [], [Admissible()]), Now);
         Assert.Equal(head.Position.Id, org.Units().Single(u => u.Id == chartered.Unit.Id).HeadPositionId);
 
         var before = Written(db);
         foreach (var (what, refused, says) in new (string, Action, string)[]
                  {
-                     ("a hire into div-operations", () => org.Hire(new HireRequest(chief, null, OrgIds.Operations, false, "a trader", ["hire"], [], [Admissible()]), Now), "board-propose"),
-                     ("replacing a division head", () => org.Hire(new HireRequest(chief, null, OrgIds.Research, true, "a new head", ["hire"], [], [Admissible()]), Now), "app trigger or a board act"),
-                     ("retiring operations", () => org.Retire(new RetireRequest(chief, null, CouncilRoles.Operations, "why", ["retire"], [], [Admissible()]), Now), "board-propose"),
-                     ("tilting the organisation", () => org.Tilt(new TiltRequest(chief, null, OrgIds.Root, OrgCurrency.Ai, 0.5m, "why", ["tilt"], [], [Admissible()]), funding, Now), "board-propose"),
-                     ("closing the organisation", () => org.Close(new CloseRequest(chief, null, OrgIds.Root, "why", ["close"], [], [Admissible()]), Now), "board-propose")
+                     ("a hire into div-operations", () => org.Hire(new HireRequest(chief, "turn-test", OrgIds.Operations, false, "a trader", ["hire"], [], [Admissible()]), Now), "board-propose"),
+                     ("replacing a division head", () => org.Hire(new HireRequest(chief, "turn-test", OrgIds.Research, true, "a new head", ["hire"], [], [Admissible()]), Now), "app trigger or a board act"),
+                     ("retiring operations", () => org.Retire(new RetireRequest(chief, "turn-test", CouncilRoles.Operations, "why", ["retire"], [], [Admissible()]), Now), "board-propose"),
+                     ("tilting the organisation", () => org.Tilt(new TiltRequest(chief, "turn-test", OrgIds.Root, OrgCurrency.Ai, 0.5m, "why", ["tilt"], [], [Admissible()]), funding, Now), "board-propose"),
+                     ("closing the organisation", () => org.Close(new CloseRequest(chief, "turn-test", OrgIds.Root, "why", ["close"], [], [Admissible()]), Now), "board-propose")
                  })
         {
             var words = Assert.Throws<TradeAgentException>(refused).Message;
@@ -136,7 +136,7 @@ public partial class OrgChiefTests
         foreach (var n in Enumerable.Range(1, 3))
             Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($u,'org','division',NULL,'active',$at)",
                 ("$u", $"div-c4d1c0ffee{n}"), ("$at", Stamp));
-        Assert.Contains("6 open divisions", Assert.Throws<TradeAgentException>(() => org.Charter(new CharterRequest(chief, null,
+        Assert.Contains("6 open divisions", Assert.Throws<TradeAgentException>(() => org.Charter(new CharterRequest(chief, "turn-test",
             OrgUnitKind.Division, 0.05m, "one more", ["a division"], [], [Admissible()], Now.AddDays(30)), funding, Now.AddDays(8))).Message,
             StringComparison.Ordinal);
 

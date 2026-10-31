@@ -276,7 +276,7 @@ public partial class CouncilLoopTests
         var host = SessionChart(db, root);
         host.Owns = true;
         var loop = new MissionLoop(host, NoHeartbeat);
-        var entry = new ResearchLedger(db).Add(Executor, null, LedgerKind.Hypothesis, "Funding below -0.05% mean-reverts within 8h.",
+        var entry = new ResearchLedger(db).Add(Executor, "turn-test", LedgerKind.Hypothesis, "Funding below -0.05% mean-reverts within 8h.",
             LedgerMark.Hypothesis, 0.6m, null, null);
         host.Conversations[Executor].Session = TurnSession.Resumed;
         SelfWake(host, Executor, "belief-1");
@@ -304,7 +304,7 @@ public partial class CouncilLoopTests
         var host = SessionChart(db, root);
         var loop = new MissionLoop(host, NoHeartbeat);
         var m = Give(db, "find out whether the funding skew predicts the next hour");
-        var failed = new OrgStore(db).Deliver(m.Id, Executor, null, OverLong, [], [], DateTimeOffset.UtcNow);
+        var failed = new OrgStore(db).Deliver(m.Id, Executor, "turn-test", OverLong, [], [], DateTimeOffset.UtcNow);
         Assert.Equal(MandateEventKind.Retry, failed.Status);
         host.Conversations[Executor].Session = TurnSession.Resumed;
         await TurnsUntil(loop, host, Executor, 1);

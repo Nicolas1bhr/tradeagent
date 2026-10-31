@@ -19,7 +19,7 @@ public partial class OrgDecisionTests
         Exec(db, """
             INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills,
                                      exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt)
-            VALUES($id, $v, 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, NULL, $attempt)
+            VALUES($id, $v, 1, 's', 'm', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', $at, 'research', $attempt)
             """, ("$id", id), ("$v", version), ("$at", at is { } t ? Sql(t) : Stamp), ("$attempt", attempt));
         db.Exec("PRAGMA foreign_keys=ON");
     }
@@ -59,7 +59,7 @@ public partial class OrgDecisionTests
         Run(db, "run-before", "ver-before", Funded(db, Member, Team, Sub, OrgIds.Research, OrgIds.Root));
         Verdict(db, "ver-before", PromotionVerdict.Promoted, now.AddMinutes(-5));
 
-        var decision = org.Decide(Head, null, OrgDecisionKind.Routine, ["charter the work"], "charter the work", "the team runs the funding skew",
+        var decision = org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["charter the work"], "charter the work", "the team runs the funding skew",
             [], [
                 new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, by, 0.6m),
                 new ForecastClaim(ForecastVocabulary.UnitAdmissible, Elsewhere, ForecastVocabulary.NoneAdmitted, by, 0.7m),
@@ -88,10 +88,10 @@ public partial class OrgDecisionTests
         Assert.Equal(ForecastOutcome.No, org.Resolution(f[2].Id)!.Outcome);
 
         // A UNIT THAT IS NOT THERE IS NO SUBJECT; A TARGET OUTSIDE THE PREDICATE'S IS REFUSED.
-        Assert.Contains("no unit on the chart", Assert.Throws<TradeAgentException>(() => org.Forecast(Head, null, decision.Id,
+        Assert.Contains("no unit on the chart", Assert.Throws<TradeAgentException>(() => org.Forecast(Head, "turn-test", decision.Id,
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, "team-nowhere", ForecastVocabulary.Admitted, by, 0.5m), now)).Message,
             StringComparison.Ordinal);
-        Assert.Contains("no target of unit-admissible", Assert.Throws<TradeAgentException>(() => org.Forecast(Head, null, decision.Id,
+        Assert.Contains("no target of unit-admissible", Assert.Throws<TradeAgentException>(() => org.Forecast(Head, "turn-test", decision.Id,
             new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, PromotionVerdict.Promoted, by, 0.5m), now)).Message,
             StringComparison.Ordinal);
     }
@@ -111,7 +111,7 @@ public partial class OrgDecisionTests
         var org = new OrgStore(db);
         var now = DateTimeOffset.UtcNow;
         var by = now.AddDays(2);
-        var decision = org.Decide(Head, null, OrgDecisionKind.Routine, ["charter the work"], "charter the work", "the team runs the funding skew",
+        var decision = org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["charter the work"], "charter the work", "the team runs the funding skew",
             [], [
                 new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.Admitted, by, 0.6m),
                 new ForecastClaim(ForecastVocabulary.UnitAdmissible, Team, ForecastVocabulary.NoneAdmitted, by, 0.4m)
@@ -135,7 +135,7 @@ public partial class OrgDecisionTests
         Exec(db, """
             INSERT INTO org_forecast(id, decision_id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by,
                                      probability, scored, unscored_why, at)
-            VALUES($id, $d, NULL, $f, NULL, $v, $p, 'ver-raw', 'promoted', $by, '0.5', 1, NULL, $at)
+            VALUES($id, $d, NULL, $f, 'turn-test', $v, $p, 'ver-raw', 'promoted', $by, '0.5', 1, NULL, $at)
             """, ("$id", id), ("$d", decision), ("$f", Head), ("$v", vocabulary), ("$p", predicate), ("$by", Sql(by)),
             ("$at", Sql(by.AddDays(-1))));
         return id;
@@ -155,7 +155,7 @@ public partial class OrgDecisionTests
         Chart(db);
         var org = new OrgStore(db);
         var now = DateTimeOffset.UtcNow;
-        var decision = org.Decide(Head, null, OrgDecisionKind.Routine, ["a"], "a", "why", [], [], now.AddDays(-2)).Id;
+        var decision = org.Decide(Head, "turn-test", OrgDecisionKind.Routine, ["a"], "a", "why", [], [], now.AddDays(-2)).Id;
         Version(db, "ver-raw");
         var due = now.AddMinutes(-1);
         var v1 = StoredForecast(db, decision, 1, ForecastVocabulary.VerdictClass, due);

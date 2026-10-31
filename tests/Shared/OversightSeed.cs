@@ -58,7 +58,7 @@ public static class OversightSeed
             case "claim-without-evidence":
                 Accepted(c, tag, unit, refs: "[]", passed: true, now);
                 // AND A LEDGER CLAIM WITH NO LINK AT ITS REVISION, past the grace.
-                Insert(c, "ledger_entry", ("kind", "finding"), ("author", role), ("created_at", T(now.AddHours(-2))));
+                Insert(c, "ledger_entry", ("kind", "finding"), ("author", role), ("created_at", T(now.AddHours(-2))), ("attempt", "turn-" + tag));
                 using (var id = c.CreateCommand())
                 {
                     id.CommandText = "SELECT last_insert_rowid()";
@@ -72,7 +72,7 @@ public static class OversightSeed
             case "dead-version-rerun":
                 Insert(c, "strategy_promotion", ("id", "prom-" + tag), ("version_id", "ver-" + tag), ("verdict", "refused"), ("reason", "failed"),
                     ("at", T(now.AddDays(-3))));
-                Insert(c, "strategy_run", ("id", "run-" + tag), ("version_id", "ver-" + tag), ("created_at", T(now.AddDays(-1))), ("role", role));
+                Insert(c, "strategy_run", ("id", "run-" + tag), ("version_id", "ver-" + tag), ("created_at", T(now.AddDays(-1))), ("role", role), ("attempt", "turn-" + tag));
                 break;
             default:
                 throw new ArgumentException("no seed for " + detector);
@@ -85,7 +85,8 @@ public static class OversightSeed
         Insert(c, "org_mandate", ("id", mandate), ("unit_id", unit), ("decider", CouncilRoles.Research), ("holder", "pos-" + tag),
             ("kind", "task"), ("checks", "[]"), ("latitude", "narrow"), ("deadline", T(now.AddDays(1))), ("allocation_ai", "1"),
             ("retry_limit", 1), ("created_at", T(now.AddHours(-3))));
-        Insert(c, "org_delivery", ("id", "dlv-" + tag), ("mandate_id", mandate), ("report", "done"), ("deviations", "[]"), ("refs", refs),
+        // THE DELIVERY'S LINEAGE (U-lineage-check): an author position and an attempt, as every delivery now records.
+        Insert(c, "org_delivery", ("id", "dlv-" + tag), ("mandate_id", mandate), ("author", CouncilRoles.Research), ("attempt_id", "turn-" + tag), ("report", "done"), ("deviations", "[]"), ("refs", refs),
             ("manifest", "{}"), ("at", T(now.AddHours(-2))));
         Insert(c, "org_check", ("delivery_id", "dlv-" + tag), ("check_name", "shape"), ("passed", passed ? 1 : 0), ("reason", "measured"));
         Insert(c, "org_mandate_event", ("mandate_id", mandate), ("at", T(now.AddHours(-1))), ("kind", "accepted"), ("actor", CouncilRoles.Research),

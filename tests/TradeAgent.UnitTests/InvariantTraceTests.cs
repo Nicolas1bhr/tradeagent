@@ -322,14 +322,14 @@ public class InvariantTraceTests
         var strategies = new StrategyStore(db);
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
-            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, Start, null, null));
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, Start, CouncilRoles.Research, "turn-test"));
         strategies.RecordRun(new StrategyRunRow(
             result.RunId, result.VersionId, set.Id, result.Request.DatasetSha256, null, null,
             result.Request.Model.Canonical, result.Outcome.ToString(), result.FaultReason,
             result.Metrics.Bars, result.Metrics.Trades, result.Metrics.Wins, result.Metrics.Signals,
             result.Metrics.Fills, result.Metrics.ExposureBars, result.Metrics.MissingMinutes,
             result.Metrics.Faults, result.Metrics.GrossPnl, result.Metrics.Fees, result.Metrics.NetPnl,
-            result.Metrics.MaxDrawdown, result.Trace.Sha256, Start, null, null), []);
+            result.Metrics.MaxDrawdown, result.Trace.Sha256, Start, CouncilRoles.Research, "turn-test"), []);
 
         return (Assert.Single(strategies.RunsOfDataset(set.Id)), result.Trace.Text);
     }

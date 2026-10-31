@@ -134,12 +134,12 @@ public class OrgSurfaceReadsTests
         Chart(db);
         var org = new OrgStore(db);
         var t = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero);
-        var old = org.Decide(Head, null, "routine", ["a", "b"], "a", "an old reason", [], [], t.AddDays(-5));
-        var first = org.Decide(Head, null, "routine", ["a", "b"], "b", "the first reason", [], [], t);
-        var second = org.Decide(Other, null, "routine", ["x"], "x", "the second reason", [], [], t.AddHours(1));
+        var old = org.Decide(Head, "turn-test", "routine", ["a", "b"], "a", "an old reason", [], [], t.AddDays(-5));
+        var first = org.Decide(Head, "turn-test", "routine", ["a", "b"], "b", "the first reason", [], [], t);
+        var second = org.Decide(Other, "turn-test", "routine", ["x"], "x", "the second reason", [], [], t.AddHours(1));
         const string forecast = """
-            INSERT INTO org_forecast(id, decision_id, forecaster, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
-            VALUES($id, $d, $p, 1, 'verdict-class', 'v', 'promoted', $at, $prob, 1, NULL, $at)
+            INSERT INTO org_forecast(id, decision_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at)
+            VALUES($id, $d, $p, 'turn-test', 1, 'verdict-class', 'v', 'promoted', $at, $prob, 1, NULL, $at)
             """;
         Exec(db, forecast, ("$id", "fc-000000000001"), ("$d", first.Id), ("$p", Head), ("$at", Stamp), ("$prob", "0.7"));
         Exec(db, forecast, ("$id", "fc-000000000002"), ("$d", first.Id), ("$p", Head), ("$at", Stamp), ("$prob", "0.2"));

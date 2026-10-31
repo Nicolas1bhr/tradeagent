@@ -69,7 +69,7 @@ public class PromotionLedgerTests
         strategies.RecordVersion(new StrategyVersionRow(
             versionId, program.Source, program.Canonical, manifest ?? program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars,
-            Cutoff.AddDays(-1), null, null));
+            Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test"));
 
         var request = new BacktestRequest(set.Id, set.NormalisedSha256, Model, Cutoff, null);
         var runId = request.RunIdFor(versionId);

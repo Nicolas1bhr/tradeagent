@@ -98,7 +98,7 @@ public class RetirementBoundaryTests
         strategies.RecordVersion(new StrategyVersionRow(
             program.StrategyId, program.Source, program.Canonical, program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars,
-            Cutoff.AddDays(-1), CouncilRoles.Research, null)
+            Cutoff.AddDays(-1), CouncilRoles.Research, "turn-test")
         {
             ParentVersionId = parent
         });
@@ -137,7 +137,7 @@ public class RetirementBoundaryTests
         c.Strategies.RecordRun(new StrategyRunRow(
             runId, c.VersionId, c.Set.Id, c.Set.NormalisedSha256, Cutoff, null, model.Canonical,
             BacktestOutcome.COMPLETED.ToString(), null, 500, 4, 3, 4, 4, 100, 0, 0,
-            12m, 2m, 10m, 3m, "trace-sha", At, CouncilRoles.Research, null), []);
+            12m, 2m, 10m, 3m, "trace-sha", At, CouncilRoles.Research, "turn-test"), []);
         return runId;
     }
 

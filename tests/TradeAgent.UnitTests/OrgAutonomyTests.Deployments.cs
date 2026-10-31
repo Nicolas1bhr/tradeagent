@@ -18,7 +18,7 @@ public partial class OrgAutonomyTests
         var id = Sha256Hex.Of("u-org-autonomy " + tag);
         Exec(db, """
             INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt)
-            VALUES($id, $src, $src, 'm', 'b', 'ok', 0, $at, $role, NULL)
+            VALUES($id, $src, $src, 'm', 'b', 'ok', 0, $at, $role, 'turn-test')
             """, ("$id", id), ("$src", "instrument BTCUSDT\n# " + tag), ("$at", Stamp), ("$role", author));
         return id;
     }

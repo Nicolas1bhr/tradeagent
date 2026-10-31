@@ -54,13 +54,13 @@ public class BacktestLedgerTests(Xunit.Abstractions.ITestOutputHelper log)
         return new DatasetStore(db).Record(record);
     }
 
-    static StrategyVersionRow Version(StrategyProgram program, string? role = null, string? attempt = null) =>
+    static StrategyVersionRow Version(StrategyProgram program, string? role = CouncilRoles.Research, string? attempt = "turn-test") =>
         new(program.StrategyId, program.Source, program.Canonical, program.Manifest,
             StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, At, role, attempt);
 
     static StrategyRunRow Run(string id, string versionId, long datasetId, string sha = "aa11") =>
         new(id, versionId, datasetId, sha, At, At.AddHours(1), "fees=0.001;slippage=0;increment=1;capital=10000",
-            "COMPLETED", null, 60, 2, 1, 3, 4, 21, 0, 0, 12.5m, 0.5m, 12m, 3.25m, "beef", At, null, null);
+            "COMPLETED", null, 60, 2, 1, 3, 4, 21, 0, 0, 12.5m, 0.5m, 12m, 3.25m, "beef", At, CouncilRoles.Research, "turn-test");
 
     static StrategyTradeRow Trade(string runId, int ordinal) =>
         new(runId, ordinal, At.AddMinutes(ordinal), 100m, At.AddMinutes(ordinal + 5), 101m, 1m,

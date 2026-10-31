@@ -3283,6 +3283,25 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{launchEvidenceRung}') ON CONFLICT(key) DO UPDATE SET value='{launchEvidenceRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-lineage-check): a unit overtaken renumbers it in Versions, nothing else.
+        const int artifactLineageRung = Versions.ArtifactLineageRung;
+        if (have < artifactLineageRung)
+        {
+            // EVERY ARTIFACT NAMES ITS AUTHOR POSITION AND THE ATTEMPT WHOSE READS PRODUCED IT — `U-lineage-check` (VISION § 7.2: lineage
+            // not recorded when an artifact is made cannot be rebuilt; R26 stage 2 unit 1). `org_delivery.author` is the position that
+            // delivered — the mandate's holder, the one caller `Deliver` admits — written in the delivery's own insert and sealed into its
+            // manifest, so the id it is the hash of covers it. Then one BEFORE INSERT trigger per artifact table, composed from
+            // `ArtifactLineage.Kinds` (this assembly's constants only): an insert with no author, an author that is neither a position nor
+            // the kind's app principal, or no attempt while a position wrote it, is refused — whichever writer tried. Triggers on INSERT
+            // only: a row written before this rung stays exactly as it was and reads "not recorded" (`ArtifactLineage.Of`), never
+            // backfilled. The column added only where missing and the triggers IF NOT EXISTS, the stamp last: a crash between any
+            // statement and the stamp runs this again over what it made.
+            AddColumnIfMissing("org_delivery", "author", "TEXT REFERENCES org_position(id)");
+            foreach (var kind in ArtifactLineage.Kinds) Exec(ArtifactLineage.TriggerSql(kind));
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{artifactLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{artifactLineageRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
