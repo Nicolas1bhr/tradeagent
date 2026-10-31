@@ -229,6 +229,9 @@ public partial class FeatureProgramRunnerTests(ITestOutputHelper log)
         var reader = tape ? new TapeReader(file) : null;
         gw.Tape = reader;
 
+        // THE FOUNDING POLICY'S OWN BTCUSDT ENVELOPE GOES FIRST: one envelope stands for a pair at a time (U-evidence-breadth-paper).
+        foreach (var e in gw.Envelopes.StandingOn(gw.Connector.Id, PaperConnector.TheAccount, At).Where(e => e.Symbol == "BTCUSDT"))
+            Assert.True(gw.WithdrawPaperEnvelope(e.Id, At).Ok);
         var granted = await gw.GrantPaperEnvelopeAsync("BTCUSDT", 5m, 5_000_000m, At.AddDays(30), At);
         Assert.True(granted.Ok, granted.Why);
         var version = Judged(db, text);

@@ -227,6 +227,9 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
 
         if (seed && db.GetKv("rig-seeded") is null)
         {
+            // THE FOUNDING POLICY'S OWN BTCUSDT ENVELOPE GOES FIRST: one envelope stands for a pair at a time (U-evidence-breadth-paper).
+            foreach (var e in gw.Envelopes.StandingOn(gw.Connector.Id, PaperConnector.TheAccount, start).Where(e => e.Symbol == "BTCUSDT"))
+                Assert.True(gw.WithdrawPaperEnvelope(e.Id, start).Ok);
             var granted = await gw.GrantPaperEnvelopeAsync(
                 "BTCUSDT", envelopeQuantity, envelopeNotional, start.AddDays(30), start);
             Assert.True(granted.Ok, granted.Why);
