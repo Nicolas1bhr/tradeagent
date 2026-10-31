@@ -3290,15 +3290,15 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     }
 
     /// <summary>
-    /// THE FRESH HOLDOUT BEING COLLECTED, for <c>data-list</c>'s note, or nothing while none is (<c>U-evidence-campaign</c>): its
-    /// cutoff, that nothing from it on is served here, and what its campaign waits for.
+    /// THE FRESH HOLDOUTS BEING COLLECTED, for <c>data-list</c>'s note, or nothing while none is (<c>U-evidence-campaign</c>): each
+    /// one's cutoff, that nothing from it on is served here, and what its campaign waits for — one per pair at most
+    /// (<c>U-evidence-breadth</c>), so every one is named.
     /// </summary>
-    string FreshHoldoutNote() => gateway.Renewals.Holding() is [var held, ..]
-        ? $" A FRESH HOLDOUT IS BEING COLLECTED: campaign {held.SpentCampaignId} has spent its {held.Spent}, so every bar of every "
-          + $"pair, every forward bar and every tape row from {held.Cutoff:u} on is held back with no end — 'data-bars', 'backtest' "
-          + "and 'data-tape' refuse any read reaching it — until the campaign after it opens over those months. "
-          + CampaignRenewal.Waiting(held, null)
-        : "";
+    string FreshHoldoutNote() => string.Concat(gateway.Renewals.Holding().Select(held =>
+        $" A FRESH HOLDOUT IS BEING COLLECTED: campaign {held.SpentCampaignId} has spent its {held.Spent}, so every bar of every "
+        + $"pair, every forward bar and every tape row from {held.Cutoff:u} on is held back with no end — 'data-bars', 'backtest' "
+        + "and 'data-tape' refuse any read reaching it — until the campaign after it opens over those months. "
+        + CampaignRenewal.Waiting(held, null)));
 
     /// <summary>
     /// THE TAPE'S SERIES, FOR <c>data-list</c> (<c>U-tape-read</c>): every series with the switch that records it, its

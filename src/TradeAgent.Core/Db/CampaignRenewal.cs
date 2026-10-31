@@ -38,13 +38,15 @@ public sealed record ForwardHoldout(long SpentCampaignId, DateTimeOffset Cutoff,
 /// reaches: now, the close of every dataset's last bar, the close of every forward bar, the end of every held window, and every
 /// cutoff already armed. Nothing at or after it existed when it was armed, so nothing at or after it can have been served. It is
 /// written once (<see cref="Database.AddKvOnce"/>, by the database and not by this code) and never moved: earlier would hold back
-/// minutes already served, later would release minutes it held. One window is armed at a time, so each starts after the last.</item>
+/// minutes already served, later would release minutes it held. One window is armed at a time FOR EACH PAIR, so each of a pair's
+/// windows starts after the last (<c>U-evidence-breadth</c>: each pair's campaign is its own budget, so a spent BTCUSDT campaign
+/// does not make a spent ETHUSDT campaign wait for BTCUSDT's fresh month first).</item>
 /// <item><b>Held from that moment.</b> <see cref="TapeHoldout"/> holds <c>[cutoff, no end)</c> for every pipe caller and the
 /// referee's research evidence, exactly as a dataset's window is held. NOT for the paper runner: it trades the present, which is
 /// what these minutes are, and a paper run's figures were never held back (<c>docs/CONTRACTS.md</c>, The holdout, "NOT covered").</item>
 /// <item><b>Opened by the app, on enough of it.</b> A fresh download of the spent campaign's own pair, source and interval, holding
 /// no cutoff, with research months before the cutoff and at least <see cref="MinimumFreshDays"/> days of bars from it, while no
-/// other held window reaches past the cutoff: the app sets the cutoff on it through the owner's own press path, which opens the
+/// other held window OF THE SAME PAIR reaches past the cutoff: the app sets the cutoff on it through the owner's own press path, which opens the
 /// next campaign with today's budgets and writes the successor here in the same transaction
 /// (<c>TradingGateway.OpenForwardCampaign</c>). Until then every refusal says what it waits for, in days.</item>
 /// </list>
@@ -92,20 +94,32 @@ public sealed class CampaignRenewal(Database db)
     }
 
     /// <summary>
-    /// ARMS THE FRESH HOLDOUT OF EVERY SPENT CAMPAIGN THAT HAS NONE, oldest first, one at a time: while one window is still held
-    /// open-ended, nothing else is armed, so the next starts after it. Answers what this call armed — nothing when nothing was
-    /// spent, when a window is still holding, or when nothing on record has a measurable end (<see cref="NextCutoff"/>).
+    /// ARMS THE FRESH HOLDOUT OF EVERY SPENT CAMPAIGN THAT HAS NONE, oldest first, one at a time FOR EACH PAIR: while one of a pair's
+    /// windows is still held open-ended, no other campaign of that pair is armed, so its next starts after it. Answers what this call
+    /// armed — nothing when nothing was spent, when every spent campaign's pair is still holding, or when nothing on record has a
+    /// measurable end (<see cref="NextCutoff"/>).
+    ///
+    /// <para><b>Per pair, and why that keeps the rule</b> (<c>U-evidence-breadth</c>). Each window still holds every pair's bars from
+    /// its cutoff on (<see cref="TapeHoldout"/>), and each cutoff is still after everything on record — every armed cutoff of every
+    /// pair included — so nothing at or after it was served to anyone. What a window is FOR is one pair's next campaign, whose
+    /// judgements count only that pair's (<see cref="CampaignStore.JudgementsSpent"/>); two pairs collecting at once share no budget.
+    /// A spent campaign whose pair cannot be read (its dataset gone) holds every pair back, as before: unknown is never "another
+    /// pair".</para>
     /// </summary>
     public IReadOnlyList<ForwardHoldout> Arm(DateTimeOffset now) => db.Write(_ =>
     {
         var armed = new List<ForwardHoldout>();
-        if (Holding().Count > 0) return (IReadOnlyList<ForwardHoldout>)armed;
-
         var datasets = new DatasetStore(db);
-        foreach (var campaign in new CampaignStore(db).All().Where(c => c.IsOpen).OrderBy(c => c.Id))
+        var campaigns = new CampaignStore(db);
+
+        // THE PAIRS STILL COLLECTING: one open-ended window each. A window whose campaign's pair is unknown holds them all.
+        var collecting = Holding().Select(h => PairOf(campaigns, datasets, h.SpentCampaignId)).ToList();
+
+        foreach (var campaign in campaigns.All().Where(c => c.IsOpen).OrderBy(c => c.Id))
         {
             if (datasets.ById(campaign.HoldoutDatasetId) is not { } set
                 || EvaluationClass.Or(set.EvaluationClass) != EvaluationClass.Research) continue;
+            if (collecting.Any(pair => CampaignStore.SamePair(pair, set.Pair))) continue;
             if (SpentOn(campaign) is not { } spent) continue;
             if (NextCutoff(now) is not { } cutoff) break;
 
@@ -114,10 +128,14 @@ public sealed class CampaignRenewal(Database db)
             if (!db.AddKvOnce(ArmedKey + Id(campaign.Id), $"{Sql.T(cutoff)}|{Sql.T(now)}|{spent}")) continue;
 
             armed.Add(new ForwardHoldout(campaign.Id, cutoff, now.ToUniversalTime(), spent, null));
-            break;
+            collecting.Add(set.Pair);
         }
         return (IReadOnlyList<ForwardHoldout>)armed;
     });
+
+    /// <summary>The pair of a campaign's dataset, or null when the campaign or its dataset is not in this ledger.</summary>
+    static string? PairOf(CampaignStore campaigns, DatasetStore datasets, long campaignId) =>
+        campaigns.ById(campaignId) is { } campaign ? datasets.ById(campaign.HoldoutDatasetId)?.Pair : null;
 
     /// <summary>
     /// THE FIRST UTC MIDNIGHT STRICTLY AFTER EVERYTHING ON RECORD — now, every dataset's last bar's close, every forward bar's close,
@@ -218,8 +236,11 @@ public sealed class CampaignRenewal(Database db)
         if (fresh.LastBar is not { } last || Close(fresh.Interval, last) is not { } close || close - held.Cutoff < MinimumFresh)
             return Waiting(held, fresh);
 
-        // NOTHING ELSE HELD REACHES PAST THE CUTOFF: months another campaign holds are months its judgements read.
-        foreach (var window in TapeHoldout.WindowsOf(new DatasetStore(db).All().Where(s => s.Id != fresh.Id)))
+        // NOTHING ELSE OF THE PAIR HELD REACHES PAST THE CUTOFF: months another campaign of this pair holds are months its judgements
+        // read, and they count against this pair's next campaign (`CampaignStore.JudgementsSpent`). Another pair's held months are its
+        // own campaign's budget (U-evidence-breadth) — and still unread by research on every pair, `TapeHoldout` holding them.
+        foreach (var window in TapeHoldout.WindowsOf(new DatasetStore(db).All()
+                     .Where(s => s.Id != fresh.Id && CampaignStore.SamePair(s.Pair, fresh.Pair))))
             if (window.Until is not { } end || end > held.Cutoff)
                 return $"{window.Words}, which reaches past {held.Cutoff:u}: those months are held for that dataset's campaign, so "
                        + "they are not fresh, and no campaign is opened over them.";
@@ -263,9 +284,12 @@ public sealed class CampaignRenewal(Database db)
                   + "trials over that dataset's months before the cutoff and ask for judgements there."
                 : Waiting(held, null);
 
-        return Holding() is [var other, ..]
+        var campaigns = new CampaignStore(db);
+        var datasets = new DatasetStore(db);
+        var pair = PairOf(campaigns, datasets, campaignId);
+        return Holding().FirstOrDefault(h => CampaignStore.SamePair(PairOf(campaigns, datasets, h.SpentCampaignId), pair)) is { } other
             ? $"TradeAgent arms this campaign's fresh holdout once the one it is collecting for campaign {other.SpentCampaignId} has "
-              + $"opened — no earlier than {other.Earliest:u} — so that each fresh window starts after the last."
+              + $"opened — no earlier than {other.Earliest:u} — so that each fresh window of {pair ?? "its pair"} starts after the last."
             : "TradeAgent arms its fresh holdout within minutes: the next campaign opens on market data from the next UTC midnight "
               + $"on, which nothing has seen, once a download holds at least {MinimumFreshDays} days of it.";
     }

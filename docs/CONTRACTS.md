@@ -3877,14 +3877,15 @@ have seen. (1) An open research campaign whose judgements (`JudgementsSpent`) or
 zero is SPENT. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
 midnight strictly after now, every dataset's last close, every forward bar's close, every held window's end and every cutoff
 armed before — refused when any of those has no measurable end — written once by `Database.AddKvOnce`
-(`campaign_forward_holdout:<id>`), one window at a time. (3) From that moment `TapeHoldout` holds `[cutoff, no end)` for every
+(`campaign_forward_holdout:<id>`), one window at a time PER PAIR (`U-evidence-breadth`: a spent ETHUSDT campaign does not wait
+for BTCUSDT's fresh month; each cutoff is still after every armed cutoff of every pair). (3) From that moment `TapeHoldout` holds `[cutoff, no end)` for every
 pipe caller and the referee's research evidence (`DatasetStore.ForwardWindows`) — not for the paper runner, which trades the
 present (a paper run's figures are not held back, as before) — and `data-list` names it. (4) Once `cutoff + 30 days`
 (`MinimumFreshDays`) has passed, the pass downloads the spent campaign's pair again (at most once a day) and
 `TradingGateway.OpenForwardCampaign` opens the next campaign through `SetHoldout` at the armed cutoff, in one transaction with
 the write-once successor (`campaign_forward_successor:<id>`) — only over an ACCEPTED download of the same source, pair and
-interval, holding no cutoff, with bars before the cutoff and at least thirty days from it, while no other held window reaches
-past it. Until then every spent-budget sentence and the Settings line say what it waits for, in days. Nothing is re-keyed: the
+interval, holding no cutoff, with bars before the cutoff and at least thirty days from it, while no other held window OF THE
+SAME PAIR reaches past it (another pair's held months are its own campaign's budget, and still unread by research). Until then every spent-budget sentence and the Settings line say what it waits for, in days. Nothing is re-keyed: the
 spent campaign stays open (its cutoff cannot move later, its development months stay charged to it, a family rooted there stays
 charged there); the successor is a new lineage over new months, so its judgements and its α-wealth start over those months, as an
 owner's press on other months always did. The live quote and the cells' web egress still show the present to every agent: the
@@ -3970,18 +3971,25 @@ and the alternative is a run over the held-back data standing in the ledger char
 already registered answers Ok even over a full budget — the same question asked again is the row that is
 already there, and refusing it would make a restart look like an overrun.
 
-**THE TRIAL CHARGE: research over a campaign's months is charged to it through any dataset of any pair**
-(`U-holdout-campaign`, rule 1; seat A's decision of 2026-10-09). A cutoff holds market time for every pair (The holdout),
-so a campaign is about market time for every pair, and `CampaignPolicy.V1` already says so — "Research runs are made over
-bars before the campaign's holdout cutoff and every one of them is charged"; its sha is on every campaign row, so the code
-was brought up to the text. Charged to its own dataset's campaign alone, a run over a second download of the same months,
-or over another pair, was served past a spent budget and counted by nobody (the survey's probe, Q1.3-Q1.4). A campaign's
+**THE TRIAL CHARGE: research over a campaign's months is charged to it through any dataset of its pair**
+(`U-holdout-campaign`, rule 1; seat A's decision of 2026-10-09; narrowed to the pair by `U-evidence-breadth`, the
+orchestrator's brief of 2026-10-31: "a version declares its pair; its backtests, trials and verdict are charged to that pair's
+campaign only"). `CampaignPolicy.V1` says "Research runs are made over bars before the campaign's holdout cutoff and every one
+of them is charged"; charged to its own dataset's campaign alone, a run over a second download of the same months was served
+past a spent budget and counted by nobody (the survey's probe, Q1.3). **Each pair set up has its OWN campaign and budgets**:
+a version names one instrument and is measured only on its bars (`InstrumentMatch`), so a run of an ETHUSDT version is
+research about ETHUSDT and is charged to ETHUSDT's campaigns — never to BTCUSDT's, which is another budget (charging every
+pair's campaign, as rule 1 did from 2026-10-09 to 2026-10-31, made five pairs' budgets one). **The holdout is NOT narrowed:**
+a cutoff still holds market time for every pair (The holdout), so no research of any pair reads any pair's held window. A
+campaign whose dataset the ledger no longer holds is of every pair (`CampaignStore.SamePair`). A campaign's
 **development months** are its dataset's bars before the cutoff, `[first_bar, holdout_from)`, read from the dataset ledger
 at each look. A research run's **span** is the market its bars cover — `TapeHoldout`'s span, from the open of the first bar
 to the close of the last — with an open or out-of-range side read as the run dataset's own first or last bar
 (`Backtest.ClosesOf`'s sides), a bar length this build cannot read as no end, and a window that reads no bar as no span.
 `CampaignStore.ChargedBy` answers the open campaigns a run is charged to: its own dataset's first, then, by id, every other
-open campaign whose development months the span overlaps — one shared instant is no overlap. `Backtests.Run` asks
+open campaign OF THE SAME PAIR whose development months the span overlaps — one shared instant is no overlap. A family's
+home (`ChargedCampaignFor`) is likewise the campaign of the run's pair its eldest ancestor was first charged to: a BTCUSDT
+root ported to an ETHUSDT child charges the child to ETHUSDT's campaign. `Backtests.Run` asks
 `TrialRefusal` of each before the run, and `Record` registers each with `RegisterTrial` inside the run's write, so any
 refusal rolls the run back; a refusal for a campaign that is not the run's own names its months and the dataset read.
 The own-first order decides a never-charged version's home (`ChargedCampaignFor` reads the row just written). **A run is
@@ -3999,10 +4007,14 @@ before one are research's to read. Where no campaign's months are read, nothing 
 the door.** The row is written by the request, not by the answer: a budget checked after the holdout run
 refuses nothing that matters, because the bars have been read. Verdicts are counted across the whole
 **renewal lineage**, which is what makes `renewed_from` load-bearing — trials renew, holdout access does
-not — **and across every other campaign over the same held months** (`U-holdout-campaign`, rule 2, THE JUDGEMENT
-COUNT): a judgement reads `[the cutoff on its row, its dataset's last bar's close)` (`Referee.Verdict`), and
-`CampaignStore.JudgementsSpent` counts every verdict, of any campaign and any pair, whose read span overlaps the span
-the campaign's own judgements read, its lineage's included. A second press over months already held — a fresh download
+not — **and across every other campaign of the same pair over the same held months** (`U-holdout-campaign`, rule 2, THE
+JUDGEMENT COUNT; narrowed to the pair by `U-evidence-breadth`): a judgement reads `[the cutoff on its row, its dataset's last
+bar's close)` (`Referee.Verdict`), and `CampaignStore.JudgementsSpent` counts every verdict, of any campaign of the pair,
+whose read span overlaps the span the campaign's own judgements read, its lineage's included; the α-wealth order
+(`JudgementsCharged`) and a unit's verdict share count the same set. Another pair's judgements over the same months are
+that pair's budget. Stated, not hidden: pairs held over the same months are judged over the same market regime, so five
+pairs' judgements tell the research process more about that regime than one pair's three — the price of breadth the brief
+chose; the held bars stay unread by research on every pair. A second press over months already held — a fresh download
 held back at the same date — opens a campaign whose `verdicts_spent` starts at the judgements already taken over them;
 it is TOLD and COUNTED, never refused, because a REJECTED dataset's window stays held and a refusal would dead-end its
 months. The press's note names every other campaign over its months and the judgements each has taken
