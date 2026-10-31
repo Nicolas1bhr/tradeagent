@@ -50,7 +50,7 @@ public class EvidenceCampaignTests
     /// A dataset the ledger recorded with its files on disk, so <c>DatasetStore.Checked</c> accepts it — the bars it names are the
     /// row's, the file a short stand-in the hash is taken of.
     /// </summary>
-    static DatasetRecord OnDisk(Database db, string pair, DateTimeOffset first, DateTimeOffset last)
+    static DatasetRecord OnDisk(Database db, string pair, DateTimeOffset first, DateTimeOffset last, string version = "v1")
     {
         var dir = BinanceArchive.DatasetDir(pair);
         Directory.CreateDirectory(Path.Combine(dir, "raw"));
@@ -62,7 +62,7 @@ public class EvidenceCampaignTests
 
         var store = new DatasetStore(db);
         var id = store.Record(new DatasetRecord(
-            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 12, [],
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, version, 12, 12, [],
             csv, DatasetStore.Sha256(csv)!, 1000, first, last, 0, [], false, 0, 0, 0, Now, DatasetState.ACCEPTED, null,
             [new DatasetFile("2026-09", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!, DatasetStore.Sha256(raw)!,
                 new FileInfo(raw).Length, first, KlineTimeUnit.Microseconds, raw)]));
@@ -203,6 +203,39 @@ public class EvidenceCampaignTests
         Assert.Equal([$"collect {c}", $"check {c} held=False"], said);
         Assert.Contains($"{a}: a campaign is already open", second.Words, StringComparison.Ordinal);
         Assert.Equal(3, gw.Campaigns.All().Count);
+    }
+
+    /// <summary>
+    /// TWO OVERLAPPING SETUP PRESSES OPEN ONE CAMPAIGN (the Codex review's P2): the second, pressed while the first is still
+    /// downloading, starts nothing and says so; the first opens the pair's one campaign. RED without the one-press guard, where
+    /// each press downloaded the pair.
+    /// </summary>
+    [Fact]
+    public async Task Two_overlapping_setup_presses_open_one_campaign()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var owned = db;
+        await using var gateway = gw;
+        var pair = TestEnv.NewPair();
+        var release = new TaskCompletionSource();
+        var downloads = 0;
+        var evidence = new EvidenceCampaigns(() => gw, async (p, _, _, _) =>
+        {
+            var n = ++downloads;
+            await release.Task;
+            return new DataCollection(OnDisk(db, p, First, Last, $"v{n}"), [], "collected");
+        });
+
+        var first = evidence.SetUpAsync(Now, [pair]);
+        var second = evidence.SetUpAsync(Now, [pair]);
+        release.SetResult();
+        var done = await Task.WhenAll(first, second);
+
+        Assert.True(downloads == 1, $"two overlapping presses downloaded {pair} {downloads} times");
+        Assert.Single(gw.Campaigns.All());
+        Assert.Single(done[0].Campaigns);
+        Assert.Empty(done[1].Campaigns);
+        Assert.Contains("already downloading", done[1].Words, StringComparison.Ordinal);
     }
 
     /// <summary>WHAT SETUP OFFERS: the owner's Settings pair first, then the five default pairs, each once.</summary>
