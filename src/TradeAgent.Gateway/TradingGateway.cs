@@ -8595,6 +8595,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// </summary>
     async Task<(string Target, OrderInfo? Before)> ResolveModifyTargetAsync(string reference, string accountId, CancellationToken ct)
     {
+        RefuseAnotherPlatformsOrderOrThrow(reference);
         var known = _requests.Get(reference)?.ConnectorOrderId;
         IReadOnlyList<OrderInfo> book;
         try { book = await Connector.GetOrdersAsync(accountId, true, null, ct); }
@@ -8831,8 +8832,22 @@ public sealed partial class TradingGateway : IAsyncDisposable
             { Intent = OrderIntent.Close }, ct);
     }
 
+    /// <summary>
+    /// AN ORDER IS CANCELLED OR CHANGED ONLY ON THE PLATFORM IT WAS SENT TO (<c>U-atas-home-no-atas-build</c>, Codex review): a request
+    /// recorded on another platform — ATAS's, read by the paper venue standing in for it in a build without the adapter — carries a broker
+    /// id that names nothing here, or on a collision one of this platform's own orders. Refused in words before anything is written.
+    /// </summary>
+    void RefuseAnotherPlatformsOrderOrThrow(string reference)
+    {
+        if (_requests.Get(reference) is { } recorded && !string.Equals(recorded.ConnectorId, Connector.Id, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"order '{reference}' was placed on {recorded.ConnectorId}, and TradeAgent is connected to {Connector.Id}, which cannot "
+                + "reach it. Nothing was sent.");
+    }
+
     async Task<string> ResolveConnectorOrderId(string reference, CancellationToken ct)
     {
+        RefuseAnotherPlatformsOrderOrThrow(reference);
         if (_requests.Get(reference) is { ConnectorOrderId: { } coid }) return coid;
         var orders = await Connector.GetOrdersAsync(await RequireAccountId(ct), true, null, ct);
         var hit = orders.FirstOrDefault(o => o.ConnectorOrderId == reference || o.ClientOrderId == reference);
@@ -9309,11 +9324,17 @@ public sealed partial class TradingGateway : IAsyncDisposable
         if (rows.Count == 0)
             return new PressOutcome(kind, nonce, Now, [], 0, true, "Nothing was sent.");
 
-        // Read once, for every target, off the account the RECORDS carry.
+        // Read once, for every target, off the account the RECORDS carry — and only on the platform they were sent to
+        // (U-atas-home-no-atas-build, Codex review): another platform's book, the paper venue standing in for ATAS among them, says
+        // nothing about that account, and its empty one read as "now flat" over a close nobody confirmed.
         IReadOnlyList<PositionInfo>? positions = null;
-        var accountUnreadable = false;
-        try { positions = await Connector.GetPositionsAsync(rows[0].AccountId, ct); }
-        catch (Exception) { accountUnreadable = true; }
+        var elsewhere = !string.Equals(rows[0].ConnectorId, Connector.Id, StringComparison.Ordinal);
+        var accountUnreadable = elsewhere;
+        if (!elsewhere)
+        {
+            try { positions = await Connector.GetPositionsAsync(rows[0].AccountId, ct); }
+            catch (Exception) { accountUnreadable = true; }
+        }
 
         var targets = rows.Select(r => new PressTarget(
             r.RequestId,
@@ -9321,7 +9342,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             r.State,
             !r.NeedsReconciliation && !_unconfirmed.ContainsKey(r.RequestId),
             OutcomeSentence(r),
-            r.Instrument == "-" ? null : positions?.FirstOrDefault(p => p.Symbol == r.Instrument)?.Quantity ?? 0m
+            r.Instrument == "-" || elsewhere ? null : positions?.FirstOrDefault(p => p.Symbol == r.Instrument)?.Quantity ?? 0m
         )).ToList();
 
         var unresolved = targets.Count(t => !t.Resolved);
@@ -9336,6 +9357,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
             : accountUnreadable ? "Every record is resolved, but the account could not be read back."
             : stillOpen.Count > 0 ? $"Every record is resolved. Still open: {string.Join(", ", stillOpen)}."
             : $"{targets.Count} record(s), all resolved and nothing left open.";
+        if (elsewhere)
+            summary += $" This press was sent to {rows[0].ConnectorId}; TradeAgent is connected to {Connector.Id}, which cannot read that account.";
 
         return new PressOutcome(kind, nonce, rows.Min(r => r.CreatedAt), targets, unresolved, complete, summary);
     }

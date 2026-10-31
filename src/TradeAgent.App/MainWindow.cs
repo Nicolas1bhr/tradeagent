@@ -276,10 +276,14 @@ public sealed class MainWindow : Window
         _setupSlot.Content = Ui.Col(Tokens.S4,
             Ui.H1("This TradeAgent has no ATAS"),
             Ui.Body(_host.AtasRefusal!.Message),
-            Ui.Body("You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
-                    + "is kept, and a TradeAgent with ATAS goes back to it."),
+            Ui.Body(_host.AtasRefusal.SetupFinished
+                ? "You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
+                  + "is kept, and a TradeAgent with ATAS goes back to it. Choose paper's account on the Settings page before it trades."
+                : "Your setup was not finished. You can finish it in this TradeAgent instead: it asks you to choose its platform again — "
+                  + "its own paper venue or the practice simulator."),
             Ui.Row(Tokens.S3,
-                Ui.Confirm("Run on TradeAgent paper", AtasHome.ConfirmPaper, async () =>
+                Ui.Confirm(_host.AtasRefusal.SetupFinished ? "Run on TradeAgent paper" : "Finish setup without ATAS",
+                    _host.AtasRefusal.SetupFinished ? AtasHome.ConfirmPaper : AtasHome.ConfirmSetupAgain, async () =>
                 {
                     if (await _host.RunOnPaperInsteadAsync()) { await AfterStartAsync(); return; }
                     if (_host.AtasRefusal is not null) ShowAtasNotInThisBuild();

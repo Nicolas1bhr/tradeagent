@@ -1180,6 +1180,8 @@ public sealed class AppHost : IAsyncDisposable
             Connector = Platforms.Connectors.Create(chosen, ConnectorChoiceNow());
 
             Gateway = new TradingGateway(_db, Connector, Health);
+            // THE ATAS ACCOUNT, HELD ASIDE ON THE PAPER STAND-IN AND HANDED BACK TO ATAS (U-atas-home-no-atas-build): before anything reads it.
+            AtasHome.HoldTheAtasAccount(_db, Gateway, chosen);
             // THE COLLECTOR RAISES THE `data` WAKE ITSELF and this is what pokes the loop, the way
             // `ScanMaterials` does for new material: the ROW is the fact and is written in the
             // collector's own transaction, and this only stops a sleeping loop from waiting for its
@@ -1702,6 +1704,7 @@ public sealed class AppHost : IAsyncDisposable
         _db.SetKv("connector", id);
         // AN EXPLICIT CHOICE ENDS THE PAPER STAND-IN FOR ATAS (U-atas-home-no-atas-build): the next no-ATAS build that finds ATAS saved asks again.
         if (_db.GetKv(AtasHome.StandInKey) is { Length: > 0 }) _db.SetKv(AtasHome.StandInKey, "");
+        if (_db.GetKv(AtasHome.HeldAccountKey) is { Length: > 0 }) _db.SetKv(AtasHome.HeldAccountKey, "");
         if (current == id && Gateway is not null) return;
 
         // The chosen account belongs to the platform it was chosen on. Carrying it across turns
