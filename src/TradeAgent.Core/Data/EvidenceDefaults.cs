@@ -25,6 +25,21 @@ public static class EvidenceDefaults
     public const int HoldoutMonths = 3;
 
     /// <summary>
+    /// THE PAIRS SETUP OFFERS, EACH HELD BACK UNDER ITS OWN CAMPAIGN (<c>U-evidence-breadth</c> item 1): Binance spot's five most
+    /// liquid USDT pairs — BTC, ETH, SOL, BNB and XRP. Chosen, and stated: each is published month by month in Binance's public
+    /// archive (the data source, no account and no key), each is in the tape's universe (<see cref="TapeSourceCatalog.Universe"/>,
+    /// whose sixth, DOGE, is left out as the least liquid), and the paper venue trades any Binance spot pair whose step the app's
+    /// instrument check has read from the venue's own definition (<c>PaperConnector</c>, <c>U-venue-verify</c>), which setup asks
+    /// for each pair before holding it back. Five campaigns of three judgements are fifteen looks over fresh months instead of
+    /// three; the owner unticks any he does not want, and the pair on his Settings page is always offered first.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"];
+
+    /// <summary>What setup offers, in order: the owner's Settings pair first when it is a pair, then <see cref="Pairs"/>, each once.</summary>
+    public static IReadOnlyList<string> Offered(string? settingsPair) =>
+        [.. (BinanceArchive.IsPair(settingsPair) ? [settingsPair!] : Array.Empty<string>()).Concat(Pairs).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
     /// THE CUTOFF THE SETUP STEP HOLDS BACK FROM, or null with nothing to hold: no bar recorded, or a download too short to
     /// keep at least one research month before the held months. Midnight UTC on the first day of the earliest held month.
     /// </summary>

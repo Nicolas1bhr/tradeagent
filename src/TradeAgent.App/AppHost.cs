@@ -1174,7 +1174,8 @@ public sealed class AppHost : IAsyncDisposable
             // next scheduled look to find out.
             _marketData = new MarketDataService(_db, nudge: () => Mission?.Wake());
             _evidence = new EvidenceCampaigns(() => Gateway,
-                (pair, now, progress, ct) => _marketData.CollectAsync(pair, now, progress, ct));
+                (pair, now, progress, ct) => _marketData.CollectAsync(pair, now, progress, ct),
+                (pair, ct) => CheckInstrumentAsync(pair, ct));
 
             // THE FORWARD COLLECTOR, STARTED WITH THE APP. Both functions are read at every look
             // rather than captured: the owner changes the pair and flips the toggle on the Settings
@@ -2059,11 +2060,13 @@ public sealed class AppHost : IAsyncDisposable
                 // restarts itself while the owner is looking elsewhere is not a convenience.
                 if (pass % (12 * 60 * 6) == 0 && AutoCheckForUpdates) _ = Updates.CheckAsync(ct);
 
-                // THE CONFIGURED PAIR AGAINST THE VENUE'S OWN DEFINITION: once at startup, then every six
-                // hours (U-venue-verify). A successful check is served for seven days, so an app left
-                // running re-reads it long before it lapses, and a venue that changes a step is noticed
-                // within the day. It never throws: a failure is a row and an activity line.
-                if (pass % (12 * 60 * 6) == 0) _ = CheckInstrumentAsync(ct);
+                // THE CONFIGURED PAIR AND EVERY PAIR UNDER EVIDENCE AGAINST THE VENUE'S OWN DEFINITION: once at
+                // startup, then every six hours (U-venue-verify; U-evidence-breadth — a pair's backtests round to
+                // its step and its campaign's judge is priced from it, so each pair set up is kept verified). A
+                // successful check is served for seven days, so an app left running re-reads it long before it
+                // lapses, and a venue that changes a step is noticed within the day. It never throws: a failure is
+                // a row and an activity line.
+                if (pass % (12 * 60 * 6) == 0) _ = CheckInstrumentsAsync(ct);
 
                 Changed?.Invoke();
             }
@@ -2085,11 +2088,28 @@ public sealed class AppHost : IAsyncDisposable
     /// discard the task. Null when nothing was asked: no verifier, or a pair TradeAgent will not put in an
     /// address.</para>
     /// </summary>
-    public async Task<Core.Data.InstrumentCheckRow?> CheckInstrumentAsync(CancellationToken ct = default)
+    public Task<Core.Data.InstrumentCheckRow?> CheckInstrumentAsync(CancellationToken ct = default) =>
+        Gateway is { } gateway ? CheckInstrumentAsync(gateway.Settings.MarketDataPair, ct) : Task.FromResult<Core.Data.InstrumentCheckRow?>(null);
+
+    /// <summary>
+    /// THE CONFIGURED PAIR, THEN EVERY PAIR UNDER EVIDENCE, CHECKED ONE AFTER ANOTHER (<c>U-evidence-breadth</c>): what the background
+    /// loop runs every six hours. Each pair once; it never throws.
+    /// </summary>
+    async Task CheckInstrumentsAsync(CancellationToken ct)
+    {
+        if (Gateway is not { } gateway) return;
+        IReadOnlyList<string> evidence;
+        try { evidence = _evidence?.Pairs() ?? []; }
+        catch (Exception ex) { gateway.Log.Engineering("App", "instrument_check_pairs_failed", "warn", ex: ex); evidence = []; }
+        foreach (var pair in new[] { gateway.Settings.MarketDataPair }.Concat(evidence).Distinct(StringComparer.Ordinal))
+            await CheckInstrumentAsync(pair, ct);
+    }
+
+    /// <summary>One pair of <see cref="CheckInstrumentAsync(CancellationToken)"/>: the same check, for the pair named.</summary>
+    public async Task<Core.Data.InstrumentCheckRow?> CheckInstrumentAsync(string pair, CancellationToken ct)
     {
         if (_verifier is not { } verifier || Gateway is not { } gateway) return null;
 
-        var pair = gateway.Settings.MarketDataPair;
         try
         {
             var row = await verifier.CheckAsync(Core.Data.VenueCatalog.BinanceSpot, pair, ct);
