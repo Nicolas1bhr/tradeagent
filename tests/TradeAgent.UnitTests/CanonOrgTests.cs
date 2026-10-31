@@ -266,6 +266,13 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
         Assert.All(guide.Writes, p => Assert.True(reach.WritesInto(p), p));
         foreach (var op in new[] { Ops.DataList, Ops.Backtest, Ops.Verdict, Ops.LedgerAdd }) Assert.Contains(op, guide.Verbs);
         Assert.Equal(runtime == RuntimeClass.Cell, guide.Text.Contains("TradeAgent ends everything your cell started", StringComparison.Ordinal));
+        // ITS FILES, DERIVED (the orchestrator's note: derive, don't hand-write): the plan and journal by the paths WorkspaceRevisions keeps,
+        // written only where the seat's tools write them, and the recorded folders by the scanner's own list.
+        var keeps = reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Plan)) && reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Journal));
+        Assert.Equal(keeps, guide.Text.Contains($"keeps a copy of `{WorkspaceRevisions.PathOf(PublicationKind.Plan)}` and "
+                                                + $"`{WorkspaceRevisions.PathOf(PublicationKind.Journal)}`", StringComparison.Ordinal));
+        var recorded = Assert.Single(guide.Text.Split("\n- "), l => l.StartsWith("TradeAgent records every file", StringComparison.Ordinal));
+        foreach (var dir in MaterialScanner.TrackedRoleDirs) Assert.Contains($"`{dir}/`", recorded, StringComparison.Ordinal);
 
         var canon = Canon.Render(ctx, reach).Text;
         Assert.Contains("holds TradeAgent's reference — what its tools, files and loop do", canon, StringComparison.Ordinal);
