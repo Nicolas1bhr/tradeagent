@@ -523,6 +523,28 @@ public class OrgEvidenceSharesTests
         var made = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
         Assert.True(made.Ok, made.Error?.Message);
         Assert.Equal(before + 1, Divisions(db));
+
+        // ASLEEP DIRECTORS, AWAKE DIVISIONS (the Codex review): a position active in a team under each legacy division spends that division's
+        // split whatever its director does, so both splits stand again — the next charter is refused in the Safety page's words.
+        db.Write(_ =>
+        {
+            foreach (var sql in new[]
+                     {
+                         $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('team-5ea5ea00', '{OrgIds.Research}', 'team', NULL, 'active', '{Sql.T(At)}')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('pos-5ea5ea000001', 'team-5ea5ea00', 'org/pos-5ea5ea000001', 'active', '{Sql.T(At)}')",
+                         $"INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('team-5ea5ea01', '{OrgIds.Operations}', 'team', NULL, 'active', '{Sql.T(At)}')",
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('pos-5ea5ea000002', 'team-5ea5ea01', 'org/pos-5ea5ea000002', 'active', '{Sql.T(At)}')"
+                     })
+            {
+                using var c = db.Cmd(sql);
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        });
+        var spent = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.False(spent.Ok, "a charter was written past a division whose split a position under it still spends");
+        Assert.Contains("the split on the Safety page", spent.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(before + 1, Divisions(db));
     }
 
     // ---- U-org-autonomy item 3 (R25 D6): the chief spends a verdict on a version authored in its subtree ----------------------

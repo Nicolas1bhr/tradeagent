@@ -384,8 +384,9 @@ public sealed partial class GatewayPipeServer
             // A PAIR THE GATE KEEPS ASLEEP HOLDS NONE OF IT (U-loop-e2e; R25 D4): while a position beyond the pair is active, the gate
             // refuses the pair's unconfined seats every launch, so its split is spent by nobody — and on the founding policy's equal
             // split the two would hold the whole root, leaving an active chief nothing to charter. A share is a slice of the ceiling,
-            // never an addition (BoardPolicy.ShareForRole): the pair woken again later still spends inside the day-total.
-            if (Asleep(OrgEnvelopes.LegacyRoleOf(unit)!))
+            // never an addition (BoardPolicy.ShareForRole): the pair woken again later still spends inside the day-total. A division with any
+            // position active under its director still spends its split, and counts it (the Codex review).
+            if (Asleep(unit))
             {
                 shares[unit] = 0m;
                 continue;
@@ -411,16 +412,21 @@ public sealed partial class GatewayPipeServer
     }
 
     /// <summary>
-    /// Whether the activation gate refuses legacy <paramref name="role"/> now because a position beyond the pair is active — its own rule over
-    /// the facts the host reads for every launch (<see cref="TradingGateway.SeatFactsOf"/>). Facts nobody could read are no proof of sleep.
+    /// Whether legacy division <paramref name="unit"/> spends nothing now: the activation gate refuses its director because a position beyond
+    /// the pair is active — its own rule over the facts the host reads for every launch (<see cref="TradingGateway.SeatFactsOf"/>) — and no
+    /// position is active anywhere under it. Facts nobody could read are no proof of sleep.
     /// </summary>
-    bool Asleep(string role)
+    bool Asleep(string unit)
     {
         try
         {
+            var role = OrgEnvelopes.LegacyRoleOf(unit)!;
+            var org = Gateway.Org;
             return Gateway.SeatFactsOf?.Invoke(role) is { Standing: { IsLegacy: true } standing } facts
                    && facts.ActiveBeyondLegacy.Count > 0
-                   && PositionActivation.Decide(role, standing, facts) is not null;
+                   && PositionActivation.Decide(role, standing, facts) is not null
+                   && !org.ActivePositionsBeyondLegacy().Any(p => org.UnitOf(p) is { } u
+                                                                  && (u.Id == unit || org.Ancestors(u.Id).Any(a => a.Id == unit)));
         }
         catch (Exception) { return false; }
     }
