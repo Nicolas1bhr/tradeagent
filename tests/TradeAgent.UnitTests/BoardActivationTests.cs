@@ -117,6 +117,14 @@ public class BoardActivationTests(ITestOutputHelper log)
             Assert.Contains("retired", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-2")).Message, StringComparison.Ordinal);
             Assert.Equal(2L, StateRows(db));
             Assert.Equal(BoardSeatStatus.Dormant, host.Board.Seats().Single(s => s.Id == other.Id).Status);
+
+            // A FOLDER THAT CANNOT BE BUILT REFUSES THE ACTIVATION, NOTHING WRITTEN (the re-review's P2): a directory where its canon goes.
+            var blocked = host.Gateway.FoundBoardSeat(SeatClasses.Broker, BoardModelClass.Standard, "openai");
+            Directory.CreateDirectory(Path.Combine(host.HomeFor(blocked.Id), "AGENTS.md"));
+            var unbuilt = Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat(blocked.Id));
+            log.WriteLine(unbuilt.Message);
+            Assert.Contains("folder could not be built", unbuilt.Message, StringComparison.Ordinal);
+            Assert.Equal(BoardSeatStatus.Dormant, host.Board.Seats().Single(s => s.Id == blocked.Id).Status);
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
