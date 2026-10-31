@@ -37,8 +37,8 @@ public class RefereeVerdictTests
     const int HoldoutAtBar = 60;
 
     /// <summary>
-    /// BUYS THE DIP AND SELLS THE RIP, over bars that cycle 96 → 105. Each ten-bar cycle enters at the
-    /// next open after a close under 97 and leaves at the next open after a close over 103, so the runs
+    /// BUYS THE DIP AND SELLS THE RIP, over bars that cycle 96 → 105, each level held three minutes. Each thirty-bar
+    /// cycle enters two minutes after a close under 97 and leaves two minutes after a close over 103, so the runs
     /// below close real trades and come out ahead — which is what lets the promoted path be tested at
     /// all, rather than only the refusals.
     ///
@@ -84,7 +84,9 @@ public class RefereeVerdictTests
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < bars; i++)
         {
-            var close = 96m + i % 10;
+            // EACH LEVEL HELD THREE MINUTES (U-backtest-parity, ruling Q2): an order fills two minutes after the minute it
+            // was learnt on, at the level it was learnt at, so "profitable" and "losing" stay true by construction.
+            var close = 96m + i / 3 % 10;
             text.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }

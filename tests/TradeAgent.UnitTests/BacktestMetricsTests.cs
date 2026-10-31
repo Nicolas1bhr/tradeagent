@@ -58,28 +58,30 @@ public class BacktestMetricsTests(ITestOutputHelper log)
         """);
 
     /// <summary>
-    /// EIGHT BARS WITH ONE COMPLETE TRADE AND A DEEP DIP INSIDE IT.
+    /// TEN BARS WITH ONE COMPLETE TRADE AND A DEEP DIP INSIDE IT.
     ///
-    /// <para>Hand-computed, with 10,000 of capital and no friction: the entry fills at bar 4's open of
-    /// 100, so cash is 9,900 for the rest of the trade and equity is <c>9,900 + close</c> while it is
-    /// open. Equity by bar: 10,000 · 10,000 · 10,000 · 10,000 · 9,970 · 10,020 · 9,959 · 10,010. The
-    /// peak reaches 10,020 at bar 6 and the trough after it is 9,959 at bar 7, so the worst fall is
+    /// <para>Hand-computed, with 10,000 of capital and no friction: the entry learnt at bar 3 is placed in bar 4 and
+    /// fills at bar 5's open of 100, so cash is 9,900 for the rest of the trade and equity is <c>9,900 + close</c> while
+    /// it is open. Equity by bar: 10,000 · 10,000 · 10,000 · 10,000 · 10,000 · 9,970 · 10,020 · 9,959 · 9,959 · 10,010.
+    /// The peak reaches 10,020 at bar 7 and the trough after it is 9,959 at bars 8 and 9, so the worst fall is
     /// <b>61</b>. The single closed trade is 100 in and 110 out: gross 10, a win.</para>
     /// </summary>
     static IReadOnlyList<KlineBar> OneTradeWithADip() => Bars(
         [95m, 96m, 94m, 95m],           // 1  flat, nothing fires
         [95m, 96m, 94m, 95m],           // 2  flat
         [100m, 102m, 99m, 101m],        // 3  close 101 > 100: the entry signal
-        [100m, 101m, 99m, 100m],        // 4  it fills at 100. equity 10,000
-        [100m, 100m, 69m, 70m],         // 5  the dip. equity 9,970
-        [70m, 121m, 69m, 120m],         // 6  equity 10,020 — the peak
-        [120m, 121m, 58m, 59m],         // 7  close 59 < 60: the exit signal. equity 9,959 — the trough
-        [110m, 111m, 90m, 95m]);        // 8  it fills at 110. equity 10,010, flat, and nothing re-enters
+        [101m, 102m, 100m, 101m],       // 4  the entry is placed. equity 10,000
+        [100m, 101m, 99m, 100m],        // 5  it fills at 100. equity 10,000
+        [100m, 100m, 69m, 70m],         // 6  the dip. equity 9,970
+        [70m, 121m, 69m, 120m],         // 7  equity 10,020 — the peak
+        [120m, 121m, 58m, 59m],         // 8  close 59 < 60: the exit signal. equity 9,959 — the trough
+        [59m, 60m, 58m, 59m],           // 9  the exit is placed. equity 9,959 — still open
+        [110m, 111m, 90m, 95m]);        // 10 it fills at 110. equity 10,010, flat, and nothing re-enters
 
     /// <summary>
     /// THE DRAWDOWN IS MEASURED ON EQUITY, AND THE OPEN TRADE IS IN IT.
     ///
-    /// <para>61 is the fall from bar 6's 10,020 to bar 7's 9,959, and bar 7 is a bar the position was
+    /// <para>61 is the fall from bar 7's 10,020 to bar 8's 9,959, and bar 8 is a bar the position was
     /// still open on. Measured on closed trades this run's drawdown is 0: nothing had closed yet.</para>
     /// </summary>
     [Fact]
@@ -95,9 +97,9 @@ public class BacktestMetricsTests(ITestOutputHelper log)
     /// <summary>
     /// EVERY OTHER FIGURE OF THE SAME RUN, AND EVERY ONE OF THEM COUNTED FROM THE TRACE.
     ///
-    /// <para>Exposure is bars 4 to 8 — five — because the position was open at some point in each of
+    /// <para>Exposure is bars 5 to 10 — six — because the position was open at some point in each of
     /// them, the bar it filled on and the bar it was sold on included. It is not <c>bars - warm-up</c>,
-    /// which is 7 here, and that difference is the mutant this class exists for.</para>
+    /// which is 9 here, and that difference is the mutant this class exists for.</para>
     /// </summary>
     [Fact]
     public void Every_metric_is_counted_from_the_trace_and_the_exposure_is_not_the_programs_warm_up()
@@ -105,8 +107,8 @@ public class BacktestMetricsTests(ITestOutputHelper log)
         var result = RunOn(EnterAbove100(), OneTradeWithADip());
         var metrics = result.Metrics;
 
-        Assert.Equal(8, metrics.Bars);
-        Assert.Equal(5, metrics.ExposureBars);              // bars 4,5,6,7,8 — not 8 - 1
+        Assert.Equal(10, metrics.Bars);
+        Assert.Equal(6, metrics.ExposureBars);              // bars 5,6,7,8,9,10 — not 10 - 1
         Assert.Equal(2, metrics.Signals);                   // the entry and the exit
         Assert.Equal(1, metrics.Fills);
         Assert.Equal(1, metrics.Trades);
@@ -149,9 +151,11 @@ public class BacktestMetricsTests(ITestOutputHelper log)
             entry when close > 100
             """), Bars(
             [100m, 102m, 99m, 101m],
-            [100m, 105m, 95m, 101m],
+            [101m, 102m, 100m, 101m],       // the entry is placed
+            [100m, 105m, 95m, 101m],        // and fills at 100 * 1.0005
             [101m, 102m, 88m, 89m],
-            [120m, 125m, 115m, 119m]),
+            [89m, 90m, 88m, 89m],           // the exit is placed
+            [120m, 125m, 115m, 119m]),      // and fills at 120 * 0.9995
             Model(fees: 0.001m, slippage: 0.0005m)).Metrics;
 
         Assert.Equal(39.78m, metrics.GrossPnl);
@@ -173,9 +177,9 @@ public class BacktestMetricsTests(ITestOutputHelper log)
     {
         var metrics = RunOn(EnterAbove100(), Bars(
             [100m, 102m, 99m, 101m],        // the entry signal
-            [100m, 101m, 99m, 100m],        // it fills at 100
-            [100m, 100m, 69m, 70m],         // 30 under water, and the window ends here
-            [70m, 91m, 69m, 90m])).Metrics;
+            [100m, 101m, 99m, 100m],        // the entry is placed
+            [100m, 100m, 69m, 70m],         // it fills at this open, 100, and closes 30 under water
+            [70m, 91m, 69m, 90m])).Metrics; // and the window ends here
 
         Assert.Equal(0, metrics.Trades);
         Assert.Null(metrics.WinRate);

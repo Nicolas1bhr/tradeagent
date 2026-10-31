@@ -52,7 +52,7 @@ public class PaperEligibleVerdictTests
     static DateTimeOffset AfterTheCutoff => Bar0.AddMinutes(HoldoutAtBar + 10);
 
     /// <summary>
-    /// Buys the dip and sells the rip over bars that cycle 96 → 105, so it closes real trades and comes
+    /// Buys the dip and sells the rip over bars that cycle 96 → 105, each level held three minutes, so it closes real trades and comes
     /// out ahead. It declares the three execution bounds because the referee refuses to JUDGE a version
     /// that declares none of them (`PromotionBoundsTests`), and none of the three changes the backtest.
     /// </summary>
@@ -89,7 +89,9 @@ public class PaperEligibleVerdictTests
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < bars; i++)
         {
-            var close = 96m + i % 10;
+            // EACH LEVEL HELD THREE MINUTES (U-backtest-parity, ruling Q2): an order fills two minutes after the minute it
+            // was learnt on, at the level it was learnt at, so "profitable" and "losing" stay true by construction.
+            var close = 96m + i / 3 % 10;
             text.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }

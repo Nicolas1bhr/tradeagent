@@ -88,7 +88,8 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
     /// (f) A BACKTEST READS A FEATURE ONLY AS IT HAD ARRIVED. Funding is a mild 0.0001 at ten past each hour; a spike to
     /// −0.01 is stamped 03:59:58 — before the 04:00 close — and first seen at 04:00:20, after it. At the 04:00 close the
     /// spike had not arrived, so the hour opening 03:00 decides nothing; at the 05:00 close it had, and is the newest
-    /// reading, so the hour opening 04:00 enters, and fills at 05:00. The value at each close is the one at THAT close:
+    /// reading, so the hour opening 04:00 enters, and fills at 05:01 — two minutes after 04:59, the minute that closed it,
+    /// as on paper. The value at each close is the one at THAT close:
     /// read at the next one, the spike would have moved the 03:00 hour's decision. (The exit waits a bar more than the
     /// funding does: an intent is held over the next event, as it always was.)
     ///
@@ -111,7 +112,7 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
         Assert.Equal([(Start.AddHours(4), "Enter"), (Start.AddHours(6), "Exit")], Signals(run));
         var atFour = run.Trace.Of(BacktestEventKind.Bar).Single(e => e.Bar == Start.AddHours(3));
         Assert.Equal(EvaluationStatus.Idle.ToString(), atFour.Status);
-        Assert.Equal(Start.AddHours(5), Assert.Single(run.Trace.Of(BacktestEventKind.Fill)).Bar);
+        Assert.Equal(Start.AddHours(5).AddMinutes(1), Assert.Single(run.Trace.Of(BacktestEventKind.Fill)).Bar);
     }
 
     /// <summary>
@@ -194,7 +195,7 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
         Assert.Equal(BacktestOutcome.COMPLETED, run.Outcome);
         Assert.Equal([(springDay, "Enter")], Signals(run));
-        Assert.Equal(springClose, run.Trace.Of(BacktestEventKind.Fill).Single().Bar);
+        Assert.Equal(springClose.AddMinutes(1), run.Trace.Of(BacktestEventKind.Fill).Single().Bar);   // learnt on 03:59Z, filled at 04:01Z
         Assert.Equal(TimeSpan.FromHours(1),
             new FeatureFeed(new TapeReader(file), TapeHoldout.Pipe(null, new DatasetStore(_ledger)), program).Step);
     }
@@ -561,9 +562,10 @@ public class FeatureProgramBacktestTests(ITestOutputHelper log) : IDisposable
 
     /// <summary>
     /// The run id of `ma-crossover.strategy` over the fixture request above: SHA-256 of the five lines main's
-    /// <c>RunIdFor</c> hashed (at <c>18a7ab10</c>) and the evaluator line <c>backtest=2;metrics=1;scoring=1</c> it hashes
+    /// <c>RunIdFor</c> hashed (at <c>18a7ab10</c>) and the evaluator line <c>backtest=3;metrics=1;scoring=1</c> it hashes
     /// since <c>U-evidence-evaluator-label</c>, computed outside this build, with Python's hashlib (the five lines alone
-    /// still give <c>1cf789735c32…</c>, the figure pinned before).
+    /// still give <c>1cf789735c32…</c>, the figure pinned before; under <c>backtest=2</c>, until <c>U-backtest-parity</c>'s
+    /// bump, <c>593be2d99b53…</c>).
     /// </summary>
-    const string PinnedV1RunId = "593be2d99b53c247b43236f298e39da450d481c508486d9c165f8e29e1be5f65";
+    const string PinnedV1RunId = "f2bf5e99ace4d9754cbf227d7806736ae803d0c3883c08dcff36dc22066a44ae";
 }

@@ -156,8 +156,10 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
     /// composition produces — <c>version id \n dataset id \n dataset sha256 \n window \n model \n evaluator</c> —
     /// so a change to the order, the separator or the fields is caught here and not by a reader
     /// wondering why last month's id no longer reproduces. The evaluator line is
-    /// <c>backtest=2;metrics=1;scoring=1</c> (<c>U-evidence-evaluator-label</c>): a bump of
-    /// <see cref="Referee.EvaluatorVersion"/> moves every run id, and this test says so where it happens.</para>
+    /// <c>backtest=3;metrics=1;scoring=1</c> (<c>U-evidence-evaluator-label</c>): a bump of
+    /// <see cref="Referee.EvaluatorVersion"/> moves every run id, and this test says so where it happens — re-pinned at
+    /// <c>U-backtest-parity</c>'s bump from <c>backtest=2</c>, whose two ids were <c>dec8536c5c80…</c> and
+    /// <c>a9286f8a7c32…</c>, both recomputed outside this build over the same string with only that line moved.</para>
     ///
     /// <para>The dataset's SHA-256 is in there as well as its id, which is the mutant this test was
     /// watched against: with the sha left out, a run over the bytes the ledger measured and a run over
@@ -172,13 +174,13 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
             new DateTimeOffset(2026, 8, 2, 0, 0, 0, TimeSpan.Zero));
 
         Assert.Equal("2026-08-01T00:00:00.0000000Z..2026-08-02T00:00:00.0000000Z", window.Window);
-        Assert.Equal("dec8536c5c800bf8ad6880e547da3aacadb5025e89b38192a29ca84f4fb92b59",
+        Assert.Equal("67dfaa29e95f54e367d5fb707bbb19cc93f5c17e017d1c993c13ec335bfae64a",
             window.RunIdFor("version-x"));
 
         // An open-ended window says `all` on the side that is open, and is its own run.
         var everything = window with { From = null, To = null };
         Assert.Equal("all..all", everything.Window);
-        Assert.Equal("a9286f8a7c32e28563a36d59ef3f1bd3c3c404d1ead560b2f41f54d8076ed4fa",
+        Assert.Equal("b7b57758811a721d3e37e6d923c08f5447ada5b956c6a263428c31758b69d5ad",
             everything.RunIdFor("version-x"));
     }
 

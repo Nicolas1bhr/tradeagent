@@ -124,7 +124,9 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < bars; i++)
         {
-            var close = 96m + i % 10;
+            // EACH LEVEL HELD THREE MINUTES (U-backtest-parity, ruling Q2): an order fills two minutes after the minute it
+            // was learnt on, at the level it was learnt at, so "profitable" and "losing" stay true by construction.
+            var close = 96m + i / 3 % 10;
             text.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }
@@ -707,7 +709,9 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
         var rows = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < 120; i++)
         {
-            var close = 96m + i % 10;
+            // EACH LEVEL HELD THREE MINUTES (U-backtest-parity, ruling Q2): an order fills two minutes after the minute it
+            // was learnt on, at the level it was learnt at, so "profitable" and "losing" stay true by construction.
+            var close = 96m + i / 3 % 10;
             rows.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }
