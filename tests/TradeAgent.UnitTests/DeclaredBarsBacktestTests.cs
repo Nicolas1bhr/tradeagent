@@ -15,8 +15,9 @@ namespace TradeAgent.Tests.Unit;
 ///
 /// <para><b>Two clocks.</b> <c>Backtest.Run</c> walks closed minutes. On every minute a signal waiting
 /// from the last decision fills at that minute's open and the stop and the target fire on that minute's
-/// range. Only when one of the program's own bars closes is the maximum hold taken and the evaluator
-/// asked, on that bar. So an hourly program's indicators, lookback, history, <c>max_hold_bars</c> and the
+/// range. Only when one of the program's own bars closes is the evaluator asked, on that bar; the maximum hold
+/// is asked on every minute, counted in its bars elapsed (<c>U-backtest-parity-2</c>, the section at the end). So an
+/// hourly program's indicators, lookback, history, <c>max_hold_bars</c> and the
 /// run cap count hours, its trace holds one line per hour plus its fills and exits, and a year is one
 /// run. A program that declares nothing is unchanged, line for line (<c>DeclaredBarsGrammarTests</c>'s
 /// guard (e) runs the golden vectors).</para>
