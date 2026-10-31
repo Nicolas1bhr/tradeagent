@@ -9,7 +9,7 @@ namespace TradeAgent.Core.Strategy;
 /// from, and the day.
 ///
 /// <para><b>The TAKER rate, because every fill the judge models takes liquidity.</b> A signal fills at
-/// the next bar's open — a market order — and protection fires through the book; nothing in a backtest
+/// a minute's open — a market order — and protection fires through the book; nothing in a backtest
 /// rests on it and earns the maker rate.</para>
 /// </summary>
 /// <param name="VenueId">The venue catalogue's id for the venue, e.g. <c>binance-spot</c>.</param>

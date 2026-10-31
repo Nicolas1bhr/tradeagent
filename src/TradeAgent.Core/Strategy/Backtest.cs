@@ -313,13 +313,20 @@ public sealed record BacktestRequest(
 /// kill switch; the only thing it writes is a measurement, and even that is the store's job and not
 /// this one's.</para>
 ///
-/// <para><b>Signals fill at the next bar's open. Protection fills where protection fires.</b> That is
-/// one rule with two halves and both are needed. A signal is computed from a bar's CLOSE, so the
-/// earliest thing it can be acted on is the next bar's open — filling at the close that produced it
-/// would be reading a price the decision had not been made at yet, and it is the single most common
-/// way a backtest flatters itself. A stop or a target is NOT a decision taken at a close: it is an
-/// order already resting at the venue, and it fires the moment the price is touched. Modelling
-/// protection as a next-open decision would hold a position through the whole bar that broke it.</para>
+/// <para><b>Every order fills on the minute paper fills it. Protection fills where protection fires.</b> That
+/// is one rule with two halves and both are needed. A signal is computed from a bar's CLOSE, so filling at
+/// the close that produced it would be reading a price the decision had not been made at yet — the single
+/// most common way a backtest flatters itself. And the next minute's open is not a price the app could
+/// have paid either (<c>U-backtest-parity</c>): the paper runner reads minute X after it has closed and
+/// places what it decided while X+1 is in progress, and the paper venue fills a market order only on a
+/// minute that OPENS after it was placed. So an order learnt at minute X — an entry, an exit, a
+/// <c>session_exit</c> or the maximum hold's close — fills at the open of the first minute opening at or
+/// after X+2. A backtest that filled sooner would measure every trade more optimistically than the paper
+/// run it promotes into. A stop or a target is NOT a decision taken at a close: it is an order resting at
+/// the venue, and it fires the moment the price is touched — once it IS resting: the runner places it on
+/// the pass after the entry's fill minute F, so it rests from F+2, and takes it off on the pass after an
+/// exit or the maximum hold is decided at X, so it rests no longer than X. A relative level (percent, ATR)
+/// rests at its declared distance from the price paid; a fixed one where it was declared.</para>
 ///
 /// <para><b>Conservative ordering, stated rather than assumed.</b> A bar whose low touched the stop
 /// and whose high touched the target counts as the STOP. Bars carry no intrabar ordering
@@ -330,18 +337,23 @@ public sealed record BacktestRequest(
 /// does not fill you at it.</para>
 ///
 /// <para><b>Protection is the backtest's bookkeeping and the evaluator emits nothing for it.</b> The
-/// stop, the target and the maximum holding time are checked here, on every bar from the one the
-/// entry filled on — the fill was at that bar's open, so the rest of its range happened after it —
-/// and they are checked BEFORE the evaluator is asked anything on that bar. So when protection has
-/// closed the position, the account the evaluator reads is flat and its own `max_hold_bars` branch
-/// cannot fire a second exit. That ordering is what makes the maximum holding time a promise: if the
-/// bar that reaches the limit is one the evaluator cannot evaluate — warming up, a value undefined,
-/// an interpreter fault — the position still closes.</para>
+/// stop, the target and the maximum holding time are checked here, BEFORE the evaluator is asked anything
+/// on a bar. So when the stop or the target has closed the position, the account the evaluator reads is
+/// flat; and on every bar whose books hold the position at or past the maximum hold, it reads FLAT with
+/// an order pending — the hold's market close is in flight, as the paper runner's <c>RunBooks.Flat</c>
+/// reads it — so its own `max_hold_bars` branch cannot fire a second exit and no entry is taken until that
+/// close has filled. That ordering is what makes the maximum holding time a promise: if the bar that
+/// reaches the limit is one the evaluator cannot evaluate — warming up, a value undefined, an interpreter
+/// fault — the close is still sent. An order the evaluator itself emitted is NOT reported pending: its own
+/// one-event hold covers the minute it is placed in, as the runner's replay does, and reporting it as well
+/// would keep that hold past the fill and swallow the entry the runner takes on an exit's fill minute.</para>
 ///
 /// <para><b>"A bar" above is two bars for a program that declares one</b> (`bars 1h`,
 /// <see cref="StrategyProgram.Bars"/>). Decisions are taken at the DECLARED bar's close and the maximum
 /// hold counts declared bars; the fill of a decision, the stop, the target and the conservative ordering
-/// stay on the MINUTE — the next minute's open, each minute's own range. An hourly bar whose range
+/// stay on the MINUTE — two minutes after the minute the decision was learnt on, each minute's own range.
+/// That minute is the declared bar's last, or — for a bar whose last minutes the data does not have — the
+/// first minute past it, which is when the runner learns the bar has closed. An hourly bar whose range
 /// touched both levels is not a stop if a minute inside it reached the target first and alone: the
 /// minutes carry that ordering, and an hour's range would throw it away. <see cref="Run"/> has the two
 /// clocks.</para>
@@ -387,11 +399,11 @@ public static class Backtest
     /// nothing is read from a clock, a file, the network or a random number, so the same inputs give the
     /// same trace on every machine and in a year.
     ///
-    /// <para><b>Two clocks.</b> The MINUTE clock is the market's: on every minute a signal waiting from
-    /// the last decision fills at that minute's open, and the stop and the target fire on that minute's
-    /// range — the rules of the type's summary, applied minute by minute exactly as they always were. The
+    /// <para><b>Two clocks.</b> The MINUTE clock is the market's: on every minute an order that is due by
+    /// then fills at that minute's open, and the stop and the target fire on that minute's range while they
+    /// rest — the rules of the type's summary, applied minute by minute. The
     /// DECLARED clock is the program's: only when one of its bars has closed (<see cref="BarResampler"/>)
-    /// is the maximum hold taken at that bar's close and the evaluator asked, on that bar — so its
+    /// is the maximum hold decided at that bar's close and the evaluator asked, on that bar — so its
     /// indicators, lookback, history and `max_hold_bars` count declared bars, and the trace has one line
     /// per evaluated bar plus a line for every fill, exit and refusal, never one per minute. A program that
     /// declares no `bars` is the case where the two clocks are one: its declared bar IS the minute, and
@@ -403,7 +415,11 @@ public static class Backtest
     ///
     /// <para><b>A run over history that ends inside a declared bar closes it, as a partial bar</b>: its
     /// remaining minutes happened and the data does not have them, which is what a missing minute is. A
-    /// signal from it has no open to fill at, and says so.</para>
+    /// signal from it is due after the last minute there is, and says so.</para>
+    ///
+    /// <para><b>An order due at a minute the window never reaches is no trade, in words</b>: the evaluator's
+    /// with the minute it was due; the maximum hold's close by leaving the position open at the end — in the
+    /// equity, outside net pnl — as paper would show it.</para>
     /// </summary>
     public static BacktestResult Run(
         StrategyProgram program,
@@ -504,8 +520,8 @@ public static class Backtest
                 }
 
                 // A DECLARED BAR WHOSE LAST MINUTES THE DATA DOES NOT HAVE HAS CLOSED BY NOW — this minute
-                // is past its end — and it is decided BEFORE this minute is applied: a signal from its close
-                // fills at this minute's open, the first price after it.
+                // is past its end — and it is decided BEFORE this minute is applied. This is the minute the
+                // runner learns of that close on, so an order from it is due two minutes on, like any other.
                 if (resampler.CloseBefore(minute.OpenTime) is { } passed)
                 {
                     if (!Decide(passed)) break;
@@ -576,8 +592,8 @@ public static class Backtest
             FeaturesReadAs = features?.ReadAs
         };
 
-        // THE MINUTE CLOCK: the signal waiting from the last decision fills, then protection fires, on this
-        // minute's own prices. False when the run halted on it.
+        // THE MINUTE CLOCK: an order due by this minute fills, then resting protection fires, on this minute's own
+        // prices. False when the run halted on it.
         bool OnMinute(KlineBar minute, bool opens)
         {
             try
@@ -671,7 +687,7 @@ public static class Backtest
             }
         }
 
-        // THE DECLARED CLOCK: one of the program's bars has closed. The maximum hold is taken at its close,
+        // THE DECLARED CLOCK: one of the program's bars has closed. The maximum hold is decided at its close,
         // then the evaluator is asked, on that bar. False when the run halted on it.
         bool Decide(KlineBar bar)
         {
