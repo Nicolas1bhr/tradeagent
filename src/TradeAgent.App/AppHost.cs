@@ -508,6 +508,11 @@ public sealed class AppHost : IAsyncDisposable
         var runtime = RuntimeObjectFor(role);
         if (runtime is null) return null;
 
+        // ITS HOME BEFORE ITS FIRST LAUNCH (U-home-on-hire item 1): a position hired and activated while the app runs — by its own hire's
+        // write, the owner's press or a board act alike — is built here, through the start-up pass's own body, before any conversation of
+        // it is handed out; a home the last prepare built is only looked up. One that cannot be built is refused in words at every look.
+        Agent?.EnsureHome(role, WorkspaceContext);
+
         // ONE CACHE, TWO CALLERS (U-org-autonomy item 4; the Codex review): the loop and the Chat page — which shows the chief's — both ask for
         // a role's conversation, so the read-or-open is one locked step and both are handed the same one.
         lock (_roleConversations)

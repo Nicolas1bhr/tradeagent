@@ -164,28 +164,49 @@ public static class WorkspaceBuilder
         AppFileManifest? appFiles = null, IEnumerable<string>? positions = null, Func<string, string?>? kindOf = null,
         Func<string, string?>? placeOf = null)
     {
-        var ws = root ?? Paths.Workspace;
         var homes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var r in CouncilRoles.All.Concat(positions ?? []).Distinct(StringComparer.Ordinal))
-        {
-            var home = HomeOf(ws, r);
-            try
-            {
-                homes[r] = Core.Board.BoardSeats.IsBoardId(r)
-                    ? BuildBoardHome(r, root, appFiles)
-                    : Build(ctx with { Role = r, Kind = kindOf?.Invoke(r), Place = placeOf?.Invoke(r) }, root, appFiles);
-                Unbuilt.TryRemove(Key(homes[r]), out _);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                Unbuilt[Key(home)] = $"TradeAgent did not start the position {r}: the last start could not rebuild its folder — {ex.Message} "
-                                     + "Nothing in the folder was deleted. This position stays refused until a start can rebuild its folder; "
-                                     + "every other position started.";
-                homes[r] = home;
-            }
-        }
+            homes[r] = BuildPosition(ctx, r, root, appFiles, kindOf, placeOf);
         return homes;
     }
+
+    /// <summary>
+    /// ONE POSITION'S HOME, THROUGH THE START-UP PASS'S OWN BODY (<see cref="BuildAll"/> builds each of its positions here): a board seat's
+    /// (<see cref="BuildBoardHome"/>) or a position's (<see cref="Build"/>, with its kind and place), its refusal cleared when it is built and
+    /// recorded in words when it cannot be (<see cref="RefusalFor"/>) — its home's path returned either way. <c>U-home-on-hire</c>: the
+    /// supervisor builds a position hired and activated while the app runs here, before its first launch, rather than at the next start.
+    /// </summary>
+    public static string BuildPosition(WorkspaceContext ctx, string position, string? root = null, AppFileManifest? appFiles = null,
+        Func<string, string?>? kindOf = null, Func<string, string?>? placeOf = null)
+    {
+        var home = HomeOf(root ?? Paths.Workspace, position);
+        try
+        {
+            var built = Core.Board.BoardSeats.IsBoardId(position)
+                ? BuildBoardHome(position, root, appFiles)
+                : Build(ctx with { Role = position, Kind = kindOf?.Invoke(position), Place = placeOf?.Invoke(position) }, root, appFiles);
+            Unbuilt.TryRemove(Key(built), out _);
+            return built;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Unbuilt[Key(home)] = $"TradeAgent did not start the position {position}: the last start could not rebuild its folder — {ex.Message} "
+                                 + "Nothing in the folder was deleted. This position stays refused until a start can rebuild its folder; "
+                                 + "every other position started.";
+            return home;
+        }
+    }
+
+    /// <summary>
+    /// RECORDS <paramref name="home"/> AS ONE ITS LAUNCHES ARE REFUSED IN, as a start that could not rebuild it does (<c>U-home-on-hire</c>
+    /// item 2): a launch's own hard line found it unbuilt or stale — a canon that is not the app's, one it could not put back — so every
+    /// later look (<see cref="RefusalFor"/>) refuses the position before admission, lasting, its wakes kept, until a start or the owner's
+    /// repair rebuilds the folder. That is the bound: such a refusal reaches an admitted launch at most once, never a launch after launch.
+    /// An earlier refusal's words stand. Returns the words the position is now refused in.
+    /// </summary>
+    public static string Refuse(string home, string position, string why) =>
+        Unbuilt.GetOrAdd(Key(home), _ => $"TradeAgent did not start the position {position}: {why}. Nothing in its folder was deleted. This "
+                                         + "position stays refused until a start or a repair of its folder rebuilds it; every other position runs.");
 
     /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S HOME (<c>U-board-b2</c> item 3): its own folder under <c>workspace/board/</c> — never under an org

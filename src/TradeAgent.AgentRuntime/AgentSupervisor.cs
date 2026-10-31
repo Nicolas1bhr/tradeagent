@@ -72,8 +72,47 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     /// is regenerated so it can never describe a stale world, and a role whose folder appears only
     /// once it is scheduled is a role whose first turn runs against a world nobody wrote down.
     /// </summary>
-    public IReadOnlyDictionary<string, string> Workspaces { get; private set; } =
-        new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> Workspaces
+    {
+        get { lock (_homes) return _workspaces; }
+        private set { lock (_homes) _workspaces = value; }
+    }
+
+    IReadOnlyDictionary<string, string> _workspaces = new Dictionary<string, string>();
+
+    /// <summary>Held while <see cref="Workspaces"/> is read, replaced, or grown by one position's build (<see cref="EnsureHome"/>).</summary>
+    readonly object _homes = new();
+
+    /// <summary>
+    /// A POSITION HIRED AND ACTIVATED WHILE THE APP RUNS GETS ITS HOME BEFORE ITS FIRST LAUNCH (<c>U-home-on-hire</c> item 1; R25 D3): the
+    /// home of <paramref name="position"/> as the last prepare — or an earlier call of this — built it; and where neither did and the chart
+    /// holds it active now, built here, through the start-up pass's own body (<see cref="WorkspaceBuilder.BuildPosition"/>: seat home, canon
+    /// and guide for each runtime it can run on, research library, context, its cell's in/out), with its kind and place from the same
+    /// register. ATOMIC: the home joins <see cref="Workspaces"/> only once that body has returned — built, or refused in words that every
+    /// launch of it then meets (<see cref="WorkspaceBuilder.RefusalFor"/>) — under the one lock the map is read and replaced under, so no
+    /// launch is ever handed a half-written home and two callers never build it twice. Once per position per prepare: a refused home is
+    /// rebuilt by the next start or the owner's repair, never by a launch after launch. Null before anything is prepared, and for a position
+    /// the chart does not hold active — a home is never built for a guess.
+    /// </summary>
+    public string? EnsureHome(string position, Func<WorkspaceContext> ctx)
+    {
+        lock (_homes)
+        {
+            if (_workspaces.TryGetValue(position, out var built)) return built;
+            if (_workspaces.Count == 0) return null;
+        }
+        // THE CHART AND THE CONTEXT ARE READ OUTSIDE THE LOCK (each takes locks of its own); the build and the map's growth inside it.
+        if (!Positions().Contains(position, StringComparer.Ordinal)) return null;
+        var context = ctx();
+        var register = seats ?? PositionActivation.Seats;
+        lock (_homes)
+        {
+            if (_workspaces.TryGetValue(position, out var built)) return built;
+            var home = WorkspaceBuilder.BuildPosition(context, position, kindOf: register.KindOf, placeOf: register.PlaceOf);
+            _workspaces = new Dictionary<string, string>(_workspaces, StringComparer.Ordinal) { [position] = home };
+            return home;
+        }
+    }
 
     /// <summary>
     /// The version probe's deadline for every runtime this supervisor prepares. The product never
