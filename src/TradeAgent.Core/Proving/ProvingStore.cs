@@ -91,9 +91,10 @@ public sealed class ProvingStore : IDisposable
             Exec("CREATE TABLE IF NOT EXISTS proving_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)", tx);
             var mark = Scalar($"SELECT value FROM proving_meta WHERE key='{HomeMark.Key}'", tx) as string;
             var version = Scalar("SELECT value FROM proving_meta WHERE key='schema'", tx) as string;
-            var have = version is null ? 0 : int.Parse(version, CultureInfo.InvariantCulture);
-            if (have > Schema)
-                throw new InvalidOperationException($"the proving store at {File} is layout version {have}, and this build reads version {Schema}. Nothing was read or written.");
+            // EXACTLY THIS BUILD'S LAYOUT, OR NONE YET: any other stamp — newer, older, negative, not a number — is refused, never guessed.
+            var have = version is null ? 0
+                : version == Schema.ToString(CultureInfo.InvariantCulture) ? Schema
+                : throw new InvalidOperationException($"the proving store at {File} is stamped layout '{version}', and this build reads version {Schema} only. Nothing was read or written.");
             if (mark is not null && mark != HomeMark.Word(HomeKind.Proving))
                 throw new InvalidOperationException($"the proving store at {File} is marked '{mark}', and a proving store is a proving home's only. Nothing was read or written.");
             if (mark is null)

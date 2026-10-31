@@ -293,11 +293,39 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
         Assert.Null(none);
         Assert.Contains("founding chart's positions only", why, StringComparison.Ordinal);
 
+        // A CHART OF SEATS THAT LEAVES A FOUNDING POSITION OFF (review P2): the kernel would still wake it, so it is refused.
+        var alone = Configuration("alone", "seats", script: AgentScript());
+        ((JsonArray)alone["chart"]!["positions"]!).RemoveAt(1);
+        (none, why) = ProvingConfiguration.Parse(alone.ToJsonString());
+        Assert.Null(none);
+        Assert.Contains("leaves position 'operations' off its chart", why, StringComparison.Ordinal);
+
         var extra = Configuration("x", "floor");
         extra["temperature"] = 1;
         (none, why) = ProvingConfiguration.Parse(extra.ToJsonString());
         Assert.Null(none);
         Assert.Contains("'temperature'", why, StringComparison.Ordinal);
+    }
+
+    /// <summary>A proving store stamped with any layout but this build's — older, negative, not a number — is refused, never rewritten (review P2).</summary>
+    [Fact]
+    public void A_proving_store_of_another_layout_is_refused()
+    {
+        using var scratch = TestEnv.NewScratch("proving-store");
+        Directory.CreateDirectory(scratch.Dir);
+        foreach (var stamp in new[] { "-1", "0", "2", "one" })
+        {
+            var file = Path.Combine(scratch.Dir, $"stamp-{stamp}.db");
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = $"CREATE TABLE proving_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO proving_meta VALUES('schema', '{stamp}')";
+                cmd.ExecuteNonQuery();
+            }
+            var refused = Assert.Throws<InvalidOperationException>(() => new ProvingStore(file));
+            Assert.Contains($"stamped layout '{stamp}'", refused.Message, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>

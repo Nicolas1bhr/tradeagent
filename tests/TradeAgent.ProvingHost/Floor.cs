@@ -24,6 +24,9 @@ static class Floor
     /// <summary>Returns true when the deadline stopped the floor.</summary>
     public static async Task<bool> Run(GatewayPipeServer server, Database db, DateTimeOffset deadline, List<string> log)
     {
+        // THE DEADLINE STOPS A RUN IN FLIGHT: the handlers are asked under a CancellationToken that fires at it, and a run the app stopped is neither
+        // recorded nor charged nor answered (Backtests.Run).
+        using var expiry = new CancellationTokenSource(deadline - DateTimeOffset.UtcNow is var left && left > TimeSpan.Zero ? left : TimeSpan.Zero);
         var datasets = new DatasetStore(db);
         var campaigns = new CampaignStore(db).All().Where(c => c.IsOpen).OrderBy(c => c.HoldoutDatasetId).ToList();
         var folder = Path.Combine(Paths.RoleHome(Role), "strategies");
@@ -45,7 +48,8 @@ static class Floor
                 await File.WriteAllTextAsync(Path.Combine(folder, name), program.Text);
                 var answer = await server.CallAsync(Frame(Ops.Backtest, ("strategy", "strategies/" + name), ("dataset", set.Id),
                     ("from", (set.FirstBar ?? campaign.HoldoutFrom).ToString("O", CultureInfo.InvariantCulture)),
-                    ("to", to.ToString("O", CultureInfo.InvariantCulture))), Role, null);
+                    ("to", to.ToString("O", CultureInfo.InvariantCulture))), Role, null, expiry.Token);
+                if (expiry.IsCancellationRequested) { log.Add("deadline reached during a research run; it was stopped, unrecorded"); return true; }
                 if (!answer.Ok)
                 {
                     if (answer.Error?.Code == nameof(ErrorCode.CAMPAIGN_BUDGET_REACHED))
@@ -65,7 +69,8 @@ static class Floor
             foreach (var (program, version, net) in results.Where(r => r.Net > 0m).OrderByDescending(r => r.Net).ThenBy(r => r.Program.Ordinal))
             {
                 if (DateTimeOffset.UtcNow >= deadline) { log.Add("deadline reached in judging"); return true; }
-                var answer = await server.CallAsync(Frame(Ops.Verdict, ("version", version), ("dataset", set.Id)), Role, null);
+                var answer = await server.CallAsync(Frame(Ops.Verdict, ("version", version), ("dataset", set.Id)), Role, null, expiry.Token);
+                if (expiry.IsCancellationRequested) { log.Add("deadline reached during a verdict; it was stopped"); return true; }
                 if (!answer.Ok)
                 {
                     if (answer.Error?.Code == nameof(ErrorCode.CAMPAIGN_BUDGET_REACHED))

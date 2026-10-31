@@ -175,6 +175,12 @@ public sealed record ProvingConfiguration(
             if (!Units.Contains(position.Unit, StringComparer.Ordinal))
                 return $"{from}'s position '{position.Id}' sits in unit '{position.Unit}', which the chart's units do not name.";
         }
+        // EVERY FOUNDING POSITION IS SEATED: one left off the template would still be on the chart and woken by the kernel's own records
+        // (a promotion's boundary wakes the chair), adding a seat and spend the configuration never named.
+        foreach (var founding in FoundingPositions.Keys)
+            if (!Positions.Any(p => p.Id == founding))
+                return $"{from} leaves position '{founding}' off its chart, and every founding position is on every home's chart, woken by the "
+                       + "kernel's own records whatever a template says: a chart of seats seats each of them, with its script. Nothing was applied.";
         return null;
     }
 

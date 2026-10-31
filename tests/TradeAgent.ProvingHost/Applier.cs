@@ -107,6 +107,14 @@ static class Applier
         await host.Agent.StartAsync();
         if (!host.Agent.Running) throw new InvalidOperationException("the puppet runtime did not start");
         _ = host.Conversation;
+        // THE ENVELOPE IS ONE ALLOWANCE FOR THE WHOLE RUN (BUDGET-001): the meter's envelope is a day's, so a configuration never works
+        // past the day's reset, where it would be handed a second one — it stops there, whatever its deadline.
+        var reset = host.Meter!.TodayFor(config.Positions[0].Id).ResumesAt;
+        if (reset > DateTimeOffset.UtcNow && reset < deadline)
+        {
+            log.Add($"the deadline is cut to the meter's day reset at {reset:O}: one envelope per run");
+            deadline = reset;
+        }
         host.Mission.Start();
 
         // THE BRIEF GOES TO THE TEMPLATE'S FIRST POSITION — one wake; every later turn of every position is woken by the kernel's own
