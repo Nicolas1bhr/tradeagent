@@ -197,6 +197,16 @@ public static class OrgEventKind
     public const string Review = "review";
 
     /// <summary>
+    /// AN OCCUPANT RETIRED AND A NEW ONE SEATED IN THE SAME POSITION (<c>U-worker-replace</c>; ORGANISATION § 8, "replacing a worker"):
+    /// written by <see cref="OrgStore.OccupantSweep"/> (decider <see cref="OrgDecider.App"/>, an app rule's measurement) or
+    /// <see cref="OrgStore.ReplaceOccupant"/> (decider <see cref="OrgDecider.Owner"/>, his press) and by nothing else. Its detail is the
+    /// app's — the position, the occupant retired and the one seated, the rule and its measurement — ending with the commit mark of the
+    /// last launch recorded before it, which divides the predecessor's launches from the new occupant's. The position, its seat, its
+    /// mandates, its spend, its reservations and its unit's trial and verdict counts are untouched: restructuring resets nothing.
+    /// </summary>
+    public const string OccupantReplaced = "occupant-replaced";
+
+    /// <summary>
     /// THE STRUCTURAL CHANGES THE WEEKLY THROTTLE COUNTS (ORGANISATION § 3: "at most two structural changes a week"; survey Q4): a
     /// charter, a close, a merge — decided by a position, never the app's or the owner's. A hire or a retirement is bounded by span and
     /// positions instead.
