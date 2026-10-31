@@ -129,8 +129,18 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// decimal's own scale. A trace that faulted on a decimal under 1 (<c>divided 1026.70 by zero</c>) is
     /// not the trace the same request produces under 2 (<c>divided 1026.7 by zero</c>), so what the backtest
     /// outputs moved and every verdict taken under 1 is withdrawn with it.</para>
+    ///
+    /// <para><b>backtest=3</b> (<c>U-backtest-parity</c>): every order fills on the minute paper fills it — an order learnt
+    /// at minute X at the open of the first minute opening at or after X+2, where 2 filled it at X+1's open (a declared bar
+    /// decided past its missing minutes at X's own); protection rests from the entry's fill minute plus two and comes off
+    /// at X+1 once an exit is decided at X, where 2 let it fire from the fill minute itself; a relative stop or target is
+    /// measured from the fill, where 2 measured it from the signal's close; and the maximum hold is a market close filled
+    /// the same way, the evaluator reading FLAT with that close pending while it is in flight, where 2 closed it at X's own
+    /// close and handed the evaluator an account with nothing pending — so an entry on that bar was counted that paper
+    /// never makes. Every one of those moves a trade toward what the paper run it promotes into does, and every verdict
+    /// taken under 2 is withdrawn with it, by design: a figure 2 measured is more optimistic than paper.</para>
     /// </summary>
-    public const string EvaluatorVersion = "backtest=2;metrics=1;scoring=1";
+    public const string EvaluatorVersion = "backtest=3;metrics=1;scoring=1";
 
     /// <summary>An id as it is printed for a person. The same twelve characters everything else uses.</summary>
     static string Short(string id) => id.Length <= 12 ? id : id[..12];

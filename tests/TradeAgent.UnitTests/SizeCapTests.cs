@@ -249,7 +249,7 @@ public class SizeCapTests(ITestOutputHelper log)
     /// (b) A TIGHT STOP FILLS CAPPED AND IS NO TRADE UNCAPPED — one backtest over a fixture whose ATR shrinks.
     ///
     /// <para>Four bars four units wide put atr(3) at 4; the fifth rises and signals with a stop 4 below, a risk size of
-    /// <c>10,000 * 0.01 / 4 = 25</c> — a quarter of the capital — and both programs fill 25 at the next open: the cap
+    /// <c>10,000 * 0.01 / 4 = 25</c> — a quarter of the capital — and both programs fill 25 two minutes on: the cap
     /// (<c>10,000 * 0.5 / 100.1</c>, about 49.95) is the larger and changes nothing. The maximum hold closes it flat, and
     /// nine bars a tenth of a unit wide shrink the ATR to about 0.2 before the next rise signals: a risk size of about
     /// 496, near fifty thousand of notional. Without the clause the declared capital cannot pay for it; with it the entry
@@ -271,11 +271,15 @@ public class SizeCapTests(ITestOutputHelper log)
         var bars = Rows(
             wide, wide, wide, wide,                     // 0-3: atr(3) 4, nothing rises
             [100m, 102.1m, 98.1m, 100.1m],              // 4: rises with atr(3) still 4 — the first entry signals
-            narrow,                                     // 5: both fill 25 at 100.1
-            narrow,                                     // 6: held one bar — the maximum hold closes it at 100.1, flat
-            narrow, narrow, narrow, narrow, narrow, narrow,   // 7-12: the ATR shrinks toward 0.25
+            narrow,                                     // 5: placed
+            narrow,                                     // 6: both fill 25 at 100.1
+            narrow,                                     // 7: held one bar — the maximum hold sends its close
+            narrow,                                     // 8: placed
+            narrow,                                     // 9: the close fills at 100.1, flat
+            narrow, narrow, narrow,                     // 10-12: the ATR shrinks toward 0.25
             [100.1m, 100.2m, 100.1m, 100.15m],          // 13: rises with atr(3) about 0.2 — the second entry signals
-            [100.15m, 100.2m, 100.1m, 100.15m]);        // 14: the capped one fills here; the uncapped one cannot pay
+            [100.15m, 100.2m, 100.1m, 100.15m],         // 14: placed
+            [100.15m, 100.2m, 100.1m, 100.15m]);        // 15: the capped one fills here; the uncapped one cannot pay
 
         var model = ExecutionModel.Declare(0m, 0m, 0.001m, 10_000m).Model!;
         BacktestResult Run(string text)
@@ -318,7 +322,7 @@ public class SizeCapTests(ITestOutputHelper log)
         Assert.Equal(2, fills.Count);
         Assert.Equal(49.925m, fills[1].Quantity);
         Assert.Equal(100.15m, fills[1].Price);
-        Assert.Equal(15L, fills[1].Ordinal);
+        Assert.Equal(16L, fills[1].Ordinal);
     }
 
     // ---------------------------------------------------------------- item 3: the words
@@ -353,7 +357,8 @@ public class SizeCapTests(ITestOutputHelper log)
     /// unit under a close of 100 asks for 200 units, twice the 10,000 of capital, so the cap decides the size:
     /// <c>max_capital_fraction 1</c> is 100 units, which cost 10,012 at an open equal to the close — the declared capital
     /// cannot pay — and fill only at an open about 0.12 % below it; <c>0.95</c> is 95 units, which fill at an open equal to
-    /// the close and at one 5 % above it.
+    /// the close and at one 5 % above it. The open is the one two minutes after the signal: the minute between is the one
+    /// the order is placed in.
     /// </summary>
     [Theory]
     [InlineData("1", "100", false)]
@@ -373,7 +378,7 @@ public class SizeCapTests(ITestOutputHelper log)
             exit when close < 1
             entry when close > 99.95
             """);
-        var bars = Rows([100m, 100.05m, 99.95m, 100m], [o, o + 0.05m, o - 0.05m, o]);
+        var bars = Rows([100m, 100.05m, 99.95m, 100m], [100m, 100.05m, 99.95m, 100m], [o, o + 0.05m, o - 0.05m, o]);
         var model = ExecutionModel.Declare(0.001m, VenueCostModel.SlippageRate, 0.001m, 10_000m).Model!;
 
         var run = Backtest.Run(program, new BacktestRequest(7, "sha-of-the-normalised-file", model), bars);
@@ -425,7 +430,7 @@ public class SizeCapTests(ITestOutputHelper log)
     /// per cent of equity over two ATRs asks for more than all of it: the breakout's text before this unit
     /// (<c>DayOnePrograms.BreakoutV1</c>) answers "the declared capital cannot pay" on every signal and never trades, and the
     /// shipped file — <c>max_capital_fraction 0.95</c> — signals <c>0.95 * cash / close</c> and fills it rounded DOWN, at the
-    /// next open, under the venue cost model's fee and slippage.
+    /// open two minutes on, under the venue cost model's fee and slippage.
     /// </summary>
     [Fact]
     public void The_shipped_breakout_is_funded_at_its_cap()
@@ -452,20 +457,23 @@ public class SizeCapTests(ITestOutputHelper log)
             return result;
         }
 
-        // THE V1 TEXT: every signal is a no-trade the declared capital cannot pay for.
+        // THE V1 TEXT: every signal that reaches an open is a no-trade the declared capital cannot pay for; the last, due two
+        // minutes after the window's last minute but one, is the no-trade of an order the window never reached.
         var before = Run(v1);
         Assert.Empty(before.Trace.Of(BacktestEventKind.Fill));
         var refused = before.Trace.Of(BacktestEventKind.NoTrade).ToList();
-        Assert.NotEmpty(refused);
-        Assert.All(refused, r => Assert.Contains("the declared capital cannot pay for this fill", r.Reason, StringComparison.Ordinal));
+        Assert.True(refused.Count >= 2, $"{refused.Count} no-trade(s)");
+        Assert.All(refused.SkipLast(1),
+            r => Assert.Contains("the declared capital cannot pay for this fill", r.Reason, StringComparison.Ordinal));
+        Assert.StartsWith("the run's window ended before", refused[^1].Reason, StringComparison.Ordinal);
 
-        // THE SHIPPED FILE: 0.95 of the cash at the signal's close, filled rounded down at the next open.
+        // THE SHIPPED FILE: 0.95 of the cash at the signal's close, filled rounded down two minutes on.
         var after = Run(shipped);
         var signal = after.Trace.Of(BacktestEventKind.Signal).First();
         Assert.Equal(61L, signal.Ordinal);
         Assert.Equal(10_000m * 0.95m / 100.3m, signal.Quantity);
         var fill = Assert.Single(after.Trace.Of(BacktestEventKind.Fill));
-        Assert.Equal(62L, fill.Ordinal);
+        Assert.Equal(63L, fill.Ordinal);
         Assert.Equal(model.RoundDown(10_000m * 0.95m / 100.3m), fill.Quantity);
         Assert.Equal(94.715m, fill.Quantity);
         Assert.Equal(model.Buy(100.3m), fill.Price);

@@ -120,7 +120,7 @@ public class CostModelPinTests(ITestOutputHelper log)
         new VenueStore(db).Sync(VenueCatalog.Read(path));
     }
 
-    /// <summary>120 one-minute bars on disk, cycling from <paramref name="basePrice"/> in ten steps.</summary>
+    /// <summary>120 one-minute bars on disk, cycling from <paramref name="basePrice"/> in ten steps of three minutes each.</summary>
     internal static DatasetRecord Dataset(TradingGateway gw, string? venue, string? symbol, decimal basePrice,
         decimal step, int bars = 120)
     {
@@ -133,7 +133,9 @@ public class CostModelPinTests(ITestOutputHelper log)
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < bars; i++)
         {
-            var close = basePrice + step * (i % 10);
+            // EACH LEVEL HELD THREE MINUTES (U-backtest-parity, ruling Q2): an order fills two minutes after the minute it
+            // was learnt on, at the level it was learnt at, so "profitable" and "losing" stay true by construction.
+            var close = basePrice + step * (i / 3 % 10);
             text.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + step / 5},{close - step / 5},{close},1.00\n");
         }

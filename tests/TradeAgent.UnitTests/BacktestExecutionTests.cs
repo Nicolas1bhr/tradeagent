@@ -62,41 +62,6 @@ public class BacktestExecutionTests(ITestOutputHelper log)
         """);
 
     /// <summary>
-    /// A SIGNAL FILLS AT THE NEXT BAR'S OPEN, NOT AT THE CLOSE THAT PRODUCED IT.
-    ///
-    /// <para>The fixture makes the difference impossible to miss: the signal bar closes at 101 and the
-    /// next bar opens at 200. A fill at the signal's own close would be 101.</para>
-    /// </summary>
-    [Fact]
-    public void A_signal_fills_at_the_next_bars_open_and_never_at_the_close_that_produced_it()
-    {
-        var result = RunOn(EnterAbove100(), Bars(
-            [100m, 102m, 99m, 101m],        // bar 1: close 101 > 100 — the entry signal
-            [200m, 205m, 195m, 201m],       // bar 2: it fills HERE, at 200
-            [201m, 202m, 88m, 89m],         // bar 3: close 89 < 90 — the exit signal
-            [300m, 305m, 295m, 299m]));     // bar 4: it fills HERE, at 300
-
-        var trade = Assert.Single(result.Trades);
-        Assert.Equal(200m, trade.EntryPrice);
-        Assert.Equal(300m, trade.ExitPrice);
-        Assert.Equal(2m, trade.Quantity);
-        Assert.Equal(ExitReason.Rule, trade.Reason);
-        Assert.Equal(200m, trade.Pnl);                       // (300 - 200) * 2
-        Assert.Equal(Start.AddMinutes(1), trade.EntryBar);   // the bar it filled on, not the one it was decided on
-        Assert.Equal(Start.AddMinutes(3), trade.ExitBar);
-
-        // The trace says the same thing, and it is where every figure about this run comes from.
-        var fill = Assert.Single(result.Trace.Of(BacktestEventKind.Fill));
-        Assert.Equal(2L, fill.Ordinal);
-        Assert.Equal(200m, fill.Price);
-
-        // The intent was stamped with the bar it was DECIDED on, one bar earlier.
-        var signal = result.Trace.Of(BacktestEventKind.Signal).First();
-        Assert.Equal(1L, signal.Ordinal);
-        Assert.Equal(BacktestOutcome.COMPLETED, result.Outcome);
-    }
-
-    /// <summary>
     /// A BAR THAT TOUCHED BOTH THE STOP AND THE TARGET COUNTS AS THE STOP.
     ///
     /// <para>Bar 2 opens at 110, runs down to 95 and up to 125; the stop is at 99 and the target at
@@ -118,7 +83,10 @@ public class BacktestExecutionTests(ITestOutputHelper log)
 
         var result = RunOn(program, Bars(
             [100m, 111m, 99m, 110m],        // close 110 > 100: enter. stop 99, target 121
-            [110m, 125m, 95m, 110m],        // the fill at 110, then BOTH are touched on this bar
+            [110m, 110m, 110m, 110m],       // the entry is placed
+            [110m, 111m, 109m, 110m],       // the fill at 110: the levels, measured from it, are 99 and 121
+            [110m, 111m, 109m, 110m],       // protection is placed
+            [110m, 125m, 95m, 110m],        // resting, BOTH are touched on this bar
             [50m, 51m, 49m, 50m]));         // nothing fires here
 
         var trade = Assert.Single(result.Trades);
@@ -146,8 +114,10 @@ public class BacktestExecutionTests(ITestOutputHelper log)
 
         var result = RunOn(program, Bars(
             [100m, 111m, 99m, 110m],        // enter; stop at 99
+            [110m, 111m, 109m, 110m],       // the entry is placed
             [110m, 111m, 109m, 110m],       // the fill at 110, nothing touched
-            [80m, 81m, 75m, 78m],           // opens at 80, straight through the stop
+            [110m, 111m, 109m, 110m],       // the stop is placed
+            [80m, 81m, 75m, 78m],           // resting: opens at 80, straight through the stop
             [78m, 79m, 77m, 78m]));
 
         var trade = Assert.Single(result.Trades);
@@ -169,8 +139,10 @@ public class BacktestExecutionTests(ITestOutputHelper log)
     {
         var result = RunOn(EnterAbove100(), Bars(
             [100m, 102m, 99m, 101m],
+            [101m, 102m, 100m, 101m],       // the entry is placed
             [100m, 105m, 95m, 101m],        // the entry fills at 100 * 1.0005
             [101m, 102m, 88m, 89m],
+            [89m, 90m, 88m, 89m],           // the exit is placed
             [120m, 125m, 115m, 119m]),      // the exit fills at 120 * 0.9995
             Model(fees: 0.001m, slippage: 0.0005m));
 
@@ -226,9 +198,10 @@ public class BacktestExecutionTests(ITestOutputHelper log)
     /// <summary>
     /// THE MAXIMUM HOLDING TIME IS THE BACKTEST'S PROTECTION, AND THE EVALUATOR EMITS NOTHING FOR IT.
     ///
-    /// <para>It is checked before the evaluator is asked anything on that bar, so the account the
-    /// evaluator reads is already flat and its own <c>max_hold_bars</c> branch cannot fire a second
-    /// exit. One intent came out of this whole run — the entry — and the exit is protection's.</para>
+    /// <para>It is checked before the evaluator is asked anything on that bar, and from then until its market close
+    /// fills the account the evaluator reads is FLAT with that close pending, so its own <c>max_hold_bars</c> branch
+    /// cannot fire a second exit and no entry is taken while the close is in flight. One intent came out of this whole
+    /// run — the entry — and the exit is protection's.</para>
     ///
     /// <para>That ordering is what makes the declared maximum a promise: on a bar the evaluator cannot
     /// evaluate at all — warming up, a value undefined, an interpreter fault — the position still
@@ -247,9 +220,12 @@ public class BacktestExecutionTests(ITestOutputHelper log)
 
         var result = RunOn(program, Bars(
             [100m, 111m, 99m, 110m],        // enter
+            [110m, 111m, 109m, 110m],       // the entry is placed
             [110m, 111m, 109m, 110m],       // fills at 110; held 0
             [111m, 113m, 110m, 112m],       // held 1 — under the limit
-            [113m, 116m, 98m, 99m]));       // held 2 — protection closes at this bar's CLOSE, 99
+            [113m, 116m, 98m, 99m],         // held 2 — protection sends a market close at this bar's close
+            [99m, 100m, 98m, 99m],          // the close is placed; the books still hold the position
+            [99m, 99m, 97m, 98m]));         // and it fills at this minute's OPEN, 99 — never at a close
 
         var trade = Assert.Single(result.Trades);
         Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
@@ -278,7 +254,7 @@ public class BacktestExecutionTests(ITestOutputHelper log)
         Assert.Empty(result.Trades);
         Assert.Equal(1, result.Counters.Intents);
         var refused = Assert.Single(result.Trace.Of(BacktestEventKind.NoTrade));
-        Assert.Contains("window ended before the next bar", refused.Reason);
+        Assert.Contains($"window ended before {Start.AddMinutes(2):O}", refused.Reason);
     }
 
     /// <summary>
@@ -294,8 +270,8 @@ public class BacktestExecutionTests(ITestOutputHelper log)
     {
         var result = RunOn(EnterAbove100(), Bars(
             [100m, 102m, 99m, 101m],
-            [100m, 105m, 95m, 101m],
-            [101m, 102m, 100m, 101m]),
+            [101m, 102m, 100m, 101m],       // the entry is placed
+            [100m, 105m, 95m, 101m]),       // it would fill at this open, 100: two at 100 is 200
             Model(capital: 100m));
 
         Assert.Empty(result.Trades);
@@ -385,7 +361,9 @@ public class BacktestExecutionTests(ITestOutputHelper log)
         Assert.Equal((Start.AddMinutes(2), 210m), (trade.EntryBar, trade.EntryPrice));
         Assert.Equal((Start.AddMinutes(5), 320m), (trade.ExitBar, trade.ExitPrice));
         Assert.Equal(ExitReason.Rule, trade.Reason);
-        Assert.Equal(220m, trade.Pnl);                       // (320 - 210) * 2
+        Assert.Equal(2m, trade.Quantity);
+        Assert.Equal(220m, trade.Pnl);                       // (320 - 210) * 2; at the signal's own close it would be 101
+        Assert.Equal(BacktestOutcome.COMPLETED, result.Outcome);
 
         var fill = Assert.Single(result.Trace.Of(BacktestEventKind.Fill));
         Assert.Equal((3L, Start.AddMinutes(2), 210m), (fill.Ordinal, fill.Bar, fill.Price!.Value));

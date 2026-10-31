@@ -27,7 +27,7 @@ namespace TradeAgent.Tests.Unit;
 /// figure every <c>strategy_run</c> row records), the SHA-256 of the metrics and the closed trades as
 /// <see cref="MetricsText"/> spells them, and the answers of <see cref="ScoringPolicyV1"/> and
 /// <see cref="PaperPolicyV1"/> over that run — the backtest, the metrics and the scoring, the three
-/// parts of <c>backtest=2;metrics=1;scoring=1</c>.</para>
+/// parts of <c>backtest=3;metrics=1;scoring=1</c>.</para>
 ///
 /// <para><b>What every vector declares.</b> Its program, the series it runs over, and all four numbers of
 /// its execution model. Nothing is left to a default — a research default or a venue fee edited elsewhere
@@ -49,6 +49,13 @@ namespace TradeAgent.Tests.Unit;
 /// decimal's own scale — <c>1026,70</c> on a Belgian machine, <c>1026.70</c> on CI — and that change in
 /// what the backtest outputs is what moved the number to 2. The fifteen vectors that do not fault on a
 /// decimal kept every pin they had.</para>
+///
+/// <para><b>Re-pinned under <c>backtest=3</c></b> (<c>U-backtest-parity</c>): every order now fills on the minute paper
+/// fills it (two minutes after the minute it was learnt on), protection rests from two minutes after the entry's fill,
+/// relative levels are measured from the fill and the maximum hold is a market close in flight. Thirteen vectors moved —
+/// every one whose run reached an order's fill: all but <c>size-rounds-to-nothing</c>, <c>operation-budget-fault</c> and
+/// the two <c>-fault</c> vectors, which never fill anything — and <c>history-arithmetic-stop-and-target</c> went from
+/// Met / MetOnHistory to NotProfitable on both policies: under 2 its edge was the minute paper never trades on.</para>
 /// </summary>
 public class EvaluationGoldenVectorTests(ITestOutputHelper log)
 {
@@ -58,7 +65,7 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
     /// on its first check; re-pinning means computing the vectors again under the new numbers and writing
     /// both numbers and every pin here, in the commit that moved them.
     /// </summary>
-    const string PinnedEvaluator = "backtest=2;metrics=1;scoring=1";
+    const string PinnedEvaluator = "backtest=3;metrics=1;scoring=1";
 
     /// <inheritdoc cref="PinnedEvaluator"/>
     const string PinnedManifest = "language=1;indicators=1;calendar=1";
@@ -327,36 +334,36 @@ public class EvaluationGoldenVectorTests(ITestOutputHelper log)
     /// </summary>
     static readonly Pin[] Pins =
     [
-        new("sma-crossover-percent-stop", "f315ac0227e4d491834f68e4e85b14f66cb0f9e72753fee63d9badf1e524c419",
-            "8a1344b4762675b3ac4a0660c7553cbfa84feb14a343f38a04f5ad8878831301", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("ema-trend-capital-fraction-target", "9d3cd3ff0a11d170ab769fb084f8d0649fcaba1631783749bc9c6575e2eef9c0",
-            "e1472d1ed91a21dbfcba3b39c5bf7e4f502346a3e0568055913d492b140a8007", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("rsi-reversion-max-hold", "163b2dc4872dc5ca6dc4b99be91c6e79b5183151b77ffd219b9b0730563ead99",
-            "76e6550669e99a6b04c97de14955cb0f734f50f006e9311d8bc20b9a1df19966", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
-        new("channel-breakout-atr-stop-risk", "04e7be95be4e4b31fede60d73b40c331eef58fcb47a76f7dd68a07cb29277d32",
-            "797f13c124b80ced49c395c2a4abca4a7066af93aa1b9bd19bff704c9fd36850", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("atr-volume-filter-fixed-levels", "68872f26000ae889189e592b287443af407893a5bd408ec3e493e845b2da3b13",
-            "71df6f8230b0a58e8c09a6659c8b174228cafea5f58de8a16ce22060345bdffc", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("history-arithmetic-stop-and-target", "9026cd3eb61218853ab4bd3f94b39e6fd95be4cc31a13e8135938ca5951f8c38",
-            "4e1191431b682e4b1486669be24af65925eedff4bb1ccca121c32cf5ad7df248", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("long-warm-up-max-hold", "b69e25f3af2a94f6fad9fb9935cbf78287d22875a867f831dd27e9900d356b5c",
-            "474ec10fd95beb6cb2ae3fb9419522a3bddfdccfd5b5b4f7acb2e4fdd71aff2a", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
-        new("ordered-rules-stop-beats-target", "0ef6c89d385363da9f80d4aff99c45855481cb7f980112cf9c91c7b97de841bf",
-            "1bffe317ebfae5be5e1e7ac4569bb8ac7bc4a79c94851909c352a316cb90327a", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("sma-crossover-percent-stop", "3715a818042420b56c760af3918ff1b43c26e4e4199ec46b683e9ec107ea3b42",
+            "0f2ab9bd6f428e337efb056f74af10f8fb9b12dd0e02db611e35e93b8d0d5578", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("ema-trend-capital-fraction-target", "63ce8366f78f63f5f0ded2b538ecce44c7359cf2fb106294dbd4f96778eba7f8",
+            "1220ded8614f052ffc3ad5b1040c11b4749c3f34e861435a549e8c2e35c690d5", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("rsi-reversion-max-hold", "d3db218fb5ac899bae3f43fad6e0e886076dd095a6c0ef822902dc63d10dab2a",
+            "31005084a3d79bd00b2c8f748c76a7332dcad70bf16fd3c07519dfa85757c28e", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("channel-breakout-atr-stop-risk", "e43bf3cd300dd56123ee2461f1a88511664daea6143c28a9ac464152391783b5",
+            "f5db6444d9d504b855199d5bd5e9f1fee6e33b067046536e945e3b3706b48bd8", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("atr-volume-filter-fixed-levels", "a9b1fa9cd7eaf000c03acfd75100417fb1829cfa768cba34c73eae59104a8c5d",
+            "ec7ab078b23d8737cc74844e5743bb00b973cfab08bcffa6116b0d814ad3bdfe", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("history-arithmetic-stop-and-target", "a60e2d8942f24187e1bc84a291cd64b4666830aaff25b28caed8592ad536709a",
+            "d4197ce971802812b7c442cb1c34bdcaf1e0eb5fddfdaece00dce86297272511", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("long-warm-up-max-hold", "353e69380c330db71ac2030df1e3613a2cb6792f48068e466bfe8c4e23854406",
+            "746c4e504cb4a1e5e4516e5cdf4a669cc5654865aaff819c9d937c29a9df1f11", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("ordered-rules-stop-beats-target", "0bd5d4047c0b004b668ee06e84274e9919d25b984056805654f9605bd3d88fb8",
+            "e545920b0709c95ee4f4860d74016fd50b14fd866ff45d55dc085e82b2d3a39c", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
         new("size-rounds-to-nothing", "711979444155d0154fb6df00028bb6927131a5f169a37a08bc09335fff41814a",
             "643cc95a84ad1d2d8f15c9a3a4d59a063d907dee83ad717cb3ee24228ae3de15", PromotionReason.NoTrade, PromotionReason.NoTrade),
-        new("capital-cannot-pay", "098108d0e8f5c1c9436ec1d3132cd3b7d119429025a80bd73b060330847f2c34",
-            "654a659bd8d4226f70ecbe959fbdacf5c29a2fc085f8af320cfc41d4d61e49ee", PromotionReason.NoTrade, PromotionReason.NoTrade),
+        new("capital-cannot-pay", "a7dd784a80f8ae7068094a5ccc36c63ac9f49d7a634f5b0e9211a51ff9a1e21d",
+            "a798d4e28741b030a168d8076edead5b1ab9875f7cbe177e4f233eaa4e029e1c", PromotionReason.NoTrade, PromotionReason.NoTrade),
         new("operation-budget-fault", "39666aed151dce031200c84ea611d56acd95c7c870350f836d27da3d1e03f339",
             "be871dc2260d69987280d0f772796405fa179a731690a62f05508b979a29d319", PromotionReason.DidNotComplete, PromotionReason.DidNotComplete),
-        new("new-york-opening-range-breakout", "c9857dc6723ac9d102e01598d64988303d26a24f31bbf132932ded0844e892c9",
-            "76b9c41dd46a56d00ed7e7020e217c1cbcd7eb4706eae06111b809ef38e5fe66", PromotionReason.Met, PromotionReason.MetOnHistory),
-        new("new-york-two-window-reversion", "1b83fdb0785e4bd64893e8d85f6dff8e7ea0bcdd5a4db7904ef3e68f77b46d6e",
-            "9c97f450d4e4bea3b80002bd89bf0e1bb2e51015be6726ece6c46b60e0c78a7b", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
-        new("new-york-range-reentry", "803da2f341f586d1e6f7d002c741ce5db8691901f0e1b72451f0d9b82842d94c",
-            "d5d08a118de95697410c59c291a1395bc2038feedf8be73dde254c4b5dec7b3e", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
-        new("london-summer-time-window", "9959b74c08413a2d31a73b4fb54d2c6bc260587e590d345031dd3c80415217c9",
-            "6b3e781214f26d6b0cf2f13d3f5cbd0f255e859117597416a663432eb2070ee7", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("new-york-opening-range-breakout", "71438e663c63453b386dc28d1f5a768069e7fa7e3f6d8624bdbc98deee79eb9f",
+            "5d9b475df0838f512a47ca9f20d276dc99e6fa13ea50c407682dfd7225444de0", PromotionReason.Met, PromotionReason.MetOnHistory),
+        new("new-york-two-window-reversion", "7a1326ecd6bcd4117d21077bd7d2c054ef63aef1ea60ba552696ae7ac002fdd0",
+            "5d701bb1474a68cccd45a1bc02fb713cab7fd80c98d3d4dce8b477d3f21dc8a7", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("new-york-range-reentry", "de505b4008947d870928401812b36858e7aac8371910763c0231e81888a5a8e5",
+            "89c436833f5f9c582aae4845e7a3711a296f954be55f3f34223e6be154bf1522", PromotionReason.NotProfitable, PromotionReason.NotProfitable),
+        new("london-summer-time-window", "a4d76eb05c25647fc2a2de9a897dac36c3ca53444b0df541a3e892a4d522f325",
+            "fa32322a832690a0bb022a3b68b9feb93c0e235da385e7d55c04337f0897d82b", PromotionReason.Met, PromotionReason.MetOnHistory),
         new("zero-divisor-under-a-trailing-zero-fault", "d7720e8bfcf708177e9fe67dfd639bdae80575daaf03830543fa71d69369c5a3",
             "f2f987d0bbd47b20982605f3970de962212a0fece1c6c14c4d0ac04f90fb43ef", PromotionReason.DidNotComplete, PromotionReason.DidNotComplete),
         new("risk-sizing-under-a-stop-above-every-close-fault", "7eb8a46a76cb522552ff497716ea452d769cf4d6a0d3ab478396a732f89fd5b8",

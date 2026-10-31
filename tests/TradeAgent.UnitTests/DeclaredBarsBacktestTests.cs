@@ -76,7 +76,7 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
     /// <para>Twelve hours of minutes. The entry needs four things of an HOUR: a close above the three-hour
     /// mean of closes, a range over 3, a volume over 150 and an open below the close. Hours 2, 3 and 4 each
     /// have three of the four — the open, then the volume, then the range is the one missing — and hour 5
-    /// has all four, so the run signals once, at hour 5's close, and fills at the first minute of hour 6.
+    /// has all four, so the run signals once, at hour 5's close, and fills at the second minute of hour 6 — paper's.
     /// No single minute could do it: a minute's volume is at most 3 and its range a few cents. And the
     /// trace has twelve bar lines, one per hour at the hour, and nothing for the 708 minutes in between but
     /// the one fill.</para>
@@ -133,11 +133,13 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
         var signal = Assert.Single(Of(run, BacktestEventKind.Signal));
         Assert.Equal((Start.AddHours(5), 6L, 107m, "Enter"), (signal.Bar, signal.Ordinal, signal.Price!.Value, signal.Status));
 
+        // Learnt on hour 5's last minute, placed inside 06:00, filled at 06:01's open — paper's minute.
+        var paid = minutes[6 * 60 + 1].Open;
         var fill = Assert.Single(Of(run, BacktestEventKind.Fill));
-        Assert.Equal((Start.AddHours(6), 7L, 107m), (fill.Bar, fill.Ordinal, fill.Price!.Value));
+        Assert.Equal((Start.AddHours(6).AddMinutes(1), 7L, paid), (fill.Bar, fill.Ordinal, fill.Price!.Value));
 
         // The last hour's line marks the open position at the hour's close: 10,000 less the one unit bought, plus 113.
-        Assert.Equal(10_000m - 107m + 113m, closes[^1].Equity);
+        Assert.Equal(10_000m - paid + 113m, closes[^1].Equity);
         Assert.Equal(14, run.Trace.Events.Count);
 
         // And the same minutes, the same rules, on minutes: no minute has that volume or that range.
@@ -147,15 +149,15 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// (c) A DECISION AT AN HOURLY CLOSE FILLS AT THE NEXT MINUTE'S OPEN, AND A STOP STILL FILLS ON MINUTES.
+    /// (c) A DECISION AT AN HOURLY CLOSE FILLS ON THE MINUTES, AND A STOP STILL FILLS ON MINUTES.
     ///
-    /// <para>Two runs of one program, which enters on hour 1's close. In the first, the minute that follows
-    /// is missing, so the entry fills at the next minute there is — 02:05, at its open — and at 02:17 a
-    /// minute opens THROUGH the stop: the exit is at that minute's open, 98.5, at 02:17. Judged on the hour
-    /// it would have been the stop price at the hour's open. In the second the target is touched at 02:10
-    /// and the stop only at 02:40: the minutes say the target came first and alone, so the trade is a
-    /// target at 104.03 — while the hour's range covers both levels and, read as one bar, would have been
-    /// the conservative STOP.</para>
+    /// <para>Two runs of one program, which enters on hour 1's close — learnt on 01:59, due at 02:01. In the first,
+    /// the minutes from 02:00 are missing, so the entry fills at the next minute there is — 02:05, at its open — and at
+    /// 02:17 a minute opens THROUGH the stop: the exit is at that minute's open, 98.5, at 02:17. Judged on the hour
+    /// it would have been the stop price at the hour's open. In the second the entry fills at 02:01, 101.5, so the
+    /// target rests three percent of 101 above that, at 104.53; it is touched at 02:10 and the stop only at 02:40: the
+    /// minutes say the target came first and alone, so the trade is a target at 104.53 — while the hour's range covers
+    /// both levels and, read as one bar, would have been the conservative STOP.</para>
     /// </summary>
     [Fact]
     public void A_decision_at_an_hourly_close_fills_at_the_next_minute_open_and_a_stop_still_fills_on_minutes()
@@ -203,7 +205,7 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
         var targetFirst = lead
             .Concat(Enumerable.Range(120, 10).Select(i => M(i, 101.5m, 101.6m, 101.4m, 101.5m)))   // 02:00..02:09
-            .Append(M(130, 101.5m, 104.5m, 101.4m, 103m))                                         // 02:10 reaches the target
+            .Append(M(130, 101.5m, 105m, 101.4m, 103m))                                           // 02:10 reaches the target
             .Concat(Enumerable.Range(131, 29).Select(i => M(i, 102m, 102.1m, 101.9m, 102m)))
             .Append(M(160, 102m, 102m, 98m, 99m))                                                 // 02:40 reaches the stop
             .Concat(Flat(161, 19, 99m))
@@ -214,9 +216,9 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
         var won = Assert.Single(target.Trades);
         Assert.Equal(ExitReason.Target, won.Reason);
-        Assert.Equal(104.03m, won.ExitPrice);
+        Assert.Equal(104.53m, won.ExitPrice);
         Assert.Equal(Start.AddMinutes(130), won.ExitBar);
-        Assert.Equal(Start.AddMinutes(120), won.EntryBar);
+        Assert.Equal(Start.AddMinutes(121), won.EntryBar);
         Assert.Equal(101.5m, won.EntryPrice);
     }
 
@@ -326,9 +328,9 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// `max_hold_bars` COUNTS DECLARED BARS. Entered on hour 1's close and filled at 02:00, a two-bar hold
-    /// is taken at the close of hour 4 — the second hour after the one it filled in — at that hour's close,
-    /// stamped with its last minute; counted in minutes it would have been out at 02:02.
+    /// `max_hold_bars` COUNTS DECLARED BARS. Entered on hour 1's close and filled at 02:01, a two-bar hold is reached
+    /// at the close of hour 4 — the second hour after the one it filled in — and its market close, sent then, fills at
+    /// 05:01's open, in hour 5; counted in minutes it would have been reached at 02:03.
     /// </summary>
     [Fact]
     public void Max_hold_bars_counts_declared_bars_and_is_taken_at_the_close_of_the_bar_that_reaches_it()
@@ -352,10 +354,10 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
         var trade = Assert.Single(run.Trades);
         Assert.Equal(ExitReason.MaxHoldBars, trade.Reason);
-        Assert.Equal(Start.AddMinutes(120), trade.EntryBar);
-        Assert.Equal(Start.AddMinutes(299), trade.ExitBar);
+        Assert.Equal(Start.AddMinutes(121), trade.EntryBar);
+        Assert.Equal(Start.AddMinutes(301), trade.ExitBar);
         Assert.Equal(103m, trade.ExitPrice);
-        Assert.Equal(5L, Assert.Single(Of(run, BacktestEventKind.Exit)).Ordinal);
+        Assert.Equal(6L, Assert.Single(Of(run, BacktestEventKind.Exit)).Ordinal);
     }
 
     /// <summary>
@@ -390,8 +392,8 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
     /// <summary>
     /// A RUN THAT ENDS INSIDE AN HOUR CLOSES IT, AS THE PARTIAL BAR IT IS. Two and a half hours of minutes:
-    /// three hourly bars, the last built from thirty minutes and counted thirty short. Its exit signal has
-    /// no minute after it to fill at, and the trace says so; the position is still open at the end, and the
+    /// three hourly bars, the last built from thirty minutes and counted thirty short. Its exit signal is due two
+    /// minutes after the last minute there is, and the trace says so; the position is still open at the end, and the
     /// last line marks it at the last minute's close.
     /// </summary>
     [Fact]
@@ -419,7 +421,9 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
 
         Assert.Equal(["Enter", "Exit"], Of(run, BacktestEventKind.Signal).Select(e => e.Status));
         var noTrade = Assert.Single(Of(run, BacktestEventKind.NoTrade));
-        Assert.Equal("the run's window ended before the next bar, so this signal had no open to fill at", noTrade.Reason);
+        Assert.Equal($"the run's window ended before {Start.AddMinutes(151):O}, the first minute this order could fill at: "
+            + "an order is placed inside the minute after the one it was decided on and fills at the open of the minute "
+            + "after that, as on paper", noTrade.Reason);
         Assert.True(run.Metrics.PositionOpenAtEnd);
         Assert.Equal(BacktestOutcome.COMPLETED, run.Outcome);
     }
