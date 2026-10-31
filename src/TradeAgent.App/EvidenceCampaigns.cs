@@ -127,17 +127,27 @@ public sealed class EvidenceCampaigns(
         if (asked.Count == 0)
             return new EvidenceSetup(Ready(), "No pair was ticked, so nothing was downloaded or held back.", []);
 
-        var words = new List<string>();
-        var opened = new List<CampaignRow>();
-        foreach (var pair in asked)
+        // ONE PRESS AT A TIME (the Codex review's P2): two presses overlapping would each download the same pair and each open a
+        // campaign over its months — counted together, but two campaigns where one was asked for.
+        if (Interlocked.Exchange(ref _settingUp, 1) == 1)
+            return new EvidenceSetup(Ready(), "A setup press is already downloading and holding back, so nothing more was started.", []);
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var (said, campaign) = await SetUpPairAsync(pair, now, progress, ct);
-            words.Add(said);
-            if (campaign is not null) opened.Add(campaign);
+            var words = new List<string>();
+            var opened = new List<CampaignRow>();
+            foreach (var pair in asked)
+            {
+                ct.ThrowIfCancellationRequested();
+                var (said, campaign) = await SetUpPairAsync(pair, now, progress, ct);
+                words.Add(said);
+                if (campaign is not null) opened.Add(campaign);
+            }
+            return new EvidenceSetup(Ready(), string.Join(" ", words), opened);
         }
-        return new EvidenceSetup(Ready(), string.Join(" ", words), opened);
+        finally { Volatile.Write(ref _settingUp, 0); }
     }
+
+    int _settingUp;
 
     /// <summary>One pair of <see cref="SetUpAsync"/>: its sentence, and the campaign it opened or null.</summary>
     async Task<(string Words, CampaignRow? Campaign)> SetUpPairAsync(string pair, DateTimeOffset now,
@@ -167,6 +177,10 @@ public sealed class EvidenceCampaigns(
         if ((set.HoldoutFrom ?? EvidenceDefaults.Cutoff(set)) is not { } cutoff)
             return ($"{pair}: nothing was held back: the download holds too few months to keep the last "
                 + $"{EvidenceDefaults.HoldoutMonths} back and still leave a month to research.", null);
+
+        // ASKED AGAIN AFTER THE DOWNLOAD AND THE CHECK: the owner's Settings press may have opened this pair's campaign meanwhile.
+        if (Pairs().Contains(pair, StringComparer.Ordinal))
+            return ($"{pair}: a campaign was opened over real history meanwhile, so nothing more was held back.", null);
 
         var (done, campaign) = gw.SetHoldout(set.Id, cutoff, EvaluationClass.Research);
         if (!done.Ok || campaign is null) return ($"{pair}: {done.Why}", null);

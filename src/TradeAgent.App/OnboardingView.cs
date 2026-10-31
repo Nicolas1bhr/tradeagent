@@ -1111,10 +1111,20 @@ public sealed class OnboardingView
     /// campaign with its own budget — and the rule that follows a spent campaign said before he presses. "Later" leaves it to the
     /// Settings page: nothing is judged until a holdout is set, and the step says so.
     /// </summary>
+    /// <summary>The pairs the owner unticked on the evidence step, kept across renders.</summary>
+    readonly HashSet<string> _unticked = new(StringComparer.Ordinal);
+
     Screen HoldEvidence()
     {
         var offered = EvidenceDefaults.Offered(_host.Gateway.Settings.MarketDataPair);
-        var ticks = offered.Select(pair => new CheckBox { IsChecked = true, Content = Ui.Body(pair) }).ToList();
+        // THE OWNER'S UNTICKS OUTLIVE A RENDER (the Codex review's P2): the screen is rebuilt by the poll and by every press, and a
+        // box recreated ticked would download and hold back a pair he excluded.
+        var ticks = offered.Select(pair =>
+        {
+            var box = new CheckBox { IsChecked = !_unticked.Contains(pair), Content = Ui.Body(pair) };
+            box.IsCheckedChanged += (_, _) => { if (box.IsChecked == true) _unticked.Remove(pair); else _unticked.Add(pair); };
+            return box;
+        }).ToList();
         return new(
             "TradeAgent judges every strategy the AI writes on market data the AI has never seen. It sets that up now.",
             Ui.Card(Ui.Col(Theme.S4,
@@ -1132,7 +1142,7 @@ public sealed class OnboardingView
                     + "judged twice on one pair."))),
             Ui.Primary("Download and hold back", Act(async () =>
             {
-                var pairs = offered.Where((_, i) => ticks[i].IsChecked == true).ToList();
+                var pairs = offered.Where(pair => !_unticked.Contains(pair)).ToList();
                 var done = await _host.Evidence.SetUpAsync(DateTimeOffset.UtcNow, pairs);
                 if (!done.Ok) throw new InvalidOperationException(done.Words);
                 // WHAT HAPPENED TO EACH PAIR, a failed one included, where he can read it after the step moves on.
