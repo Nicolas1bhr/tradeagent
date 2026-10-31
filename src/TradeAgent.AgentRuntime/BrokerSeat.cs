@@ -39,6 +39,17 @@ public static class BrokerSeat
     /// </summary>
     public const string Model = "gpt-6-luna";
 
+    /// <summary>
+    /// THE VENDOR FAMILY OF A BUILT-IN RUNTIME (<c>U-board-alive</c>, the review's P1): code, never <c>runtimes.json</c> — the family a board
+    /// seat on it actually runs, which the two-seat rule's families are checked against at activation. Null for a runtime this build names
+    /// no family for, which refuses the activation.
+    /// </summary>
+    public static string? VendorFamilyOf(string? runtimeId) => runtimeId switch
+    {
+        BrokerDoor.CodexId => "openai",
+        _ => null
+    };
+
     /// <summary>The model <paramref name="seatClass"/> is pinned to, or null for a class that pins none.</summary>
     public static string? ModelOf(string seatClass) => IsVerified(seatClass) ? Model : null;
 

@@ -36,7 +36,7 @@ public class BoardActivationTests(ITestOutputHelper log)
     public void A_board_seat_is_activated_only_where_this_host_could_seat_it()
     {
         var broker = Seat("board-1", SeatClasses.Broker);
-        Assert.Null(BoardSeatGate.ActivationRefusal("board-1", broker, SeatClasses.Broker, puppet: false, provenCell: true));
+        Assert.Null(BoardSeatGate.ActivationRefusal("board-1", broker, SeatClasses.Broker, puppet: false, provenCell: true, runtimeFamily: "openai"));
         Assert.Null(BoardSeatGate.ActivationRefusal("board-1", broker, SeatClasses.Broker, puppet: true, provenCell: false));
 
         var refusals = new (string Why, string? Refusal)[]
@@ -47,7 +47,10 @@ public class BoardActivationTests(ITestOutputHelper log)
             ("harness", BoardSeatGate.ActivationRefusal("board-2", Seat("board-2", SeatClasses.Harness), SeatClasses.Harness, false, true)),
             ("retired", BoardSeatGate.ActivationRefusal("board-1", Seat("board-1", SeatClasses.Broker, BoardSeatStatus.Retired), SeatClasses.Broker, false, true)),
             ("active", BoardSeatGate.ActivationRefusal("board-1", Seat("board-1", SeatClasses.Broker, BoardSeatStatus.Active), SeatClasses.Broker, false, true)),
-            ("missing", BoardSeatGate.ActivationRefusal("board-9", null, SeatClasses.Broker, false, true))
+            ("missing", BoardSeatGate.ActivationRefusal("board-9", null, SeatClasses.Broker, false, true)),
+            // THE REVIEW'S P1: a seat founded as one vendor family is never activated on another's runtime, nor on one of no known family.
+            ("another vendor family", BoardSeatGate.ActivationRefusal("board-1", broker with { VendorFamily = "anthropic" }, SeatClasses.Broker, false, true, "openai")),
+            ("no known family", BoardSeatGate.ActivationRefusal("board-1", broker, SeatClasses.Broker, false, true, null))
         };
         foreach (var (why, refusal) in refusals)
         {
@@ -57,6 +60,8 @@ public class BoardActivationTests(ITestOutputHelper log)
         Assert.Contains("no proven executor cell recorded", refusals[0].Refusal, StringComparison.Ordinal);
         Assert.Contains("founded on a broker seat and this host would start it on a cli seat", refusals[1].Refusal, StringComparison.Ordinal);
         Assert.Contains("only the app's door", refusals[3].Refusal, StringComparison.Ordinal);
+        Assert.Contains("founded on the vendor family 'anthropic' and this host would start it on a runtime of 'openai'", refusals[7].Refusal,
+            StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -98,12 +103,20 @@ public class BoardActivationTests(ITestOutputHelper log)
             }));
             Assert.DoesNotContain(new AiAttemptStore(db).Between(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1)),
                 a => BoardSeats.IsBoardId(a.Role));
+            // ITS HOME AT ONCE (the review's P2): the board's canon in its folder, not at the next start.
+            Assert.Contains("You act only through the board's verbs", File.ReadAllText(Path.Combine(host.HomeFor("board-1"), "AGENTS.md")),
+                StringComparison.Ordinal);
+            // A SEAT FOUNDED AS ANOTHER VENDOR FAMILY IS NOT ACTIVATED ON CODEX (the review's P1).
+            var other = host.Gateway.FoundBoardSeat(SeatClasses.Broker, BoardModelClass.Strong, "anthropic");
+            Assert.Contains("founded on the vendor family 'anthropic'", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat(other.Id)).Message,
+                StringComparison.Ordinal);
 
             Assert.Contains("is active: only a dormant seat is activated", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1")).Message,
                 StringComparison.Ordinal);
             host.Gateway.RetireBoardSeat("board-2");
             Assert.Contains("retired", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-2")).Message, StringComparison.Ordinal);
             Assert.Equal(2L, StateRows(db));
+            Assert.Equal(BoardSeatStatus.Dormant, host.Board.Seats().Single(s => s.Id == other.Id).Status);
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
