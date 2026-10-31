@@ -207,6 +207,15 @@ public static class MissionEventKind
     /// is one row, due now: it moves no ceiling, changes no interval and no value the board holds, and a failed turn is not retried on it.
     /// </summary>
     public const string OwnerWake = "owner-wake";
+
+    /// <summary>
+    /// A NEW OCCUPANT TAKES THE SEAT (<c>U-worker-replace</c>; ORGANISATION § 8, "replacing a worker"): raised ONCE to the position in the
+    /// write that retired its occupant — by an app rule (<see cref="OrgStore.OccupantSweep"/>) or the owner's press
+    /// (<see cref="OrgStore.ReplaceOccupant"/>), never a pipe op, verb or board act. Its payload is the <c>occupant-replaced</c> event's id.
+    /// It grants nothing: the activation gate and admission still decide the launch it buys, and that launch starts from the position's
+    /// memory in a fresh session, never the predecessor's.
+    /// </summary>
+    public const string Occupant = "occupant";
 }
 
 /// <summary>
@@ -297,6 +306,9 @@ public static class WakePriority
         // "the chief's strategy": a position just activated, and the head that hired it (U-org-autonomy) — the agenda handed down to a new
         // seat, and the head told its hire runs.
         [MissionEventKind.Activated] = WakeClass.Strategy,
+        // and a new occupant in a position whose predecessor was retired (U-worker-replace): the seat handed to a new occupant, as an
+        // activation hands a new position its agenda.
+        [MissionEventKind.Occupant] = WakeClass.Strategy,
 
         // "housekeeping": the clock — the look, the day's renewal, a head's ceiling — and a held output, which is never due.
         [MissionEventKind.Review] = WakeClass.Housekeeping,
@@ -606,6 +618,10 @@ public static class MissionEventIds
     /// </summary>
     public static string Activated(string position, string recipient, long eventId) =>
         $"{MissionEventKind.Activated}:{position}:{recipient}:{eventId.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>A NEW OCCUPANT'S ONE WAKE (<c>U-worker-replace</c>), keyed by the <c>occupant-replaced</c> event that raised it: one replacement, one row.</summary>
+    public static string Occupant(string position, long eventId) =>
+        $"{MissionEventKind.Occupant}:{position}:{eventId.ToString(CultureInfo.InvariantCulture)}";
 
     /// <summary>
     /// A HEAD'S ESCALATION'S ONE WAKE TO THE HEAD THE APP CHOSE ABOVE IT (<c>U-org-decisions</c>), keyed by the escalation's own id,
