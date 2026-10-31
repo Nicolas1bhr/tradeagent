@@ -156,10 +156,12 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
     /// composition produces — <c>version id \n dataset id \n dataset sha256 \n window \n model \n evaluator</c> —
     /// so a change to the order, the separator or the fields is caught here and not by a reader
     /// wondering why last month's id no longer reproduces. The evaluator line is
-    /// <c>backtest=3;metrics=1;scoring=1</c> (<c>U-evidence-evaluator-label</c>): a bump of
+    /// <c>backtest=4;metrics=1;scoring=1</c> (<c>U-evidence-evaluator-label</c>): a bump of
     /// <see cref="Referee.EvaluatorVersion"/> moves every run id, and this test says so where it happens — re-pinned at
     /// <c>U-backtest-parity</c>'s bump from <c>backtest=2</c>, whose two ids were <c>dec8536c5c80…</c> and
-    /// <c>a9286f8a7c32…</c>, both recomputed outside this build over the same string with only that line moved.</para>
+    /// <c>a9286f8a7c32…</c>, and at <c>U-backtest-parity-2</c>'s from <c>backtest=3</c>, whose two were
+    /// <c>67dfaa29e95f…</c> and <c>b7b57758811a…</c> — each recomputed outside this build over the same string with only
+    /// that line moved, the old line reproducing the old pins first.</para>
     ///
     /// <para>The dataset's SHA-256 is in there as well as its id, which is the mutant this test was
     /// watched against: with the sha left out, a run over the bytes the ledger measured and a run over
@@ -174,13 +176,13 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
             new DateTimeOffset(2026, 8, 2, 0, 0, 0, TimeSpan.Zero));
 
         Assert.Equal("2026-08-01T00:00:00.0000000Z..2026-08-02T00:00:00.0000000Z", window.Window);
-        Assert.Equal("67dfaa29e95f54e367d5fb707bbb19cc93f5c17e017d1c993c13ec335bfae64a",
+        Assert.Equal("b3290ed51ce98f4bb85688e3d1a294ba8f36ee74f745f2869cf57f8bac188f33",
             window.RunIdFor("version-x"));
 
         // An open-ended window says `all` on the side that is open, and is its own run.
         var everything = window with { From = null, To = null };
         Assert.Equal("all..all", everything.Window);
-        Assert.Equal("b7b57758811a721d3e37e6d923c08f5447ada5b956c6a263428c31758b69d5ad",
+        Assert.Equal("93655c93130c1285e0b27f40452bf938ded009cd63a7776bc132c791ac5be008",
             everything.RunIdFor("version-x"));
     }
 

@@ -32,10 +32,14 @@ namespace TradeAgent.Tests.Unit;
 /// <para><b>Re-pinned under <c>backtest=3</c></b> (<c>U-backtest-parity</c>): all four moved — every run id hashes the
 /// evaluator line, and every trace's fills moved to the minute paper fills on (two after the minute an order was learnt
 /// on). The programs' ids and the values read did not move: what a program is and what it read are not the evaluator's.</para>
+///
+/// <para><b>Re-pinned under <c>backtest=4</c></b> (<c>U-backtest-parity-2</c>): the four run ids only — each hashes the
+/// evaluator line. Every trace kept its pin: these programs' runs over trend-utc reach no gap with a hold in flight or a
+/// fill on the minute that closes a bar past its missing minutes.</para>
 /// </summary>
 public class FeatureProgramGoldenVectorTests(ITestOutputHelper log)
 {
-    const string PinnedEvaluator = "backtest=3;metrics=1;scoring=1";
+    const string PinnedEvaluator = "backtest=4;metrics=1;scoring=1";
     const string PinnedManifest = "language=1;indicators=1;calendar=1";
     const string PinnedFeatures = "features=1";
 
@@ -110,19 +114,19 @@ public class FeatureProgramGoldenVectorTests(ITestOutputHelper log)
         new("funding-latest-every-minute", "429e884014a7327eacf46b5593663cd0329dcec3f655248f8775dbba48db4d2e",
             "1bf42a3a7a61676b4ba8017ca2e66ad3894f431d071e6a9ed5cc34bb510b66b2",
             "9a3c64edb5772db75aaad48cea3653ae206340294f7894f4708c9290e8b57e70",
-            "63973700a3f6c6ac98d3bec1a69831e3dad62822a2f60e7b1bfa99251fb0cbd5"),
+            "2f53abad7edd5e7ea54c13f433af0d3212bb3d774f9350bf8e91d4b3b5096496"),
         new("mark-mean-window-five-minute", "beaf3ed496f80b858eb5698643b8a76dea8806c9aea341e8c4e7c385366e359f",
             "f67db0a5f1e9726b3614728afd325bc2f7e9cf1f64208e69ffee4cadc177b3ed",
             "9532532888688e2677fd1f2ed51dca4009ee168f124d497807c9af510294370a",
-            "eb5e92352251b0da7bd253a45fb6871853fcc4f70c26bee49c8523e4e3afdc11"),
+            "63216dcdccc93307d360cb780c70e585f19ae76b180ef23d257bf0fdf738dae3"),
         new("funding-change-and-history-fifteen-minute", "e646cc9f0f9e1d575b3ab3c101b37798dce51391acb094c08d681b1ba5172906",
             "66ab1125d64582f3588068dbc3106a8e25c0cf7b8e133239063fc08bb16fd1f7",
             "7a639d74e1c472522ec57000218fe8a5fe8aac3b17399dd604874fb8f9f391dd",
-            "ae9d74054883293c748db2f8a9db435d5b54cfa8e2cb721e1b24ddb5f4cc5d3e"),
+            "3242a197f832ccbd728e888c73e265ccc02fae8c0e586fe2e4ae80b1aa8a23ab"),
         new("funding-rank-hourly", "e8b9d27b4a75f854d78997aa237b15cecda23b4de99be802dedf478cd80ad1c5",
             "560542fb2e0886eda5cbbb4b69b738dfb47958eb373aa608f3b1ea6f79003798",
             "bc70f0ce962b7183144e309f351de00e5a79eca05f892514997253da44bb3e46",
-            "228bdb919637eb50628b849ae1e6163448eb8f3ae586ad18d35dcb8ca5764668"),
+            "b5d61777ac4d5a4bfb132fe35e23cab4da717a2c70c4a71aa6c474a7b6bb09cb"),
     ];
 
     // ---- the fixtures --------------------------------------------------------------------------
