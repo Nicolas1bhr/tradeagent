@@ -330,6 +330,73 @@ public class PuppetBoardLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(1, BoardLives.AssertNoModel(life));
     }
 
+    // ---- U-board-alive item 5: a whole board cycle ----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A WHOLE BOARD CYCLE ON THE REAL KERNEL, NO MODEL (<c>U-board-alive</c> item 5; R24 §§ 4.1–4.3): a position (the Research Director's
+    /// puppet) PETITIONS for a larger plan day through <c>trade petition file</c> — a record that applies nothing — and the app wakes ONE
+    /// active seat, board-1, whose packet carries the petition as data; board-1 PROPOSES the widening through <c>trade board propose</c>;
+    /// board-3 — woken by that proposal alone, on its own broker seat, blind to board-1's rationale — CONFIRMS it with the intent's hash;
+    /// the gateway enforces version 2 AT ONCE (the day is 50); then the owner's in-process VETO narrows it back (version 3, decided by him,
+    /// the day 40). The petition alone changed nothing; one seat alone changed nothing; two seats did. RED at base: no petition verb.
+    /// </summary>
+    [Fact]
+    public async Task A_petition_two_seats_enforcement_and_the_owners_veto_make_one_board_cycle()
+    {
+        await using var life = await BoardLives.Begin("board-cycle", "board-1", "board-3");
+        var store = new BoardStore(life.Host.Db);
+        const string petitioner = CouncilRoles.Research;
+        var intent = BoardLives.Change("plan_day_total", 40, 50);
+        life.Script(petitioner, [BoardLives.Petition(intent, "PETITION-WORDS-9d2 the research queue outgrew the day"), "usage 10 0 5",
+            "final Petitioned."], ["usage 10 0 5", "final Nothing more."]);
+        life.Script("board-1", [BoardLives.Propose(intent, BoardLives.Rationale), "signal proposed", "await confirmer-scripted",
+            "usage 100 0 10", "final Proposed."]);
+
+        life.Wake(petitioner);
+        await life.RunUntil(() => life.Reached("proposed"), "board-1's puppet proposed after the petition woke it");
+
+        // THE PETITION: one record, routed to board-1, applying nothing — the day is still the founding 40 until a second seat speaks.
+        var petition = Assert.Single(store.Petitions());
+        Assert.Equal((petitioner, "board-1", "widens"), (petition.Position, petition.RoutedTo, petition.Direction));
+        var petitionWake = Assert.Single(life.Events(), e => e.Kind == MissionEventKind.Board && e.Payload == petition.Id);
+        Assert.Equal("board-1", petitionWake.Role);
+        var act = Assert.Single(store.Acts()).Act;
+        Assert.Equal(("board-1", BoardActKind.Propose), (act.Seat, act.Kind));
+        Assert.Equal(1, store.InForce().Version);
+        Assert.Equal(40m, life.Host.Gateway.Policy.PlanDayTotal);
+        var proposerPrompt = life.Prompt("board-1", 1)!;
+        Assert.Contains(petition.Id, proposerPrompt, StringComparison.Ordinal);
+        Assert.Contains("\"PETITION-WORDS-9d2 the research queue outgrew the day\"", proposerPrompt, StringComparison.Ordinal);
+
+        life.Script("board-3", [BoardLives.Decide(act.Id, "confirm", act.IntentSha256, "the figures in force allow it"), "usage 100 0 10",
+            "final Confirmed."]);
+        life.Release("confirmer-scripted");
+        await life.RunUntil(() => life.AttemptsOf("board-3").Any(a => a.State == AiAttemptState.ENDED), "board-3's turn ended");
+        var decide = BoardLives.TradeSteps(life, "board-3", 1)[0];
+        Assert.True((int?)decide["exit"] == 0, $"the confirmation was refused: {BoardLives.Said(decide)}");
+
+        // ENFORCED AT ONCE: version 2, decided by the board, is the gateway's day.
+        Assert.Equal((2, BoardDecider.Board), (store.InForce().Version, store.InForce().Decider));
+        Assert.Equal(50m, life.Host.Gateway.Policy.PlanDayTotal);
+        // board-3 WAS WOKEN BY THE PROPOSAL ALONE, blind to board-1's rationale.
+        var confirmerWake = Assert.Single(life.Events(), e => e.Role == "board-3");
+        Assert.Equal((MissionEventKind.Board, act.Id), (confirmerWake.Kind, confirmerWake.Payload));
+        Assert.DoesNotContain(BoardLives.Marker, life.Prompt("board-3", 1)!, StringComparison.Ordinal);
+
+        // THE OWNER'S VETO NARROWS IT BACK — two presses in his UI: the preview, then the veto bound to it.
+        var preview = life.Host.Gateway.PreviewBoardVeto(act.Id);
+        Assert.True(preview.Allowed, preview.Words);
+        Assert.Equal(BoardActEventKind.Vetoed, life.Host.Gateway.VetoBoardAct(act.Id, preview).Status);
+        Assert.Equal((3, BoardDecider.Owner, BoardBasis.Veto), (store.InForce().Version, store.InForce().Decider, store.InForce().Basis));
+        Assert.Equal(40m, life.Host.Gateway.Policy.PlanDayTotal);
+
+        // EACH SEAT ON ITS BROKER SEAT, ON THE BOARD'S OWN BUDGET; NO MODEL.
+        foreach (var seat in new[] { "board-1", "board-3" })
+            Assert.Equal(SeatClasses.Broker, Assert.Single(life.AttemptsOf(seat)).SeatClass);
+        Assert.Equal(2, BoardLives.AssertNoModel(life));
+        output.WriteLine($"cycle: {life.Counts()}");
+    }
+
     // ---- item 7: the guards ------------------------------------------------------------------------------------------------------
 
     /// <summary>
