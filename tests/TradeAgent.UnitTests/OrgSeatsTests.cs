@@ -250,6 +250,12 @@ public class OrgSeatsTests : IDisposable
 
         new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest("board-2", TradeAgent.Core.Board.BoardSeatStatus.Active, now);
         var refused = Assert.Throws<TradeAgentException>(() => store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message;
+        // IN-PROCESS ONLY (AUTH-001): the owner's press in AppHost is its one caller; no op, door verb or trade verb names it.
+        var root = RepoRoot();
+        Assert.Equal(["src/TradeAgent.App/AppHost.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs"],
+            Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+                .Where(f => File.ReadAllText(f).Contains("ChooseSeatModel(", StringComparison.Ordinal))
+                .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')).Order(StringComparer.Ordinal));
         Assert.Contains("the security board's now that a board seat is active", refused);
         Assert.Contains("Nothing was written", refused);
         Assert.Equal(BrokerSeat.Model, store.Position(Pos)!.SeatModel);

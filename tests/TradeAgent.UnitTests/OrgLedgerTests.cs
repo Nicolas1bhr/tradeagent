@@ -484,6 +484,12 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-org-autonomy item 4: ActiveChief — a READ, the root's head while its position is active, which the owner's
         // words and his material are routed by (MissionEventStore.OwnerRecipient). It writes nothing.
         mandate = [.. mandate, "ActiveChief"];
+        // REVISITED, OUT LOUD, BY U-seat-models (R25 D8): ChooseSeatModel — the OWNER's in-process switch of a position's model among the
+        // verified catalog's (AUTH-001), only while no board seat is active. It writes the four seat columns of one org_position row and one
+        // `seated` org_event decided by the owner, through OrgStore.Seats.cs's own WriteSeat — no new writer file, no org_unit — refusing a
+        // model outside the catalog, the legacy pair, an ended position and a seat written in part. No op, door verb or trade verb reaches
+        // it (OrgSeatsTests.The_owner_switches_a_positions_model_among_the_catalogs_only_while_no_board_seat_is_active).
+        mandate = [.. mandate, "ChooseSeatModel"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
