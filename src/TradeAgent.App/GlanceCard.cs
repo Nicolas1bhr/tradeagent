@@ -200,7 +200,7 @@ static class GlanceWords
         var line = money.StartsWith("Today: ", StringComparison.Ordinal) ? Cap(money["Today: ".Length..]) : money;
         var details = plan.StartsWith("Today: ", StringComparison.Ordinal) ? "Plan: " + plan["Today: ".Length..] : plan;
         if (!s.CanPrice)
-            details += $"\nThe real-money figure is not complete: TradeAgent cannot price this AI's turns ({s.WhyNoPrice ?? "no reason recorded"}).";
+            details += $"\nNeither figure is complete: TradeAgent cannot price this AI's turns ({s.WhyNoPrice ?? "no reason recorded"}).";
         return new(Spend, "AI spend today", line, details, !s.AdmitsAnotherTurn || !s.CanPrice);
     }
 
