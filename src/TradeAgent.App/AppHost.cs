@@ -1196,9 +1196,12 @@ public sealed class AppHost : IAsyncDisposable
             // series is not being collected, and the app comes up.
             try
             {
+                // AND EVERY PAIR A PAPER RUN IS ON (U-evidence-breadth-paper): each pair under evidence has its own envelope, and
+                // a run on it is decided and filled only on minutes this collector stored for that pair.
                 Forward = new ForwardBarCollector(_db,
                     () => Gateway.Settings.MarketDataPair,
-                    () => Gateway.Settings.CollectLiveBars);
+                    () => Gateway.Settings.CollectLiveBars,
+                    deployed: () => Gateway.DeployedPairs());
 
                 // AND THE PAPER CONNECTOR HEARS EVERY MINUTE THE COLLECTOR STORES. Through the one
                 // delegate rather than a direct subscription: a connector switch replaces what is

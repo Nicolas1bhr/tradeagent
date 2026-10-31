@@ -71,6 +71,7 @@ public sealed class ForwardBarCollector : IAsyncDisposable
 
     readonly ForwardBarStore _store;
     readonly Func<string?> _symbol;
+    readonly Func<IReadOnlyList<string>> _deployed;
     readonly Func<bool> _enabled;
     readonly Func<DateTimeOffset> _now;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
@@ -91,6 +92,11 @@ public sealed class ForwardBarCollector : IAsyncDisposable
     /// A tick while it is off costs one boolean and writes nothing — no row, not even a failure,
     /// because "the owner switched it off" is not a fetch that went wrong.
     /// </param>
+    /// <param name="deployed">
+    /// EVERY PAIR A PAPER DEPLOYMENT IS RUNNING ON (<c>U-evidence-breadth-paper</c>), read at every tick: each is collected beside
+    /// the Settings pair, once, so a run on any pair under evidence has its minutes recorded — the paper venue fills and the runner
+    /// decides only on bars this collector stored. Null for none (the Settings pair alone).
+    /// </param>
     /// <param name="baseUrl">
     /// Where to ask. Null means the catalogue row's, which is the vendor's. A test passes its
     /// loopback address here and nothing in this suite has ever passed anything else.
@@ -109,12 +115,14 @@ public sealed class ForwardBarCollector : IAsyncDisposable
         Func<DateTimeOffset>? now = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         CandleSourceEntry? entry = null,
-        TimeSpan? alignOffset = null)
+        TimeSpan? alignOffset = null,
+        Func<IReadOnlyList<string>>? deployed = null)
     {
         ArgumentNullException.ThrowIfNull(db);
 
         _store = new ForwardBarStore(db);
         _symbol = symbol ?? throw new ArgumentNullException(nameof(symbol));
+        _deployed = deployed ?? (() => []);
         _enabled = enabled ?? (() => true);
         _now = now ?? (() => DateTimeOffset.UtcNow);
         _delay = delay ?? ((d, ct) => Task.Delay(d, ct));
@@ -243,11 +251,41 @@ public sealed class ForwardBarCollector : IAsyncDisposable
     {
         if (!_enabled()) return null;
 
-        // A PAIR THAT IS NOT ONE IS NOT ASKED FOR, and it is not a failure either: the owner is
-        // halfway through typing in the Pair box and the next look will have a real one.
-        var configured = _symbol();
-        if (!BinanceArchive.IsPair(configured)) return null;
-        var symbol = configured!;
+        // THE SETTINGS PAIR, THEN EVERY DEPLOYED PAIR, EACH ONCE (U-evidence-breadth-paper). A PAIR THAT IS NOT ONE IS NOT ASKED FOR,
+        // and it is not a failure either: the owner is halfway through typing in the Pair box and the next look will have a real one.
+        // A deployed pair list that cannot be read is the Settings pair alone this look — never a reason to collect nothing.
+        IReadOnlyList<string> deployed;
+        try { deployed = _deployed(); }
+        catch (Exception ex) { deployed = []; LastError = $"the deployed pairs could not be read: {ex.Message.ReplaceLineEndings(" ")}"; }
+        var pairs = new[] { _symbol() }.Concat(deployed).Where(BinanceArchive.IsPair).Select(p => p!).Distinct(StringComparer.Ordinal).ToList();
+        if (pairs.Count == 0) return null;
+
+        // ONE LOOK PER PAIR; THE BACKOFF IS THE LOOK'S: any pair failing counts this look a failure, so a host having a bad
+        // afternoon is asked less often for every pair. The answer is the first pair's — the Settings pair's when it is one.
+        var looks = new List<(string Symbol, ForwardAppend Result, string? Note, DateTimeOffset? Last)>();
+        foreach (var symbol in pairs)
+        {
+            var (result, note, last) = await CollectPairAsync(symbol, ct);
+            looks.Add((symbol, result, note, last));
+        }
+        if (looks.LastOrDefault(l => l.Note is not null) is { Note: { } failure }) { _failures++; LastError = failure; }
+        else { _failures = 0; LastError = null; }
+
+        // AFTER THE COMMIT, AND ONLY FOR A BAR THIS CALL ACTUALLY STORED. A re-fetch of a minute a
+        // strategy has already acted on must not make it act again, which is why this is driven by
+        // the rows that went in rather than by the rows that arrived. After the look's own state, so a
+        // subscriber's fault stays this collector's last error.
+        foreach (var (symbol, result, _, last) in looks)
+            if (result.Stored > 0)
+                foreach (var bar in _store.Since(symbol, last, result.Stored))
+                    Raise(symbol, bar.OpenTime);
+
+        return looks[0].Result;
+    }
+
+    /// <summary>One pair's look of <see cref="CollectOnceAsync"/>: its append, the failure in words or null, and the newest bar held before it.</summary>
+    async Task<(ForwardAppend Result, string? Note, DateTimeOffset? Last)> CollectPairAsync(string symbol, CancellationToken ct)
+    {
 
         var last = _store.LastOpen(ForwardBars.Source, symbol);
         var url = Url(symbol, last);
@@ -288,17 +326,7 @@ public sealed class ForwardBarCollector : IAsyncDisposable
             Note = note
         }, bars);
 
-        if (note is null) { _failures = 0; LastError = null; }
-        else { _failures++; LastError = note; }
-
-        // AFTER THE COMMIT, AND ONLY FOR A BAR THIS CALL ACTUALLY STORED. A re-fetch of a minute a
-        // strategy has already acted on must not make it act again, which is why this is driven by
-        // the rows that went in rather than by the rows that arrived.
-        if (result.Stored > 0)
-            foreach (var bar in _store.Since(symbol, last, result.Stored))
-                Raise(symbol, bar.OpenTime);
-
-        return result;
+        return (result, note, last);
     }
 
     void Raise(string symbol, DateTimeOffset openTime)

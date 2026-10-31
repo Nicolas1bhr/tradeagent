@@ -331,6 +331,38 @@ public class ForwardBarCollectorTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// EVERY DEPLOYED PAIR IS COLLECTED BESIDE THE SETTINGS PAIR (<c>U-evidence-breadth-paper</c>): each pair under evidence has its own
+    /// paper envelope, and a run on it is decided and filled only on minutes this collector stored for that pair — so one look asks
+    /// for the Settings pair and then each deployed pair, once each (a pair named twice is asked once, a name that is not a pair never),
+    /// stores each pair's bars under its own symbol and tells the runner each bar of each. RED before the unit: one symbol per look.
+    /// </summary>
+    [Fact]
+    public async Task Every_deployed_pair_is_collected_beside_the_settings_pair()
+    {
+        using var db = TestEnv.NewDb();
+        using var host = new FakeArchive();
+        host.PublishAt(Path, Klines(0, 1));
+
+        await using var collector = new ForwardBarCollector(db, () => Symbol,
+            baseUrl: host.BaseUrl, requestTimeout: TimeSpan.FromSeconds(5), interval: Tick,
+            now: () => Noon.AddMinutes(5), deployed: () => ["ETHUSDT", Symbol, "not a pair", "ETHUSDT", "SOLUSDT"]);
+        var told = new List<string>();
+        collector.BarClosed += (symbol, _) => told.Add(symbol);
+
+        var first = await collector.CollectOnceAsync();
+        Assert.Equal(2, first!.Stored);
+        var store = new ForwardBarStore(db);
+        foreach (var pair in new[] { Symbol, "ETHUSDT", "SOLUSDT" })
+        {
+            log.WriteLine($"{pair}: {store.Attempts(pair).Count} look(s), newest bar {store.LastOpen(ForwardBars.Source, pair):O}");
+            Assert.Single(store.Attempts(pair));
+            Assert.NotNull(store.LastOpen(ForwardBars.Source, pair));
+        }
+        Assert.Empty(store.Attempts("not a pair"));
+        Assert.Equal([Symbol, Symbol, "ETHUSDT", "ETHUSDT", "SOLUSDT", "SOLUSDT"], told);
+    }
+
+    /// <summary>
     /// THE FORWARD ROW IS DATA AND IT SAYS WHAT IT IS. The host and the endpoint live in the
     /// catalogue, verified by one measurement quoted on the row; it publishes no checksum, and it
     /// cannot be driven as an archive.
