@@ -93,8 +93,8 @@ public sealed class AuditStore : IDisposable
     /// <summary>The file's name under <see cref="Paths.State"/>. HERE, not in <see cref="Paths"/>, on purpose (see the class).</summary>
     public const string FileName = "audit.db";
 
-    /// <summary>The layout version this build writes and understands.</summary>
-    public const int Schema = 1;
+    /// <summary>The layout version this build writes and understands: rung 2 is <c>U-org-audit-b</c>'s (budget, traps, canaries, catch rates).</summary>
+    public const int Schema = 2;
 
     /// <summary>The bytes of the sampler's salt.</summary>
     public const int SaltBytes = 32;
@@ -267,6 +267,56 @@ public sealed class AuditStore : IDisposable
                 seed.ExecuteNonQuery();
             Exec("INSERT INTO audit_meta(key, value) VALUES('schema', '1') ON CONFLICT(key) DO UPDATE SET value='1';");
         }
+        // RUNG 2 (U-org-audit-b): the owner's budget for the line, the register of what it planted, and the catch rates its canaries
+        // measured — each append-only by trigger, each written only by this class. Created only where missing, the stamp last.
+        if (have < 2)
+        {
+            Exec("""
+                CREATE TABLE IF NOT EXISTS audit_budget(
+                  seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+                  class   TEXT NOT NULL CHECK (class IN ('key', 'plan')),
+                  amount  TEXT NOT NULL,
+                  set_at  TEXT NOT NULL);
+
+                CREATE TABLE IF NOT EXISTS audit_trap(
+                  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                  mandate_id  TEXT NOT NULL UNIQUE,
+                  kind        TEXT NOT NULL CHECK (kind IN ('impossible')),
+                  at          TEXT NOT NULL);
+
+                CREATE TABLE IF NOT EXISTS audit_canary_run(
+                  seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+                  at       TEXT NOT NULL,
+                  failure  TEXT);
+
+                CREATE TABLE IF NOT EXISTS audit_catch(
+                  run_seq       INTEGER NOT NULL REFERENCES audit_canary_run(seq),
+                  detector      TEXT NOT NULL,
+                  planted       INTEGER NOT NULL CHECK (planted >= 1),
+                  caught        INTEGER NOT NULL CHECK (caught >= 0 AND caught <= planted),
+                  controls      INTEGER NOT NULL CHECK (controls >= 0),
+                  false_alarms  INTEGER NOT NULL CHECK (false_alarms >= 0 AND false_alarms <= controls),
+                  PRIMARY KEY (run_seq, detector));
+
+                CREATE TRIGGER IF NOT EXISTS audit_budget_sealed_u BEFORE UPDATE ON audit_budget
+                BEGIN SELECT RAISE(ABORT, 'a budget moves by a new row, never by an edit'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_budget_sealed_d BEFORE DELETE ON audit_budget
+                BEGIN SELECT RAISE(ABORT, 'a budget row is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_trap_sealed_u BEFORE UPDATE ON audit_trap
+                BEGIN SELECT RAISE(ABORT, 'a planted trap is never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_trap_sealed_d BEFORE DELETE ON audit_trap
+                BEGIN SELECT RAISE(ABORT, 'a planted trap is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_canary_run_sealed_u BEFORE UPDATE ON audit_canary_run
+                BEGIN SELECT RAISE(ABORT, 'a canary run is a measurement and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_canary_run_sealed_d BEFORE DELETE ON audit_canary_run
+                BEGIN SELECT RAISE(ABORT, 'a canary run is a measurement and never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_catch_sealed_u BEFORE UPDATE ON audit_catch
+                BEGIN SELECT RAISE(ABORT, 'a catch rate is a measurement and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_catch_sealed_d BEFORE DELETE ON audit_catch
+                BEGIN SELECT RAISE(ABORT, 'a catch rate is a measurement and never deleted'); END;
+                """);
+            Exec("INSERT INTO audit_meta(key, value) VALUES('schema', '2') ON CONFLICT(key) DO UPDATE SET value='2';");
+        }
         return have;
     });
 
@@ -399,6 +449,96 @@ public sealed class AuditStore : IDisposable
         using var r = c.ExecuteReader();
         while (r.Read()) rows.Add(new AuditFlag(r.GetString(0), r.GetString(1), Sql.S(r.GetValue(2)), r.GetString(3), Sql.Time(r.GetString(4))));
         return (IReadOnlyList<AuditFlag>)rows;
+    });
+
+    // -------------------------------------------------------------------------------- the owner's budget (U-org-audit-b)
+
+    /// <summary>
+    /// THE OWNER'S BUDGET FOR THE LINE IN ONE BILLING CLASS (<c>key</c> real money, <c>plan</c> plan capacity): the latest row, or 0 where he
+    /// never set one — the founding default his answer named (Q1, 2026-10-22). Carved off the top of that class's daily ceiling
+    /// (<see cref="AuditBudget.Off"/>); set by his own press on his Owner page and by nothing else — no organisation verb, pipe op, board act
+    /// or setting reaches this file.
+    /// </summary>
+    public decimal Budget(string billingClass) => Read(() =>
+    {
+        using var c = Cmd("SELECT amount FROM audit_budget WHERE class = $c ORDER BY seq DESC LIMIT 1", ("$c", AuditBudget.ClassOf(billingClass)));
+        return c.ExecuteScalar() is string text ? decimal.Parse(text, NumberStyles.Number, CultureInfo.InvariantCulture) : 0m;
+    });
+
+    /// <summary>Appends the owner's figure for <paramref name="billingClass"/> — a new row, never an edit. A negative figure is refused.</summary>
+    public void SetBudget(string billingClass, decimal amount, DateTimeOffset at)
+    {
+        var cls = AuditBudget.ClassOf(billingClass);
+        if (amount < 0m) throw new ArgumentOutOfRangeException(nameof(amount), "the audit line's budget is zero or more");
+        Write(() =>
+        {
+            using var c = Cmd("INSERT INTO audit_budget(class, amount, set_at) VALUES($c, $a, $at)",
+                ("$c", cls), ("$a", amount.ToString(CultureInfo.InvariantCulture)), ("$at", Sql.T(at)));
+            return c.ExecuteNonQuery();
+        });
+    }
+
+    // -------------------------------------------------------------------------------- the traps it planted (U-org-audit-b)
+
+    /// <summary>
+    /// Registers <paramref name="mandateId"/> as an assignment the line planted, impossible by construction. The register is THIS file: no
+    /// organisation table and no view the organisation can reach says a mandate is a trap. Idempotent by the mandate.
+    /// </summary>
+    internal void RegisterTrap(string mandateId, DateTimeOffset at) => Write(() =>
+    {
+        using var c = Cmd("INSERT INTO audit_trap(mandate_id, kind, at) VALUES($m, 'impossible', $at) ON CONFLICT(mandate_id) DO NOTHING",
+            ("$m", mandateId), ("$at", Sql.T(at)));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>The mandates the line planted as impossible assignments.</summary>
+    internal IReadOnlySet<string> Traps() => Read(() =>
+    {
+        using var c = Cmd("SELECT mandate_id FROM audit_trap");
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        using var r = c.ExecuteReader();
+        while (r.Read()) set.Add(r.GetString(0));
+        return (IReadOnlySet<string>)set;
+    });
+
+    // -------------------------------------------------------------------------------- canaries and catch rates (U-org-audit-b)
+
+    /// <summary>
+    /// RECORDS ONE CANARY RUN: when, its failure (null when it ran through), and one catch row per detector — measured by
+    /// <see cref="AuditCanaries"/> from the line's own findings over what it planted, never a claim. One transaction.
+    /// </summary>
+    internal long RecordCanaryRun(DateTimeOffset at, IReadOnlyList<AuditCatch> catches, string? failure) => Write(() =>
+    {
+        long seq;
+        using (var c = Cmd("INSERT INTO audit_canary_run(at, failure) VALUES($at, $f) RETURNING seq", ("$at", Sql.T(at)), ("$f", failure)))
+            seq = (long)c.ExecuteScalar()!;
+        foreach (var k in catches)
+        {
+            using var c = Cmd("""
+                INSERT INTO audit_catch(run_seq, detector, planted, caught, controls, false_alarms) VALUES($r, $d, $p, $c, $n, $f)
+                """, ("$r", seq), ("$d", k.Detector), ("$p", k.Planted), ("$c", k.Caught), ("$n", k.Controls), ("$f", k.FalseAlarms));
+            c.ExecuteNonQuery();
+        }
+        return seq;
+    });
+
+    /// <summary>The latest canary run — when, its failure, and its catch rows — or null when the line has run none.</summary>
+    public AuditCanaryRun? LastCanaryRun() => Read(() =>
+    {
+        long seq;
+        DateTimeOffset at;
+        string? failure;
+        using (var c = Cmd("SELECT seq, at, failure FROM audit_canary_run ORDER BY seq DESC LIMIT 1"))
+        using (var r = c.ExecuteReader())
+        {
+            if (!r.Read()) return null;
+            (seq, at, failure) = (r.GetInt64(0), Sql.Time(r.GetString(1)), Sql.S(r.GetValue(2)));
+        }
+        var catches = new List<AuditCatch>();
+        using (var c = Cmd("SELECT detector, planted, caught, controls, false_alarms FROM audit_catch WHERE run_seq = $r ORDER BY detector", ("$r", seq)))
+        using (var r = c.ExecuteReader())
+            while (r.Read()) catches.Add(new AuditCatch(r.GetString(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4)));
+        return new AuditCanaryRun(seq, at, failure, catches);
     });
 
     // -------------------------------------------------------------------------------- its own failures

@@ -254,7 +254,7 @@ public sealed class AppHost : IAsyncDisposable
     /// exactly this, so the two can never be two ceilings. Read through <see cref="Gateway"/> at every call, because a
     /// connector switch replaces the gateway and the owner changes the cap while the AI works.
     /// </summary>
-    decimal AiCap() => Gateway.Settings.AiDailyCostCap;
+    decimal AiCap() => AuditBudget.Off(Gateway.Settings.AiDailyCostCap, AuditBudgetOf(BillingClasses.Key));
 
     /// <summary>
     /// THE PLAN'S DAY-TOTAL, AS ONE DELEGATE (<c>U-billing-classes</c>; <c>U-board-a2</c> item 9): what the meter admits plan and unknown
@@ -263,7 +263,29 @@ public sealed class AppHost : IAsyncDisposable
     /// day-total is zero, <c>U-board-a1</c> item 6), and neither does a settings row nobody could read: that row's own fail-closed
     /// reading, zero plan turns, is kept now the figure lives in the policy.
     /// </summary>
-    decimal AiPlanCap() => Gateway.Settings.CouldNotBeRead ? 0m : Gateway.Policy.PlanDayTotal;
+    decimal AiPlanCap() => Gateway.Settings.CouldNotBeRead ? 0m : AuditBudget.Off(Gateway.Policy.PlanDayTotal, AuditBudgetOf(BillingClasses.Plan));
+
+    /// <summary>
+    /// THE AUDIT LINE'S BUDGET OFF THE TOP (<c>U-org-audit-b</c>; the owner's Q1): both delegates above admit the organisation — every position,
+    /// the board's seats and perception — against the ceiling LESS the line's figure in that class, read from the line's own file at every
+    /// admission. The line open but its file unreadable (refused, or closed by the quit) is null: no room, never a zero budget. A host composed
+    /// without the line at all (<see cref="Composed"/>, a test's) carves nothing; <see cref="StartAsync"/> composes it before the AI.
+    /// </summary>
+    decimal? AuditBudgetOf(string billingClass) => _audit is { } line ? line.BudgetOf(billingClass) : _auditClosed ? null : 0m;
+
+    /// <summary>Set once the quit closed the audit line: from then on its budget is unreadable, never zero.</summary>
+    bool _auditClosed;
+
+    /// <summary>
+    /// COMPOSES THE PUBLIC AUDIT LINE over this host's database, writing to <paramref name="auditFile"/> (null: <c>state/audit.db</c>) — its
+    /// timer is started by <see cref="StartAsync"/>. Internal so a test composes the line the product composes.
+    /// </summary>
+    internal AuditLine ComposeAuditLine(string? auditFile = null) => _audit = new AuditLine(_db!.FilePath, auditFile);
+
+    /// <summary>The audit line's own file and refusal, for the owner's page alone (<c>U-org-audit-b</c>): App-internal, never on the pipe.</summary>
+    internal AuditStore? AuditStore => _audit?.Store;
+
+    internal string? AuditRefusal => _audit?.Refusal;
 
     /// <summary>The decision models built so far, one per instrument, disposed with the app.</summary>
     readonly Dictionary<string, TypeSafeWire> _decisionModels = new(StringComparer.Ordinal);
@@ -1302,6 +1324,8 @@ public sealed class AppHost : IAsyncDisposable
             _door.Start();
             Health.Set(Components.Gateway, HealthState.READY);
 
+            // THE AUDIT LINE BEFORE THE AI (U-org-audit-b): its budget is carved off every ceiling the AI is admitted against.
+            ComposeAuditLine();
             ComposeTheAi(_db);
             // WHAT THE SWEEP COULD NOT END HOLDS EVERY TURN AND COUNTS AS AN AGENT PRESENT until it is gone (U-cell-linux-b fix pass 1,
             // R3): a crash's leftover still runs as the owner's user and may spend or write the inbox.
@@ -1321,8 +1345,7 @@ public sealed class AppHost : IAsyncDisposable
             _oversight.Start();
             // THE PUBLIC AUDIT LINE (U-org-audit-a; ORCHESTRATION § 2.13): its own file, state/audit.db, on its own one-minute timer. It reads
             // approved evidence here READ-ONLY and writes nothing the organisation reads; its findings are shown nowhere until part c.
-            _audit = new AuditLine(_db!.FilePath);
-            _audit.Start();
+            _audit!.Start();
 
             Gateway.Log.Activity("TradeAgent started");
             if (OperatingSystem.IsLinux())
@@ -3217,7 +3240,7 @@ public sealed class AppHost : IAsyncDisposable
             _loop.Dispose();
         }
         if (_oversight is not null) { await _oversight.DisposeAsync(); _oversight = null; }
-        if (_audit is not null) { await _audit.DisposeAsync(); _audit = null; }
+        if (_audit is not null) { _auditClosed = true; await _audit.DisposeAsync(); _audit = null; }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
         // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":

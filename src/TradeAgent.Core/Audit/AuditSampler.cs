@@ -12,6 +12,13 @@ public static class AuditPolicy
     /// the rate is bounded by nothing but the line's own minute.
     /// </summary>
     public const double SampleRate = 0.25;
+
+    /// <summary>
+    /// THE RATE AT WHICH THE LINE PLANTS IMPOSSIBLE ASSIGNMENTS IN THE OWNER'S REAL HOME: zero until M-org1 (the owner's Q3 of 2026-10-22,
+    /// "traps in his real home at rate 0 until M-org1"). A constant, not a setting: no key, op, verb or board act can raise it. Until a later
+    /// owner press does, the line plants traps only in its own scratch proving home (<see cref="AuditCanaries"/>).
+    /// </summary>
+    public const double RealTrapRate = 0;
 }
 
 /// <summary>

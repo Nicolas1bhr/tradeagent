@@ -34,8 +34,9 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
         {
             var salt = store.Salt();
             var after = store.Cursor() ?? 0;
+            var traps = store.Traps();
             using var evidence = new AuditEvidence(DatabaseFile);
-            var write = evidence.InOneRead(() => Read(evidence, salt, after, now));
+            var write = evidence.InOneRead(() => Read(evidence, salt, after, traps, now));
             return new AuditSweepResult(store.Commit(write, now), null);
         }
         catch (Exception ex)
@@ -48,7 +49,7 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
     }
 
     /// <summary>Everything one sweep writes, read in one read transaction of the app's database.</summary>
-    AuditSweepWrite Read(AuditEvidence evidence, byte[] salt, long after, DateTimeOffset now)
+    AuditSweepWrite Read(AuditEvidence evidence, byte[] salt, long after, IReadOnlySet<string> traps, DateTimeOffset now)
     {
         var top = evidence.Rows("SELECT MAX(id) FROM org_mandate_event")[0][0] is long t ? t : (long?)null;
         if (top is not { } last || last <= after) return new AuditSweepWrite([], [], [], [], null);
@@ -98,10 +99,13 @@ public sealed class AuditSweep(string databaseFile, AuditStore store, double rat
                 continue;
             }
             named[delivery] = eventId;
-            if (!AuditSampler.Draws(salt, delivery, rate)) continue;
+            // A TRAP THE LINE PLANTED IS ALWAYS DRAWN (U-org-audit-b): its acceptance is the one the line set out to see. The draw stays
+            // invisible either way — nobody in the organisation can tell a drawn delivery from another.
+            var trap = traps.Contains(mandate);
+            if (!trap && !AuditSampler.Draws(salt, delivery, rate)) continue;
             var sample = new AuditSample(delivery, mandate, unit, eventId, now);
             samples.Add(sample);
-            var outcome = AuditChecks.Of(evidence, sample, now);
+            var outcome = AuditChecks.Of(evidence, sample, now, trap);
             checks.AddRange(outcome.Checks);
             findings.AddRange(outcome.Findings);
             if (outcome.Flag is { } flag) flags.Add(flag);

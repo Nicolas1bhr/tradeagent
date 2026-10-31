@@ -108,7 +108,9 @@ public class AuditInvisibilityTests(ITestOutputHelper log)
         Assert.True(holders.Count == 0, "an agent-reachable assembly holds the audit line: " + string.Join(", ", holders));
 
         var root = Seam.RepoRoot();
-        string[] named = [ns, AuditStore.FileName, "audit_", nameof(AuditStore), nameof(AuditLine), nameof(AuditSweep), nameof(AuditEvidence)];
+        string[] named = [ns, AuditStore.FileName, "audit_", nameof(AuditStore), nameof(AuditLine), nameof(AuditSweep), nameof(AuditEvidence),
+            // U-org-audit-b: the canary list, the budget and the catch rates are the line's as well.
+            nameof(AuditCanaries), nameof(AuditBudget), nameof(AuditCatch), "impossible-claimed"];
         var sources = new[] { "TradeAgent.Gateway", "TradeAgent.AgentRuntime", "TradeAgent.TradeCli", "TradeAgent.GatewayHost" }
             .SelectMany(p => Directory.GetFiles(Path.Combine(root, "src", p), "*.cs", SearchOption.AllDirectories))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
