@@ -479,7 +479,8 @@ public sealed class OnboardingView
     RuntimeManifest? Manifest() =>
         RuntimeCatalog.Find(_host.Gateway.Settings.SelectedRuntimeId ?? "opencode");
 
-    bool UsingAtas => (_host.Db.GetKv("connector") ?? "fake") == "atas";
+    // THE PLATFORM RUNNING, not the one saved (U-atas-home-no-atas-build): a build without the adapter keeps ATAS saved while it runs paper.
+    bool UsingAtas => _host.Connector.Id == Platforms.Connectors.Atas;
 
     // ---- the screens ---------------------------------------------------------------------------
 

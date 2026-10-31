@@ -32,6 +32,8 @@ TradingGateway? settingsOf = null;
 ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoice
 {
     SimulatorAccountId = Arg("--account"),
+    // ATAS ONLY WHERE THIS BUILD CARRIES ITS ADAPTER (U-atas-home-no-atas-build): read from the bridge installed beside this executable.
+    AtasAdapterInThisBuild = BuildContents.AtasAdapterInThisBuild,
     // The same forward-bar ledger the app collects into. There is no collector in this host, so
     // nothing announces a minute here and the connector settles by polling the rows — which is what
     // `IPaperBarSource.SinceAsync` is for, and why an event that can be missed is never the path.
