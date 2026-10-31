@@ -954,6 +954,18 @@ public static class GatewaySchema
             + "TradeAgent chose (null: the owner), the mandate, the reason as written and every head passed over and why. At most "
             + $"{GatewayPipeServer.OrgListMax} and {Core.Db.ResearchLedger.MaxReadBytes:N0} bytes a call; 'more' says it stopped.",
             [new("before", "string", false, "An escalation id: serve only those before it — an answer's 'next_before'.")]),
+        new(Core.Ops.PetitionFile, "trade petition file <intent> <rationale>", false,
+            "PETITION THE SECURITY BOARD, AS A POSITION: name the change you want to the policy in force ('intent': a JSON list of "
+            + "changes, each {\"field\", \"from\", \"to\"}, every 'from' the value in force — a limit, an allowance, the paper "
+            + "envelope) and why ('rationale', your words). TradeAgent checks the intent, records it and wakes ONE active seat of the "
+            + "board, which weighs it on its own judgement: a narrowing it may apply alone, a widening only another seat can confirm. "
+            + "A petition APPLIES NOTHING and binds no seat; nothing waits on it. Refused while no board seat is active, to a board seat, "
+            + $"and beyond {Core.Board.BoardLimits.PetitionsPerDay} in 24 hours. A real-money mode and real money's switch are no field "
+            + "of any intent. It grants nothing, places no order and moves no money.",
+            [
+                new("intent", "string", true, "A JSON list of changes, each {\"field\", \"from\", \"to\"}."),
+                new("rationale", "string", true, $"Why, in your words: at most {Core.Board.BoardLimits.MaxRationaleChars:N0} characters — your claim; it binds no one.")
+            ]),
         new(Core.Ops.LateralSend, "trade lateral send <to> <text> [--refs JSON]", false,
             "SEND A NOTE TO ANOTHER POSITION — a finding, a reference, a data defect, an offer to work together: 'to' (an active "
             + "position, never yourself, an app principal, one that may place orders, or one whose latest seat cannot carry "

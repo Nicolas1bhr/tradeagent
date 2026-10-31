@@ -489,11 +489,20 @@ public static class Versions
     /// INSERT trigger per artifact table in <c>ArtifactLineage.Kinds</c> — version, run, delivery, ledger entry, decision, forecast —
     /// refusing a row with no author position, or no attempt while a position wrote it. No backfill: a row before the rung reads
     /// "not recorded".</para>
+    ///
+    /// <para><b>54 — a position's petition to the security board</b> (<c>U-board-alive</c>, rung <see cref="BoardPetitionRung"/>, after
+    /// <c>U-lineage-check</c>'s 53): <c>board_petition</c> — an active position's request that the board change the policy (the chief's
+    /// included): its typed intent and hash, read strictly against the version in force, its direction, its words as a claim, and the one
+    /// active seat the app woke for it (<c>routed_to</c>). A RECORD THAT APPLIES NOTHING: only a board act changes the policy. Sealed: an
+    /// UPDATE, a DELETE and an insert over its key are refused by trigger. One writer, <c>BoardStore</c>.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ArtifactLineageRung;
+    public const int DatabaseSchemaVersion = BoardPetitionRung;
 
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;
+
+    /// <summary>A position's petition to the board, spelled once (<c>U-board-alive</c>); a unit overtaken renumbers it here and nowhere else.</summary>
+    public const int BoardPetitionRung = 54;
 
     /// <summary>
     /// THE OLDEST HOME THIS BUILD OPENS (<c>U-windows-release</c>): a home stamped below this schema is REFUSED, untouched, in words
