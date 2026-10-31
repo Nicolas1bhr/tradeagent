@@ -101,6 +101,9 @@ static class BoardLives
 
     public static string Narrow(string intent, string why) => $"trade board narrow {Arg(intent)} \"{why}\"";
 
+    /// <summary>A position's petition to the board (<c>U-board-alive</c>): <c>trade petition file</c>.</summary>
+    public static string Petition(string intent, string why) => $"trade petition file {Arg(intent)} \"{why}\"";
+
     public static string Decide(string act, string answer, string sha, string why) => $"trade board decide {act} {answer} {sha} \"{why}\"";
 
     public static List<JsonObject> TradeSteps(PuppetLife life, string role, int turn) =>
