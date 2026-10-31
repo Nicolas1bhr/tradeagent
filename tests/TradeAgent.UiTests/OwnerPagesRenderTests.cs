@@ -70,6 +70,8 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
             Make("board", h => new BoardPage(h.Board), (p, _) => p.Update(), p => p.Root),
             Make("report", h => new ReportPage(h), (p, _) => p.Update(), p => p.Root),
             Make("owner", h => new OwnerPage(h, new SettingsPage(h)), (p, _) => p.Update(status.Status!), p => p.Root),
+            // THE SETTINGS PAGE, the market data and the owner's head-start kit card (U-kit-socket).
+            Make("settings", h => new SettingsPage(h), (p, _) => p.Update(status.Status!), p => p.Root),
             Make("for-you", h => new OwnerInboxPage(OwnerInboxSources.For(h)), (p, _) => p.Update(), p => p.Root),
             Make("oversight", h => new OversightPage(OversightSources.For(h)), (p, _) => p.Update(), p => p.Root),
         ];
@@ -356,6 +358,23 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// THE DASHBOARD'S COST LINE NAMES THE SEAT'S MODEL AS THE SEAT'S (seen on the owner's screen, 2026-10-30): "running gpt-5.6-sol" stood
     /// beside a day's figure a chief on gpt-6-luna had spent. The figure is every position's; the model is the one this role's next turn asks for.
     /// </summary>
+    /// <summary>
+    /// THE HEAD-START KIT CARD ON SETTINGS (<c>U-kit-socket</c>): its two ways in and what is installed — at a start whose build carries the
+    /// repository's empty sample kit, that kit, installed from the bundle, with its hash.
+    /// </summary>
+    [Fact]
+    public void The_settings_page_shows_the_kit_card_with_its_presses_and_what_is_installed()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"kit-{Guid.NewGuid():n}.db"));
+        var settings = RenderAll(db, "kit", 1280, 800).Single(f => f.Page == "settings");
+        Assert.Contains(Labels.ChooseKitFolder, settings.Texts);
+        Assert.Contains(Labels.ChooseKitZip, settings.Texts);
+        var installed = settings.Texts.SkipWhile(t => t != "Installed").Skip(1).FirstOrDefault() ?? "";
+        Assert.True(installed.StartsWith("Empty head-start kit — 0 skills, 0 tools — kit ", StringComparison.Ordinal) || installed == "No kit installed.",
+            $"the card says '{installed}'");
+        Assert.Empty(settings.Overflow);
+    }
+
     [Fact]
     public void The_cost_line_never_says_a_model_ran_that_only_the_chairs_next_turn_asks_for()
     {
