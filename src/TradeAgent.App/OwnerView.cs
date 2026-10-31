@@ -681,6 +681,9 @@ sealed class OwnerPage
             Ui.Spacer(Theme.S2),
             Ui.Muted(Labels.CampaignBudgetsAreEvidence)));
 
+        // EACH PAIR'S CAMPAIGN, WHAT IT HAS LEFT AND WHAT ITS RENEWAL WAITS FOR (U-evidence-breadth item 4): one text, updated in place.
+        var standings = Ui.Section("Campaigns under evidence", _campaignStandings);
+
         var connections = Ui.Section("Key for TradeAgent's own worker", Ui.Col(Theme.S2,
             Ui.Muted("TradeAgent's own worker calls the AI provider directly, with the tools TradeAgent chose and a budget it enforces on "
                 + "every request. It cannot run a shell, install anything or reach the internet. It needs a key, which is yours."),
@@ -769,7 +772,7 @@ sealed class OwnerPage
             _unreadableCard, _releaseCard, running, _boardComposition.Root,
             Ui.H2(Labels.OwnerGroupConnections), settings.Platform, settings.Account, connections, _seatChoices.Root, settings.Bridge,
             Ui.H2(Labels.OwnerGroupMoney), spending, _perception.Root,
-            Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns,
+            Ui.H2(Labels.OwnerGroupEvidence), evidence, settings.Friction, settings.Holdout, campaigns, standings,
             Ui.H2(Labels.OwnerGroupUpdates), settings.Updates)));
         grid.Children.Add(Pages.Column(1, Ui.With(Ui.Col(Theme.S6, emergency, settings.WhatTheseChange),
             c => c.Margin = new Thickness(Theme.S5, 0, 0, 0))));
@@ -831,7 +834,21 @@ sealed class OwnerPage
         _explorationBudget.Text = N(Math.Min(trials, Math.Max(0, s.CampaignExplorationBudget)));
         _verdictBudget.Text = N(Math.Max(0, s.CampaignVerdictBudget));
         _judgeCapital.Text = N(Core.Strategy.VenueCostModel.CapitalOf(s.JudgeCapital)) + ", in the units of the data's prices";
+
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var lines = _host.Evidence.Standings().Select(r => r.Line(now)).ToList();
+            _campaignStandings.Text = lines.Count == 0
+                ? "No campaign is open over real history, so no strategy can be judged yet. Setup holds back each pair's last months; "
+                  + "Settings can hold back one more."
+                : string.Join("\n", lines);
+        }
+        catch (Exception) { _campaignStandings.Text = "could not be read"; }
     }
+
+    /// <summary>One line per open campaign over real history (<see cref="EvidenceCampaigns.Standings"/>).</summary>
+    readonly TextBlock _campaignStandings = Ui.Body("");
 
     // ---- the key for TradeAgent's own worker (U-key-host-pin) ---------------------------------------
 

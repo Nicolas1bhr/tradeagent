@@ -404,6 +404,36 @@ public class EvidenceCampaignTests
         Assert.Contains($"dataset {stale.Id}", refused, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// THE OWNER'S PAGE SHOWS EACH PAIR'S CAMPAIGN (<c>U-evidence-breadth</c> item 4): what it has left of its judgements and research
+    /// runs, and — once spent — what its pair's next campaign waits for, from when, and how many days that is from now.
+    /// </summary>
+    [Fact]
+    public async Task The_owner_page_shows_each_pairs_campaign_what_it_has_left_and_what_its_renewal_waits_for()
+    {
+        var pair = TestEnv.NewPair();
+        var (gw, db, _, k1) = await SpentOnce(pair);
+        using var owned = db;
+        await using var gateway = gw;
+        var second = TestEnv.NewPair();
+        var (held, j1) = gw.SetHoldout(Recorded(db, second, First, Last).Id, DefaultCutoff, EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        var evidence = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
+
+        var before = evidence.Standings().ToDictionary(r => r.Pair, r => r.Line(Now));
+        Assert.StartsWith($"{pair}, campaign {k1.Id}, held back from 2026-07-01 UTC: 0 of 1 final judgements and 5 of 5 research runs "
+            + "left. Its final judgements are spent. TradeAgent arms its fresh holdout within minutes", before[pair], StringComparison.Ordinal);
+
+        var armed = Assert.Single(gw.Renewals.Arm(Now));
+        var lines = evidence.Standings().ToDictionary(r => r.Pair, r => r.Line(Now));
+        Assert.Equal(2, lines.Count);
+        Assert.Equal($"{second}, campaign {j1!.Id}, held back from 2026-07-01 UTC: 1 of 1 final judgements and 5 of 5 research runs left.",
+            lines[second]);
+        Assert.Equal($"{pair}, campaign {k1.Id}, held back from 2026-07-01 UTC: 0 of 1 final judgements and 5 of 5 research runs left. "
+            + $"Its final judgements are spent; the next {pair} campaign waits for fresh bars from {armed.Cutoff:yyyy-MM-dd} UTC — at least "
+            + $"30 days of them — so it opens no earlier than {armed.Earliest:yyyy-MM-dd} (31 days from now).", lines[pair]);
+    }
+
     /// <summary>A SPENT CAMPAIGN'S REFUSAL SAYS WHAT FOLLOWS IT: the fresh cutoff and the thirty days it waits for.</summary>
     [Fact]
     public async Task A_refused_judgement_names_the_fresh_months_it_waits_for()
