@@ -170,6 +170,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
             $"trade org charter division 0.25 \"one division to find a paper strategy\" --forecasts {Forecasts()} --collapse-by {collapse}",
             $"trade org hire {{out:\"unit\":\\s*\"([^\"]+)\"}} \"a head for the new division\" --head true --forecasts {Forecasts()}",
             "trade org wake 300",
+            "signal chief-worked", "await chief-go",
             "usage 400 0 40", "final Chartered a division, appointed its head, and asked to look again in five hours."
         ];
         string[] idle = ["usage 50 0 5", "final Read it."];
@@ -184,8 +185,8 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.StartsWith($"You woke the chief {chief} once", woke, StringComparison.Ordinal);
         var chiefWorkTurn = chiefActivationWake ? 2 : 1;
 
-        await life.RunUntil(() => Ended(life, chief) >= chiefWorkTurn, "the chief's woken turn ended");
-        Served(life, chief, chiefWorkTurn, 3);
+        // ONE LANE: while the chief's turn waits, nothing else turns — so the head's script is written before its activation wake is taken.
+        await life.RunUntil(() => life.Reached("chief-worked"), "the chief chartered, hired and asked for its next wake");
         var ownerWake = Assert.Single(life.Host.Wakes.OfKind(MissionEventKind.OwnerWake));
         Assert.Equal((chief, life.AttemptsOf(chief)[chiefWorkTurn - 1].Id), (ownerWake.Role, ownerWake.ConsumedBy));
 
@@ -194,6 +195,21 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var division = Assert.Single(org.Units(), u => u.Kind == OrgUnitKind.Division && u.ParentId == OrgIds.Root && OrgEnvelopes.LegacyRoleOf(u.Id) is null);
         Assert.Equal("0.25", division.EnvelopeShare);
         var head = division.HeadPositionId!;
+        var cutoff = Bar0.AddMinutes(HoldoutAtBar);
+        var due = DateTimeOffset.UtcNow.AddDays(7).ToString("O");
+        string[] headHire =
+        [
+            $"trade org charter team 0.25 \"a team to author and test candidates\" --forecasts {Forecasts()} --collapse-by {collapse}",
+            $"trade org hire {{out:\"unit\":\\s*\"([^\"]+)\"}} \"an executor to author candidates\" --forecasts {Forecasts()}",
+            $"trade mandate assign {{out:\"position\":\\s*\"([^\"]+)\"}} \"author two BTCUSDT programs and backtest each on dataset {set.Id}\" "
+            + $"--kind task --shape report --due {due} --allocation 5",
+            "signal head-staffed", "await head-go",
+            "usage 300 0 30", "final Staffed a team and assigned the work."
+        ];
+        life.Script(head, headHire, idle);
+        life.Release("chief-go");
+        await life.RunUntil(() => Ended(life, chief) >= chiefWorkTurn, "the chief's woken turn ended");
+        Served(life, chief, chiefWorkTurn, 3);
         Assert.Equal(OrgPositionStatus.Active, org.Position(head)!.Status);
         Assert.Contains(org.DecisionsOf(chief), d => d.Kind == OrgDecisionKind.Charter);
         Assert.Equal(chief, Decider(db, OrgEventKind.Activated, head));
@@ -207,20 +223,9 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.InRange(nextLook.DueAt, chiefTurn.StartedAt.AddMinutes(300), DateTimeOffset.UtcNow.AddMinutes(300));
 
         // ---- 3. THE HEAD, WOKEN BY ITS ACTIVATION: charters a team, hires an executor into it, assigns it a mandate — one turn, ids read
-        // back from each verb's own answer. The executor's activation wakes it and its hirer; its mandate wakes it too.
-        var cutoff = Bar0.AddMinutes(HoldoutAtBar);
-        var due = DateTimeOffset.UtcNow.AddDays(7).ToString("O");
-        string[] headHire =
-        [
-            $"trade org charter team 0.25 \"a team to author and test candidates\" --forecasts {Forecasts()} --collapse-by {collapse}",
-            $"trade org hire {{out:\"unit\":\\s*\"([^\"]+)\"}} \"an executor to author candidates\" --forecasts {Forecasts()}",
-            $"trade mandate assign {{out:\"position\":\\s*\"([^\"]+)\"}} \"author two BTCUSDT programs and backtest each on dataset {set.Id}\" "
-            + $"--kind task --shape report --due {due} --allocation 5",
-            "usage 300 0 30", "final Staffed a team and assigned the work."
-        ];
-        life.Script(head, headHire, idle);
-        await life.RunUntil(() => Ended(life, head) >= 1, "the head's first turn ended");
-        Served(life, head, 1, 3);
+        // back from each verb's own answer, waiting while the executor's script is written. The executor's activation wakes it and its hirer;
+        // its mandate wakes it too.
+        await life.RunUntil(() => life.Reached("head-staffed"), "the head staffed its team and assigned the work");
         var team = Assert.Single(org.Units(), u => u.ParentId == division.Id);
         var executor = Assert.Single(org.Positions(), p => p.UnitId == team.Id).Id;
         Assert.Equal(OrgPositionStatus.Active, org.Position(executor)!.Status);
@@ -244,6 +249,9 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
             $"trade mandate deliver {{out:\"mandate\":\\s*\"([^\"]+)\"}} \"two candidates backtested on the research months: dip and rip\" --refs {refs}",
             "signal delivered", "await executor-go", "usage 900 0 90", "final Delivered two candidates."
         ]);
+        life.Release("head-go");
+        await life.RunUntil(() => Ended(life, head) >= 1, "the head's first turn ended");
+        Served(life, head, 1, 3);
         await life.RunUntil(() => life.Reached("delivered"), "the executor delivered");
         Served(life, executor, 1, 4);
         var runs = gw.Strategies.CompletedRunsOf(winner, executor).Concat(gw.Strategies.CompletedRunsOf(loser, executor)).ToList();
