@@ -11,7 +11,7 @@ name: release
 # wherever ATAS would be offered. A build that has been carrying ATAS is never updated to it (UpdateChannel, UpdateService.cs).
 #
 # A DRAFT IS MADE ONLY on a pushed tag v<version>, or on a workflow_dispatch from main with dry_run unticked — and only when the
-# version in Directory.Build.props matches, no release of that version exists, and a `build` run on this exact commit concluded
+# commit is on main, the version in Directory.Build.props matches, no release of that version exists, and a `build` run on this exact commit concluded
 # success. Every other run (a dry run, any branch) builds, checks and uploads the assets as this run's artifact, and stops there.
 on:
   push:
@@ -42,6 +42,8 @@ jobs:
       draft: ${{ steps.plan.outputs.draft }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,6 +61,13 @@ jobs:
           elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY" = false ]; then
             draft=true
             [ "$REF" = refs/heads/main ] || { echo "::error::a draft release is cut from main only, not $REF"; exit 1; }
+          fi
+          # ON MAIN (Codex review): a tag can point at any commit, so a draft is cut only from a commit main already contains.
+          git fetch -q --no-tags origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then on_main=true; else on_main=false; fi
+          echo "commit ${GITHUB_SHA:0:10} on main: $on_main"
+          if [ "$draft" = true ] && [ "$on_main" != true ]; then
+            echo "::error::$GITHUB_SHA is not on main; a release is cut only from a commit main contains"; exit 1
           fi
           # THE GREEN GATE: a `build` run on this exact commit that concluded success. Asked on every run, so a dry run shows the answer.
           green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.total_count')"

@@ -1127,6 +1127,16 @@ public sealed class AppHost : IAsyncDisposable
 
     public async Task<bool> StartAsync()
     {
+        // AN OLDER HOME, BEFORE THE LOCK AND THE MANAGED FOLDERS (U-windows-release, Codex review): the lock file and the folders
+        // EnsureAllVerbose makes are inside the home, so the refusal is read first — read-only — and nothing of this start is written
+        // there. The open in Database refuses it again for every other process that opens a home.
+        if (ProbeOlderHome(Paths.Home) is { } early)
+        {
+            OlderHome = early;
+            StartupProblem = early.Message;
+            return false;
+        }
+
         _lock = SingleInstanceLock.TryAcquire();
         SingleInstance = _lock is not null;
         if (!SingleInstance)
@@ -1346,6 +1356,17 @@ public sealed class AppHost : IAsyncDisposable
     /// Settable only by a test host, which stands in for a build made on the machine with ATAS.
     /// </summary>
     public bool AtasInThisBuild { get; internal set; } = BuildContents.AtasAdapterInThisBuild;
+
+    /// <summary>The home's refusal read before anything is written to it, or null — including when it cannot be read: the open decides then.</summary>
+    internal static OlderHomeException? ProbeOlderHome(string dir)
+    {
+        try
+        {
+            var home = Path.GetFullPath(dir);
+            return Core.OlderHome.RefusedSchema(home) is { } schema ? new OlderHomeException(home, schema, Versions.App) : null;
+        }
+        catch (Exception) { return null; }
+    }
 
     /// <summary>The older home this start refused (<see cref="OlderHomeException"/>), while it stands; null otherwise.</summary>
     public OlderHomeException? OlderHome { get; private set; }

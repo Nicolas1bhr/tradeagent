@@ -45,7 +45,7 @@ CI cuts it; you press two buttons; nothing is published without the second one.
    creates a **DRAFT** release `v<version>` with four assets: `TradeAgent-Setup-x64-no-atas.exe`,
    `TradeAgent-<version>-linux-x64.tar.gz`, `SHA256SUMS.txt` and `SHA256SUMS` (one manifest naming both files, under the two
    names the updater and `packaging/linux/install.sh` read). It refuses — creating nothing — when the version and a pushed tag
-   differ, when dispatched from anything but main, when a release of that version exists, or when no `build` run on that exact
+   differ, when dispatched from anything but main, when the commit is not on main, when a release of that version exists, or when no `build` run on that exact
    commit concluded success. With `dry_run` ticked (the default) it builds and checks everything, uploads the four files as the
    run's artifact `release-assets`, and makes no draft.
 3. **Publish.** Open the draft on the repository's Releases page, read it, press **Publish release**. That press creates the tag
