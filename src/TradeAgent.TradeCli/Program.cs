@@ -552,6 +552,25 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             }
         }
 
+        // `trade petition file <intent> <rationale>` (U-board-alive): a position's petition to the security board — a record that applies
+        // nothing and wakes one active board seat. Every flag is sent on under its own name and the gateway refuses one it does not take.
+        case "petition":
+        {
+            foreach (var (key, value) in flags)
+                if (!key.Equals("request-id", StringComparison.OrdinalIgnoreCase))
+                    a[key.Replace('-', '_')] = value;
+
+            var rest = pos.Skip(1).ToList();
+            switch ((pos.ElementAtOrDefault(0) ?? "").ToLowerInvariant())
+            {
+                case "file":
+                    Fill(a, rest, "intent", "rationale");
+                    return (Ops.PetitionFile, a);
+                default:
+                    return (null, a);
+            }
+        }
+
         // `trade board narrow <intent> <rationale>`, `propose <intent> <rationale>`, `decide <act> <answer> <intent_sha256> <rationale>`,
         // `list` and `show <act>` (U-board-b1): the security board's verbs, served to an active board seat alone. Every flag is sent on
         // under its own name and the gateway refuses one the verb does not take. No `board` verb reaches the owner's veto, the board's

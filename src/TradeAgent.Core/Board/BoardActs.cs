@@ -45,7 +45,21 @@ public static class BoardLimits
 
     /// <summary>The longest text of a power proposal.</summary>
     public const int MaxPowerTextChars = 4000;
+
+    /// <summary>
+    /// HOW MANY PETITIONS ONE POSITION FILES IN ANY 24 HOURS (<c>U-board-alive</c>): each one buys a board seat's strong-model turn on the
+    /// board's own budget, so a position cannot spend the board's day by asking. An app constant (CHANGE-001: the board does not set it).
+    /// </summary>
+    public const int PetitionsPerDay = 3;
 }
+
+/// <summary>
+/// A POSITION'S PETITION TO THE BOARD (<c>board_petition</c>, rung 53; <c>U-board-alive</c>): the position (the chief included), its launch,
+/// the intent and its hash as the app parsed them, its direction, the version in force it was read against, the position's words — a
+/// claim — the one active seat the app woke for it, and when. It applies nothing.
+/// </summary>
+public sealed record BoardPetitionRow(string Id, string Position, string? Attempt, string Intent, string IntentSha256, string Direction,
+    int PolicyVersion, string Rationale, string RoutedTo, DateTimeOffset At);
 
 /// <summary>
 /// WHAT A SEAT MAY PROPOSE OF THE BOARD'S OWN POWER (<c>U-board-b1</c>; R24 § 4.4, CHANGE-001) — a closed list. Each proposal is a record

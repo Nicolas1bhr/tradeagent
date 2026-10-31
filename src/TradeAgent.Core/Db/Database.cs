@@ -3283,6 +3283,42 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{launchEvidenceRung}') ON CONFLICT(key) DO UPDATE SET value='{launchEvidenceRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-board-alive): a unit overtaken renumbers it in Versions, nothing else.
+        const int petitionRung = Versions.BoardPetitionRung;
+        if (have < petitionRung)
+        {
+            // A POSITION'S PETITION TO THE SECURITY BOARD — `U-board-alive` (R24 § 4.1: an agent that wants more permission can only
+            // propose it to the board). A RECORD THAT APPLIES NOTHING: the position's typed intent and its hash, read strictly against the
+            // version in force when it was filed (`policy_version`), its direction, the position's own words (a claim), and the ONE active
+            // seat the app woke for it (`routed_to`, the app's choice). Only a board act changes the policy. A board id is never a
+            // petitioner. Sealed like every board table: UPDATE, DELETE and an insert over its key refused; WITHOUT ROWID so the key is the
+            // only one an insert can collide with. CREATE IF NOT EXISTS and the stamp last: a crash before the stamp re-runs it over what it
+            // made, writing nothing twice.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS board_petition(
+                  id             TEXT PRIMARY KEY CHECK (substr(id, 1, 5) = 'bpet-' AND length(id) BETWEEN 6 AND 40),
+                  position       TEXT NOT NULL CHECK (length(position) BETWEEN 1 AND 64 AND substr(position, 1, 6) <> 'board-'),
+                  attempt_id     TEXT,
+                  intent         TEXT NOT NULL CHECK (length(intent) BETWEEN 2 AND 65536),
+                  intent_sha256  TEXT NOT NULL CHECK (length(intent_sha256) = 64),
+                  direction      TEXT NOT NULL CHECK (direction IN ('widens','narrows')),
+                  policy_version INTEGER NOT NULL REFERENCES board_policy(version),
+                  rationale      TEXT NOT NULL CHECK (length(rationale) BETWEEN 1 AND 4000),
+                  routed_to      TEXT NOT NULL REFERENCES board_seat(id),
+                  at             TEXT NOT NULL
+                ) WITHOUT ROWID;
+                CREATE INDEX IF NOT EXISTS ix_board_petition_position ON board_petition(position, at);
+                CREATE TRIGGER IF NOT EXISTS board_petition_sealed_u BEFORE UPDATE ON board_petition
+                BEGIN SELECT RAISE(ABORT, 'a row of board_petition is written once and never updated'); END;
+                CREATE TRIGGER IF NOT EXISTS board_petition_sealed_d BEFORE DELETE ON board_petition
+                BEGIN SELECT RAISE(ABORT, 'a row of board_petition is never deleted'); END;
+                CREATE TRIGGER IF NOT EXISTS board_petition_sealed_i BEFORE INSERT ON board_petition
+                WHEN NEW.id IS NOT NULL AND EXISTS (SELECT 1 FROM board_petition WHERE id = NEW.id)
+                BEGIN SELECT RAISE(ABORT, 'a row of board_petition is written once: an insert over it, a replace included, is refused'); END;
+                """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{petitionRung}') ON CONFLICT(key) DO UPDATE SET value='{petitionRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
