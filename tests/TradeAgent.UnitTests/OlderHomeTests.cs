@@ -61,7 +61,7 @@ public class OlderHomeTests
         Assert.Contains($"TradeAgent {release}", refused.Message);
         Assert.Contains($"This is TradeAgent {Versions.App}", refused.Message);
         Assert.Contains($"schema {schema}", refused.Message);
-        Assert.Contains("Nothing in that folder has been changed", refused.Message);
+        Assert.Contains("None of your records or files in that folder has been changed", refused.Message);
         Assert.Equal(schema, refused.HomeSchema);
         Assert.Equal(Path.GetFullPath(home), refused.Home);
         Assert.Equal(before, Fingerprint(home));
@@ -107,5 +107,29 @@ public class OlderHomeTests
         Assert.Contains("is not a home from an older TradeAgent", refused.Message);
         Assert.Equal(before, Fingerprint(home));
         Assert.Empty(Directory.GetDirectories(scratch.Dir, "TradeAgent-from-*"));
+    }
+
+    /// <summary>
+    /// The app's start reads the refusal BEFORE its lock file and managed folders are made (Codex review): the probe answers an older
+    /// home with both versions and writes nothing to it, and answers nothing for a home the build opens.
+    /// </summary>
+    [Fact]
+    public void The_start_reads_the_refusal_before_it_writes_anything_into_the_home()
+    {
+        using var scratch = TestEnv.NewScratch("older-home");
+        var home = OldHome(scratch.Dir, 4);
+        var before = Fingerprint(home);
+        var dirs = Directory.GetDirectories(home, "*", SearchOption.AllDirectories).Length;
+
+        var refused = TradeAgent.App.AppHost.ProbeOlderHome(home);
+
+        Assert.NotNull(refused);
+        Assert.Contains("TradeAgent 0.1.2", refused!.Message);
+        Assert.Equal(before, Fingerprint(home));
+        Assert.Equal(dirs, Directory.GetDirectories(home, "*", SearchOption.AllDirectories).Length);
+
+        var current = Path.Combine(scratch.Dir, "current");
+        using (new Database(Path.Combine(current, "state", "tradeagent.db"))) { }
+        Assert.Null(TradeAgent.App.AppHost.ProbeOlderHome(current));
     }
 }

@@ -230,8 +230,9 @@ public sealed class UpdateService
         UpdateVersion.TryParse(currentVersion, out _current);
         CurrentVersion = _current.ToString();
         Repository = Resolve(repository);
-        _assetPattern = assetPattern ?? Environment.GetEnvironmentVariable("TRADEAGENT_UPDATE_ASSET")
-            ?? UpdateChannel.PatternFor(atasAdapter ?? BuildContents.AtasAdapterInThisBuild);
+        // NO ENVIRONMENT OVERRIDE OF THE CHANNEL (U-windows-release, Codex review): TRADEAGENT_UPDATE_ASSET used to replace this
+        // pattern, which let one variable swap the kind of build an update installs. A pattern is handed in by a test only.
+        _assetPattern = assetPattern ?? UpdateChannel.PatternFor(atasAdapter ?? BuildContents.AtasAdapterInThisBuild);
         _sources = sources ?? UpdateSources.GitHub(Repository);
         ByDeploy = byDeploy;
         if (ByDeploy) { Stage = UpdateStage.ByDeploy; Message = DeployedHere; }
@@ -861,7 +862,7 @@ public static class ReleaseFeed
 
             // Exactly one, or none. Two files that both look like the installer is a real release —
             // an arm64 build published beside the x64 one would do it, and so would a leftover
-            // TradeAgent-Setup-x64.exe.bak under a looser TRADEAGENT_UPDATE_ASSET pattern. Which of
+            // TradeAgent-Setup-x64.exe.bak under a looser pattern. Which of
             // them replaces the program holding the owner's open orders is not a question the order
             // of a JSON array gets to answer, and there is no version of "pick one" that is a
             // decision somebody made.

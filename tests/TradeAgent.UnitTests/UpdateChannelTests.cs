@@ -124,7 +124,6 @@ public class UpdateChannelTests
     {
         // This test process has no bridge\ beside it, so it is a build without the adapter, and its updater takes the CI installer.
         Assert.False(BuildContents.AtasAdapterInThisBuild);
-        if (Environment.GetEnvironmentVariable("TRADEAGENT_UPDATE_ASSET") is not null) return;
 
         var f = new Fake { ReleaseJson = Release(UpdateChannel.WithAtas, UpdateChannel.WithoutAtas, "SHA256SUMS.txt") };
         var service = new UpdateService("0.1.2", "owner/repo", sources: f.Sources()) { UnconfirmedWork = () => 0 };

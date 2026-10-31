@@ -35,7 +35,7 @@ public static class OlderHome
         $"This is TradeAgent {thisVersion}. The folder it keeps your records in ({home}) was written by TradeAgent " +
         $"{Versions.ReleaseThatWrote(homeSchema) ?? $"schema {homeSchema}"} (its records are at schema {homeSchema}; this version opens " +
         $"schema {Versions.OldestHomeSchema} and later), and this version does not open it: it would have to guess what the old records " +
-        "mean, and it does not guess. Nothing in that folder has been changed. You can start fresh: the old folder is kept, whole, " +
+        "mean, and it does not guess. None of your records or files in that folder has been changed. You can start fresh: the old folder is kept, whole, " +
         "beside the new one, and nothing in it is deleted.";
 
     /// <summary>What the second press says it will do, in full.</summary>
