@@ -358,13 +358,13 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         // v10 (U-runway-fixes): the reach section tells an organisation position that its guide holds TradeAgent's reference — what its
         // tools, files and loop do — and that how it works is its own; the pair are told of procedures and reference as before. The
         // pair's rendered words are v9's.
-        (10, CouncilRoles.Operations, "TBD"),
-        (10, CouncilRoles.Research, "TBD"),
-        (10, "org", "TBD"),
-        (10, "org:chief", "TBD"),
-        (10, "org:head", "TBD"),
-        (10, "org:staff", "TBD"),
-        (10, "org:executor", "TBD")
+        (10, CouncilRoles.Operations, "ffdf8a622320bf34f5af6fb33fc61a9fa7a239eda2609c95eee01a14dce9b587"),
+        (10, CouncilRoles.Research, "3438e66624b16db5751c1f38b08cb6862cc38e69dec6568ee49af546d9d484d3"),
+        (10, "org", "cc213ba8772f0358bca0814f7b6fbfa4b009c9309e252e0377cf3a657c6e8b88"),
+        (10, "org:chief", "8e929dfc3a4052909969b21e2696d6f1bce5e98050e1b5f7c3d76fa6d44b293c"),
+        (10, "org:head", "e32991e1478901b98edd7b7fbe053ffb330798886bd71a24481d8b0bfa717bd2"),
+        (10, "org:staff", "ea64a88d29c1e9bcbcef5a79b0b334ed874c639d7cf0f5c4e3f17492a4961625"),
+        (10, "org:executor", "04fdf148fd3366463c17d46fa0d95182e7997097ad7d7332bae3d3887514bf93")
     ];
 
     /// <summary>
