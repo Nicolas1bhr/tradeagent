@@ -11,6 +11,7 @@ using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
+using TradeAgent.Tests.PuppetIo;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -223,7 +224,7 @@ sealed class PuppetLife : IAsyncDisposable
     public void Script(string role, params string[][] turns)
     {
         var json = new JsonObject { ["turns"] = new JsonArray([.. turns.Select(t => (JsonNode?)new JsonArray([.. t.Select(s => (JsonNode?)s)]))]) };
-        File.WriteAllText(Path.Combine(Scripts, KeyOf(role) + ".json"), json.ToJsonString());
+        PuppetFiles.Write(Path.Combine(Scripts, KeyOf(role) + ".json"), json.ToJsonString());
     }
 
     /// <summary>Lets a puppet waiting on <c>await <paramref name="name"/></c> go on.</summary>
@@ -236,14 +237,14 @@ sealed class PuppetLife : IAsyncDisposable
     public string? Prompt(string role, int turn)
     {
         var file = Path.Combine(Scripts, $"{KeyOf(role)}.{turn.ToString(CultureInfo.InvariantCulture)}.prompt");
-        return File.Exists(file) ? File.ReadAllText(file, Encoding.UTF8) : null;
+        return File.Exists(file) ? PuppetFiles.ReadAllText(file, Encoding.UTF8) : null;
     }
 
     /// <summary>How many turns <paramref name="role"/>'s puppet has started.</summary>
     public int Turns(string role)
     {
         var counter = Path.Combine(Scripts, KeyOf(role) + ".turns");
-        return File.Exists(counter) ? int.Parse(File.ReadAllText(counter).Trim(), CultureInfo.InvariantCulture) : 0;
+        return PuppetFiles.ReadCount(counter);
     }
 
     /// <summary>What <paramref name="role"/>'s <paramref name="turn"/>-th turn's steps reported, one JSON object per step.</summary>
@@ -251,7 +252,7 @@ sealed class PuppetLife : IAsyncDisposable
     {
         var file = Path.Combine(Scripts, $"{KeyOf(role)}.{turn.ToString(CultureInfo.InvariantCulture)}.log");
         return File.Exists(file)
-            ? [.. File.ReadAllLines(file).Where(l => l.Length > 0).Select(l => JsonNode.Parse(l)!.AsObject())]
+            ? [.. PuppetFiles.ReadAllText(file).Split('\n').Where(l => l.Length > 0).Select(l => JsonNode.Parse(l)!.AsObject())]
             : [];
     }
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TradeAgent.Tests.PuppetIo;
 
 // THE PUPPET SEAT (U-puppet-runtime; docs/ORCHESTRATION.md § 2.7 and § 7): a program that stands where an agent CLI stands and
 // plays a script instead of asking a model. The real AgentSession starts it — the prompt on its stdin, the launch's own grant in
@@ -56,7 +57,7 @@ using (var stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encodin
     prompt = stdin.ReadToEnd();
 
 var n = NextTurn(scripts, key);
-File.WriteAllText(Path.Combine(scripts, $"{key}.{n}.prompt"), prompt, new UTF8Encoding(false));
+PuppetFiles.Write(Path.Combine(scripts, $"{key}.{n}.prompt"), prompt, new UTF8Encoding(false));
 var log = Path.Combine(scripts, $"{key}.{n}.log");
 
 var items = 0;
@@ -151,8 +152,8 @@ return 0;
 static int NextTurn(string scripts, string key)
 {
     var counter = Path.Combine(scripts, $"{key}.turns");
-    var n = File.Exists(counter) && int.TryParse(File.ReadAllText(counter).Trim(), out var last) ? last + 1 : 1;
-    File.WriteAllText(counter, n.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    var n = PuppetFiles.ReadCount(counter) + 1;
+    PuppetFiles.Write(counter, n.ToString(System.Globalization.CultureInfo.InvariantCulture));
     return n;
 }
 
@@ -160,7 +161,7 @@ static List<string> StepsFor(string scripts, string key, int n)
 {
     var file = Path.Combine(scripts, $"{key}.json");
     if (!File.Exists(file)) return ["final Nothing to do."];
-    var turns = JsonNode.Parse(File.ReadAllText(file))?["turns"]?.AsArray() ?? [];
+    var turns = JsonNode.Parse(PuppetFiles.ReadAllText(file))?["turns"]?.AsArray() ?? [];
     if (turns.Count == 0) return ["final Nothing to do."];
     var turn = turns[Math.Min(n, turns.Count) - 1]?.AsArray() ?? [];
     return [.. turn.Select(s => s?.GetValue<string>() ?? "")];
@@ -260,4 +261,4 @@ static string? OnPath(string name)
 
 static void Emit(JsonObject e) => Console.Out.WriteLine(e.ToJsonString());
 
-static void Log(string file, JsonObject entry) => File.AppendAllText(file, entry.ToJsonString() + "\n");
+static void Log(string file, JsonObject entry) => PuppetFiles.AppendLine(file, entry.ToJsonString());
