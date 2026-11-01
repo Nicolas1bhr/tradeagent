@@ -75,6 +75,14 @@ Real money stays closed in both: the board's live path exists in code, no live v
   12-and-3 default inconclusive. The scorer is not lowered; the data meets it. Successor campaigns keep ≥ 30 fresh days and reach paper, when
   inconclusive, through the inconclusive path.
 
+- **D13 (2026-11-01) — a turn billed to his plan reserves what it can plausibly cost:** U-loop-e2e (6f72d717) found that one turn reserves 2.56
+  list-price dollars while a 0.25 team in a 0.25 division of the founding 40/day holds 2.50, so a team's executors could never run; the first real luna
+  turn cost about 0.005. For plan-billed turns (no money moves) the reservation becomes max(a model floor, 2 × the p99 of that seat class and model's
+  measured turn costs), capped at the context-window bound; a turn that costs more is charged in full and blocks its unit until it is back inside its
+  envelope — the stated guarantee becomes "exceeded by at most one turn's overrun". Paid-API-key turns (real money) keep the full reservation; the
+  day-total gate stays first. Also kept on his behalf: U-loop-e2e's budget fix — an idle legacy division (its director asleep, nothing active under
+  it) counts 0 toward shares, so a fresh home's chief can charter.
+
 ## 5. Order
 Wave 1: `U-chief-wake-once` · `U-ci-fast-fixes` (gaps 8, 14) · `U-cell-windows` (gap 13, the provider and proof) · `U-org-canon` (gap 5).
 Wave 2: `U-org-autonomy` (gaps 3, 4, 6, 9, 10; D3–D6, D9) · `U-evidence-campaign` (gap 7; D7) · `U-seat-models` (D8) · `U-kit-socket` (gap 12; D10) ·
