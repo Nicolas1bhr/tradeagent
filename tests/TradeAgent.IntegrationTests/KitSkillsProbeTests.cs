@@ -71,9 +71,9 @@ public class KitSkillsProbeWindowsTests(Xunit.Abstractions.ITestOutputHelper out
         var codex = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
         var sha = codex.Install.ExecutableSha256!;
         var kit = KitFixture.Installed(Path.Combine(TestEnv.Home, "kit-probe-" + Guid.NewGuid().ToString("n")[..8]));
-        string Json(string path) => path.Replace("\\", "\\\\", StringComparison.Ordinal);
-        var atKit = Json(Path.Combine("app-home", Kit.Dir(""), Kit.SkillsDir, KitFixture.Skill));
-        var atLink = Json(Path.Combine("codex", RouteA.SkillsLink, KitFixture.Skill));
+        // CODEX WRITES A ROOT WITH FORWARD SLASHES (measured on CI's Windows Server: "`r0` = `C:/Users/…/app-home/kit/skills`").
+        const string atKit = "app-home/kit/skills";
+        var atLink = "codex/" + RouteA.SkillsLink;
 
         async Task<string> FirstRequest(string seatClass)
         {
