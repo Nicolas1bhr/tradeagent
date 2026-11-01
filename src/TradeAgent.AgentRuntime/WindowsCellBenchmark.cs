@@ -164,35 +164,45 @@ public static class WindowsCellBenchmark
                 finally { File.Delete(probe); }   // a timeout or a broken boundary never leaves the planted file for the real scanner (Codex, landing 3)
             });
 
-            // THE OWNER'S KIT IS READ AND RUN, NEVER WRITTEN (U-kit-socket-2): a PROBE kit of the benchmark's own — an index and one tool,
+            // THE OWNER'S KIT IS READ AND RUN, NEVER WRITTEN (U-kit-socket-2): a PROBE kit of the benchmark's own — an index and two tools,
             // no skill — installed by the product's own Kit.Install into a home of the bench's (never the owner's kit), granted by the
             // product's own policy (RouteA.WindowsPolicy with the kit), its files' read-only attributes taken off so every denial is the
-            // AppContainer's. The cell reads the index, runs the tool by its name from the PATH, and every write into the kit is refused.
+            // AppContainer's. The cell runs the probe tool BY ITS NAME from the PATH, and the tool itself — a batch file reading its own
+            // folder (%~dp0), so no path crosses a command line — reads the index and tries every write into the kit.
+            // NO PATH ON CMD'S LINE (measured, CI run 41327239681): a cell's command line is quoted by the C runtime's rules (an inner quote
+            // becomes \"), which cmd does not read — a quoted path there is "The filename, directory name, or volume label syntax is
+            // incorrect", a failure that would pass for a denial.
             await Row("kit-read-only", async () =>
             {
                 var src = Path.Combine(root, "kit-src");
                 Directory.CreateDirectory(Path.Combine(src, Kit.ToolsDir));
                 File.WriteAllText(Path.Combine(src, Kit.IndexFile),
-                    "{\"kit\": 1, \"name\": \"cell benchmark probe\", \"skills\": [], \"tools\": [{\"name\": \"kit-probe.cmd\", \"description\": \"prints one word\"}]}");
-                File.WriteAllText(Path.Combine(src, Kit.ToolsDir, "kit-probe.cmd"), "@echo kit-probe-ran\r\n");
+                    "{\"kit\": 1, \"name\": \"cell benchmark probe\", \"skills\": [], \"tools\": [" +
+                    "{\"name\": \"kit-probe.cmd\", \"description\": \"tries the kit\"}, {\"name\": \"kit-victim.cmd\", \"description\": \"a file to remove\"}]}");
+                File.WriteAllText(Path.Combine(src, Kit.ToolsDir, "kit-victim.cmd"), "@echo victim\r\n");
+                File.WriteAllText(Path.Combine(src, Kit.ToolsDir, "kit-probe.cmd"), string.Join("\r\n",
+                    "@echo off",
+                    "echo kit-probe-ran",
+                    "type \"%~dp0..\\kit.json\"",
+                    "echo x> \"%~dp0..\\planted.txt\" && (echo KIT-CREATE-OPEN) || (echo KIT-CREATE-DENIED)",
+                    "echo x> \"%~dp0planted.cmd\" && (echo TOOLS-CREATE-OPEN) || (echo TOOLS-CREATE-DENIED)",
+                    "echo x>> \"%~dp0kit-victim.cmd\" && (echo TOOL-WRITE-OPEN) || (echo TOOL-WRITE-DENIED)",
+                    "mkdir \"%~dp0..\\planted\" && (echo KIT-MKDIR-OPEN) || (echo KIT-MKDIR-DENIED)",
+                    "ren \"%~dp0kit-victim.cmd\" kit-victim.old && (echo TOOL-RENAME-OPEN) || (echo TOOL-RENAME-DENIED)",
+                    "del /f /q \"%~dp0kit-victim.cmd\"",
+                    "if exist \"%~dp0kit-victim.cmd\" (echo TOOL-REMOVE-DENIED) else (echo TOOL-REMOVE-OPEN)",
+                    ""));
                 var (kit, refusal) = Kit.Install(src, kitHome);
                 if (kit is null) return (false, "the probe kit did not install: " + refusal);
                 foreach (var f in Directory.EnumerateFiles(kit.Dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
                 var kitted = RouteA.WindowsPolicy(ws, codex ?? cmd, codex is not null ? RouteA.CodexRoot(codex) : system32, codexHome, home, CellEgress.None, kit);
-                var tool = kit.ToolPath("kit-probe.cmd");
-                var (_, o) = await Script(kitted, "kit",
-                    $"type \"{Path.Combine(kit.Dir, Kit.IndexFile)}\" > {Sink("k")} && (echo KIT-READ-OPEN) || (echo KIT-READ-DENIED)\n" +
-                    "kit-probe || (echo TOOL-FAILED)\n" +
-                    $"echo x> \"{Path.Combine(kit.Dir, "planted.txt")}\" && (echo KIT-CREATE-OPEN) || (echo KIT-CREATE-DENIED)\n" +
-                    $"echo x> \"{Path.Combine(kit.Tools!, "planted.cmd")}\" && (echo TOOLS-CREATE-OPEN) || (echo TOOLS-CREATE-DENIED)\n" +
-                    $"echo x>> \"{tool}\" && (echo TOOL-WRITE-OPEN) || (echo TOOL-WRITE-DENIED)\n" +
-                    $"mkdir \"{Path.Combine(kit.Dir, "planted")}\" && (echo KIT-MKDIR-OPEN) || (echo KIT-MKDIR-DENIED)\n" +
-                    $"del /f /q \"{tool}\"\nif exist \"{tool}\" (echo TOOL-REMOVE-DENIED) else (echo TOOL-REMOVE-OPEN)");
-                string[] denied = ["KIT-CREATE-DENIED", "TOOLS-CREATE-DENIED", "TOOL-WRITE-DENIED", "KIT-MKDIR-DENIED", "TOOL-REMOVE-DENIED"];
+                var (_, o) = await Run(kitted, cmd, "/d", "/c", "kit-probe");
+                string[] denied = ["KIT-CREATE-DENIED", "TOOLS-CREATE-DENIED", "TOOL-WRITE-DENIED", "KIT-MKDIR-DENIED", "TOOL-RENAME-DENIED", "TOOL-REMOVE-DENIED"];
+                var opened = denied.Select(d => d.Replace("-DENIED", "-OPEN", StringComparison.Ordinal)).Where(x => o.Contains(x, StringComparison.Ordinal)).ToList();
+                // FROM OUTSIDE: nothing planted, the victim still there, the kit hashing as installed.
                 var whole = Kit.HashOf(kit.Dir) == kit.Hash;
-                var opened = denied.Select(d => d.Replace("-DENIED", "-OPEN", StringComparison.Ordinal)).Where(x => o.Contains(x, StringComparison.Ordinal));
-                var held = o.Contains("KIT-READ-OPEN", StringComparison.Ordinal) && o.Contains("kit-probe-ran", StringComparison.Ordinal)
-                           && denied.All(d => o.Contains(d, StringComparison.Ordinal)) && !opened.Any() && whole;
+                var held = o.Contains("kit-probe-ran", StringComparison.Ordinal) && o.Contains("cell benchmark probe", StringComparison.Ordinal)
+                           && denied.All(d => o.Contains(d, StringComparison.Ordinal)) && opened.Count == 0 && whole;
                 return (held, $"{Trim(o)}; the kit {(whole ? "hashes as installed" : "CHANGED")}");
             });
 
