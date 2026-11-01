@@ -68,7 +68,7 @@ public static class WindowsCellEgress
             Place(rules);
             return Missing(rules).Count == 0 ? Done : FailedCode;
         }
-        catch (Exception ex) when (ex is TradeAgentException or COMException or InvalidCastException or ArgumentException or UnauthorizedAccessException
+        catch (Exception ex) when (ex is TradeAgentException or COMException or IOException or InvalidCastException or ArgumentException or UnauthorizedAccessException
                                        or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
         {
             return FailedCode;
@@ -177,8 +177,9 @@ public static class WindowsCellEgress
 
     static dynamic? Read(dynamic set, string name)
     {
+        // NOT FOUND is HRESULT 0x80070002, which .NET raises as FileNotFoundException, not COMException (the tests box, 26200).
         try { return set.Item(name); }
-        catch (COMException) { return null; }
+        catch (Exception ex) when (ex.HResult == unchecked((int)0x80070002)) { return null; }
     }
 
     static void RemoveNamed(dynamic set, string name)
