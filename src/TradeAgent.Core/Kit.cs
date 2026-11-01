@@ -246,6 +246,7 @@ public static class Kit
                 {
                     aside = Path.Combine(StagingDir(home), "old-" + Guid.NewGuid().ToString("n")[..12]);
                     MoveDir(dir, aside);
+                    Ungrant(aside);
                 }
                 else if (File.Exists(dir)) return (null, $"{dir} is a file, not a folder TradeAgent can install a kit into");
                 try { MoveDir(root, dir); }
@@ -330,6 +331,7 @@ public static class Kit
                     var aside = Path.Combine(StagingDir(home), "old-" + Guid.NewGuid().ToString("n")[..12]);
                     Directory.CreateDirectory(StagingDir(home));
                     MoveDir(dir, aside);
+                    Ungrant(aside);
                     DeleteTree(aside);
                 }
                 Append(home, last with { At = DateTimeOffset.UtcNow, Act = Removed });
@@ -543,6 +545,20 @@ public static class Kit
         File.SetUnixFileMode(from, mode | UnixFileMode.UserWrite);
         Directory.Move(from, to);
         File.SetUnixFileMode(to, mode);
+    }
+
+    /// <summary>
+    /// A KIT SET ASIDE CARRIES NO CELL'S GRANT (<c>U-kit-socket-2</c>): on Windows a running cell's slot holds a read-and-execute ACE on
+    /// the kit's folder, and a folder moved keeps its ACL — so the folder set aside, which a failed delete could leave in the staging
+    /// folder, would stay readable to that slot's next cell, past its sweep (which revokes by the kit's own path). The explicit
+    /// AppContainer ACEs come off its top folder at once, and what it held inherited goes with them. Never throws: what stays grants only
+    /// a read of an old kit, and the next install or removal tries again.
+    /// </summary>
+    static void Ungrant(string aside)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try { AppContainerCell.PurgeContainerAces(new DirectoryInfo(aside)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { /* see above */ }
     }
 
     const UnixFileMode ReadOnlyDir = UnixFileMode.UserRead | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute

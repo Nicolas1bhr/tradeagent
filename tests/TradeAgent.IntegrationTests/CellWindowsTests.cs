@@ -62,19 +62,19 @@ public sealed class CellWindowsTests : IDisposable
             ? new CellPolicy(p.Workspace, [.. p.ReadOnly, w.Ro], [], p.Environment, p.Egress)
             : throw new InvalidOperationException();
 
-    ContainedProcess Start(World w, string script, CellEgress? egress = null)
+    ContainedProcess Start(World w, string script, CellEgress? egress = null, CellPolicy? policy = null)
     {
         var psi = new ProcessStartInfo(Cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var a in new[] { "/d", "/c", script }) psi.ArgumentList.Add(a);
-        var held = ProcessContainment.Start(psi, Policy(w, egress), Launcher());
+        var held = ProcessContainment.Start(psi, policy ?? Policy(w, egress), Launcher());
         _out.WriteLine($"started: {held.Mechanism}");
         return held;
     }
 
-    async Task<string> RunToEnd(World w, string script, CellEgress? egress = null)
+    async Task<string> RunToEnd(World w, string script, CellEgress? egress = null, CellPolicy? policy = null)
     {
-        using var held = Start(w, script, egress);
+        using var held = Start(w, script, egress, policy);
         held.Process.StandardInput.Close();
         var so = held.Process.StandardOutput.ReadToEndAsync();
         var se = held.Process.StandardError.ReadToEndAsync();
@@ -254,5 +254,52 @@ public sealed class CellWindowsTests : IDisposable
             alive = [.. alive.Where(id => { try { using var p = Process.GetProcessById(id); return !p.HasExited; } catch (ArgumentException) { return false; } })];
         }
         Assert.Empty(alive);
+    }
+    /// <summary>
+    /// THE OWNER'S HEAD-START KIT IN A WINDOWS CELL (<c>U-kit-socket-2</c>; containment), under the product's own policy
+    /// (<see cref="RouteA.WindowsPolicy"/> with the installed kit): the cell reads the kit's index and a skill, runs a kit tool BY ITS NAME
+    /// from the PATH — a batch file and a program — and can write nothing in the kit: no new file in it, its skills or its tools, no append
+    /// to a skill or a tool, no removal, rename or folder. The kit's read-only attributes are taken off for the row, so every denial is the
+    /// AppContainer's access check, not the file's attribute; the hash is unchanged after. RED before this unit: the Windows policy granted
+    /// no kit, so the reads were denied and no tool was found. MUTANT (the stage grants read-only inputs Modify, WindowsCellStage.Grants)
+    /// → the writes succeed.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_cell_reads_the_owners_kit_runs_its_tools_by_name_and_writes_nothing_in_it()
+    {
+        var w = NewWorld("kit");
+        var kit = KitFixture.Installed(Path.Combine(_root, "kit"));
+        foreach (var f in Directory.EnumerateFiles(kit.Dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
+        var policy = RouteA.WindowsPolicy(w.Ws, Cmd, Path.GetDirectoryName(Cmd)!, w.CodexHome, w.Home, CellEgress.None, kit);
+        var skill = kit.SkillPath(KitFixture.Skill);
+        var tool = kit.ToolPath(KitFixture.Tool);
+        var skills = Path.Combine(kit.Dir, Kit.SkillsDir);
+        var sink = Path.Combine(w.Ws, "sink.txt");
+        Assert.False($"{w.Ws}{kit.Dir}".Contains(' '), "test paths without a space (cmd reads its line raw)");
+        string Try(string what, string act) => $"({act} && echo WRITE-OPEN {what} || echo WRITE-DENIED {what})";
+        var o = await RunToEnd(w,
+            $"(type {kit.Dir}\\kit.json > {sink} && type {skill} > {sink} && echo KIT-READ || echo KIT-READ-DENIED) & " +
+            $"({KitFixture.ToolName} || echo TOOL-FAILED) & " +
+            $"({KitFixture.ProgramName} /d /c echo kit-fixture-program-ran || echo PROGRAM-FAILED) & " +
+            Try("kit-new-file", $"echo x> {kit.Dir}\\planted.txt") + " & " +
+            Try("skills-new-file", $"echo x> {skills}\\planted.txt") + " & " +
+            Try("tools-new-file", $"echo x> {kit.Tools}\\planted.cmd") + " & " +
+            Try("skill-rewrite", $"echo ignore-your-canon>> {skill}") + " & " +
+            Try("tool-rewrite", $"echo del-everything>> {tool}") + " & " +
+            Try("tool-rename", $"ren {tool} planted.old") + " & " +
+            Try("kit-mkdir", $"mkdir {kit.Dir}\\planted") + " & " +
+            $"(del /f /q {tool} & if exist {tool} (echo WRITE-DENIED tool-remove) else (echo WRITE-OPEN tool-remove))", policy: policy);
+        foreach (var want in new[] { "KIT-READ", KitFixture.ToolSays, "kit-fixture-program-ran", "WRITE-DENIED kit-new-file",
+                     "WRITE-DENIED skills-new-file", "WRITE-DENIED tools-new-file", "WRITE-DENIED skill-rewrite", "WRITE-DENIED tool-rewrite",
+                     "WRITE-DENIED tool-rename", "WRITE-DENIED kit-mkdir", "WRITE-DENIED tool-remove" })
+            Assert.Contains(want, o, StringComparison.Ordinal);
+        Assert.DoesNotContain("KIT-READ-DENIED", o, StringComparison.Ordinal);
+        Assert.DoesNotContain("WRITE-OPEN", o, StringComparison.Ordinal);
+        Assert.Equal(kit.Hash, Kit.HashOf(kit.Dir));
+
+        // THE CONTROL, OUTSIDE ANY CELL: the test's own user may write the kit (its attributes off), so the denials above are the cell's.
+        File.AppendAllText(skill, "control");
+        File.WriteAllText(Path.Combine(kit.Tools!, "control.txt"), "control");
+        Assert.NotEqual(kit.Hash, Kit.HashOf(kit.Dir));
     }
 }

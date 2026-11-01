@@ -97,9 +97,7 @@ public static class RouteA
     /// the kit.</para>
     /// </summary>
     public static CellPolicy Policy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome, Kit.View? kit = null) =>
-        // ON WINDOWS NO KIT YET (U-kit-socket): the Windows cell grants exactly its policy's folders by ACL and its PATH is Windows-shaped;
-        // granting the kit there is owed to the Windows cell track, so a Windows cell is given none.
-        OperatingSystem.IsWindows() ? WindowsPolicy(workspace, codexExe, codexRoot, cellCodexHome, cellHome, Egress) :
+        OperatingSystem.IsWindows() ? WindowsPolicy(workspace, codexExe, codexRoot, cellCodexHome, cellHome, Egress, kit) :
         new(workspace, [cellCodexHome, cellHome, .. kit is null ? [] : new[] { kit.Dir }],
         [codexRoot, .. CellPolicy.SystemRoots, .. kit?.Tools is { } tools ? new[] { tools } : []],
         [
@@ -115,14 +113,22 @@ public static class RouteA
     /// read-only, codex's own root read and run — and no system root (Windows grants every AppContainer its own system folders); an
     /// environment named in full, Windows-shaped: the system's names, the cell's home as USERPROFILE and HOME, LOCALAPPDATA inside the
     /// workspace (Windows rewrites it, and TEMP and TMP beneath it, for an AppContainer — measured), and nothing of the owner's.
+    ///
+    /// <para><b>And the owner's head-start kit</b> (<c>U-kit-socket-2</c>), as on Linux: the whole kit a read-only input and its
+    /// <c>tools/</c> a program root — on Windows both are one grant, read and execute by ACL for the slot's SID and nothing more
+    /// (<see cref="WindowsCellStage"/>), so a cell reads and runs the kit and every write into it is denied by the AppContainer's access
+    /// check whatever the files' own attributes — and <c>tools/</c> LAST on the PATH, so a tool runs by its name (with an extension the
+    /// PATHEXT names) and never shadows a system program.</para>
     /// </summary>
-    public static CellPolicy WindowsPolicy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome, CellEgress egress)
+    public static CellPolicy WindowsPolicy(string workspace, string codexExe, string codexRoot, string cellCodexHome, string cellHome, CellEgress egress,
+        Kit.View? kit = null)
     {
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var system32 = Path.Combine(windows, "System32");
-        return new(workspace, [cellCodexHome, cellHome], [codexRoot],
+        return new(workspace, [cellCodexHome, cellHome, .. kit is null ? [] : new[] { kit.Dir }],
+        [codexRoot, .. kit?.Tools is { } tools ? new[] { tools } : []],
         [
-            new("PATH", string.Join(';', Path.GetDirectoryName(codexExe), system32, windows)),
+            new("PATH", string.Join(';', [Path.GetDirectoryName(codexExe), system32, windows, .. kit?.Tools is { } t ? new[] { t } : []])),
             new("SystemRoot", windows), new("windir", windows), new("ComSpec", Path.Combine(system32, "cmd.exe")),
             new("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
             new("USERPROFILE", cellHome), new("HOME", cellHome), new("CODEX_HOME", cellCodexHome),
@@ -194,8 +200,26 @@ public static class RouteA
         // THE KIT'S SKILLS WHERE THE PINNED CODEX LOOKS (U-kit-socket): its user skill root is `$CODEX_HOME/skills` (vendor
         // ext/skills/src/host_roots.rs:94-100 at rust-v0.160.1), canonicalised before its skills are listed (loader/host.rs:132-133),
         // so the list names the kit's own path — the path the cell reads it at, read-only. This home is the attempt's, written here.
-        // Not on Windows, whose cell is given no kit yet (Policy).
-        if (!OperatingSystem.IsWindows() && kit?.Skills is { } skills) File.CreateSymbolicLink(Path.Combine(layout.HarnessCodexHome, SkillsLink), skills);
+        if (kit?.Skills is { } skills) LaySkills(layout.HarnessCodexHome, skills);
+    }
+
+    /// <summary>
+    /// LAYS CODEX'S USER SKILL ROOT IN A HARNESS'S CODEX HOME: <c>&lt;codexHome&gt;/skills</c> leading to the kit's <c>skills/</c>. A symlink on
+    /// Linux and macOS. ON WINDOWS A JUNCTION (<c>U-kit-socket-2</c>), never a symlink, which needs Developer Mode or elevation there: the
+    /// pinned codex 0.160.1's <c>codex exec</c> reads no config key and no environment variable naming another skill root — its roots are
+    /// <c>$CODEX_HOME/skills</c>, <c>~/.agents/skills</c> (the profile's known folder on Windows, dirs-sys 0.5.0, not USERPROFILE), the
+    /// machine's <c>%ProgramData%</c> folder and the project's own (the workspace, which the cell writes) (vendor
+    /// <c>ext/skills/src/host_roots.rs:73-128</c>; a profile's file lies in <c>$CODEX_HOME</c>, <c>config/src/loader/mod.rs:130</c>; a
+    /// plugin's skill path must stay inside the plugin, <c>core-plugins/src/manifest.rs:654</c>; extra roots only by the app-server's
+    /// <c>skills/extraRoots/set</c>, <c>ext/skills/src/host_service.rs:154</c>). A junction is resolved by the same canonicalisation
+    /// (<c>loader/host.rs:132-133</c>, <c>dunce::canonicalize</c>), so the list names the kit's own path. It lies under the seat home, which
+    /// no cell is ever granted; <see cref="Remove"/> unlinks it without walking it.
+    /// </summary>
+    public static void LaySkills(string codexHome, string skills)
+    {
+        var link = Path.Combine(codexHome, SkillsLink);
+        if (OperatingSystem.IsWindows()) Junction.Create(link, skills);
+        else File.CreateSymbolicLink(link, skills);
     }
 
     /// <summary>The name, in the harness's per-attempt codex home, of the link to the kit's skills: codex's own user skill root.</summary>
@@ -208,6 +232,13 @@ public static class RouteA
     /// <summary>Removes one attempt's homes. Never throws: what stays grants nothing on its own and the next start's sweep sees it.</summary>
     public static void Remove(Layout layout)
     {
+        // THE KIT'S SKILL ROOT UNLINKED FIRST, AS A LINK (U-kit-socket-2): the folder delete below never walks one, and this says so in code.
+        try
+        {
+            var skills = new DirectoryInfo(Path.Combine(layout.HarnessCodexHome, SkillsLink));
+            if (skills.Exists && (skills.Attributes & FileAttributes.ReparsePoint) != 0) skills.Delete();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the delete below still never walks it */ }
         foreach (var root in layout.Roots)
             try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* left for the sweep */ }

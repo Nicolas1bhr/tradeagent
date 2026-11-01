@@ -6,6 +6,15 @@ using Xunit;
 
 namespace TradeAgent.Tests.Unit;
 
+/// <summary>A unit row that needs Windows itself (a junction, an ACL): skipped elsewhere; CI's windows shards run it.</summary>
+public sealed class WindowsUnitFactAttribute : FactAttribute
+{
+    public WindowsUnitFactAttribute()
+    {
+        if (!OperatingSystem.IsWindows()) Skip = "needs Windows: CI's windows shards run it";
+    }
+}
+
 /// <summary>
 /// THE HEAD-START KIT SOCKET (<c>U-kit-socket</c>; R25 D10): the folder the owner's own kit installs into, the record of each install
 /// with its hash, what a cell is granted of it, what codex is pointed at and what the canon names. Every kit here is a FIXTURE made in a
@@ -403,6 +412,52 @@ public class KitTests
             Assert.Equal(view.Skills, link.LinkTarget);
         }
         finally { RouteA.Remove(layout); }
+    }
+
+    /// <summary>
+    /// THE WINDOWS CELL IS GRANTED THE KIT AS THE LINUX ONE IS (<c>U-kit-socket-2</c>): the kit a read-only input, its <c>tools/</c> a program
+    /// root, LAST on the Windows PATH; without a kit nothing of it is named. Built off Windows too: the policy is pure.
+    /// </summary>
+    [Fact]
+    public void A_windows_cell_is_granted_the_kit_read_and_run_with_its_tools_last_on_its_path()
+    {
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), ["alpha"], ["beta.cmd"]), home);
+        var ws = Path.Combine(home, "ws");
+        var policy = RouteA.WindowsPolicy(ws, @"C:	ools\codexin\codex.exe", @"C:	ools\codex", Path.Combine(home, "cc"), Path.Combine(home, "ch"),
+            CellEgress.None, view);
+        Assert.Contains(view!.Dir, policy.ReadOnly);
+        Assert.Contains(view.Tools!, policy.Executable);
+        Assert.EndsWith(";" + view.Tools, policy.Environment.Single(e => e.Key == "PATH").Value, StringComparison.Ordinal);
+        var bare = RouteA.WindowsPolicy(ws, @"C:	ools\codexin\codex.exe", @"C:	ools\codex", Path.Combine(home, "cc"), Path.Combine(home, "ch"),
+            CellEgress.None);
+        Assert.DoesNotContain(bare.ReadOnly.Concat(bare.Executable), p => p.StartsWith(view.Dir, StringComparison.Ordinal));
+        Assert.DoesNotContain(view.Dir, bare.Environment.Single(e => e.Key == "PATH").Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ON WINDOWS THE HARNESS'S SKILL ROOT IS A JUNCTION, NEVER A SYMLINK (<c>U-kit-socket-2</c>): made without elevation or Developer Mode,
+    /// leading to the kit's own <c>skills/</c>; the attempt's homes are removed without walking it — the kit and its hash untouched.
+    /// </summary>
+    [WindowsUnitFact]
+    public void On_windows_the_harnesss_skill_root_is_a_junction_to_the_kit_and_removing_the_attempt_leaves_the_kit_whole()
+    {
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), ["alpha"], ["beta.cmd"]), home);
+        var layout = RouteA.LayoutFor("attempt-wk-" + Guid.NewGuid().ToString("n")[..8]);
+        File.WriteAllText(Path.Combine(home, "auth.json"), "{}");   // the harness's sign-in is a hard link to it on Windows
+        try
+        {
+            RouteA.Make(layout, Encoding.UTF8.GetBytes("# keys\n"), "default = \"cell\"\n", Path.Combine(home, "auth.json"), view);
+            var link = new DirectoryInfo(Path.Combine(layout.HarnessCodexHome, RouteA.SkillsLink));
+            Assert.True((link.Attributes & FileAttributes.ReparsePoint) != 0, "the skill root is not a reparse point");
+            Assert.Equal(Path.TrimEndingDirectorySeparator(view!.Skills!), Path.TrimEndingDirectorySeparator(link.LinkTarget!.Replace(@"\??\", "")));
+            Assert.True(File.Exists(Path.Combine(link.FullName, "alpha", Kit.SkillFile)), "the kit's skill is not read through the junction");
+        }
+        finally { RouteA.Remove(layout); }
+        Assert.False(Directory.Exists(Path.GetDirectoryName(layout.HarnessCodexHome)), "the attempt's harness home was left");
+        Assert.True(File.Exists(view!.SkillPath("alpha")), "removing the attempt reached into the kit");
+        Assert.Equal(view.Hash, Kit.HashOf(view.Dir));
     }
 
     [Fact]
