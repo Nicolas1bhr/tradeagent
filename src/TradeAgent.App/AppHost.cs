@@ -544,6 +544,10 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     PositionStanding? StandingOf(string role) => _db is null ? null : new OrgStore(_db).Standing(role);
 
+    /// <summary>Who sits in a position of the chart now (<c>U-worker-replace</c>): its occupant's ordinal; null for the legacy pair and off-chart roles.</summary>
+    internal int? OccupantOf(string role) =>
+        _db is { } db && !CouncilRoles.IsKnown(role) && new OrgStore(db).Position(role) is not null ? new OrgStore(db).OccupancyOf(role).Ordinal : null;
+
     /// <summary>
     /// WHY A POSITION MAY NOT TURN — its kind and a sentence — or null: the activation gate's own answer with the DECLARED seat,
     /// asked by the loop so a position it refuses is stepped over rather than chosen and handed no conversation. A chart that
@@ -1472,6 +1476,7 @@ public sealed class AppHost : IAsyncDisposable
         // outside a test host (fix pass 2, item 5). Its reads are asked at each launch, never here.
         _seats.Facts = FactsFor;
         _seats.Standing = StandingOf;
+        _seats.Occupant = OccupantOf;
         _seats.Neighbours = ActiveBeyondLegacy;
 
         // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
@@ -1900,6 +1905,8 @@ public sealed class AppHost : IAsyncDisposable
     internal string ReplaceOccupant(OccupantPreview asShown) => ChiefPress(org =>
     {
         var done = org.ReplaceOccupant(asShown, DateTimeOffset.UtcNow);
+        // THE PREDECESSOR'S RUNNING TURN ENDS NOW (the Codex review, P1): the replacement wrote a fence, and the loop ends the turn it fenced.
+        FenceWritten();
         Mission?.Wake();
         return $"You retired occupant {done.Retired} of {done.Position}. Occupant {done.Seated} starts now, in a fresh session, from the "
                + "position's memory; its seat, open mandates, spend, reservations and trial counts carried over.";
@@ -2767,6 +2774,7 @@ public sealed class AppHost : IAsyncDisposable
             // THE AUDIT RULE IS NOT RELAYED HERE: the public audit line's findings are shown to no organisation reader until its part c
             // relays them (U-org-audit-a; ORCHESTRATION § 2.13), so this host hands the sweep none (its one unjudged sentence, always the same, is not logged).
             var occupants = org.OccupantSweep(now, OccupantThresholds.Default, findings: null);
+            if (occupants.Replaced.Count > 0) host.FenceWritten();     // each wrote a fence: the predecessor's running turn ends now
             foreach (var r in occupants.Replaced)
                 host.Gateway?.Log.Activity($"TradeAgent retired occupant {r.Retired} of {r.Position} ({r.Rule}: {r.Measurement}); occupant {r.Seated} "
                                            + "starts from the position's memory.", "warn");
@@ -2841,9 +2849,7 @@ public sealed class AppHost : IAsyncDisposable
                 AgentReach.RuntimeOf(host.DeclaredSeatClass(role)) ?? WorkspaceBuilder.RuntimesOf(role, host._seats.KindOf(role))[0]));
 
         /// <summary>Who sits in a position of the chart now (<c>U-worker-replace</c>): its occupant's ordinal; null for the legacy pair and off-chart roles.</summary>
-        public int? OccupantOf(string role) =>
-            host._db is { } db && !CouncilRoles.IsKnown(role) && new OrgStore(db).Position(role) is not null
-                ? new OrgStore(db).OccupancyOf(role).Ordinal : null;
+        public int? OccupantOf(string role) => host.OccupantOf(role);
 
         /// <summary>The row, its events, its measured spend and its latest delivery with the app's checks on it.</summary>
         internal static MandateView View(OrgStore org, MandateRow m)
@@ -3340,6 +3346,7 @@ public sealed class AppHost : IAsyncDisposable
         HarnessKey.Clear();
         PerceptionKey.Clear();
         _seats.Facts = null;
+        _seats.Occupant = null;
         _seats.Neighbours = null;
         lock (_decisionModels)
         {

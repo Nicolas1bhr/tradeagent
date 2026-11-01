@@ -623,6 +623,9 @@ public sealed class AgentSession(
     /// </summary>
     string _freshWhy = SessionWhy.First;
 
+    /// <summary>The occupant the open session was started under (<c>U-worker-replace</c>); null for none or no position of the chart.</summary>
+    int? _sessionOccupant;
+
     /// <summary>The session the turn in flight runs in (<see cref="AgentTurnEnded.Session"/>); null until it launches.</summary>
     TurnSession? _session;
 
@@ -1048,6 +1051,23 @@ public sealed class AgentSession(
             args = AgentArgs.For(manifest, message, resuming: false, model: launchModel, seatClass, launchSeat.Door, out promptInArgv);
         }
         if (!_sessionExists) _sessionProfile = seat.Profile;
+
+        // A NEW OCCUPANT NEVER RESUMES ITS PREDECESSOR'S SESSION (U-worker-replace; the Codex review, P1): asked HERE, after admission and
+        // immediately before the process, so a replacement committed at any moment before this launch's row — whose launches the fence divides
+        // by commit order — is seen; the loop's own rotation is the ordinary case and this is the guard. An occupant that cannot be read is
+        // unknown, and an unknown occupant is never handed a conversation: the session is fresh.
+        int? occupant = null;
+        var occupantKnown = true;
+        try { occupant = (seats ?? PositionActivation.Seats).Occupant?.Invoke(role); }
+        catch (Exception) { occupantKnown = false; }
+        if (_sessionExists && (!occupantKnown || occupant != _sessionOccupant))
+        {
+            _sessionExists = false;
+            _threadId = null;
+            _freshWhy = occupantKnown ? SessionWhy.Replaced : SessionWhy.OccupantUnread;
+            args = AgentArgs.For(manifest, message, resuming: false, model: launchModel, seatClass, launchSeat.Door, out promptInArgv);
+        }
+        if (!_sessionExists) _sessionOccupant = occupant;
 
         // THE SESSION THIS TURN RUNS IN, as decided on this very argv (U-org-packets-a): resumed only where the resume template is
         // what launches — a runtime that declares none starts fresh every turn, and says so (fix pass 1) — or fresh with why.

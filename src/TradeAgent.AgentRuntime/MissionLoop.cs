@@ -153,6 +153,9 @@ public static class SessionWhy
     /// </summary>
     public const string Replaced = "replaced";
 
+    /// <summary>Who sits in the position could not be read, and a session is never continued for an occupant nobody can name (<c>U-worker-replace</c>).</summary>
+    public const string OccupantUnread = "occupant-unread";
+
     /// <summary>The session was ended by a stop no rotation ordered — the owner's Stop, or a new conversation.</summary>
     public const string Restart = "restart";
 
@@ -2382,7 +2385,13 @@ public sealed class MissionLoop
         var replaced = false;
         int? occupant = null;
         try { occupant = _host.OccupantOf(role); }
-        catch (Exception ex) { Said(role, $"who sits in {role} could not be read ({ex.Message}), so its session is not rotated for a new occupant"); }
+        catch (Exception ex)
+        {
+            // UNREAD IS NEVER RESUMED (the Codex review, P1): an occupant nobody can name is never handed a conversation on a guess.
+            Said(role, $"who sits in {role} could not be read ({ex.Message}), so its next turn starts a fresh session");
+            lock (_gate) _sessionOccupants.Remove(role);
+            return SessionWhy.OccupantUnread;
+        }
         lock (_gate)
         {
             if (occupant is { } seated)

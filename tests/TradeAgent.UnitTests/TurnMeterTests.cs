@@ -48,7 +48,8 @@ internal static class AgentRuntimeProbe
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
         int sleepSeconds = 0, Func<string?>? model = null, string? marker = null,
         string? stderr = null, int exitCode = 0, Func<string, RuntimeManifest>? manifest = null,
-        string? workspace = null, AppFileManifest? appFiles = null, [CallerMemberName] string name = "")
+        string? workspace = null, AppFileManifest? appFiles = null, string? role = null, SeatRegister? seats = null,
+        [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
         Directory.CreateDirectory(dir);
@@ -102,7 +103,8 @@ internal static class AgentRuntimeProbe
         // (U-admission-fail-closed), so a probe session nothing meters takes the explicit no-ledger path. A test that
         // meters it attaches a TurnMeter, which replaces this with the real gate.
         return new AgentSession(built, () => script, () => workspace ?? dir, () => new Dictionary<string, string>(),
-            presence: new AgentPresence(), model: model, grants: new AgentGrants(), appFiles: appFiles)
+            presence: new AgentPresence(), model: model, grants: new AgentGrants(), appFiles: appFiles,
+            role: role ?? CouncilRoles.Operations, seats: seats)
         {
             Admit = _ => AiAdmission.NoLedger
         };

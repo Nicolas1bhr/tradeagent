@@ -13,6 +13,7 @@ namespace TradeAgent.Tests.Unit;
 /// once, starts in a FRESH session (never A's) from a packet built from the position's memory alone, and resumes the mandate from it: its
 /// script finds the mandate's id and the plan's words in its own prompt — nothing else tells it either — and delivers. No model.
 /// </summary>
+[Collection(VendorOverrideFiles.Name)]
 public class PuppetReplaceLivesTests(ITestOutputHelper output) : IDisposable
 {
     public void Dispose()
@@ -94,5 +95,41 @@ public class PuppetReplaceLivesTests(ITestOutputHelper output) : IDisposable
         output.WriteLine($"life (replace) A {turns[0].Id} {SessionOf(turns[0])} → retired by event {replaced.EventId} → B {turns[1].Id} "
                          + $"{SessionOf(turns[1])} → delivery {delivery.Id} on {m.Id}");
         foreach (var line in block.Split('\n').Take(8)) output.WriteLine($"life (replace) B's takeover: {line.TrimEnd()}");
+    }
+
+    /// <summary>
+    /// THE OWNER'S PRESS ENDS THE RETIRED OCCUPANT'S RUNNING TURN (the Codex review, P1): occupant A is mid-turn on its mandate and would never
+    /// end on its own (<c>hang</c>); the owner's press through the host's own route — the one the Organisation page calls — writes the fence AND
+    /// signals it, so A's turn and process tree end: the attempt closes ENDED with its reservation as its cost, read as fenced, and occupant B's
+    /// turn follows in a fresh session. RED without the signal: A's turn ran on until the life's patience ran out.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_press_ends_the_retired_occupants_running_turn()
+    {
+        const string head = "pos-5e55dd000001", member = "pos-5e55dd000002", team = "team-5e55dd00";
+        await using var life = await PuppetLife.Begin("replace-mid-turn", seed: SeedTeam(team, head, member));
+        life.Script(member, ["signal turning", "hang"], ["usage 10 0 5", "final Took over."]);
+        var org = new OrgStore(life.Host.Db);
+        var m = org.Assign(new MandateIssue(head, null, member, MandateKind.Task, "find out whether the funding skew predicts the next hour", null,
+            MandateShape.Report, false, DateTimeOffset.UtcNow.AddDays(7), 5m, 2), DateTimeOffset.UtcNow);
+        await life.RunUntil(() => life.Reached("turning"), "occupant A is mid-turn on the mandate");
+        var running = Assert.Single(life.AttemptsOf(member));
+        Assert.Equal((AiAttemptState.LAUNCHED, m.Id), (running.State, running.MandateId));
+
+        var said = life.Host.ReplaceOccupant(life.Host.PreviewReplaceOccupant(member));
+        Assert.StartsWith($"You retired occupant 1 of {member}.", said, StringComparison.Ordinal);
+
+        await life.RunUntil(() => life.AttemptsOf(member).Single(a => a.Id == running.Id).State != AiAttemptState.LAUNCHED,
+            "occupant A's turn ended on the replacement's fence");
+        var closed = life.AttemptsOf(member).Single(a => a.Id == running.Id);
+        Assert.Equal(AiAttemptState.ENDED, closed.State);
+        Assert.Equal(closed.ReservedCost, closed.Cost);
+        Assert.NotNull(org.FencedSince(closed.Id));
+        Assert.True(org.IsOpen(m.Id), "the mandate was closed by the replacement");
+
+        await life.RunUntil(() => life.AttemptsOf(member).Count(a => a.State == AiAttemptState.ENDED) == 2, "occupant B's turn ended");
+        var b = life.AttemptsOf(member).Single(a => a.Id != running.Id);
+        Assert.Equal(("fresh", SessionWhy.Replaced), SessionOf(b));
+        output.WriteLine($"life (replace mid-turn) A {closed.Id} ended fenced at its reservation {closed.Cost}; B {b.Id} {SessionOf(b)}");
     }
 }

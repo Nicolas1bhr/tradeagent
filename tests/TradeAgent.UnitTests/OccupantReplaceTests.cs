@@ -297,6 +297,15 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         Assert.Contains($"Note `{note.Id}` from `{TeamHead}`", text, StringComparison.Ordinal);
         Assert.True(Encoding.UTF8.GetByteCount(text) <= PacketBounds.Default.Executor);
 
+        // A FIRST LAUNCH THE MODEL NEVER READ — ended with no usage, as a refusal before the model ends (the Codex review, P2) — keeps the block.
+        Assert.True(new AiAttemptStore(db).Begin(new AiAttempt
+        {
+            Id = "turn-mem-0001b", StartedAt = Now.AddMinutes(1), Role = Worker, ReservedCost = 0.3m, SeatClass = SeatClasses.Harness,
+            MandateId = m.Id, BillingClass = BillingClasses.Key, Funding = [OrgReviewTests.Team, Div, OrgIds.Root]
+        }).Admitted);
+        Assert.True(new AiAttemptStore(db).End("turn-mem-0001b", 1, Now.AddMinutes(1), null, null, null, null, null, null, null, null, null));
+        Assert.Contains("You are this position's occupant 2", PositionPacket.Compose(db, Worker, Now.AddMinutes(2), Broker)!.Text, StringComparison.Ordinal);
+
         Launch(db, "turn-mem-0002", m.Id, Now.AddMinutes(2), cost: 0.1m);
         Assert.DoesNotContain("You are this position's occupant", PositionPacket.Compose(db, Worker, Now.AddMinutes(5), Broker)!.Text, StringComparison.Ordinal);
     }
@@ -382,5 +391,33 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         press.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Contains(row.Children.OfType<TextBlock>(), t => t.Text == "replaced: occupant 2");
         Assert.Equal(2, new OrgStore(db).OccupancyOf(Worker).Ordinal);
+    }
+
+    /// <summary>
+    /// GUARD (the Codex review's P1s; "never hand the new occupant the old transcript"): THE SESSION ITSELF NEVER RESUMES ACROSS A CHANGE OF
+    /// OCCUPANT, asked at the launch after admission — whatever the loop decided before — and never resumes for an occupant it cannot read.
+    /// A conversation over the register: turn 1 fresh (first), turn 2 resumed under the same occupant, turn 3 after occupant 2 is seated fresh
+    /// (why <c>replaced</c>) with the fresh template, turn 4 resumed under occupant 2, turn 5 with the occupant unreadable fresh (why
+    /// <c>occupant-unread</c>).
+    /// </summary>
+    [Fact]
+    public async Task A_session_never_resumes_across_a_change_of_occupant_nor_for_one_it_cannot_read()
+    {
+        int? sits = 1;
+        var unreadable = false;
+        var register = new SeatRegister { Occupant = _ => unreadable ? throw new InvalidOperationException("the chart cannot be read") : sits };
+        var session = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, role: CouncilRoles.Research, seats: register);
+        var seen = new List<TradeAgent.AgentRuntime.TurnSession?>();
+        session.TurnEnded += e => seen.Add(e.Session);
+        await session.SendAsync("one");
+        await session.SendAsync("two");
+        sits = 2;
+        await session.SendAsync("three");
+        await session.SendAsync("four");
+        unreadable = true;
+        await session.SendAsync("five");
+        Assert.Equal([("fresh", TradeAgent.AgentRuntime.SessionWhy.First), ("resumed", null), ("fresh", TradeAgent.AgentRuntime.SessionWhy.Replaced),
+                      ("resumed", null), ("fresh", TradeAgent.AgentRuntime.SessionWhy.OccupantUnread)],
+            seen.Select(x => (x?.State, x?.Why)));
     }
 }

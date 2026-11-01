@@ -190,6 +190,13 @@ public sealed class SeatRegister
     public Func<string, PositionStanding?>? Standing { get; set; }
 
     /// <summary>
+    /// WHO SITS IN A POSITION NOW (<c>U-worker-replace</c>): its occupant's ordinal, read at every launch, or null for no position of the
+    /// chart. A session never resumes across a change of it — nor when it throws: who sits is then unknown, and an unknown occupant is never
+    /// handed a conversation on a guess. Unset (a test's host, the legacy pair's), no position is replaced.
+    /// </summary>
+    public Func<string, int?>? Occupant { get; set; }
+
+    /// <summary>
     /// THE KIND OF <paramref name="id"/> AS THE CHART DERIVES IT (<see cref="OrgPositionKind"/>), or null where nothing could say: no
     /// register set, no such position, a read that failed. Null is never a Member — a session that cannot read the kind starts the
     /// class it would start for a kind nobody named, and the gate, which reads the chart itself, refuses that class where it is not the
