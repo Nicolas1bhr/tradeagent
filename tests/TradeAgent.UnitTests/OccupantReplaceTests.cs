@@ -44,12 +44,17 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         if (cost is { } c) Assert.True(store.End(id, 0, at.AddMinutes(1), 1000, 0, null, 100, null, "model-x", c, null, context));
     }
 
-    /// <summary>A delivery of <see cref="Worker"/>'s on <paramref name="mandate"/>, written by no launch, with one check of TradeAgent's that failed (or passed).</summary>
+    /// <summary>
+    /// A delivery of <see cref="Worker"/>'s on <paramref name="mandate"/>, sealed by a launch of its own made just before (every artifact names its
+    /// author and attempt, rung 53), with one check of TradeAgent's that failed (or passed).
+    /// </summary>
     static string Delivered(Database db, string mandate, int n, DateTimeOffset at, bool failed = true)
     {
         var id = $"dlv-occupant-{n:000}";
-        Exec(db, "INSERT INTO org_delivery(id, mandate_id, attempt_id, report, deviations, refs, manifest, at) VALUES($id,$m,NULL,'the answer','[]','[]','{}',$at)",
-            ("$id", id), ("$m", mandate), ("$at", Sql.T(at)));
+        var launch = $"turn-dlv-{n:000}";
+        Launch(db, launch, null, at.AddMinutes(-2), cost: 0.1m);
+        Exec(db, "INSERT INTO org_delivery(id, mandate_id, attempt_id, author, report, deviations, refs, manifest, at) VALUES($id,$m,$a,$w,'the answer','[]','[]','{}',$at)",
+            ("$id", id), ("$m", mandate), ("$a", launch), ("$w", Worker), ("$at", Sql.T(at)));
         Exec(db, "INSERT INTO org_check(delivery_id, check_name, passed, reason) VALUES($id,'shape',$p,'TradeAgent''s reason')",
             ("$id", id), ("$p", failed ? 0 : 1));
         return id;
@@ -226,11 +231,12 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         using var db = Chart();
         var t0 = Now.AddDays(-3);
         var org = new OrgStore(db);
+        Launch(db, "turn-cal-001", null, t0.AddMinutes(-5), cost: 0.1m);
         for (var i = 0; i < 10; i++)
         {
             var version = $"ver-0cc{i:00}";
-            OrgScorecardTests.Version(db, version);
-            org.Decide(Worker, null, OrgDecisionKind.Routine, ["forecast it"], "forecast it", "my reasons", [],
+            OrgScorecardTests.Version(db, version, Worker);
+            org.Decide(Worker, "turn-cal-001", OrgDecisionKind.Routine, ["forecast it"], "forecast it", "my reasons", [],
                 [new ForecastClaim(ForecastVocabulary.VerdictClass, version, PromotionVerdict.Promoted, t0.AddDays(2), 0.9m)], t0);
             OrgScorecardTests.Verdict(db, version, PromotionVerdict.Refused, t0.AddHours(1));
         }
