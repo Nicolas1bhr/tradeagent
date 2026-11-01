@@ -71,7 +71,7 @@ public sealed class CellWindowsProofTests
     static string Pin => RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install.ExecutableSha256!;
 
     /// <summary>TA_CELL_CODEX from CI's step, else the release archive this build pins, downloaded and held to the archive's and the program's SHA-256.</summary>
-    static string PinnedWindowsCodex()
+    internal static string PinnedWindowsCodex()
     {
         var plan = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex").Install;
         var path = Environment.GetEnvironmentVariable("TA_CELL_CODEX");
