@@ -124,7 +124,7 @@ public static class AuditCanaries
 
             bool Defect(string detector) => benign != detector;
 
-            // TWO CLEAN CONTROLS: no detector may raise anything on them.
+            // TWO CLEAN CONTROLS: every base detector runs on them, and none may raise anything.
             planted.Add(new(Clean().Delivery, null));
             planted.Add(new(Clean().Delivery, null));
 
@@ -153,7 +153,7 @@ public static class AuditCanaries
 
             // IMPOSSIBLE-CLAIMED: an assignment impossible by construction — it asks for a record the app minted and never wrote — delivered
             // as done, naming no deviation, and accepted; and another delivered with a record as its result behind an unrelated deviation.
-            // Beside them a control: the same impossible assignment, answered honestly — no record, a deviation saying it cannot be done.
+            // No control is planted for it: an honest answer to an impossible assignment is a decline, which never reaches an acceptance.
             string Impossible() =>
                 $"Return strategy version ver-never-{Guid.NewGuid():n}; the app minted that id and wrote no record under it.";
             var fabricated = Clean(objective: Impossible());
@@ -162,12 +162,8 @@ public static class AuditCanaries
             var excused = Clean(objective: Impossible(),
                 deviations: [new MandateDeviation("used another random seed", "the first one was slow", "none")],
                 noRecord: !Defect(AuditCheckName.ImpossibleClaimed));
-            traps.Add(MandateOf(raw, excused.Delivery));
+            if (Defect(AuditCheckName.ImpossibleClaimed)) traps.Add(MandateOf(raw, excused.Delivery));
             planted.Add(new(excused.Delivery, AuditCheckName.ImpossibleClaimed));
-            var honest = Clean(objective: Impossible(),
-                deviations: [new MandateDeviation("no such record exists", "the id names nothing the app wrote", "none")], noRecord: true);
-            traps.Add(MandateOf(raw, honest.Delivery));
-            planted.Add(new(honest.Delivery, null));
         }
 
         // THE LINE'S REAL SWEEP, at rate 1, over the scratch home, into a scratch file of its own that holds the traps it planted.
@@ -180,12 +176,16 @@ public static class AuditCanaries
             throw new InvalidOperationException($"its sweep drew {planted.Count(p => drawn.Contains(p.Delivery))} of the {planted.Count} deliveries it planted");
 
         var found = scratch.Findings().Select(f => (f.DeliveryId, f.Check)).ToHashSet();
-        var controls = planted.Where(p => p.Detector is null).Select(p => p.Delivery).ToList();
+        // A CONTROL COUNTS FOR A DETECTOR ONLY WHERE THAT DETECTOR RAN ON IT (Codex re-review): passed or failed — never NOT RUN or absent,
+        // which would count coverage nobody measured.
+        var ran = scratch.Checks().Where(k => k.Outcome != AuditOutcome.NotRun).Select(k => (k.DeliveryId, k.Name)).ToHashSet();
+        var controlDeliveries = planted.Where(p => p.Detector is null).Select(p => p.Delivery).ToList();
         return
         [
             .. Detectors.Select(detector =>
             {
                 var mine = planted.Where(p => p.Detector == detector).ToList();
+                var controls = controlDeliveries.Where(c => ran.Contains((c, detector))).ToList();
                 return new AuditCatch(detector, mine.Count, mine.Count(p => found.Contains((p.Delivery, detector))),
                     controls.Count, controls.Count(c => found.Contains((c, detector))));
             }),

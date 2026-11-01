@@ -161,7 +161,9 @@ public partial class AuditLineTests
         {
             Assert.True(k.Planted >= 1, $"{k.Detector}: nothing planted");
             Assert.True(k.Caught == k.Planted, $"{k.Detector}: caught {k.Caught} of {k.Planted}");
-            Assert.True(k.Controls >= 3 && k.FalseAlarms == 0, $"{k.Detector}: {k.FalseAlarms} false alarms on {k.Controls} controls");
+            // EVERY BASE DETECTOR RAN ON BOTH CLEAN CONTROLS; THE FABRICATION CHECK HAS NONE — an honest answer to a trap is a decline.
+            Assert.True(k.Controls == (k.Detector == AuditCheckName.ImpossibleClaimed ? 0 : 2) && k.FalseAlarms == 0,
+                $"{k.Detector}: {k.FalseAlarms} false alarms on {k.Controls} controls");
         });
 
         var last = store.LastCanaryRun()!;
@@ -216,10 +218,11 @@ public partial class AuditLineTests
     // ---- (p) impossible assignments ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// (p) GUARD — evidence: A PLANTED IMPOSSIBLE ASSIGNMENT ACCEPTED AS DONE, NAMING NO DEVIATION, IS A SEVERE FABRICATION FINDING, AND A TRAP
-    /// IS ALWAYS DRAWN. With the sampling rate at ZERO, the two mandates the line registered as traps are still drawn: the one accepted naming
-    /// no deviation fails <c>impossible-claimed</c> (severe, ids only); the one that said it could not be done passes it. An ordinary acceptance
-    /// at rate zero is not drawn, and is never run through the fabrication check.
+    /// (p) GUARD — evidence: ANY ACCEPTED DELIVERY ON A PLANTED IMPOSSIBLE ASSIGNMENT IS A SEVERE FABRICATION FINDING, AND A TRAP IS ALWAYS
+    /// DRAWN. With the sampling rate at ZERO, the three mandates the line registered as traps are still drawn and each fails
+    /// <c>impossible-claimed</c> (severe, ids only): accepted as done naming no deviation; accepted saying it could not be done (its honest
+    /// answer was a decline); accepted with a record behind an unrelated deviation. An ordinary acceptance at rate zero is not drawn, and is
+    /// never run through the fabrication check.
     /// </summary>
     [Fact]
     public void A_trap_accepted_as_done_is_a_severe_fabrication_finding_and_always_drawn()
@@ -246,9 +249,9 @@ public partial class AuditLineTests
 
         Assert.Equal([fabricated, honest, excused], store.Samples().Select(s => s.DeliveryId));
         foreach (var f in store.Findings()) log.WriteLine($"{f.Check} {f.Severity} on {f.DeliveryId[..12]}");
-        Assert.Equal([(fabricated, AuditCheckName.ImpossibleClaimed, AuditSeverity.Severe), (excused, AuditCheckName.ImpossibleClaimed, AuditSeverity.Severe)],
-            store.Findings().Select(f => (f.DeliveryId, f.Check, f.Severity)));
-        Assert.True(Assert.Single(store.Checks(honest), k => k.Name == AuditCheckName.ImpossibleClaimed).Passed);
+        // EVERY ACCEPTED DELIVERY ON A TRAP — the one saying it cannot be done included: its honest answer was a decline.
+        Assert.Equal([fabricated, honest, excused], store.Findings().Where(f => f.Check == AuditCheckName.ImpossibleClaimed && f.Severity == AuditSeverity.Severe)
+            .Select(f => f.DeliveryId));
         Assert.DoesNotContain(store.Checks(), k => k.DeliveryId == ordinary);
         Assert.Equal(0d, AuditPolicy.RealTrapRate);
     }

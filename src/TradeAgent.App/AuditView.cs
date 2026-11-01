@@ -75,7 +75,8 @@ sealed record AuditWords(string Status, string Money, string Plan, string Canari
             : last.Catches.Select(k => (k.Missed > 0
                     ? $"{k.Detector}: MISSED {k.Missed} of {k.Planted}"
                     : $"{k.Detector}: caught {k.Caught} of {k.Planted}")
-                + (k.FalseAlarms > 0 ? $"; {k.FalseAlarms} false alarm(s) on {k.Controls} clean controls" : $"; no false alarm on {k.Controls} clean controls"))
+                + (k.Controls == 0 ? "; no clean control ran it"
+                    : k.FalseAlarms > 0 ? $"; {k.FalseAlarms} false alarm(s) on {k.Controls} clean controls" : $"; no false alarm on {k.Controls} clean controls"))
                 .ToList();
         return new("The audit line is running: code checks over sampled deliveries every minute, and its canaries once a day. It spends "
                    + "nothing today — every check is code — and it can neither instruct nor block anything.",
