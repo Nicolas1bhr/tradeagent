@@ -86,7 +86,8 @@ namespace TradeAgent.ProvingHost
     /// <summary>One market of a run, as its file states it.</summary>
     /// <remarks>A market starts <c>StartDay</c> days after the run's start: markets over disjoint windows have campaigns that charge
     /// each other nothing (a run's bars are charged to every open campaign whose months they overlap).</remarks>
-    sealed record RunMarket(ulong Seed, string Instrument, int StartDay, int Days, int HoldoutFromDay, long? BetaTicks, string? Trap);
+    /// <remarks><c>OffPath</c>: a market the brief does not name (<c>U-proving-ground-d</c> item 3) — its planted edge is the off-path exam.</remarks>
+    sealed record RunMarket(ulong Seed, string Instrument, int StartDay, int Days, int HoldoutFromDay, long? BetaTicks, string? Trap, bool OffPath = false);
 
     /// <summary>
     /// A RUN, AS DATA: the markets every configuration works on, the configurations, and the programs the seats run. Refused, never
@@ -109,7 +110,8 @@ namespace TradeAgent.ProvingHost
                 m.GetProperty("days").GetInt32(),
                 m.GetProperty("holdout_from_day").GetInt32(),
                 m.TryGetProperty("beta_ticks", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetInt64() : null,
-                m.TryGetProperty("trap", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null)).ToList();
+                m.TryGetProperty("trap", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null,
+                m.TryGetProperty("off_path", out var o) && o.ValueKind == JsonValueKind.True)).ToList();
             if (markets.Count == 0) throw new Refused($"the run file {file} names no market. Nothing was run.");
             return new RunFile(
                 DateTimeOffset.Parse(root.GetProperty("start").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
@@ -134,5 +136,6 @@ namespace TradeAgent.ProvingHost
     }
 
     /// <summary>What a configuration's process saw, written for the run's scorer.</summary>
-    sealed record ApplyReport(DateTimeOffset StartedAt, DateTimeOffset EndedAt, bool DeadlineReached, List<EnvelopeRefusal> Refusals, List<string> Log);
+    sealed record ApplyReport(DateTimeOffset StartedAt, DateTimeOffset EndedAt, bool DeadlineReached, List<EnvelopeRefusal> Refusals, List<string> Log,
+        Dictionary<string, string>? Positions = null);
 }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core.Proving;
@@ -10,12 +11,25 @@ public enum ProvingConfigurationKind
     /// <summary>A closed grammar of programs searched in a fixed order, with no model (<see cref="FloorGrammar"/>).</summary>
     Floor,
 
-    /// <summary>Positions on a chart, each played by its seat — in part c a puppet script per position.</summary>
+    /// <summary>Positions on a chart, each played by its seat — a puppet script per position in the test host.</summary>
     Seats
 }
 
-/// <summary>One position of a configuration's chart template, and the turns its puppet plays, one array of steps per turn.</summary>
-public sealed record ProvingPosition(string Id, string Unit, IReadOnlyList<IReadOnlyList<string>> Script);
+/// <summary>
+/// One position of a configuration's chart template, and the turns its puppet plays, one array of steps per turn. A founding position
+/// is named by its own id; a position in a chartered unit by a template id the app replaces with the id it mints at the hire, and
+/// <paramref name="Head"/> appoints it its unit's head.
+/// </summary>
+public sealed record ProvingPosition(string Id, string Unit, IReadOnlyList<IReadOnlyList<string>> Script, bool Head = false);
+
+/// <summary>
+/// A UNIT THE TEMPLATE CHARTERS (<c>U-proving-ground-d</c> item 1): a template id the app replaces with the unit id it mints, its kind, the
+/// founding unit it is chartered under, and its AI share of that unit's envelope — chartered through <see cref="OrgStore.Charter"/> by the
+/// parent's head as a funded, bounded experiment, never seeded.
+/// </summary>
+/// <para><paramref name="VerdictShare"/>: the team's fraction of each campaign's own verdict budget — what lets a position below the division's head
+/// spend a verdict at all (the referee's rule) — or null for none.</para>
+public sealed record ProvingCharter(string Id, string Kind, string Parent, decimal AiShare, decimal? VerdictShare = null);
 
 /// <summary>
 /// A CONFIGURATION, AS DATA (<c>U-proving-ground-c</c> item 2; <c>docs/ORCHESTRATION.md</c> § 2.14: "a configuration — chart
@@ -29,7 +43,8 @@ public sealed record ProvingPosition(string Id, string Unit, IReadOnlyList<IRead
 /// </summary>
 /// <param name="Name">A short name, which names its home's folder: letters, digits and '-' only.</param>
 /// <param name="Kind">The floor or a chart of seats.</param>
-/// <param name="Units">The chart template's units, by id.</param>
+/// <param name="Units">The founding units the chart template names, by id.</param>
+/// <param name="Charters">The units the template charters, in order, each under a founding unit (<c>U-proving-ground-d</c>).</param>
 /// <param name="Positions">The chart template's positions, each with its puppet script. The brief — a wake per scripted turn — goes to
 /// the first; every other plays its script when the kernel's own records wake it.</param>
 /// <param name="AiEnvelope">The root unit's AI envelope, in the price list's currency.</param>
@@ -40,6 +55,7 @@ public sealed record ProvingConfiguration(
     string Name,
     ProvingConfigurationKind Kind,
     IReadOnlyList<string> Units,
+    IReadOnlyList<ProvingCharter> Charters,
     IReadOnlyList<ProvingPosition> Positions,
     decimal AiEnvelope,
     int TrialBudget,
@@ -47,14 +63,14 @@ public sealed record ProvingConfiguration(
     int DeadlineSeconds)
 {
     /// <summary>The one format version this build reads and writes.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>The longest a configuration may work: a proving run is scored in hours, never days.</summary>
     public const int MaxDeadlineSeconds = 6 * 3600;
 
     /// <summary>
-    /// THE FOUNDING CHART'S UNITS AND POSITIONS — all part c applies. A template naming any other unit or position (a critic, a
-    /// headed team) is part d's, and is refused in words rather than half-written.
+    /// THE FOUNDING CHART'S UNITS AND POSITIONS, which every home holds. Anything more — a critic, a headed team — the template charters
+    /// and hires through the kernel's own writers (<see cref="Charters"/>), under the founding unit the research position heads.
     /// </summary>
     public static readonly IReadOnlyList<string> FoundingUnits = [OrgIds.Root, OrgIds.Operations, OrgIds.Research];
 
@@ -110,8 +126,8 @@ public sealed record ProvingConfiguration(
             if (!root.TryGetProperty("chart", out var chart) || chart.ValueKind != JsonValueKind.Object)
                 return (null, $"{from} has no chart template (an object with 'units' and 'positions').");
             foreach (var p in chart.EnumerateObject())
-                if (p.Name is not ("units" or "positions"))
-                    return (null, $"{from}'s chart holds '{p.Name}', and a chart template holds 'units' and 'positions' only.");
+                if (p.Name is not ("units" or "positions" or "charters"))
+                    return (null, $"{from}'s chart holds '{p.Name}', and a chart template holds 'units', 'charters' and 'positions' only.");
             if (!chart.TryGetProperty("units", out var unitsJson) || unitsJson.ValueKind != JsonValueKind.Array)
                 return (null, $"{from}'s chart names no units.");
             var units = new List<string>();
@@ -121,6 +137,30 @@ public sealed record ProvingConfiguration(
                 if (units.Contains(unit, StringComparer.Ordinal)) return (null, $"{from}'s chart names unit '{unit}' twice.");
                 units.Add(unit);
             }
+            var charters = new List<ProvingCharter>();
+            if (chart.TryGetProperty("charters", out var chartersJson))
+            {
+                if (chartersJson.ValueKind != JsonValueKind.Array) return (null, $"{from}'s charters are not a list.");
+                foreach (var c in chartersJson.EnumerateArray())
+                {
+                    if (c.ValueKind != JsonValueKind.Object) return (null, $"{from}'s chart holds a charter that is not an object.");
+                    foreach (var f in c.EnumerateObject())
+                        if (f.Name is not ("id" or "kind" or "parent" or "ai_share" or "verdict_share"))
+                            return (null, $"{from}'s charter holds '{f.Name}', and a charter holds 'id', 'kind', 'parent', 'ai_share' and 'verdict_share' only.");
+                    if (Text(c, "id") is not { Length: > 0 } cid || Text(c, "kind") is not { Length: > 0 } ckind || Text(c, "parent") is not { Length: > 0 } cparent)
+                        return (null, $"{from}'s chart holds a charter without an id, a kind or a parent.");
+                    if (!c.TryGetProperty("ai_share", out var share) || share.ValueKind != JsonValueKind.Number || !share.TryGetDecimal(out var aiShare))
+                        return (null, $"{from}'s charter '{cid}' names no ai_share: the fraction of its parent's envelope it is funded with.");
+                    decimal? verdictShare = null;
+                    if (c.TryGetProperty("verdict_share", out var vs))
+                    {
+                        if (vs.ValueKind != JsonValueKind.Number || !vs.TryGetDecimal(out var vShare) || vShare <= 0m || vShare > 1m)
+                            return (null, $"{from}'s charter '{cid}' names a verdict_share that is not a fraction above 0 and at most 1.");
+                        verdictShare = vShare;
+                    }
+                    charters.Add(new ProvingCharter(cid, ckind, cparent, aiShare, verdictShare));
+                }
+            }
             if (!chart.TryGetProperty("positions", out var positionsJson) || positionsJson.ValueKind != JsonValueKind.Array)
                 return (null, $"{from}'s chart names no positions (an empty list for none).");
             var positions = new List<ProvingPosition>();
@@ -128,8 +168,14 @@ public sealed record ProvingConfiguration(
             {
                 if (p.ValueKind != JsonValueKind.Object) return (null, $"{from}'s chart holds a position that is not an object.");
                 foreach (var f in p.EnumerateObject())
-                    if (f.Name is not ("id" or "unit" or "script"))
-                        return (null, $"{from}'s position holds '{f.Name}', and a position holds 'id', 'unit' and 'script' only.");
+                    if (f.Name is not ("id" or "unit" or "script" or "head"))
+                        return (null, $"{from}'s position holds '{f.Name}', and a position holds 'id', 'unit', 'script' and 'head' only.");
+                var head = false;
+                if (p.TryGetProperty("head", out var headJson))
+                {
+                    if (headJson.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return (null, $"{from}'s position has a 'head' that is not true or false.");
+                    head = headJson.GetBoolean();
+                }
                 if (Text(p, "id") is not { Length: > 0 } id || Text(p, "unit") is not { Length: > 0 } unit)
                     return (null, $"{from}'s chart holds a position without an id or a unit.");
                 if (positions.Any(x => x.Id == id)) return (null, $"{from}'s chart names position '{id}' twice.");
@@ -142,45 +188,104 @@ public sealed record ProvingConfiguration(
                         return (null, $"{from}'s position '{id}' has a turn that is not a list of steps in text.");
                     turns.Add([.. turn.EnumerateArray().Select(s => s.GetString()!)]);
                 }
-                positions.Add(new ProvingPosition(id, unit, turns));
+                positions.Add(new ProvingPosition(id, unit, turns, head));
             }
 
-            var configuration = new ProvingConfiguration(name, kind.Value, units, positions, envelope, trials, verdicts, deadline);
+            var configuration = new ProvingConfiguration(name, kind.Value, units, charters, positions, envelope, trials, verdicts, deadline);
             return configuration.ChartRefusal(from) is { } chartWhy ? (null, chartWhy) : (configuration, "");
         }
     }
 
+    /// <summary>A template id: a lower-case letter, then up to 19 lower-case letters, digits and '-' — never an id the app mints.</summary>
+    static readonly Regex TemplateId = new("^[a-z][a-z0-9-]{0,19}$", RegexOptions.CultureInvariant);
+
+    /// <summary>A token in a script the writer replaces with the id the app minted for a template id: <c>{position:x}</c> or <c>{unit:x}</c>.</summary>
+    internal static readonly Regex Token = new(@"\{(position|unit):([^}]*)\}", RegexOptions.CultureInvariant);
+
     /// <summary>
-    /// WHY THIS CHART TEMPLATE IS NOT ONE PART C APPLIES, or null: the floor seats nobody; a chart of seats names only the founding
-    /// chart's units and positions (a critic or a headed team is part d's), each position in the unit it sits in, at least one.
+    /// WHY THIS CHART TEMPLATE IS NOT ONE THIS BUILD APPLIES, or null: the floor seats nobody and charters nothing; a chart of seats seats
+    /// every founding position in its own unit, and anything more lives in units it charters under the research division — teams, each
+    /// with a template id, a share no larger than a bounded experiment takes (<see cref="OrgBounds.ExperimentMaxShare"/>), at least one
+    /// position, at most one head and <see cref="OrgBounds.MaxMembers"/> members — and every token in a script names a template id it declares.
     /// </summary>
     string? ChartRefusal(string from)
     {
         if (Kind == ProvingConfigurationKind.Floor)
-            return Positions.Count > 0
-                ? $"{from} is the floor, which seats no position and plays no script — it is a search with no model; it names {Positions.Count}."
+            return Positions.Count > 0 || Charters.Count > 0
+                ? $"{from} is the floor, which seats no position, charters no unit and plays no script — it is a search with no model; it names "
+                  + $"{Positions.Count} position(s) and {Charters.Count} charter(s)."
                 : null;
         if (Positions.Count == 0) return $"{from} is a chart of seats with no position on it.";
         foreach (var unit in Units)
             if (!FoundingUnits.Contains(unit, StringComparer.Ordinal))
-                return $"{from}'s chart names unit '{unit}', and this build applies the founding chart's units only ({string.Join(", ", FoundingUnits)}): "
-                       + "a template that charters new units — a critic, a headed team — is the next part of the proving ground's. Nothing was applied.";
+                return $"{from}'s chart names unit '{unit}' among its founding units, and the founding units are {string.Join(", ", FoundingUnits)}: "
+                       + "a unit beyond them is chartered (a 'charters' entry), never named into being. Nothing was applied.";
+
+        var chartered = new Dictionary<string, ProvingCharter>(StringComparer.Ordinal);
+        foreach (var c in Charters)
+        {
+            if (!TemplateId.IsMatch(c.Id) || FoundingUnits.Contains(c.Id, StringComparer.Ordinal))
+                return $"{from}'s charter '{c.Id}' is no template id: a lower-case letter then up to 19 lower-case letters, digits and '-', and no founding unit's.";
+            if (!chartered.TryAdd(c.Id, c)) return $"{from} charters '{c.Id}' twice.";
+            if (c.Kind != OrgUnitKind.Team)
+                return $"{from}'s charter '{c.Id}' is a '{c.Kind}', and a proving template charters teams ('{OrgUnitKind.Team}') only.";
+            if (c.Parent != OrgIds.Research)
+                return $"{from}'s charter '{c.Id}' is chartered under '{c.Parent}', and a proving template charters under {OrgIds.Research}, which the "
+                       + "research position heads — never under operations, whose structure is a board act. Nothing was applied.";
+            if (c.AiShare <= 0m || c.AiShare > OrgBounds.ExperimentMaxShare)
+                return string.Create(CultureInfo.InvariantCulture,
+                    $"{from}'s charter '{c.Id}' asks an AI share of {c.AiShare}, and a chartered team is a bounded experiment funded with above 0 and at most {OrgBounds.ExperimentMaxShare} of its parent's envelope.");
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var position in Positions)
         {
-            if (!FoundingPositions.TryGetValue(position.Id, out var sits))
-                return $"{from}'s chart names position '{position.Id}', and this build seats the founding chart's positions only "
-                       + $"({string.Join(", ", FoundingPositions.Keys)}). Nothing was applied.";
-            if (sits != position.Unit)
-                return $"{from}'s position '{position.Id}' is placed in unit '{position.Unit}', and it sits in '{sits}'.";
-            if (!Units.Contains(position.Unit, StringComparer.Ordinal))
-                return $"{from}'s position '{position.Id}' sits in unit '{position.Unit}', which the chart's units do not name.";
+            ids.Add(position.Id);
+            if (FoundingPositions.TryGetValue(position.Id, out var sits))
+            {
+                if (sits != position.Unit)
+                    return $"{from}'s position '{position.Id}' is placed in unit '{position.Unit}', and it sits in '{sits}'.";
+                if (!Units.Contains(position.Unit, StringComparer.Ordinal))
+                    return $"{from}'s position '{position.Id}' sits in unit '{position.Unit}', which the chart's units do not name.";
+                if (position.Head)
+                    return $"{from}'s position '{position.Id}' is a founding position, which heads what it already heads: 'head' is for a chartered unit's position.";
+                continue;
+            }
+            if (!chartered.ContainsKey(position.Unit))
+                return $"{from}'s chart names position '{position.Id}' in unit '{position.Unit}', and a position beyond the founding chart's "
+                       + $"({string.Join(", ", FoundingPositions.Keys)}) sits in a unit the template charters. Nothing was applied.";
+            if (!TemplateId.IsMatch(position.Id) || position.Id.StartsWith("pos-", StringComparison.Ordinal))
+                return $"{from}'s position '{position.Id}' is no template id: a lower-case letter then up to 19 lower-case letters, digits and '-', never 'pos-…', which the app mints.";
         }
+        foreach (var c in Charters)
+        {
+            var seated = Positions.Where(p => p.Unit == c.Id).ToList();
+            if (seated.Count == 0) return $"{from} charters '{c.Id}' and seats nobody in it: a unit with no position does no work and is not chartered.";
+            if (seated.Count(p => p.Head) > 1) return $"{from} appoints {seated.Count(p => p.Head)} heads of '{c.Id}', and a unit has one.";
+            if (seated.Count(p => !p.Head) > OrgBounds.MaxMembers)
+                return $"{from} seats {seated.Count(p => !p.Head)} members in '{c.Id}', and one head leads at most {OrgBounds.MaxMembers}.";
+        }
+        if (Positions.Count > OrgBounds.MaxPositions)
+            return $"{from} seats {Positions.Count} positions, and the chart carries at most {OrgBounds.MaxPositions}.";
+
         // EVERY FOUNDING POSITION IS SEATED: one left off the template would still be on the chart and woken by the kernel's own records
         // (a promotion's boundary wakes the chair), adding a seat and spend the configuration never named.
         foreach (var founding in FoundingPositions.Keys)
             if (!Positions.Any(p => p.Id == founding))
                 return $"{from} leaves position '{founding}' off its chart, and every founding position is on every home's chart, woken by the "
                        + "kernel's own records whatever a template says: a chart of seats seats each of them, with its script. Nothing was applied.";
+
+        // EVERY TOKEN NAMES WHAT THE TEMPLATE DECLARES: the writer replaces it with the id the app minted, and a token it could not
+        // replace would reach a seat as words that name nothing.
+        foreach (var position in Positions)
+            foreach (var step in position.Script.SelectMany(t => t))
+                foreach (Match m in Token.Matches(step))
+                {
+                    var known = m.Groups[1].Value == "position" ? ids.Contains(m.Groups[2].Value)
+                        : chartered.ContainsKey(m.Groups[2].Value) || FoundingUnits.Contains(m.Groups[2].Value, StringComparer.Ordinal);
+                    if (!known)
+                        return $"{from}'s position '{position.Id}' has a step naming '{m.Value}', and the template declares no such {m.Groups[1].Value}.";
+                }
         return null;
     }
 
@@ -216,28 +321,46 @@ public sealed record ProvingConfiguration(
 }
 
 /// <summary>What applying a configuration wrote, for its report.</summary>
-/// <param name="Scripts">Each scripted position and the file its script was written to.</param>
-public sealed record ProvingApplied(IReadOnlyDictionary<string, string> Scripts);
+/// <param name="Scripts">Each scripted position, by its template id, and the file its script was written to.</param>
+/// <param name="Positions">Each position of the template, by its template id, and the position id it holds on this home's chart — a founding
+/// position its own, a hired one the id the app minted.</param>
+/// <param name="Units">Each unit the template chartered, by its template id, and the unit id the app minted.</param>
+public sealed record ProvingApplied(IReadOnlyDictionary<string, string> Scripts, IReadOnlyDictionary<string, string> Positions,
+    IReadOnlyDictionary<string, string> Units);
 
 /// <summary>
-/// APPLIES A CONFIGURATION TO A PROVING HOME (<c>U-proving-ground-c</c> item 2): the root unit's AI envelope through the
-/// settings the meter sizes the root from, and a puppet script per position under the key its home's folder gives it.
-/// Positions are the founding chart's, which every home holds as O1/O2a wrote them, so nothing is added to the chart and no
-/// column is new; a template naming any other is refused at parse.
+/// WHAT THE HOST THAT METERS LAUNCHES ANSWERS FOR A TEMPLATE'S CHARTERS (<c>U-proving-ground-d</c> item 1): a charter's funding as
+/// admission sizes it for the chartering head (<see cref="CharterFunding"/>; null refuses), and the owner's in-process activation of a
+/// hired position in this proving home — the press the app's "For you" page makes, which returns its words or throws refused.
+/// </summary>
+public sealed record ProvingChartHost(Func<string, CharterFunding?> Funding, Func<string, string> Activate);
+
+/// <summary>
+/// APPLIES A CONFIGURATION TO A PROVING HOME (<c>U-proving-ground-c</c> item 2; <c>U-proving-ground-d</c> item 1): the root unit's AI
+/// envelope through the settings the meter sizes the root from; each unit the template charters through <see cref="OrgStore.Charter"/>
+/// by the research position, which heads its parent — a funded, bounded experiment with its collapse date and a <c>unit-admissible</c>
+/// forecast, inside the rights matrix, the chart's bounds, the weekly throttle and the earning test; each of its positions through
+/// <see cref="OrgStore.Hire"/> by the same head, then the owner's activation (<see cref="ProvingChartHost.Activate"/>); and a puppet
+/// script per position under the key its home's folder gives it, every <c>{position:x}</c> and <c>{unit:x}</c> replaced by the id the
+/// app minted. NEVER SEEDED SQL: what a richer chart holds, the kernel wrote, and refused what it refuses.
 ///
 /// <para><b>Only in a home marked proving</b> (SIM-001): the database must be opened as a proving home's and carry the
 /// proving mark on disk. Anything else — the owner's home, a test assembly's home, an unmarked file — is refused before
-/// anything is written: a puppet configuration applied there would put scripted seats behind a real home's chart.</para>
+/// anything is written: a puppet configuration applied there would put scripted seats — and chartered teams — behind a real home's chart.</para>
 /// </summary>
 public static class ProvingConfigurationWriter
 {
+    /// <summary>How long a chartered team's bounded experiment runs before it collapses unless its forecast holds.</summary>
+    public static readonly TimeSpan CollapseAfter = TimeSpan.FromDays(30);
+
     /// <summary>
     /// Applies <paramref name="configuration"/> to <paramref name="db"/>: its envelope through <paramref name="settings"/> (the
-    /// gateway's own update), and each position's script into <paramref name="scripts"/> as <c>&lt;key&gt;.json</c>, the key
-    /// being <paramref name="keyOf"/> of its id — the folder name of its home, which is how the puppet finds it.
+    /// gateway's own update), its charters and hires through the kernel's writers with <paramref name="chart"/>'s answers, and each
+    /// position's script into <paramref name="scripts"/> as <c>&lt;key&gt;.json</c>, the key being <paramref name="keyOf"/> of its
+    /// position id — the folder name of its home, which is how the puppet finds it.
     /// </summary>
     public static ProvingApplied Apply(Database db, ProvingConfiguration configuration, string scripts,
-        Func<string, string> keyOf, Action<Action<TradeAgentSettings>> settings)
+        Func<string, string> keyOf, Action<Action<TradeAgentSettings>> settings, ProvingChartHost? chart = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -246,10 +369,14 @@ public static class ProvingConfigurationWriter
         ArgumentException.ThrowIfNullOrWhiteSpace(scripts);
 
         if (NotProving(db) is { } refused) throw new InvalidOperationException(refused);
+        if (configuration.Charters.Count > 0 && chart is null)
+            throw new InvalidOperationException($"configuration '{configuration.Name}' charters {configuration.Charters.Count} unit(s), and this host "
+                                                + "answers neither a charter's funding nor an activation. Nothing was applied.");
 
-        // THE POSITIONS ARE ON THE CHART AS THE FOUNDING CHART PUT THEM, ACTIVE — read, never written.
+        // THE FOUNDING POSITIONS ARE ON THE CHART AS THE FOUNDING CHART PUT THEM, ACTIVE — read, never written.
         var org = new OrgStore(db);
-        foreach (var position in configuration.Positions)
+        var founding = configuration.Positions.Where(p => ProvingConfiguration.FoundingPositions.ContainsKey(p.Id)).ToList();
+        foreach (var position in founding)
         {
             if (org.Position(position.Id) is not { } row || row.Status != OrgPositionStatus.Active || row.UnitId != position.Unit)
                 throw new InvalidOperationException(
@@ -259,15 +386,46 @@ public static class ProvingConfigurationWriter
 
         settings(s => s.AiDailyCostCap = configuration.AiEnvelope);
 
+        var positions = founding.ToDictionary(p => p.Id, p => p.Id, StringComparer.Ordinal);
+        var units = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var charter in configuration.Charters)
+        {
+            var caller = org.Units().FirstOrDefault(u => u.Id == charter.Parent)?.HeadPositionId
+                         ?? throw new InvalidOperationException($"unit '{charter.Parent}' has no head in this proving home to charter '{charter.Id}'.");
+            var now = DateTimeOffset.UtcNow;
+            var collapse = now + CollapseAfter;
+            var why = $"proving configuration '{configuration.Name}' charters its '{charter.Id}' team as a bounded experiment (SIMULATED)";
+            var made = org.Charter(new CharterRequest(caller, null, charter.Kind, charter.AiShare, why, [], [],
+                    [new ForecastClaim(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, collapse, 0.5m)], collapse,
+                    VerdictShare: charter.VerdictShare),
+                chart!.Funding(caller), now);
+            units[charter.Id] = made.Unit.Id;
+
+            // ITS HEAD FIRST, THEN ITS MEMBERS — each hired by the head of the unit's parent, then activated by the owner's press.
+            foreach (var position in configuration.Positions.Where(p => p.Unit == charter.Id).OrderBy(p => p.Head ? 0 : 1))
+            {
+                var hired = org.Hire(new HireRequest(caller, null, made.Unit.Id, position.Head,
+                    $"proving configuration '{configuration.Name}' seats its '{position.Id}' position (SIMULATED)", [], [],
+                    [new ForecastClaim(ForecastVocabulary.UnitAdmissible, null, ForecastVocabulary.Admitted, collapse, 0.5m)]), DateTimeOffset.UtcNow);
+                if (hired.Position.Status != OrgPositionStatus.Active) chart.Activate(hired.Position.Id);
+                if (org.Position(hired.Position.Id) is not { Status: OrgPositionStatus.Active })
+                    throw new InvalidOperationException($"position '{position.Id}' ({hired.Position.Id}) was hired and is not active. The run stops here.");
+                positions[position.Id] = hired.Position.Id;
+            }
+        }
+
         Directory.CreateDirectory(scripts);
         var written = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var position in configuration.Positions)
         {
-            var file = Path.Combine(scripts, keyOf(position.Id) + ".json");
-            File.WriteAllText(file, JsonSerializer.Serialize(new { turns = position.Script }));
+            var turns = position.Script.Select(t => t.Select(step => ProvingConfiguration.Token.Replace(step,
+                m => m.Groups[1].Value == "position" ? positions[m.Groups[2].Value]
+                    : units.TryGetValue(m.Groups[2].Value, out var u) ? u : m.Groups[2].Value)).ToList()).ToList();
+            var file = Path.Combine(scripts, keyOf(positions[position.Id]) + ".json");
+            File.WriteAllText(file, JsonSerializer.Serialize(new { turns }));
             written[position.Id] = file;
         }
-        return new ProvingApplied(written);
+        return new ProvingApplied(written, positions, units);
     }
 
     /// <summary>Why <paramref name="db"/> is not a proving home's, in words, or null.</summary>

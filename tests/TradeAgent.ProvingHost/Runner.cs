@@ -86,7 +86,7 @@ static class Runner
             {
                 var opened = ProvingCampaign.Open(home, db, market!, spec, spec.Start.AddDays(spec.Holdout!.FromDay));
                 if (!opened.Ok) throw new InvalidOperationException($"the campaign over {spec.Instrument} was not opened: {opened.Why}");
-                truths.Add(MarketTruth.Read(market!.TruthFile));
+                truths.Add(MarketTruth.Read(market!.TruthFile) with { OffPath = run.Markets.Single(m => m.Instrument == spec.Instrument).OffPath });
             }
         }
 

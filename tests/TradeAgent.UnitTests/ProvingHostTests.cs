@@ -19,14 +19,14 @@ namespace TradeAgent.Tests.Unit;
 /// and reads the scores it wrote into <c>proving.db</c>. SIMULATED: process skill on synthetic markets, never market truth, never
 /// intelligence.
 /// </summary>
-public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper log) : IClassFixture<ProvingHostTests.Ladder>
+public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper log) : IClassFixture<ProvingHostTests.Ladder>
 {
     internal static readonly DateTimeOffset Start = new(2026, 8, 3, 0, 0, 0, TimeSpan.Zero);
     const int Days = 14, HoldoutDay = 7;
 
     /// <summary>The noise and trap markets' first days: each a day after the market before it ends, so no market's bars reach another's holdout.</summary>
-    const int NoiseDay = Days + 1, TrapDay = 2 * Days + 2;
-    const long EdgeDataset = 1, NoiseDataset = 2, TrapDataset = 3;
+    const int NoiseDay = Days + 1, TrapDay = 2 * Days + 2, OffPathDay = 3 * Days + 3;
+    const long EdgeDataset = 1, NoiseDataset = 2, TrapDataset = 3, OffPathDataset = 4;
     /// <summary>The last instant a market starting <paramref name="startDay"/> days into the run may be researched to: an hour and a minute before its cutoff.</summary>
     static string ResearchFrom(int startDay) => Start.AddDays(startDay).ToString("O");
 
@@ -104,9 +104,10 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
         [
             "write strategies/edge.strategy " + Program("SYNA"),
             $"trade backtest --strategy strategies/edge.strategy --dataset {EdgeDataset} --from {ResearchFrom(0)} --to {ResearchTo(0)}",
-            $"trade verdict --version {VersionOf(Program("SYNA"))} --dataset {EdgeDataset}",
             "write strategies/trap.strategy " + Program("SYNC"),
             $"trade backtest --strategy strategies/trap.strategy --dataset {TrapDataset} --from {ResearchFrom(TrapDay)} --to {ResearchTo(TrapDay)}",
+            Judging("ask a verdict on both", (Program("SYNA"), 0.7m), (Program("SYNC"), 0.4m)),
+            $"trade verdict --version {VersionOf(Program("SYNA"))} --dataset {EdgeDataset}",
             $"trade verdict --version {VersionOf(Program("SYNC"))} --dataset {TrapDataset}",
             $"usage {input} 0 {output}",
             "final I measured one hypothesis on two instruments and asked for both verdicts."
@@ -120,7 +121,7 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
     /// <summary>What one chair turn costs at the owner's rate.</summary>
     const decimal ChairTurn = 0.028m;
 
-    internal static JsonObject Configuration(string name, string kind, decimal envelope = 100m, string[][]? script = null,
+    internal static JsonObject Configuration(string name, string kind, decimal envelope = Envelope, string[][]? script = null,
         int trials = 10, int verdicts = 2, int deadline = 900)
     {
         static JsonArray Turns(string[][] turns) => new([.. turns.Select(t => (JsonNode?)new JsonArray([.. t.Select(s => (JsonNode?)s)]))]);
@@ -147,7 +148,9 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
     [
         new JsonObject { ["seed"] = "701", ["instrument"] = "SYNA", ["days"] = Days, ["holdout_from_day"] = HoldoutDay, ["beta_ticks"] = 12 },
         new JsonObject { ["seed"] = "702", ["instrument"] = "SYNB", ["start_day"] = NoiseDay, ["days"] = Days, ["holdout_from_day"] = HoldoutDay },
-        new JsonObject { ["seed"] = "703", ["instrument"] = "SYNC", ["start_day"] = TrapDay, ["days"] = Days, ["holdout_from_day"] = HoldoutDay, ["beta_ticks"] = 2, ["trap"] = "pre-fee-only" }
+        new JsonObject { ["seed"] = "703", ["instrument"] = "SYNC", ["start_day"] = TrapDay, ["days"] = Days, ["holdout_from_day"] = HoldoutDay, ["beta_ticks"] = 2, ["trap"] = "pre-fee-only" },
+        // THE OFF-PATH EXAM (U-proving-ground-d item 3): a planted edge on a market no brief names.
+        new JsonObject { ["seed"] = "704", ["instrument"] = "SYND", ["start_day"] = OffPathDay, ["days"] = Days, ["holdout_from_day"] = HoldoutDay, ["beta_ticks"] = 12, ["off_path"] = true }
     ];
 
     /// <summary>A fresh proving home under <paramref name="dir"/>, the run file naming <paramref name="configurations"/>, and its path.</summary>
@@ -188,7 +191,9 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
         {
             var (home, run) = Prepare(_scratch.Dir,
                 Configuration("floor", "floor"),
-                Configuration("one-agent", "seats", script: AgentScript()));
+                Configuration("one-agent", "seats", script: AgentScript()),
+                CriticConfiguration(),
+                HeadedConfiguration());
             return (home, Host(home, Pipe(), "run", "--run", run));
         });
 
@@ -201,7 +206,13 @@ public class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper 
             return ProvingHostTests.Scores(Home);
         }
 
-        public void Dispose() => _scratch.Dispose();
+        public void Dispose()
+        {
+            if (Environment.GetEnvironmentVariable("TA_DEBUG_KEEP") is { Length: > 0 } keep && _run.IsValueCreated)   // DEBUG-REMOVE
+                foreach (var f in Directory.EnumerateFiles(Path.Combine(Home, "configurations"), "*", SearchOption.AllDirectories).Where(f => f.EndsWith(".log") || f.EndsWith(".txt") || f.EndsWith(".json")))
+                { var to = Path.Combine(keep, Path.GetRelativePath(Home, f)); Directory.CreateDirectory(Path.GetDirectoryName(to)!); File.Copy(f, to, true); }
+            _scratch.Dispose();
+        }
     }
 
     // ---- the tests ----------------------------------------------------------------------------------------------------------

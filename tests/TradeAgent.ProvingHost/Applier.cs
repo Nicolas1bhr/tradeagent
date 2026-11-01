@@ -40,9 +40,10 @@ static class Applier
         host.Gateway.Venues.Sync(SyntheticMarket.Venues(Core.Data.VenueCatalog.BinanceSpot,
             new DatasetStore(db).All().Where(d => d.Source == ProvingSources.Synthetic).Select(d => d.Pair).Distinct()));
 
-        ProvingConfigurationWriter.Apply(db, config, scripts,
-            role => Path.GetFileName(host.HomeFor(role).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-            host.Gateway.Update);
+        string KeyOf(string role) => Path.GetFileName(host.HomeFor(role).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        ProvingApplied? applied = null;
+        if (config.Kind == ProvingConfigurationKind.Floor)
+            applied = ProvingConfigurationWriter.Apply(db, config, scripts, KeyOf, host.Gateway.Update);
 
         // TRADEAGENT'S OWN trade COMMAND, deployed into THIS home's bin/ as the app deploys it: the launcher every turn is held by.
         if (ToolDeployer.EnsureTradeCli(tradeDir) is null)
@@ -59,7 +60,7 @@ static class Applier
             if (config.Kind == ProvingConfigurationKind.Floor)
                 reached = await Floor.Run(server, db, deadline, log);
             else
-                reached = await Seats(host, config, scripts, puppetDll, deadline, log, refusals);
+                (reached, applied) = await Seats(host, config, scripts, puppetDll, deadline, log, refusals, KeyOf);
         }
         finally
         {
@@ -70,7 +71,7 @@ static class Applier
             try { db.Dispose(); } catch (Exception) { }
         }
 
-        var report = new ApplyReport(started, DateTimeOffset.UtcNow, reached, refusals, log);
+        var report = new ApplyReport(started, DateTimeOffset.UtcNow, reached, refusals, log, applied?.Positions.ToDictionary(kv => kv.Key, kv => kv.Value));
         await File.WriteAllTextAsync(reportFile, JsonSerializer.Serialize(report));
         foreach (var line in log) Console.WriteLine(line);
         return 0;
@@ -81,8 +82,8 @@ static class Applier
     /// kernel, until the organisation is quiet. A position left with due wakes nothing consumed while the meter admits no further turn
     /// for it is the envelope's refusal, recorded with those wakes. True when the deadline stopped it.
     /// </summary>
-    static async Task<bool> Seats(AppHost host, ProvingConfiguration config, string scripts, string puppetDll, DateTimeOffset deadline,
-        List<string> log, List<EnvelopeRefusal> refusals)
+    static async Task<(bool Reached, ProvingApplied Applied)> Seats(AppHost host, ProvingConfiguration config, string scripts, string puppetDll,
+        DateTimeOffset deadline, List<string> log, List<EnvelopeRefusal> refusals, Func<string, string> keyOf)
     {
         string[] turn = [puppetDll, "--scripts", scripts, "{prompt}"];
         var manifest = new RuntimeManifest
@@ -107,9 +108,17 @@ static class Applier
         await host.Agent.StartAsync();
         if (!host.Agent.Running) throw new InvalidOperationException("the puppet runtime did not start");
         _ = host.Conversation;
+
+        // THE CONFIGURATION, APPLIED ONCE ITS SEATS ARE DECLARED (U-proving-ground-d item 1): a chartered team's positions are hired and
+        // activated by the owner's in-process press, which reads the seat each is declared on — the puppet's, prepared above.
+        var applied = ProvingConfigurationWriter.Apply(host.Db, config, scripts, keyOf, host.Gateway.Update,
+            new ProvingChartHost(caller => FundingOf(host, caller), host.ActivatePosition));
+        foreach (var (template, id) in applied.Positions.Where(kv => kv.Key != kv.Value)) log.Add($"hired and activated: {template} = {id}");
+        foreach (var (template, id) in applied.Units) log.Add($"chartered: {template} = {id}");
         // THE ENVELOPE IS ONE ALLOWANCE FOR THE WHOLE RUN (BUDGET-001): the meter's envelope is a day's, so a configuration never works
         // past the day's reset, where it would be handed a second one — it stops there, whatever its deadline.
-        var reset = host.Meter!.TodayFor(config.Positions[0].Id).ResumesAt;
+        var first = applied.Positions[config.Positions[0].Id];
+        var reset = host.Meter!.TodayFor(first).ResumesAt;
         if (reset > DateTimeOffset.UtcNow && reset < deadline)
         {
             log.Add($"the deadline is cut to the meter's day reset at {reset:O}: one envelope per run");
@@ -117,10 +126,17 @@ static class Applier
         }
         host.Mission.Start();
 
+        // THE CHART'S OWN WAKES FIRST (U-proving-ground-d): an activation wakes the position and the head that hired it, and those turns are
+        // the configuration's — spent and scored — but they come before the brief, so every position's later turns answer the brief's work.
+        if (applied.Positions.Values.Any(p => DueUnconsumed(host, p).Count > 0))
+        {
+            log.Add("the chart's activation wakes are answered before the brief");
+            if (await UntilQuiet(host, deadline)) { log.Add("deadline reached while the chart's own wakes were answered"); return (true, applied); }
+        }
+
         // THE BRIEF GOES TO THE TEMPLATE'S FIRST POSITION — one wake; every later turn of every position is woken by the kernel's own
-        // records (a verdict wakes its author, a promotion's boundary wakes the chair), never by this host, and each position plays its
-        // script's turns in order, the last again once they run out.
-        var first = config.Positions[0].Id;
+        // records (a mandate wakes its holder, a delivery or a proposal its decider, a verdict its author, a promotion's boundary the
+        // chair), never by this host, and each position plays its script's turns in order, the last again once they run out.
         var brief = MissionEventIds.Self($"proving-{Guid.NewGuid():n}");
         var due = DateTimeOffset.UtcNow.AddSeconds(-1);
         if (!host.Wakes!.RaiseDue(brief, MissionEventKind.Self, due.AddMinutes(-1), due, role: first))
@@ -128,33 +144,73 @@ static class Applier
         host.Mission.Wake();
         log.Add($"brief: {brief} to {first}");
 
-        // UNTIL THE ORGANISATION IS QUIET: no launch open and none started for three times the loop's rest between a position's turns.
+        if (await UntilQuiet(host, deadline)) { log.Add("deadline reached while the organisation was still working"); return (true, applied); }
+        await host.Mission.PauseAsync();
+
+        // THE APP'S OWN LAST TICK OF ITS FORECASTS (U-proving-ground-d item 2): every forecast the home's records now settle is resolved by
+        // the app's resolver, as its sweep does each tick — the calibration the score reads is the app's resolution, never the seat's.
+        var swept = new ForecastResolver(host.Db).Sweep(DateTimeOffset.UtcNow);
+        log.Add($"forecasts resolved at the end: {swept.Resolved}; refused {swept.Refused.Count}");
+
+        // WHAT THE ENVELOPE REFUSED: each seated position — every one on the chart the template made, the chartered ones included — the
+        // meter admits no further turn for, with wakes due that nothing consumed (BUDGET-001: a richer chart spends from the same envelope).
+        foreach (var position in applied.Positions.Values)
+        {
+            var spend = host.Meter!.TodayFor(position);
+            if (spend.AdmitsAnotherTurn) continue;
+            var owed = DueUnconsumed(host, position);
+            if (owed.Count == 0) continue;
+            var b = spend.Binding;
+            refusals.Add(new EnvelopeRefusal(position, owed, b.Spent + b.Reserved, b.Cap));
+            log.Add(string.Create(CultureInfo.InvariantCulture,
+                $"{position}: refused by the envelope — {owed.Count} wake(s) due and unconsumed ({string.Join(", ", owed)}); spent {b.Spent}, reserved {b.Reserved}, next turn {b.NextTurnReservation}, cap {b.Cap}"));
+        }
+        foreach (var a in Attempts(host)) log.Add($"attempt {a.Id} {a.Role} {a.State} in={a.InputTokens} out={a.OutputTokens} cost={a.Cost}");
+        return (false, applied);
+    }
+
+    /// <summary>
+    /// UNTIL THE ORGANISATION IS QUIET: no launch open and none started for three times the loop's rest between a position's turns. True
+    /// when the deadline came first.
+    /// </summary>
+    static async Task<bool> UntilQuiet(AppHost host, DateTimeOffset deadline)
+    {
         var quiet = TimeSpan.FromSeconds(15);
         var quietSince = DateTimeOffset.UtcNow;
         var seen = Attempts(host).Count;
         while (DateTimeOffset.UtcNow - quietSince < quiet)
         {
-            if (DateTimeOffset.UtcNow >= deadline) { log.Add("deadline reached while the organisation was still working"); return true; }
+            if (DateTimeOffset.UtcNow >= deadline) return true;
             var now = Attempts(host);
             if (now.Count != seen || now.Any(a => a.State == AiAttemptState.LAUNCHED)) { seen = now.Count; quietSince = DateTimeOffset.UtcNow; }
             await Task.Delay(200);
         }
-        await host.Mission.PauseAsync();
-
-        // WHAT THE ENVELOPE REFUSED: each seated position the meter admits no further turn for, with wakes due that nothing consumed.
-        foreach (var position in config.Positions)
-        {
-            var spend = host.Meter!.TodayFor(position.Id);
-            if (spend.AdmitsAnotherTurn) continue;
-            var owed = DueUnconsumed(host, position.Id);
-            if (owed.Count == 0) continue;
-            var b = spend.Binding;
-            refusals.Add(new EnvelopeRefusal(position.Id, owed, b.Spent + b.Reserved, b.Cap));
-            log.Add(string.Create(CultureInfo.InvariantCulture,
-                $"{position.Id}: refused by the envelope — {owed.Count} wake(s) due and unconsumed ({string.Join(", ", owed)}); spent {b.Spent}, reserved {b.Reserved}, next turn {b.NextTurnReservation}, cap {b.Cap}"));
-        }
-        foreach (var a in Attempts(host)) log.Add($"attempt {a.Id} {a.Role} {a.State} in={a.InputTokens} out={a.OutputTokens} cost={a.Cost}");
         return false;
+    }
+
+    /// <summary>
+    /// WHAT A CHARTER'S SHARE IS SIZED AGAINST, as this host's meter reads it — the pipe's own reading (<c>GatewayPipeServer.FundingOf</c>)
+    /// for a head writing outside a launch: one turn of <paramref name="caller"/>'s seat (<see cref="TradingGateway.AiReservation"/>), and
+    /// in each ceiling the nearest envelope at or above its unit (<see cref="TradingGateway.AiEnvelopes"/>). A chartered team sits under
+    /// a division whose children are chartered units only, so no legacy sibling's split is read. Null where any of it cannot be read.
+    /// </summary>
+    static CharterFunding? FundingOf(AppHost host, string caller)
+    {
+        IReadOnlyList<UnitDay>? days;
+        decimal? reserves;
+        try { days = host.Gateway.AiEnvelopes?.Invoke(caller); reserves = host.Gateway.AiReservation?.Invoke(caller); }
+        catch (Exception) { return null; }
+        var unit = host.Gateway.Org.UnitOf(caller);
+        if (days is null || unit is null || reserves is not { } turn || turn <= 0m) return null;
+        var parent = new List<CeilingEnvelope>();
+        foreach (var ceiling in days.Select(d => d.Ceiling).Distinct(StringComparer.Ordinal))
+        {
+            var chain = days.Where(d => d.Ceiling == ceiling).ToList();
+            var at = chain.FindIndex(d => d.UnitId == unit.Id);
+            if (at < 0 || chain.Skip(at).FirstOrDefault(d => d.Envelope is not null)?.Envelope is not { } envelope) return null;
+            parent.Add(new CeilingEnvelope(ceiling, envelope));
+        }
+        return parent.Count == 0 ? null : new CharterFunding(caller, turn, parent);
     }
 
     /// <summary>The ids of wakes due now for <paramref name="role"/> that nothing has consumed, as the home's own ledger holds them.</summary>
