@@ -193,8 +193,9 @@ public static class CellBenchmark
     ];
 
     /// <summary>
-    /// The Windows rows that decide whether the proof names egress <c>web</c> (the egress decision of 2026-10-30): both held — 443 reached
-    /// and every other port refused, which only the firewall rule makes true — and the proof names <c>none</c> and <c>web</c>; otherwise
+    /// The Windows rows that decide whether the proof names egress <c>web</c> (the egress decision of 2026-10-30): both held on EVERY slot
+    /// (<c>U-cell-windows-egress</c>) — 443 reached, port 80 and a direct DNS query refused, which only the firewall rule the one elevated helper
+    /// places makes true — and the proof names <c>none</c> and <c>web</c>; otherwise
     /// <c>none</c> alone, and a <c>web</c> launch runs under <c>none</c> (<see cref="RouteA.AdmissionOn"/>).
     /// </summary>
     public static readonly IReadOnlyList<string> WindowsWebRows = ["web-443-granted", "web-nothing-else"];

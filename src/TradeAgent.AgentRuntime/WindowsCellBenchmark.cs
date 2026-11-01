@@ -18,7 +18,7 @@ namespace TradeAgent.AgentRuntime;
 ///
 /// <para><b>What is written.</b> Every CORE row held (<see cref="CellBenchmark.WindowsCoreRows"/>) ⇒ ONE proof under
 /// <see cref="RouteA.WindowsProvider"/>, bound to machine, build and boot, naming egress <c>none</c> — and <c>web</c> too only when both
-/// web rows held (443 reached, every other port refused: the firewall rule's work). Any core row failed ⇒ nothing is written. A row's
+/// web rows held ON EVERY SLOT (443 reached, port 80 and a direct DNS query refused: the firewall rule's work; <see cref="WebRowsAsync"/>). Any core row failed ⇒ nothing is written. A row's
 /// script is a file in the workspace, so a path holding a space is quoted as cmd reads it; nothing is sent to NUL (Windows Server
 /// refuses it to an AppContainer).</para>
 ///
@@ -234,25 +234,28 @@ public static class WindowsCellBenchmark
             await Row("descendants-cancelled", async () =>
             {
                 // A SHELL AND A DETACHED GRANDCHILD THAT LIVE UNTIL ENDED (both read input the benchmark holds open), cancelled while alive;
-                // every one of them gone after (Codex, landing 3: no longer a constant).
-                var before = Process.GetProcessesByName("findstr").Select(p => p.Id).ToHashSet();
-                HashSet<int> mine = [];
+                // every one of them gone after. THE CELL'S PROCESSES ARE WINDOWS' OWN LIST of the attempt's job whose token is an
+                // AppContainer's (U-cell-windows-egress, card 3) — never a name, so a process outside the cell is never counted.
+                IReadOnlyList<CellMember> mine = [];
                 using (var held = Launch(none, cmd, ["/d", "/c", "start /b findstr x & findstr y"]))
                 {
-                    for (var i = 0; i < 100 && mine.Count < 2; i++)
+                    for (var i = 0; i < 100 && mine.Count(m => m.Name == "findstr") < 2; i++)
                     {
                         await Task.Delay(50, ct);
-                        mine = [.. Process.GetProcessesByName("findstr").Select(p => p.Id).Where(id => !before.Contains(id))];
+                        mine = CellMembers(held) ?? [];
                     }
-                    if (mine.Count < 2) return (false, $"the cell's two readers did not start ({mine.Count})");
+                    if (mine.Count(m => m.Name == "findstr") < 2)
+                        return (false, $"the cell's two readers are not both in its job ({string.Join(", ", mine.Select(m => m.Name))})");
                 }
                 var alive = mine.ToList();
                 for (var i = 0; i < 100 && alive.Count > 0; i++)
                 {
                     await Task.Delay(50, ct);
-                    alive = [.. alive.Where(Running)];
+                    alive = [.. alive.Where(m => WindowsProcessTable.StillRunning(new ProcessEntry(m.Pid, 0, 0, 0, m.Start, false, false)))];
                 }
-                return (alive.Count == 0, alive.Count == 0 ? $"{mine.Count} live descendants, every one ended with the cancel" : "OUTLIVED the cancel: " + string.Join(", ", alive));
+                return (alive.Count == 0, alive.Count == 0
+                    ? $"{mine.Count} processes of the cell's job ({string.Join(", ", mine.Select(m => m.Name))}), every one ended with the cancel"
+                    : "OUTLIVED the cancel: " + string.Join(", ", alive.Select(m => $"{m.Name} {m.Pid}")));
             });
             await Row("route-a-exec-server", async () =>
             {
@@ -270,22 +273,8 @@ public static class WindowsCellBenchmark
                 return (layers == 0 && exit == 0 && parity, $"initialize ok; environmentConfig/read {layers} layer(s); cd exit {exit} {(parity ? "= the workspace" : "≠ the workspace: " + output.Trim())}");
             });
 
-            // THE WEB ROWS DECIDE THE PROOF'S EGRESS, never whether there is one.
-            await Row("web-443-granted", async () =>
-            {
-                var (code, o) = await Run(web, curl, "-sS", "-o", Path.Combine(ws, "w.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "10", "--max-time", "15", $"https://{Remote}/");
-                return (code == 0 && Reached(o), $"{Remote}:443 from a web cell: {Trim(o)}");
-            });
-            await Row("web-nothing-else", async () =>
-            {
-                // ANOTHER PORT OF THE SAME REMOTE HOST (Codex, landing 3): refused only where the firewall rule holds web to 443. A POSITIVE
-                // CONTROL first — the app, outside any cell, reaches that port — so an UPSTREAM block on 80 does not masquerade as the rule's
-                // work: without the control the row is inconclusive, not held.
-                var control = await OutsideReaches($"http://{Remote}:80/");
-                if (!control) return (false, $"port 80 of {Remote} is not reachable even from outside a cell, so a cell's failure to reach it proves nothing");
-                var (code, o) = await Run(web, curl, "-sS", "-o", Path.Combine(ws, "e.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", $"http://{Remote}:80/");
-                return (CurlFailedToReach(code) && !Reached(o), $"{Remote}:80 from a web cell: {Trim(o)} (reachable from outside); {(Reached(o) ? "no rule holds web to 443 on this host" : "the rule holds")}");
-            });
+            // THE WEB ROWS DECIDE THE PROOF'S EGRESS, never whether there is one — measured on EVERY slot (U-cell-windows-egress item 2).
+            foreach (var row in await WebRowsAsync(web, ws, launcher, platform, ct)) rows.Add(row);
 
             // LAST, SO IT CATCHES A WEB CELL'S LEAK TOO (Codex, landing 3): after every launch above, no slot's SID holds an ACE on the
             // bench folders and no grant record is left.
@@ -330,6 +319,164 @@ public static class WindowsCellBenchmark
             : "no cell proof: " + string.Join("; ", rows.Where(r => !r.Held && CellBenchmark.WindowsCoreRows.Contains(r.Name)).Select(r => $"{r.Name} did not hold ({r.Seen})"));
         return new BenchResult(rows, profile, proof, sentence);
     }
+
+    /// <summary>One process of a cell's job: its pid, its creation (so a pid handed on is never it) and its image name, for the words only.</summary>
+    public sealed record CellMember(int Pid, ulong Start, string Name, string Sid);
+
+    /// <summary>
+    /// THE CELL'S PROCESSES (<c>U-cell-windows-egress</c>, card 3): the processes Windows lists in the attempt's job whose token is an
+    /// AppContainer's — the stage itself (the app's own code, outside any container) is in the job and never counted. Null when Windows would
+    /// not list the job.
+    /// </summary>
+    public static IReadOnlyList<CellMember>? CellMembers(ContainedProcess held)
+    {
+        if (held.JobMembers() is not { } pids) return null;
+        var members = new List<CellMember>();
+        foreach (var pid in pids)
+        {
+            if (WindowsToken.AppContainerSidOf(pid) is not { Length: > 0 } sid) continue;
+            if (WindowsProcessTable.StartOf(pid) is not { } start) continue;
+            string name;
+            try { using var p = Process.GetProcessById(pid); name = p.ProcessName; }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { continue; }
+            members.Add(new CellMember(pid, start, name, sid));
+        }
+        return members;
+    }
+
+    /// <summary>
+    /// THE TWO WEB ROWS, MEASURED ON EVERY SLOT (<c>U-cell-windows-egress</c> item 2): the firewall rule names each slot's container SID, so
+    /// one slot holding proves nothing of the others. For each slot in turn every OTHER free slot is held, one <c>web</c> cell is started,
+    /// the slot it landed in is named by its own token's container SID, the hold is let go, and the cell then tries
+    /// <list type="bullet">
+    /// <item>github.com on 443 — reached (<c>web-443-granted</c>);</item>
+    /// <item>github.com on 80 and a direct DNS query to a public resolver over UDP — both refused while each is reachable from outside a cell
+    /// (the positive controls), so an upstream block is never taken for the rule's work (<c>web-nothing-else</c>).</item>
+    /// </list>
+    /// Each row holds only when all <see cref="WindowsCellSlots.Count"/> slots were measured and each held. The first slot that does not hold
+    /// ends the sweep: the slots after it are NOT RUN, said in the row.
+    /// </summary>
+    public static async Task<IReadOnlyList<BenchRow>> WebRowsAsync(CellPolicy web, string ws, IReadOnlyList<string>? launcher, CellPlatform platform,
+        CancellationToken ct = default)
+    {
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string cmd = Path.Combine(system32, "cmd.exe"), curl = Path.Combine(system32, "curl.exe"), nslookup = Path.Combine(system32, "nslookup.exe");
+        var sids = WindowsCellStage.SlotSids();
+        var port80 = await OutsideReaches($"http://{Remote}:80/");
+        string? resolver = null;
+        foreach (var candidate in Resolvers)
+            if (await OutsideResolves(nslookup, candidate)) { resolver = candidate; break; }
+
+        var reached = new List<string>();
+        var refused = new List<string>();
+        var measured = 0;
+        var allReached = true;
+        var allRefused = true;
+        string? stop = !port80 ? $"port 80 of {Remote} is not reachable even from outside a cell, so a cell's failure to reach it proves nothing"
+            : resolver is null ? $"no public resolver ({string.Join(", ", Resolvers)}) answers even from outside a cell, so a cell's unanswered query proves nothing"
+            : null;
+        for (var slot = 1; slot <= WindowsCellSlots.Count && stop is null; slot++)
+        {
+            var sink443 = $"\"{Path.Combine(ws, $"web{slot}-443.out")}\"";
+            var sink80 = $"\"{Path.Combine(ws, $"web{slot}-80.out")}\"";
+            var script = "echo READY & set /p go= & " +
+                         $"echo ==443== & \"{curl}\" -sS -o {sink443} -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
+                         $"echo ==80== & \"{curl}\" -sS -o {sink80} -D - --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
+                         $"echo ==dns== & \"{nslookup}\" -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
+            string output;
+            string? landed;
+            var hold = WindowsCellStage.HoldAllBut(slot);
+            try
+            {
+                var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var a in new[] { "/d", "/c", script }) psi.ArgumentList.Add(a);
+                using var held = ProcessContainment.Start(psi, web, launcher, platform);
+                var err = held.Process.StandardError.ReadToEndAsync(ct);
+                var ready = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct);
+                // THE SLOT IT LANDED IN, BY ITS OWN TOKEN — while it waits, before the hold is let go.
+                landed = ready?.Trim() == "READY" ? (CellMembers(held) ?? []).Select(m => m.Sid).Distinct().SingleOrDefault() : null;
+                hold.Dispose();
+                await held.Process.StandardInput.WriteLineAsync("go");
+                held.Process.StandardInput.Close();
+                var rest = held.Process.StandardOutput.ReadToEndAsync(ct);
+                await held.Process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(90), ct);
+                output = (ready ?? "") + "\n" + await rest + await err;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                stop = $"slot {slot}: the web cell could not be measured ({ex.Message})";
+                break;
+            }
+            finally { hold.Dispose(); }
+
+            if (landed is null || !string.Equals(landed, sids[slot - 1], StringComparison.OrdinalIgnoreCase))
+            {
+                stop = $"slot {slot}: the measured cell's token names {(landed is null ? "no single container" : landed)}, not slot {slot}'s {sids[slot - 1]}";
+                break;
+            }
+            measured++;
+            var (s443, s80, sdns) = (Section(output, "443"), Section(output, "80"), Section(output, "dns"));
+            var got443 = s443.Contains("HTTP/", StringComparison.Ordinal);
+            var refused80 = !s80.Contains("HTTP/", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(s80, @"curl: \((6|7|28|35)\)");
+            var unanswered = sdns.Contains(resolver!, StringComparison.Ordinal) && !Answered(sdns, resolver!);
+            reached.Add($"slot {slot} {(got443 ? "reached" : "NOT reached: " + Trim(s443))}");
+            refused.Add($"slot {slot} 80 {(refused80 ? "refused" : "NOT refused: " + Trim(s80))}, dns {(unanswered ? "unanswered" : "NOT unanswered: " + Trim(sdns))}");
+            allReached &= got443;
+            allRefused &= refused80 && unanswered;
+            if (!got443 || !refused80 || !unanswered)
+                stop = $"slot {slot} does not hold web to 443";
+        }
+
+        var all = measured == WindowsCellSlots.Count && stop is null;
+        var tail = (stop is null ? "" : $"; {stop}") +
+                   (measured < WindowsCellSlots.Count ? $"; slot{(measured + 1 < WindowsCellSlots.Count ? $"s {measured + 1}-" : " ")}{WindowsCellSlots.Count} NOT RUN" : "");
+        return
+        [
+            new BenchRow("web-443-granted", all && allReached,
+                $"{Remote}:443 from a web cell in each slot: {(reached.Count == 0 ? "none measured" : string.Join("; ", reached))}{tail}"),
+            new BenchRow("web-nothing-else", all && allRefused,
+                $"{Remote}:80 (reachable from outside: {(port80 ? "yes" : "no")}) and direct DNS to {resolver ?? "no answering resolver"} from a web cell in each slot: " +
+                $"{(refused.Count == 0 ? "none measured" : string.Join("; ", refused))}{tail}")
+        ];
+    }
+
+    /// <summary>The public resolvers a direct query is tried against, the first that answers from outside a cell the one used.</summary>
+    static readonly string[] Resolvers = ["8.8.8.8", "1.1.1.1"];
+
+    static readonly string[] Markers = ["==443==", "==80==", "==dns=="];
+
+    /// <summary>The text after the marker <c>==name==</c> and before the next of the three markers.</summary>
+    static string Section(string output, string name)
+    {
+        var at = output.IndexOf($"=={name}==", StringComparison.Ordinal);
+        if (at < 0) return "";
+        var from = at + name.Length + 4;
+        var next = Markers.Select(m => output.IndexOf(m, from, StringComparison.Ordinal)).Where(i => i >= 0).DefaultIfEmpty(output.Length).Min();
+        return output[from..next];
+    }
+
+    /// <summary>Whether a direct query to <paramref name="resolver"/> from OUTSIDE any cell is answered: the positive control for the DNS denial.</summary>
+    static async Task<bool> OutsideResolves(string nslookup, string resolver)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(nslookup) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in new[] { "-timeout=3", "-retry=1", Remote, resolver }) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            var o = await p.StandardOutput.ReadToEndAsync();
+            p.WaitForExit(20_000);
+            return Answered(o, resolver);
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// Whether nslookup's output carries an ANSWER: an IPv4 address other than the resolver's own (which it prints asked or not). Read by
+    /// address, never by its words — they are the system's language ("Name:", "Nom :"), and a refusal can name the host it could not find.
+    /// </summary>
+    static bool Answered(string output, string resolver) =>
+        System.Text.RegularExpressions.Regex.Matches(output, @"(?<![\d.])(\d{1,3}\.){3}\d{1,3}(?![\d.])").Any(m => m.Value != resolver);
 
     /// <summary>Whether <paramref name="path"/> is <paramref name="folder"/> or beneath it, as Windows compares paths.</summary>
     static bool Inside(string path, string folder)

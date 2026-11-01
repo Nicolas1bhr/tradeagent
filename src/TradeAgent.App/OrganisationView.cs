@@ -168,6 +168,19 @@ sealed class OrganisationPage
 
     internal TextBlock ProofText => _proof;
 
+    readonly TextBlock _web = Ui.Muted("");
+
+    /// <summary>The web press's sentence (<c>U-cell-windows-egress</c>): where the owner's one press for web on Windows stands, or hidden.</summary>
+    internal TextBlock WebText => _web;
+
+    readonly StackPanel _webRow = new() { Spacing = Theme.S2 };
+
+    /// <summary>
+    /// The web press itself, made the first time the sources hand the page a press (on Windows, once the app holds one) and never before:
+    /// drawn while the cells run at egress none, and again after a No or a failure.
+    /// </summary>
+    internal Button? WebPress { get; private set; }
+
     public OrganisationPage(OrgSurfaceSources sources)
     {
         _src = sources;
@@ -176,7 +189,9 @@ sealed class OrganisationPage
         _list = new LiveList<OrgUnitWords>(_units, Ui.Muted(Labels.OrganisationNoUnits), u => u.Id, MakeUnit);
         _status.Text = Labels.SurfaceNotRead;
 
-        var body = Ui.Col(Theme.S4, _status, _proof, _units);
+        _web.FontSize = Theme.Small;
+        _webRow.Children.Add(_web);
+        var body = Ui.Col(Theme.S4, _status, _proof, _webRow, _units);
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
@@ -212,6 +227,25 @@ sealed class OrganisationPage
         _status.IsVisible = words.Status.Length > 0;
         OrgText.Set(_proof, words.Proof);
         _proof.IsVisible = words.Proof.Length > 0;
+        var web = _src.CellWeb();
+        var webWords = web?.Words ?? "";
+        OrgText.Set(_web, webWords);
+        _web.IsVisible = webWords.Length > 0;
+        if (web is not null && WebPress is null)
+        {
+            // THE OWNER'S ONE PRESS FOR WEB ON WINDOWS (U-cell-windows-egress): then Windows' own prompt and his Yes.
+            WebPress = Ui.Primary(Labels.CellWebPress, async () =>
+            {
+                if (_src.CellWeb() is not { } press) return;
+                var pressed = press.Press();
+                Update();
+                await pressed;
+                Update();
+            });
+            _webRow.Children.Add(WebPress);
+        }
+        var canPress = web?.CanPress == true;
+        if (WebPress is not null && WebPress.IsVisible != canPress) WebPress.IsVisible = canPress;
         // A read that failed leaves the last cards as they were: the status line above them says nothing below is current.
         if (read) _list.Update(words.Units);
     }

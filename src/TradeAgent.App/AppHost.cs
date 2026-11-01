@@ -926,12 +926,34 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     void RunWindowsBenchmark(CancellationToken ct)
     {
-        if (OperatingSystem.IsWindows()) _ = ProveWindowsCellsAsync(ct);
+        if (!OperatingSystem.IsWindows()) return;
+        CellWeb ??= NewCellWebPress();
+        _ = ProveWindowsCellsAsync(ct);
     }
 
+    /// <summary>
+    /// THE OWNER'S WEB PRESS ON WINDOWS (<c>U-cell-windows-egress</c>): one press, Windows' one prompt, the fixed elevated helper (this app's own
+    /// program with <see cref="WindowsCellEgress.Verb"/>), then the benchmark again over every slot. In-process only; null off Windows.
+    /// </summary>
+    internal CellWebPress? CellWeb { get; private set; }
+
+    /// <summary>Whether the newest Windows proof names web: null when there is no Windows proof here at all.</summary>
+    bool? WindowsWebProved() =>
+        _db is { } d && new CellProofStore(d).ProofOf(RouteA.WindowsProvider) is { } proof ? proof.Egress.Contains(CellEgress.Web.Name) : null;
+
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    async Task ProveWindowsCellsAsync(CancellationToken ct)
+    CellWebPress NewCellWebPress() => new(
+        () => Task.Run(() => WindowsCellEgress.Request(Environment.ProcessPath)),
+        () => ProveWindowsCellsAsync(_loop?.Token ?? CancellationToken.None),
+        WindowsWebProved);
+
+    /// <summary>One Windows benchmark at a time: the start's and the press's would otherwise hold each other's slots.</summary>
+    readonly SemaphoreSlim _windowsBench = new(1, 1);
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    async Task<string> ProveWindowsCellsAsync(CancellationToken ct)
     {
+        await _windowsBench.WaitAsync(ct);
         try
         {
             var manifest = RuntimeCatalog.Load().FirstOrDefault(m => m.Id == "codex");
@@ -941,11 +963,14 @@ public sealed class AppHost : IAsyncDisposable
             using (_presence.Enter())
                 result = await WindowsCellBenchmark.RunAsync(_db!, exe, manifest?.Install.ExecutableSha256 ?? "", ct: ct);
             Gateway.Log.Activity("Cell benchmark: " + result.Sentence, result.ProofId is null ? "warn" : "info");
+            return result.Sentence;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
+            return $"the check could not run: {ex.Message}";
         }
+        finally { _windowsBench.Release(); }
     }
 
     string? PricingRuntime => PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId);

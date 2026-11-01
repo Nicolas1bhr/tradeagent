@@ -128,13 +128,7 @@ public static class Paths
     }
 
     /// <summary>The home a process with no <c>TRADEAGENT_HOME</c> runs in — the real one. Computed; nothing is created.</summary>
-    public static string DefaultHome()
-    {
-        var b = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(b))
-            b = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-        return Path.Combine(b, "TradeAgent");
-    }
+    public static string DefaultHome() => AccountHome.Default();
 
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
@@ -154,5 +148,21 @@ public static class Paths
         var p = Path.Combine(parent, name);
         Directory.CreateDirectory(p);
         return p;
+    }
+}
+
+/// <summary>
+/// THE ACCOUNT'S DEFAULT HOME, COMPUTED BY A TYPE WITH NO STATE (<c>U-cell-windows-egress</c>): <see cref="Paths"/>' initializer creates every
+/// managed folder, so the elevated egress helper — which must create nothing in the owner's home as an administrator — asks this instead.
+/// </summary>
+public static class AccountHome
+{
+    /// <summary>%LOCALAPPDATA%\TradeAgent (or ~/.local/share/TradeAgent where there is no such folder). Computed; nothing is created.</summary>
+    public static string Default()
+    {
+        var b = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(b))
+            b = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        return Path.Combine(b, "TradeAgent");
     }
 }

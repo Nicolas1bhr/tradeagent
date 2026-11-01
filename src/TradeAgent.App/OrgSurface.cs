@@ -30,6 +30,12 @@ sealed record OrgSurfaceSources
     /// <summary>Whether a cell proof is recorded for this machine and build.</summary>
     public Func<bool> ProofHeld { get; init; } = () => false;
 
+    /// <summary>
+    /// THE OWNER'S WEB PRESS ON WINDOWS (<c>U-cell-windows-egress</c>): one press, then Windows' permission prompt — in-process only, never the
+    /// pipe's. Null off Windows and where there is no host, and nothing is drawn.
+    /// </summary>
+    public Func<CellWebPress?> CellWeb { get; init; } = () => null;
+
     /// <summary>The currency the AI is charged in.</summary>
     public Func<string> Currency { get; init; } = () => "";
 
@@ -79,6 +85,7 @@ sealed record OrgSurfaceSources
         Attempts = () => host.AttemptLedger,
         Scorecards = () => host.ScorecardLedger,
         ProofHeld = () => host.CellProofHeld,
+        CellWeb = () => host.CellWeb,
         Currency = () => host.SpendToday.Currency,
         HomeRefusal = host.HomeRefusalFor,
         RepairHome = host.RepairHome,

@@ -43,7 +43,13 @@ public static class WindowsCellStage
     /// full path. A PROFILE IS THE ACCOUNT'S, the slots' locks are a home's: two homes of one account (a test's beside the app's) never
     /// share a SID, so a cell of one is never granted what a cell of the other was.
     /// </summary>
-    public static string ProfilePrefix => "TradeAgent.Cell." + Sha256Hex.Of(Path.GetFullPath(Paths.Home).ToLowerInvariant())[..12] + ".";
+    public static string ProfilePrefix => ProfilePrefixFor(Paths.Home);
+
+    /// <summary>The profile names' prefix of the app home <paramref name="home"/> — what the elevated egress helper names, never reading <see cref="Paths"/>.</summary>
+    public static string ProfilePrefixFor(string home) => "TradeAgent.Cell." + Sha256Hex.Of(Path.GetFullPath(home).ToLowerInvariant())[..12] + ".";
+
+    /// <summary>Slot <paramref name="slot"/>'s profile name in the app home <paramref name="home"/>.</summary>
+    public static string ProfileNameFor(string home, int slot) => ProfilePrefixFor(home) + slot.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>Deletes every slot's profile of this home (a test home's, at its end). Never throws; true when all are gone.</summary>
     public static bool DeleteProfiles() => Enumerable.Range(1, Slots).Select(i => AppContainerCell.DeleteProfile(ProfileName(i))).ToList().All(ok => ok);
@@ -206,6 +212,29 @@ public static class WindowsCellStage
     {
         try { if (link is DirectoryInfo d) d.Delete(recursive: false); else link.Delete(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the next sweep */ }
+    }
+
+    /// <summary>
+    /// HOLDS EVERY SLOT BUT <paramref name="slot"/> that no cell holds (<c>U-cell-windows-egress</c>: the benchmark measures each slot in turn):
+    /// a launch started while this is held finds only that slot — or one a running cell lets go meanwhile, which is why the benchmark also
+    /// names the slot it measured by the cell's own token. Dispose it as soon as the launch's cell is running, so the app's own cells are
+    /// not kept waiting.
+    /// </summary>
+    public static IDisposable HoldAllBut(int slot)
+    {
+        var held = new List<Slot>();
+        for (var i = 1; i <= Slots; i++)
+            if (i != slot && Slot.Take(i) is { } s) held.Add(s);
+        return new Held(held);
+    }
+
+    sealed class Held(List<Slot> slots) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var s in slots) s.Dispose();
+            slots.Clear();
+        }
     }
 
     /// <summary>

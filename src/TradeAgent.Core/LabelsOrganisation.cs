@@ -111,6 +111,34 @@ public static partial class Labels
     public const string ChiefWakeOnceWhat =
         "\"Wake the chief once\" gives an active chief one turn now, on your plan, so you can watch its first turn instead of waiting for its ceiling.";
 
+    // ---- THE WEB PRESS ON WINDOWS (U-cell-windows-egress; R25 D2) ---------------------------------------------------------------------
+
+    /// <summary>The press's own words.</summary>
+    public const string CellWebPress = "Let the AI's helpers reach secure websites";
+
+    /// <summary>Offered: the cells run with no internet, and what one press and Windows' one prompt change.</summary>
+    public const string CellWebOffered =
+        "The AI's helpers on this computer work with no internet. One press lets them reach secure websites (port 443) and nothing else: " +
+        "Windows then asks \"Do you want to allow this app to make changes to your device?\" once — click Yes. TradeAgent then checks it on every cell.";
+
+    public const string CellWebAsking = "Waiting for your answer on Windows' permission prompt…";
+
+    public const string CellWebMeasuring =
+        "Permission given. TradeAgent is checking, cell by cell, that the AI's helpers reach secure websites and nothing else…";
+
+    public const string CellWebProved =
+        "The AI's helpers reach secure websites (port 443) and nothing else — checked on all eight cells of this computer.";
+
+    public const string CellWebDeclined =
+        "You said No on Windows' prompt, so the AI's helpers keep working with no internet on this computer. Press again whenever you want to allow it.";
+
+    /// <summary>The rule was not placed, or placed and not shown holding on every cell: the cells stay without internet.</summary>
+    public static string CellWebFailed(string why) =>
+        $"The AI's helpers keep working with no internet on this computer: {(why.Length > 0 ? why : "the rule could not be set")}. You can press again.";
+
+    /// <summary>The rule was placed, and the check did not show it holding on every cell — the benchmark's own sentence.</summary>
+    public static string CellWebNotMeasured(string said) => $"the rule was set, but TradeAgent's check did not show it holding on every cell ({said})";
+
     public const string CellProofHeld = "A cell proof is recorded for this machine and this build.";
 
     public const string CellProofNone =
