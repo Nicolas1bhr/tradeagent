@@ -24,6 +24,12 @@ public class BillingClassesTests : IDisposable
     /// <summary>One turn's reservation at <see cref="Rate"/> over the shipped allowance: 1.2 M in at 1, 20 k out at 4.</summary>
     static readonly decimal Turn = TurnAllowance.Default.InputTokens * 1m / 1_000_000m + TurnAllowance.Default.OutputTokens * 4m / 1_000_000m;
 
+    /// <summary>
+    /// A PLAN turn's reservation at <see cref="Rate"/> on a seat with no measured turn (<c>U-turn-reservation</c>; R25 D13): two typical turns,
+    /// 200,000 in at 1 plus 4,000 out at 4, twice — 0.432. A key turn, and one whose payer nobody established, still reserves <see cref="Turn"/>.
+    /// </summary>
+    static readonly decimal PlanTurn = 2 * (200_000 * 1m / 1_000_000m + 4_000 * 4m / 1_000_000m);
+
     public void Dispose()
     {
         if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
@@ -252,7 +258,7 @@ public class BillingClassesTests : IDisposable
     public void A_plan_turn_counts_against_the_plan_ceiling_and_never_the_money_cap()
     {
         Spent(BillingClasses.Key, 50m);
-        var meter = Meter(money: 0m, plan: 2 * Turn + 0.5m);
+        var meter = Meter(money: 0m, plan: 2 * PlanTurn + 0.1m);
         using var seat = meter.Attach(new Billed(BillingClasses.Plan), CouncilRoles.Operations);
 
         Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
@@ -261,7 +267,7 @@ public class BillingClassesTests : IDisposable
         Assert.False(refused.Admitted);
         Assert.Equal(AiAdmission.PlanDay, refused.Ceiling);
         Assert.Equal(Labels.DailyPlanCapacityReached, refused.Refusal);
-        Assert.Equal(Turn - 0.5m, refused.Over);
+        Assert.Equal(PlanTurn - 0.1m, refused.Over);
         Assert.Equal(2, Rows().Count(a => a.BillingClass == BillingClasses.Plan));
     }
 
@@ -304,7 +310,7 @@ public class BillingClassesTests : IDisposable
         Assert.Equal(AiAdmission.PlanDay, Launch(Meter(money: 100m, plan: 0m), CouncilRoles.Research).Ceiling);
         Assert.Empty(Rows());
 
-        var both = Meter(money: 2 * Turn - 0.5m, plan: 2 * Turn - 0.5m);
+        var both = Meter(money: 2 * Turn - 0.5m, plan: Turn + PlanTurn - 0.1m);
         using (both.Attach(new Billed(BillingClasses.Unknown), CouncilRoles.Operations))
             Assert.True(Launch(both, CouncilRoles.Operations).Admitted);
         Assert.Equal(BillingClasses.Unknown, Assert.Single(Rows()).BillingClass);
@@ -458,7 +464,7 @@ public class BillingClassesTests : IDisposable
 
     /// <summary>
     /// (e) THE ENVELOPES NEST IN EACH CLASS, AND TWO SIBLINGS CANNOT BOTH TAKE A CLASS'S LAST ROOM. A subdivision of Research with 0.2 of
-    /// each ceiling (2.00 of 10.00 plan, 2.00 of 10.00 money) — room for one turn of each class. Two sibling positions' plan rules, built
+    /// each ceiling (0.60 of 3.00 plan, 2.00 of 10.00 money) — room for one turn of each class (a plan turn reserves 0.432, a key one 1.28). Two sibling positions' plan rules, built
     /// on an empty ledger before either is admitted: the first is admitted and the second refused by the subdivision, in the plan's
     /// words; the second sibling's KEY launch is then admitted, because a plan row is in no money envelope — and the subdivision's money
     /// room is then gone too. An unknown launch sees both envelopes.
@@ -477,12 +483,13 @@ public class BillingClassesTests : IDisposable
             VALUES('pos-b1', 'team-b1', 'org/pos-b1', 'active', '2026-10-11T12:00:00.0000000Z'),
                   ('pos-b2', 'team-b2', 'org/pos-b2', 'active', '2026-10-11T12:00:00.0000000Z')
             """);
-        var meter = Meter(money: 10m, plan: 10m);
+        var meter = Meter(money: 10m, plan: 3m);
         var store = new AiAttemptStore(_db);
 
         var first = meter.AdmissionRuleFor("pos-b1", BillingClasses.Plan);
         var second = meter.AdmissionRuleFor("pos-b2", BillingClasses.Plan);
-        Assert.Equal(2m, first.PlanFunding!.Single(u => u.UnitId == "sub-b").Envelope);
+        Assert.Equal(0.6m, first.PlanFunding!.Single(u => u.UnitId == "sub-b").Envelope);
+        Assert.Equal((PlanTurn, Turn), (first.Reservation, meter.AdmissionRuleFor("pos-b2", BillingClasses.Key).Reservation));
         Assert.Equal(first.Funding!.Select(u => u.UnitId), first.PlanFunding!.Select(u => u.UnitId));
         Assert.True(store.Begin(Attempt("b1-plan", "pos-b1", first), admit: first).Admitted);
         var refused = store.Begin(Attempt("b2-plan", "pos-b2", second), admit: second);
@@ -539,11 +546,12 @@ public class BillingClassesTests : IDisposable
         // THE CARD: both figures, the plan's never called a cost — each turn still open, so committed rather than spent.
         var card = TradeAgent.App.DashboardPage.MissionCost(meter.Today);
         var committed = $"including {Labels.Money(Turn, "USD")} committed";
+        var planCommitted = $"including {Labels.Money(PlanTurn, "USD")} committed";
         Assert.Contains($"Cost today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} daily limit of real money", card,
             StringComparison.Ordinal);
         Assert.Contains($"Plan capacity used today: {Labels.Money(0m, "USD")} of {Labels.Money(40m, "USD")} daily plan-capacity limit ("
                         + "your ChatGPT plan counted at list price, not money)", card, StringComparison.Ordinal);
-        Assert.Equal(2, card.Split(committed).Length - 1);
+        Assert.Equal((1, 1), (card.Split(committed).Length - 1, card.Split(planCommitted).Length - 1));
     }
 
     // ---- U-billing-followups items 3 and 4: the status's turns and the review's funding, in the app's own composition -------------
@@ -707,7 +715,7 @@ public class BillingClassesTests : IDisposable
             Assert.True(Launch(meter, CouncilRoles.Operations).Admitted);
         var (money, plan) = TradeAgent.App.OwnerPage.TodayLines(meter.Today);
         Assert.Equal($"Today: {Labels.Money(0m, "USD")} of {Labels.Money(10m, "USD")} in real money.", money);
-        Assert.Equal($"Today: {Labels.Money(Turn, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.",
+        Assert.Equal($"Today: {Labels.Money(PlanTurn, "USD")} of {Labels.Money(40m, "USD")} of plan capacity, counted at list price — not money.",
             plan);
 
         var seats = TradeAgent.App.OwnerPage.SeatClassesLine(
@@ -748,7 +756,7 @@ public class BillingClassesTests : IDisposable
             Spending = [meter.Today, .. CouncilRoles.All.Select(meter.TodayFor)]
         });
         Assert.Equal(1, report.Spending.PlanTurns);
-        Assert.Equal(Turn, report.Spending.PlanSpent);
+        Assert.Equal(PlanTurn, report.Spending.PlanSpent);
 
         var text = TradeAgent.Gateway.DailyReportText.Render(report);
         Assert.Contains("turns against plan capacity: 1, 1 charged at their reservation because no usage was ever reported", text,
@@ -785,7 +793,7 @@ public class BillingClassesTests : IDisposable
         Assert.Equal(10m, report.Spending.Cap);
         Assert.Equal(40m, report.Spending.PlanCap);
         Assert.Equal(3m, report.Spending.PlanSpent);
-        Assert.Equal(Turn, report.Spending.PlanReserved);
+        Assert.Equal(PlanTurn, report.Spending.PlanReserved);
         Assert.Equal(0m, report.Spending.Spent);
         var operations = report.Spending.Roles.Single(r => r.Role == CouncilRoles.Title(CouncilRoles.Operations));
         Assert.Equal(BillingClasses.Plan, operations.Class);
@@ -794,7 +802,7 @@ public class BillingClassesTests : IDisposable
         var text = TradeAgent.Gateway.DailyReportText.Render(report);
         Assert.Contains($"daily ceiling of real money: {Labels.Money(10m, "USD")}", text, StringComparison.Ordinal);
         Assert.Contains("turns against plan capacity: 2", text, StringComparison.Ordinal);
-        Assert.Contains($"plan capacity used: 3 of 40 a day, {Turn.ToString("0.####", CultureInfo.InvariantCulture)} committed — "
+        Assert.Contains($"plan capacity used: 3 of 40 a day, {PlanTurn.ToString("0.####", CultureInfo.InvariantCulture)} committed — "
                         + "your ChatGPT plan's use counted at list price in USD, not money", text, StringComparison.Ordinal);
         Assert.DoesNotContain(Labels.Money(40m, "USD"), text, StringComparison.Ordinal);
         Assert.DoesNotContain(Labels.Money(3m, "USD"), text, StringComparison.Ordinal);
