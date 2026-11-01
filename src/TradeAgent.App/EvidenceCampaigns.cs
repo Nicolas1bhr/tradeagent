@@ -1,24 +1,28 @@
 using System.Globalization;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using TradeAgent.Provisioning;
 
 namespace TradeAgent.App;
 
 /// <summary>
-/// What the setup step's one press did, or why it did nothing, in the owner's words: one sentence per pair asked for, and the
-/// campaigns it opened — one per pair (<c>U-evidence-breadth</c>).
+/// What the setup step's one press did, or why it did nothing, in the owner's words: one sentence per pair asked for, the
+/// campaigns it opened — one per pair (<c>U-evidence-breadth</c>) — and the pairs whose download stopped part way, which the next
+/// press finishes (<c>U-evidence-holdout-length</c>).
 /// </summary>
-public sealed record EvidenceSetup(bool Ok, string Words, IReadOnlyList<CampaignRow> Campaigns);
+public sealed record EvidenceSetup(bool Ok, string Words, IReadOnlyList<CampaignRow> Campaigns, IReadOnlyList<string> Unfinished);
 
 /// <summary>
 /// ONE OPEN CAMPAIGN OVER REAL HISTORY AS THE OWNER'S PAGE SHOWS IT (<c>U-evidence-breadth</c> item 4): its pair, the judgements and
 /// research runs it has spent — counted as the budgets count them (<see cref="CampaignStore.JudgementsSpent"/>,
-/// <see cref="CampaignStore.TrialsCharged(long)"/>) — and the fresh holdout armed for it, if any.
+/// <see cref="CampaignStore.TrialsCharged(long)"/>) — the fresh holdout armed for it, if any, and how long its own holdout is
+/// (<see cref="CampaignStore.HoldoutSpan"/>; null when its end cannot be read), which says whether a verdict over it can be
+/// conclusive (<c>U-evidence-holdout-length</c> item 3).
 /// </summary>
 public sealed record CampaignStanding(string Pair, CampaignRow Campaign, int Judgements, int Trials, string? Spent,
-    ForwardHoldout? Renewal, string Next)
+    ForwardHoldout? Renewal, string Next, TimeSpan? Holdout)
 {
     public int JudgementsLeft => Math.Max(0, Campaign.VerdictBudget - Judgements);
     public int TrialsLeft => Math.Max(0, Campaign.TrialBudget - Trials);
@@ -28,7 +32,7 @@ public sealed record CampaignStanding(string Pair, CampaignRow Campaign, int Jud
     {
         var line = $"{Pair}, campaign {Campaign.Id}, held back from {Campaign.HoldoutFrom.UtcDateTime:yyyy-MM-dd} UTC: "
             + $"{JudgementsLeft:N0} of {Campaign.VerdictBudget:N0} final judgements and {TrialsLeft:N0} of {Campaign.TrialBudget:N0} "
-            + "research runs left.";
+            + "research runs left. " + HoldoutLength.Words(Holdout);
         if (Spent is null) return line;
         if (Renewal is { Successor: { } next }) return line + $" Its {Spent} are spent; campaign {next} follows it over fresh months.";
         if (Renewal is { } held)
@@ -106,18 +110,19 @@ public sealed class EvidenceCampaigns(
             var spent = renewals.SpentOn(campaign);
             rows.Add(new CampaignStanding(set.Pair, campaign, gw.Campaigns.JudgementsSpent(campaign.Id),
                 gw.Campaigns.TrialsCharged(campaign.Id), spent, renewals.Of(campaign.Id),
-                spent is null ? "" : renewals.Next(campaign.Id)));
+                spent is null ? "" : renewals.Next(campaign.Id), gw.Campaigns.HoldoutSpan(campaign.Id)));
         }
         return [.. rows.OrderBy(r => r.Pair, StringComparer.Ordinal).ThenBy(r => r.Campaign.Id)];
     }
 
     /// <summary>
     /// THE SETUP STEP'S ONE PRESS, OVER THE PAIRS THE OWNER LEFT TICKED (<c>U-evidence-breadth</c> item 1): each pair in turn —
-    /// one already under a campaign over real history is left alone — gets its newest accepted download (collected now when there
-    /// is none), its instrument check, and its own holdout from <see cref="EvidenceDefaults.Cutoff"/> — or from the cutoff it already
-    /// has, which is never moved — with its OWN campaign opened with the owner's budgets, through
-    /// <see cref="TradingGateway.SetHoldout"/>. Ok when a campaign over real history is open afterwards; one sentence per pair says
-    /// what happened to it, a pair that failed included, so the owner can finish it from Settings.
+    /// one already under a campaign over real history is left alone — gets the default download (its newest one when that already
+    /// holds the owner's cutoff), its instrument check, and its own holdout from <see cref="EvidenceDefaults.Cutoff"/> — or from the
+    /// cutoff it already has, which is never moved — with its OWN campaign opened with the owner's budgets, through
+    /// <see cref="TradingGateway.SetHoldout"/>. Nothing is held back over a download that stopped part way: the pair is
+    /// <see cref="EvidenceSetup.Unfinished"/> and the next press finishes it (<c>U-evidence-holdout-length</c>). Ok when a campaign over
+    /// real history is open afterwards; one sentence per pair says what happened to it, a pair that failed included.
     /// </summary>
     public async Task<EvidenceSetup> SetUpAsync(DateTimeOffset now, IReadOnlyList<string> pairs,
         IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default)
@@ -125,46 +130,67 @@ public sealed class EvidenceCampaigns(
         ArgumentNullException.ThrowIfNull(pairs);
         var asked = pairs.Distinct(StringComparer.Ordinal).ToList();
         if (asked.Count == 0)
-            return new EvidenceSetup(Ready(), "No pair was ticked, so nothing was downloaded or held back.", []);
+            return new EvidenceSetup(Ready(), "No pair was ticked, so nothing was downloaded or held back.", [], []);
 
         // ONE PRESS AT A TIME (the Codex review's P2): two presses overlapping would each download the same pair and each open a
         // campaign over its months — counted together, but two campaigns where one was asked for.
         if (Interlocked.Exchange(ref _settingUp, 1) == 1)
-            return new EvidenceSetup(Ready(), "A setup press is already downloading and holding back, so nothing more was started.", []);
+            return new EvidenceSetup(Ready(), "A setup press is already downloading and holding back, so nothing more was started.", [], []);
         try
         {
             var words = new List<string>();
             var opened = new List<CampaignRow>();
+            var unfinished = new List<string>();
             foreach (var pair in asked)
             {
                 ct.ThrowIfCancellationRequested();
-                var (said, campaign) = await SetUpPairAsync(pair, now, progress, ct);
+                var (said, campaign, stopped) = await SetUpPairAsync(pair, now, progress, ct);
                 words.Add(said);
                 if (campaign is not null) opened.Add(campaign);
+                if (stopped) unfinished.Add(pair);
             }
-            return new EvidenceSetup(Ready(), string.Join(" ", words), opened);
+            return new EvidenceSetup(Ready(), string.Join(" ", words), opened, unfinished);
         }
         finally { Volatile.Write(ref _settingUp, 0); }
     }
 
     int _settingUp;
 
-    /// <summary>One pair of <see cref="SetUpAsync"/>: its sentence, and the campaign it opened or null.</summary>
-    async Task<(string Words, CampaignRow? Campaign)> SetUpPairAsync(string pair, DateTimeOffset now,
+    /// <summary>
+    /// One pair of <see cref="SetUpAsync"/>: its sentence, the campaign it opened or null, and whether its download stopped part way
+    /// (so the next press finishes it).
+    /// </summary>
+    async Task<(string Words, CampaignRow? Campaign, bool Stopped)> SetUpPairAsync(string pair, DateTimeOffset now,
         IProgress<ProvisionProgress>? progress, CancellationToken ct)
     {
         var gw = gateway();
         if (!BinanceArchive.IsPair(pair))
-            return ($"“{pair}” is not a pair as Binance writes one, so nothing was held back for it.", null);
+            return ($"“{pair}” is not a pair as Binance writes one, so nothing was held back for it.", null, false);
         if (Pairs().Contains(pair, StringComparer.Ordinal))
-            return ($"{pair}: a campaign is already open over real history, so nothing was changed.", null);
+            return ($"{pair}: a campaign is already open over real history, so nothing was changed.", null, false);
 
-        var set = gw.Datasets.Newest(pair) is { } newest ? gw.Datasets.Checked(newest) : null;
-        if (set is null || set.State != DatasetState.ACCEPTED)
+        // A DOWNLOAD THAT ALREADY HOLDS A CUTOFF IS THE OWNER'S, AND IS HELD BACK AS IT IS. Every other pair is downloaded now, by the
+        // default press (U-evidence-holdout-length): a month this installation already keeps with exactly the bytes the vendor's
+        // checksum names is not fetched again (`CandleSourceClient`), so a download that stopped part way is FINISHED by this press
+        // rather than restarted, and one shorter than the default — an earlier press — is lengthened, before anything is held back.
+        var newest = gw.Datasets.Newest(pair) is { } row ? gw.Datasets.Checked(row) : null;
+        DatasetRecord set;
+        if (newest is { State: DatasetState.ACCEPTED, HoldoutFrom: not null }) set = newest;
+        else
         {
             var collected = await collect(pair, now, progress, ct);
+            var missing = Unfetched(collected.Months);
             if (collected.Dataset is not { } fresh || fresh.State != DatasetState.ACCEPTED)
-                return ($"{pair}: nothing was held back: {collected.Summary}", null);
+                return ($"{pair}: nothing was held back: {collected.Summary}" + (missing > 0 ? " Press again to ask once more." : ""),
+                    null, missing > 0);
+
+            // NEVER HALF-HELD: a month that did not arrive — the vendor unreachable, a checksum that did not match, no checksum to pin it
+            // to, its name taken here — would leave the holdout short or holed, or the research months cut, and a cutoff never moves
+            // once set. So nothing is held back over a download any month of which is still to come; a month the vendor answered it
+            // does not publish is its answer, not a failure.
+            if (missing > 0)
+                return ($"{pair}: nothing was held back, because the download stopped part way — {collected.Summary} Press again: the "
+                    + $"months already checked are kept and only the {missing:N0} that did not arrive are fetched.", null, true);
             set = fresh;
         }
 
@@ -176,20 +202,27 @@ public sealed class EvidenceCampaigns(
         // held back, and the store refuses earlier. The default is chosen only for a download that holds none.
         if ((set.HoldoutFrom ?? EvidenceDefaults.Cutoff(set)) is not { } cutoff)
             return ($"{pair}: nothing was held back: the download holds too few months to keep the last "
-                + $"{EvidenceDefaults.HoldoutMonths} back and still leave a month to research.", null);
+                + $"{EvidenceDefaults.HoldoutMonths} back and still leave a month to research.", null, false);
 
         // ASKED AGAIN AFTER THE DOWNLOAD AND THE CHECK: the owner's Settings press may have opened this pair's campaign meanwhile.
         if (Pairs().Contains(pair, StringComparer.Ordinal))
-            return ($"{pair}: a campaign was opened over real history meanwhile, so nothing more was held back.", null);
+            return ($"{pair}: a campaign was opened over real history meanwhile, so nothing more was held back.", null, false);
 
         var (done, campaign) = gw.SetHoldout(set.Id, cutoff, EvaluationClass.Research);
-        if (!done.Ok || campaign is null) return ($"{pair}: {done.Why}", null);
+        if (!done.Ok || campaign is null) return ($"{pair}: {done.Why}", null, false);
 
         return ($"{set.Pair} bars from {cutoff.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC on are "
             + "held back: the AI cannot read them or backtest over them, and this date can no longer be moved. "
             + CampaignStore.PressNote(campaign, gw.Campaigns.JudgementsSpent(campaign.Id), gw.Campaigns.OverTheSameMonths(campaign.Id)),
-            campaign);
+            campaign, false);
     }
+
+    /// <summary>
+    /// HOW MANY OF A DOWNLOAD'S MONTHS ARE STILL TO COME: every one that did not arrive for a reason other than the vendor answering that
+    /// it does not publish it — which is the archive's answer, and pressing again would ask the same question to the same answer.
+    /// </summary>
+    static int Unfetched(IReadOnlyList<MonthResult> months) =>
+        months.Count(m => m.Outcome is not (MonthOutcome.Collected or MonthOutcome.NotPublished));
 
     /// <summary>
     /// ONE PASS OF THE RULE (R25 D7), on the app's clock: arm the fresh holdout of a spent campaign; and for one armed long enough

@@ -163,10 +163,12 @@ public class EvidenceCampaignTests
         Assert.Null(gw.Datasets.Newest(pair)!.HoldoutFrom);
         Assert.Contains("35 of 36 periods collected", first.Words, StringComparison.Ordinal);
         Assert.Contains("Press again", first.Words, StringComparison.Ordinal);
+        Assert.Equal([pair], first.Unfinished);
 
         var second = await evidence.SetUpAsync(Now, [pair]);
         Assert.Equal(2, presses);
         Assert.Equal(DefaultCutoff, Assert.Single(second.Campaigns).HoldoutFrom);
+        Assert.Empty(second.Unfinished);
     }
 
     /// <summary>
@@ -519,15 +521,17 @@ public class EvidenceCampaignTests
         var evidence = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
 
         var before = evidence.Standings().ToDictionary(r => r.Pair, r => r.Line(Now));
-        Assert.StartsWith($"{pair}, campaign {k1.Id}, held back from 2026-07-01 UTC: 0 of 1 final judgements and 5 of 5 research runs "
-            + "left. Its final judgements are spent. TradeAgent arms its fresh holdout within minutes", before[pair], StringComparison.Ordinal);
+        Assert.StartsWith($"{pair}, campaign {k1.Id}, held back from 2025-10-01 UTC: 0 of 1 final judgements and 5 of 5 research runs "
+            + "left. Its holdout spans 365 days — long enough for the referee to reach a conclusive verdict. Its final judgements are spent. TradeAgent arms its fresh holdout within minutes", before[pair],
+            StringComparison.Ordinal);
 
         var armed = Assert.Single(gw.Renewals.Arm(Now));
         var lines = evidence.Standings().ToDictionary(r => r.Pair, r => r.Line(Now));
         Assert.Equal(2, lines.Count);
-        Assert.Equal($"{second}, campaign {j1!.Id}, held back from 2026-07-01 UTC: 1 of 1 final judgements and 5 of 5 research runs left.",
-            lines[second]);
-        Assert.Equal($"{pair}, campaign {k1.Id}, held back from 2026-07-01 UTC: 0 of 1 final judgements and 5 of 5 research runs left. "
+        Assert.Equal($"{second}, campaign {j1!.Id}, held back from 2025-10-01 UTC: 1 of 1 final judgements and 5 of 5 research runs left. "
+            + "Its holdout spans 365 days — long enough for the referee to reach a conclusive verdict.", lines[second]);
+        Assert.Equal($"{pair}, campaign {k1.Id}, held back from 2025-10-01 UTC: 0 of 1 final judgements and 5 of 5 research runs left. "
+            + "Its holdout spans 365 days — long enough for the referee to reach a conclusive verdict. "
             + $"Its final judgements are spent; the next {pair} campaign waits for fresh bars from {armed.Cutoff:yyyy-MM-dd} UTC — at least "
             + $"30 days of them — so it opens no earlier than {armed.Earliest:yyyy-MM-dd} (31 days from now).", lines[pair]);
     }
@@ -558,6 +562,31 @@ public class EvidenceCampaignTests
         Assert.DoesNotContain("inconclusive", lines[year], StringComparison.Ordinal);
         Assert.Contains("Its holdout spans 92 days, under 365, so no verdict over it is conclusive", lines[quarter], StringComparison.Ordinal);
         Assert.Contains("reaches paper only through the inconclusive path", lines[quarter], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE SETTINGS PAGE SAYS HOW LONG A TYPED HOLDOUT WOULD BE, BEFORE EITHER PRESS (<c>U-evidence-holdout-length</c> item 1): the owner may
+    /// hold back less than setup's twelve months, and the page then says plainly that no verdict over it can be conclusive and names the
+    /// inconclusive path; twelve months say a conclusive verdict is possible; a date past the download's end, or no download, say nothing.
+    /// </summary>
+    [Fact]
+    public void The_settings_page_says_how_long_a_typed_holdout_would_be_and_whether_a_verdict_over_it_can_be_conclusive()
+    {
+        var set = Row(First, Last);
+
+        var shorter = SettingsPage.HoldoutLengthNote(set, new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero))!.Value;
+        Assert.False(shorter.Conclusive);
+        Assert.StartsWith("A holdout from 2026-07-01 00:00 UTC on BTCUSDT's newest download spans 92 days, under 365, so no verdict over it "
+            + "is conclusive", shorter.Words, StringComparison.Ordinal);
+        Assert.Contains("reaches paper only through the inconclusive path", shorter.Words, StringComparison.Ordinal);
+
+        var year = SettingsPage.HoldoutLengthNote(set, DefaultCutoff)!.Value;
+        Assert.True(year.Conclusive);
+        Assert.Equal("A holdout from 2025-10-01 00:00 UTC on BTCUSDT's newest download spans 365 days — long enough for the referee to "
+            + "reach a conclusive verdict.", year.Words);
+
+        Assert.Null(SettingsPage.HoldoutLengthNote(set, Last.AddMinutes(1)));
+        Assert.Null(SettingsPage.HoldoutLengthNote(null, DefaultCutoff));
     }
 
     /// <summary>A SPENT CAMPAIGN'S REFUSAL SAYS WHAT FOLLOWS IT: the fresh cutoff and the thirty days it waits for.</summary>

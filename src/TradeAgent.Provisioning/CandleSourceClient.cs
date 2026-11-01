@@ -34,6 +34,10 @@ namespace TradeAgent.Provisioning;
 /// written over the bytes that dataset recorded. Either way the earlier evidence was rejected for good.
 /// So a fetch downloads into a staging folder of its own — the only place it deletes — and places the
 /// bytes beside what is already there, never over it: see <see cref="Place"/>.</para>
+///
+/// <para><b>A press RESUMES the last one</b> (<c>U-evidence-holdout-length</c>): a pinned period whose bytes are already kept here,
+/// hashing to exactly what the vendor publishes now, is collected from that file and not downloaded again, so a long download that
+/// stopped part way costs the next press only what did not arrive.</para>
 /// </summary>
 public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
 {
@@ -127,6 +131,17 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
             }
         }
 
+        // RESUMED, NOT FETCHED AGAIN (U-evidence-holdout-length: a thirty-six-month download that stops part way is finished by the
+        // next press). Bytes this installation already keeps under one of the period's two names whose SHA-256 is EXACTLY the hash the
+        // vendor publishes now are the vendor's file: downloading them again could only arrive at the same bytes, which `Place` would
+        // then reuse — this is that reuse, without the download. Only for a pinned period: a source with no published hash has
+        // nothing to match a kept file against, so it is always fetched. Recorded as `Place`'s reuse records it, the moment this
+        // collection obtained the bytes it records.
+        if (published is not null && KeptAlready(rawDir, name, published) is { } already)
+            return new MonthResult(period.Name, MonthOutcome.Collected,
+                new RawMonth(period.Name, period.Url, published, published, new FileInfo(already).Length, DateTimeOffset.UtcNow, already),
+                $"{name} is already kept here with exactly the bytes {source.DisplayName}'s checksum names, so it was not downloaded again");
+
         try
         {
             await Downloader.DownloadAsync(period.Url, staged,
@@ -203,6 +218,18 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
             : $"{name} arrived, and {hashed} — the name these bytes are kept at when the vendor's own is taken — "
               + "already holds other bytes, so nothing was kept. TradeAgent never replaces a file it has kept: "
               + "a dataset may record that one.");
+    }
+
+    /// <summary>
+    /// THE FILE ALREADY KEPT FOR THIS PERIOD WHOSE BYTES ARE EXACTLY <paramref name="published"/>, or null: the vendor's own name first,
+    /// then the one carrying that hash (<see cref="HashedName"/>) — the two names <see cref="Place"/> keeps bytes at. Each is hashed now,
+    /// so a file that changed since it was kept, or cannot be read, is never taken for the vendor's.
+    /// </summary>
+    static string? KeptAlready(string rawDir, string name, string published)
+    {
+        foreach (var at in new[] { Path.Combine(rawDir, name), Path.Combine(rawDir, HashedName(name, published)) })
+            if (string.Equals(Sha256Hex.OfFile(at), published, StringComparison.OrdinalIgnoreCase)) return at;
+        return null;
     }
 
     /// <summary>

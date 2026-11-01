@@ -120,6 +120,8 @@ sealed class SettingsPage
     readonly TextBlock _judgeValue = Ui.Mono("—");
 
     readonly TextBlock _holdoutNote = Ui.Muted("");
+    /// <summary>How long a holdout from the typed date would be, and whether a verdict over it can be conclusive (<c>U-evidence-holdout-length</c>).</summary>
+    readonly TextBlock _holdoutLength = Ui.Muted("");
     readonly Button _holdoutResearch;
     readonly Button _holdoutFixture;
 
@@ -384,6 +386,7 @@ sealed class SettingsPage
             Ui.FieldRow("From", _holdoutFrom,
                 "A date, or a date and time, in UTC — 2026-06-01 or 2026-06-01T00:00:00Z. The bar at that " +
                 "instant is already held back."),
+            _holdoutLength,
             Ui.Wrap(Theme.S2, _holdoutResearch, _holdoutFixture),
             Ui.Divider(),
             Ui.Muted("Bars from this date on become evidence the research process never sees. The AI can neither " +
@@ -937,12 +940,39 @@ sealed class SettingsPage
         _holdoutResearch.IsEnabled = at is not null;
         _holdoutFixture.IsEnabled = at is not null;
         _holdoutNote.IsVisible = typed && at is null;
+
+        // HOW LONG THAT HOLDOUT WOULD BE, said before either press (U-evidence-holdout-length item 1): the owner may hold back less than
+        // setup's twelve months, and the page then says plainly that no verdict over it can be conclusive.
+        (string Words, bool Conclusive)? length = null;
+        try { length = HoldoutLengthNote(_host.Gateway.Datasets.All().FirstOrDefault(), at); }
+        catch (Exception) { length = null; }
+        _holdoutLength.IsVisible = length is not null;
+        _holdoutLength.Text = length?.Words ?? "";
+        _holdoutLength.Foreground = length is { Conclusive: false } ? Theme.Caution : Theme.TextMuted;
+
         if (typed && at is null)
         {
             _holdoutNote.Foreground = Theme.Caution;
             _holdoutNote.Text = "TradeAgent cannot read that as a date. Write it as 2026-06-01, or as "
                 + "2026-06-01T13:00:00Z if the hour matters.";
         }
+    }
+
+    /// <summary>
+    /// HOW LONG A HOLDOUT FROM <paramref name="at"/> ON <paramref name="newest"/> WOULD BE — to that download's last close, as
+    /// <c>CampaignStore.HoldoutSpan</c> measures a campaign's — in <see cref="Core.Strategy.HoldoutLength.Words"/>' sentence, and whether a verdict over
+    /// it can be conclusive; null with no download, no readable date, or a date at or past the download's end.
+    /// </summary>
+    internal static (string Words, bool Conclusive)? HoldoutLengthNote(DatasetRecord? newest, DateTimeOffset? at)
+    {
+        if (newest is not { LastBar: { } last } || at is not { } from) return null;
+        TimeSpan bar;
+        try { bar = KlineNormaliser.BarLength(newest.Interval); }
+        catch (TradeAgentException) { return null; }
+        var span = last.ToUniversalTime() + bar - from.ToUniversalTime();
+        if (span <= TimeSpan.Zero) return null;
+        return (Core.Strategy.HoldoutLength.Words(span, $"A holdout from {from.UtcDateTime:yyyy-MM-dd HH:mm} UTC on {newest.Pair}'s newest download"),
+            Core.Strategy.HoldoutLength.CanBeConclusive(span));
     }
 
     /// <summary>
