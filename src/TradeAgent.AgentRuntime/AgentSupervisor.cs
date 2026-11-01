@@ -101,14 +101,17 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
             if (_workspaces.TryGetValue(position, out var built)) return built;
             if (_workspaces.Count == 0) return null;
         }
-        // THE CHART AND THE CONTEXT ARE READ OUTSIDE THE LOCK (each takes locks of its own); the build and the map's growth inside it.
+        // EVERY READ THAT TAKES A LOCK OF ITS OWN IS MADE OUTSIDE THIS ONE — the chart, the context, the position's kind and place (the
+        // database's lock: the Codex review's P1 — a turn's commit holds it and asks Workspaces, so reading it under _homes could deadlock
+        // both); only the file writes and the map's growth are inside it.
         if (!Positions().Contains(position, StringComparer.Ordinal)) return null;
         var context = ctx();
         var register = seats ?? PositionActivation.Seats;
+        var (kind, place) = (register.KindOf(position), register.PlaceOf(position));
         lock (_homes)
         {
             if (_workspaces.TryGetValue(position, out var built)) return built;
-            var home = WorkspaceBuilder.BuildPosition(context, position, kindOf: register.KindOf, placeOf: register.PlaceOf);
+            var home = WorkspaceBuilder.BuildPosition(context, position, kindOf: _ => kind, placeOf: _ => place);
             _workspaces = new Dictionary<string, string>(_workspaces, StringComparer.Ordinal) { [position] = home };
             return home;
         }
