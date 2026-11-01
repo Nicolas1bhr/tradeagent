@@ -255,25 +255,14 @@ public sealed class CellWindowsTests : IDisposable
         }
         Assert.Empty(alive);
     }
-    /// <summary>A program's whole output, run as the test's own user outside any cell.</summary>
-    static string Outside(string program, params string[] args)
-    {
-        var psi = new ProcessStartInfo(program) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        using var proc = Process.Start(psi)!;
-        var text = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
-        proc.WaitForExit();
-        return text.Trim().Replace("\r", "").Replace('\n', ' ');
-    }
-
     /// <summary>
     /// THE OWNER'S HEAD-START KIT IN A WINDOWS CELL (<c>U-kit-socket-2</c>; containment), under the product's own policy
     /// (<see cref="RouteA.WindowsPolicy"/> with the installed kit): the cell reads the kit's index and a skill, runs a kit tool BY ITS NAME
     /// from the PATH — a batch file and a program — and can write nothing in the kit: no new file in it, its skills or its tools, no append
     /// to a skill or a tool, no removal, rename or folder. The kit's read-only attributes are taken off for the row, so every denial is the
-    /// AppContainer's access check, not the file's attribute; the hash is unchanged after. RED before this unit: the Windows policy granted
-    /// no kit, so the reads were denied and no tool was found. MUTANT (the stage grants read-only inputs Modify, WindowsCellStage.Grants)
-    /// → the writes succeed.
+    /// AppContainer's access check, not the file's attribute; the hash is unchanged after. RED before this unit (Windows 11 26200, the
+    /// tests box): the Windows policy granted no kit → "Not found: kit-fixture-tool-ran". MUTANT (the stage grants read-only inputs
+    /// Modify, WindowsCellStage.Grants) → "Not found: WRITE-DENIED kit-new-file".
     /// </summary>
     [WindowsFact]
     public async Task A_cell_reads_the_owners_kit_runs_its_tools_by_name_and_writes_nothing_in_it()
@@ -285,8 +274,6 @@ public sealed class CellWindowsTests : IDisposable
         // stage's link check, and Windows grants every AppContainer its own system folders already.
         var p = RouteA.WindowsPolicy(w.Ws, Cmd, Path.GetDirectoryName(Cmd)!, w.CodexHome, w.Home, CellEgress.None, kit);
         var policy = new CellPolicy(p.Workspace, p.ReadOnly, [kit.Tools!], p.Environment, p.Egress);
-        foreach (var at in new[] { kit.Dir, Path.Combine(kit.Dir, Kit.IndexFile), kit.Tools! })
-            _out.WriteLine("outside: " + Outside("icacls", at));
         var skill = kit.SkillPath(KitFixture.Skill);
         var tool = kit.ToolPath(KitFixture.Tool);
         var skills = Path.Combine(kit.Dir, Kit.SkillsDir);
@@ -294,8 +281,7 @@ public sealed class CellWindowsTests : IDisposable
         Assert.False($"{w.Ws}{kit.Dir}".Contains(' '), "test paths without a space (cmd reads its line raw)");
         string Try(string what, string act) => $"({act} && echo WRITE-OPEN {what} || echo WRITE-DENIED {what})";
         var o = await RunToEnd(w,
-            $"(icacls {kit.Dir} & icacls {kit.Dir}\\kit.json & icacls {kit.Tools} & dir /b {kit.Dir} & type {kit.Dir}\\kit.json) & " +
-            $"(type {kit.Dir}\\kit.json > {sink} && type {skill} > {sink} && echo KIT-READ || echo KIT-READ-DENIED) & " +
+            $"(type {kit.Dir}\\kit.json > {sink} && type {skill} > {sink} && echo KIT-READ-OPEN || echo KIT-READ-DENIED) & " +
             $"({KitFixture.ToolName} || echo TOOL-FAILED) & " +
             $"({KitFixture.ProgramName} /d /c echo kit-fixture-program-ran || echo PROGRAM-FAILED) & " +
             Try("kit-new-file", $"echo x> {kit.Dir}\\planted.txt") + " & " +
@@ -306,7 +292,7 @@ public sealed class CellWindowsTests : IDisposable
             Try("tool-rename", $"ren {tool} planted.old") + " & " +
             Try("kit-mkdir", $"mkdir {kit.Dir}\\planted") + " & " +
             $"(del /f /q {tool} & if exist {tool} (echo WRITE-DENIED tool-remove) else (echo WRITE-OPEN tool-remove))", policy: policy);
-        foreach (var want in new[] { "KIT-READ", KitFixture.ToolSays, "kit-fixture-program-ran", "WRITE-DENIED kit-new-file",
+        foreach (var want in new[] { "KIT-READ-OPEN", KitFixture.ToolSays, "kit-fixture-program-ran", "WRITE-DENIED kit-new-file",
                      "WRITE-DENIED skills-new-file", "WRITE-DENIED tools-new-file", "WRITE-DENIED skill-rewrite", "WRITE-DENIED tool-rewrite",
                      "WRITE-DENIED tool-rename", "WRITE-DENIED kit-mkdir", "WRITE-DENIED tool-remove" })
             Assert.Contains(want, o, StringComparison.Ordinal);
