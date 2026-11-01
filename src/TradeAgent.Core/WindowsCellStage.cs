@@ -135,7 +135,7 @@ public static class WindowsCellStage
     {
         var paths = new List<(string Path, FileSystemRights Rights)> { (policy.Workspace, FileSystemRights.Modify) };
         paths.AddRange(policy.ReadOnly.Concat(policy.Executable).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(p => Directory.Exists(p) || File.Exists(p)).Select(p => (p, FileSystemRights.ReadAndExecute)));
+            .Where(p => Directory.Exists(p) || File.Exists(p)).Select(p => (p, FileSystemRights.Modify)));
         foreach (var (path, _) in paths) Inspect(path);
         OwnerOnlyFile.Write(slot.Record, System.Text.Encoding.UTF8.GetBytes(string.Join('\n', paths.Select(p => p.Path))));
         // ONE DACL WRITER AT A TIME (Codex, landing 2): slots share the program root, and two read-modify-writes of its DACL racing would
