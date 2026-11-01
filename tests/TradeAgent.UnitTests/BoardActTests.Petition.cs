@@ -84,13 +84,13 @@ public partial class BoardActTests
     }
 
     /// <summary>
-    /// THE STORE REFUSES A BOARD ID AS A PETITIONER IN WORDS, AND RUNG 53 RE-RUNS WITHOUT WRITING TWICE: <c>BoardStore.Petition</c> under
+    /// THE STORE REFUSES A BOARD ID AS A PETITIONER IN WORDS, AND ITS RUNG RE-RUNS WITHOUT WRITING TWICE: <c>BoardStore.Petition</c> under
     /// board-1's name is refused with nothing written (the pipe refuses it earlier, at <c>OrgVerbCaller</c>); a home holding a petition,
-    /// stamped back to 52, opens with the row as it was and the stamp 53; the row refuses an UPDATE and a DELETE. RED at base: no
+    /// stamped back one rung, opens with the row as it was and the stamp the build's; the row refuses an UPDATE and a DELETE. RED at base: no
     /// <c>board_petition</c> table.
     /// </summary>
     [Fact]
-    public void A_board_id_never_petitions_and_rung_53_reruns_without_writing_twice()
+    public void A_board_id_never_petitions_and_its_rung_reruns_without_writing_twice()
     {
         var file = NewFile();
         string first;

@@ -54,7 +54,7 @@ public static class BoardLimits
 }
 
 /// <summary>
-/// A POSITION'S PETITION TO THE BOARD (<c>board_petition</c>, rung 53; <c>U-board-alive</c>): the position (the chief included), its launch,
+/// A POSITION'S PETITION TO THE BOARD (<c>board_petition</c>, rung 54; <c>U-board-alive</c>): the position (the chief included), its launch,
 /// the intent and its hash as the app parsed them, its direction, the version in force it was read against, the position's words — a
 /// claim — the one active seat the app woke for it, and when. It applies nothing.
 /// </summary>

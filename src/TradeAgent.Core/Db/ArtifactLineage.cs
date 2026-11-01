@@ -111,6 +111,7 @@ public static class ArtifactLineage
         ["cell_assurance"] = "the assurance a cell launch ran under: the app's measurement",
         ["cell_assurance_row"] = "one row of a cell launch's assurance: the app's measurement",
         ["board_power_proposal"] = "a board seat's proposal of a power change: the board's own ledger",
+        ["board_petition"] = "a position's petition to the board: a request that applies nothing, its petitioner and launch on the row (U-board-alive)",
     };
 
     /// <summary>The spec of <paramref name="kind"/>; an unknown kind is a programming error.</summary>
