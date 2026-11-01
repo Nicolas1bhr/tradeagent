@@ -687,10 +687,11 @@ public class NumberEntryCultureTests
         Assert.Equal(0.05m, Field<AmountField>(page, "_dailyCap").Value);
 
         // AND NO SCROLL CHANGES A CHOICE (U-org-surface-b item 5): the board's closed lists on the owner's page — a seat's class, its
-        // model class, the seat to retire — keep their selection under a wheel, clicked into or not, and leave the scroll to the page.
-        // Watched red with a stock ComboBox: clicked into, one notch stepped the selection and swallowed the scroll.
+        // model class, the seat to retire and (U-board-alive) the dormant seat to activate — keep their selection under a wheel, clicked
+        // into or not, and leave the scroll to the page. Watched red with a stock ComboBox: clicked into, one notch stepped the selection
+        // and swallowed the scroll.
         var choices = page.Root.GetLogicalDescendants().OfType<ComboBox>().ToList();
-        Assert.Equal(3, choices.Count);
+        Assert.Equal(4, choices.Count);
         Assert.All(choices, c => Assert.IsType<ChoiceBox>(c));
         foreach (var choice in choices)
         {
