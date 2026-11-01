@@ -751,4 +751,85 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
         var hour2 = Of(run, BacktestEventKind.Bar).Single(b => b.Bar == Start.AddHours(2));
         Assert.Equal((1m, true, 10_000m - 101.5m + 101m), (hour2.Position!.Value, hour2.Exposed, hour2.Equity!.Value));
     }
+
+    /// <summary>
+    /// (h3) A HOLD REACHED THROUGH A WHOLLY MISSING HOUR WHOSE CLOSE NEVER FILLS IS SAID ON THE BAR IT WAS SENT IN.
+    ///
+    /// <para>(h2)'s run, ended at 04:01: the hold is reached on 04:00 and its close is due at 04:02, past the window, so
+    /// the position is open at the end and the trace says so in words — on hour 4, the bar of the minute the close was
+    /// sent on, at that minute's close (99.6), never on hour 3, which has no minute, beside a price from another bar.</para>
+    ///
+    /// <para><b>RED at <c>b4c4aecb</c></b> (the line named hour 3).</para>
+    /// </summary>
+    [Fact]
+    public void A_hold_reached_through_a_missing_hour_and_never_filled_is_said_on_the_bar_it_was_sent_in()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 1h
+            size fixed 1
+            max_hold_bars 2
+            entry when close > 100
+            """);
+
+        var opens = new Dictionary<int, decimal> { [61] = 100.1m, [240] = 99.6m };
+        var minutes = Enumerable.Range(0, 180).Concat(Enumerable.Range(240, 2))   // 03:00..03:59 missing; ends at 04:01
+            .Select(i => i == 59 ? M(59, 100m, 101m, 100m, 101m) : At(i, opens.GetValueOrDefault(i, 100m)))
+            .ToList();
+
+        var run = Backtest.Run(program, Request(), minutes);
+        log.WriteLine(run.Trace.Text);
+
+        Assert.Empty(run.Trades);
+        Assert.True(run.Metrics.PositionOpenAtEnd);
+        var open = Assert.Single(Of(run, BacktestEventKind.NoTrade));
+        Assert.Equal((Start.AddHours(4), 99.6m), (open.Bar, open.Price!.Value));
+        Assert.StartsWith($"the run's window ended before {Start.AddMinutes(242):O}, the first minute the maximum hold's",
+            open.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (i2) AT THE CAP, A BAR PAST ITS MISSING MINUTES IS STILL DECIDED FROM THE BOOKS ITS LEARNING MINUTE LEAVES.
+    ///
+    /// <para>Five-minute bars to the cap. The 200,000th bar has only its first minute, closing at 101; the minute past it
+    /// opens at 90, through the entry's stop (95), and opens the 200,001st bar — past the cap. The run applies that
+    /// minute (the stop fills at 90, on the next bar's ordinal), decides the 200,000th bar FLAT from the books it leaves —
+    /// so it enters on that close — and halts before the next bar, having evaluated exactly the cap.</para>
+    ///
+    /// <para><b>RED at <c>b4c4aecb</c></b>: the 200,000th bar decided long, before the minute — no entry on it, no stop.</para>
+    /// </summary>
+    [Fact]
+    public void At_the_cap_a_bar_past_its_missing_minutes_is_decided_from_the_books_its_learning_minute_leaves()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            bars 5m
+            size fixed 1
+            stop percent 5
+            entry when close > 100
+            """);
+
+        var last = (Backtest.MaxTracedBars - 1) * 5;                   // the 200,000th bar's first and only minute
+        var past = Backtest.MaxTracedBars * 5;                         // the minute past it: the 200,001st bar's first
+        var minutes = Enumerable.Range(0, last).Select(i => i == 4 ? M(4, 100m, 101m, 100m, 101m) : At(i, 100m))
+            .Append(At(last, 101m))
+            .Concat(Enumerable.Range(past, 5).Select(i => At(i, 90m)));
+
+        var run = Backtest.Run(program, Request(), minutes);
+
+        Assert.Equal(BacktestOutcome.FAULTED, run.Outcome);
+        Assert.Equal(Backtest.MaxTracedBars, run.Metrics.Bars);
+        Assert.Equal(
+            $"this window holds more than the {Backtest.MaxTracedBars} bars of 5m one run may evaluate, so the run halted "
+            + $"at the bar before {Start.AddMinutes(past):O}. Ask for a shorter window with --from and --to.",
+            run.FaultReason);
+
+        var stopped = Assert.Single(run.Trades);
+        Assert.Equal((ExitReason.Stop, Start.AddMinutes(past), 90m), (stopped.Reason, stopped.ExitBar, stopped.ExitPrice));
+        Assert.Equal(Backtest.MaxTracedBars + 1L, Assert.Single(Of(run, BacktestEventKind.Exit)).Ordinal);
+
+        var signals = Of(run, BacktestEventKind.Signal);
+        Assert.Equal((Start.AddMinutes(last), (long)Backtest.MaxTracedBars, "Enter"),
+            (signals[^1].Bar, signals[^1].Ordinal, signals[^1].Status));
+    }
 }
