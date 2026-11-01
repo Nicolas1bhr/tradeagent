@@ -255,6 +255,17 @@ public sealed class CellWindowsTests : IDisposable
         }
         Assert.Empty(alive);
     }
+    /// <summary>A program's whole output, run as the test's own user outside any cell.</summary>
+    static string Outside(string program, params string[] args)
+    {
+        var psi = new ProcessStartInfo(program) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var proc = Process.Start(psi)!;
+        var text = proc.StandardOutput.ReadToEnd() + proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+        return text.Trim().Replace("\r", "").Replace('\n', ' ');
+    }
+
     /// <summary>
     /// THE OWNER'S HEAD-START KIT IN A WINDOWS CELL (<c>U-kit-socket-2</c>; containment), under the product's own policy
     /// (<see cref="RouteA.WindowsPolicy"/> with the installed kit): the cell reads the kit's index and a skill, runs a kit tool BY ITS NAME
@@ -270,7 +281,12 @@ public sealed class CellWindowsTests : IDisposable
         var w = NewWorld("kit");
         var kit = KitFixture.Installed(Path.Combine(_root, "kit"));
         foreach (var f in Directory.EnumerateFiles(kit.Dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
-        var policy = RouteA.WindowsPolicy(w.Ws, Cmd, Path.GetDirectoryName(Cmd)!, w.CodexHome, w.Home, CellEgress.None, kit);
+        // THE PRODUCT'S POLICY WITH THE KIT, its program roots the kit's tools alone: System32 as a program root would be walked by the
+        // stage's link check, and Windows grants every AppContainer its own system folders already.
+        var p = RouteA.WindowsPolicy(w.Ws, Cmd, Path.GetDirectoryName(Cmd)!, w.CodexHome, w.Home, CellEgress.None, kit);
+        var policy = new CellPolicy(p.Workspace, p.ReadOnly, [kit.Tools!], p.Environment, p.Egress);
+        foreach (var at in new[] { kit.Dir, Path.Combine(kit.Dir, Kit.IndexFile), kit.Tools! })
+            _out.WriteLine("outside: " + Outside("icacls", at));
         var skill = kit.SkillPath(KitFixture.Skill);
         var tool = kit.ToolPath(KitFixture.Tool);
         var skills = Path.Combine(kit.Dir, Kit.SkillsDir);
@@ -278,6 +294,7 @@ public sealed class CellWindowsTests : IDisposable
         Assert.False($"{w.Ws}{kit.Dir}".Contains(' '), "test paths without a space (cmd reads its line raw)");
         string Try(string what, string act) => $"({act} && echo WRITE-OPEN {what} || echo WRITE-DENIED {what})";
         var o = await RunToEnd(w,
+            $"(icacls {kit.Dir} & icacls {kit.Dir}\\kit.json & icacls {kit.Tools} & dir /b {kit.Dir} & type {kit.Dir}\\kit.json) & " +
             $"(type {kit.Dir}\\kit.json > {sink} && type {skill} > {sink} && echo KIT-READ || echo KIT-READ-DENIED) & " +
             $"({KitFixture.ToolName} || echo TOOL-FAILED) & " +
             $"({KitFixture.ProgramName} /d /c echo kit-fixture-program-ran || echo PROGRAM-FAILED) & " +
