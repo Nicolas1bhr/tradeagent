@@ -428,6 +428,36 @@ public sealed record TurnRecord
     public TurnContext? Context { get; init; }
 }
 
+/// <summary>HOW A TURN'S RESERVATION WAS SIZED (<c>U-turn-reservation</c>; R25 D13).</summary>
+public enum ReservationRule
+{
+    /// <summary>The whole turn bound: an API key's turn, a turn nobody established the payer of, an unknown price, or a bound below the estimate.</summary>
+    Bound,
+
+    /// <summary>A plan turn on a seat with too few measured turns: <see cref="TurnMeter.PlanFactor"/> typical turns.</summary>
+    Default,
+
+    /// <summary>A plan turn: <see cref="TurnMeter.PlanFactor"/> × the 99th percentile of its seat's last measured turns.</summary>
+    Measured,
+
+    /// <summary>A plan turn whose measured turns are so cheap that one typical turn is more.</summary>
+    Floor
+}
+
+/// <summary>
+/// ONE TURN'S RESERVATION AND WHY (<c>U-turn-reservation</c>): <see cref="Price"/> is what admission holds, priced at the seat's rate;
+/// <see cref="Rule"/> and <see cref="Why"/> say how it was sized, in the owner's words for the Costs page; <see cref="Bound"/> is the
+/// whole turn bound where the reservation is smaller than it, and null where it IS the bound.
+/// </summary>
+public sealed record TurnReservation(TurnPrice Price, ReservationRule Rule, string Why)
+{
+    /// <summary>The whole turn bound where <see cref="Price"/> is below it (a plan turn's estimate); null where the price is the bound.</summary>
+    public decimal? Bound { get; init; }
+
+    /// <summary>A reservation nobody could price: unknown, never zero.</summary>
+    public static TurnReservation Unpriced(string why) => new(TurnPrice.Unknown(why), ReservationRule.Bound, why);
+}
+
 /// <summary>
 /// THE LAUNCHES THIS PROCESS IS STILL FLYING — the one kind of open <c>ai_attempt</c> row that is
 /// not a turn nobody will ever hear from again.
@@ -973,7 +1003,10 @@ public sealed class TurnMeter
         // the activation gate, fail closed, refused the same way — no row, no reservation, no wake, its kind carried as data.
         if (Gate(role, seat.SeatClass) is { } gate) return new AiAdmission { Refusal = gate.Words, Kind = gate.Kind };
 
-        var reservation = ReservationOf(spec);
+        // THE RESERVATION, FOR THE CLASS THE VERIFIED SEAT BILLS (U-turn-reservation; R25 D13): a plan turn what its seat's measured turns
+        // say it can plausibly cost, a key turn — and one nobody established the payer of — the whole turn bound. The same verdict's class
+        // is the row's below, and the start re-reads it (AgentSession): a plan reservation never runs on a key.
+        var reservation = ReservationOf(spec, BillingClasses.Of(seat.BillingClass), seat.SeatClass).Price;
 
         // THE UNITS THAT FUND THIS LAUNCH, read from the chart before the transaction and recorded with the row inside it
         // (U-org-envelopes). A chain nobody can read refuses the launch: admitted on the day's limit alone it would be spend
@@ -1184,7 +1217,7 @@ public sealed class TurnMeter
         var cap = Cap();
         var planCap = PlanCap(cap);
         var (funding, planFunding) = FundingOf(role, cap, planCap);
-        return RuleFor(role, Reservation(role), funding, planFunding, cap, planCap, billingClass);
+        return RuleFor(role, ReservationFor(role, billingClass).Price, funding, planFunding, cap, planCap, billingClass);
     }
 
     /// <summary>
@@ -1318,39 +1351,108 @@ public sealed class TurnMeter
             : null;
 
     /// <summary>
-    /// WHAT THE NEXT TURN WOULD COMMIT: the allowance, priced at the model TradeAgent is asking for.
-    ///
-    /// The requested model is handed to the price list as though the runtime had named it, because
-    /// TradeAgent put it on the command line itself — that is a stronger claim than the "dearest in
-    /// the catalogue" fallback, which is what a runtime whose model this software cannot choose
-    /// still gets. A rate nobody can supply reserves nothing, and then the ceiling holds nothing
-    /// back, which the card and the Situation both say rather than hide.
+    /// WHAT THE NEXT TURN OF <paramref name="role"/> WOULD COMMIT, for the class its seat bills now (<see cref="ClassOf"/>; the chair's launch
+    /// nobody named is <c>unknown</c>): the rule in <see cref="ReservationFor"/>. A rate nobody can supply reserves nothing, and then the
+    /// ceiling holds nothing back, which the card and the Situation both say rather than hide.
     /// </summary>
-    public TurnPrice Reservation(string? role = null)
+    public TurnPrice Reservation(string? role = null) =>
+        ReservationFor(role, role is null ? BillingClasses.Unknown : ClassOf(role)).Price;
+
+    /// <summary>
+    /// WHAT THE NEXT TURN OF <paramref name="role"/> WOULD COMMIT IF BILLED TO <paramref name="billingClass"/>, and why that figure
+    /// (<c>U-turn-reservation</c>; R25 D13): the seat as it resolves now, the history of the seat class it is declared on. Never a throw
+    /// into a reading: a seat that cannot be read reserves an unknown, never zero.
+    /// </summary>
+    public TurnReservation ReservationFor(string? role, string billingClass)
     {
-        try
-        {
-            // CostCatalog.Reserve, not Price: a bound is not a bill, and the difference is the input
-            // rate. Priced as a turn that used its whole allowance as ordinary input, a vendor whose
-            // CACHE WRITES cost more than plain input bills above the reservation, and the ceiling is
-            // walked past by exactly that difference. See CostCatalog.Reserve for the formula.
-            //
-            // The ROLE'S model, because that is the one its next turn will actually be run on. A
-            // reservation priced at another role's model is a commitment against a rate nobody is
-            // going to be charged, in whichever direction that rate happens to differ.
-            return ReservationOf(_seat(role));
-        }
-        catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
+        try { return ReservationOf(_seat(role), billingClass, role is null ? null : Declared(role)); }
+        catch (Exception) { return TurnReservation.Unpriced("the reservation could not be priced"); }
     }
 
     /// <summary>
-    /// ONE SEAT'S RESERVATION (<c>U-org-seats</c>): its allowance where its turn is held to it, never below the shipped bound where it is
-    /// not (<see cref="SeatSpec.Reserved"/>), priced at its own runtime and model.
+    /// THE TURN A PLAN RESERVATION STARTS FROM BEFORE ANY TURN OF ITS SEAT IS MEASURED, AND NEVER GOES BELOW (<c>U-turn-reservation</c>;
+    /// R25 D13): 200,000 input and 4,000 output tokens — the first measured gpt-6-luna chief turn (133,513 in, 1,290 out; the fleet's
+    /// <c>records/M-org1-luna-turn.md</c>) rounded up — priced like the bound, its input at the dearer of the plain and cache-write rates.
+    /// The floor is one such turn; a seat with no history reserves <see cref="PlanFactor"/> of them.
     /// </summary>
-    TurnPrice ReservationOf(SeatSpec spec)
+    public static readonly TurnAllowance TypicalTurn = new(200_000, 4_000);
+
+    /// <summary>How many of a seat's latest measured turns a plan reservation reads (<see cref="AiAttemptStore.MeasuredTurns"/>).</summary>
+    public const int PlanHistory = 20;
+
+    /// <summary>Fewer measured turns than this is no history yet: the seat reserves <see cref="PlanFactor"/> typical turns.</summary>
+    public const int PlanHistoryMinimum = 5;
+
+    /// <summary>The multiple of the measured 99th percentile — and of the typical turn, with no history — a plan turn reserves.</summary>
+    public const decimal PlanFactor = 2m;
+
+    /// <summary>
+    /// ONE SEAT'S RESERVATION FOR ONE BILLING CLASS (<c>U-turn-reservation</c>; R25 D13, decided by the orchestrator on the owner's behalf).
+    ///
+    /// <para><b>The bound</b> (<c>U-org-seats</c>): the seat's allowance where its turn is held to it, never below the shipped bound where it
+    /// is not (<see cref="SeatSpec.Reserved"/>), priced at its own runtime and model by <see cref="CostCatalog.Reserve"/> — the input at the
+    /// dearer of the plain and cache-write rates. A turn billed to an API KEY (real money) reserves exactly this, and so does a turn whose
+    /// payer nobody established: it may be real money, so it is counted as real money. Unchanged.</para>
+    ///
+    /// <para><b>A PLAN TURN</b> (notional list-price dollars against the plan's capacity — no money moves) reserves what it can plausibly
+    /// cost: <see cref="PlanFactor"/> × the 99th percentile of its seat class + runtime + model's last <see cref="PlanHistory"/> measured
+    /// turns — their tokens priced at today's rate, so a changed price or the owner's own two numbers apply to the history too; with 20
+    /// turns the 99th percentile is the dearest of them — never below one <see cref="TypicalTurn"/>, never above the bound. With fewer than
+    /// <see cref="PlanHistoryMinimum"/> measured turns, <see cref="PlanFactor"/> typical turns. After the turn its measured cost is charged
+    /// and the rest released, as for every turn; a turn that cost MORE is charged in full, so its units sit past their envelopes and refuse
+    /// every launch until they are back inside (midnight, or a widened envelope) — a plan envelope is exceeded by at most the overrun of
+    /// the turns already running in it, one per position. A plan turn nobody measured (LOST, or no usage reported) is charged this
+    /// reservation, as every turn is: an estimate from measured turns, never zero.</para>
+    /// </summary>
+    TurnReservation ReservationOf(SeatSpec spec, string billingClass, string? seatClass)
     {
-        try { return CostCatalog.Reserve(spec.Reserved, spec.Runtime, owner: Owner(), requestedModel: spec.Model); }
-        catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
+        TurnPrice bound;
+        try { bound = CostCatalog.Reserve(spec.Reserved, spec.Runtime, owner: Owner(), requestedModel: spec.Model); }
+        catch (Exception) { return TurnReservation.Unpriced("the reservation could not be priced"); }
+
+        var billed = BillingClasses.Of(billingClass);
+        if (billed != BillingClasses.Plan)
+            return new TurnReservation(bound, ReservationRule.Bound,
+                billed == BillingClasses.Key ? Labels.ReservationKeyBound : Labels.ReservationUnknownBound);
+        // AN UNKNOWN BOUND STAYS UNKNOWN: nothing below may turn a price nobody could supply into a number.
+        if (bound.Cost is not { } ceiling) return new TurnReservation(bound, ReservationRule.Bound, bound.Unpriced ?? "");
+
+        try
+        {
+            var catalogue = CostCatalog.Read();
+            var owner = Owner();
+            if (CostCatalog.Reserve(TypicalTurn, spec.Runtime, catalogue, owner, spec.Model).Cost is not { } floor || floor <= 0m)
+                return new TurnReservation(bound, ReservationRule.Bound, Labels.ReservationUnknownBound);
+
+            var measured = _attempts.MeasuredTurns(seatClass, spec.Runtime, spec.Model, PlanHistory)
+                .Select(a => CostCatalog.Price(new TurnUsage(a.InputTokens ?? 0, a.CachedInputTokens ?? 0, a.CacheWriteInputTokens ?? 0,
+                    a.OutputTokens ?? 0, a.ReasoningOutputTokens ?? 0, null), spec.Runtime, catalogue, owner, spec.Model).Cost)
+                .ToList();
+
+            // NO HISTORY YET — or a measured turn today's prices cannot read, which is no history either: never a guess below it.
+            if (measured.Count < PlanHistoryMinimum || measured.Any(c => c is null))
+                return Capped(PlanFactor * floor, ReservationRule.Default, Labels.ReservationNoHistory(measured.Count(c => c is not null)));
+
+            var p99 = Percentile(measured.Select(c => c!.Value), 0.99m);
+            return PlanFactor * p99 >= floor
+                ? Capped(PlanFactor * p99, ReservationRule.Measured, Labels.ReservationMeasured(measured.Count))
+                : Capped(floor, ReservationRule.Floor, Labels.ReservationFloor(measured.Count));
+        }
+        // A HISTORY NOBODY CAN READ IS NOT A SMALL ONE: the bound, as a key turn reserves.
+        catch (Exception) { return new TurnReservation(bound, ReservationRule.Bound, Labels.ReservationUnknownBound); }
+
+        TurnReservation Capped(decimal estimate, ReservationRule rule, string why) =>
+            estimate >= ceiling
+                ? new TurnReservation(bound, ReservationRule.Bound, Labels.ReservationBoundIsLower)
+                : new TurnReservation(bound with { Cost = estimate }, rule, why) { Bound = ceiling };
+    }
+
+    /// <summary>The nearest-rank <paramref name="p"/> percentile of a non-empty set: the value at rank ⌈p × n⌉ in ascending order.</summary>
+    static decimal Percentile(IEnumerable<decimal> values, decimal p)
+    {
+        var sorted = values.Order().ToList();
+        var rank = (int)Math.Ceiling(p * sorted.Count);
+        return sorted[Math.Clamp(rank, 1, sorted.Count) - 1];
     }
 
     /// <summary>
@@ -1714,15 +1816,19 @@ public sealed class TurnMeter
     {
         var cap = Cap();
         var planCap = PlanCap(cap);
-        return BillingClasses.Of(billingClass) switch
+        // THE NEXT TURN'S RESERVATION FOR THE CLASS THIS READING IS ABOUT (U-turn-reservation), once for both ceilings an unknown one
+        // reads: the reading admits what the gate would, and an unknown class reserves the whole bound in each.
+        var billed = BillingClasses.Of(billingClass);
+        var next = ReservationFor(role, billed).Price.Cost ?? 0m;
+        return billed switch
         {
-            BillingClasses.Plan => Reading(role, BillingClasses.Plan, cap, planCap),
-            BillingClasses.Key => Reading(role, BillingClasses.Key, cap, planCap),
-            _ => Reading(role, BillingClasses.Key, cap, planCap) with { PlanReading = Reading(role, BillingClasses.Plan, cap, planCap) }
+            BillingClasses.Plan => Reading(role, BillingClasses.Plan, cap, planCap, next),
+            BillingClasses.Key => Reading(role, BillingClasses.Key, cap, planCap, next),
+            _ => Reading(role, BillingClasses.Key, cap, planCap, next) with { PlanReading = Reading(role, BillingClasses.Plan, cap, planCap, next) }
         };
     }
 
-    AiSpendToday Reading(string? role, string ceiling, decimal moneyCap, decimal planCap)
+    AiSpendToday Reading(string? role, string ceiling, decimal moneyCap, decimal planCap, decimal nextTurn)
     {
         {
             var now = _now();
@@ -1756,7 +1862,7 @@ public sealed class TurnMeter
                 RoleCap = share,
                 Spent = totals.Spent,
                 Reserved = totals.Reserved,
-                NextTurnReservation = Reservation(role).Cost ?? 0m,
+                NextTurnReservation = nextTurn,
                 Cap = cap,
                 Model = ModelOf(role),
                 Currency = catalogue.Costs?.Currency ?? "",
