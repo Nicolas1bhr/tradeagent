@@ -283,12 +283,13 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             if (stop.IsCancellationRequested)
                 throw new GatewayDeniedException(ErrorCode.IPC_UNAVAILABLE, Stopped);
 
-            Record(result, trace, kept, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent,
+            var mine = Record(result, trace, kept, program, role, caller.AttemptId, charges, kind, step.Source, friction.Source, parent,
                 under);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source)
             {
-                FrictionSource = friction.Source
+                FrictionSource = friction.Source,
+                RunId = mine
             };
         }
         finally
@@ -621,7 +622,12 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     static string Plain(decimal value) =>
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
-    void Record(BacktestResult result, string trace, IReadOnlyList<StrategyStreamRow> streams, StrategyProgram program,
+    /// <summary>
+    /// Records the version, the caller's run, its trades and its trials in ONE write, and returns the id of THE CALLER'S OWN run row
+    /// (<c>U-backtest-dedupe-role</c>): the computation's id, or — when another position recorded this identical computation first —
+    /// the id of the caller's own row of it, which names that run as the computation it reuses (<see cref="StrategyRunRow.ReusesRun"/>).
+    /// </summary>
+    string Record(BacktestResult result, string trace, IReadOnlyList<StrategyStreamRow> streams, StrategyProgram program,
         string role, string? attempt, IReadOnlyList<CampaignCharge> charges, string kind, string? incrementSource,
         string? frictionSource, string? parent, LedgerAsk? under)
     {
@@ -631,7 +637,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         // ONE TRANSACTION FOR THE VERSION, THE RUN AND ITS TRADES. `Database.Write` joins the
         // transaction already open, so a crash between the three leaves none of them rather than a run
         // whose version nobody can look up.
-        db.Write(_ =>
+        return db.Write(_ =>
         {
             _strategies.RecordVersion(new StrategyVersionRow(
                 program.StrategyId, program.Source, program.Canonical, program.Manifest,
@@ -653,8 +659,19 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 ParentVersionId = parent
             });
 
+            // WHOSE RUN THIS IS (U-backtest-dedupe-role). A run's id hashes what decided its result and never who asked, so an
+            // identical request is the same computation. When ANOTHER position recorded it first, the caller gets its OWN row —
+            // its role, its attempt, the figures it is answered with — naming that run as the computation it reuses, so the
+            // caller holds a run of what it measured and a verdict is spent on its author's own completed run by construction.
+            // Read INSIDE this write, so two positions racing to the same new computation cannot both take its row: the second
+            // finds it here. The same position asking again is the same row (`ReuseRunId` hashes the role), as it always was.
+            // Its daily streams are the computation's and stay on its row: the reuse row is written with none.
+            var first = _strategies.RunById(result.RunId);
+            var reused = first is not null && !string.Equals(first.Role, role, StringComparison.Ordinal);
+            var mine = reused ? StrategyStore.ReuseRunId(result.RunId, role) : result.RunId;
+
             _strategies.RecordRun(new StrategyRunRow(
-                result.RunId, result.VersionId, result.Request.DatasetId, result.Request.DatasetSha256,
+                mine, result.VersionId, result.Request.DatasetId, result.Request.DatasetSha256,
                 result.Request.From, result.Request.To, result.Request.Model.Canonical,
                 result.Outcome.ToString(), result.FaultReason,
                 metrics.Bars, metrics.Trades, metrics.Wins, metrics.Signals, metrics.Fills,
@@ -663,14 +680,15 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 trace, at, role, attempt)
                 {
                     IncrementSource = incrementSource,
-                    FrictionSource = frictionSource
+                    FrictionSource = frictionSource,
+                    ReusesRun = reused ? result.RunId : null
                 },
                 [.. result.Trades.Select(t => new StrategyTradeRow(
-                    result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
+                    mine, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))],
                 // ITS DAILY NET RETURN STREAMS, in the run's own insert (U-trial-returns): rolled back with it and with
                 // its trials below, and written nothing again for a run already there.
-                streams);
+                reused ? [] : streams);
 
             // THE TRIAL, IN THE SAME TRANSACTION AS THE RUN IT IS THE COST OF, AND IT IS THE GATE.
             //
@@ -689,6 +707,10 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // ONE TRIAL UNDER EVERY CAMPAIGN THE LOOK ASKED, in its order — the run's own dataset's first,
             // so a version never charged before has that campaign as its home — and any one refusal rolls
             // the whole write back (U-holdout-campaign).
+            //
+            // KEYED BY THE COMPUTATION, A REUSE ROW'S TOO (U-backtest-dedupe-role; EVID-001: trial keys carry no role): never by
+            // the caller's own row, which would charge one computation twice. Registered here when the computation has no trial
+            // under that campaign yet — a reuse is never a run standing with none behind it — and Ok, charged nothing, when it has.
             foreach (var charge in charges)
             {
                 var registered = _campaigns.RegisterTrial(
@@ -700,9 +722,10 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // AND THE LINK, LAST, IN THE SAME WRITE (U-research-ledger): the app answered a request asked under that entry
             // with this run. After the trials, so a refused trial rolls it back with everything else; the same run asked
             // again under the same entry is one run and one link — the first, with the revision it was asked under.
-            if (under is not null) gateway.Links.Link(under, LedgerRecord.Run, result.RunId, attempt);
+            // THE CALLER'S OWN ROW, which is the run that answered its request.
+            if (under is not null) gateway.Links.Link(under, LedgerRecord.Run, mine, attempt);
 
-            return 0;
+            return mine;
         });
     }
 }
@@ -914,4 +937,11 @@ public sealed record BacktestRan(
     /// a fee it did not declare has to be able to see what charged it.
     /// </summary>
     public string? FrictionSource { get; init; }
+
+    /// <summary>
+    /// THE CALLER'S OWN RUN ROW (<c>U-backtest-dedupe-role</c>): <see cref="BacktestResult.RunId"/>, the computation's id, unless
+    /// another position recorded that identical computation first — then the id of the caller's own row of it
+    /// (<see cref="StrategyStore.ReuseRunId"/>). The run the answer names, so what it reads back and delivers is its own.
+    /// </summary>
+    public required string RunId { get; init; }
 }
