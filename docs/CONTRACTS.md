@@ -3807,7 +3807,13 @@ decides which bars are served, the class decides whether a run over them is char
 judges from it.** `DatasetStore.SetHoldout` is the one writer of both columns — deliberately not part of
 `DatasetStore.Record`, so collecting months cannot declare a holdout as a side effect — and it is reached from
 the two-press card on the Data page, from setup's one press (`EvidenceCampaigns.SetUpAsync`: the last
-`EvidenceDefaults.HoldoutMonths` complete months of the first download, never moving a cutoff already there) and from
+`EvidenceDefaults.HoldoutMonths` complete months of the first download, never moving a cutoff already there — since
+`U-evidence-holdout-length` (R25 D12, decided on the owner's behalf) the last 12 of `BinanceArchive.MonthsWanted` = 36, a holdout of
+365 or 366 days, so `Inconclusive.ShortHoldout` and the α-test's 365 known days can be met and the scorer is not lowered; never over
+a download any month of which did not arrive for a reason other than the vendor's 404 — the pair is `Unfinished` and the next press
+finishes it, `CandleSourceClient` collecting a pinned month whose kept bytes hash to the vendor's published checksum without
+downloading it again; the Owner page's campaign lines and the Settings date box say whether the span can yield a conclusive verdict,
+`HoldoutLength.Words`) and from
 the app's fresh-holdout rule below, all three through `TradingGateway.SetHoldout`, and from nowhere else. There is no pipe op, no `trade` verb and no request
 field: `HoldoutOverPipeTests` asks **every op this build has**, in both directions, and the row does not move.
 Moving the cutoff back is refused in words because the bars in between have already been served, and

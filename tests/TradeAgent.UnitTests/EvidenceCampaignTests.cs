@@ -305,6 +305,23 @@ public class EvidenceCampaignTests
         Assert.Contains("already downloading", done[1].Words, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// THE SETUP STEP STATES THE DOWNLOAD'S SIZE AND TIME (<c>U-evidence-holdout-length</c> item 1), from the archive's own sizes measured for
+    /// every default pair on 2026-10-31 — a pair not measured counted at their average — and what a download that stops part way costs.
+    /// </summary>
+    [Fact]
+    public void The_setup_step_states_the_measured_size_and_time_of_the_download()
+    {
+        Assert.Equal(EvidenceDefaults.Pairs.Order(StringComparer.Ordinal), EvidenceDefaults.MeasuredMegabytes.Keys.Order(StringComparer.Ordinal));
+
+        var five = EvidenceDefaults.DownloadWords(EvidenceDefaults.Offered("BTCUSDT"));
+        Assert.StartsWith("About 341 MB for the 5 pairs offered here (about 68 MB a pair), and about 1.0 GB on disk once unpacked. Measured "
+            + "on 2026-10-31, the archive arrived at about 0.36 MB a second, so this takes about 16 minutes there", five, StringComparison.Ordinal);
+        Assert.Contains("press again: the months already checked are kept", five, StringComparison.Ordinal);
+        Assert.StartsWith("About 409 MB for the 6 pairs offered here", EvidenceDefaults.DownloadWords(EvidenceDefaults.Offered("ADAUSDT")),
+            StringComparison.Ordinal);
+    }
+
     /// <summary>WHAT SETUP OFFERS: the owner's Settings pair first, then the five default pairs, each once.</summary>
     [Fact]
     public void Setup_offers_the_settings_pair_first_then_the_default_pairs_once_each()

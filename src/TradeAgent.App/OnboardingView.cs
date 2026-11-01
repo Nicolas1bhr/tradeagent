@@ -1107,8 +1107,8 @@ public sealed class OnboardingView
 
     /// <summary>
     /// THE DATA AND THE HOLDOUT, IN ONE PRESS (<c>U-evidence-campaign</c> item 1; <c>U-evidence-breadth</c> item 1): the Settings page's
-    /// Download and "Hold these bars back" with the defaults chosen for him — the last twelve complete months of each pair he leaves
-    /// ticked (<see cref="EvidenceDefaults.Offered"/>) from Binance's public archive, the last three held back, each pair its own
+    /// Download and "Hold these bars back" with the defaults chosen for him — the last thirty-six complete months of each pair he leaves
+    /// ticked (<see cref="EvidenceDefaults.Offered"/>) from Binance's public archive, the last twelve held back (R25 D12), each pair its own
     /// campaign with its own budget — and the rule that follows a spent campaign said before he presses. "Later" leaves it to the
     /// Settings page: nothing is judged until a holdout is set, and the step says so.
     /// </summary>
@@ -1130,17 +1130,21 @@ public sealed class OnboardingView
             "TradeAgent judges every strategy the AI writes on market data the AI has never seen. It sets that up now.",
             Ui.Card(Ui.Col(Theme.S4,
                 Numbered(1, "Download the history",
-                    "The last twelve complete months of minute bars of each pair ticked here, from Binance's public archive. No "
-                    + "account and no key are needed. Untick any you do not want; you can add one later in Settings."),
+                    $"The last {BinanceArchive.MonthsWanted} complete months of minute bars of each pair ticked here, from Binance's "
+                    + "public archive. No account and no key are needed. Untick any you do not want; you can add one later in Settings. "
+                    + EvidenceDefaults.DownloadWords(offered)),
                 Ui.Wrap(Theme.S3, [.. ticks]),
                 Numbered(2, $"Hold the last {EvidenceDefaults.HoldoutMonths} months back",
-                    "The AI researches on the earlier months and never reads these, on any pair. Each pair is its own test: a "
+                    $"The AI researches on the {BinanceArchive.MonthsWanted - EvidenceDefaults.HoldoutMonths} months before them and "
+                    + "never reads these, on any pair. Twelve months — a year — is what the referee needs before a verdict can be "
+                    + "conclusive. Each pair is its own test: a "
                     + $"strategy for it is judged over its months, and {_host.Gateway.Settings.CampaignVerdictBudget} judgements and "
                     + $"{_host.Gateway.Settings.CampaignTrialBudget} research runs count against each pair's own."),
                 Numbered(3, "Keep the test fresh by itself",
                     "When a pair's are used up, TradeAgent holds back the market data that arrives next and opens that pair's next "
                     + $"test on it — at least {CampaignRenewal.MinimumFreshDays} days of it, which nothing has seen. A month is never "
-                    + "judged twice on one pair."))),
+                    + "judged twice on one pair. A test shorter than a year can give no conclusive verdict: a strategy it refuses for a "
+                    + "loss can still be watched on paper, through the one path for verdicts that could not tell."))),
             Ui.Primary("Download and hold back", Act(async () =>
             {
                 var pairs = offered.Where(pair => !_unticked.Contains(pair)).ToList();
