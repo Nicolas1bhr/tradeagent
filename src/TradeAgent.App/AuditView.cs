@@ -116,10 +116,12 @@ sealed class AuditSection
     {
         _src = sources;
         Note.IsVisible = false;
-        var store = Store();
-        _opened = store is not null;
-        MoneyBox = Ui.AmountField(store?.Budget(BillingClasses.Key), AmountKind.Decimal);
-        PlanBox = Ui.AmountField(store?.Budget(BillingClasses.Plan), AmountKind.Decimal);
+        // A FILE THAT CANNOT BE READ NEVER STOPS THE PAGE BEING BUILT (Codex P2): the boxes open empty and the status says why.
+        var money = Read(BillingClasses.Key);
+        var plan = Read(BillingClasses.Plan);
+        _opened = money is not null && plan is not null;
+        MoneyBox = Ui.AmountField(money, AmountKind.Decimal);
+        PlanBox = Ui.AmountField(plan, AmountKind.Decimal);
         MoneySave = BuildSaveBudget(Labels.SaveAuditMoneyBudget, MoneyLabel, MoneyBox, () => Current(BillingClasses.Key), "real money",
             _src.Currency, () => Save(BillingClasses.Key, MoneyBox), why => Ui.Refuse(Note, why));
         PlanSave = BuildSaveBudget(Labels.SaveAuditPlanBudget, PlanLabel, PlanBox, () => Current(BillingClasses.Plan), "plan capacity",
@@ -151,7 +153,15 @@ sealed class AuditSection
         catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { return null; }
     }
 
-    decimal Current(string billingClass) => Store()?.Budget(billingClass) ?? 0m;
+    /// <summary>The line's budget in <paramref name="billingClass"/>, or null when the line is not open or its file cannot be read.</summary>
+    decimal? Read(string billingClass)
+    {
+        try { return Store()?.Budget(billingClass); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The figure in force, for the press's raise-or-lower test: an unreadable one compares as zero, so any figure asks twice.</summary>
+    decimal Current(string billingClass) => Read(billingClass) ?? 0m;
 
     /// <summary>In place on every tick, touching nothing when nothing moved.</summary>
     public void Update()
@@ -159,17 +169,22 @@ sealed class AuditSection
         AuditWords words;
         var store = Store();
         try { words = AuditWords.Of(store, _src.Refusal(), _src.Currency(), _src.MoneyCeiling(), _src.PlanCeiling()); }
-        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { return; } // the quit closed the file under this tick
+        catch (ObjectDisposedException) { return; } // the quit closed the file under this tick
+        catch (Exception ex)
+        {
+            Set(Status, $"The audit line's file cannot be read ({ex.GetType().Name}). While its budget cannot be read, the AI is admitted no new turn.");
+            return;
+        }
         Set(Status, words.Status);
         Set(MoneyText, words.Money);
         Set(PlanText, words.Plan);
         Set(CanaryText, words.Canaries);
         Set(CatchText, string.Join("\n", words.Catches));
-        if (!_opened && store is not null)
+        if (!_opened && Read(BillingClasses.Key) is { } money && Read(BillingClasses.Plan) is { } plan)
         {
             _opened = true;
-            MoneyBox.OpenOn(store.Budget(BillingClasses.Key));
-            PlanBox.OpenOn(store.Budget(BillingClasses.Plan));
+            MoneyBox.OpenOn(money);
+            PlanBox.OpenOn(plan);
         }
     }
 

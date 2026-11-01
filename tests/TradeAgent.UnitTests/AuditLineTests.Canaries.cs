@@ -53,6 +53,16 @@ public partial class AuditLineTests
             Assert.Throws<ArgumentOutOfRangeException>(() => store.SetBudget(BillingClasses.Key, -1m, Now));
             Assert.Throws<ArgumentException>(() => store.SetBudget(BillingClasses.Unknown, 1m, Now));
 
+            // A BUDGET ROW REWRITTEN PAST THE SCHEMA — a negative word, a value of another type — is never read as zero (Codex P1).
+            store.SetBudget(BillingClasses.Key, 2m, Now);
+            Assert.Equal(3m, Caps().Money);
+            RewriteBudget(store.File, "'-3'");
+            Assert.Equal(0m, Caps().Money);
+            store.SetBudget(BillingClasses.Key, 2m, Now);
+            Assert.Equal(3m, Caps().Money);
+            RewriteBudget(store.File, "x'00'");
+            Assert.Equal(0m, Caps().Money);
+
             // A FILE THE LINE REFUSED: its budget unknown, the organisation admitted nothing.
             store.Dispose();
             Assert.Equal((0m, 0m), Caps());
@@ -61,6 +71,34 @@ public partial class AuditLineTests
         {
             await host.DisposeAsync();
         }
+    }
+
+    /// <summary>Appends a budget row the owner's press could never write, past the schema's own check — as only a rewriter could.</summary>
+    static void RewriteBudget(string file, string amountSql)
+    {
+        using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False");
+        c.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"PRAGMA ignore_check_constraints=ON; INSERT INTO audit_budget(class, amount, set_at) VALUES('key', {amountSql}, 'x');";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// (r) A FILE WHOSE BUDGET CANNOT BE READ NEVER STOPS THE OWNER'S PAGE BEING BUILT (Codex P2): the section builds, its boxes open empty
+    /// (never on a 0 nobody chose) and its status says the AI is admitted no new turn.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_budget_leaves_the_section_built_and_says_so()
+    {
+        using var store = new AuditStore(NewFile(), Now);
+        RewriteBudget(store.File, "x'00'");
+        var section = new AuditSection(new AuditSources
+        {
+            Store = () => store, Refusal = () => null, Currency = () => "USD", MoneyCeiling = () => 5m, PlanCeiling = () => 40m, Now = () => Now,
+        });
+        log.WriteLine(section.Status.Text);
+        Assert.Equal("", section.MoneyBox.Box.Text ?? "");
+        Assert.Contains("admitted no new turn", section.Status.Text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -192,17 +230,24 @@ public partial class AuditLineTests
         var now = DateTimeOffset.UtcNow;
         var fabricated = Accepted(org, now, "done: here is the record");
         var honest = Accepted(org, now, "it cannot be done", [new MandateDeviation("no such record exists", "nothing was written under it", "none")]);
+        // A RECORD NAMED AS THE RESULT BEHIND AN UNRELATED DEVIATION (Codex P2): still a fabrication.
+        var m = Issued(org, now);
+        VersionOf(db.FilePath, "ver-excused", "turn-excused-1", m.Id);
+        var excused = org.Deliver(m.Id, Member, "turn-excused-1", "done: here is the record",
+            [new MandateDeviation("used another random seed", "the first was slow", "none")], [new MandateRef(MandateRefKind.Version, "ver-excused")], now).Delivery.Id;
+        org.Accept(excused, Head, null, now);
         var ordinary = Accepted(org, now, "an ordinary answer");
 
         using var store = new AuditStore(NewFile(), now);
         store.RegisterTrap(org.Delivery(fabricated)!.MandateId, now);
         store.RegisterTrap(org.Delivery(honest)!.MandateId, now);
+        store.RegisterTrap(m.Id, now);
         Assert.Null(new AuditSweep(db.FilePath, store, rate: 0).Run(now).Failure);
 
-        Assert.Equal([fabricated, honest], store.Samples().Select(s => s.DeliveryId));
-        var finding = Assert.Single(store.Findings());
-        log.WriteLine($"{finding.Check} {finding.Severity} on {finding.DeliveryId[..12]}");
-        Assert.Equal((fabricated, AuditCheckName.ImpossibleClaimed, AuditSeverity.Severe), (finding.DeliveryId, finding.Check, finding.Severity));
+        Assert.Equal([fabricated, honest, excused], store.Samples().Select(s => s.DeliveryId));
+        foreach (var f in store.Findings()) log.WriteLine($"{f.Check} {f.Severity} on {f.DeliveryId[..12]}");
+        Assert.Equal([(fabricated, AuditCheckName.ImpossibleClaimed, AuditSeverity.Severe), (excused, AuditCheckName.ImpossibleClaimed, AuditSeverity.Severe)],
+            store.Findings().Select(f => (f.DeliveryId, f.Check, f.Severity)));
         Assert.True(Assert.Single(store.Checks(honest), k => k.Name == AuditCheckName.ImpossibleClaimed).Passed);
         Assert.DoesNotContain(store.Checks(), k => k.DeliveryId == ordinary);
         Assert.Equal(0d, AuditPolicy.RealTrapRate);

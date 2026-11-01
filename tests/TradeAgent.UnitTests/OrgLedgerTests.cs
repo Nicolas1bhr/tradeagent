@@ -502,8 +502,11 @@ public class OrgLedgerTests
         var writes = new Regex(
             @"\b(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|DROP\s+TABLE|ALTER\s+TABLE)\s+org_(unit|position|event)\b",
             RegexOptions.IgnoreCase);
+        // REVISITED, OUT LOUD, BY U-org-audit-b: Audit/AuditCanaries.cs writes org_unit and org_position — ONLY in the audit line's own scratch
+        // PROVING home (new Database(…, HomeKind.Proving) under the line's file, removed when the run ends), the chart its planted canaries are
+        // made in; never the app's database, which the line never opens for writing (AuditInvisibilityTests (h); AuditLineTests (m)).
         Assert.Equal(
-            ["src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Chief.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
+            ["src/TradeAgent.Core/Audit/AuditCanaries.cs", "src/TradeAgent.Core/Db/Database.cs", "src/TradeAgent.Core/Db/OrgStore.Chief.cs", "src/TradeAgent.Core/Db/OrgStore.Restructure.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs",
              "src/TradeAgent.Core/Db/OrgStore.Tilt.cs", "src/TradeAgent.Core/Db/OrgStore.Verbs.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => writes.IsMatch(File.ReadAllText(f)))

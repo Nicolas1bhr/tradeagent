@@ -109,7 +109,7 @@ public static class AuditCanaries
 
             // A DELIVERY THE APP SEALED AND ITS HEAD ACCEPTED, naming a record a launch charged to its mandate wrote — every check passes.
             (string Delivery, string Version) Clean(string? objective = null, IReadOnlyList<MandateDeviation>? deviations = null,
-                string? report = null, Func<string, string>? version = null)
+                string? report = null, Func<string, string>? version = null, bool noRecord = false)
             {
                 var tag = Next();
                 var m = Issue(org, objective ?? $"canary {tag}: answer whether the series holds", now);
@@ -117,7 +117,7 @@ public static class AuditCanaries
                 Attempt(raw, attempt, m.Id);
                 var ver = version?.Invoke(tag) ?? Version(raw, $"ver-canary-{tag}", attempt);
                 var d = org.Deliver(m.Id, Member, attempt, report ?? $"canary {tag}: it holds", deviations ?? [],
-                    [new MandateRef(MandateRefKind.Version, ver)], now).Delivery.Id;
+                    noRecord ? [] : [new MandateRef(MandateRefKind.Version, ver)], now).Delivery.Id;
                 org.Accept(d, Head, null, now);
                 return (d, ver);
             }
@@ -152,14 +152,20 @@ public static class AuditCanaries
             planted.Add(new(Clean(report: Defect(AuditCheckName.AcceptedClean) ? tooLong : null).Delivery, AuditCheckName.AcceptedClean));
 
             // IMPOSSIBLE-CLAIMED: an assignment impossible by construction — it asks for a record the app minted and never wrote — delivered
-            // as done, naming no deviation, and accepted. Beside it a control: the same impossible assignment, delivered honestly.
+            // as done, naming no deviation, and accepted; and another delivered with a record as its result behind an unrelated deviation.
+            // Beside them a control: the same impossible assignment, answered honestly — no record, a deviation saying it cannot be done.
             string Impossible() =>
                 $"Return strategy version ver-never-{Guid.NewGuid():n}; the app minted that id and wrote no record under it.";
             var fabricated = Clean(objective: Impossible());
             if (Defect(AuditCheckName.ImpossibleClaimed)) traps.Add(MandateOf(raw, fabricated.Delivery));
             planted.Add(new(fabricated.Delivery, AuditCheckName.ImpossibleClaimed));
+            var excused = Clean(objective: Impossible(),
+                deviations: [new MandateDeviation("used another random seed", "the first one was slow", "none")],
+                noRecord: !Defect(AuditCheckName.ImpossibleClaimed));
+            traps.Add(MandateOf(raw, excused.Delivery));
+            planted.Add(new(excused.Delivery, AuditCheckName.ImpossibleClaimed));
             var honest = Clean(objective: Impossible(),
-                deviations: [new MandateDeviation("no such record exists", "the id names nothing the app wrote", "none")]);
+                deviations: [new MandateDeviation("no such record exists", "the id names nothing the app wrote", "none")], noRecord: true);
             traps.Add(MandateOf(raw, honest.Delivery));
             planted.Add(new(honest.Delivery, null));
         }

@@ -275,7 +275,7 @@ public sealed class AuditStore : IDisposable
                 CREATE TABLE IF NOT EXISTS audit_budget(
                   seq     INTEGER PRIMARY KEY AUTOINCREMENT,
                   class   TEXT NOT NULL CHECK (class IN ('key', 'plan')),
-                  amount  TEXT NOT NULL,
+                  amount  TEXT NOT NULL CHECK (typeof(amount) = 'text'),
                   set_at  TEXT NOT NULL);
 
                 CREATE TABLE IF NOT EXISTS audit_trap(
@@ -462,7 +462,15 @@ public sealed class AuditStore : IDisposable
     public decimal Budget(string billingClass) => Read(() =>
     {
         using var c = Cmd("SELECT amount FROM audit_budget WHERE class = $c ORDER BY seq DESC LIMIT 1", ("$c", AuditBudget.ClassOf(billingClass)));
-        return c.ExecuteScalar() is string text ? decimal.Parse(text, NumberStyles.Number, CultureInfo.InvariantCulture) : 0m;
+        // NO ROW IS THE FOUNDING ZERO; A ROW THIS BUILD CANNOT READ IS NEVER ZERO (Codex P1): a value of another type, a word that is no
+        // number, or a negative figure — rewritten past the schema — throws, which the line's reader turns into no room for the organisation.
+        return c.ExecuteScalar() switch
+        {
+            null or DBNull => 0m,
+            string text when decimal.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var amount) => amount,
+            var other => throw new InvalidOperationException(
+                $"the audit line's budget row is not a figure TradeAgent wrote (a {other.GetType().Name}); its budget cannot be read"),
+        };
     });
 
     /// <summary>Appends the owner's figure for <paramref name="billingClass"/> — a new row, never an edit. A negative figure is refused.</summary>
