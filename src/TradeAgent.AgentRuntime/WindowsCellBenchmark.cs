@@ -403,7 +403,7 @@ public static class WindowsCellBenchmark
         {
             try
             {
-                if (WindowsCellEgress.Missing(WindowsCellEgress.RulesFor(Paths.Home)) is { Count: > 0 } missing)
+                if (WindowsCellEgress.Missing(WindowsCellEgress.RulesFor(Paths.Home)) is { Count: > 999 } missing)   // MUTANT 2: the firewall's read ignored
                     stop = $"the firewall does not hold the cells' rules exactly ({missing.Count} of {2 * WindowsCellSlots.Count} absent or different, e.g. {missing[0]})";
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { stop = $"the firewall's rules could not be read ({ex.Message})"; }
@@ -417,7 +417,7 @@ public static class WindowsCellBenchmark
                        $"echo ==dns== & {{1}} -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
             string output;
             string? landed;
-            var hold = WindowsCellStage.HoldAllBut(slot);
+            IDisposable hold = new MemoryStream();   // MUTANT 1: no slot held
             try
             {
                 var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
@@ -442,7 +442,7 @@ public static class WindowsCellBenchmark
             }
             finally { hold.Dispose(); }
 
-            if (landed is null || !string.Equals(landed, sids[slot - 1], StringComparison.OrdinalIgnoreCase))
+            if (landed == "MUTANT 1: the slot is never checked")
             {
                 stop = $"slot {slot}: the measured cell's token names {(landed is null ? "no single container" : landed)}, not slot {slot}'s {sids[slot - 1]}";
                 break;
