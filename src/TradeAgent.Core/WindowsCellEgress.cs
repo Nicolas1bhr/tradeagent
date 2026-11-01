@@ -188,7 +188,8 @@ public static class WindowsCellEgress
 
     /// <summary>
     /// Whether a present rule is exactly the one placed — and narrows nothing: outbound block, the protocol, the remote ports, the container,
-    /// every profile, every interface, enabled, and no address, local port, program or service condition that would make it block less.
+    /// every profile, every interface type and no named interface, enabled, and no address, local port, program or service condition that would
+    /// make it block less.
     /// </summary>
     static bool Matches(dynamic present, EgressRule rule)
     {
@@ -199,6 +200,9 @@ public static class WindowsCellEgress
             && S(present.RemotePorts) == rule.RemotePorts
             && S(present.RemoteAddresses) == "*" && S(present.LocalAddresses) == "*" && S(present.LocalPorts) == "*"
             && string.Equals(S(present.InterfaceTypes), "All", StringComparison.OrdinalIgnoreCase)
-            && S(present.ApplicationName).Length == 0 && S(present.ServiceName).Length == 0;
+            && S(present.ApplicationName).Length == 0 && S(present.ServiceName).Length == 0
+            && NoInterfaces(present.Interfaces);   // Codex: a rule bound to named interfaces (Ethernet only) blocks nothing on Wi-Fi
     }
+
+    static bool NoInterfaces(object? interfaces) => interfaces is null || interfaces is Array { Length: 0 };
 }

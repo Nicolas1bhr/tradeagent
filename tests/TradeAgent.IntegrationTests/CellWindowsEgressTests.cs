@@ -99,7 +99,59 @@ public sealed class CellWindowsEgressTests : IDisposable
             foreach (var r in rows) _out.WriteLine($"  {(r.Held ? "held" : "FAIL")}  {r.Name}: {r.Seen}");
             var nothingElse = rows.Single(r => r.Name == "web-nothing-else");
             Assert.False(nothingElse.Held, "web held although slot 8's container has no rule: " + nothingElse.Seen);
-            Assert.Contains($"slot {WindowsCellSlots.Count} 80 NOT refused", nothingElse.Seen, StringComparison.Ordinal);
+            Assert.Contains($".{WindowsCellSlots.Count} web:", nothingElse.Seen, StringComparison.Ordinal);   // the firewall's read names slot 8's rule
+        }
+        finally { WindowsCellEgress.RemoveForTests(rules); }
+    }
+
+    /// <summary>
+    /// RULES THAT BLOCK ONLY WHAT THE PROBES TRY ARE NOT WEB (Codex): every slot blocked on TCP 80 alone and on UDP, under the helper's own
+    /// names — each slot's probes (443 reached, 80 and direct DNS refused) all pass, and the firewall's read still refuses web, since every
+    /// other TCP port stays open.
+    /// </summary>
+    [WindowsAdminFact]
+    public async Task Rules_that_block_only_what_the_probes_try_are_not_web()
+    {
+        RequireElevated();
+        var rules = WindowsCellEgress.RulesFor(Paths.Home);
+        var narrow = rules.Select(r => r.RemotePorts == WindowsCellEgress.BlockedTcp ? r with { RemotePorts = "80" } : r).ToList();
+        try
+        {
+            WindowsCellEgress.RemoveForTests(rules);
+            WindowsCellEgress.Place(narrow);
+            Assert.Empty(WindowsCellEgress.Missing(narrow));
+
+            var rows = await WebRows();
+            foreach (var r in rows) _out.WriteLine($"  {(r.Held ? "held" : "FAIL")}  {r.Name}: {r.Seen}");
+            var nothingElse = rows.Single(r => r.Name == "web-nothing-else");
+            Assert.False(nothingElse.Held, "web held under rules that block TCP 80 alone: " + nothingElse.Seen);
+            Assert.Contains("the firewall does not hold the cells' rules exactly", nothingElse.Seen, StringComparison.Ordinal);
+        }
+        finally { WindowsCellEgress.RemoveForTests(rules); }
+    }
+
+    /// <summary>
+    /// A SLOT ANOTHER CELL HOLDS IS NEVER COUNTED AS MEASURED: with the whole rule set in place, a cell of the test's holds slot 1 throughout;
+    /// slot 1 cannot be measured, so web does not hold and the row names slot 1 — no launch that landed elsewhere stands in for it.
+    /// </summary>
+    [WindowsAdminFact]
+    public async Task A_slot_another_cell_holds_is_not_counted_as_measured()
+    {
+        RequireElevated();
+        var rules = WindowsCellEgress.RulesFor(Paths.Home);
+        try
+        {
+            WindowsCellEgress.RemoveForTests(rules);
+            WindowsCellEgress.Place(rules);
+            Assert.Empty(WindowsCellEgress.Missing(rules));
+            using var holder = StartCell("findstr x");
+            await CellChild(holder);
+            Assert.Equal(WindowsCellStage.SlotSids()[0], WindowsCellBenchmark.CellMembers(holder)!.Select(m => m.Sid).Distinct().Single());
+
+            var rows = await WebRows();
+            foreach (var r in rows) _out.WriteLine($"  {(r.Held ? "held" : "FAIL")}  {r.Name}: {r.Seen}");
+            Assert.All(rows, r => Assert.False(r.Held, $"{r.Name} held although slot 1 was never measured: {r.Seen}"));
+            Assert.Contains("slot 1:", rows.Single(r => r.Name == "web-443-granted").Seen, StringComparison.Ordinal);
         }
         finally { WindowsCellEgress.RemoveForTests(rules); }
     }
@@ -222,28 +274,15 @@ public sealed class CellWindowsEgressTests : IDisposable
         return held;
     }
 
-    /// <summary>
-    /// The cell's reader, found WITHOUT the job's list (so card 2's row stands on its own): the stage's descendants as the toolhelp snapshot has
-    /// them, the one named findstr whose token is an AppContainer's.
-    /// </summary>
+    /// <summary>The cell's reader: the process of the attempt's job named findstr whose token is an AppContainer's.</summary>
     static async Task<(int Pid, ulong Start)> CellChild(ContainedProcess held)
     {
-        var stageStart = WindowsProcessTable.StartOf(held.Process.Id) ?? 0;
         for (var i = 0; i < 200; i++)
         {
-            foreach (var e in WindowsProcessTable.Tree(held.Process.Id, stageStart) ?? [])
-            {
-                if (e.Pid == held.Process.Id || WindowsToken.AppContainerSidOf(e.Pid) is not { Length: > 0 }) continue;
-                try
-                {
-                    using var p = Process.GetProcessById(e.Pid);
-                    if (p.ProcessName == "findstr" && WindowsProcessTable.StartOf(e.Pid) is { } start) return (e.Pid, start);
-                }
-                catch (ArgumentException) { /* gone */ }
-            }
+            if (WindowsCellBenchmark.CellMembers(held)?.FirstOrDefault(m => m.Name == "findstr") is { } reader) return (reader.Pid, reader.Start);
             await Task.Delay(50);
         }
-        throw new Xunit.Sdk.XunitException("the cell's reader never appeared under the stage");
+        throw new Xunit.Sdk.XunitException("the cell's reader never appeared in the attempt's job");
     }
 
     static async Task<bool> Gone(int pid)
