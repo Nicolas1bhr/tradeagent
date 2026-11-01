@@ -345,6 +345,18 @@ public static partial class Labels
         + "midnight, or sooner if that envelope is widened.";
 
     /// <summary>
+    /// A UNIT PAST ITS ENVELOPE (<c>U-turn-reservation</c>; R25 D13): what it spent and holds today is more than its envelope — a turn
+    /// cost more than it set aside and was charged in full, or the envelope was narrowed after the spending — so it takes no new turn
+    /// until it is back inside. Names the unit, the envelope and the excess.
+    /// </summary>
+    public static string UnitEnvelopeOverrun(string unit, decimal envelope, decimal over, bool plan = false) =>
+        $"{Capitalised(unit)} is {Amount(over)} past its {Amount(envelope)} envelope of today's "
+        + (plan ? "plan-capacity limit (your AI plan's turns counted at list price, not money)" : "AI spending limit") + " — a turn "
+        + "cost more than it set aside and was charged in full, or the envelope was made smaller after it was spent — so this turn "
+        + "was not started. Nothing was sent to the AI tool. It takes no new turn until it is back inside: after midnight, or "
+        + "sooner if that envelope is widened.";
+
+    /// <summary>
     /// THE SECURITY BOARD'S OWN BUDGET HAS NO ROOM (<c>U-board-b2</c> item 2; R24 § 4.1 "Its cost"): every board seat's launches today,
     /// summed, plus this one's reservation would pass the board's share of the day. Names the share, the ceiling and the room.
     /// </summary>
@@ -678,12 +690,50 @@ public static partial class Labels
     /// is stated in three: here, <c>CONTRACTS.md</c> and the user guide.
     /// </summary>
     public const string TurnAllowanceHint =
-        "TradeAgent sets this much aside before each turn: the input tokens at the dearer of the "
-        + "plain and cache-write rates, plus the output tokens at the output rate. A bigger "
+        "Before a turn billed to an API key — real money — or to a sign-in nobody could identify, TradeAgent sets this much aside: "
+        + "the input tokens at the dearer of the plain and cache-write rates, plus the output tokens at the output rate. A bigger "
         + "allowance is a safer limit and fewer turns a day. A smaller one sets less aside only where "
         + "the turn is held to it — TradeAgent's own harness, which stops a turn before it could pass it; "
         + "on the AI company's own program nothing can stop a turn midway, so there it never sets aside "
-        + "less than the shipped default. 0 in either box means the shipped default.";
+        + "less than the shipped default. 0 in either box means the shipped default. " + PlanReservationRule;
+
+    /// <summary>
+    /// HOW A TURN ON THE OWNER'S AI PLAN IS RESERVED, AND WHAT THAT COSTS THE LIMIT (<c>U-turn-reservation</c>; R25 D13): stated here,
+    /// in <c>CONTRACTS.md</c>, the user guide and <c>ORCHESTRATION.md</c> § 2.4 in the same terms. Advisory where it is advisory: a plan
+    /// limit can be passed, by at most the overrun of the turns already running when it filled.
+    /// </summary>
+    public const string PlanReservationRule =
+        "A turn on your AI plan (counted at list price, not money) sets aside what that seat and model have measured to cost: twice the "
+        + "dearest of their last 20 turns, never less than one typical turn (200,000 input and 4,000 output tokens) and never more than "
+        + "this allowance — two typical turns before five turns are measured. A turn that costs more than it set aside is charged in "
+        + "full, and its units take no new turn until they are back inside their envelopes, so a plan limit can be passed by at most "
+        + "the overrun of the turns already running when it filled, one per position.";
+
+    /// <summary>A reservation that is the whole bound because the turn is billed to an API key (<c>U-turn-reservation</c>; the Costs page).</summary>
+    public const string ReservationKeyBound =
+        "billed to an API key — real money — so the whole turn allowance is set aside";
+
+    /// <summary>A reservation that is the whole bound because nobody established who pays for the seat's turns.</summary>
+    public const string ReservationUnknownBound =
+        "nobody has established who pays for this seat's turns, so the whole turn allowance is set aside, as for real money";
+
+    /// <summary>A plan turn whose estimate reached the whole allowance: the allowance is the smaller, so it is what is set aside.</summary>
+    public const string ReservationBoundIsLower =
+        "on your AI plan; its measured estimate reaches the whole turn allowance, so the allowance is set aside";
+
+    /// <summary>A plan turn on a seat with fewer than five measured turns: two typical turns.</summary>
+    public static string ReservationNoHistory(int measured) =>
+        $"on your AI plan, with {(measured == 0 ? "no turn" : measured == 1 ? "1 turn" : $"{measured} turns")} of this seat and model "
+        + "measured yet (five are needed): two typical turns of 200,000 input and 4,000 output tokens are set aside";
+
+    /// <summary>A plan turn sized from its seat's measured turns.</summary>
+    public static string ReservationMeasured(int measured) =>
+        $"on your AI plan: twice the dearest of the last {measured} measured turns of this seat and model, at today's rate";
+
+    /// <summary>A plan turn whose measured turns cost less than half a typical turn: one typical turn, the floor.</summary>
+    public static string ReservationFloor(int measured) =>
+        $"on your AI plan: one typical turn (200,000 input and 4,000 output tokens), the least ever set aside — the last {measured} "
+        + "measured turns of this seat and model cost less than half that";
 
     /// <summary>
     /// A POSITION'S SEAT THAT CANNOT BE READ OR SERVED AS WRITTEN (<c>U-org-seats</c>): refused before anything is written, its wakes

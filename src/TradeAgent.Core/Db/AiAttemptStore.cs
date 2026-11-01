@@ -671,8 +671,11 @@ public sealed class AiAttemptStore(Database db)
         var room = envelope - funded.Spent - funded.Reserved;
         return new AiAdmission
         {
-            Refusal = never ?? Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room > 0m ? room : 0m, rule.Reservation,
-                plan: ceiling == BillingClasses.Plan),
+            // A UNIT ALREADY PAST ITS ENVELOPE (U-turn-reservation; R25 D13): a turn cost more than it set aside, was charged in full, and
+            // the unit takes no new turn until it is back inside — said in those words, never as a room of nothing.
+            Refusal = never ?? (room < 0m
+                ? Labels.UnitEnvelopeOverrun(OrgEnvelopes.NameOf(unitId), envelope, -room, plan: ceiling == BillingClasses.Plan)
+                : Labels.UnitEnvelopeReached(OrgEnvelopes.NameOf(unitId), envelope, room, rule.Reservation, plan: ceiling == BillingClasses.Plan)),
             Ceiling = unitId,
             Over = rule.Reservation - room,
             ResumesAt = rule.ResumesAt
@@ -1057,6 +1060,27 @@ public sealed class AiAttemptStore(Database db)
              ORDER BY started_at DESC, rowid DESC LIMIT 1
             """, ("$chair", CouncilRoles.Default), ("$role", role), ("$seat", seatClass));
         return c.ExecuteScalar() as string;
+    });
+
+    /// <summary>
+    /// THE LAST <paramref name="count"/> MEASURED TURNS OF ONE SEAT CLASS, RUNTIME AND MODEL, newest first (<c>U-turn-reservation</c>;
+    /// R25 D13): what a plan turn's reservation is sized from. MEASURED means ENDED with the runtime's own token figures — a LOST row and
+    /// a row that reported no usage carry a reservation as their cost, which is a charge and not a measurement, so neither is here. Every
+    /// billing class: the tokens a turn reads are the same whoever pays, and the caller prices them at today's rate. Matched with
+    /// <c>IS</c>, so a seat with no class or model is read by its own rows and never by another's.
+    /// </summary>
+    public IReadOnlyList<AiAttempt> MeasuredTurns(string? seatClass, string? runtime, string? model, int count) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"""
+            SELECT {Cols} FROM ai_attempt
+             WHERE state = 'ENDED' AND (input_tokens IS NOT NULL OR output_tokens IS NOT NULL)
+               AND seat_class IS $seat AND runtime IS $rt AND requested_model IS $model
+             ORDER BY ended_at DESC, rowid DESC LIMIT $n
+            """, ("$seat", seatClass), ("$rt", runtime), ("$model", model), ("$n", count));
+        using var r = c.ExecuteReader();
+        var list = new List<AiAttempt>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
     });
 
     /// <summary>
