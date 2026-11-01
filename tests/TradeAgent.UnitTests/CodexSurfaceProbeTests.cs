@@ -68,14 +68,17 @@ public class CodexSurfaceProbeTests
             Assert.True(File.Exists(urlFile), $"the stand-in codex never wrote the mock's address ({(run.IsCompleted ? "the probe ended first: " + (await Record.ExceptionAsync(async () => await run))?.Message : "not ready in " + readiness)})");
             var url = File.ReadAllText(urlFile).TrimEnd('/');
 
-            // THE REQUEST; the stand-in never exits on its own. Its answer means the mock has captured the body, and the probe's seam
-            // ends the deadline the instant the probe has seen it.
+            // THE REQUEST; the stand-in never exits on its own. The seam ends the deadline the instant the probe has captured the body —
+            // which is BEFORE the mock writes its answer — and the probe then tears the mock down, so this POST's own response may be cut
+            // off ("the response ended prematurely"): that is the probe doing what it does, not what the row asserts. The row's evidence
+            // that the request landed is the probe's own verdict (the control run returns the request's tools), so the POST's outcome is
+            // awaited, so nothing is left running, and read by nothing.
             using var body = new StringContent("{\"tools\":[{\"type\":\"function\",\"name\":\"request_user_input\"}]}", Encoding.UTF8, "application/json");
-            using var answer = await http.PostAsync(url + "/responses", body);
-            Assert.True(answer.IsSuccessStatusCode, $"the mock answered {(int)answer.StatusCode}");
+            var post = Record.ExceptionAsync(async () => { using var answer = await http.PostAsync(url + "/responses", body); });
 
             IReadOnlyList<string>? offered = null;
-            var ex = await Record.ExceptionAsync(async () => offered = await run);
+            var ex = await Record.ExceptionAsync(async () => offered = await run.WaitAsync(readiness)); // the deadline is infinite: a request that never lands fails here, loudly, not by hanging
+            await post;
             if (!warn)
             {
                 Assert.True(ex is null, $"the control run (no warning) was refused: {ex?.Message}");
