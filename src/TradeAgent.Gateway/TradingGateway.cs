@@ -7589,8 +7589,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// its own — the same exclusion <see cref="ExecutionRequestStore.TryCreateFlagged"/>'s wire
     /// clause makes, for the same reason.
     /// </summary>
+    ///
+    /// <para><b>ON THIS PLATFORM ONLY</b> (<c>U-atas-home-no-atas-build</c>, Codex re-review): an unconfirmed order sent to another
+    /// platform — ATAS's, while the paper venue stands in for it — cannot move this platform's position, so it refuses nothing here;
+    /// and this platform's book is no evidence about it, so the press never settles it from here.</para>
     List<ExecutionRequest> UnresolvedReducersOn(string instrument, OrderSide side) =>
-        _requests.Query("instrument = $i AND intent = 'PLACE' AND execution_state = 'UNKNOWN'", ("$i", instrument))
+        _requests.Query("connector_id = $c AND instrument = $i AND intent = 'PLACE' AND execution_state = 'UNKNOWN'",
+                ("$c", Connector.Id), ("$i", instrument))
             .Where(r => CouldMoveThePositionLike(r, side))
             .ToList();
 

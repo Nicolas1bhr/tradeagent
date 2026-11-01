@@ -51,15 +51,25 @@ public static class AtasHome
 
     /// <summary>The owner's second press: TradeAgent's paper venue for this build. Writes <see cref="StandInKey"/> and nothing else.</summary>
     ///
-    /// <para>An UNFINISHED setup is also sent back to its platform step (<see cref="OnboardingStep.TRADING_PLATFORM_SELECTED"/>): on the
-    /// stand-in its ATAS steps would pass as "not using ATAS", and a build with ATAS would then skip them. The owner chooses this build's
-    /// platform again in setup, and that choice is his.</para>
+    /// <para>An UNFINISHED setup is also sent back to its platform step, with every step that belongs to a platform undone
+    /// (<see cref="PlatformSteps"/>): on the stand-in its ATAS steps would pass as "not using ATAS", ATAS's account and checks would stand
+    /// for paper's, and a build with ATAS would then skip them. The owner chooses this build's platform again in setup, and that choice is
+    /// his. The setup is sent back BEFORE the stand-in is written, so a crash between the two leaves the refusal standing.</para>
     public static void ChoosePaper(Database db)
     {
-        db.SetKv(StandInKey, Platforms.Connectors.Paper);
         var setup = new OnboardingStore(db);
-        if (!setup.IsComplete()) setup.Clear(OnboardingStep.TRADING_PLATFORM_SELECTED);
+        if (!setup.IsComplete())
+            foreach (var step in PlatformSteps) setup.Clear(step);
+        db.SetKv(StandInKey, Platforms.Connectors.Paper);
     }
+
+    /// <summary>The setup steps that belong to the platform chosen, from choosing it to checking its order access.</summary>
+    public static readonly IReadOnlyList<OnboardingStep> PlatformSteps =
+    [
+        OnboardingStep.TRADING_PLATFORM_SELECTED, OnboardingStep.ATAS_INSTALLED, OnboardingStep.ATAS_BRIDGE_INSTALLED,
+        OnboardingStep.ATAS_BRIDGE_CONNECTED, OnboardingStep.TRADING_CONNECTION_FOUND, OnboardingStep.ACCOUNT_SELECTED,
+        OnboardingStep.MARKET_DATA_VERIFIED, OnboardingStep.ORDER_ACCESS_VERIFIED
+    ];
 
     /// <summary>
     /// Where the stand-in holds the ATAS account aside: <c>=</c> followed by the account id (empty when none was chosen) while held;
@@ -83,7 +93,13 @@ public static class AtasHome
             db.SetKv(HeldAccountKey, "");
             return;
         }
-        if (db.GetKv("connector") != Platforms.Connectors.Atas || held is { Length: > 0 }) return;
+        if (db.GetKv("connector") != Platforms.Connectors.Atas) return;
+        if (held is ['=', .. var aside])
+        {
+            // Held already. Still selected only where a crash came between the hold and the clearing: finish it.
+            if (aside.Length > 0 && gateway.Settings.SelectedAccountId == aside) gateway.Update(s => s.SelectedAccountId = null);
+            return;
+        }
         db.SetKv(HeldAccountKey, "=" + (gateway.Settings.SelectedAccountId ?? ""));
         gateway.Update(s => s.SelectedAccountId = null);
     }
