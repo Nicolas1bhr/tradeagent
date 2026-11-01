@@ -111,6 +111,12 @@ public class OrgSurfaceShellTests
                 const string switchModel = "Ui.Confirm(Labels.SeatModelSwitch(words), Labels.SeatModelSwitchConfirm(words),";
                 Assert.Single(Regex.Matches(text, Regex.Escape(switchModel)));
                 text = text.Replace(switchModel, "", StringComparison.Ordinal);
+                // REVISITED, OUT LOUD, BY U-cell-windows-egress (item 1; R25 D2): the owner's ONE press for web on Windows, then Windows' own
+                // permission prompt — made only once the sources hand the page a CellWeb press (the walk above hands none, so it still finds
+                // none). Exactly one, by its own label, and nowhere else in these sources.
+                const string web = "Ui.Primary(Labels.CellWebPress,";
+                Assert.Single(Regex.Matches(text, Regex.Escape(web)));
+                text = text.Replace(web, "", StringComparison.Ordinal);
                 // REVISITED, OUT LOUD, BY U-org-chief (item 7; its FILE SEAM gives it the organisation's card): the owner's presses over the
                 // chief, in their own class at the end of the file — the four two-press controls by their own labels, and the closed list of
                 // seats as plain presses — and nowhere else in the file. The walk above draws none: its sources hand the page no presses.

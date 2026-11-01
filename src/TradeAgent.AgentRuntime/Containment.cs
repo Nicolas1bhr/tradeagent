@@ -216,6 +216,17 @@ public sealed class ContainedProcess : IDisposable
     /// </summary>
     public AttemptContainer? Container { get; }
 
+    /// <summary>
+    /// THE PROCESSES THE ATTEMPT'S JOB HOLDS NOW (<c>U-cell-windows-egress</c>, card 3), a nested job's included — Windows' own list, never a
+    /// name — or null where there is no job (off Windows, an unheld launch, a job already ended) or Windows would not list it.
+    /// </summary>
+    public IReadOnlyList<int>? JobMembers()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        lock (_teardown)
+            return _closed || _job == IntPtr.Zero ? null : Win32.ProcessIds(_job);
+    }
+
     /// <summary>Set once the teardown has run: a container whose attempt was ended admits nobody.</summary>
     volatile bool _over;
 
@@ -375,6 +386,16 @@ public sealed class ContainedProcess : IDisposable
                         return MembershipVerdict.Unknown($"Windows would not say when process {peer.Pid} started");
                     if (created != peer.Start)
                         return MembershipVerdict.Outside($"process {peer.Pid} is no longer the process that connected");
+                    // A CELL'S PROCESS IS NEVER A GRANT'S PEER (U-cell-windows-egress, card 2): a cell's programs are in the attempt's job
+                    // too (the stage's job is nested in it), and only the closed loopback keeps them from the door. Defence in depth: a
+                    // peer whose token is an AppContainer's is refused here, before the job is asked; a token Windows will not read is Unknown.
+                    switch (WindowsToken.AppContainerSidOf(h))
+                    {
+                        case null:
+                            return MembershipVerdict.Unknown($"Windows would not say whether process {peer.Pid} runs in an AppContainer");
+                        case { Length: > 0 } container:
+                            return MembershipVerdict.Outside($"process {peer.Pid} runs in an AppContainer ({container}) — a cell's — and a cell is never served a grant");
+                    }
                     if (!Win32.IsProcessInJob(h, owner._job, out var inside))
                         return MembershipVerdict.Unknown($"Windows would not say whether process {peer.Pid} is in the job (error {Marshal.GetLastWin32Error()})");
                     return inside ? MembershipVerdict.Member
@@ -492,6 +513,35 @@ public sealed class ContainedProcess : IDisposable
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
+
+        [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "QueryInformationJobObject")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool QueryProcessIds(IntPtr job, int infoClass, IntPtr list, uint length, IntPtr returned);
+
+        const int JobObjectBasicProcessIdList = 3;
+
+        /// <summary>The job's process ids (JOBOBJECT_BASIC_PROCESS_ID_LIST: two counts, then one ULONG_PTR per process), or null.</summary>
+        internal static IReadOnlyList<int>? ProcessIds(IntPtr job)
+        {
+            for (var room = 256; room <= 65536; room *= 4)
+            {
+                var size = 2 * sizeof(uint) + room * IntPtr.Size;
+                var buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    var ok = QueryProcessIds(job, JobObjectBasicProcessIdList, buffer, (uint)size, IntPtr.Zero);
+                    var assigned = Marshal.ReadInt32(buffer);
+                    var listed = Marshal.ReadInt32(buffer, sizeof(uint));
+                    if (!ok && Marshal.GetLastWin32Error() != 234) return null;   // ERROR_MORE_DATA: a bigger list
+                    if (!ok || listed < assigned) continue;
+                    var ids = new int[listed];
+                    for (var i = 0; i < listed; i++) ids[i] = (int)Marshal.ReadIntPtr(buffer, 2 * sizeof(uint) + i * IntPtr.Size);
+                    return ids;
+                }
+                finally { Marshal.FreeHGlobal(buffer); }
+            }
+            return null;
+        }
 
         internal static uint ActiveProcesses(IntPtr job) =>
             QueryInformationJobObject(job, JobObjectBasicAccountingInformation, out var info,
