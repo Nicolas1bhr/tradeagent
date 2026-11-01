@@ -489,6 +489,33 @@ public class PlantedEdgeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A MALFORMED LATER TRAP IS REFUSED IN WORDS, NEVER A NULL REFERENCE (part b's carded P2; <c>U-proving-ground-d</c> item 4). The
+    /// market's pre-fee bound sums every pre-fee trap, so the first trap's check reads the later ones too — and a later one riding no
+    /// series of the proving ground, or one its market does not write, or a half-life of none, was read before its own check named it.
+    /// Each is now refused for what is wrong with it, in its own words, with nothing written.
+    /// </summary>
+    [Fact]
+    public void A_malformed_later_pre_fee_trap_is_refused_in_words_never_a_null_reference()
+    {
+        using var scratch = TestEnv.NewScratch("pre-fee-later");
+        IReadOnlyList<string> signal = [ProvingSources.Signal], both = [ProvingSources.Signal, ProvingSources.TakerRatio];
+        foreach (var (later, series, words) in new (SyntheticEdge Later, IReadOnlyList<string> Series, string Words)[]
+                 {
+                     (SyntheticEdge.PreFeeOnly(2, "no-such-series"), both, "'no-such-series' is none of them"),
+                     (SyntheticEdge.PreFeeOnly(2, ProvingSources.TakerRatio), signal, $"not '{ProvingSources.TakerRatio}'"),
+                     (SyntheticEdge.PreFeeOnly(2, ProvingSources.TakerRatio) with { HalfLifeDays = 0 }, both, "a half-life is a whole number of days")
+                 })
+        {
+            using var p = new Proving(Path.Combine(scratch.Dir, Guid.NewGuid().ToString("n")[..8]));
+            var spec = new SyntheticMarketSpec(56, "SYNA", VenueCatalog.BinanceSpot, Start, 2, SyntheticEdge.PreFeeOnly(2)) { Series = series, Edges = [later] };
+            var refused = Assert.Throws<ArgumentException>(() => p.Write(spec));
+            log.WriteLine(refused.Message);
+            Assert.Contains(words, refused.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(SyntheticMarket.TruthFile(p.Home, spec)), "a refused market wrote its truth");
+        }
+    }
+
+    /// <summary>
     /// A PLANTED MOVE WHOSE FIGURES CANNOT BE REPRESENTED IS REFUSED IN WORDS, NEVER STATED WITH A WRAPPED SHARPE (fix pass 2,
     /// finding 2). The reference trade's variance carries β² in ticks²: β 4,294,967,296 squares to 2^64, which a long wraps to
     /// zero, silently restoring the noise-only denominator. That β, the first past the largest whose square is a long

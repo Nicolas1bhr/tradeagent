@@ -357,6 +357,21 @@ internal static class PlantedEdges
     /// </summary>
     internal static string? Refusal(SyntheticMarketSpec spec, SyntheticEdge edge)
     {
+        if (Own(spec, edge) is { } own) return own;
+
+        // THE MARKET'S PRE-FEE BOUND READS EVERY PRE-FEE TRAP (MostPerRoundTrip(spec)), so each of them must be one this market can hold
+        // BEFORE it is read: a later trap riding no series of the proving ground, one its market does not write, or a half-life of none
+        // is refused for what is wrong with it, never read into a null reference by the first trap's check (part b's P2).
+        if (edge.Trap == EdgeTrap.PreFeeOnly)
+            foreach (var other in spec.Planted.Where(e => e.Trap == EdgeTrap.PreFeeOnly && !ReferenceEquals(e, edge)))
+                if (Own(spec, other) is { } theirs) return theirs;
+
+        return Trap(spec, edge);
+    }
+
+    /// <summary>WHY <paramref name="edge"/> ALONE CANNOT RIDE <paramref name="spec"/>'s MARKET — its own shape, before any market-wide figure reads it — or null.</summary>
+    static string? Own(SyntheticMarketSpec spec, SyntheticEdge edge)
+    {
         if (edge.HorizonMinutes is < 1 or > 60) return "a planted edge's horizon is 1 to 60 minutes";
         if (edge.BetaTicks is > MaxBetaTicks or < -MaxBetaTicks)
             return string.Create(CultureInfo.InvariantCulture,
@@ -377,6 +392,13 @@ internal static class PlantedEdges
         if (edge.Trap != EdgeTrap.LeakyJoin && edge.FirstSeenAfter != TimeSpan.Zero)
             return "only a leaky join names when its readings are first seen; every other series is first seen its declared delay after its source time";
 
+        return null;
+    }
+
+    /// <summary>WHY <paramref name="edge"/>'s TRAP IS NOT ONE ITS MARKET CAN HOLD, every pre-fee trap's own shape already checked — or null.</summary>
+    static string? Trap(SyntheticMarketSpec spec, SyntheticEdge edge)
+    {
+        var shape = ProvingSources.Shape(edge.Series)!;   // Own named a series without a shape
         switch (edge.Trap)
         {
             case EdgeTrap.LeakyJoin:
