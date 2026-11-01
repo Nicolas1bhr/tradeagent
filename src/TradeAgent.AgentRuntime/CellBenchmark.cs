@@ -187,7 +187,7 @@ public static class CellBenchmark
     /// <summary>The Windows rows every proof needs: any one failing, nothing is written.</summary>
     public static readonly IReadOnlyList<string> WindowsCoreRows =
     [
-        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
+        "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "kit-read-only", "no-egress",
         "loopback-denied", "own-lan-address-denied", "pipe-denied", "processes-denied", "descendants-cancelled", "slot-leaves-nothing",
         "route-a-exec-server"
     ];

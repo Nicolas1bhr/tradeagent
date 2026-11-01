@@ -9,8 +9,20 @@ namespace TradeAgent.Tests.Integration;
 static class KitFixture
 {
     public const string Skill = "kit-fixture-skill";
-    public const string Tool = "kit-fixture-tool";
+
+    /// <summary>The tool's name as a cell runs it: on Windows the PATHEXT finds its <c>.cmd</c>.</summary>
+    public const string ToolName = "kit-fixture-tool";
+
+    /// <summary>The tool's file name, as the index names it: a shell script, or on Windows a batch file.</summary>
+    public static string Tool => OperatingSystem.IsWindows() ? ToolName + ".cmd" : ToolName;
+
     public const string ToolSays = "kit-fixture-tool-ran";
+
+    /// <summary>
+    /// ON WINDOWS A SECOND TOOL, A PROGRAM: a copy of the system's own <c>cmd.exe</c> under this name, so a row shows a kit's program run
+    /// by name from the kit's <c>tools/</c> apart from a batch file, which the shell must also read.
+    /// </summary>
+    public const string ProgramName = "kit-fixture-program";
 
     public static Kit.View Installed(string root)
     {
@@ -19,10 +31,16 @@ static class KitFixture
         Directory.CreateDirectory(Path.Combine(src, Kit.ToolsDir));
         File.WriteAllText(Path.Combine(src, Kit.IndexFile),
             $"{{\"kit\": 1, \"name\": \"Fixture kit\", \"skills\": [{{\"name\": \"{Skill}\", \"description\": \"the fixture {Skill}\"}}], " +
-            $"\"tools\": [{{\"name\": \"{Tool}\", \"description\": \"the fixture {Tool}\"}}]}}");
+            $"\"tools\": [{{\"name\": \"{Tool}\", \"description\": \"the fixture {Tool}\"}}" +
+            (OperatingSystem.IsWindows() ? $", {{\"name\": \"{ProgramName}.exe\", \"description\": \"the fixture program\"}}" : "") + "]}");
         File.WriteAllText(Path.Combine(src, Kit.SkillsDir, Skill, Kit.SkillFile),
             $"---\nname: {Skill}\ndescription: the fixture {Skill}, which a test lists\n---\nA fixture skill.\n");
-        File.WriteAllText(Path.Combine(src, Kit.ToolsDir, Tool), $"#!/bin/sh\necho {ToolSays}\n");
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(Path.Combine(src, Kit.ToolsDir, Tool), $"@echo {ToolSays}\r\n");
+            File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), Path.Combine(src, Kit.ToolsDir, ProgramName + ".exe"));
+        }
+        else File.WriteAllText(Path.Combine(src, Kit.ToolsDir, Tool), $"#!/bin/sh\necho {ToolSays}\n");
         var home = Path.Combine(root, "app-home");
         Directory.CreateDirectory(Path.Combine(home, "state"));
         var (view, refusal) = Kit.Install(src, home);
