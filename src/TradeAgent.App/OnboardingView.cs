@@ -1145,9 +1145,11 @@ public sealed class OnboardingView
             {
                 var pairs = offered.Where(pair => !_unticked.Contains(pair)).ToList();
                 var done = await _host.Evidence.SetUpAsync(DateTimeOffset.UtcNow, pairs);
-                if (!done.Ok) throw new InvalidOperationException(done.Words);
                 // WHAT HAPPENED TO EACH PAIR, a failed one included, where he can read it after the step moves on.
                 _host.Gateway.Log.Activity("Setup: " + done.Words);
+                // A DOWNLOAD THAT STOPPED PART WAY KEEPS THE STEP OPEN (U-evidence-holdout-length): nothing was held back for that pair,
+                // the words say so on this screen, and the same press finishes it — the months already checked are not fetched again.
+                if (!done.Ok || done.Unfinished.Count > 0) throw new InvalidOperationException(done.Words);
                 Done(OnboardingStep.EVIDENCE_HELD);
             })),
             [Ui.Secondary("Later, in Settings", async () =>
