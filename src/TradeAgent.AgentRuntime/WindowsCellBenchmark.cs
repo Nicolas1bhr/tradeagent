@@ -51,6 +51,7 @@ public static class WindowsCellBenchmark
         var ws = Path.Combine(root, "ws");
         var codexHome = Path.Combine(root, "codex");
         var home = Path.Combine(root, "home");
+        var kitHome = Path.Combine(root, "kit-home");
         foreach (var d in new[] { ws, codexHome, home }) Directory.CreateDirectory(d);
 
         try
@@ -161,6 +162,38 @@ public static class WindowsCellBenchmark
                     return (o.Contains("DENIED", StringComparison.Ordinal) && !o.Contains("OPEN", StringComparison.Ordinal) && !File.Exists(probe), Trim(o));
                 }
                 finally { File.Delete(probe); }   // a timeout or a broken boundary never leaves the planted file for the real scanner (Codex, landing 3)
+            });
+
+            // THE OWNER'S KIT IS READ AND RUN, NEVER WRITTEN (U-kit-socket-2): a PROBE kit of the benchmark's own — an index and one tool,
+            // no skill — installed by the product's own Kit.Install into a home of the bench's (never the owner's kit), granted by the
+            // product's own policy (RouteA.WindowsPolicy with the kit), its files' read-only attributes taken off so every denial is the
+            // AppContainer's. The cell reads the index, runs the tool by its name from the PATH, and every write into the kit is refused.
+            await Row("kit-read-only", async () =>
+            {
+                var src = Path.Combine(root, "kit-src");
+                Directory.CreateDirectory(Path.Combine(src, Kit.ToolsDir));
+                File.WriteAllText(Path.Combine(src, Kit.IndexFile),
+                    "{\"kit\": 1, \"name\": \"cell benchmark probe\", \"skills\": [], \"tools\": [{\"name\": \"kit-probe.cmd\", \"description\": \"prints one word\"}]}");
+                File.WriteAllText(Path.Combine(src, Kit.ToolsDir, "kit-probe.cmd"), "@echo kit-probe-ran\r\n");
+                var (kit, refusal) = Kit.Install(src, kitHome);
+                if (kit is null) return (false, "the probe kit did not install: " + refusal);
+                foreach (var f in Directory.EnumerateFiles(kit.Dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
+                var kitted = RouteA.WindowsPolicy(ws, codex ?? cmd, codex is not null ? RouteA.CodexRoot(codex) : system32, codexHome, home, CellEgress.None, kit);
+                var tool = kit.ToolPath("kit-probe.cmd");
+                var (_, o) = await Script(kitted, "kit",
+                    $"type \"{Path.Combine(kit.Dir, Kit.IndexFile)}\" > {Sink("k")} && (echo KIT-READ-OPEN) || (echo KIT-READ-DENIED)\n" +
+                    "kit-probe || (echo TOOL-FAILED)\n" +
+                    $"echo x> \"{Path.Combine(kit.Dir, "planted.txt")}\" && (echo KIT-CREATE-OPEN) || (echo KIT-CREATE-DENIED)\n" +
+                    $"echo x> \"{Path.Combine(kit.Tools!, "planted.cmd")}\" && (echo TOOLS-CREATE-OPEN) || (echo TOOLS-CREATE-DENIED)\n" +
+                    $"echo x>> \"{tool}\" && (echo TOOL-WRITE-OPEN) || (echo TOOL-WRITE-DENIED)\n" +
+                    $"mkdir \"{Path.Combine(kit.Dir, "planted")}\" && (echo KIT-MKDIR-OPEN) || (echo KIT-MKDIR-DENIED)\n" +
+                    $"del /f /q \"{tool}\"\nif exist \"{tool}\" (echo TOOL-REMOVE-DENIED) else (echo TOOL-REMOVE-OPEN)");
+                string[] denied = ["KIT-CREATE-DENIED", "TOOLS-CREATE-DENIED", "TOOL-WRITE-DENIED", "KIT-MKDIR-DENIED", "TOOL-REMOVE-DENIED"];
+                var whole = Kit.HashOf(kit.Dir) == kit.Hash;
+                var opened = denied.Select(d => d.Replace("-DENIED", "-OPEN", StringComparison.Ordinal)).Where(x => o.Contains(x, StringComparison.Ordinal));
+                var held = o.Contains("KIT-READ-OPEN", StringComparison.Ordinal) && o.Contains("kit-probe-ran", StringComparison.Ordinal)
+                           && denied.All(d => o.Contains(d, StringComparison.Ordinal)) && !opened.Any() && whole;
+                return (held, $"{Trim(o)}; the kit {(whole ? "hashes as installed" : "CHANGED")}");
             });
 
             // EGRESS NONE REACHES NOTHING (Codex, landing 3): the internet on 443 by name — and the failure is curl's own resolve/connect
@@ -294,7 +327,7 @@ public static class WindowsCellBenchmark
                 await Script(none, "slot", "echo done");
                 WindowsCellStage.SweepFree();
                 var sids = WindowsCellStage.SlotSids().Select(s => new SecurityIdentifier(s)).ToHashSet();
-                var left = new[] { ws, codexHome, home }.Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
+                var left = new[] { ws, codexHome, home, Kit.Dir(kitHome) }.Where(Directory.Exists).Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
                     .Cast<FileSystemAccessRule>().Count(r => sids.Contains((SecurityIdentifier)r.IdentityReference)));
                 var records = Directory.Exists(WindowsCellStage.SlotDirectory) ? Directory.GetFiles(WindowsCellStage.SlotDirectory, "*.grants").Length : 0;
                 return (left == 0 && records == 0, $"after every cell: {left} slot ACE(s) on the bench folders, {records} grant record(s)");
@@ -302,6 +335,9 @@ public static class WindowsCellBenchmark
         }
         finally
         {
+            // THE PROBE KIT'S FILES ARE READ-ONLY until its row takes that off; a row that failed first leaves them so.
+            try { foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the delete below says nothing either */ }
             try { Directory.Delete(root, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* swept later */ }
         }
 

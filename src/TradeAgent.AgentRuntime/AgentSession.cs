@@ -1387,13 +1387,16 @@ public sealed class AgentSession(
         try
         {
             var layout = RouteA.LayoutFor(key);
-            var policy = RouteA.WindowsPolicy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome, egress);
+            // THE OWNER'S KIT, READ ONCE FOR THIS LAUNCH (U-kit-socket-2), as on Linux: the slot's grants and the harness's skill root
+            // are made from this one reading.
+            var kit = Kit.Granted();
+            var policy = RouteA.WindowsPolicy(workspace(), exe, RouteA.CodexRoot(exe), layout.CellCodexHome, layout.CellHome, egress, kit);
             var launcher = cells!.Launcher ?? throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
                 "TradeAgent's own trade command, which starts a cell, is not installed; nothing was started");
             policyFile = policy.Write();
             homes = layout;
             RouteA.Make(layout, SeatProfile.ConfigBytes(seat), RouteA.EnvironmentsToml(launcher, null, policyFile, exe, Paths.Home),
-                Path.Combine(seat.Root, "codex", "auth.json"));
+                Path.Combine(seat.Root, "codex", "auth.json"), kit);
             psi.Environment["CODEX_HOME"] = layout.HarnessCodexHome;
             started = ProcessContainment.Start(psi, launcher, requireHeld: true, attemptId: attemptId);
             if (!started.Held) throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"the harness was not held ({started.Mechanism})");
