@@ -254,7 +254,7 @@ sealed class SettingsPage
         _dataPair = Ui.TextField(host.Gateway.Settings.MarketDataPair, "BTCUSDT");
         _dataPair.Width = 180;
         _dataPair.HorizontalAlignment = HorizontalAlignment.Left;
-        _collect = Ui.Secondary("Download 12 months", CollectDataAsync);
+        _collect = Ui.Secondary($"Download {BinanceArchive.MonthsWanted} months", CollectDataAsync);
         _collect.HorizontalAlignment = HorizontalAlignment.Left;
         _dataBusy.IsVisible = false;
         _dataNote.IsVisible = false;
@@ -347,7 +347,7 @@ sealed class SettingsPage
                      + "archive otherwise. One that looks addressed to an AI is flagged and its text withheld, no link in them is "
                      + "opened, and the AI cannot start, stop or change it. Source: the GDELT Project."),
             Ui.Divider(),
-            Ui.Muted("TradeAgent downloads the twelve most recent complete months of 1-minute bars from Binance's " +
+            Ui.Muted($"TradeAgent downloads the {BinanceArchive.MonthsWanted} most recent complete months of 1-minute bars from Binance's " +
                      "public archive and checks every file against the checksum Binance published beside it. A month " +
                      "that has not been published is recorded as such; a file whose bytes do not match is thrown away."),
             Ui.Micro("This is history to research with. It is not a trading connection, it does not decide what the AI " +
@@ -642,9 +642,9 @@ sealed class SettingsPage
     }
 
     /// <summary>
-    /// The owner's one press. It saves the pair, fetches the twelve months, normalises what arrived
-    /// and records the provenance — all off the UI thread, because a twelve-month collection is
-    /// twenty-five megabytes over a domestic line and a frozen window is not a progress indicator.
+    /// The owner's one press. It saves the pair, fetches the thirty-six months, normalises what arrived
+    /// and records the provenance — all off the UI thread, because a thirty-six-month collection is
+    /// about seventy megabytes over a domestic line and a frozen window is not a progress indicator.
     ///
     /// A failure is a sentence on this card, never an exception into the app: the archive is a
     /// public bucket and being unable to reach it is an ordinary Tuesday.

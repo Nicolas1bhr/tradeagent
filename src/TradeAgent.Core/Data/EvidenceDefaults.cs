@@ -11,9 +11,13 @@ namespace TradeAgent.Core.Data;
 /// <para><b>The last <see cref="HoldoutMonths"/> complete calendar months of the download</b>, from the first instant of
 /// the earliest of them, UTC. Whole months because the archive is published in whole months and a boundary that fell
 /// inside one would hold back a part of a file nobody can point at; the most recent ones because a holdout is the
-/// months nearest the present a strategy will trade in. Three of twelve keeps nine months for research and is a choice,
-/// stated: <c>Inconclusive.ShortHoldout</c> calls any holdout under a year short, so a loss over these months is
-/// inconclusive rather than a refutation — which is what three months can honestly say.</para>
+/// months nearest the present a strategy will trade in. <b>Twelve of thirty-six</b> (<c>U-evidence-holdout-length</c>; R25 D12,
+/// decided by the orchestrator on the owner's behalf, his to overrule): twelve whole months are 365 or 366 days, which is what the
+/// referee asks of a holdout before it can be conclusive — <c>Inconclusive.ShortHoldout</c> calls a loss over less inconclusive, and
+/// the α-test (<c>AlphaWealth.MinHoldoutDays</c>) is run only over 365 known days or more. Three of twelve, the default before it,
+/// made every verdict inconclusive (R27). Nothing about the scorer is lowered: the bar stays and the data meets it. The margin is
+/// none in a year without a 29 February — 365 days exactly — so a holdout missing a whole UTC day of bars, or judged on daily bars
+/// that open off midnight UTC, counts 364 known days and its α-test stays inconclusive.</para>
 ///
 /// <para><b>It never chooses a date for a dataset that already has one.</b> A cutoff the owner set is his, and moving it
 /// later while no campaign holds it would RELEASE months he held back; the setup step opens the campaign at the cutoff
@@ -21,8 +25,8 @@ namespace TradeAgent.Core.Data;
 /// </summary>
 public static class EvidenceDefaults
 {
-    /// <summary>How many of the download's most recent complete months are held back.</summary>
-    public const int HoldoutMonths = 3;
+    /// <summary>How many of the download's most recent complete months are held back: twelve, a year the referee can be conclusive over.</summary>
+    public const int HoldoutMonths = 12;
 
     /// <summary>
     /// THE PAIRS SETUP OFFERS, EACH HELD BACK UNDER ITS OWN CAMPAIGN (<c>U-evidence-breadth</c> item 1): Binance spot's five most

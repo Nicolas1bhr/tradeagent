@@ -88,7 +88,7 @@ public class BinanceArchiveTests
     }
 
     [Fact]
-    public async Task Twelve_months_are_asked_for_and_the_months_that_are_missing_are_reported_too()
+    public async Task Thirty_six_months_are_asked_for_and_the_months_that_are_missing_are_reported_too()
     {
         using var archive = new FakeArchive();
         var now = new DateTimeOffset(2026, 9, 7, 16, 0, 0, TimeSpan.Zero);
@@ -96,10 +96,10 @@ public class BinanceArchiveTests
 
         var results = await new BinanceArchiveClient(archive.BaseUrl).CollectMonthsAsync("XRPUSDT", now);
 
-        Assert.Equal(12, results.Count);
-        Assert.Equal("2025-09", results[0].Month);
+        Assert.Equal(36, results.Count);
+        Assert.Equal("2023-09", results[0].Month);
         Assert.Equal(MonthOutcome.NotPublished, results[0].Outcome);
-        Assert.Equal(11, results.Count(r => r.Outcome == MonthOutcome.Collected));
+        Assert.Equal(35, results.Count(r => r.Outcome == MonthOutcome.Collected));
         Assert.All(results.Where(r => r.Outcome == MonthOutcome.Collected),
             r => Assert.StartsWith(BinanceArchive.RawDir("XRPUSDT"), r.File!.Path));
     }
@@ -191,12 +191,12 @@ public class BinanceArchiveTests
     }
 
     [Fact]
-    public void The_twelve_months_asked_for_never_include_the_month_in_progress()
+    public void The_thirty_six_months_asked_for_never_include_the_month_in_progress()
     {
         var months = BinanceArchive.RecentCompleteMonths(new DateTimeOffset(2026, 9, 7, 16, 0, 0, TimeSpan.Zero));
 
-        Assert.Equal(12, months.Count);
-        Assert.Equal(new DateOnly(2025, 9, 1), months[0]);
+        Assert.Equal(36, months.Count);
+        Assert.Equal(new DateOnly(2023, 9, 1), months[0]);
         Assert.Equal(new DateOnly(2026, 8, 1), months[^1]);
         Assert.DoesNotContain(new DateOnly(2026, 9, 1), months);
     }

@@ -136,9 +136,9 @@ public class DatasetLedgerTests
 
         var set = first.Dataset!;
         Assert.Equal(BinanceArchive.Source, set.Source);
-        Assert.Equal(12, set.MonthsAttempted);
-        Assert.Equal(12, set.MonthsPresent);
-        Assert.Equal(12, set.Files.Count);
+        Assert.Equal(BinanceArchive.MonthsWanted, set.MonthsAttempted);
+        Assert.Equal(BinanceArchive.MonthsWanted, set.MonthsPresent);
+        Assert.Equal(BinanceArchive.MonthsWanted, set.Files.Count);
         Assert.All(set.Files, f =>
         {
             Assert.StartsWith("http://127.0.0.1:", f.Url);
@@ -147,7 +147,7 @@ public class DatasetLedgerTests
             Assert.True(f.Bytes > 0);
             Assert.Equal(KlineTimeUnit.Microseconds, f.Unit);
         });
-        Assert.Equal(36, set.Bars);
+        Assert.Equal(BinanceArchive.MonthsWanted * 3, set.Bars);
     }
 
     [Fact]
@@ -193,7 +193,7 @@ public class DatasetLedgerTests
         using var _a = archive;
         var set = first.Dataset!;
         var raw = set.Files.ToDictionary(f => f.Path, f => File.ReadAllBytes(f.Path));
-        Assert.Equal(12, raw.Count);
+        Assert.Equal(BinanceArchive.MonthsWanted, raw.Count);
 
         archive.AlwaysAnswer = HttpStatusCode.ServiceUnavailable;
         var offline = await svc.CollectAsync(pair, Now);
@@ -240,9 +240,53 @@ public class DatasetLedgerTests
         Assert.Equal(HashedName(pair, month, republished), kept.Path);
         Assert.Equal(FakeArchive.Sha256(republished), kept.ComputedSha256);
         Assert.True(Still(kept.Path, republished), $"{kept.Path} does not hold the bytes the vendor re-published");
-        Assert.Equal(11, second.Files.Count(f => raw.ContainsKey(f.Path)));
+        Assert.Equal(BinanceArchive.MonthsWanted - 1, second.Files.Count(f => raw.ContainsKey(f.Path)));
         Assert.NotEqual(set.NormalisedSha256, second.NormalisedSha256);
         Assert.Equal(DatasetState.ACCEPTED, svc.Store.Checked(svc.Store.ById(second.Id)!).State);
+    }
+
+    /// <summary>
+    /// (iii) A COLLECTION AFTER ONE THAT STOPPED PART WAY FETCHES ONLY WHAT DID NOT ARRIVE — AND NEVER REUSES A KEPT FILE THE VENDOR'S
+    /// CHECKSUM DOES NOT NAME (<c>U-evidence-holdout-length</c> item 1: the thirty-six-month download resumes). The first press loses one
+    /// month to a checksum mismatch; before the second, the vendor serves that month properly and another month's kept file stops being the
+    /// bytes its checksum names. The second press downloads exactly those two months — every other one is the file already kept, matched
+    /// against the checksum the vendor publishes now — and the changed one is kept beside the old file, never over it.
+    ///
+    /// <para>RED on the base, which downloaded every month again; the mutant that reuses a kept file without comparing its hash downloads
+    /// only the first.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_collection_after_one_that_stopped_part_way_fetches_only_what_did_not_arrive_and_never_a_file_its_checksum_does_not_name()
+    {
+        var pair = TestEnv.NewPair();
+        var months = BinanceArchive.RecentCompleteMonths(Now);
+        var (lost, changed) = (months[5], months[^1]);
+        using var archive = new FakeArchive();
+        foreach (var m in months)
+            if (m == lost) archive.PublishWithWrongChecksum(pair, m, Rows(m));
+            else archive.Publish(pair, m, Rows(m));
+        using var db = TestEnv.NewDb();
+        var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
+
+        var first = await svc.CollectAsync(pair, Now);
+        Assert.Equal(MonthOutcome.ChecksumMismatch, Assert.Single(first.Months, m => m.Outcome != MonthOutcome.Collected).Outcome);
+
+        archive.Publish(pair, lost, Rows(lost));
+        var kept = Path.Combine(BinanceArchive.RawDir(pair), BinanceArchive.FileName(pair, changed));
+        File.WriteAllBytes(kept, [.. File.ReadAllBytes(kept), 0]);
+        var before = archive.Requests.Count;
+
+        var second = await svc.CollectAsync(pair, Now);
+
+        var zips = archive.Requests.Skip(before)
+            .Where(r => r.Method == "GET" && r.PathAndQuery.EndsWith(".zip", StringComparison.Ordinal)).Select(r => r.PathAndQuery).ToList();
+        Assert.Equal([FakeArchive.PathOf(pair, lost), FakeArchive.PathOf(pair, changed)], zips);
+        Assert.All(second.Months, m => Assert.Equal(MonthOutcome.Collected, m.Outcome));
+        var set = second.Dataset!;
+        Assert.Equal(months.Count, set.Files.Count);
+        Assert.All(set.Files, f => Assert.Equal(f.PublishedSha256, f.ComputedSha256));
+        Assert.NotEqual(kept, Assert.Single(set.Files, f => f.Month == BinanceArchive.MonthName(changed)).Path);
+        Assert.Equal(DatasetState.ACCEPTED, svc.Store.Checked(svc.Store.ById(set.Id)!).State);
     }
 
     /// <summary>

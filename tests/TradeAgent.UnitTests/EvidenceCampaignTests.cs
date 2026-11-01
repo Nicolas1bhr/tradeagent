@@ -25,12 +25,12 @@ public class EvidenceCampaignTests
     /// <summary>When the passes in these tests run: after the first download's last bar closed.</summary>
     static readonly DateTimeOffset Now = new(2026, 10, 30, 12, 0, 0, TimeSpan.Zero);
 
-    /// <summary>The first download: October 2025 to September 2026, minute bars.</summary>
-    static readonly DateTimeOffset First = new(2025, 10, 1, 0, 0, 0, TimeSpan.Zero);
+    /// <summary>The first download: the thirty-six months October 2023 to September 2026, minute bars (R25 D12).</summary>
+    static readonly DateTimeOffset First = new(2023, 10, 1, 0, 0, 0, TimeSpan.Zero);
     static readonly DateTimeOffset Last = new(2026, 9, 30, 23, 59, 0, TimeSpan.Zero);
 
-    /// <summary>The default holdout of that download: July, August and September 2026.</summary>
-    static readonly DateTimeOffset DefaultCutoff = new(2026, 7, 1, 0, 0, 0, TimeSpan.Zero);
+    /// <summary>The default holdout of that download: its last twelve months, October 2025 to September 2026.</summary>
+    static readonly DateTimeOffset DefaultCutoff = new(2025, 10, 1, 0, 0, 0, TimeSpan.Zero);
 
     /// <summary>The fresh cutoff a pass at <see cref="Now"/> arms: the first UTC midnight after it.</summary>
     static readonly DateTimeOffset Fresh = new(2026, 10, 31, 0, 0, 0, TimeSpan.Zero);
@@ -92,16 +92,81 @@ public class EvidenceCampaignTests
     // ---- item 1: setup's one press ---------------------------------------------------------------
 
     /// <summary>
-    /// THE DEFAULT HOLDS BACK THE LAST THREE COMPLETE MONTHS, FROM A MONTH'S FIRST INSTANT, UTC — and nothing for a download too
-    /// short to keep a research month before them.
+    /// THE DEFAULT DOWNLOAD IS THIRTY-SIX COMPLETE MONTHS AND ITS LAST TWELVE ARE HELD BACK (<c>U-evidence-holdout-length</c>; R25 D12,
+    /// decided on the owner's behalf) — A HOLDOUT THE REFEREE CAN BE CONCLUSIVE OVER, for every month a download can end in, leap years
+    /// included: the span <see cref="Inconclusive"/> reads (the cutoff to the last bar's close) is at least
+    /// <see cref="Inconclusive.ShortHoldout"/>, and the known days the α-test counts — <see cref="DailyReturns"/>' UTC days over one bar
+    /// a day from the cutoff to that close — are at least <see cref="AlphaWealth.MinHoldoutDays"/>; twenty-four research months stand
+    /// before it. Nothing for a download of twelve months, which would leave none to research. RED on the base: three months held back
+    /// span 91 to 92 days.
     /// </summary>
     [Fact]
-    public void The_default_holds_back_the_last_three_complete_months_and_keeps_research_months_before_them()
+    public void The_default_holds_back_the_last_twelve_of_thirty_six_months_a_span_the_referee_can_be_conclusive_over()
     {
-        using var db = TestEnv.NewDb();
+        var daily = BarGrid.Uniform(TimeSpan.FromDays(1));
+        for (var newest = new DateOnly(2024, 1, 1); newest <= new DateOnly(2040, 12, 1); newest = newest.AddMonths(1))
+        {
+            var asked = BinanceArchive.RecentCompleteMonths(new DateTimeOffset(newest.AddMonths(1).ToDateTime(new TimeOnly(12, 0)), TimeSpan.Zero));
+            var first = new DateTimeOffset(asked[0].ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            var close = new DateTimeOffset(asked[^1].AddMonths(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
 
-        Assert.Equal(DefaultCutoff, EvidenceDefaults.Cutoff(Recorded(db, TestEnv.NewPair(), First, Last)));
-        Assert.Null(EvidenceDefaults.Cutoff(Recorded(db, TestEnv.NewPair(), new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero), Last)));
+            var cutoff = EvidenceDefaults.Cutoff(Row(first, close.AddMinutes(-1)));
+            Assert.True(cutoff is not null, $"a download ending {newest:yyyy-MM} holds back nothing by default");
+            var span = close - cutoff!.Value;
+            Assert.True(span >= Inconclusive.ShortHoldout, $"a download ending {newest:yyyy-MM} holds back {span.TotalDays} days");
+
+            var bars = new List<BacktestEvent>();
+            for (var open = cutoff.Value; open < close; open = open.AddDays(1))
+                bars.Add(new BacktestEvent { Ordinal = bars.Count + 1, Bar = open, Kind = BacktestEventKind.Bar, Status = "Idle", Equity = 10_000m + bars.Count });
+            var known = Deflation.Known(DailyReturns.Of(new BacktestTrace(bars), daily, 10_000m)).Count;
+            Assert.True(known >= AlphaWealth.MinHoldoutDays, $"a download ending {newest:yyyy-MM} holds back {known} known days");
+
+            Assert.Equal(first.AddMonths(BinanceArchive.MonthsWanted - EvidenceDefaults.HoldoutMonths), cutoff);
+        }
+
+        Assert.Equal(DefaultCutoff, EvidenceDefaults.Cutoff(Row(First, Last)));
+        Assert.Null(EvidenceDefaults.Cutoff(Row(DefaultCutoff, Last)));
+        Assert.Equal((36, 12), (BinanceArchive.MonthsWanted, EvidenceDefaults.HoldoutMonths));
+    }
+
+    /// <summary>A dataset row over the bars named, never stored — what <see cref="EvidenceDefaults.Cutoff"/> reads.</summary>
+    static DatasetRecord Row(DateTimeOffset first, DateTimeOffset last) => new(
+        0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", BinanceArchive.MonthsWanted, BinanceArchive.MonthsWanted, [],
+        "not-read-here.csv", "aa11", 1000, first, last, 0, [], false, 0, 0, 0, Now, DatasetState.ACCEPTED, null, []);
+
+    /// <summary>
+    /// A DOWNLOAD THAT STOPPED PART WAY HOLDS NOTHING BACK, AND THE NEXT PRESS FINISHES IT (<c>U-evidence-holdout-length</c> item 1): a
+    /// month that did not arrive — here one the vendor could not be reached for — leaves the pair with no cutoff and no campaign, and the
+    /// words say how much arrived and that pressing again fetches only the rest; the next press downloads again and holds back the
+    /// default over the whole download. RED on the base, which held back the last months of whatever arrived.
+    /// </summary>
+    [Fact]
+    public async Task A_download_that_stopped_part_way_holds_nothing_back_and_the_next_press_finishes_it()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var owned = db;
+        await using var gateway = gw;
+        var pair = TestEnv.NewPair();
+        var presses = 0;
+        var evidence = new EvidenceCampaigns(() => gw, (p, _, _, _) =>
+        {
+            var n = ++presses;
+            var months = BinanceArchive.RecentCompleteMonths(Now).Select((m, i) => new MonthResult(BinanceArchive.MonthName(m),
+                n == 1 && i == 20 ? MonthOutcome.Unreachable : MonthOutcome.Collected, null, "")).ToList();
+            return Task.FromResult(new DataCollection(OnDisk(db, p, First, Last, $"v{n}"), months,
+                n == 1 ? "35 of 36 periods collected (1 missing, 1 of them because the source could not be reached)." : "36 of 36 periods collected."));
+        });
+
+        var first = await evidence.SetUpAsync(Now, [pair]);
+        Assert.Empty(first.Campaigns);
+        Assert.Empty(gw.Campaigns.All());
+        Assert.Null(gw.Datasets.Newest(pair)!.HoldoutFrom);
+        Assert.Contains("35 of 36 periods collected", first.Words, StringComparison.Ordinal);
+        Assert.Contains("Press again", first.Words, StringComparison.Ordinal);
+
+        var second = await evidence.SetUpAsync(Now, [pair]);
+        Assert.Equal(2, presses);
+        Assert.Equal(DefaultCutoff, Assert.Single(second.Campaigns).HoldoutFrom);
     }
 
     /// <summary>
@@ -465,6 +530,34 @@ public class EvidenceCampaignTests
         Assert.Equal($"{pair}, campaign {k1.Id}, held back from 2026-07-01 UTC: 0 of 1 final judgements and 5 of 5 research runs left. "
             + $"Its final judgements are spent; the next {pair} campaign waits for fresh bars from {armed.Cutoff:yyyy-MM-dd} UTC — at least "
             + $"30 days of them — so it opens no earlier than {armed.Earliest:yyyy-MM-dd} (31 days from now).", lines[pair]);
+    }
+
+    /// <summary>
+    /// THE OWNER'S PAGE SAYS, PER CAMPAIGN, WHETHER ITS HOLDOUT CAN YIELD A CONCLUSIVE VERDICT (<c>U-evidence-holdout-length</c> item 3):
+    /// a campaign holding back twelve months — 365 days to its dataset's last close — can; one holding back three (92 days: a later
+    /// cutoff the owner typed in Settings, or a renewal's fresh month) says no verdict over it is conclusive and names the inconclusive
+    /// path. RED on the base, which said neither.
+    /// </summary>
+    [Fact]
+    public async Task The_owner_page_says_per_campaign_whether_its_holdout_can_yield_a_conclusive_verdict()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var owned = db;
+        await using var gateway = gw;
+        var (year, quarter) = (TestEnv.NewPair(), TestEnv.NewPair());
+        var (heldYear, _) = gw.SetHoldout(Recorded(db, year, First, Last).Id, DefaultCutoff, EvaluationClass.Research);
+        Assert.True(heldYear.Ok, heldYear.Why);
+        var (heldQuarter, _) = gw.SetHoldout(Recorded(db, quarter, First, Last).Id, new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero),
+            EvaluationClass.Research);
+        Assert.True(heldQuarter.Ok, heldQuarter.Why);
+        var evidence = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
+
+        var lines = evidence.Standings().ToDictionary(r => r.Pair, r => r.Line(Now));
+        Assert.Contains("Its holdout spans 365 days — long enough for the referee to reach a conclusive verdict.", lines[year],
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("inconclusive", lines[year], StringComparison.Ordinal);
+        Assert.Contains("Its holdout spans 92 days, under 365, so no verdict over it is conclusive", lines[quarter], StringComparison.Ordinal);
+        Assert.Contains("reaches paper only through the inconclusive path", lines[quarter], StringComparison.Ordinal);
     }
 
     /// <summary>A SPENT CAMPAIGN'S REFUSAL SAYS WHAT FOLLOWS IT: the fresh cutoff and the thirty days it waits for.</summary>
