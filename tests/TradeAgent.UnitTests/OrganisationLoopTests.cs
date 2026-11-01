@@ -40,7 +40,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
     static readonly DateTimeOffset Bar0 = new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
     const int Bars = 120, HoldoutAtBar = 60;
 
-    /// <summary>Buys the dip and sells the rip over bars cycling 96 → 105: profitable over the held-back months (RefereeVerdictTests).</summary>
+    /// <summary>Buys the dip and sells the rip over bars cycling 96 → 105, three minutes a level: profitable over the held-back months (RefereeVerdictTests).</summary>
     const string Winning =
         "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\nexit when close > 103\nentry when close < 97\n";
 
@@ -85,7 +85,9 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
         for (var i = 0; i < Bars; i++)
         {
-            var close = 96m + i % 10;
+            // EACH LEVEL HELD THREE MINUTES, as RefereeVerdictTests' bars (U-backtest-parity): an order fills two minutes after the minute
+            // it was learnt on, at the level it was learnt at, so "winning" and "losing" stay true by construction.
+            var close = 96m + i / 3 % 10;
             text.Append(CultureInfo.InvariantCulture,
                 $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }
