@@ -605,7 +605,19 @@ work was asked for and your supplier billed for it, so closing TradeAgent mid-tu
 money back, and neither does midnight. And **the last part of your limit is held in reserve**, so the
 AI stops a little before the number rather than a little after it.
 
-**How much is set aside, and the two boxes that change it.** Before each turn TradeAgent reserves
+**On your AI plan, a turn sets aside what it has been measured to cost.** A turn billed to your ChatGPT
+plan is counted at list price against the plan's limit, and no money moves; reserving the most such a turn
+could ever read (over two dollars at your rates) left a small team unable to start a single turn. So a plan
+turn sets aside twice the dearest of the last 20 turns its seat and model have actually run, priced at
+today's rate — never less than one typical turn (200,000 input and 4,000 output tokens) and never more than
+the allowance below, and two typical turns until five turns have been measured. The **Costs** page shows,
+for each position, what its next turn sets aside and why. The price is that a turn can cost more than it set
+aside: it is charged in full, and its team or division then takes no new turn until it is back inside its
+share — after midnight, or sooner if the share is widened. **A plan limit can therefore be passed, by at most
+the overrun of the turns already running when it filled.** A turn on an API key — real money — is never
+reserved this way: it always sets aside the whole allowance, below.
+
+**How much is set aside, and the two boxes that change it.** Before each turn on an API key TradeAgent reserves
 *the most tokens a turn may use, priced at the dearest rate the same tokens can be billed at*: the
 input allowance at whichever is higher of the plain and cache-write rates, plus the output allowance
 at the output rate, with reasoning counted inside output. Assuming the cheaper of the two would let a
