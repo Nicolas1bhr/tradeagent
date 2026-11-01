@@ -59,15 +59,16 @@ public class KitSkillsProbeTests(Xunit.Abstractions.ITestOutputHelper output)
 /// THE SAME ON WINDOWS, ON THE REAL PINNED BINARY (<c>U-kit-socket-2</c>): the harness's codex home holds the skill root the product lays
 /// there (<see cref="RouteA.LaySkills"/>) — a JUNCTION, never a symlink — and the cell class's first request lists the fixture skill at the
 /// KIT's own path (the path a Windows cell is granted, read and execute), never at the junction's path inside the codex home; the broker
-/// class lists none. CI's first windows shard names the pinned windows codex in <c>TA_CELL_CODEX</c>.
+/// class lists none. The pinned windows codex: CI's <c>TA_CELL_CODEX</c>, else the pinned release archive held to its hashes (the tests box).
 /// </summary>
 [Trait("Category", "Cell"), Trait("CellScope", "Windows")]
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public class KitSkillsProbeWindowsTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     [WindowsFact]
     public async Task The_cell_classs_codex_lists_the_kits_skill_through_a_junction_at_the_kits_own_path()
     {
-        var exe = CliCodeModeHostTests.PinnedCodex();
+        var exe = CellWindowsProofTests.PinnedWindowsCodex();
         var codex = RuntimeCatalog.BuiltIn(HostPlatform.Current).First(m => m.Id == "codex");
         var sha = codex.Install.ExecutableSha256!;
         var kit = KitFixture.Installed(Path.Combine(TestEnv.Home, "kit-probe-" + Guid.NewGuid().ToString("n")[..8]));
