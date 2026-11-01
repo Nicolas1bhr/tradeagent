@@ -2618,7 +2618,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         var m = result.Metrics;
 
         return new BacktestReply(
-            result.RunId, result.VersionId, ran.Role, ran.Program.Instrument, ran.Program.WarmUpBars,
+            // THE CALLER'S OWN RUN ROW (U-backtest-dedupe-role), which is the computation's id unless another position recorded it first.
+            ran.RunId, result.VersionId, ran.Role, ran.Program.Instrument, ran.Program.WarmUpBars,
             result.Request.DatasetId, ran.Dataset.Pair, ran.Dataset.Interval, ran.Dataset.Version,
             result.Request.DatasetSha256, result.Request.From, result.Request.To,
             result.Request.Model.Canonical, ran.IncrementSource, ran.FrictionSource, result.Outcome.ToString(),
@@ -3052,7 +3053,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 + "and what bounds the judgements spent on them. There is no operation here that opens, "
                 + "renews or re-budgets one.");
 
-        if (!completed.Any(r => r.DatasetId == dataset && Registered(campaign.Id, version, r.Id)))
+        // EACH OF THE MEASURER'S OWN ROWS IS ASKED FOR ITS COMPUTATION'S TRIAL (U-backtest-dedupe-role): a row that reuses a
+        // computation another position recorded first is covered by that run's trial — trial keys carry no role (EVID-001) — and
+        // the row is still the measurer's own, so the verdict is spent on its author's own completed run.
+        if (!completed.Any(r => r.DatasetId == dataset && Registered(campaign.Id, version, r.Computation)))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"{CouncilRoles.Title(measurer)} has never completed a run of version {Short(version)} over "
                 + $"dataset {dataset}, so there is nothing to have judged. TradeAgent judges a program "

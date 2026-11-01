@@ -140,7 +140,7 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
     /// campaign is what bounds a verdict and only the gateway's press opens one.</para>
     /// </summary>
     static async Task<World> Given(
-        string? role = CouncilRoles.Research, int verdicts = 3, int bars = 120, string attempt = "attempt-v1")
+        string? role = CouncilRoles.Research, int verdicts = 3, int bars = 120, string attempt = "attempt-v1", bool hold = true)
     {
         var (gw, _, db) = await TestEnv.Ready(s =>
         {
@@ -163,9 +163,8 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
             [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
                 DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)]));
 
-        var (held, campaign) = gw.SetHoldout(id, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
-        Assert.True(held.Ok, held.Why);
-        Assert.NotNull(campaign);
+        // NO CUTOFF YET when `hold` is false: the test sets it itself, through the same press (`Hold`), and reads its campaign there.
+        var campaign = hold ? Hold(gw, id) : null;
 
         var pipe = "ta-verdict-" + Guid.NewGuid().ToString("n")[..12];
         var grants = new AgentGrants();
@@ -174,6 +173,14 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
 
         var client = await Connect(pipe, grants, role, attempt);
         return new World(gw, db, gw.Datasets.ById(id)!, campaign!, grants, pipe, client, server);
+    }
+
+    /// <summary>The owner's cutoff at <see cref="HoldoutAtBar"/>, through the gateway's press, and the campaign it opened.</summary>
+    static CampaignRow Hold(TradingGateway gw, long dataset)
+    {
+        var (held, campaign) = gw.SetHoldout(dataset, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        return Assert.IsType<CampaignRow>(campaign);
     }
 
     static async Task<Raw> Connect(string pipe, AgentGrants grants, string? role, string attempt)
@@ -771,5 +778,119 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
 
         Assert.False(bars.Ok);
         Assert.Equal(ErrorCode.HOLDOUT_WITHHELD.ToString(), bars.Error!.Code);
+    }
+
+    // ---- a deduplicated backtest belongs to whoever asked (U-backtest-dedupe-role) ----------------
+
+    /// <summary>
+    /// <paramref name="role"/> ASKS THE REQUEST <see cref="GivenMeasuredVersion"/> ASKED — the same program text, from its own
+    /// folder, over the same dataset, window and increment — and the run id the answer names.
+    /// </summary>
+    static async Task<string> RunIdentical(World w, Raw client, string role, string rid, string freshness = "2m")
+    {
+        var name = $"v-{freshness}.strategy";
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, name), Program(freshness));
+
+        var ran = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = rid,
+            Args = Args(("strategy", "strategies/" + name), ("dataset", Id(w.Set.Id)),
+                ("from", Iso(Bar0)), ("to", Iso(Bar0.AddMinutes(HoldoutAtBar - 1))), ("increment", "1"))
+        });
+        Assert.True(ran.Ok, Json.Write(ran.Error));
+        return Data(ran).GetProperty("run_id").GetString()!;
+    }
+
+    /// <summary>
+    /// A BACKTEST IDENTICAL TO ANOTHER POSITION'S RUN IS THE CALLER'S OWN RUN, CHARGED NOTHING TWICE, AND THE CALLER MAY SPEND
+    /// A VERDICT ON IT (<c>U-backtest-dedupe-role</c>; U-loop-e2e's card).
+    ///
+    /// <para>The Research Director measures a version; the Operations Director then asks the identical request. A run's id
+    /// hashes what decided its result and never who asked, so it is one computation. RED on the base: the answer named the
+    /// Research Director's row, nothing was recorded under the Operations Director, and its verdict was refused "has never
+    /// completed a run" — though it had. Now it holds its OWN row (its role, its attempt, the same figures and trades) naming
+    /// the first run as the computation it reuses; the campaign still counts ONE trial, the computation's — trial keys carry
+    /// no role (EVID-001) — and asking again is the same row and charges nothing; and its verdict is judged, on its own run.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_backtest_identical_to_another_positions_run_is_the_callers_own_run_charged_once_and_it_may_spend_a_verdict_on_it()
+    {
+        await using var w = await Given();
+        var version = await GivenMeasuredVersion(w);
+        var store = new StrategyStore(w.Db);
+        var first = Assert.Single(store.CompletedRunsOf(version, CouncilRoles.Research));
+        Assert.Equal(1, w.Gw.Campaigns.TrialsCharged(w.Campaign.Id));
+
+        await using var ops = await Connect(w.Pipe, w.Grants, CouncilRoles.Operations, "attempt-ops");
+        var mine = await RunIdentical(w, ops, CouncilRoles.Operations, "dup-1");
+        log.WriteLine($"first {first.Id[..12]} by {first.Role}; the identical request answered {mine[..12]}");
+
+        // ITS OWN ROW: its role, its attempt, the lineage to the computation, and what it was answered with.
+        Assert.NotEqual(first.Id, mine);
+        var row = Assert.Single(store.CompletedRunsOf(version, CouncilRoles.Operations));
+        Assert.Equal(mine, row.Id);
+        Assert.Equal("attempt-ops", row.Attempt);
+        Assert.Equal(first.Id, row.ReusesRun);
+        Assert.Equal(first.Id, row.Computation);
+        Assert.Equal((first.TraceSha256, first.NetPnl, first.Trades, first.Bars, first.DatasetId),
+            (row.TraceSha256, row.NetPnl, row.Trades, row.Bars, row.DatasetId));
+        Assert.Equal(store.TradesOf(first.Id).Select(t => (t.Ordinal, t.Pnl)), store.TradesOf(mine).Select(t => (t.Ordinal, t.Pnl)));
+
+        // THE FIRST POSITION'S ROW IS ITS OWN STILL, and is its own computation.
+        var still = store.RunById(first.Id)!;
+        Assert.Equal((CouncilRoles.Research, "attempt-v1", (string?)null), (still.Role, still.Attempt, still.ReusesRun));
+
+        // ONE COMPUTATION, ONE TRIAL: none under the caller's row, and the campaign still counts one.
+        Assert.Equal(1, w.Gw.Campaigns.TrialsCharged(w.Campaign.Id));
+        Assert.True(w.Gw.Campaigns.Registered(w.Campaign.Id, version, first.Id));
+        Assert.False(w.Gw.Campaigns.Registered(w.Campaign.Id, version, mine));
+
+        // THE SAME POSITION ASKING AGAIN is the same row and charges nothing, as a re-run by the first one always was.
+        Assert.Equal(mine, await RunIdentical(w, ops, CouncilRoles.Operations, "dup-2"));
+        Assert.Equal(2, store.Runs(1000).Count(r => r.VersionId == version));
+        Assert.Equal(1, w.Gw.Campaigns.TrialsCharged(w.Campaign.Id));
+
+        // AND ITS VERDICT IS JUDGED, on its own completed run.
+        var reply = await AskVerdict(ops, version, dataset: w.Set.Id, rid: "v-ops");
+        log.WriteLine(Json.Write(reply.Error ?? (object)Data(reply)));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Single(w.Gw.Promotions.For(version));
+    }
+
+    /// <summary>
+    /// A REUSED COMPUTATION WITH NO TRIAL UNDER THE CAMPAIGN IS CHARGED ONE IN THE CALLER'S OWN WRITE — never a run standing
+    /// with none behind it (<c>U-backtest-dedupe-role</c>).
+    ///
+    /// <para>The Research Director measures a version before the owner sets a cutoff, so no campaign charges that run. The owner
+    /// then holds the dataset's last months back; the Operations Director asks the identical request, whose bars the new
+    /// campaign's development months cover. The computation is charged ONE trial, in that write, and the Operations Director's
+    /// own row is covered by it, so its verdict is judged. RED on the base: the trial landed but on nobody's run the Operations
+    /// Director held, so its verdict was refused "has never completed a run".</para>
+    /// </summary>
+    [Fact]
+    public async Task A_reused_computation_no_campaign_charged_yet_is_charged_once_in_the_callers_write_and_covers_its_verdict()
+    {
+        await using var w = await Given(hold: false);
+        var version = await GivenMeasuredVersion(w);
+        var store = new StrategyStore(w.Db);
+        var first = Assert.Single(store.CompletedRunsOf(version, CouncilRoles.Research));
+
+        var campaign = Hold(w.Gw, w.Set.Id);
+        Assert.Equal(0, w.Gw.Campaigns.TrialsCharged(campaign.Id));
+
+        await using var ops = await Connect(w.Pipe, w.Grants, CouncilRoles.Operations, "attempt-ops");
+        var mine = await RunIdentical(w, ops, CouncilRoles.Operations, "dup-late");
+
+        Assert.Equal(CouncilRoles.Operations, store.RunById(mine)!.Role);
+        Assert.Equal(first.Id, store.RunById(mine)!.ReusesRun);
+        Assert.Equal(1, w.Gw.Campaigns.TrialsCharged(campaign.Id));
+        Assert.True(w.Gw.Campaigns.Registered(campaign.Id, version, first.Id));
+
+        var reply = await AskVerdict(ops, version, dataset: w.Set.Id, rid: "v-ops-late");
+        log.WriteLine(Json.Write(reply.Error ?? (object)Data(reply)));
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        Assert.Single(w.Gw.Promotions.For(version));
     }
 }

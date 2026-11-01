@@ -187,6 +187,23 @@ public sealed record StrategyRunRow(
     /// build reads as its own.</para>
     /// </summary>
     public string? EvaluatorVersion { get; internal init; }
+
+    /// <summary>
+    /// THE RUN WHOSE IDENTICAL COMPUTATION THIS ONE IS, recorded first by another position — or null because this run is its own
+    /// computation (<c>U-backtest-dedupe-role</c>, rung 54; every run before the rung reads null).
+    ///
+    /// <para>A run's <see cref="Id"/> hashes everything that decided its result and nothing about who asked, so the same request
+    /// from a second position is the same computation. It used to be answered under the caller's role and stored on the first
+    /// position's row alone, so the caller held no run of what it had measured and could spend no verdict on it. Now the caller
+    /// gets its OWN row — its role, its attempt, the figures it was answered with — at <see cref="StrategyStore.ReuseRunId"/>, and
+    /// this names the computation's row: the lineage, and the run whose trial covers it. A trial is keyed by the computation and
+    /// never by who asked (EVID-001), so this row is registered under no campaign of its own: it is charged nothing twice, and the
+    /// verdict asks for the trial of <see cref="Computation"/>.</para>
+    /// </summary>
+    public string? ReusesRun { get; init; }
+
+    /// <summary>The run whose trial covers this one: <see cref="ReusesRun"/>, or this run's own id when it is its own computation.</summary>
+    public string Computation => ReusesRun ?? Id;
 }
 
 /// <summary>
@@ -291,7 +308,9 @@ public sealed class StrategyStore(Database db)
         // LAST, so every positional read above it keeps its index. See `StrategyRunRow.IncrementSource`.
         "increment_source, " +
         // LAST AGAIN, at rung 36. See `StrategyRunRow.EvaluatorVersion`.
-        "evaluator_version";
+        "evaluator_version, " +
+        // AND LAST AT RUNG 54. See `StrategyRunRow.ReusesRun`.
+        "reuses_run";
 
     /// <summary>
     /// The interpreter build a version row and a promotion record: the app's own version and the
@@ -445,7 +464,7 @@ public sealed class StrategyStore(Database db)
             INSERT INTO strategy_run({RunCols})
             VALUES($id,$ver,$ds,$sha,$from,$to,$model,$outcome,$fault,$bars,$trades,$wins,$intents,
                    $fills,$exposure,$missing,$faults,$gross,$fees,$net,$dd,$trace,$at,$role,$attempt,
-                   $incsrc,$eval)
+                   $incsrc,$eval,$reuses)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", run.Id), ("$ver", run.VersionId), ("$ds", run.DatasetId), ("$sha", run.DatasetSha256),
@@ -462,7 +481,8 @@ public sealed class StrategyStore(Database db)
             ("$trace", run.TraceSha256), ("$at", Sql.T(run.CreatedAt)),
             ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", Provenance(run)),
             // THIS BUILD'S EVALUATOR, never the row's: a caller cannot label a run with semantics it was not measured under.
-            ("$eval", Strategy.Referee.EvaluatorVersion));
+            ("$eval", Strategy.Referee.EvaluatorVersion),
+            ("$reuses", run.ReusesRun));
 
         if (insert.ExecuteNonQuery() == 0) return run.Id;
 
@@ -509,6 +529,15 @@ public sealed class StrategyStore(Database db)
 
         return run.Id;
     });
+
+    /// <summary>
+    /// THE ID OF <paramref name="role"/>'S OWN ROW OF A COMPUTATION ANOTHER POSITION RECORDED FIRST (<c>U-backtest-dedupe-role</c>):
+    /// a hash over the computation's id and the role, so the same role asking the same request again is the same row — one run,
+    /// as a re-run by the first position always was — and a third position gets a row of its own. See
+    /// <see cref="StrategyRunRow.ReusesRun"/>.
+    /// </summary>
+    public static string ReuseRunId(string computation, string role) =>
+        Sha256Hex.Of(string.Create(CultureInfo.InvariantCulture, $"reuse\n{computation}\n{role}"));
 
     /// <summary>One run by its id, or null when this installation has never produced it.</summary>
     public StrategyRunRow? RunById(string id) => db.Read(_ =>
@@ -911,7 +940,8 @@ public sealed class StrategyStore(Database db)
             {
                 IncrementSource = Increment(r.IsDBNull(25) ? null : r.GetString(25)),
                 FrictionSource = Friction(r.IsDBNull(25) ? null : r.GetString(25)),
-                EvaluatorVersion = r.IsDBNull(26) ? null : r.GetString(26)
+                EvaluatorVersion = r.IsDBNull(26) ? null : r.GetString(26),
+                ReusesRun = r.IsDBNull(27) ? null : r.GetString(27)
             });
         return rows;
     }
