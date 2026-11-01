@@ -350,9 +350,11 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         Assert.Contains("1 mandate is past its deadline; 1 delivery waits to be judged.", frames["dashboard"].Texts);
         Assert.DoesNotContain(frames["dashboard"].Texts, t => t.Contains("owes a judgement", StringComparison.Ordinal));
 
-        // NO INTERNAL FILE NAME ON ANY PAGE.
+        // NO INTERNAL FILE NAME ON ANY PAGE: the app's own vendor files. (The Settings page's kit card names kit.json — the file of the kit the
+        // owner builds himself, his to write, not one of the app's.)
         foreach (var f in frames.Values)
-            Assert.DoesNotContain(f.Texts, t => t.Contains(".json", StringComparison.Ordinal));
+            foreach (var file in new[] { Labels.CostsFile, Labels.RuntimesFile, Labels.AtasFile })
+                Assert.DoesNotContain(f.Texts, t => t.Contains(file, StringComparison.Ordinal));
 
         // EACH DIRECTOR'S OWN TURNS beside its own spend: Operations ran none of the five.
         Assert.Contains("Operations Director: model —, 0 turns of its own", All("report"), StringComparison.Ordinal);
