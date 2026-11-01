@@ -254,11 +254,18 @@ public sealed class ForwardBarCollector : IAsyncDisposable
         // THE SETTINGS PAIR, THEN EVERY DEPLOYED PAIR, EACH ONCE (U-evidence-breadth-paper). A PAIR THAT IS NOT ONE IS NOT ASKED FOR,
         // and it is not a failure either: the owner is halfway through typing in the Pair box and the next look will have a real one.
         // A deployed pair list that cannot be read is the Settings pair alone this look — never a reason to collect nothing.
+        // A DEPLOYED-PAIR LIST THAT CANNOT BE READ IS THIS LOOK'S FAILURE (the review's P2), said in words and backed off — never
+        // masked by the Settings pair's own success, since a run on a pair this look skipped has no minutes of it.
         IReadOnlyList<string> deployed;
+        string? unread = null;
         try { deployed = _deployed(); }
-        catch (Exception ex) { deployed = []; LastError = $"the deployed pairs could not be read: {ex.Message.ReplaceLineEndings(" ")}"; }
+        catch (Exception ex) { deployed = []; unread = $"the deployed pairs could not be read, so only the Settings pair was asked for: {ex.Message.ReplaceLineEndings(" ")}"; }
         var pairs = new[] { _symbol() }.Concat(deployed).Where(BinanceArchive.IsPair).Select(p => p!).Distinct(StringComparer.Ordinal).ToList();
-        if (pairs.Count == 0) return null;
+        if (pairs.Count == 0)
+        {
+            if (unread is not null) { _failures++; LastError = unread; }
+            return null;
+        }
 
         // ONE LOOK PER PAIR; THE BACKOFF IS THE LOOK'S: any pair failing counts this look a failure, so a host having a bad
         // afternoon is asked less often for every pair. The answer is the first pair's — the Settings pair's when it is one.
@@ -268,7 +275,7 @@ public sealed class ForwardBarCollector : IAsyncDisposable
             var (result, note, last) = await CollectPairAsync(symbol, ct);
             looks.Add((symbol, result, note, last));
         }
-        if (looks.LastOrDefault(l => l.Note is not null) is { Note: { } failure }) { _failures++; LastError = failure; }
+        if ((looks.LastOrDefault(l => l.Note is not null).Note ?? unread) is { } failure) { _failures++; LastError = failure; }
         else { _failures = 0; LastError = null; }
 
         // AFTER THE COMMIT, AND ONLY FOR A BAR THIS CALL ACTUALLY STORED. A re-fetch of a minute a

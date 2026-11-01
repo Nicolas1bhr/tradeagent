@@ -680,9 +680,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
         var widened = false;
         for (var v = from + 1; v <= setBy; v++)
         {
-            if (_board.VetoedVersion(v)) return false;
-            if (_board.EnvelopeTermsAt(v - 1, pair) is { } before && _board.EnvelopeTermsAt(v, pair) is { } after
-                && BoardDirection.Of(field, before, after) == BoardDirectionKind.Widens)
+            var before = _board.EnvelopeTermsAt(v - 1, pair);
+            var after = _board.EnvelopeTermsAt(v, pair);
+            // A VETOED VERSION FAILS THIS PAIR CLOSED ONLY WHEN IT MOVED THIS PAIR'S TERMS (U-evidence-breadth-paper, the review's
+            // P2): an act on another pair's envelope granted this pair nothing, so its veto revokes nothing here. Terms that cannot
+            // be read on either side still fail closed.
+            if (_board.VetoedVersion(v) && !(before is not null && after is not null && BoardDirection.SameValue(before, after))) return false;
+            if (before is not null && after is not null && BoardDirection.Of(field, before, after) == BoardDirectionKind.Widens)
                 widened = true;
         }
         return widened;
@@ -1136,21 +1140,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <summary>
     /// EVERY PAIR A PAPER RUN IS ON (<c>U-evidence-breadth-paper</c>): the instruments of the deployments not yet accounted for —
     /// running, suspended, or ended with an operation or a close still owed — distinct, in order. What the forward collector records
-    /// beside the Settings pair, so each deployed pair has its minutes. Never throws: an unreadable ledger answers none.
+    /// beside the Settings pair, so each deployed pair has its minutes. EVERY deployment is read, never a newest few (the review's
+    /// P2: a running pair older than the newest window would drop out of collection). A ledger that cannot be read THROWS — the
+    /// collector counts that look a failure in words rather than collecting the Settings pair as if nothing were deployed.
     /// </summary>
-    public IReadOnlyList<string> DeployedPairs()
-    {
-        try
-        {
-            return [.. _deployments.All(DeploymentsLookedAt).Where(HoldsItsSlot).Select(d => d.Symbol)
-                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-        }
-        catch (Exception ex)
-        {
-            _log.TryEngineering("Gateway", "deployed_pairs_not_read", "warn", ex: ex);
-            return [];
-        }
-    }
+    public IReadOnlyList<string> DeployedPairs() =>
+        [.. _deployments.All(int.MaxValue).Where(HoldsItsSlot).Select(d => d.Symbol)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
     /// <summary>How many deployments a sweep looks at. The ledger is small; this is a bound, not a filter.</summary>
     const int DeploymentsLookedAt = 200;

@@ -363,6 +363,30 @@ public class ForwardBarCollectorTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A DEPLOYED-PAIR LIST THAT CANNOT BE READ IS THE LOOK'S FAILURE (the Codex review's P2): the Settings pair is still collected, but
+    /// the look is counted failed and says why in words — never a healthy look that silently skipped every deployed pair. RED before:
+    /// the Settings pair's success cleared the error and the failure count.
+    /// </summary>
+    [Fact]
+    public async Task A_deployed_pair_list_that_cannot_be_read_is_the_looks_failure()
+    {
+        using var db = TestEnv.NewDb();
+        using var host = new FakeArchive();
+        host.PublishAt(Path, Klines(0, 1));
+
+        await using var collector = new ForwardBarCollector(db, () => Symbol,
+            baseUrl: host.BaseUrl, requestTimeout: TimeSpan.FromSeconds(5), interval: Tick,
+            now: () => Noon.AddMinutes(5), deployed: () => throw new InvalidOperationException("the deployment ledger is locked"));
+
+        Assert.Equal(2, (await collector.CollectOnceAsync())!.Stored);
+        log.WriteLine($"last error: {collector.LastError}");
+        Assert.Single(new ForwardBarStore(db).Attempts(Symbol));
+        Assert.Equal(1, collector.ConsecutiveFailures);
+        Assert.Contains("could not be read", collector.LastError, StringComparison.Ordinal);
+        Assert.Contains("the deployment ledger is locked", collector.LastError, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// THE FORWARD ROW IS DATA AND IT SAYS WHAT IT IS. The host and the endpoint live in the
     /// catalogue, verified by one measurement quoted on the row; it publishes no checksum, and it
     /// cannot be driven as an archive.
