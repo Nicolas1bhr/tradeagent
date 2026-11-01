@@ -14,8 +14,8 @@ public sealed record SeatClaim(string SeatClass, EnforcementClass Claimed, strin
 
 /// <summary>
 /// ONE PROTECTION AS DATA (<c>U-invariant-registry</c>; VISION § 6.3): its stable id, what it says, where it is written, the code that keeps it
-/// (<c>path:Symbol</c>, each checked to exist), the tests that prove the property itself (<c>Class.Method</c>, each checked to exist), and one
-/// claim per seat type.
+/// (<c>path:Symbol</c>, each checked to exist), the tests that prove the property itself (<c>Class.Method</c>, each checked to exist), one
+/// claim per seat type, and <paramref name="Open"/>: the part of the statement no named test proves, which holds every claim to advisory.
 /// </summary>
 public sealed record Invariant(
     string Id, string Statement, string WrittenIn, IReadOnlyList<string> EnforcedBy, IReadOnlyList<string> Tests,
@@ -30,8 +30,8 @@ public sealed record Invariant(
 /// the code: every test it names must exist, every component it names must exist, and every id VISION § 6.3 names must be here.</para>
 ///
 /// <para><b>The honesty rule, in code (<see cref="Shown"/>).</b> A class above advisory is shown only while it is backed — by at least one named
-/// test of the property AND at least one named test of the seat type's side. A claim missing either is SHOWN as advisory and says why, whatever
-/// the row claims. A test removed from the tree fails the conformance test, so the registry cannot keep claiming it.</para>
+/// test of the property, with no part of the statement left unproven (<see cref="Invariant.Open"/>), AND by at least one named test of the
+/// seat type's side. A claim missing any of these is SHOWN as advisory and says why, whatever the row claims. A test removed from the tree fails the conformance test, so the registry cannot keep claiming it.</para>
 ///
 /// <para><b>App-owned and read-only.</b> Compiled into the app: no file, setting, pipe op or verb writes it, and the owner's Oversight page only reads it.</para>
 ///
@@ -64,13 +64,16 @@ public static class InvariantRegistry
 
     /// <summary>
     /// THE CLASS THE PAGE SHOWS for <paramref name="claim"/> of <paramref name="invariant"/>, and why it is lower than claimed when it is: a
-    /// class above advisory with no named test of the property, or none of the seat side, is shown as advisory.
+    /// class above advisory with no named test of the property, with a part of the property no named test proves
+    /// (<see cref="Invariant.Open"/>), or with no named test of the seat side, is shown as advisory.
     /// </summary>
     public static (EnforcementClass Class, string? Downgraded) Shown(Invariant invariant, SeatClaim claim)
     {
         if (claim.Claimed <= EnforcementClass.Advisory) return (claim.Claimed, null);
         if (invariant.Tests.Count == 0)
             return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: no named test proves the property");
+        if (invariant.Open is { Length: > 0 })
+            return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: part of it no named test proves");
         if (claim.Tests.Count == 0)
             return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: no named test proves this seat's side");
         return (claim.Claimed, null);
@@ -85,10 +88,11 @@ public static class InvariantRegistry
         "BrokerSeatTests.A_broker_seat_whose_offered_tools_include_a_host_tool_or_exec_is_refused_before_admission",
     ];
 
-    /// <summary>What keeps the API harness to the app's own tools: no process, never told of a shell, a wake file or the inbox.</summary>
+    /// <summary>What keeps the API harness to the app's own tools: default deny at its surface, and a granted tool's path kept in its folder.</summary>
     static readonly string[] HarnessSide =
     [
-        "CanonTests.The_harness_is_never_told_of_a_shell_a_wake_file_or_the_inbox",
+        "ApiWorkerTests.A_tool_nobody_granted_is_refused_in_words_and_the_turn_continues",
+        "WorkerToolTests.A_path_that_climbs_out_of_the_roles_own_folder_is_refused",
     ];
 
     /// <summary>What a cell attempt is: <c>state/</c> granted to no cell, and the attempt classed as the weaker of the cell and the harness.</summary>
@@ -101,7 +105,7 @@ public static class InvariantRegistry
     const string CliWhy =
         "a CLI seat runs as your own user with a shell: it could reach the app's files, its database and its pipe directly (ORGANISATION § 14)";
     const string BrokerWhy = "no tool the broker offers crosses it, though the codex process itself runs as your user and could";
-    const string HarnessWhy = "no process: every tool the harness has is the app's own code, and none reaches it";
+    const string HarnessWhy = "no process: the harness offers only the tools the app granted, each the app's own code, and none reaches it";
     const string CellWhy =
         "the cell's own processes cannot reach state/ (containment); the unconfined harness that holds its login could, so the attempt is mediated";
 
@@ -314,8 +318,8 @@ public static class InvariantRegistry
                     "the codex process holds the seat home's sign-in and offers it to no tool the model can call",
                     [.. BrokerSide, "BrokerSeatTests.A_runtimes_json_that_drops_a_forbidden_home_path_is_refused_although_the_surface_passes"]),
                 new(SeatClasses.Harness, EnforcementClass.HardApp,
-                    "the app holds the key and sends it only to the provider; no tool hands it over",
-                    [.. HarnessSide, "SeatSignInTests.A_pasted_key_reaches_stdin_and_is_never_logged_or_kept"]),
+                    "the app holds the key and sends it only to the provider; the harness offers only granted tools, and none reads it",
+                    HarnessSide),
                 new(SeatClasses.Cell, EnforcementClass.Mediated,
                     "the seat home is granted to no cell (containment); the harness outside the cell holds the sign-in, so the attempt is mediated",
                     [.. CellSide, "CellPolicyTests.A_policy_that_grants_the_seat_home_the_apps_own_folders_or_an_environments_toml_is_refused"]),

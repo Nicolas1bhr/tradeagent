@@ -48,7 +48,7 @@ public class InvariantRegistryTests
         var dir = Sample();
         try
         {
-            Assert.Equal(["Nested.Inner_helper_is_its_own_class", "Outer.AfterNested", "Outer.Real", "Outer.Theory_one"],
+            Assert.Equal(["Nested.Inner_helper_is_its_own_class", "Outer.AfterNested", "Outer.Last", "Outer.Real", "Outer.Theory_one"],
                 TestMethods(dir).Order(StringComparer.Ordinal).ToArray());
         }
         finally { Directory.Delete(dir, recursive: true); }
@@ -96,8 +96,8 @@ public class InvariantRegistryTests
     }
 
     /// <summary>
-    /// THE HONESTY RULE: a class above advisory is shown only with a named test of the property AND of the seat's side; either missing,
-    /// it is shown advisory and says which. Advisory and a gap are shown as claimed.
+    /// THE HONESTY RULE: a class above advisory is shown only with a named test of the property, no part of it left unproven, AND a named
+    /// test of the seat's side; any of these missing, it is shown advisory and says which. Advisory and a gap are shown as claimed.
     /// </summary>
     [Fact]
     public void A_class_no_named_test_backs_is_shown_advisory_and_says_why()
@@ -115,11 +115,14 @@ public class InvariantRegistryTests
         Assert.Equal(EnforcementClass.Advisory, c2);
         Assert.Contains("no named test proves the property", why2);
         Assert.Equal(EnforcementClass.Gap, InvariantRegistry.Shown(unproved, bare with { Claimed = EnforcementClass.Gap }).Class);
+        var (c3, why3) = InvariantRegistry.Shown(proved with { Open = "one clause has no test" }, hard);
+        Assert.Equal(EnforcementClass.Advisory, c3);
+        Assert.Contains("part of it no named test proves", why3);
 
         // AND ON THE REAL REGISTRY: every cell shown above advisory carries tests on both sides.
         foreach (var inv in InvariantRegistry.All)
             foreach (var s in inv.Seats.Where(s => InvariantRegistry.Shown(inv, s).Class > EnforcementClass.Advisory))
-                Assert.True(inv.Tests.Count > 0 && s.Tests.Count > 0, $"{inv.Id}/{s.SeatClass}");
+                Assert.True(inv.Tests.Count > 0 && s.Tests.Count > 0 && inv.Open is null, $"{inv.Id}/{s.SeatClass}");
     }
 
     /// <summary>IT RECORDS AND ENFORCES NOTHING: no code but its own file and the owner's Oversight page reads the registry.</summary>
@@ -169,12 +172,15 @@ public class InvariantRegistryTests
     static string Texts(Control root) =>
         string.Join("\n", root.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text ?? ""));
 
-    /// <summary>A tests folder holding one file with a nested class between two tests, a theory, a commented-out test and braces in strings.</summary>
+    /// <summary>
+    /// A tests folder holding one file with a nested class between two tests, a theory, a commented-out test, braces in strings, a test's
+    /// text inside an interpolation hole and a raw one, and a test compiled out by <c>#if false</c>.
+    /// </summary>
     static string Sample()
     {
         var dir = Path.Combine(Path.GetTempPath(), "invariant-scan-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "Sample.cs"), """
+        File.WriteAllText(Path.Combine(dir, "Sample.cs"), """"
             public class Outer
             {
                 [Fact] public void Real() { var s = "}}}"; var c = '{'; }
@@ -186,8 +192,14 @@ public class InvariantRegistryTests
                 [Theory, InlineData(1)]
                 public void Theory_one(int x) { }
                 public void Not_a_test() { }
+                string S = $"{"[Fact] public void Inside_a_hole() { }"}";
+                string R = $$"""{{"[Fact] public void Inside_a_raw_hole() { }"}}""";
+            #if false
+                [Fact] public void Compiled_out() { }
+            #endif
+                [Fact] public void Last() { var v = @"say ""}"" "; }
             }
-            """);
+            """");
         return dir;
     }
 
@@ -203,7 +215,7 @@ public class InvariantRegistryTests
         foreach (var file in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains($"{sep}bin{sep}", StringComparison.Ordinal) || file.Contains($"{sep}obj{sep}", StringComparison.Ordinal)) continue;
-            var code = Strip(File.ReadAllText(file), keepStrings: false);
+            var code = Strip(WithoutConditionals(File.ReadAllText(file)), keepStrings: false);
             var scopes = new Stack<string?>();
             string? pendingClass = null;
             var pendingTest = false;
@@ -254,7 +266,8 @@ public class InvariantRegistryTests
 
     /// <summary>
     /// <paramref name="text"/> with comments blanked, and string and char literals too unless <paramref name="keepStrings"/>: regular,
-    /// verbatim, interpolated and raw (<c>"""</c>) strings. An interpolation hole's inner strings come in pairs, so its braces stay blanked.
+    /// verbatim, interpolated and raw (<c>"""</c>) strings, an interpolation hole read as code with its own strings skipped in turn
+    /// (<see cref="StringEnd"/>), so no text inside a string is ever read as a declaration.
     /// </summary>
     static string Strip(string text, bool keepStrings)
     {
@@ -276,45 +289,118 @@ public class InvariantRegistryTests
                 o.Append(' ');
                 continue;
             }
-            if (c == '"')
+            if (c == '"' || c == '\'')
             {
                 var start = i;
-                var quotes = 0;
-                while (i < text.Length && text[i] == '"') { quotes++; i++; }
-                if (quotes >= 3)
+                i = c == '"' ? StringEnd(text, i) : CharEnd(text, i);
+                if (i > start + 1 || c == '"')
                 {
-                    var close = new string('"', quotes);
-                    var end = text.IndexOf(close, i, StringComparison.Ordinal);
-                    i = end < 0 ? text.Length : end + quotes;
+                    o.Append(keepStrings ? text[start..i] : " \"\" ");
+                    continue;
                 }
-                else if (quotes == 2) { /* the empty string */ }
-                else
-                {
-                    var verbatim = start > 0 && (text[start - 1] == '@' || (text[start - 1] == '$' && start > 1 && text[start - 2] == '@'));
-                    while (i < text.Length)
-                    {
-                        if (!verbatim && text[i] == '\\') { i += 2; continue; }
-                        if (text[i] == '"')
-                        {
-                            if (verbatim && i + 1 < text.Length && text[i + 1] == '"') { i += 2; continue; }
-                            i++;
-                            break;
-                        }
-                        i++;
-                    }
-                }
-                o.Append(keepStrings ? text[start..Math.Min(i, text.Length)] : " \"\" ");
-                continue;
-            }
-            if (c == '\'' && !keepStrings)
-            {
-                // A char literal: 'x', '\n', '\u0000'. Anything else (an apostrophe in code cannot occur) is copied.
-                var end = text.IndexOf('\'', i + (next == '\\' ? 3 : 2));
-                if (end > 0 && end - i <= 8) { i = end + 1; o.Append(" ' ' "); continue; }
+                i = start;
             }
             o.Append(c);
             i++;
         }
         return o.ToString();
+    }
+
+    /// <summary>
+    /// WHERE THE STRING WHOSE FIRST QUOTE IS AT <paramref name="i"/> ENDS (one past it). Its prefix — <c>$</c>s and <c>@</c> before the
+    /// quote — says whether it is verbatim and how many braces open a hole; a hole is read as code to its closing brace, any string or
+    /// char literal inside it skipped by the same rules.
+    /// </summary>
+    static int StringEnd(string t, int i)
+    {
+        var start = i;
+        var quotes = 0;
+        while (i < t.Length && t[i] == '"') { quotes++; i++; }
+        var verbatim = false;
+        var dollars = 0;
+        for (var p = start - 1; p >= 0 && (t[p] == '$' || t[p] == '@'); p--)
+            if (t[p] == '@') verbatim = true; else dollars++;
+
+        if (quotes >= 3 && !verbatim)
+        {
+            var close = new string('"', quotes);
+            while (i < t.Length)
+            {
+                if (string.CompareOrdinal(t, i, close, 0, quotes) == 0) return i + quotes;
+                if (dollars > 0 && t[i] == '{')
+                {
+                    var run = 0;
+                    while (i + run < t.Length && t[i + run] == '{') run++;
+                    i = run >= dollars ? HoleEnd(t, i + run) : i + run;
+                    continue;
+                }
+                i++;
+            }
+            return t.Length;
+        }
+        if (quotes == 2 && !verbatim) return i; // the empty string
+
+        i = start + 1;
+        while (i < t.Length)
+        {
+            var c = t[i];
+            var next = i + 1 < t.Length ? t[i + 1] : '\0';
+            if (!verbatim && c == '\\') { i += 2; continue; }
+            if (c == '"')
+            {
+                if (verbatim && next == '"') { i += 2; continue; }
+                return i + 1;
+            }
+            if (dollars > 0 && c == '{')
+            {
+                if (next == '{') { i += 2; continue; }
+                i = HoleEnd(t, i + 1);
+                continue;
+            }
+            i++;
+        }
+        return t.Length;
+    }
+
+    /// <summary>One past the brace that closes the interpolation hole whose code starts at <paramref name="i"/>.</summary>
+    static int HoleEnd(string t, int i)
+    {
+        var depth = 1;
+        while (i < t.Length)
+        {
+            var c = t[i];
+            if (c == '"') { i = StringEnd(t, i); continue; }
+            if (c == '\'') { var e = CharEnd(t, i); i = e > i + 1 ? e : i + 1; continue; }
+            if (c == '{') depth++;
+            if (c == '}' && --depth == 0) return i + 1;
+            i++;
+        }
+        return t.Length;
+    }
+
+    /// <summary>One past a char literal at <paramref name="i"/> ('x', '\n', '\u0000'), or <paramref name="i"/> itself when there is none.</summary>
+    static int CharEnd(string t, int i)
+    {
+        var next = i + 1 < t.Length ? t[i + 1] : '\0';
+        var end = t.IndexOf('\'', i + (next == '\\' ? 3 : 2));
+        return end > 0 && end - i <= 8 ? end + 1 : i;
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> with every line inside a <c>#if</c>…<c>#endif</c> region blanked, every branch of it: the scan does not
+    /// evaluate symbols, so a test that compiles only under one is counted as missing — the safe side for an existence check.
+    /// </summary>
+    static string WithoutConditionals(string text)
+    {
+        var lines = text.Split('\n');
+        var depth = 0;
+        for (var n = 0; n < lines.Length; n++)
+        {
+            var line = lines[n].TrimStart();
+            if (line.StartsWith("#if", StringComparison.Ordinal)) depth++;
+            if (depth > 0) lines[n] = "";
+            if (line.StartsWith("#endif", StringComparison.Ordinal) && depth > 0) depth--;
+        }
+        return string.Join('\n', lines);
     }
 }
