@@ -57,7 +57,7 @@ public partial class BoardActTests
 
     static BoardActRequest Act(string seat, string intent, string rationale = "the seat's own reasons, a claim",
         IReadOnlyList<OrgRef>? refs = null, IReadOnlyList<ForecastClaim>? forecasts = null) =>
-        new(seat, null, intent, rationale, refs ?? [], forecasts ?? []);
+        new(seat, forecasts is { Count: > 0 } ? "turn-test" : null, intent, rationale, refs ?? [], forecasts ?? []);
 
     static string Change(string field, object from, object to) =>
         System.Text.Json.JsonSerializer.Serialize(new[] { new Dictionary<string, object> { ["field"] = field, ["from"] = from, ["to"] = to } });

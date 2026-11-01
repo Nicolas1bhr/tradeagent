@@ -107,7 +107,8 @@ public static class ArtifactLineage
         ["publication"] = "the council's published prose, written by the app on a role's behalf as often as by a turn",
         ["board_act"] = "a board seat's act: the board's own ledger, bound to its exact intent",
         ["board_act_event"] = "a board act's transition: a log row",
-        ["board_forecast"] = "a board seat's forecast: the board's own ledger, outside the organisation's chart",
+        ["board_forecast"] = "a board seat's forecast: the board's own ledger, outside the organisation's chart (its author is a board seat, "
+                             + "not a position, so it is no kind above); its attempt is required by trigger " + BoardForecastTrigger,
         ["cell_assurance"] = "the assurance a cell launch ran under: the app's measurement",
         ["cell_assurance_row"] = "one row of a cell launch's assurance: the app's measurement",
         ["board_power_proposal"] = "a board seat's proposal of a power change: the board's own ledger",
@@ -119,6 +120,9 @@ public static class ArtifactLineage
 
     /// <summary>The trigger on <c>ledger_revision</c>: a revision is new text, so it names the attempt that wrote it (its author is its entry's).</summary>
     public const string RevisionTrigger = "lineage_ledger_revision";
+
+    /// <summary>The trigger on <c>board_forecast</c> (rung <see cref="Versions.BoardForecastLineageRung"/>): a board forecast names the attempt that made it.</summary>
+    public const string BoardForecastTrigger = "lineage_board_forecast";
 
     /// <summary>What counts as no value at all, in the triggers and in <see cref="Of"/> alike: NULL, or nothing but ASCII whitespace.</summary>
     static readonly char[] Space = [' ', '\t', '\n', '\v', '\f', '\r'];
@@ -134,6 +138,26 @@ public static class ArtifactLineage
         WHEN {BlankSql("NEW.attempt")}
         BEGIN SELECT RAISE(ABORT, 'lineage: a ledger revision names the attempt that wrote it'); END;
         """;
+
+    /// <summary>The board-forecast trigger, from this assembly's constants only.</summary>
+    internal static string BoardForecastTriggerSql() => $"""
+        CREATE TRIGGER IF NOT EXISTS {BoardForecastTrigger} BEFORE INSERT ON board_forecast
+        WHEN {BlankSql("NEW.attempt_id")}
+        BEGIN SELECT RAISE(ABORT, 'lineage: a board forecast names the attempt that made it'); END;
+        """;
+
+    /// <summary>
+    /// THE BOARD WRITER'S CHECK, before anything is written: an act that carries forecasts came from an attempt. Refused in words;
+    /// the trigger is the backstop.
+    /// </summary>
+    /// <exception cref="TradeAgentException">The act carries forecasts and names no attempt; nothing was written.</exception>
+    public static void RequireBoardForecast(string? attempt)
+    {
+        if (Blank(attempt))
+            throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+                "a board forecast records the attempt whose reads produced it, and this act came with none — a call made under a "
+                + "launch carries its attempt from the launch grant TradeAgent issued. Nothing was written.");
+    }
 
     /// <summary>The trigger rung <see cref="Versions.ArtifactLineageRung"/> puts on <paramref name="k"/>'s table.</summary>
     public static string TriggerName(ArtifactKindSpec k) => $"lineage_{k.Table}";

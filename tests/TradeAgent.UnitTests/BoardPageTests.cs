@@ -202,7 +202,7 @@ public class BoardPageTests
         foreach (var seat in new[] { "board-1", "board-2" }) board.SetSeatStateUnderTest(seat, BoardSeatStatus.Active, DateTimeOffset.UtcNow);
         var now = DateTimeOffset.UtcNow;
         var forecast = new ForecastClaim(ForecastVocabulary.UnitAdmissible, OrgIds.Research, ForecastVocabulary.NoneAdmitted, now.AddDays(1), 0.8m);
-        var act = board.Propose(new BoardActRequest("board-1", null, Change("plan_day_total", 40, 50), "the plan runs short by noon", [], [forecast]), now);
+        var act = board.Propose(new BoardActRequest("board-1", "turn-test", Change("plan_day_total", 40, 50), "the plan runs short by noon", [], [forecast]), now);
         var confirmed = board.Decide(act.Act.Id, "board-2", null, true, act.Act.IntentSha256, "agreed: the noon stop costs a review", now);
         Assert.Equal(1, new ForecastResolver(db).Sweep(now.AddDays(2)).Resolved);
 

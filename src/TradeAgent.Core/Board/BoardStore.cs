@@ -507,6 +507,8 @@ public sealed class BoardStore(Database db)
         if (OrgStore.RefsRefusal(_db, request.Refs) is { } badRef) throw Refused(badRef);
         if (request.Forecasts.Count > BoardLimits.MaxForecasts)
             throw Refused($"an act carries at most {BoardLimits.MaxForecasts} forecasts.");
+        // A FORECAST NAMES THE ATTEMPT THAT MADE IT (U-cards-2; rung 55's trigger is the backstop): refused here, before the act is written.
+        if (request.Forecasts.Count > 0) ArtifactLineage.RequireBoardForecast(request.Attempt);
         var org = new OrgStore(_db);
         foreach (var f in request.Forecasts) org.CheckForecast(request.Seat, f, at);
         return (intent, inForce);

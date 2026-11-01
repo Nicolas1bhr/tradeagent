@@ -127,6 +127,7 @@ public class ArtifactLineageTests
             Assert.Equal(1L, Trigger(ArtifactLineage.TriggerName(k), k.Table));
         }
         Assert.Equal(1L, Trigger(ArtifactLineage.RevisionTrigger, "ledger_revision"));
+        Assert.Equal(1L, Trigger(ArtifactLineage.BoardForecastTrigger, "board_forecast"));
 
         long Trigger(string name, string table) => db.Read(_ =>
         {
