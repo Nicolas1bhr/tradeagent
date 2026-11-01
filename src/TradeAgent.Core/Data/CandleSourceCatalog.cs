@@ -298,7 +298,11 @@ public sealed class BinanceCandleSource(string baseUrl = BinanceArchive.BaseUrl,
     public string DisplayName => "Binance";
     public string VenueId => VenueCatalog.BinanceSpot;
     public string Interval => BinanceArchive.Interval;
-    public int CoverageTargetDays => months * TwelveMonthsInDays / BinanceArchive.MonthsWanted;
+    /// <summary>
+    /// The months asked for, in days at <see cref="TwelveMonthsInDays"/> a year — 1,095 for the default thirty-six. Against twelve, never
+    /// against the default: <c>months × 365 / MonthsWanted</c> said 365 of every default, and was right only while the default was twelve.
+    /// </summary>
+    public int CoverageTargetDays => months * TwelveMonthsInDays / 12;
     public string UrlShape => "{base}/data/spot/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{month}.zip";
     public bool PublishesChecksum => true;
     public bool CandlesCarryVolume => true;

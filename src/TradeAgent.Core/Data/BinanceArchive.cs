@@ -32,8 +32,13 @@ public static class BinanceArchive
     /// <summary>The vendor's host. A parameter everywhere below so a test can serve loopback instead.</summary>
     public const string BaseUrl = "https://data.binance.vision";
 
-    /// <summary>How many months the owner's one press asks for.</summary>
-    public const int MonthsWanted = 12;
+    /// <summary>
+    /// How many months the owner's one press asks for — setup's, the Settings page's and the renewal's download alike: THIRTY-SIX
+    /// (<c>U-evidence-holdout-length</c>; R25 D12, decided by the orchestrator on the owner's behalf), so the last twelve can be held back
+    /// (<c>EvidenceDefaults.HoldoutMonths</c>) — the year the referee's α-test needs to be conclusive — with twenty-four before them to
+    /// research on. Measured on 2026-10-31 from the archive's own listing: about 340 MB for the five default pairs.
+    /// </summary>
+    public const int MonthsWanted = 36;
 
     /// <summary>
     /// A PAIR IS PART OF A URL PATH AND OF A DIRECTORY NAME, so it is checked rather than trusted.

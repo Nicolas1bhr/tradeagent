@@ -50,8 +50,9 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     public DatasetStore Store => _store;
 
     /// <summary>
-    /// Fetches the twelve most recent complete months of <paramref name="pair"/> from Binance and
-    /// records the whole provenance. The owner's press on the Settings page.
+    /// Fetches the <see cref="BinanceArchive.MonthsWanted"/> most recent complete months of <paramref name="pair"/> from Binance
+    /// and records the whole provenance — a month already kept here with exactly the bytes Binance's checksum names is not
+    /// fetched again (<see cref="CandleSourceClient"/>). The owner's press on the Settings page, setup's and the renewal's.
     /// </summary>
     /// <param name="recordDecision">
     /// Where an unpinned period's recorded decision goes, when the caller wants to read THIS

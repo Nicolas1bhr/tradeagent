@@ -56,11 +56,25 @@ public class CandleSourceTests
     {
         var pair = TestEnv.NewPair();
         var archive = new FakeArchive();
-        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(pair, m, Rows(m));
+        // THE SAME TWELVE FIXTURE MONTHS the pinned hash was measured over; the default press asks for thirty-six since
+        // U-evidence-holdout-length, and the twenty-four older ones are not published here.
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now, 12)) archive.Publish(pair, m, Rows(m));
 
         var db = TestEnv.NewDb();
         var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
         return (await svc.CollectAsync(pair, Now), db, archive);
+    }
+
+    /// <summary>
+    /// THE DEFAULT DOWNLOAD'S TARGET IS THIRTY-SIX MONTHS IN DAYS (<c>U-evidence-holdout-length</c>; R25 D12): 1,095, the row's stated
+    /// coverage target — never 365, which is what a target computed against the default itself (months × 365 / the default) would say
+    /// of any default. RED on the base, whose default was twelve months.
+    /// </summary>
+    [Fact]
+    public void The_default_binance_source_targets_thirty_six_months_in_days()
+    {
+        Assert.Equal(36 * 365 / 12, new BinanceCandleSource().CoverageTargetDays);
+        Assert.Equal(BinanceCandleSource.TwelveMonthsInDays, new BinanceCandleSource(months: 12).CoverageTargetDays);
     }
 
     /// <summary>

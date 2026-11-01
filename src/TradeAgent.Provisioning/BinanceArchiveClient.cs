@@ -127,7 +127,7 @@ public sealed class BinanceArchiveClient(string baseUrl = BinanceArchive.BaseUrl
     }
 
     /// <summary>
-    /// THE OWNER'S ONE PRESS: the twelve most recent COMPLETE months of one pair, oldest first.
+    /// THE OWNER'S ONE PRESS: the <see cref="BinanceArchive.MonthsWanted"/> most recent COMPLETE months of one pair, oldest first.
     ///
     /// Every month is reported, including the ones that produced no file — a coverage TARGET of
     /// twelve with the ACTUAL coverage recorded beside it is what <c>docs/COUNCIL.md</c> asks for,
