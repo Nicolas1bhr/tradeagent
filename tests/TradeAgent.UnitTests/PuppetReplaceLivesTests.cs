@@ -84,6 +84,11 @@ public class PuppetReplaceLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Contains("    > Deliver this: the second venue leads the funding skew by an hour.", block, StringComparison.Ordinal);
         Assert.DoesNotContain("Planned, not delivered.", prompt, StringComparison.Ordinal);    // A's reply is no record and never reaches B
 
+        // B'S RECORD SAYS IT CARRIED THE TAKEOVER, and its model read it: the block is owed no more.
+        using (var context = JsonDocument.Parse(turns[1].Context!))
+            Assert.True(context.RootElement.GetProperty("packet").GetProperty(PositionPacket.TakeoverBlock).GetInt32() > 0);
+        Assert.Null(org.TakeoverOwed(member));
+
         var deliver = Assert.Single(life.Log(member, 2), s => (string?)s["step"] == "trade");
         Assert.True((int?)deliver["exit"] == 0, $"occupant B's delivery was refused: {deliver.ToJsonString()}");
         var delivery = Assert.Single(org.Deliveries(m.Id));

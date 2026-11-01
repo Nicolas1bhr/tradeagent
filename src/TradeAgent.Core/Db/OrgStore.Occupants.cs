@@ -122,8 +122,9 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// THE OCCUPANT WHOSE PACKET STILL OWES ITS TAKEOVER BLOCK, or null: a successor (never a position's first occupant) none of whose launches
-    /// has yet been READ BY ITS MODEL — ended cleanly with input tokens reported (the Codex review, P2): a launch lost, refused before the model,
-    /// or ended with no usage leaves the block standing for the next, and a restart changes nothing. A runtime that reports no usage keeps the
+    /// has yet CARRIED THE BLOCK AND BEEN READ BY ITS MODEL — its recorded packet holds the <see cref="PositionPacket.TakeoverBlock"/> block, and it
+    /// ended cleanly with input tokens reported (the Codex review, P2, both passes): a launch lost, refused before the model, ended with no usage,
+    /// or composed before the replacement (so carrying no takeover) leaves the block standing for the next, and a restart changes nothing. A runtime that reports no usage keeps the
     /// block on its packets — a quarter of the bound, never silence about where its memory is.
     /// </summary>
     public Occupancy? TakeoverOwed(string position) => db.Read(_ =>
@@ -131,7 +132,8 @@ public sealed partial class OrgStore
         var sits = OccupancyOf(position);
         if (sits.First) return null;
         using var c = db.Cmd("""
-            SELECT EXISTS (SELECT 1 FROM ai_attempt WHERE role = $p AND rowid > $through AND state = 'ENDED' AND exit_code = 0 AND input_tokens > 0)
+            SELECT EXISTS (SELECT 1 FROM ai_attempt WHERE role = $p AND rowid > $through AND state = 'ENDED' AND exit_code = 0 AND input_tokens > 0
+                                                   AND json_valid(context) AND json_extract(context, '$.packet.takeover') > 0)
             """,
             ("$p", position), ("$through", sits.Through));
         return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) == 0 ? sits : null;

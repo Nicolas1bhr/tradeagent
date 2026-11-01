@@ -41,6 +41,15 @@ public delegate string? PacketVerb(string op, string args);
 /// </summary>
 public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Shown)
 {
+    /// <summary>
+    /// THE CHARACTERS OF <see cref="Text"/> THAT ARE THE TAKEOVER BLOCK (<c>U-worker-replace</c>), from its start; 0 where none is owed. The
+    /// Situation writes them as their own block (<see cref="TakeoverBlock"/>), so a launch's record says it carried the takeover.
+    /// </summary>
+    public int TakeoverChars { get; init; }
+
+    /// <summary>The packet block the takeover is written as, and the key a launch's recorded packet bytes carry it under.</summary>
+    public const string TakeoverBlock = "takeover";
+
     /// <summary>How far ahead a position's own open forecasts are listed as due.</summary>
     public static readonly TimeSpan ForecastHorizon = TimeSpan.FromDays(7);
 
@@ -122,6 +131,7 @@ public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Show
             var owed = org.TakeoverOwed(position);
             var takeover = owed is null ? 0 : bound / 4;
             if (owed is not null) Takeover(b, say, db, org, owed, now, takeover);
+            var takeoverChars = b.Text.Length;
             var lists = bound - takeover;
 
             // THE SHARES: notes first — they wake nobody, so the packet is the only way one reaches its recipient — and, for a
@@ -141,7 +151,7 @@ public sealed record PositionPacket(string Text, IReadOnlyList<PacketInput> Show
             var text = b.Text.ToString();
             if (Encoding.UTF8.GetByteCount(text) is var bytes && bytes > bound)
                 throw new InvalidOperationException($"the organisation block for {position} took {bytes:N0} bytes of its {bound:N0}-byte bound");
-            return new PositionPacket(text, b.Shown);
+            return new PositionPacket(text, b.Shown) { TakeoverChars = takeoverChars };
         });
     }
 

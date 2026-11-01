@@ -1338,7 +1338,17 @@ public sealed record MissionSituation
 
         // THE ORGANISATION'S RECORDS FOR THIS POSITION, BELOW ITS MANDATE (U-org-packets-b): notes since its last packet, its own
         // forecasts and resolutions, its escalations, a head's deliveries to judge — composed and bounded in Core, placed here.
-        if (Org is { Text.Length: > 0 } org) b.Append(org.Text);
+        // A NEW OCCUPANT'S TAKEOVER (U-worker-replace) is its own block, so the launch's record says it carried it: the block stays owed
+        // until a launch that carried it was read by its model (OrgStore.TakeoverOwed).
+        if (Org is { Text.Length: > 0 } org)
+        {
+            if (org.TakeoverChars > 0)
+            {
+                b.Append(org.Text, 0, org.TakeoverChars);
+                Block(PositionPacket.TakeoverBlock);
+            }
+            b.Append(org.Text, org.TakeoverChars, org.Text.Length - org.TakeoverChars);
+        }
         Block("org");
 
         // WHAT CHANGED, UNDER THE CAUSE IT DETAILS (U-reconcile-packet): one line per observation, each with its

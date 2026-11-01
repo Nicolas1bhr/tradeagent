@@ -33,7 +33,7 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         "find out whether the funding skew predicts the next hour", null, MandateShape.Report, false, at.AddDays(7), 5m, 2), at);
 
     /// <summary>One launch of <see cref="Worker"/> under <paramref name="mandate"/>: ended at <paramref name="cost"/>, or still LAUNCHED holding its reservation.</summary>
-    static void Launch(Database db, string id, string? mandate, DateTimeOffset at, decimal? cost, decimal reserved = 0.3m)
+    static void Launch(Database db, string id, string? mandate, DateTimeOffset at, decimal? cost, decimal reserved = 0.3m, string? context = null)
     {
         var store = new AiAttemptStore(db);
         Assert.True(store.Begin(new AiAttempt
@@ -41,7 +41,7 @@ public class OccupantReplaceTests(ITestOutputHelper log)
             Id = id, StartedAt = at, Role = Worker, ReservedCost = reserved, SeatClass = SeatClasses.Harness, MandateId = mandate,
             BillingClass = BillingClasses.Key, Funding = [OrgReviewTests.Team, Div, OrgIds.Root]
         }).Admitted);
-        if (cost is { } c) Assert.True(store.End(id, 0, at.AddMinutes(1), 1000, 0, null, 100, null, "model-x", c, null, null));
+        if (cost is { } c) Assert.True(store.End(id, 0, at.AddMinutes(1), 1000, 0, null, 100, null, "model-x", c, null, context));
     }
 
     /// <summary>A delivery of <see cref="Worker"/>'s on <paramref name="mandate"/>, written by no launch, with one check of TradeAgent's that failed (or passed).</summary>
@@ -306,7 +306,11 @@ public class OccupantReplaceTests(ITestOutputHelper log)
         Assert.True(new AiAttemptStore(db).End("turn-mem-0001b", 1, Now.AddMinutes(1), null, null, null, null, null, null, null, null, null));
         Assert.Contains("You are this position's occupant 2", PositionPacket.Compose(db, Worker, Now.AddMinutes(2), Broker)!.Text, StringComparison.Ordinal);
 
-        Launch(db, "turn-mem-0002", m.Id, Now.AddMinutes(2), cost: 0.1m);
+        // A LAUNCH THE MODEL READ WHOSE PACKET CARRIED NO TAKEOVER — composed before the replacement (the review's second pass) — keeps it too.
+        Launch(db, "turn-mem-0001c", m.Id, Now.AddMinutes(1), cost: 0.1m, context: "{\"packet\":{\"org\":300}}");
+        Assert.Contains("You are this position's occupant 2", PositionPacket.Compose(db, Worker, Now.AddMinutes(2), Broker)!.Text, StringComparison.Ordinal);
+
+        Launch(db, "turn-mem-0002", m.Id, Now.AddMinutes(2), cost: 0.1m, context: "{\"packet\":{\"takeover\":900,\"org\":300}}");
         Assert.DoesNotContain("You are this position's occupant", PositionPacket.Compose(db, Worker, Now.AddMinutes(5), Broker)!.Text, StringComparison.Ordinal);
     }
 
