@@ -122,7 +122,9 @@ required data freshness and its maximum decision age, and the runner checks them
 against reported usage; the Operations Director reallocates only unreserved allowance and can never raise the owner's
 ceiling; when AI spending stops, app-side protection and reconciliation continue and never depend on an inference
 allowance. Astra's evidence, kept: the 5.0683 USD against a 5 USD cap on 2026-09-07 shows a check of completed spending
-is not a cap. Four quantities, bounded separately: per-request input, cumulative task input, output (visible plus
+is not a cap — which is why a turn billed to a paid API key still reserves its whole bound. A turn on the owner's plan (list-price capacity, no
+money) reserves what its seat has measured to cost since `U-turn-reservation` (R25 D13): its envelopes are held on that estimate, and an overrun is
+charged in full and blocks the unit, so a plan envelope can be passed by at most the overrun of the turns already running in it. Four quantities, bounded separately: per-request input, cumulative task input, output (visible plus
 provider-accounted reasoning) and retrieval (what the app's tools return, the one the app controls outright).
 
 **Workers run on an app-owned harness; seniors may keep the vendor CLI.** Cheap teams with enforceable tools and a

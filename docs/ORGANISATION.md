@@ -306,6 +306,8 @@ CHIEF (new position)            staff: Risk & Portfolio (one analyst position)
   list-price equivalent the owner sets from his tier, which is not money; a key seat against the **real-money cap**. Today one $5 cap counts both, and one
   GPT-6.1 Sol CLI turn reserves 1.2 M × $2.50 + 20 k × $10 = **$3.20** (`RuntimeManifest.cs:1006-1027`, `Trading.cs:691`; R15 prices) — so under $5 the chief
   cannot even launch once another seat has spent $1.80 (R17 #1). The plan ceiling ends that without letting real money run past what the owner set.
+  That whole bound is still what a key turn reserves; since `U-turn-reservation` (R25 D13) a plan turn reserves what its seat has measured to cost — at
+  the owner's 2/8 the bound was 2.56 against a 0.25 team of a 0.25 division of the founding 40 a day holding 2.50, so no team turn could ever start (§ 13.4).
 - **What the plan buys** (R15 § 3d; INFERENCE on the vendor's credit arithmetic; the owner's tier: Plus, his answer of 2026-10-21): one ChatGPT plan window held 48 heavy turns of
   GPT-5.6 Luna in attempt 2; it would hold about 100 GPT-6 Luna turns or about 6 GPT-6.1 Sol turns. **On the plan alone the organisation is about four strong
   managers sharing roughly six strong-model turns every five hours**, with executors on the cheap model and most of the chart dormant.
@@ -360,7 +362,8 @@ owner's surface, and confirmed or changed with two presses:
    the owner may move (§ 3).
 3. **Capital:** paper allocation, live proposals and retirements stay app policy; the chief's proposals are records; two presses for every raise.
 4. **Spend:** reserve before launch; the existing day-total gate stays first and unchanged, the reservation tree only adds gates; unknown never zero; the
-   watcher's and the perception budget's caps beside the organisation's, never inside it.
+   watcher's and the perception budget's caps beside the organisation's, never inside it. A paid key's turn reserves its whole bound; a plan turn reserves
+   what its seat has measured to cost (`U-turn-reservation`, R25 D13), so a plan envelope is exceeded by at most the overrun of the turns already running in it.
 5. **Evidence:** verdict and trial budgets keyed without role, so restructuring and replacement reset nothing; conformance vectors, canaries, the referee and
    the holdout app-owned and out of the organisation's reach through app paths.
 6. **Measurement versus claim:** `org_*` rows written only by `OrgStore`, their detail app-composed (ids, numbers, fixed words); charters, rationales, reports
@@ -380,7 +383,7 @@ owner's surface, and confirmed or changed with two presses:
 | Property | Harness seat (needs an API key) | CLI seat on a plan (today's only plan route) | After containment |
 |---|---|---|---|
 | decision rights at the app's verbs | hard by design | advisory — it can write `state/` | hard |
-| envelope and cap | hard by design | hard for app launches; runs started from its own shell are unmetered | hard |
+| envelope and cap | hard by design | admission hard for app launches, on a reservation measured from the seat's own turns — an envelope is exceeded by at most the overrun of the turns already running in it; runs started from its own shell are unmetered | hard |
 | order permission | hard by design | pipe-enforced, with the same-user gap | hard |
 | the owner's provider login (`~/.codex/auth.json`) | never exposed | readable by every CLI seat | outside the execution environment (Law 2) |
 | untrusted reading (Rule of Two) | hard | impossible — a full shell | hard |
