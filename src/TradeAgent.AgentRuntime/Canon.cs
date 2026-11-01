@@ -149,8 +149,18 @@ public static class Canon
     public static CanonRender Render(WorkspaceContext ctx, AgentReach reach)
     {
         var canon = Slots.Render(Template(ctx.Role, ctx.Place), new CanonModel(ctx, reach));
-        var kit = KitPart(ctx.Kit, reach.Runtime);
-        return kit.Length == 0 ? canon : canon with { Text = canon.Text.TrimEnd('\n') + "\n\n" + kit };
+        return canon with { Text = WithKit(canon.Text, ctx.Kit, reach.Runtime) };
+    }
+
+    /// <summary>
+    /// A CANON RENDERED WITHOUT A KIT, WITH <paramref name="kit"/>'s PART APPENDED (<see cref="KitPart"/>) — the one composition both a
+    /// start (<see cref="Render(WorkspaceContext, AgentReach)"/>) and a kit change between starts (<see cref="HomeCanons.Refresh"/>) use, so
+    /// a refreshed canon is byte for byte what the next start would write. No kit (or an empty one): the canon as it is.
+    /// </summary>
+    public static string WithKit(string canonWithoutKit, Kit.View? kit, RuntimeClass runtime)
+    {
+        var part = KitPart(kit, runtime);
+        return part.Length == 0 ? canonWithoutKit : canonWithoutKit.TrimEnd('\n') + "\n\n" + part;
     }
 
     /// <summary>The most bytes <see cref="KitPart"/> may add to a canon: a growing kit never pushes a seat's canon toward the vendor's cut.</summary>

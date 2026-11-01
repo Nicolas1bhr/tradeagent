@@ -111,7 +111,11 @@ public static class WorkspaceBuilder
         foreach (var runtime in RuntimesOf(ctx.Role, ctx.Kind))
         {
             var reach = AgentReach.For(ctx.Role, runtime, ctx.TurnsPerSession);
-            Write(home, homeDir, Canon.FileFor(runtime), Canon.Render(ctx, reach).Text, files);
+            // THE CANON WITHOUT THE KIT IS KEPT FOR THIS HOME (U-kit-socket-2), so an install or removal between starts rewrites only the
+            // kit's part, from the same composition (HomeCanons.Refresh, Canon.WithKit).
+            var plain = Canon.Render(ctx with { Kit = null }, reach).Text;
+            Write(home, homeDir, Canon.FileFor(runtime), Canon.WithKit(plain, ctx.Kit, reach.Runtime), files);
+            HomeCanons.Wrote(files, home, homeDir, Canon.FileFor(runtime), plain, reach.Runtime);
             Write(home, homeDir, Canon.GuideFor(runtime), Canon.Guide(ctx, reach).Text, files);
         }
         // THE LANGUAGE AND ITS WORKED PROGRAMS, app-owned exactly as the mission file above is. A role

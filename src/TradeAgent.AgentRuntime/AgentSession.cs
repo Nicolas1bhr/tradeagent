@@ -1127,6 +1127,9 @@ public sealed class AgentSession(
         // AND ITS REFUSAL GIVES THE WAKES BACK (U-home-on-hire item 2): it travels as the launch gate's typed refusal before any work, so the
         // loop releases every wake the launch took and the meter charges it nothing — a lasting home refusal used to burn them, one per turn.
         if (WorkspaceBuilder.RefusalFor(psi.WorkingDirectory) is { } unbuilt) throw HomeRefused(unbuilt);
+        // THE HOME IS HELD FOR THE WHOLE TURN (U-kit-socket-2): a kit installed or removed while it runs changes its canon only once its
+        // tree is ended (HomeCanons) — the vendor read the canon as it started, and this turn's record says what it read.
+        using var canonTurn = HomeCanons.Turn(appFiles ?? AppFileManifest.Shared, psi.WorkingDirectory);
         if (seatClass == SeatPlan.CellClass) RestoreCanon(psi.WorkingDirectory);
 
         // THE CANON THIS TURN RECEIVES, AS IT IS ON DISK NOW: the vendor reads it by name from the working directory as it

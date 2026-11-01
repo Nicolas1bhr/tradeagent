@@ -44,7 +44,7 @@ sealed class KitCard
                      "runs can change it, and if the folder ever changes after you install it, no seat is given it until you add it again."),
             Ui.Micro($"A kit is a folder, or a zip of one, holding {Kit.IndexFile} (its name and a one-line description of each skill and tool), " +
                      $"{Kit.SkillsDir}/<name>/{Kit.SkillFile} for each skill and {Kit.ToolsDir}/<name> for each tool. Executors' cells read it from " +
-                     "their next turn; every seat is told of it when the AI next starts.")));
+                     "their next turn; every seat is told of it at once, or as soon as the turn it is in ends.")));
         Update();
     }
 
@@ -124,7 +124,7 @@ sealed class KitCard
     {
         if (_chosen is null || _chosenHash is null) return;
         var refusal = _host.InstallKit(_chosen, _chosenHash);
-        _note.Text = refusal ?? "Installed. Executors' cells read it from their next turn; every seat is told of it when the AI next starts.";
+        _note.Text = refusal ?? "Installed. Executors' cells read it from their next turn; every seat is told of it at once, or as soon as the turn it is in ends.";
         _install.IsVisible = false;
         _chosen = _chosenHash = null;
         Update();

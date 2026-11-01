@@ -511,6 +511,9 @@ public sealed class ApiConversation(
         // AND ITS REFUSAL GIVES THE WAKES BACK (U-home-on-hire item 2): the launch gate's typed refusal before any work, so the loop releases
         // every wake the launch took and the meter charges it nothing — a lasting home refusal used to burn them, one per turn.
         if (UnbuiltHome() is { } unbuilt) throw HomeRefused(unbuilt);
+        // THE HOME IS HELD FOR THE WHOLE TURN (U-kit-socket-2): a kit installed or removed while its requests run changes the canon only
+        // once the turn has ended (HomeCanons); every request of this turn sends the system text read here.
+        using var canonTurn = HomeCanons.Turn(appFiles ?? AppFileManifest.Shared, workspace());
         // THE APP'S CANON OR NO TURN (U-exec-env-fix item 2): a home built cleanly whose canon a cell rewrote afterwards is not caught by
         // the look above, so the text sent is the app's own (Mission), and one the app cannot vouch for is refused here, nothing sent.
         // A STALE HOME, RECORDED SO THE NEXT LOOK HOLDS IT (U-home-on-hire item 2): its wakes are given back, and every later launch is
