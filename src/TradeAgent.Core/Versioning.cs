@@ -489,8 +489,13 @@ public static class Versions
     /// INSERT trigger per artifact table in <c>ArtifactLineage.Kinds</c> — version, run, delivery, ledger entry, decision, forecast —
     /// refusing a row with no author position, or no attempt while a position wrote it. No backfill: a row before the rung reads
     /// "not recorded".</para>
+    ///
+    /// <para><b>54 — a run's reused computation</b> (<c>U-backtest-dedupe-role</c>, rung <see cref="RunReuseRung"/>, after
+    /// <c>U-lineage-check</c>'s 53): <c>strategy_run.reuses_run</c>, the id of the run whose identical computation another position
+    /// recorded first — set on the caller's OWN row, written in its insert; NULL on a run that is its own computation, and on every run
+    /// before the rung.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ArtifactLineageRung;
+    public const int DatabaseSchemaVersion = RunReuseRung;
 
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;
@@ -516,6 +521,9 @@ public static class Versions
 
     /// <summary>What a launch was offered and what its vendor said, spelled once (<c>U-chief-wake-once</c>); a unit overtaken renumbers it here.</summary>
     public const int LaunchEvidenceRung = 52;
+
+    /// <summary>A run's reused computation, spelled once (<c>U-backtest-dedupe-role</c>); a unit overtaken renumbers it here.</summary>
+    public const int RunReuseRung = 54;
 
     /// <summary>The three-dimension envelopes' rung, spelled once (<c>U-org-verbs-e</c>); a unit overtaken renumbers it here.</summary>
     public const int EvidenceSharesRung = 50;

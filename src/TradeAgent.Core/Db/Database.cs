@@ -3303,6 +3303,21 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{artifactLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{artifactLineageRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-backtest-dedupe-role): a unit overtaken renumbers it in Versions, nothing else.
+        const int runReuseRung = Versions.RunReuseRung;
+        if (have < runReuseRung)
+        {
+            // A DEDUPLICATED BACKTEST BELONGS TO WHOEVER ASKED — `U-backtest-dedupe-role`. A run's id hashes what decided its result
+            // and never who asked, so a position whose request is identical to a run another position recorded first is given its
+            // OWN row (its role, its attempt, its own figures) beside that one, and `strategy_run.reuses_run` names the run whose
+            // computation it is: the lineage, and the run whose trial covers it — trial keys still carry no role (EVID-001). Written
+            // by the app in the row's own insert; NULL on a run that is its own computation and on every run before the rung. The
+            // column added only where missing and the stamp last, so a crash between them runs this again as a no-op.
+            AddColumnIfMissing("strategy_run", "reuses_run", "TEXT REFERENCES strategy_run(id)");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{runReuseRung}') ON CONFLICT(key) DO UPDATE SET value='{runReuseRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
