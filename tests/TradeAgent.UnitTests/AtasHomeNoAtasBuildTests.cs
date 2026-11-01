@@ -1,4 +1,5 @@
 using TradeAgent.App;
+using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Connectors.Paper;
@@ -279,5 +280,78 @@ public class AtasHomeNoAtasBuildTests
 
         Assert.Equal(OnboardingStep.TRADING_PLATFORM_SELECTED, setup.Current());
         Assert.Equal(Platform.Paper, AtasHome.PlatformAtStart(db, atasInThisBuild: false, out _));
+    }
+
+    /// <summary>
+    /// AN UNCONFIRMED ATAS ORDER DOES NOT BLOCK, AND IS NOT SETTLED BY, A CLOSE ON THE STAND-IN (Codex re-review, P1): it cannot move
+    /// paper's position, so it is no reason to refuse closing it — and paper's book is no evidence about it, so the owner's Close all
+    /// positions must leave it exactly as recorded.
+    /// </summary>
+    [Fact]
+    public async Task An_unconfirmed_ATAS_order_neither_blocks_nor_is_settled_by_a_close_on_the_stand_in()
+    {
+        using var db = TestEnv.NewDb();
+        await using var gw = await OnTheStandIn(db, new FakeConnector(new FakeBroker()));
+        var bought = await gw.PlaceAsync(new AgentContext("a"), "buy-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null));
+        Assert.Equal(ExecutionState.FILLED, bought.State);
+
+        var store = new ExecutionRequestStore(db);
+        var sell = OnAtas("atas-sell-1", DateTimeOffset.UtcNow);
+        store.TryCreate(new ExecutionRequest
+        {
+            RequestId = sell.RequestId, ConnectorId = sell.ConnectorId, AccountId = sell.AccountId, Instrument = "ES",
+            Intent = RequestIntent.PLACE, ClientOrderId = sell.ClientOrderId, CreatedAt = sell.CreatedAt, State = ExecutionState.CREATED,
+            Mode = TradingMode.PAPER,
+            ParametersJson = Json.Write(new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 1m, null, null, TimeInForce.Day, null))
+        });
+        store.Transition(sell.RequestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition(sell.RequestId, ExecutionState.DISPATCHING, ExecutionState.UNKNOWN);
+
+        var closed = await gw.CloseAsync(new AgentContext("a"), "close-1", "ES");
+
+        Assert.NotNull(closed);
+        await gw.OperatorCloseAllAsync();
+        var atas = gw.GetRequest(sell.RequestId)!;
+        Assert.Equal(ExecutionState.UNKNOWN, atas.State);
+    }
+
+    /// <summary>A crash between holding the ATAS account and clearing it leaves the next stand-in start to finish the clearing.</summary>
+    [Fact]
+    public async Task A_crash_between_holding_the_ATAS_account_and_clearing_it_is_finished_by_the_next_start()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("connector", Platform.Atas);
+        AtasHome.ChoosePaper(db);
+        db.SetKv(AtasHome.HeldAccountKey, "=ATAS-ACCOUNT-1");   // held, and the crash came before the clearing
+        await using var paper = new TradingGateway(db, new FakeConnector(new FakeBroker()));
+        paper.Update(s => s.SelectedAccountId = "ATAS-ACCOUNT-1");
+
+        AtasHome.HoldTheAtasAccount(db, paper, Platform.Paper);
+
+        Assert.Null(paper.Settings.SelectedAccountId);
+        Assert.Equal("=ATAS-ACCOUNT-1", db.GetKv(AtasHome.HeldAccountKey));
+    }
+
+    /// <summary>
+    /// An unfinished setup past ATAS's account steps asks every platform step again (Codex re-review, P2), and the stand-in is written
+    /// only after the setup was sent back, so a crash between them leaves the refusal standing rather than paper over ATAS's steps.
+    /// </summary>
+    [Fact]
+    public void An_unfinished_ATAS_setup_past_its_account_asks_every_platform_step_again()
+    {
+        using var db = TestEnv.NewDb();
+        db.SetKv("connector", Platform.Atas);
+        var setup = new OnboardingStore(db);
+        foreach (var step in Enum.GetValues<OnboardingStep>().TakeWhile(s => s != OnboardingStep.WORKSPACE_CREATED)) setup.Complete(step);
+
+        AtasHome.ChoosePaper(db);
+
+        var done = setup.Completed();
+        foreach (var step in new[] { OnboardingStep.TRADING_PLATFORM_SELECTED, OnboardingStep.ATAS_INSTALLED, OnboardingStep.ATAS_BRIDGE_INSTALLED,
+                     OnboardingStep.ATAS_BRIDGE_CONNECTED, OnboardingStep.TRADING_CONNECTION_FOUND, OnboardingStep.ACCOUNT_SELECTED,
+                     OnboardingStep.MARKET_DATA_VERIFIED, OnboardingStep.ORDER_ACCESS_VERIFIED })
+            Assert.DoesNotContain(step, done);
+        Assert.Contains(OnboardingStep.AI_AUTHENTICATED, done);
     }
 }
