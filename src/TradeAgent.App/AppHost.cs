@@ -2151,9 +2151,11 @@ public sealed class AppHost : IAsyncDisposable
     {
         var (view, refusal) = Kit.Install(source, expectHash: shownHash);
         if (view is null) return refusal;
+        // EVERY SEAT IS TOLD AT ONCE (U-kit-socket-2): each home's canon rewritten now, or as soon as the turn it is in ends.
+        var told = HomeCanons.Refresh(view);
         Gateway.Log.Activity($"You installed the head-start kit {view.Index.Name} ({view.Index.Skills.Count} skills, {view.Index.Tools.Count} tools, " +
-                             $"kit {view.Hash[..12]}) from {view.Source}. Executors' cells read it from their next turn; every seat is told of it " +
-                             "when the AI next starts.");
+                             $"kit {view.Hash[..12]}) from {view.Source}. Executors' cells are given it from their next turn; every seat is told of it: " +
+                             told.Words + ".");
         Changed?.Invoke();
         return null;
     }
@@ -2163,8 +2165,9 @@ public sealed class AppHost : IAsyncDisposable
     {
         var before = Kit.Current();
         if (Kit.Remove() is { } refusal) return refusal;
+        var told = HomeCanons.Refresh(null);
         Gateway.Log.Activity($"You removed the head-start kit{(before.Last is { } r ? $" {r.Name} (kit {r.Hash[..12]})" : "")}. No cell is given it " +
-                             "from its next turn; seats stop being told of it when the AI next starts.");
+                             $"from its next turn; every seat stops being told of it: {told.Words}.");
         Changed?.Invoke();
         return null;
     }
