@@ -125,10 +125,10 @@ public static class RouteA
     {
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var system32 = Path.Combine(windows, "System32");
-        return new(workspace, [cellCodexHome, cellHome, .. kit is null ? [] : new[] { kit.Dir }],
-        [codexRoot, .. kit?.Tools is { } tools ? new[] { tools } : []],
+        return new(workspace, [cellCodexHome, cellHome],
+        [codexRoot],
         [
-            new("PATH", string.Join(';', [Path.GetDirectoryName(codexExe), system32, windows, .. kit?.Tools is { } t ? new[] { t } : []])),
+            new("PATH", string.Join(';', Path.GetDirectoryName(codexExe), system32, windows)),
             new("SystemRoot", windows), new("windir", windows), new("ComSpec", Path.Combine(system32, "cmd.exe")),
             new("PATHEXT", ".COM;.EXE;.BAT;.CMD"),
             new("USERPROFILE", cellHome), new("HOME", cellHome), new("CODEX_HOME", cellCodexHome),
