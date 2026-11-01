@@ -256,16 +256,25 @@ public sealed class CellWindowsEgressTests : IDisposable
     async Task<IReadOnlyList<BenchRow>> WebRows()
     {
         var ws = Directory.CreateDirectory(Path.Combine(_root, "web-ws")).FullName;
-        var p = RouteA.WindowsPolicy(ws, Cmd, Path.GetDirectoryName(Cmd)!, Directory.CreateDirectory(Path.Combine(_root, "codex")).FullName,
-            Directory.CreateDirectory(Path.Combine(_root, "home")).FullName, CellEgress.Web);
-        return await WindowsCellBenchmark.WebRowsAsync(p, ws, Launcher(), CellPlatform.Read());
+        return await WindowsCellBenchmark.WebRowsAsync(Policy(ws, CellEgress.Web), ws, Launcher(), CellPlatform.Read());
+    }
+
+    /// <summary>
+    /// A cell's policy over <paramref name="ws"/>, as <c>CellWindowsTests</c> makes it: the system's own programs run without a grant (Windows
+    /// grants every AppContainer its system folders), so no program root is named — the stage refuses to write an ACE on System32.
+    /// </summary>
+    CellPolicy Policy(string ws, CellEgress egress)
+    {
+        var name = Path.GetFileName(ws);
+        var p = RouteA.WindowsPolicy(ws, Cmd, Path.GetDirectoryName(Cmd)!, Directory.CreateDirectory(Path.Combine(_root, "c-" + name)).FullName,
+            Directory.CreateDirectory(Path.Combine(_root, "h-" + name)).FullName, egress);
+        return new CellPolicy(p.Workspace, p.ReadOnly, [], p.Environment, p.Egress);
     }
 
     ContainedProcess StartCell(string script)
     {
         var ws = Directory.CreateDirectory(Path.Combine(_root, "ws-" + Guid.NewGuid().ToString("n")[..6])).FullName;
-        var policy = RouteA.WindowsPolicy(ws, Cmd, Path.GetDirectoryName(Cmd)!, Directory.CreateDirectory(Path.Combine(_root, "c-" + Path.GetFileName(ws))).FullName,
-            Directory.CreateDirectory(Path.Combine(_root, "h-" + Path.GetFileName(ws))).FullName, CellEgress.None);
+        var policy = Policy(ws, CellEgress.None);
         var psi = new ProcessStartInfo(Cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var a in new[] { "/d", "/c", script }) psi.ArgumentList.Add(a);
@@ -277,12 +286,16 @@ public sealed class CellWindowsEgressTests : IDisposable
     /// <summary>The cell's reader: the process of the attempt's job named findstr whose token is an AppContainer's.</summary>
     static async Task<(int Pid, ulong Start)> CellChild(ContainedProcess held)
     {
+        IReadOnlyList<WindowsCellBenchmark.CellMember>? seen = null;
         for (var i = 0; i < 200; i++)
         {
-            if (WindowsCellBenchmark.CellMembers(held)?.FirstOrDefault(m => m.Name == "findstr") is { } reader) return (reader.Pid, reader.Start);
+            seen = WindowsCellBenchmark.CellMembers(held);
+            if (seen?.FirstOrDefault(m => m.Name == "findstr") is { } reader) return (reader.Pid, reader.Start);
             await Task.Delay(50);
         }
-        throw new Xunit.Sdk.XunitException("the cell's reader never appeared in the attempt's job");
+        var members = held.JobMembers();
+        throw new Xunit.Sdk.XunitException($"the cell's reader never appeared in the attempt's job: job members {(members is null ? "unlisted" : string.Join(", ", members))}; " +
+            $"cell members {(seen is null ? "unlisted" : string.Join(", ", seen.Select(m => $"{m.Name} {m.Pid}")))}; stage {(held.Process.HasExited ? $"exited {held.Process.ExitCode}: {held.Process.StandardError.ReadToEnd()}" : "running")}");
     }
 
     static async Task<bool> Gone(int pid)
