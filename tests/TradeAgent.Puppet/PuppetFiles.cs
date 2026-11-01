@@ -22,12 +22,31 @@ internal static class PuppetFiles
         try
         {
             File.WriteAllText(temp, text, encoding ?? new UTF8Encoding(false));
-            File.Move(temp, path, overwrite: true);
+            Rename(temp, path);
         }
         catch
         {
             try { File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             throw;
+        }
+    }
+
+    /// <summary>
+    /// The rename over the target. On Windows a rename over a file a reader has open at that instant is refused
+    /// (<see cref="UnauthorizedAccessException"/> or <see cref="IOException"/>, even when the reader allows <see cref="FileShare.Delete"/>;
+    /// CI run 41185326828, windows shard 5); the READER is never made to wait or retry, so the WRITER, who owns the file, tries again for
+    /// a few seconds — a reader holds it for microseconds. Anywhere else the first try lands.
+    /// </summary>
+    static void Rename(string temp, string path)
+    {
+        var until = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            try { File.Move(temp, path, overwrite: true); return; }
+            catch (Exception e) when (OperatingSystem.IsWindows() && e is IOException or UnauthorizedAccessException && DateTime.UtcNow < until)
+            {
+                Thread.Sleep(1);
+            }
         }
     }
 
