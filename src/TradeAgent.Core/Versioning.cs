@@ -494,8 +494,17 @@ public static class Versions
     /// <c>U-lineage-check</c>'s 53): <c>strategy_run.reuses_run</c>, the id of the run whose identical computation another position
     /// recorded first — set on the caller's OWN row, written in its insert; NULL on a run that is its own computation, and on every run
     /// before the rung.</para>
+    ///
+    /// <para><b>55 — a board forecast names the attempt that made it</b> (<c>U-cards-2</c>, rung <see cref="BoardForecastLineageRung"/>,
+    /// after 54): one BEFORE INSERT trigger on <c>board_forecast</c> refusing a row with no attempt (NULL or blank). The board's
+    /// forecasts stay the board's own ledger, outside the chart (their author is a board seat, not a position); only the attempt is
+    /// required. No backfill: a row before the rung keeps its NULL.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = RunReuseRung;
+    public const int DatabaseSchemaVersion = BoardForecastLineageRung;
+
+    /// <summary>The board-forecast lineage rung, spelled once (<c>U-cards-2</c>); a unit overtaken renumbers it here.</summary>
+    public const int BoardForecastLineageRung = 55;
+
 
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;

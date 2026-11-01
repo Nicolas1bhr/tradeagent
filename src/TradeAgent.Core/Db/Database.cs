@@ -3318,6 +3318,16 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{runReuseRung}') ON CONFLICT(key) DO UPDATE SET value='{runReuseRung}';");
         }
 
+        const int boardForecastLineageRung = Versions.BoardForecastLineageRung;
+        if (have < boardForecastLineageRung)
+        {
+            // A BOARD FORECAST NAMES THE ATTEMPT THAT MADE IT — `U-cards-2` (U-lineage-check's card: `board_forecast` accepted a null
+            // attempt). One BEFORE INSERT trigger, INSERT only: a row written before this rung keeps its NULL, never backfilled. The
+            // trigger IF NOT EXISTS and the stamp last, so a crash between them runs this again over what it made.
+            Exec(ArtifactLineage.BoardForecastTriggerSql());
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{boardForecastLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{boardForecastLineageRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
