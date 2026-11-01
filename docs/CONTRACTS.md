@@ -2751,8 +2751,8 @@ of one declared bar shares its ordinal, a fill or exit carrying the minute it ha
 EVALUATED bars, so a year of hourly bars (8,760) is one run. There is no bar parameter: `Run` reads `program.Bars`,
 so `Backtest.Over`, `trade backtest` and the referee judge what was declared. A run that ends inside a declared bar
 closes it as a partial bar — history: its last minutes happened and the data does not have them — and a signal from it
-is the usual no-trade, due after the last minute there is. A program that declares nothing is the case where the two clocks are one, and its trace is the
-one it always had, byte for byte.
+is the usual no-trade, due after the last minute there is. A program that declares nothing is the case where the two clocks are one; over whole
+data its trace is the one it always had, byte for byte, and across missing minutes it reads what the runner reads, as above (`backtest=4`).
 
 **A program that reads features is handed them as they had arrived** (`U-language-v2a`). At each evaluated bar's
 close — `BarGrid.EndOf`, the instant its decision is taken; a zoned `1d` bar's local midnight, 23 to 25 hours after

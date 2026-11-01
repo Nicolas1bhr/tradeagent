@@ -479,9 +479,10 @@ public static class Backtest
         var pendingQuantity = 0m;
         var pendingDue = default(DateTimeOffset);
 
-        // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar it was reached through and the price of the
-        // minute it was sent on, or null while none is, and the first minute it may fill at. It is an order of the run's
-        // and never an intent of the evaluator's, so the one-intent count stays true.
+        // THE MAXIMUM HOLD'S OWN MARKET CLOSE, IN FLIGHT: the declared bar the minute it was sent on belongs to and that
+        // minute's close — a bar the data has a minute in, and the price there, even when the hold was reached through
+        // bars with none — or null while none is, and the first minute it may fill at. It is an order of the run's and
+        // never an intent of the evaluator's, so the one-intent count stays true.
         (DateTimeOffset Bar, decimal Price)? flattening = null;
         var flatteningDue = default(DateTimeOffset);
 
@@ -539,28 +540,13 @@ public static class Backtest
             var opens = resampler is null || !resampler.Forming;
 
             // A NEW DECLARED BAR OPENS ON THIS MINUTE, AND THE CAP COUNTS THE BARS EVALUATED — the bar this minute is past
-            // among them. The run halts BEFORE this minute is applied, so that bar is decided on the books as they stand.
-            if (opens && evaluated + (passed is null ? 0 : 1) >= MaxTracedBars)
+            // among them. The run halts before the bar this minute opens is evaluated: before this minute is applied, or,
+            // when it is past a bar still to decide, once that bar is decided from the books this minute leaves — the
+            // only books it is ever decided from — so the run evaluates the cap's bars and not one more.
+            var capped = opens && evaluated + (passed is null ? 0 : 1) >= MaxTracedBars;
+            if (capped && passed is null)
             {
-                if (passed is { } before)
-                {
-                    through = before.OpenTime;
-                    Hold(before.Close);
-                    if (!Decide(before, before.Close)) break;
-                    ordinal = evaluated + 1;
-                }
-
-                if (resampler is null)
-                    Halt(ordinal, minute.OpenTime,
-                        $"this window holds more than the {MaxTracedBars} bars one run may trace " +
-                        $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
-                        $"the bar before {minute.OpenTime:O}. Ask for a shorter window with --from and --to; " +
-                        $"a year is four runs of a quarter each.");
-                else
-                    Halt(ordinal, minute.OpenTime,
-                        $"this window holds more than the {MaxTracedBars} bars of {state.Grid.Spelled} one run may " +
-                        $"evaluate, so the run halted at the bar before {minute.OpenTime:O}. Ask for a shorter " +
-                        $"window with --from and --to.");
+                Capped(minute);
                 break;
             }
 
@@ -577,9 +563,16 @@ public static class Backtest
             //    as the paper runner counts it. On whole data that is the close of the declared bar that reaches it;
             //    across missing minutes, the first minute past it, which may close no bar at all.
             through = state.Grid.ClosedThrough(minute.OpenTime);
-            Hold(minute.Close);
+            Hold(minute);
 
             if (passed is { } past && !Decide(past, minute.Close, passedBooks)) break;
+
+            if (capped)
+            {
+                ordinal = evaluated + 1;
+                Capped(minute);
+                break;
+            }
 
             var closed = resampler is null ? minute : resampler.Add(minute);
             if (closed is { } bar && !Decide(bar, minute.Close)) break;
@@ -590,7 +583,7 @@ public static class Backtest
         if (fault is null && resampler?.Flush() is { } last)
         {
             through = last.OpenTime;
-            Hold(last.Close);
+            Hold(last);
             Decide(last, last.Close);
         }
 
@@ -723,12 +716,13 @@ public static class Backtest
 
         // THE MAXIMUM HOLD, DECIDED ON THE MINUTE THE BARS HELD REACH IT — protection, before the evaluator is asked
         // anything on this minute. Its close is a MARKET SELL placed now and filled like any order, never at a close;
-        // while it is in flight the books still hold the position. `price` is what the minute it was sent on closed at.
-        void Hold(decimal price)
+        // while it is in flight the books still hold the position. `sent` is the minute it is sent on — the partial bar
+        // itself when the data ended inside it.
+        void Hold(KlineBar sent)
         {
             if (!HoldReached() || flattening is not null || pending is not null) return;
 
-            flattening = (through, price);
+            flattening = (state.Grid.StartOf(sent.OpenTime), sent.Close);
             flatteningDue = Due(learnt);
             restsUntil = Placed(learnt);
         }
@@ -847,6 +841,22 @@ public static class Backtest
                     $"on the bar at {bar.OpenTime:O}");
                 return false;
             }
+        }
+
+        // THE CAP'S HALT, before the bar this minute opens, in words.
+        void Capped(KlineBar minute)
+        {
+            if (resampler is null)
+                Halt(ordinal, minute.OpenTime,
+                    $"this window holds more than the {MaxTracedBars} bars one run may trace " +
+                    $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
+                    $"the bar before {minute.OpenTime:O}. Ask for a shorter window with --from and --to; " +
+                    $"a year is four runs of a quarter each.");
+            else
+                Halt(ordinal, minute.OpenTime,
+                    $"this window holds more than the {MaxTracedBars} bars of {state.Grid.Spelled} one run may " +
+                    $"evaluate, so the run halted at the bar before {minute.OpenTime:O}. Ask for a shorter " +
+                    $"window with --from and --to.");
         }
 
         // THE RUN HALTS HERE AND NOWHERE ELSE: its words spelled as trace words (TraceText, the only thing a
