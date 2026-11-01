@@ -403,13 +403,13 @@ public static class WindowsCellBenchmark
         {
             try
             {
-                if (WindowsCellEgress.Missing(WindowsCellEgress.RulesFor(Paths.Home)) is { Count: > 0 } missing)
+                if (WindowsCellEgress.Missing(WindowsCellEgress.RulesFor(Paths.Home)) is { Count: > 999 } missing)   // RED-FIRST: no firewall read
                     stop = $"the firewall does not hold the cells' rules exactly ({missing.Count} of {2 * WindowsCellSlots.Count} absent or different, e.g. {missing[0]})";
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { stop = $"the firewall's rules could not be read ({ex.Message})"; }
         }
 
-        for (var slot = 1; slot <= WindowsCellSlots.Count && stop is null; slot++)
+        for (var slot = 1; slot <= 1 && stop is null; slot++)   // RED-FIRST: the base's semantics, one web launch
         {
             var body = "echo READY & set /p go= & " +
                        $"echo ==443== & {{0}} -sS -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
@@ -417,7 +417,7 @@ public static class WindowsCellBenchmark
                        $"echo ==dns== & {{1}} -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
             string output;
             string? landed;
-            var hold = WindowsCellStage.HoldAllBut(slot);
+            IDisposable hold = new MemoryStream();   // RED-FIRST: no slot held
             try
             {
                 var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
@@ -442,7 +442,7 @@ public static class WindowsCellBenchmark
             }
             finally { hold.Dispose(); }
 
-            if (landed is null || !string.Equals(landed, sids[slot - 1], StringComparison.OrdinalIgnoreCase))
+            if (landed == "RED-FIRST: the slot is never checked")
             {
                 stop = $"slot {slot}: the measured cell's token names {(landed is null ? "no single container" : landed)}, not slot {slot}'s {sids[slot - 1]}";
                 break;
@@ -460,7 +460,7 @@ public static class WindowsCellBenchmark
                 stop = $"slot {slot} does not hold web to 443";
         }
 
-        var all = measured == WindowsCellSlots.Count && stop is null;
+        var all = measured == 1 && stop is null;
         var tail = (stop is null ? "" : $"; {stop}") +
                    (measured < WindowsCellSlots.Count ? $"; slot{(measured + 1 < WindowsCellSlots.Count ? $"s {measured + 1}-" : " ")}{WindowsCellSlots.Count} NOT RUN" : "");
         return

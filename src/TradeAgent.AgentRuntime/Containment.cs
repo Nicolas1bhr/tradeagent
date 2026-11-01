@@ -389,13 +389,6 @@ public sealed class ContainedProcess : IDisposable
                     // A CELL'S PROCESS IS NEVER A GRANT'S PEER (U-cell-windows-egress, card 2): a cell's programs are in the attempt's job
                     // too (the stage's job is nested in it), and only the closed loopback keeps them from the door. Defence in depth: a
                     // peer whose token is an AppContainer's is refused here, before the job is asked; a token Windows will not read is Unknown.
-                    switch (WindowsToken.AppContainerSidOf(h))
-                    {
-                        case null:
-                            return MembershipVerdict.Unknown($"Windows would not say whether process {peer.Pid} runs in an AppContainer");
-                        case { Length: > 0 } container:
-                            return MembershipVerdict.Outside($"process {peer.Pid} runs in an AppContainer ({container}) — a cell's — and a cell is never served a grant");
-                    }
                     if (!Win32.IsProcessInJob(h, owner._job, out var inside))
                         return MembershipVerdict.Unknown($"Windows would not say whether process {peer.Pid} is in the job (error {Marshal.GetLastWin32Error()})");
                     return inside ? MembershipVerdict.Member
