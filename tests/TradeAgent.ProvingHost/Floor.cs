@@ -11,7 +11,7 @@ namespace TradeAgent.ProvingHost;
 /// <summary>
 /// THE FLOOR, RUN (<c>U-proving-ground-c</c> item 3): for each market's open campaign, in dataset order, every program of
 /// <see cref="FloorGrammar"/> in its fixed order through the pipe's own <c>backtest</c> handler — <c>Backtests.Run</c> — under a
-/// proving-only app principal: an in-process worker of this host, as the Research position, holding no launch. Its trials are
+/// proving-only app principal: an in-process worker of this host, as the Research position, under one no-model launch row. Its trials are
 /// charged to the campaign as a seat's, and the campaign refuses past its budget. Then a verdict for the best research results,
 /// net above zero at the venue's cost, best first, through the pipe's own <c>verdict</c> handler, until the campaign's verdict
 /// budget refuses. No model; the order reads no truth and no result but the floor's own.
@@ -21,8 +21,26 @@ static class Floor
     /// <summary>The principal the floor's runs are recorded under: the founding chart's research position.</summary>
     const string Role = CouncilRoles.Research;
 
-    /// <summary>Returns true when the deadline stopped the floor.</summary>
+    /// <summary>
+    /// Returns true when the deadline stopped the floor. THE FLOOR'S OWN LAUNCH (<c>U-lineage-check</c>): every version and run names the
+    /// attempt that made it, so the floor opens one launch-ledger row for its whole run — Research's, no model, nothing reserved — and
+    /// closes it at cost 0, so its AI dollars stay a measured zero and its versions and runs carry an attempt the ledger holds.
+    /// </summary>
     public static async Task<bool> Run(GatewayPipeServer server, Database db, DateTimeOffset deadline, List<string> log)
+    {
+        var attempt = $"floor-{Guid.NewGuid():n}"[..18];
+        var ledger = new AiAttemptStore(db);
+        var admitted = ledger.Begin(new AiAttempt
+        {
+            Id = attempt, StartedAt = DateTimeOffset.UtcNow, Role = Role, ReservedCost = 0m, Runtime = "proving-floor",
+            SeatClass = SeatClasses.Puppet, Assurance = SeatClasses.AssuranceOf(SeatClasses.Puppet) is { } a ? SeatClasses.Name(a) : null
+        });
+        if (!admitted.Admitted) throw new InvalidOperationException($"the floor's launch was not admitted: {admitted.Refusal}");
+        try { return await RunUnder(server, db, deadline, log, attempt); }
+        finally { ledger.End(attempt, 0, DateTimeOffset.UtcNow, 0, 0, 0, 0, 0, null, 0m, null, "the proving floor: no model"); }
+    }
+
+    static async Task<bool> RunUnder(GatewayPipeServer server, Database db, DateTimeOffset deadline, List<string> log, string attempt)
     {
         // THE DEADLINE STOPS A RUN IN FLIGHT: the handlers are asked under a CancellationToken that fires at it, and a run the app stopped is neither
         // recorded nor charged nor answered (Backtests.Run).
@@ -48,7 +66,7 @@ static class Floor
                 await File.WriteAllTextAsync(Path.Combine(folder, name), program.Text);
                 var answer = await server.CallAsync(Frame(Ops.Backtest, ("strategy", "strategies/" + name), ("dataset", set.Id),
                     ("from", (set.FirstBar ?? campaign.HoldoutFrom).ToString("O", CultureInfo.InvariantCulture)),
-                    ("to", to.ToString("O", CultureInfo.InvariantCulture))), Role, null, expiry.Token);
+                    ("to", to.ToString("O", CultureInfo.InvariantCulture))), Role, attempt, expiry.Token);
                 if (expiry.IsCancellationRequested) { log.Add("deadline reached during a research run; it was stopped, unrecorded"); return true; }
                 if (!answer.Ok)
                 {
@@ -69,7 +87,7 @@ static class Floor
             foreach (var (program, version, net) in results.Where(r => r.Net > 0m).OrderByDescending(r => r.Net).ThenBy(r => r.Program.Ordinal))
             {
                 if (DateTimeOffset.UtcNow >= deadline) { log.Add("deadline reached in judging"); return true; }
-                var answer = await server.CallAsync(Frame(Ops.Verdict, ("version", version), ("dataset", set.Id)), Role, null, expiry.Token);
+                var answer = await server.CallAsync(Frame(Ops.Verdict, ("version", version), ("dataset", set.Id)), Role, attempt, expiry.Token);
                 if (expiry.IsCancellationRequested) { log.Add("deadline reached during a verdict; it was stopped"); return true; }
                 if (!answer.Ok)
                 {
