@@ -1,5 +1,14 @@
 # Resume here
 
+> **2026-11-02 ~03:0x CET — THE FAST LANE WRAPPED UP on the owner's word** ("Start wrapping up and not starting new things. Well asses what was done and
+> continue later."). Nothing runs; no wake is armed. **Resume from the fleet's `FAST-STATE.md` top block ("WRAPPED UP").** Since 997365c4: 29 units
+> landed plus R25 (decisions D1–D14), R26 (the roadmap) and R27 (the α split); the organisation's first real model turn ran on 2026-10-30 (the chief,
+> gpt-6-luna, exit 0). **Main is RED at 2a4a7edc** (OrganisationLoopTests and OversightPageTests on three platforms — an integration break between the
+> last landings): fixing it is the first step. Then land the in-flight units (two of them block the 72-hour run: U-turn-reservation, U-founding-carry),
+> then the 72-hour run on the Linux host, then the Windows release and sitting. NOT VERIFIED: verdict → paper → fills on any real seat; any 72-hour run;
+> anything on Windows beyond the cell proof rows.
+
+
 **Read this first, then `BUILD-STATUS.md`.** This file says where the work stopped, what to do next,
 and which traps have already been paid for. `BUILD-STATUS.md` says what is proven and what is not,
 with the evidence quoted; it is the honest record and it is kept that way deliberately.
