@@ -1510,7 +1510,8 @@ public sealed class AppHost : IAsyncDisposable
             // WHO THE SEAT HOME'S SIGN-IN BILLS NOW (U-billing-classes, fix pass 2): the app's own last reading of it, refreshed on the
             // background pass below — what the loop's first look holds a CLI or broker role to, so neither a home with no launch yet
             // nor a seat the owner signed in again another way is held to the other class's ceiling. No process here: the last reading.
-            signIn: () => SeatSignIn.State().SignedInClass);
+            // A TEST HOST'S PUPPET HAS NO SIGN-IN TO READ: the class its test declared stands in for it (U-turn-reservation) — null in the product.
+            signIn: () => (Agent.Current as CliAgentRuntime)?.Manifest.TestHostPuppetBilling ?? SeatSignIn.State().SignedInClass);
         Meter.Changed += () => Changed?.Invoke();
 
         Wakes = new MissionEventStore(db);
