@@ -94,7 +94,7 @@ public static class HomeMark
     }
 
     /// <summary>SQLite's URI for <paramref name="file"/>, opened immutable: its characters that a URI reserves escaped.</summary>
-    static string ImmutableUri(string file)
+    internal static string ImmutableUri(string file)
     {
         var path = Path.GetFullPath(file).Replace('\\', '/');
         var uri = new System.Text.StringBuilder("file:");
