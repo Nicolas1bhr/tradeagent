@@ -137,15 +137,12 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var book = Path.Combine(TestEnv.Home, $"loop-paper-{Guid.NewGuid():n}.db");
         await using var life = await PuppetLife.Begin("loop", seed: db => ThinkingSeatsTests.ProveCell(db), seatClass: SeatClasses.Broker,
             seatClasses: new Dictionary<string, string> { [CouncilRoles.Operations] = SeatClasses.Cli, [CouncilRoles.Research] = SeatClasses.Cli },
-            settings: s =>
-            {
-                s.SelectedAccountId = PaperConnector.TheAccount;
-                // THE OWNER'S RATE, a quarter of the puppet lives' 2/8: at 2/8 one turn at the founding allowance reserves 2.56, and a team
-                // that is a quarter of an experiment division that is a quarter of the founding 40 a day holds 2.50 — no turn would fit.
-                s.AiPriceInputPerMillion = 0.5m;
-                s.AiPriceOutputPerMillion = 2m;
-            },
-            connector: PaperVenue(book));
+            // THE PUPPET LIVES' OWN RATE, 2/8, AND THE OWNER'S PLAN (U-turn-reservation; R25 D13): at 2/8 one turn at the founding allowance
+            // reserves 2.56, and a team that is a quarter of an experiment division that is a quarter of the founding 40 a day holds 2.50 —
+            // so a team turn fits only because a turn billed to his plan reserves what it can plausibly cost (0.864 before five turns of
+            // its seat are measured), never the whole bound a paid key's turn keeps.
+            settings: s => s.SelectedAccountId = PaperConnector.TheAccount,
+            connector: PaperVenue(book), billingClass: BillingClasses.Plan);
         var db = life.Host.Db;
         var org = new OrgStore(db);
         var gw = life.Host.Gateway;
@@ -260,6 +257,13 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(2, runs.Count);
         var executorTurn = Assert.Single(life.AttemptsOf(executor));
         Assert.All(runs, r => Assert.Equal((executor, executorTurn.Id), (r.Role, r.Attempt)));
+        // A TEAM TURN FITS AT THE FOUNDING SHARES (U-turn-reservation; R25 D13): the team is a quarter of a quarter of the founding 40 a day,
+        // 2.50 of plan capacity; the executor's turn, billed to the plan, reserved what it can plausibly cost — two typical turns at 2/8, 0.864,
+        // or one, 0.432, once five turns of its seat are measured — never the 2.56 bound, which no turn of the team could ever fit.
+        output.WriteLine($"executor turn: {executorTurn.BillingClass}, reserved {executorTurn.ReservedCost}");
+        Assert.Equal(2.5m, life.Host.Meter!.EnvelopesFor(executor)!.Single(u => u.UnitId == team.Id && u.Ceiling == BillingClasses.Plan).Envelope);
+        Assert.Equal(BillingClasses.Plan, executorTurn.BillingClass);
+        Assert.Contains(executorTurn.ReservedCost, new[] { 0.432m, 0.864m });
         Assert.Equal(executor, gw.Strategies.VersionById(winner)!.Role);
         var delivery = org.Deliveries(mandate)[^1];
         Assert.All(org.Checks(delivery.Id), c => Assert.True(c.Passed, $"{c.Check}: {c.Reason}"));

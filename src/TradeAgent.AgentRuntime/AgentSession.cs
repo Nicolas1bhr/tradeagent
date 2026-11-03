@@ -395,7 +395,7 @@ public sealed class AgentSession(
     }
 
     /// <summary>The verdict on this session's seat with nothing to verify: nothing refused, and its class.</summary>
-    SeatVerdict Seated => SeatVerdict.None with { SeatClass = SeatClass };
+    SeatVerdict Seated => SeatProfile.Unverified(manifest) with { SeatClass = SeatClass };
 
     /// <summary>
     /// WHY A LAUNCH OF THIS ROLE MAY NOT START NOW, or null (<c>U-grant-tree</c>) — the look the mission loop and the owner's
