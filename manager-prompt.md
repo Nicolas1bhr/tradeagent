@@ -1,5 +1,10 @@
 # TradeAgent — final direction for the build fleet
 
+> **2026-11-04:** TradeAgent is two repositories. One is this public kernel. The other is the owner's private moat,
+> `Nicolas1bhr/tradeagent-moat`: his head-start kit and edge research, which reach the app only through the kit socket.
+> Edge-revealing material goes there, never here, and the fleet does not open that repository. See `CLAUDE.md`, under
+> "TradeAgent is two repositories".
+>
 > **2026-10-02, later:** the agent organisation is `docs/ORGANISATION.md` (the owner's hierarchical direction, his answers and research R12–R17); § 1's
 > "capable models choose useful work … delegate" is read through it — managers decide, executors execute, the chart is app data — and the build runs
 > in two lanes, its § 15.

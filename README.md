@@ -3,6 +3,12 @@
 > **Picking this up?** Read [docs/RESUME-HERE.md](docs/RESUME-HERE.md) first — what to do next,
 > what is still open, and the traps already paid for. [BUILD-STATUS.md](BUILD-STATUS.md) is the
 > honest record of what is proven and what is not.
+>
+> **TradeAgent is two repositories.** This one is the public kernel: the app and every generic
+> mechanism. The owner's head-start kit and edge research live in a private companion repository,
+> `Nicolas1bhr/tradeagent-moat`. It reaches the app only as a kit installed from Settings →
+> Head-start kit, and nothing here depends on it. Agents: see [CLAUDE.md](CLAUDE.md), under "TradeAgent is
+> two repositories".
 
 An AI agent, safely wired to an ATAS trading account, for someone who does not use a terminal.
 
@@ -144,6 +150,7 @@ The installer is per-user: `PrivilegesRequired=lowest`, no elevation, no PATH ed
 | `src/TradeAgent.App` | The Avalonia desktop app: `Theme`/`Ui` design system, onboarding wizard, chat panel, dashboard, safety, activity, checks |
 | `src/TradeAgent.GatewayHost` | Headless gateway, for tests and diagnostics |
 | `tests/` | Unit, integration and fault suites; counts and where they last ran are in [BUILD-STATUS.md](BUILD-STATUS.md) |
+| `kit/` | The head-start kit a build carries: always the empty index. The owner's own kit is built in the private `tradeagent-moat` repository and installed from Settings |
 | `docs/` | [DECISIONS](docs/DECISIONS.md) · [RESEARCH-REQUIRED](docs/RESEARCH-REQUIRED.md) · [CONTRACTS](docs/CONTRACTS.md) · [USER-GUIDE](docs/USER-GUIDE.md) |
 
 ## Where things live at runtime

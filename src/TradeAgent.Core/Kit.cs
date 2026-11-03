@@ -10,7 +10,10 @@ namespace TradeAgent.Core;
 /// <summary>
 /// THE HEAD-START KIT SOCKET (<c>U-kit-socket</c>; R25 D10): the one folder the owner's own kit of skills and tools is installed into,
 /// which every seat is told of and every executor's cell reads and runs from, and which no agent can write. The kit is the OWNER's to
-/// build ("i'll build that myself and hand it to you later", 2026-10-30); this is only the socket it plugs into.
+/// build ("i'll build that myself and hand it to you later", 2026-10-30); this is only the socket it plugs into. The kit is built in
+/// the owner's PRIVATE moat repository and reaches an app only through <see cref="Install"/> from his own folder or zip. This public
+/// repository's <c>kit/</c>, the one <see cref="BundledDir"/> ships, stays the empty index: a kit put there is published with every
+/// build (CLAUDE.md, "TradeAgent is two repositories").
 ///
 /// <para><b>The layout an author follows</b> — a folder, or a zip of one (the folder itself or its one top folder):</para>
 /// <code>
@@ -211,7 +214,7 @@ public static class Kit
     // ---- install and remove ---------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// INSTALLS THE KIT AT <paramref name="source"/> — a folder, or a <c>.zip</c> of one — for the owner's second press (or the fleet's
+    /// INSTALLS THE KIT AT <paramref name="source"/> — a folder, or a <c>.zip</c> of one — for the owner's second press (or a build's
     /// bundle): staged, checked, made read-only, hashed, swapped in and recorded. The kit already installed is replaced only once the new
     /// one passed every check; a refusal leaves it as it was. Returns the installed view or the refusal in the owner's words.
     /// </summary>
@@ -343,7 +346,9 @@ public static class Kit
     }
 
     /// <summary>
-    /// THE FLEET'S BUNDLE (<c>U-kit-socket</c> item 3): a build that carries a kit in <see cref="BundledDir"/> installs it at start —
+    /// A BUILD'S BUNDLE (<c>U-kit-socket</c> item 3). A build from this public repository bundles only the empty index; a bundle with
+    /// content can only come from a private build (CLAUDE.md, "TradeAgent is two repositories"). A build that carries a kit in
+    /// <see cref="BundledDir"/> installs it at start —
     /// while the record holds no act at all, or when the kit last installed was itself a build's bundle and this build's differs. An
     /// owner's own install or removal is never undone by a build. Returns what was done, for the activity line, or null for nothing.
     /// </summary>

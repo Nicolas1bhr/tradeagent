@@ -1,5 +1,16 @@
 # Resume here
 
+> **2026-11-04 — TradeAgent is two repositories (the owner, 2026-11-03).** The owner's head-start kit and edge research now live in the
+> private `Nicolas1bhr/tradeagent-moat` (`~/Projects/tradeagent-moat`), which reaches the app only through the kit socket.
+> - Edge-revealing material goes there, never here.
+> - A session working here does not open it.
+> - Every push from this clone, the owner's working copy on his Mac with all its worktrees, runs its tripwire through the
+>   `pre-push` hook.
+>
+> The rules are in `CLAUDE.md`, under "TradeAgent is two repositories". Nothing else moved. The WRAPPED UP block below still holds, and
+> main is still red for the two tests it names. These commits change docs and two code comments only: the `kit/` comment in
+> `TradeAgent.App.csproj` and `Kit.cs`, which used to invite the owner's kit into this repository's `kit/`.
+
 > **2026-11-02 ~03:0x CET — THE FAST LANE WRAPPED UP on the owner's word** ("Start wrapping up and not starting new things. Well asses what was done and
 > continue later."). Nothing runs; no wake is armed. **Resume from the fleet's `FAST-STATE.md` top block ("WRAPPED UP").** Since 997365c4: 29 units
 > landed plus R25 (decisions D1–D14), R26 (the roadmap) and R27 (the α split); the organisation's first real model turn ran on 2026-10-30 (the chief,

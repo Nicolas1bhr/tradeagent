@@ -1,6 +1,50 @@
 # Working on TradeAgent
 
-**Audience: whoever picks this up next — a human, or a Claude Code session.**
+**Audience: whoever picks this up next — a human, a Claude Code session, Codex or any other agent** (the root `AGENTS.md` points here).
+
+## TradeAgent is two repositories
+
+**This repository is half of the project. The other half is private** (the owner, 2026-11-03 and 2026-11-04):
+
+| | The kernel: this repository | The moat |
+|---|---|---|
+| GitHub | `Nicolas1bhr/tradeagent`, public | `Nicolas1bhr/tradeagent-moat`, private: only the owner can read it |
+| On the owner's Mac | `~/Projects/ai-trading-software-for-mihael` | `~/Projects/tradeagent-moat` |
+| What it holds | The app: the organisation, the loop, evidence, containment, the broker, the pages and the kit socket — every generic mechanism | The owner's head-start kit (skills, tools, information sources, perception as data) and the research that says where an edge is |
+| How it reaches the running app | It is the app | Only as a kit installed through the socket (`src/TradeAgent.Core/Kit.cs`; Settings → Head-start kit): skills the agents read and tools they run in their cells. It is never compiled into the app and never bundled into a build from here |
+
+"The moat" in this section means that repository. In the wider sense the project's moat also includes the data in the app's
+home: the tape, ledgers and forward records. Neither repository holds that data.
+
+What that means for anyone working here:
+
+- **Nothing here depends on the moat.** No submodule, fetch, build step, bundle or test reads it. `kit/` stays the empty index. A
+  build or release from this repository carries nothing of the moat and is complete without it.
+- **Edge-revealing material belongs to the moat and is never committed here, not even on a branch.** Public history is permanent.
+  This covers:
+  - a promoted or deployed strategy's text;
+  - research naming a family whose forward record is positive;
+  - a data source that pays.
+
+  Exports of the tape, ledgers or forward records stay in the app's home and belong to neither repository. If work here produces
+  such material, stop and hand it to the owner, or to a session opened in the moat for that purpose.
+- **A session working here does not open the moat and reads nothing from it.** When a task needs both sides, it ends in two
+  commits. Here: the generic capability, written so it makes sense to a reader who has never seen the moat. There: the specific use.
+- **Every push from this clone runs the moat's tripwire.** This clone is the owner's working copy on his Mac. Its `pre-push` hook
+  covers every worktree. It stops a push that carries the moat's canary, a private term, or a 12-word passage of its kit or research.
+  Take the text out of the commit. Never use `--no-verify`, and never remove or change the hook: only the owner switches it off.
+  - **A judged false positive goes to the owner.** Allowing one is done in the moat, never from here.
+  - **Never copy a hit into a record or a commit message.** The hook names only where the hit is, not the text, and a record says
+    only that a push was stopped and where.
+  - **It is not the fleet's own scan.** That scan (`scan.sh`) looks for credentials and host names. Both checks run, and neither
+    can see an edge written here in fresh words.
+  - **It fails closed.** If the moat folder is missing, the hook stops every push until the owner reinstalls it.
+- **Records and the honesty rule.** Every instruction in this repository to record, quote or checkpoint excludes edge-revealing
+  material. That covers BUILD-STATUS and its "verified or NOT VERIFIED" rule, `manager-prompt.md`, `docs/HOW-WE-BUILD.md` and every
+  record. When the evidence for a claim reveals an edge, the public record says the claim was verified and that its quoted
+  evidence is kept in the moat. It cites that evidence by date and a neutral id, never by a name that reveals the edge. This is
+  still the first category, verified with the output quoted, in the one place where it may be quoted.
+- **Work in the moat follows the moat's own rules:** its `AGENTS.md` and `BOUNDARY.md`.
 
 ## Start here
 
@@ -195,9 +239,17 @@ during a run. `tools/probe` is the harness behind the two headline claims, re-ru
   board act that moves real money or widens a limit takes two independent board seats, a proposer and
   a confirmer (R24, 2026-10-23).
 - Do not commit credentials, host names or the contents of `%LOCALAPPDATA%\TradeAgent`.
-- **Public until the absolute point (the owner, 2026-10-08).** Open source is the cheaper way to build, and the moat is data and calendar time, not code.
-  The repository stays public until the owner's "absolute point" — the moment the moat is proven — when development moves to the private `TradeAgent-Org`.
-  Until then nothing that reveals a working edge is committed: a promoted or deployed strategy's text, a tape, ledger or forward-record export, or
-  research naming a family whose forward record is positive. Losing and rejected work may be recorded as before. This is a policy, not a barrier: no gate
-  detects edge-revealing text and a repository made private later does not unpublish its history, so whoever writes a record checks it, and the move to
-  `TradeAgent-Org` comes before the first record that would need it (R22).
+- **Public, with the moat kept apart (the owner, 2026-10-08 and 2026-11-03).** Building in public is the cheaper way to build. The
+  owner's word was "open source"; the licence is source-available (README, License). The moat is data, calendar time and the owner's
+  kit, not this code. Nothing that reveals a working edge is committed here. The list, and where each item goes, is in "TradeAgent is
+  two repositories", above. Losing and rejected work may be recorded here as before (the owner, 2026-10-08), one result at a time.
+  The accumulated memory of what failed is still part of the moat in `docs/PRINCIPLES.md`'s sense. A collection that maps where the
+  edge is, such as a family base-rate table or a census of what is left to try, goes to the moat.
+  - **The barrier is partial.** The moat's tripwire stops a push that copies the moat's own text. Nothing detects an edge first
+    written here in fresh words, and a repository made private later does not unpublish its history. So whoever writes a record
+    checks it.
+  - **The absolute point stays the owner's decision.** That is the moment the moat is proven, and he decides then whether this kernel
+    itself moves to `TradeAgent-Org`, his private GitHub organisation.
+  - **The older plan is superseded on one point.** Records that move the kernel there before the first edge-revealing record (R21
+    § 4, R22, and the history in `docs/RESUME-HERE.md`) are superseded: such a record now goes to the moat. Amended 2026-11-04, when
+    the moat repository was made.
