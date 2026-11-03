@@ -42,6 +42,12 @@ sealed record OrgSurfaceSources
     /// </summary>
     public Func<string, ResolvedSeat>? SeatOf { get; init; }
 
+    /// <summary>
+    /// WHAT ONE TURN OF A POSITION WOULD SET ASIDE NOW, and the class its seat bills (<c>U-turn-reservation</c>; the Costs page), or null where
+    /// there is nothing to ask — a test, a build with no host, no meter yet. Reads only.
+    /// </summary>
+    public Func<string, SeatReservation?>? ReservationOf { get; init; }
+
     /// <summary>Why a position's folder refuses its launches because the last start could not rebuild it, or null (<see cref="AppHost.HomeRefusalFor"/>).</summary>
     public Func<string, string?> HomeRefusal { get; init; } = _ => null;
 
@@ -81,6 +87,7 @@ sealed record OrgSurfaceSources
             WakeOnce = host.WakeChiefOnce
         },
         SeatOf = host.ResolvedSeatOf,
+        ReservationOf = host.ReservationOf,
         Org = () => host.OrgLedger,
         Attempts = () => host.AttemptLedger,
         Scorecards = () => host.ScorecardLedger,

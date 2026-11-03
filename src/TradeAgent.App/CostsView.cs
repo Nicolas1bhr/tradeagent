@@ -1,6 +1,7 @@
 using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Media;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 
@@ -13,16 +14,45 @@ sealed record CostsRead(
     DateTimeOffset From,
     string Currency)
 {
-    public static CostsRead Of(OrgStore org, AiAttemptStore attempts, DateTimeOffset now, string currency)
+    /// <summary>The chart's positions, so each unit's card can name what one turn of each sets aside (<c>U-turn-reservation</c>).</summary>
+    public IReadOnlyList<OrgPositionRow> Positions { get; init; } = [];
+
+    /// <summary>
+    /// WHAT THE NEXT TURN OF EACH POSITION WOULD RESERVE, and the class its seat bills, keyed by position (<c>U-turn-reservation</c>; R25 D13):
+    /// the meter's own rule, read once per page read. A position with no entry is one nothing could be read for (no host, a test).
+    /// </summary>
+    public IReadOnlyDictionary<string, SeatReservation> Reservations { get; init; } = new Dictionary<string, SeatReservation>();
+
+    public static CostsRead Of(OrgStore org, AiAttemptStore attempts, DateTimeOffset now, string currency,
+        Func<string, SeatReservation?>? reservationOf = null)
     {
         var (from, to) = OwnerDay.Window(now);
-        return new CostsRead(org.Units(), attempts.UnitTotalsByClass(from, to), from, currency);
+        var positions = org.Positions();
+        var reservations = new Dictionary<string, SeatReservation>(StringComparer.Ordinal);
+        if (reservationOf is not null)
+            foreach (var p in positions.Where(p => p.Status != OrgPositionStatus.Ended))
+                if (reservationOf(p.Id) is { } r) reservations[p.Id] = r;
+        return new CostsRead(org.Units(), attempts.UnitTotalsByClass(from, to), from, currency)
+        {
+            Positions = positions,
+            Reservations = reservations
+        };
     }
 }
+
+/// <summary>What one turn of a position would reserve now (<see cref="TurnMeter.ReservationFor"/>), for the class its seat bills.</summary>
+sealed record SeatReservation(string BillingClass, TurnReservation Reservation);
 
 /// <summary>One unit's day as the page says it: a line for each billing class, in the order plan, key, not established.</summary>
 sealed record CostUnitWords(string Id, int Depth, string Title, string Plan, string Key, string Unknown)
 {
+    /// <summary>
+    /// WHAT ONE TURN HERE SETS ASIDE, AND WHY (<c>U-turn-reservation</c>): a sentence per position of the unit itself, the figure unknown
+    /// and never zero where it cannot be priced, and — where any of them bills the plan — that its plan limits are advisory and by how
+    /// much. Empty where nothing was read.
+    /// </summary>
+    public string Basis { get; init; } = "";
+
     /// <summary>
     /// The lines a card shows: each class the unit has turns in today, or — when it has none in any — the one line that says so. Three
     /// "none today" lines per unit hid the one figure that mattered among them.
@@ -47,7 +77,8 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
         if (damage is not null) return new CostsWords(Labels.ChartDamaged(damage), "", []);
 
         var byUnit = read.Day.ToLookup(d => d.UnitId, StringComparer.Ordinal);
-        var names = OrgNames.Of(read.Units, []);
+        var names = OrgNames.Of(read.Units, read.Positions);
+        var seated = read.Positions.Where(p => p.Status != OrgPositionStatus.Ended).ToLookup(p => p.UnitId, StringComparer.Ordinal);
         var units = tree
             .Where(t => t.Unit.Status != OrgUnitStatus.Closed || byUnit[t.Unit.Id].Any())   // a closed unit with no turns today has nothing to say
             .Select(t =>
@@ -57,9 +88,11 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
                 var lines = classes.Select(c => Line(c, rows, read.Currency)).ToArray();
                 var shown = classes.Select((c, i) => (c, i)).Where(x => rows.Any(r => r.BillingClass == x.c && r.Totals is not null))
                     .Select(x => lines[x.i]).ToList();
+                var basis = Basis(seated[t.Unit.Id], read.Reservations, names, read.Currency);
                 return new CostUnitWords(t.Unit.Id, t.Depth, names.Unit(t.Unit.Id), lines[0], lines[1], lines[2])
                 {
-                    Shown = shown.Count > 0 ? shown : [Labels.CostsNothingToday]
+                    Shown = [.. shown.Count > 0 ? shown : [Labels.CostsNothingToday], .. basis.Length > 0 ? new[] { basis } : []],
+                    Basis = basis
                 };
             })
             .ToList();
@@ -92,6 +125,25 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
         if (t.Estimated > 0)
             line += $"; {Count(t.Estimated, "turn was", "turns were")} priced as an estimate because no model was named";
         return line + ".";
+    }
+
+    /// <summary>
+    /// ONE UNIT'S RESERVATION BASIS (<c>U-turn-reservation</c>): a sentence per position of the unit read, in the chart's order. An unknown
+    /// figure is said as unknown, never as 0; a plan turn's line is followed once by <see cref="Labels.CostsPlanAdvisory"/>. Nothing read for
+    /// any position (no host, a test) says nothing rather than guess.
+    /// </summary>
+    static string Basis(IEnumerable<OrgPositionRow> positions, IReadOnlyDictionary<string, SeatReservation> reservations, OrgNames names,
+        string currency)
+    {
+        var here = positions.ToList();
+        var read = here.Where(p => reservations.ContainsKey(p.Id)).Select(p => (p.Id, Seat: reservations[p.Id])).ToList();
+        if (read.Count == 0) return here.Count == 0 && reservations.Count > 0 ? Labels.CostsNoSeat : "";
+
+        var sentences = read.Select(x => x.Seat.Reservation.Price.Cost is { } cost
+            ? Labels.CostsReservation(names.Position(x.Id), Labels.Money(cost, currency), x.Seat.Reservation.Why)
+            : Labels.CostsReservationUnknown(names.Position(x.Id), (x.Seat.Reservation.Price.Unpriced ?? x.Seat.Reservation.Why) is { Length: > 0 } why ? why : "it could not be priced"));
+        var plan = read.Any(x => BillingClasses.Of(x.Seat.BillingClass) == BillingClasses.Plan);
+        return string.Join(" ", plan ? [.. sentences, Labels.CostsPlanAdvisory] : sentences);
     }
 
     static string Count(int n, string one, string many) => $"{n.ToString(CultureInfo.InvariantCulture)} {(n == 1 ? one : many)}";
@@ -148,7 +200,7 @@ sealed class CostsPage
         {
             if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = CostsWords.Of(CostsRead.Of(org, attempts, _src.Now(), _src.Currency()), null);
+                words = CostsWords.Of(CostsRead.Of(org, attempts, _src.Now(), _src.Currency(), _src.ReservationOf), null);
                 read = true;
             }
             else words = CostsWords.Of(null, null);
@@ -169,7 +221,7 @@ sealed class CostsPage
     static (Control Card, Action<CostUnitWords> Fill) MakeUnit(CostUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
-        TextBlock[] lines = [Line(), Line(), Line()];
+        TextBlock[] lines = [Line(), Line(), Line(), Line()];   // up to three billing classes and the reservation basis
         var card = Ui.Card(Ui.Col(Theme.S2, [title, .. lines]));
         return (card, u =>
         {

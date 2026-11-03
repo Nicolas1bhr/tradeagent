@@ -1752,8 +1752,8 @@ public sealed record MissionSituation
 
         if (spend.CapCannotFundATurn)
             return $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
-                   + $"{Money(spend.Cap, spend.Currency)} {ceiling}, over {turns}. One turn can cost up to "
-                   + $"{Money(spend.NextTurnReservation, spend.Currency)}, which is more than that whole limit, so "
+                   + $"{Money(spend.Cap, spend.Currency)} {ceiling}, over {turns}. One turn "
+                   + Labels.OneTurnSetsAside(spend.Class, Money(spend.NextTurnReservation, spend.Currency)) + ", which is more than that whole limit, so "
                    + "your owner has to raise it or choose a cheaper model before you can work again. Midnight "
                    + "will not change it.";
 
@@ -1775,7 +1775,10 @@ public sealed record MissionSituation
         // would plan against a number it cannot reason about.
         if (spend.UnreportedTurns > 0)
             spent += $" — and {spend.UnreportedTurns} never reported what they used and are charged "
-                     + "what they reserved, which is the most they could have cost";
+                     + (spend.Class == BillingClasses.Plan
+                         // A PLAN TURN RESERVES AN ESTIMATE (U-turn-reservation; R25 D13), not its whole bound: never "the most".
+                         ? "what they reserved, an estimate from measured turns that a turn can pass"
+                         : "what they reserved, which is the most they could have cost");
 
         if (spend.Reserved > 0m)
             spent += $" — {Money(spend.Reserved, spend.Currency)} of that is committed to turns whose "
