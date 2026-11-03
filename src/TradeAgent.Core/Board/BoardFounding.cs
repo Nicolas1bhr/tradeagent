@@ -52,6 +52,14 @@ public static class BoardFounding
         ("XRPUSDT", 5_000m)
     ];
 
+    /// <summary>
+    /// THE FOUNDING PAPER POLICY'S OPEN POSITIONS: FIFTEEN (R25 D14, decided by the orchestrator on the owner's behalf, 2026-11-01,
+    /// his to overrule) — every pair under evidence (<see cref="PaperPairs"/>, five) by its <see cref="PaperDeployments"/> (three), so
+    /// no run the founding envelopes allow is refused by the cap before the envelopes say so. Paper only: the policy it is in is
+    /// PAPER with real money off, and the settings' survivable default stays 2. The board narrows it with one seat, widens it with two.
+    /// </summary>
+    public const int FoundingOpenPositions = 15;
+
     /// <summary>The founding policy, version 1. (Declared after <see cref="PaperPairs"/>: static fields initialise in order.)</summary>
     public static BoardPolicy V1 { get; } = new()
     {
@@ -61,7 +69,9 @@ public static class BoardFounding
         {
             MaxOrderQuantity = 1m,
             MaxNotionalPerOrder = 0m,
-            MaxOpenPositions = 2,
+            // R25 D14 (2026-11-01, the orchestrator on the owner's behalf, his to overrule): five pairs by three deployments.
+            // PAPER ONLY — this policy's mode is paper with real money off; the board narrows it with one seat, widens it with two.
+            MaxOpenPositions = FoundingOpenPositions,
             MaxOrdersPerMinute = 6,
             MaxLossPerTrade = 0m,
             MaxDailyLoss = 0m,
@@ -106,7 +116,8 @@ public static class BoardFounding
         + "ruling on his behalf (R25 D11), set here by the app as its founding values: one standing envelope per pair under evidence — "
         + "BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000 — each pair at most 5,000 USDT notional in all, the "
         + "notional cap binding above each pair's floor price; three deployments per pair, each its third (D11 amended: one inconclusive "
-        + "slot beside two favourable); no expiry while no board seat is active";
+        + "slot beside two favourable); no expiry while no board seat is active; at most 15 open positions, five pairs by three runs, paper "
+        + "only (R25 D14)";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family
