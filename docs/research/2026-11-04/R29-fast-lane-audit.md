@@ -4,7 +4,7 @@
 rules that outrank making it compile" and `docs/PRINCIPLES.md` "The boundary remains enforceable", with R24 and R25 D1–D13 as what was meant to hold.
 Run from a cloud session on branch `claude/r29-fast-lane-audit`, starting at main `92204b30`. No product code changed.
 
-**Status: IN PROGRESS.** Areas A, C and E are recorded below; B and D follow in later commits on this branch.
+**Status: IN PROGRESS.** Areas A, C, D and E are recorded below; B follows in later commits on this branch.
 
 ## 0. Method
 - Toolchain: .NET SDK 10.0.114 (distro package; the dotnet-install host was refused by the session's proxy). `dotnet build TradeAgent.sln` at
@@ -58,6 +58,38 @@ confirm, not a defect established.
 **F-A5 INFO — an idle legacy division counting 0 lets declared shares sum above 1.** `src/TradeAgent.Gateway/GatewayPipeServer.Structure.cs`:389
 (`Asleep`, ea019732/e5dadccb). Every launch is still admitted along its whole chain to the root's day-total, so no unit draws past its envelope:
 overcommitment, not new money.
+
+**F-D1 MEDIUM — a Linux cell changes modes and times of any file the owner's uid owns, outside its grants; the kit (in range) leans on it.**
+`src/TradeAgent.Core/CellNative.cs`:77–80 (the seccomp deny list is io_uring, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd: no
+chmod, fchmod, fchmodat, fchmodat2, utimes, utimensat) and :37 (Landlock's handled rights carry no attribute change; Landlock does not mediate chmod or
+utime). A cell running as the owner's uid can `chmod 000` the home's database or the app's files (the supervisor and trusted state denied service),
+`chmod 0666` them, loosen `~/.ssh`, or flip a run bit in the kit, whose hash covers run bits — so one cell withdraws the kit from every other cell.
+No read or write is gained. Partly known: `tests/TradeAgent.IntegrationTests/CellLinuxTests.Kit.cs`:72 says "chmod is not a right Landlock handles …
+said, not asserted"; `RouteA.AssuranceRows` (`src/TradeAgent.AgentRuntime/RouteA.cs`:270–305) names no such GAP. Introduced before the range (the
+Linux cell, 1b4d7bdd); e5561796 / b58835cc depend on it. Fix: EPERM from seccomp for the chmod and utime family (fchmod on an owned fd at most), or
+at least a GAP assurance row "attribute changes outside grants". VERIFIED at kernel level with an equivalent ruleset (Landlock ABI 7, handled rights
+0xFFFF, the kit granted read-only): `chmod OK …/kit/tool 0o100644` · `chmod OK …/outside/s 0o100666` · `read outside DENIED [Errno 13]` · `write kit
+DENIED [Errno 13]` — not run through the product's own cell stage (this host's cgroup lacks the delegation CI's Cell step gives, § 2). The deny list
+was re-read by the record's author.
+
+**F-D2 LOW — Windows `web` egress is measured on port 80 only and the firewall rule is not re-read per launch.**
+`src/TradeAgent.AgentRuntime/WindowsCellBenchmark.cs`:279–288 (`web-nothing-else` probes github.com:80), `RouteA.cs`:236. `internetClient` opens every
+port; a rule blocking 80 but not other TCP ports or UDP still yields a proof naming `web`, and a rule removed after the proof leaves web cells every
+port until reboot; nothing in the code creates the rule (D2's helper). Exposure today none: ddb51f42 shows web holding nowhere, cells run at `none`.
+Introduced 43d45c85, 4cec837b. Fix: probe another TCP port and a UDP send; re-read the rule by SID and port at admission before choosing `web`.
+READ-ONLY (Windows).
+
+**F-D3 LOW (suspicion, not established) — the Windows slot sweep may follow a junction made during cleanup.** `WindowsCellStage.cs`:166–187 decides
+"not a link" from enumeration-time attributes, then recurses as the owner; kill-on-close ends processes asynchronously, so a dying descendant could swap
+a folder for a junction and the owner's sweep would delete its target. Introduced 20074d6d. Fix: open each entry with
+`FILE_FLAG_OPEN_REPARSE_POINT` and re-check, or wait for the job's active-process count to reach 0. READ-ONLY.
+
+**F-D4 LOW (suspicion) — the stage's job check accepts any job.** `WindowsCellStage.cs`:80 `IsProcessInJob(…, NULL)` is true in any job, not only
+TradeAgent's, despite its comment; small, as the cell's nested job is kill-on-close and held by the stage. 20074d6d. READ-ONLY.
+
+**F-D5 INFO — the kit's "no link" check does not cover hardlinks.** `Kit.cs`:438–462: a source folder holding a hardlink to a secret installs its
+bytes into the kit every cell reads. No power gained (making the hardlink already needs the owner's uid). Fix if wanted: refuse `st_nlink > 1`.
+VERIFIED: `hardlink: INSTALLED; kit/tools/support/key = PRIVATE KEY`.
 
 **F-C1 MEDIUM — vendor_said's credential scrub lets common shapes through.** `src/TradeAgent.Core/Db/LaunchEvidence.cs`:51 (`Named`), :54
 (`Bearer`), :57 (`Key`), called from `src/TradeAgent.AgentRuntime/TurnMeter.cs`:1419. In JSON the key name's closing quote satisfies the separator
@@ -118,7 +150,17 @@ ends (suspicion, not established). Needs the owner's or the board's explicit acc
 code, not reachable from a seat (e51db327). `ProvingStore` (`src/TradeAgent.Core/Proving/ProvingStore.cs`:80) opens any path without checking the
 proving mark; its one caller passes a proving home — hardening only.
 
-**Clean so far (with what was read).** Hire placement (`OrgRights.cs`:200–232): no hire into the root as a member, the root's head and anything under
+**Clean so far (with what was read).** Kit: zip-slip and links refused, VERIFIED against the real `Kit.Preview` (`../evil`, `tools/../../evil`,
+`/tmp/evil`, `..\evil`, a symlink entry, a directory symlink in a folder source; install from inside the home refused, `Kit.cs`:401–408, 465–489);
+press two re-stages and requires the first press's hash (`Kit.cs`:241–243, `AppHost.cs`:2067); every grant re-hashes every byte (`Kit.cs`:177);
+never granted writable (`Cell.cs`:303–309); kit tools last on PATH (`RouteA.cs`:106). AppContainer job: KILL_ON_JOB_CLOSE without BREAKAWAY_OK or
+SILENT_BREAKAWAY_OK, created suspended and assigned before resume, exactly three inherited handles (`AppContainerCell.cs`:188–205, 315–331); grants
+recorded before granted, swept, a failed revoke refuses (`WindowsCellStage.cs`:124–163, 220–234); Windows proofs bound to BootId, machine, release,
+build and profile, written only when every core row held (`CellProofStore.cs`:72–80, 186–190; `WindowsCellBenchmark.cs`:310–319) — all read only.
+Linux: no commit in range changes Cell.cs, CellNative.cs or CellProofStore.cs beyond the kit's read-only grant; self-activation passes `Decide`'s
+ProvenCell check (`PositionActivation.cs`:344). Home on hire: app-minted `[a-z0-9-]` ids, 48 random bits, `workspace/org/<id>`, links replaced
+(`WorkspaceBuilder.cs`:95–103). Puppet torn-read touches tests only. `tools/linux-ui.sh` commits no host, user, display or path (it presses the
+owner's GUI as the app's account; outside the product, policy-limited as its header says). Hire placement (`OrgRights.cs`:200–232): no hire into the root as a member, the root's head and anything under
 div-operations are board acts, the caller must head the parent; board seats and the watcher are not org units. Activation gate
 (`PositionActivation.cs`:369–377): broker or cell seats only, then `Decide` (proven cell, assurance, ceilings); a seat priced at nothing is refused;
 unreadable facts leave the hire dormant. f5f5a509's wake give-back charges nothing because it runs nothing. org-wake (`OrgStore.Autonomy.cs`): own
