@@ -4,7 +4,7 @@
 rules that outrank making it compile" and `docs/PRINCIPLES.md` "The boundary remains enforceable", with R24 and R25 D1–D13 as what was meant to hold.
 Run from a cloud session on branch `claude/r29-fast-lane-audit`, starting at main `92204b30`. No product code changed.
 
-**Status: IN PROGRESS.** Areas C and E are recorded below; A, B and D follow in later commits on this branch.
+**Status: IN PROGRESS.** Areas A, C and E are recorded below; B and D follow in later commits on this branch.
 
 ## 0. Method
 - Toolchain: .NET SDK 10.0.114 (distro package; the dotnet-install host was refused by the session's proxy). `dotnet build TradeAgent.sln` at
@@ -27,6 +27,37 @@ or tests-box trx) on that platform and show anything else advisory. VERIFIED (sc
 `OrgStructureTests.No_pipe_op_or_door_verb_reaches_veto_or_activation` (both AUTH-001's proofs) left
 `Every_test_the_registry_names_is_a_test_in_the_tree_under_that_class` and `A_class_no_named_test_backs_is_shown_advisory_and_says_why` Passed
 (`Total tests: 9  Passed: 8  Skipped: 1`).
+
+**F-A1 MEDIUM — a head wakes itself back-to-back, past the board's floor, by hiring and retiring in a cycle (D3).**
+`src/TradeAgent.Core/Db/OrgStore.Verbs.cs`:348 (`WakeActivated(id, r.Caller, …)`) and :304 (`if (inUnit.Count == 0) route = "first";`). A head
+runs `org-hire` into a vacant child unit; the hire self-activates and raises an immediate `activated` wake to the hire and one to the hirer; the head
+runs `org-retire`; the unit is empty again, so the next hire passes the earning test as a "first" hire with no evidence. Every cycle hands the head an
+immediate wake that never meets the board's floor (60 min at team level) its own `org-wake` is held to, plus a fresh id and home per cycle. Only the
+unit envelopes and the day-total bound the spend — so this widens no money, but it voids the board's rewake policy (R24) and the earning rule. Also,
+`SelfActivationRefusal` prices one turn while each activation commits two wakes. Introduced a42677a8; 1b6b8ad3's id keying makes every re-activation
+wake again. Fix: no `activated` wake to a hirer who is the verb's caller (the reply already tells it), or hold it to `LastWoken + policy.Floor` as
+`RequestWake` does; count ended positions in the "first" route; price the two wakes. VERIFIED (scratch test in `OrgAutonomyTests`, broker seats, one
+head launch): `ORG-WAKE 1 min: ok=False … the security board's floor`; `CYCLE 0: hired pos-… status=active; retire ok=True` … `CYCLE 4: … retire
+ok=True`; `ACTIVATED WAKES TO THE HEAD: 5, due 23:22:43,23:22:43,…`; `ALL ACTIVATED WAKES: 10`; `Passed: 1`.
+
+**F-A2 LOW — a cell's wake file is held to no floor (D5 on the path cells actually use).** `src/TradeAgent.AgentRuntime/MissionLoop.cs`:4769–4773
+(`AskedForDelay`) clamps only to `MaxDelay` (30 min); `{"AfterSeconds":1}` in `.tradeagent/next.json` each turn gives a `self` wake a second later,
+past the board's executor floor (15 min). 1b6b8ad3 refuses `org-wake` to cells because "a cell asks with its wake file", so the floor and ceiling D5
+states are never applied to cells. Spend still bounded by envelope and day-total. Introduced: the wake file predates the range; 1b6b8ad3 made it the
+cells' only path. Fix: clamp to at least `RewakeFloors.Of(policy).Floor(level)` for every org position. READ-ONLY (code re-read by the record's author).
+
+**F-A3 INFO — D13 is a record, not code.** c9d3adb1 changes only `R25-fast-lane-mvp.md` (`1 file changed, 8 insertions`); `TurnMeter.cs`:1352
+still reserves the full allowance at list price for every billing class; no p99, model floor or plan/key split exists in src. So no paid-key turn is
+under-reserved and the day-total gate is unchanged (safe) — but a 0.25 × 0.25 team still cannot fit one turn, which blocks the MVP. RESUME-HERE names
+U-turn-reservation as in flight; it also cites "D1–D14" where R25 records D1–D13.
+
+**F-A4 INFO — self-activation proceeds while the board is active.** The owner's activation is refused once a board seat is active (activation is
+then the board's act, R24); a hire's self-activation (OrgStore.Verbs.cs Hire) is not. R25 D3 says "the board's powers stand", so this is a ruling to
+confirm, not a defect established.
+
+**F-A5 INFO — an idle legacy division counting 0 lets declared shares sum above 1.** `src/TradeAgent.Gateway/GatewayPipeServer.Structure.cs`:389
+(`Asleep`, ea019732/e5dadccb). Every launch is still admitted along its whole chain to the root's day-total, so no unit draws past its envelope:
+overcommitment, not new money.
 
 **F-C1 MEDIUM — vendor_said's credential scrub lets common shapes through.** `src/TradeAgent.Core/Db/LaunchEvidence.cs`:51 (`Named`), :54
 (`Bearer`), :57 (`Key`), called from `src/TradeAgent.AgentRuntime/TurnMeter.cs`:1419. In JSON the key name's closing quote satisfies the separator
@@ -87,7 +118,14 @@ ends (suspicion, not established). Needs the owner's or the board's explicit acc
 code, not reachable from a seat (e51db327). `ProvingStore` (`src/TradeAgent.Core/Proving/ProvingStore.cs`:80) opens any path without checking the
 proving mark; its one caller passes a proving home — hardening only.
 
-**Clean so far (with what was read).** D9 scope: live and non-paper runs refused (`PositionsPaperStopRefusal`, :4161), list filtered to the subtree's
+**Clean so far (with what was read).** Hire placement (`OrgRights.cs`:200–232): no hire into the root as a member, the root's head and anything under
+div-operations are board acts, the caller must head the parent; board seats and the watcher are not org units. Activation gate
+(`PositionActivation.cs`:369–377): broker or cell seats only, then `Decide` (proven cell, assurance, ceilings); a seat priced at nothing is refused;
+unreadable facts leave the hire dormant. f5f5a509's wake give-back charges nothing because it runs nothing. org-wake (`OrgStore.Autonomy.cs`): own
+wake only, floor and ceiling from its last woken turn, one pending, no target argument. Wake-once (`OrgStore.ChiefWake.cs`): second press through
+`WhatMoved`, unreachable from Gateway, TradeCli, AgentReach and GrantedWorkerTools. Seat models: only the owner's `ChooseSeatModel` (refused while the
+board is active) or SeatChief write seat columns, the hire verb takes no model, `IsCatalogModel` limits to luna and sol. Campaign budgets key by
+campaign, so a new hire resets none. D9 scope: live and non-paper runs refused (`PositionsPaperStopRefusal`, :4161), list filtered to the subtree's
 PAPER runs (:4080), board, pair and app principals excluded (:1368), subtree from app-recorded `strategy_version.role` (`StrategyStore.cs`:309) and
 `Org.SubtreeOf`; the stop re-reads the row inside its per-run gate. D4: owner-kind events raised only by `RecordOwnerMessage` (`AppHost.cs`:842) and
 `RetryOnce`; no agent input parses a `MissionEventKind`. material-read writes only a tool_call row, opens the scanner's `RelPath` through
