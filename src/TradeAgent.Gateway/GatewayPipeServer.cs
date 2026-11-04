@@ -645,7 +645,14 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         if (_loop is not null) return;
         Grants.Ended += OnGrantEnded;
         Grants.Withholding += OnWithheld;
-        _loop = Task.Run(() => AcceptLoop(_accept.Token));
+        // THE DOOR IS OPEN WHEN THIS RETURNS: the first pipe instance is created here, on the caller's thread, and handed to the
+        // loop. Created inside the loop's Task.Run it could still not exist when a caller told the server had started tried to
+        // connect — on a loaded thread pool past a client's whole connect budget (main's CI at 2a4a7edc, Windows). A first
+        // instance that cannot be created is logged and left to the loop's own retry, exactly as any later one is.
+        NamedPipeServerStream? first = null;
+        try { first = CreateServer(); }
+        catch (Exception ex) { gateway.Log.Engineering("Ipc", "accept_failed", "warn", ex: ex); }
+        _loop = Task.Run(() => AcceptLoop(first, _accept.Token));
     }
 
     /// <summary>
@@ -685,14 +692,15 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         catch (Exception) { /* a line about a launch is never worth the launch */ }
     }
 
-    async Task AcceptLoop(CancellationToken ct)
+    async Task AcceptLoop(NamedPipeServerStream? first, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            NamedPipeServerStream? server = null;
+            NamedPipeServerStream? server = first;
+            first = null;
             try
             {
-                server = CreateServer();
+                server ??= CreateServer();
                 await server.WaitForConnectionAsync(ct);
                 var s = server;
                 server = null; // ownership moves to the handler
@@ -712,6 +720,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 try { await Task.Delay(500, ct); } catch (OperationCanceledException) { return; }
             }
         }
+        // CLOSED BEFORE THE LOOP EVER RAN: the instance Start opened is not left behind.
+        first?.Dispose();
     }
 
     NamedPipeServerStream CreateServer()

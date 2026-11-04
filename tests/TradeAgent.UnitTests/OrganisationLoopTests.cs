@@ -285,14 +285,31 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(MandateEventKind.Accepted, org.MandateStatus(mandate));
 
         // THE WINNER: paper-eligible by the campaign's paper arm (frozen after the cutoff), allocated by the app's policy inside the
-        // founding envelope, and deployed on the loop's tick. THE LOSER: refused on its figures, and allocated nothing.
+        // founding envelope, and deployed on the loop's tick. THE LOSER: refused on its figures, and allocated nothing on its verdict —
+        // no row under the app's favourable policy, and never the winner's.
+        //
+        // WHAT R25 D11 AS AMENDED CHANGED HERE (744d815, U-evidence-breadth-paper): the founding envelope now carries three deployments,
+        // so the one inconclusive path into paper (U-referee-v2b, `Inconclusive.Slots`) holds one slot per pair — D11 was amended for
+        // exactly that. This life's holdout is an hour, under `Inconclusive.ShortHoldout`, so the loser's refusal is by contract a
+        // `loss-over-a-short-holdout`: inconclusive, observed on paper under `AllocationPolicy.InconclusiveV1` for `Inconclusive.Term`,
+        // its verdict still refused, and no live authority with it. Anything else written for it — a favourable row, a second row, a
+        // row that is not the envelope's share or not scoped to paper — is the losing verdict allocating something, and fails here.
         var promotions = new Promotions(db);
         Assert.Equal(PromotionVerdict.PaperEligible, Assert.Single(promotions.For(winner)).Verdict);
         Assert.Equal(PromotionVerdict.Refused, Assert.Single(promotions.For(loser)).Verdict);
-        var allocation = Assert.Single(gw.Allocations.PaperStanding(DateTimeOffset.UtcNow)).Allocation;
+        var paperStanding = gw.Allocations.PaperStanding(DateTimeOffset.UtcNow);
+        var allocation = Assert.Single(paperStanding, a => a.Allocation.PolicyVersion == AllocationPolicy.V1).Allocation;
         Assert.Equal((winner, PaperConnector.ConnectorId, PaperConnector.TheAccount), (allocation.VersionId, allocation.ConnectorId, allocation.AccountId));
-        Assert.DoesNotContain(gw.Allocations.PaperStanding(DateTimeOffset.UtcNow), a => a.Allocation.VersionId == loser);
-        var deployment = Assert.Single(gw.Deployments.Open());
+        Assert.DoesNotContain(paperStanding, a => a.Allocation.VersionId == loser && a.Allocation.PolicyVersion != AllocationPolicy.InconclusiveV1);
+        var observed = Assert.Single(gw.Allocations.For(loser));
+        Assert.Equal((AllocationPolicy.InconclusiveV1, AllocationScope.Paper, PaperConnector.ConnectorId, PaperConnector.TheAccount, allocation.MaxQuantity, allocation.MaxNotional),
+            (observed.PolicyVersion, observed.Scope, observed.ConnectorId, observed.AccountId, observed.MaxQuantity, observed.MaxNotional));
+        Assert.Equal(Inconclusive.Term, observed.EffectiveTo - observed.EffectiveFrom);
+        var observedStanding = Assert.Single(paperStanding, a => a.Allocation.VersionId == loser);
+        Assert.Equal((Inconclusive.ShortHoldoutLoss, PromotionState.Refused, false, false),
+            (observedStanding.InconclusiveClass, observedStanding.Promotion.State, observedStanding.Promotion.IsPromoted, observedStanding.Promotion.IsPaperEligible));
+        Assert.Equal(2, paperStanding.Count);
+        var deployment = Assert.Single(gw.Deployments.Open(), d => d.VersionId == winner);
         Assert.Equal((winner, allocation.Id, DeploymentState.Active), (deployment.VersionId, deployment.AllocationId, deployment.State));
 
         // THE NOTES REACH THE AUTHOR: the referee's verdict note and the allocator's note name the executor beside research, each with
