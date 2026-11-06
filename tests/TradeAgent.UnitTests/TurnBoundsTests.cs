@@ -162,6 +162,16 @@ public class TurnBoundsTests : IDisposable
         Assert.Equal(overLimit, owed.DispositionDetail);
         Assert.Equal(overLimit, life.Host.Mission.StandingAsideFor(Ops)?.Why);
 
+        // THE WATCH READS THE SAME THING, over the rows the app itself wrote (U-chief-moves): the turn's word in the errors, and why this position has not turned.
+        if (!OperatingSystem.IsWindows())
+        {
+            var digest = OrgDigestTests.OnALiveHome(life.Host.Db);
+            Assert.Contains(digest.GetProperty("errors").GetProperty("groups").EnumerateArray(),
+                g => g.GetProperty("ended").GetString() == AgentTurnEnded.EndedTimedOut && g.GetProperty("words").GetString()!.StartsWith(overLimit[..60], StringComparison.Ordinal));
+            var chair = digest.GetProperty("wakes").GetProperty("active_positions").EnumerateArray().Single(w => w.GetProperty("position").GetString() == Ops);
+            Assert.StartsWith(overLimit[..60], chair.GetProperty("why").GetProperty("words").GetString(), StringComparison.Ordinal);
+        }
+
         // AND THE NEXT TURN — the owner's press lifts the backoff here, so a test need not sit it out — answers them, told what happened.
         life.Host.Mission.SeatChanged(Ops);
         await life.RunUntil(() => life.Turns(Ops) == 2 && life.Host.Wakes!.OfKind(MissionEventKind.Owner).Single().Consumed, "the next turn took the words");
