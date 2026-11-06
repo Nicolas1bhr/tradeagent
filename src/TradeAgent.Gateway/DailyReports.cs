@@ -963,7 +963,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         try
         {
             runs = gateway.Strategies.RunCount;
-            foreach (var run in gateway.Strategies.Runs(ListShown))
+            foreach (var run in gateway.Strategies.Computations(ListShown))
                 metrics.Add(run.Role == Core.Strategy.Referee.RunRole ? HoldoutRunLine(run) : RunLine(run));
         }
         catch (Exception ex) { gaps.Add(new ReportGap("backtests", $"the strategy ledger could not be read ({ex.Message})")); }
