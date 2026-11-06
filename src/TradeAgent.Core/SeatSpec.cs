@@ -47,14 +47,14 @@ public sealed record SeatSpec(string? Runtime, string? Model, TurnAllowance Allo
     /// <summary>
     /// THE LONGEST A VENDOR PROGRAM'S TURN MAY RUN ON THE WALL CLOCK (<c>U-turn-bounds</c>, R28 W2). The one real chief turn measured took 20 s, so
     /// this is 90 times that, the top of R28's 20–30 minute range, because the two errors are not alike: cutting a working turn loses its
-    /// reservation and its work, while a hung turn held ten minutes longer costs only those ten minutes. Long verbs run on the app's clock and a
-    /// seat waits for none of them, so a turn this long is hung, not busy.
+    /// reservation and its work, while a hung turn held ten minutes longer costs only those ten minutes. Not nearer the measured turn because that
+    /// one ran no verb: a seat's <c>trade backtest</c> answers inside its turn, and a working turn can run several.
     /// </summary>
     public static readonly TimeSpan VendorTurnLimit = TimeSpan.FromMinutes(30);
 
     /// <summary>
-    /// THE SAME LIMIT FOR THE APP'S OWN HARNESS: half the vendor's, because each of its requests is already held to two minutes and no tool of
-    /// its turn starts a program, so fifteen minutes is seven requests that never answered.
+    /// THE SAME LIMIT FOR THE APP'S OWN HARNESS: half the vendor's, because each of its requests is already held to two minutes, so fifteen
+    /// minutes is seven requests in a row that never answered.
     /// </summary>
     public static readonly TimeSpan HarnessTurnLimit = TimeSpan.FromMinutes(15);
 

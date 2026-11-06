@@ -2871,7 +2871,7 @@ public sealed class MissionLoop
 
     /// <summary>
     /// STEPS <paramref name="role"/> ASIDE until its backoff ends: <paramref name="rest"/>, or for a position refused again, the failure backoff by
-    /// how many times in a row. Answers zero, so the lane looks again at once and is given to whoever else is due; with nobody, that look
+    /// how many times in a row. Answers zero (a host with no queue: the rest), so the lane looks again at once and is given to whoever else is due; with nobody, that look
     /// sleeps until the first rest ends (<see cref="WaitingForTheAside"/>). The refusal is told once per cause, not once per look.
     /// </summary>
     TimeSpan StepAside(string role, string why, TimeSpan? rest = null)
@@ -2889,7 +2889,9 @@ public sealed class MissionLoop
         }
         if (!told) Refused?.Invoke($"{CouncilRoles.Title(role)}: {why}");
         Changed?.Invoke();
-        return TimeSpan.Zero;
+
+        // A HOST WITH NO WAKE QUEUE HAS NOBODY ELSE TO SERVE AND NO PICK TO STEP OVER IT: its one role sleeps the rest.
+        return _host.Events is null ? until - _now() : TimeSpan.Zero;
     }
 
     /// <summary>
@@ -3067,9 +3069,14 @@ public sealed class MissionLoop
 
             // ONE WHOSE ONLY WAKES CANNOT BE CHECKED STANDS ASIDE TOO (R28 W8): its windows could not be read, and reading them again in five seconds costs a sweep.
             foreach (var role in due.Except(servable))
-                StepAside(role, "the tape wakes it holds can be checked once its holdout windows can be read");
-            if (servable.Count == 0)
-                return new Picked([], queued.Count > 0 ? WaitingForTheAside(events) : Idle(events));
+                StepAside(role, "what it was woken for cannot be checked yet, because its holdout windows could not be read.");
+            if (queued.Count == 0)
+            {
+                // NOTHING IS DUE, so nobody waits on a backoff, and the next refusal of anyone is a first one.
+                lock (_gate) _stoodAside.Clear();
+                return new Picked([], Idle(events));
+            }
+            if (servable.Count == 0) return new Picked([], WaitingForTheAside(events));
             due = servable;
 
             // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of
@@ -3204,7 +3211,9 @@ public sealed class MissionLoop
         if (HeldFor(role) is not null) return Holding(role);
 
         var conversation = _host.ConversationFor(role);
-        if (conversation is null) return _options.BusyRetry;
+        // NOTHING TO RUN IT ON IS A REFUSED SEAT TOO (R28 W5): left due and picked again, it holds the lane for every position behind it.
+        if (conversation is null)
+            return events is null ? _options.BusyRetry : StepAside(role, "no AI program is ready for this position.");
         lock (_gate) _conversations[role] = conversation;
 
         // The owner is mid-conversation on the Chat page. Their turn is the one in flight; the
@@ -3668,7 +3677,8 @@ public sealed class MissionLoop
 
         // A SEAT THAT CANNOT WORK NOW, OR A TURN THAT HUNG (U-turn-bounds, R28 W2, W5, W6), STANDS ASIDE under its failure backoff. Slept here, the same wait
         // would stop every other position on the lane for it.
-        if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable) is { } trouble)
+        if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable
+             ?? (ended?.GateRefused is { Refusal.Kind: RefusalKind.HostOrLaunch } late ? late.Refusal.Words : null)) is { } trouble)
             return StepAside(role, trouble, Backoff(errors));
 
         return failed ? Backoff(errors) : NextWait(events, attemptId, role, wake);
@@ -4117,7 +4127,7 @@ public sealed class MissionLoop
         try { refusal = _host.ActivationRefusal(role); }
         catch (Exception ex)
         {
-            StepAside(role, $"TradeAgent could not read whether it may turn ({ex.Message})");
+            StepAside(role, $"TradeAgent could not read whether it may turn ({ex.Message}).");
             return false;
         }
         if (refusal is null) return true;

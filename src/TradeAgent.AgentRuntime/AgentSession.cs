@@ -1022,8 +1022,10 @@ public sealed class AgentSession(
         // the turn: a host with no meter starts turns too, and this is the last moment before the start.
         var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, launchSeat, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
+        // A LAST CHECK, AND A REFUSAL ABOUT THIS LAUNCH: nothing starts, so it is charged nothing and gives back its wakes (D17), whoever marked the seat
+        // between this launch's admission and this line.
         if (SeatMarks.Refusal(manifest, seat.Profile, launchModel, this) is { } deadSeat)
-            throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, deadSeat);
+            throw new GateRefusedException(new TurnRefusal(RefusalKind.HostOrLaunch, deadSeat), beforeAnyWork: true);
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
         // line would run under a profile its row does not name.
@@ -1289,6 +1291,8 @@ public sealed class AgentSession(
         {
             // AND ON EVERY OTHER WAY OUT — cancelled, or a read that failed — what the stream already said is kept (fix pass 1).
             KeepWarnings();
+            // A PROBE OF THIS SEAT THAT SETTLED NOTHING ABOUT IT WAS STILL THE ONE PROBE (U-turn-bounds).
+            SeatMarks.ProbeEnded(manifest, seat.Profile, launchModel, this);
 
             // THE TURN'S WHOLE TREE ENDED, ON EVERY PATH OUT — finished, failed, cancelled — leader exited
             // or not (ContainedProcess.End). What it could not end is carried to the meter, and the grant
@@ -1464,7 +1468,12 @@ public sealed class AgentSession(
         // for a refused turn that used to be "did not finish: Reading additional input from stdin..." —
         // stderr's first line, which codex prints on every run and which says nothing about why this
         // one ended. The sentence that does say, and says until when, is the vendor's.
-        if (state.Limit is { } limit)
+        if (_timedOut is { } overLimit)
+        {
+            // THE TEARDOWN ENDED THE PROCESS, SO THE READS ENDED CLEANLY: what ended the turn is still its limit, and its last words say so.
+            Append(new ChatTurn(ChatRole.System, overLimit, DateTimeOffset.UtcNow));
+        }
+        else if (state.Limit is { } limit)
         {
             Append(new ChatTurn(ChatRole.System, limit.Message, DateTimeOffset.UtcNow));
         }

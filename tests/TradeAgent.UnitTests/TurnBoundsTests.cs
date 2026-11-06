@@ -58,6 +58,14 @@ public class TurnBoundsTests : IDisposable
         // A PROBE THAT NEVER REPORTED BACK DOES NOT HOLD THE SEAT FOR EVER: the window passes and another launch tries.
         Assert.Null(SeatMarks.Refusal(seat, null, model, second, over + SeatMarks.ProbeWindow));
 
+        // A PROBE THAT SETTLED NOTHING WAS STILL THE ONE PROBE: its own next launch waits out the hold like any other.
+        var failing = new object();
+        var later = over + SeatMarks.ProbeWindow * 2;
+        Assert.Null(SeatMarks.Refusal(seat, null, model, failing, later));
+        SeatMarks.ProbeEnded(seat, null, model, failing, later);
+        Assert.NotNull(SeatMarks.Refusal(seat, null, model, failing, later));
+        Assert.Null(SeatMarks.Refusal(seat, null, model, failing, later + SeatMarks.FirstHold));
+
         // A CLEAN TURN ENDS THE MATTER: every launch of the seat runs, and the next trouble is a first strike.
         SeatMarks.Clear(seat, null, model);
         Assert.Null(SeatMarks.Refusal(seat, null, model, new object(), over));
@@ -295,6 +303,54 @@ public class TurnBoundsTests : IDisposable
         Assert.Equal(options.FirstBackoff, tick.Wait);
     }
 
+    /// <summary>
+    /// A POSITION WITH NOTHING TO RUN ON IS A REFUSED SEAT TOO. RED at base: no conversation answered 5 s and left it the lane's oldest due for good.
+    /// </summary>
+    [Fact]
+    public async Task A_position_with_no_program_to_run_on_steps_aside_as_well()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        Due(events, Research, now - TimeSpan.FromMinutes(2));
+        var host = new NoChair(events);
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.Equal(TimeSpan.Zero, await loop.TurnAsync());
+        await loop.TurnAsync();
+        Assert.Single(host.Inner.Conv(Research).Sent);
+        Assert.Contains("no AI program is ready", loop.StandingAsideFor(Ops)?.Why);
+    }
+
+    /// <summary>The lanes host, with no conversation for the chair.</summary>
+    sealed class NoChair(MissionEventStore events) : IMissionHost
+    {
+        public OrgLanesTests.LaneHost Inner { get; } = new() { Events = events };
+        public MissionEventStore? Events => events;
+        public IAgentConversation? Conversation => null;
+        public IAgentConversation? ConversationFor(string role) => role == Ops ? null : Inner.ConversationFor(role);
+        public string AgentHome => Inner.AgentHome;
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) => Inner.SituationAsync(ct);
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId) => Inner.BeginTurn(prompt, wakes, role, attemptId);
+    }
+
+    /// <summary>
+    /// A HOST WITH NO WAKE QUEUE HAS NO PICK TO STEP OVER ITS ONE ROLE: a refusal sleeps the rest. Answered zero, its loop would launch again at once, for ever.
+    /// </summary>
+    [Fact]
+    public async Task A_host_with_no_queue_sleeps_a_refusal_out_and_never_spins()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var host = new OrgLanesTests.LaneHost();
+        host.Admit = (_, _) => new AiAdmission { Refusal = "the seat is refused", Kind = RefusalKind.HostOrLaunch };
+        var options = new MissionOptions { ReviewEvery = TimeSpan.Zero };
+        var loop = new MissionLoop(host, options, now: () => now);
+
+        Assert.Equal(options.FirstBackoff, await loop.TurnAsync());
+    }
+
     /// <summary>THE OWNER'S PRESS IS NOT MADE TO WAIT OUT A BACKOFF: changing the seat lifts the rest it was about, and the loop looks now.</summary>
     [Fact]
     public async Task Changing_a_seat_lifts_the_rest_it_was_about()
@@ -466,6 +522,7 @@ public class TurnBoundsTests : IDisposable
         using var db = TestEnv.NewDb();
         OrgSurfaceSeed.Chart(db);
         var words = Labels.SeatStandingAside("Codex refused the model gpt-6-luna.", "14:30");
+        Assert.Equal("Not running for now: Codex refused the model gpt-6-luna. TradeAgent looks at it again at 14:30.", words);
         var page = new OrganisationPage(new OrgSurfaceSources
         {
             Org = () => new OrgStore(db), Attempts = () => new AiAttemptStore(db), Currency = () => "USD",
