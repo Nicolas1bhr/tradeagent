@@ -248,7 +248,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     /// campaign, the version, the holdout run and the promotion row. A faked id would be refused by
     /// the ledger a step earlier and would prove nothing about anything above it.
     /// </summary>
-    internal static string Judged(Database db, string text, DateTimeOffset at)
+    internal static string Judged(Database db, string text, DateTimeOffset at, string pair = "BTCUSDT")
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"forward-runner-{Guid.NewGuid():n}.csv");
@@ -258,13 +258,13 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         // THE NEXT LABEL IN THIS LEDGER: a test may judge two versions over one ledger, and the ledger refuses a
         // second row under a (pair, interval, version) it holds. The first is `v1`, as it always was.
         var id = datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, $"v{datasets.All().Count + 1}", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, at, DatasetState.ACCEPTED, null, []));
         Assert.True(datasets.SetHoldout(id, Cutoff, EvaluationClass.Research).Ok);
         var set = datasets.ById(id)!;
 
-        var campaign = new CampaignStore(db).Open("BTCUSDT 1m forward", set, 10, 3, at);
+        var campaign = new CampaignStore(db).Open($"{pair} 1m forward", set, 10, 3, at);
         Assert.True(campaign.Ok, campaign.Why);
 
         var parsed = StrategyParser.Parse(text);
