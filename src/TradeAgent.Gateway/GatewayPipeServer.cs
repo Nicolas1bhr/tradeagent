@@ -3474,7 +3474,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// <see cref="HomeFiles.Write"/>, which follows no link at any component and replaces whatever is at the name unread, so a link a cell
     /// planted there points nowhere this writes. <b>And recorded as a read of that position</b>: one <c>tool_call</c> row — the
     /// observed-deliveries ledger, which no op writes — with the attempt, the position, the dataset, the window, the file and its bytes. That
-    /// row is also what the byte bound counts, so a file the ledger could not record is taken back and the export is refused.</para>
+    /// row is also what the byte bound counts, so it is written first and an export the ledger could not record is never written.</para>
     /// </summary>
     object DataExport(AgentContext ctx, IpcRequest req)
     {
@@ -3544,7 +3544,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"the export could not be written into your folder: {ex.Message} Nothing else was changed.");
+                $"the export could not be written into your folder: {ex.Message} It still counts toward what you are written in a day. Nothing else was changed.");
         }
 
         return new DataExportReply(relative, set.Id, set.Pair, set.Interval, set.Version, window.Bars[0].OpenTime,
@@ -3582,15 +3582,19 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                     $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
                     + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
-            HomeFiles.Write(home, relative, bytes);
-
-            // A READ OF THIS POSITION, RECORDED: the observed-deliveries ledger, beside every door call (`ToolCallStore` never throws, and answers 0
-            // for a row it could not write: a file standing without its row is a read nobody sees and bytes no bound counts).
-            if (gateway.ToolCalls.Record(row) == 0)
-            {
-                HomeFiles.Remove(home, relative);
+            // CHARGED BEFORE THE FILE EXISTS (the Codex review's P1), stamped here and not before the wait for this gate (its P2): the moment the file
+            // stands a cell can rename or link it, so a charge that came after could fail with the bytes already out of reach. `ToolCallStore` never
+            // throws and answers 0 for a row it could not write, and an export with no row is a read nobody sees and bytes no bound counts.
+            var charged = row with { At = DateTimeOffset.UtcNow };
+            if (gateway.ToolCalls.Record(charged) == 0)
                 throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                    "the export could not be recorded, and an export TradeAgent has no record of is not kept. Ask again. Nothing was written.");
+                    "the export could not be recorded, and TradeAgent writes no export it has no record of. Ask again. Nothing was written.");
+            try { HomeFiles.Write(home, relative, bytes); }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                // THE CHARGE STANDS: a write can fail after some of it reached the disk. This second row says it did not arrive.
+                gateway.ToolCalls.Record(charged with { At = DateTimeOffset.UtcNow, Bytes = 0, Served = false, Refusal = "the file could not be written" });
+                throw;
             }
         }
     }

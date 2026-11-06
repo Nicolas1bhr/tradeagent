@@ -273,6 +273,29 @@ public class DataExportTests
     }
 
     /// <summary>
+    /// A WRITE THAT FAILED STAYS CHARGED AND SAYS SO: the charge comes first, because a file that stands is the cell's to rename, and a failed write
+    /// may have reached the disk in part. A second row records that the file did not arrive.
+    /// </summary>
+    [Fact]
+    public async Task A_write_that_failed_stays_charged_and_the_ledger_says_it_failed()
+    {
+        await using var rig = await Ready();
+        var to = Cutoff.AddMinutes(-1);
+        // A FOLDER AT THE EXPORT'S NAME: what the write's unlink refuses, on every platform.
+        Directory.CreateDirectory(Path.Combine(rig.Home, DataExports.FileName(rig.Set, Start, to)));
+
+        var refused = await rig.ExportAsync(("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture)), ("to", Iso(to)));
+
+        Assert.False(refused.Ok);
+        var rows = Exports(rig.Db);
+        Assert.Equal(2, rows.Count);
+        Assert.True(rows[0].Served);
+        Assert.True(rows[0].Bytes > 0);
+        Assert.False(rows[1].Served);
+        Assert.Equal(rows[0].Bytes, new ToolCallStore(rig.Db).BytesServed(CouncilRoles.Research, Ops.DataExport, Start));
+    }
+
+    /// <summary>
     /// AN EXPORT THE LEDGER COULD NOT RECORD IS NOT WRITTEN: that row is the read this position is charged with and what the bound counts, so a
     /// file standing without one would be a read nobody can see and bytes the bound never counted.
     /// </summary>
@@ -290,6 +313,6 @@ public class DataExportTests
 
         Assert.False(refused.Ok);
         Assert.Contains("Nothing was written", refused.Error!.Message, StringComparison.Ordinal);
-        Assert.Empty(Directory.EnumerateFiles(Path.Combine(rig.Home, DataExports.Folder), DataExports.Prefix + "*"));
+        Assert.False(Directory.Exists(Path.Combine(rig.Home, DataExports.Folder)));
     }
 }
