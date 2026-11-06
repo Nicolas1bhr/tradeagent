@@ -94,7 +94,7 @@ public partial class OrgAutonomyTests
         var toHead = ActivatedWakes(db).Where(w => w.Role == Head).ToList();
         Assert.Equal(5, toHead.Count);
         Assert.All(toHead, w => Assert.True(w.DueAt >= anchor.AddMinutes(60), $"the head's wake {w.Id} was due {w.DueAt:O}, before its floor from {anchor:O}"));
-        Assert.Empty(events.DueFor(Head, DateTimeOffset.UtcNow.AddMinutes(59).AddSeconds(-30)).Where(w => w.Kind == MissionEventKind.Activated));
+        Assert.DoesNotContain(events.DueFor(Head, anchor.AddMinutes(59)), w => w.Kind == MissionEventKind.Activated);
 
         // A HIRE IS STILL WOKEN AT ONCE: it has had no turn, so it has no floor to pass.
         var hire = ActivatedWakes(db).Single(w => w.Role == hires[^1]);
