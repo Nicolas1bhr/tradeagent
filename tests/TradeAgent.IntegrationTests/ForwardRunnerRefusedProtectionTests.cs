@@ -228,10 +228,12 @@ public partial class ForwardRunnerTests
         await QuietMinuteAsync(rig, 4);
         var stop = Assert.Single(await WorkingProtection(rig), w => w.Op.Kind == DeploymentOpKind.Stop).Op;
 
+        // WHAT THE LEDGER HOLDS AFTER THAT CRASH: the operation with no answer, and the cursor still behind the minute it was written on.
         rig.Db.Write(_ =>
         {
             using var c = rig.Db.Cmd("UPDATE deployment_op SET state='dispatched', answer=NULL, resolved_at=NULL WHERE request_id=$id", ("$id", stop.RequestId));
-            return c.ExecuteNonQuery();
+            using var d = rig.Db.Cmd("UPDATE strategy_deployment SET cursor_open_time=$bar WHERE id=$id", ("$bar", Sql.T(rig.Origin.AddMinutes(3))), ("$id", rig.Deployment.Id));
+            return c.ExecuteNonQuery() + d.ExecuteNonQuery();
         });
         Assert.Equal(DeploymentOpState.Dispatched, rig.Gw.Deployments.OpById(stop.RequestId)!.State);
 
