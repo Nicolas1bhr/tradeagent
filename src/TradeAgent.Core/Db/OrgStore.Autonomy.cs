@@ -77,13 +77,15 @@ public sealed partial class OrgStore
     /// The file asks and is not answered, so where the verb refuses in words this moves the time to the floor: at least
     /// <see cref="RewakeFloors.Floor"/> after the position's last woken turn began. One pending request per position: a second asks for
     /// nothing. A position no longer active asks for nothing. The legacy pair sit outside the chart's levels and keep the time they asked.
+    /// <paramref name="asked"/> of zero is no request but a wake told again after a failed turn: it asks only for its floor, and another
+    /// wake standing beside it is no reason to drop it.
     /// </summary>
     public DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, RewakeFloors policy, DateTimeOffset now) => db.Read(_ =>
     {
         var due = now + asked;
         if (CouncilRoles.IsKnown(role)) return due;
         if (Roster().FirstOrDefault(p => p.Id == role) is not { } position) return (DateTimeOffset?)null;
-        if (new MissionEventStore(db).Pending(MissionEventKind.Self, role) is { Count: > 0 }) return null;
+        if (asked > TimeSpan.Zero && new MissionEventStore(db).Pending(MissionEventKind.Self, role) is { Count: > 0 }) return null;
         var soonest = WakeAnchor(role, now) + policy.Floor(position.Level);
         return due < soonest ? soonest : due;
     });
