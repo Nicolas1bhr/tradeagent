@@ -215,11 +215,10 @@ public class BacktestWindowCapTests
         Assert.Null(Backtest.WindowRefusal(On("15m"), set, null, to));
     }
 
-    /// <summary>WHAT THE AGENTS ARE TOLD ABOUT THE CAP IS THE CAP, and "from 15m up every research month fits" stays true of the longest download.</summary>
+    /// <summary>THE ORG GUIDE NAMES THE CAP FROM THE CONSTANT, and its "from 15m up every research month fits" stays true of the longest download. The pair's guide is pinned byte for byte, so its seats read the cap in the language reference and the schema.</summary>
     [Fact]
     public void The_agents_are_told_the_cap_and_how_to_choose_a_window()
     {
-        Assert.Contains("{{run_bar_cap}} bars", Canon.GuideTemplate, StringComparison.Ordinal);
         Assert.Contains("{{run_bar_cap}} bars", Canon.OrgGuideTemplate, StringComparison.Ordinal);
         Assert.True(Backtest.MaxJudgedBars / 15 <= Backtest.MaxTracedBars, "a word in the canon: from 15m up every research month fits");
     }
