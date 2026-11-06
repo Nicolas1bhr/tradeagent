@@ -84,14 +84,13 @@ public class LinuxHostRuntimeTests(ITestOutputHelper output)
     /// <c>packages/opencode/script/build.ts</c>, both at the tag — and the program it unpacked runs. Before this
     /// unit the Windows asset was asked for, on every computer.
     /// </summary>
-    [Theory]
+    [OnlyOnTheory("the stand-in programs are shell scripts", "linux", "macos")]
     [InlineData(Architecture.X64)]
     [InlineData(Architecture.Arm64)]
     public async Task On_linux_each_runtime_installs_its_linux_archive(Architecture cpu)
     {
         // The stand-in programs are shell scripts, so the install that ends by running one is proven where one
         // runs. The plan's choice of asset is data, and that is proven below on every computer.
-        if (OperatingSystem.IsWindows()) return;
 
         var downloads = RuntimeCatalog.BuiltIn(new HostPlatform(HostOs.Linux, cpu))
             .Where(m => m.Install.Kind == InstallKind.Download).ToList();
@@ -175,11 +174,9 @@ public class LinuxHostRuntimeTests(ITestOutputHelper output)
     /// refuses by naming the archive's own failure, and a computer with no plan at all is told so — none of them
     /// with a "yourself", a "manually", a terminal or a download page.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("it is what the owner is told off Windows", "linux", "macos")]
     public async Task Off_windows_no_refusal_tells_the_owner_to_install_anything()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         // TradeAgent's own Node.js, asked for directly. It refuses before it asks anything of anyone.
         var node = await Assert.ThrowsAsync<TradeAgentException>(() => NodeRuntime.InstallAsync());
         output.WriteLine("node: " + node.Message);

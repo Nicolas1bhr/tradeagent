@@ -15,6 +15,15 @@ public sealed class OnlyOnFactAttribute : FactAttribute
     }
 }
 
+/// <summary>A theory only some platforms can run: <see cref="OnlyOnFactAttribute"/>, every row.</summary>
+public sealed class OnlyOnTheoryAttribute : TheoryAttribute
+{
+    public OnlyOnTheoryAttribute(string why, params string[] platforms)
+    {
+        if (!platforms.Any(OperatingSystem.IsOSPlatform)) Skip = $"{string.Join(" and ", platforms)} only: {why}";
+    }
+}
+
 /// <summary>A fact that cannot hold under root off Windows: skipped there with the reason, never passed unrun.</summary>
 public sealed class NotAsRootFactAttribute : FactAttribute
 {

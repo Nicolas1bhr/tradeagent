@@ -125,11 +125,9 @@ public class AgentTreeTests : IDisposable
     /// Doctor's fixed probes and the runtime's interactive session — and its teardown is what this proves, on the same
     /// tree, through the same containment the turn used: started with no launcher, ended by <c>ContainedProcess.End</c>.</para>
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public async Task A_paused_turn_with_no_launcher_ends_every_process_that_descends_from_its_leader()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var dir = NewDir("bare");
         var sh = WriteScript(dir, HungBody(dir, orphan: false));
         var psi = new ProcessStartInfo("/bin/sh")
@@ -229,11 +227,10 @@ public class AgentTreeTests : IDisposable
     /// the remembered session alone. The guard this pins: a Dispose that tears down only while the leader
     /// still runs leaves it running.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public async Task Dispose_ends_the_session_a_leader_that_has_already_exited_left_behind()
     {
-        if (OperatingSystem.IsWindows()) return;
-
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         var dir = NewDir("leaderless");
         var launcher = Path.Combine(dir, "exec-launcher.sh");
         File.WriteAllText(launcher, "#!/bin/sh\nshift\nexec /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \"$@\"\n");
@@ -276,11 +273,9 @@ public class AgentTreeTests : IDisposable
     /// reaches it and the group kill does not either — and a child that left the turn's SESSION while its
     /// parent still runs. Both end on Pause.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public async Task Children_that_left_the_turns_group_or_session_end_with_it()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var dir = NewDir("left");
         var body =
             $"echo $$ > \"{dir}/leader.pid\"\n" +
@@ -389,11 +384,9 @@ public class AgentTreeTests : IDisposable
     /// something that outlives the app. Unix; on Windows the job closes with the app's last handle, and
     /// that arm is named to U-contain-seats.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public async Task The_apps_death_ends_the_turns_whole_tree()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         DeployLauncher();
         var dir = NewDir("death");
         var sh = WriteScript(dir, HungBody(dir, orphan: true));
@@ -606,11 +599,9 @@ public class AgentTreeTests : IDisposable
     /// rather than running. The kill is withheld for the one process here, because a process this user's
     /// SIGKILL does not reach is not something a test can make.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public void A_teardown_that_cannot_end_a_process_names_it_within_its_bound()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var stuck = Ours("/bin/sleep", "61");
         var entry = ProcessTable.Read(stuck.Id);
         Assert.NotNull(entry);
@@ -632,11 +623,9 @@ public class AgentTreeTests : IDisposable
     /// sentence naming the process, until that process has ended; then the next launch is admitted. The
     /// control turn beside it, whose teardown ended everything, keeps its grant for the grace.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a POSIX process tree; a Windows launch is held in a job", "linux", "macos")]
     public async Task A_turn_whose_teardown_failed_loses_its_grant_at_once_and_holds_the_next_launch_until_its_process_ends()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         // HELD, as every launch now must be to be bound at all (U-grant-tree): a grant whose launch nothing holds stays
         // pending and serves nobody, so the grace this test reads is a held launch's.
         DeployLauncher();
@@ -695,11 +684,9 @@ public class AgentTreeTests : IDisposable
     /// no launch is admitted until it has exited. Windows only: the assign and the kill are refused through
     /// <see cref="ProcessContainment.Faults"/>, scoped to this test's own flow; the process that keeps running is real.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a job refused through a fault seam: no other platform starts a launch and then finds it unheld", "windows")]
     public async Task A_launch_windows_would_not_hold_and_could_not_end_holds_every_launch_until_it_exits()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var dir = NewDir("unassigned");
         var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
         var manifest = new RuntimeManifest
@@ -750,11 +737,9 @@ public class AgentTreeTests : IDisposable
     /// — re-asked at every admission, never cleared by a timer — until a listing succeeds and shows none of it alive. Windows
     /// only: the assign, the kill and the snapshot are refused through <see cref="ProcessContainment.Faults"/>; the child is real.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a job refused through a fault seam: no other platform lists a tree that way", "windows")]
     public async Task A_tree_windows_would_not_list_holds_every_launch_until_a_listing_shows_none_of_it_alive()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var dir = NewDir("unlisted");
         var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
         var manifest = new RuntimeManifest

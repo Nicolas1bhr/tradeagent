@@ -121,12 +121,11 @@ public class RepairHomeTests
     /// owner's scanned inbox, or out of the workspace — refuses the repair in words naming it, and the refused home, the link and where it
     /// points are byte for byte as they were. Before the fix the move followed the link and the cell's folder landed in the inbox.
     /// </summary>
-    [Theory]
+    [OnlyOnTheory("the repair refuses first on Windows; the first test asserts it", "linux", "macos")]
     [InlineData("inbox")]
     [InlineData("outside")]
     public void A_refused_dir_that_is_a_link_refuses_the_repair_and_changes_nothing(string into)
     {
-        if (OperatingSystem.IsWindows()) return;   // no cell runs there and the repair refuses first (the first test asserts it)
         var (root, home, files, _) = Refused();
         var target = into == "inbox"
             ? Path.Combine(root, MaterialScanner.InboxDir)
@@ -155,12 +154,11 @@ public class RepairHomeTests
     /// refused either before, so a repair renamed a linked home's link or moved a home through a linked workspace. Now each refuses in words
     /// naming the link, and the link and what it points at are as they were.
     /// </summary>
-    [Theory]
+    [OnlyOnTheory("the repair refuses first on Windows; the first test asserts it", "linux", "macos")]
     [InlineData("home")]
     [InlineData("workspace")]
     public void A_home_or_workspace_that_is_a_link_refuses_the_repair_and_changes_nothing(string which)
     {
-        if (OperatingSystem.IsWindows()) return;   // no cell runs there and the repair refuses first (the first test asserts it)
         var (root, home, files, _) = Refused();
         string ws = root, link, real;
         if (which == "home")
@@ -252,10 +250,9 @@ public class RepairHomeTests
     /// the session's launch gate asks about (<see cref="WorkspaceBuilder.RefusalFor"/> of <see cref="AppHost.HomeFor"/>) is not refused, and the
     /// act is one Activity line and one engineering-log line naming where the old folder is kept.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the kernel refuses on Windows; its own test says so in words", "linux", "macos")]
     public async Task The_hosts_repair_clears_the_refusal_and_records_one_activity_line()
     {
-        if (OperatingSystem.IsWindows()) return;                           // the kernel refuses on Windows; its own test says so in words
         using var db = TestEnv.NewDb();
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
         try

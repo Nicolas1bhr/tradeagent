@@ -285,10 +285,10 @@ public class SeatAclTests
     /// component from the root is looked at, not only the last (the review's P2). The walk steps over the linked folder; at base the
     /// credential pass then changed the mode of the owner's file through it. Linux and macOS (a Windows link needs a privilege).
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a linked folder needs a privilege a Windows account may not hold", "linux", "macos")]
     public void A_credential_path_through_a_linked_folder_is_refused_with_its_target_unchanged()
     {
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         var (codex, exe, _) = SeatHomeTests.Seat(nameof(A_credential_path_through_a_linked_folder_is_refused_with_its_target_unchanged));
         var seat = codex.Seat!;
         SeatProfile.Prepare(seat);
@@ -315,10 +315,10 @@ public class SeatAclTests
     /// 0755 and, on macOS, a session file its access entry. Linux and macOS (a Windows link needs a privilege). Red at base: the root is
     /// made 0700 before the refusal.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a linked folder needs a privilege a Windows account may not hold", "linux", "macos")]
     public void A_credential_path_through_a_linked_folder_is_refused_before_anything_is_changed()
     {
-        if (OperatingSystem.IsWindows()) return;
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         var (codex, exe, _) = SeatHomeTests.Seat("linked-folder-before-any-change");
         var seat = codex.Seat!;
         SeatProfile.Prepare(seat);

@@ -275,10 +275,9 @@ public class BrokerDoorTests
     ///
     /// <para>RED before the fix: the executor rows' door refusal quoted above (CI run 39733776557); this row itself was not run before it.</para>
     /// </summary>
-    [Fact]
+    [OnlyOnFact("Windows and macOS name the peer as before; no cgroup proof runs there", "linux")]
     public async Task On_linux_the_doors_peer_is_pinned_by_a_pidfd_with_its_cgroup()
     {
-        if (!OperatingSystem.IsLinux()) return;   // Windows and macOS name the peer as before; no cgroup proof runs there
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var client = new TcpClient();

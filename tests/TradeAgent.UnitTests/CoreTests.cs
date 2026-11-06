@@ -706,12 +706,11 @@ public class RuntimeResolutionTests
         Assert.Equal(exe, Runtime("tool.exe").ResolveExecutable());
     }
 
-    [Fact]
+    [OnlyOnFact("a .cmd shim exists only on Windows", "windows")]
     public void A_cmd_shim_satisfies_a_manifest_that_names_an_exe()
     {
         // npm installs its CLIs as a .cmd shim on Windows and hides the real binary in node_modules.
         // Matching only "codex.exe" reported an installed, signed-in tool as missing.
-        if (!OperatingSystem.IsWindows()) return;
 
         var dir = Scratch();
         var shim = Path.Combine(dir, "tool.cmd");
@@ -720,11 +719,9 @@ public class RuntimeResolutionTests
         Assert.Equal(shim, Runtime("tool.exe").ResolveExecutable());
     }
 
-    [Fact]
+    [OnlyOnFact("a .cmd shim exists only on Windows", "windows")]
     public void A_real_exe_wins_over_a_shim_with_the_same_stem()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var dir = Scratch();
         File.WriteAllText(Path.Combine(dir, "tool.cmd"), "@echo off");
         var exe = Path.Combine(dir, "tool.exe");

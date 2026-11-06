@@ -40,10 +40,9 @@ public class AttemptContainerTests
 
     static ProcessEntry P(int pid, int parent, ulong start) => new(pid, parent, pid, 1, start, false, false);
 
-    [Fact]
+    [OnlyOnFact("the session's proof; Windows asks its job", "linux", "macos")]
     public void A_descendant_of_the_leader_is_a_member_and_a_stranger_is_not()
     {
-        if (OperatingSystem.IsWindows()) return;   // the session's proof; Windows asks its job
         var table = Table(P(Leader, 1, 100), P(Child, Leader, 110), P(Grandchild, Child, 120), P(Stranger, 1, 130));
 
         Assert.True(TreeTeardown.IsMember(Grandchild, 120, Leader, 100, 0, table));
@@ -51,20 +50,18 @@ public class AttemptContainerTests
         Assert.False(TreeTeardown.IsMember(Stranger, 130, Leader, 100, 0, table));
     }
 
-    [Fact]
+    [OnlyOnFact("the session's proof; Windows asks its job", "linux", "macos")]
     public void A_pid_whose_start_is_not_the_one_read_is_not_a_member()
     {
-        if (OperatingSystem.IsWindows()) return;
         var table = Table(P(Leader, 1, 100), P(Child, Leader, 110));
 
         Assert.False(TreeTeardown.IsMember(Child, 999, Leader, 100, 0, table));
         Assert.False(TreeTeardown.IsMember(Child, 110, Leader, 101, 0, table));
     }
 
-    [Fact]
+    [OnlyOnFact("the session's proof; Windows asks its job", "linux", "macos")]
     public void A_parent_that_started_after_its_child_is_a_pid_handed_on_and_breaks_the_chain()
     {
-        if (OperatingSystem.IsWindows()) return;
         // The child's parent pid now names a process that started after the child did: not the parent it had.
         var table = Table(P(Leader, 1, 200), P(Child, Leader, 110));
 

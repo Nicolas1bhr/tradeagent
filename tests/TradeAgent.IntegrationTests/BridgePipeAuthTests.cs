@@ -314,14 +314,12 @@ public class BridgePipeAuthTests(ITestOutputHelper output)
     /// they failed, the reason would be "would not say which program", which is a refusal for a
     /// different cause and would hide this one.
     ///
-    /// Runs on Windows only, and returns rather than failing elsewhere: off Windows there is no ATAS
+    /// Runs on Windows only, and is skipped elsewhere: off Windows there is no ATAS
     /// and no product, and <see cref="BridgePipeAuth.ImageVerdict"/> is covered portably below.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("off Windows there is no ATAS and no product; the verdict itself is covered portably", "windows")]
     public async Task A_peer_that_is_not_the_recorded_program_is_refused_before_the_secret_is_asked_for()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var pipe = NewPipe();
         await using var squatter = new SquattingPipeOwner(pipe, Cred());
         squatter.Start();

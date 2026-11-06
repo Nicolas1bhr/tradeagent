@@ -103,13 +103,51 @@ public class InvariantRegistryTests
     {
         if (Regex.IsMatch(t.Attributes, @"\bSkip\s*=") && runsOn != ProofPlatform.None) return "skipped, and the record does not say so";
         if (t.Body.Trim(' ', '\t', '\r', '\n', '{', '}').Length == 0) return "empty";
-        var own = Regex.Replace(t.Body, @"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}", " ");
-        var proof = Regex.Match(t.Body, @"\bAssert\w*\s*[.(<]");
-        if (!proof.Success) return "asserts nothing";
-        var firstInOwn = Regex.Match(own, @"\bAssert\w*\s*[.(<]");
-        var exit = Regex.Match(own, @"\breturn\s*;");
-        return exit.Success && (!firstInOwn.Success || exit.Index < firstInOwn.Index) ? "returns before its first assertion" : null;
+        if (!Assertion.IsMatch(t.Body)) return "asserts nothing";
+        return ExitsBeforeProof(t, @"\breturn\s*;") ? "returns before its first assertion" : null;
     }
+
+    static readonly Regex Assertion = new(@"\bAssert\w*\s*[.(<]");
+
+    /// <summary>Whether <paramref name="exit"/> stands in <paramref name="t"/>'s own body, lambdas read out, before its first assertion there.</summary>
+    static bool ExitsBeforeProof(TestSource t, string exit)
+    {
+        var own = Regex.Replace(t.Body, @"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}", " ");
+        var first = Assertion.Match(own);
+        var leaves = Regex.Match(own, exit);
+        return leaves.Success && (!first.Success || leaves.Index < first.Index);
+    }
+
+    /// <summary>
+    /// NO PLAIN TEST PASSES ON A PLATFORM IT DOES NOT RUN ON (R29 F-E2, F-E3): a <c>[Fact]</c> or <c>[Theory]</c> that leaves on a platform check
+    /// before its first assertion reads Passed where nothing was tested. Such a test says where it runs in its attribute
+    /// (<see cref="OnlyOnFactAttribute"/>), so the results read Skipped there. A test whose attribute already limits it may keep a check.
+    /// </summary>
+    [Fact]
+    public void No_plain_test_passes_on_a_platform_it_does_not_run_on()
+    {
+        var silent = TreeSources.Value.Where(PassesSilently).Select(t => t.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        Assert.True(silent.Count == 0, "these pass where they never ran: " + string.Join(", ", silent));
+    }
+
+    /// <summary>THE CHECK ABOVE IS NOT VACUOUS: each spelling of the pattern is found, and what is not the pattern is left alone.</summary>
+    [Fact]
+    public void A_platform_exit_is_found_in_each_of_its_spellings()
+    {
+        Assert.True(PassesSilently(Parse("[Fact] public void T() { if (OperatingSystem.IsWindows()) return; Assert.True(true); }")));
+        Assert.True(PassesSilently(Parse("[Fact] public void T() { if (!OperatingSystem.IsLinux()) { return; } Assert.True(true); }")));
+        Assert.True(PassesSilently(Parse("[Fact] public async Task T() { await Go(); if (OperatingSystem.IsMacOS() || off) return; Assert.True(true); }")));
+        Assert.True(PassesSilently(Parse("[Theory, InlineData(1)] public void T(int x) { if (OperatingSystem.IsWindows()) return; Assert.True(true); }")));
+
+        Assert.False(PassesSilently(Parse("[OnlyOnFact(\"why\", \"linux\")] public void T() { if (!OperatingSystem.IsLinux()) return; Assert.True(true); }")));
+        Assert.False(PassesSilently(Parse("[Fact] public void T() { Assert.True(a); if (OperatingSystem.IsWindows()) return; Assert.True(b); }")));
+        Assert.False(PassesSilently(Parse("[Fact] public void T() { if (OperatingSystem.IsWindows()) Go(); Assert.True(a); }")));
+        Assert.False(PassesSilently(Parse("[Fact] public void T() { Run(() => { if (OperatingSystem.IsWindows()) return; Go(); }); Assert.True(a); }")));
+    }
+
+    static bool PassesSilently(TestSource t) =>
+        Regex.IsMatch(t.Attributes, @"[\[,]\s*(?:Fact|Theory)\b")
+        && ExitsBeforeProof(t, @"\bif\s*\([^;{}]*OperatingSystem\.Is\w+\(\)[^;{}]*\)\s*\{?\s*return\s*;");
 
     /// <summary>One test's source, through the same scan the tree goes through.</summary>
     static TestSource Parse(string test)
@@ -396,7 +434,7 @@ public class InvariantRegistryTests
     /// verbatim, interpolated and raw (<c>"""</c>) strings, an interpolation hole read as code with its own strings skipped in turn
     /// (<see cref="StringEnd"/>), so no text inside a string is ever read as a declaration.
     /// </summary>
-    static string Strip(string text, bool keepStrings)
+    internal static string Strip(string text, bool keepStrings)
     {
         var o = new StringBuilder(text.Length);
         var i = 0;

@@ -129,11 +129,9 @@ public class ContainmentTests
     /// turn the loop had already admitted is refused before any process starts. macOS and Linux: Windows makes its job
     /// before the process, and a job Windows will not make is a refusal there too, but not one a test can arrange.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("Windows makes its job before the process, and a job it will not make is not one a test can arrange", "linux", "macos")]
     public async Task A_launch_the_app_cannot_contain_never_starts_and_says_why()
     {
-        if (OperatingSystem.IsWindows()) return;
-
         var dir = Path.Combine(TestEnv.Home, "uncontained-" + Guid.NewGuid().ToString("n")[..8]);
         Directory.CreateDirectory(dir);
         var marker = Path.Combine(dir, "the-cli-ran");

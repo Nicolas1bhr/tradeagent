@@ -176,10 +176,10 @@ public class RouteATests
     /// the meter admits no further turn while any of it runs. Linux only (CI's Cell step, under a delegated root); elsewhere the same
     /// session is refused before anything starts, which this row shows too.
     /// </summary>
-    [Fact, Trait("Category", "Cell")]
+    [OnlyOnFact("no cell and no shell script there; the Cell step is Linux", "linux", "macos"), Trait("Category", "Cell")]
     public async Task A_cell_launch_whose_assurance_insert_and_cgroup_kill_both_fail_reports_its_survivors_and_keeps_its_presence()
     {
-        if (OperatingSystem.IsWindows()) return;   // no cell and no shell script there; the Cell step is Linux
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         using var db = TestEnv.NewDb();
         var dir = Path.Combine(TestEnv.Home, "r2-" + Guid.NewGuid().ToString("n")[..8]);
         Directory.CreateDirectory(dir);
