@@ -587,6 +587,22 @@ public sealed class RuntimeManifest
     public bool IsTestHostPuppet => Puppet && PuppetSeats.TestHost;
 
     /// <summary>
+    /// WHO A PUPPET'S SIGN-IN BILLS, where its test declares it (<c>U-turn-reservation</c>): a test host's puppet has no sign-in to read, so
+    /// every turn of it was <c>unknown</c> — counted as real money, reserved at the whole bound — and no test could play a seat on the owner's
+    /// plan, the product's ordinary seat. Code only, like <see cref="PuppetSeatClass"/>; never serialized; read through
+    /// <see cref="TestHostPuppetBilling"/>, which answers nothing outside a test host.
+    /// </summary>
+    [JsonIgnore]
+    internal string? PuppetBillingClass { get; init; }
+
+    /// <summary>
+    /// THE CLASS A TEST HOST'S PUPPET DECLARED ITS SIGN-IN BILLS (<see cref="PuppetBillingClass"/>), or null — always null in the product, a
+    /// manifest that is not a puppet, or a puppet whose test declared none. What its seat verdict and the meter's reading of the sign-in say.
+    /// </summary>
+    [JsonIgnore]
+    public string? TestHostPuppetBilling => IsTestHostPuppet ? PuppetBillingClass : null;
+
+    /// <summary>
     /// THE CLASS A TEST HOST'S REAL-RUNTIME MANIFEST DECLARES (<c>U-cell-linux-c</c> L6): how a test runs route (a)'s <c>cell</c> class
     /// while no product position is assigned it (<c>U-execution-environment</c> assigns it). Code only, honoured only in a test host.
     /// </summary>

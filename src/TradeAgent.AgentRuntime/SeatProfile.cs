@@ -764,19 +764,26 @@ public static class SeatProfile
     /// expected set (<see cref="BrokerSeat.VerifySurfaceAsync"/>) — so a broker seat that would be offered a host tool or <c>exec</c>
     /// is refused before its admission writes anything.
     /// </summary>
+    /// <summary>
+    /// THE VERDICT ON A SEAT WITH NOTHING TO VERIFY: nothing refused, and who pays <c>unknown</c> — except a test host's puppet whose test
+    /// declared its sign-in's class (<see cref="RuntimeManifest.TestHostPuppetBilling"/>, <c>U-turn-reservation</c>).
+    /// </summary>
+    public static SeatVerdict Unverified(RuntimeManifest manifest) =>
+        manifest.TestHostPuppetBilling is { } billed ? SeatVerdict.None with { BillingClass = billed } : SeatVerdict.None;
+
     public static async Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
         string workingDirectory, ISeatProbe probe, SeatLaunch launch, CancellationToken ct)
     {
         // A TEST HOST'S PUPPET PLAYING THE BROKER CLASS HAS NO VENDOR SEAT TO VERIFY (U-board-b2): it runs no model and starts no vendor
         // program, so a board seat founded on the broker class can be played. Only that class — a cell is a real confinement a puppet never
         // plays past its admission — and never in the product: a puppet runs only in a test host.
-        if (manifest.IsTestHostPuppet && launch.SeatClass == SeatPlan.BrokerClass) return SeatVerdict.None;
+        if (manifest.IsTestHostPuppet && launch.SeatClass == SeatPlan.BrokerClass) return Unverified(manifest);
 
         // A BROKER SEAT IS NEVER STARTED UNVERIFIED: a manifest with no seat profile has none of the class's deny set to carry.
         if (manifest.Seat is not { } seat)
             return BrokerSeat.IsVerified(launch.SeatClass)
                 ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, BrokerSeat.OverrideRefusal(manifest, launch.SeatClass) ?? "TradeAgent will not start a broker-only seat with no seat profile.")
-                : SeatVerdict.None;
+                : Unverified(manifest);
         var seatClass = launch.SeatClass;
         var broker = BrokerSeat.IsVerified(seatClass);
         string? model = null;
