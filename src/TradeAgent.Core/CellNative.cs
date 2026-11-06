@@ -88,12 +88,13 @@ public static class CellNative
     internal const uint SysFchmodat2 = 452, SysSetxattrat = 463, SysRemovexattrat = 466, SysFileSetattr = 469;
 
     /// <summary>
-    /// THE INODE FLAG REQUESTS (<c>include/uapi/linux/fs.h</c>, <c>fsverity.h</c>): <c>FS_IOC_SETFLAGS</c> in both widths, <c>FS_IOC_FSSETXATTR</c>,
-    /// <c>FS_IOC_ENABLE_VERITY</c>. A read-only descriptor and being the owner is all each asks, and <c>ioctl</c> carries its request in a
-    /// 32-bit word, so the low word of the argument is what the kernel acts on. Device ioctls are Landlock's, and every other request is
-    /// allowed.
+    /// THE REQUESTS THAT CHANGE AN INODE (<c>include/uapi/linux/fs.h</c>, <c>fsverity.h</c>, <c>fscrypt.h</c>, <c>btrfs.h</c>): <c>FS_IOC_SETFLAGS</c> and
+    /// <c>FS_IOC_SETVERSION</c> in both widths, <c>FS_IOC_FSSETXATTR</c>, <c>FS_IOC_ENABLE_VERITY</c>, <c>FS_IOC_SET_ENCRYPTION_POLICY</c>,
+    /// <c>BTRFS_IOC_SUBVOL_SETFLAGS</c>. A read-only descriptor and being the owner is all each asks, and <c>ioctl</c> carries its request in
+    /// a 32-bit word, so the low word of the argument is what the kernel acts on. Device ioctls are Landlock's, and every other request is
+    /// allowed: a filesystem's private setter outside this list is not closed.
     /// </summary>
-    internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x401C5820, 0x40806685];
+    internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A];
 
     internal static Table? TableFor(Architecture arch) => arch switch
     {

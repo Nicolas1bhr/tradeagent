@@ -107,9 +107,17 @@ public partial class CellLinuxTests
             ioctl("ioctl-fssetxattr", FS_IOC_FSSETXATTR, struct.pack("<I", struct.unpack_from("<I", attr)[0] | 0x80) + bytes(attr[4:]))
             os.close(fd)
 
+        def hard_link(tag, p):
+            # ONE NAME IS ALL THE SUPERVISOR JUDGES: a second name inside the workspace for what lies outside it would pass.
+            try:
+                os.link(p, os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "hard-" + tag)); print(f"link {tag} ok", flush=True)
+            except OSError as e:
+                print(f"link {tag} errno={e.errno}", flush=True)
+
         for kind, tag, p in zip(sys.argv[1::3], sys.argv[2::3], sys.argv[3::3]):
             by_path(tag, p)
             if kind == "granted": by_fd(tag, p)
+            if tag not in ("outside-dir", "via-symlink"): hard_link(tag, p)
         print("probe-done", flush=True)
         """;
 
@@ -198,7 +206,8 @@ public partial class CellLinuxTests
         var refused = ran.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(l => l != "probe-done").ToList();
         // EPERM FROM EVERY ONE, AND ONE KIND OF NOT-FOUND: /proc/self/fd/<n> is the SUPERVISOR's table when the supervisor reads it, so it either refuses a
         // magic link (EPERM) or finds no such descriptor (ENOENT). Neither reaches the object, and the snapshot above says so.
-        Assert.All(refused, l => Assert.True(l.EndsWith(" errno=1", StringComparison.Ordinal) || (l.StartsWith("fchmodat-procfd ", StringComparison.Ordinal) && l.EndsWith(" errno=2", StringComparison.Ordinal)), l));
+        Assert.All(refused, l => Assert.True(l.EndsWith(" errno=1", StringComparison.Ordinal) || (l.StartsWith("fchmodat-procfd ", StringComparison.Ordinal) && l.EndsWith(" errno=2", StringComparison.Ordinal))
+            || (l.StartsWith("link ", StringComparison.Ordinal) && l.EndsWith(" errno=18", StringComparison.Ordinal)), l));
 
         // THE KIT'S HASH COVERS ITS RUN BITS: one cell's flip would have withdrawn the kit from every other cell.
         Assert.Equal(m.Kit.Hash, Kit.HashOf(m.Kit.Dir));
@@ -241,12 +250,20 @@ public partial class CellLinuxTests
             os.fchmod(fd, 0o640)
             os.utime(fd, (1000000000, 1000000000))
             os.close(fd)
+            # A FILE UNLINKED WHILE OPEN, AND ONE THAT NEVER HAD A NAME: what lies in the workspace is the workspace's.
+            fd = os.open('gone', os.O_RDWR | os.O_CREAT); os.unlink('gone'); os.fchmod(fd, 0o600); os.utime(fd); os.close(fd)
+            fd = os.open('.', os.O_RDWR | os.O_TMPFILE, 0o600); os.fchmod(fd, 0o640); os.close(fd)
+            # AN ABSOLUTE PATH IGNORES ITS DIRECTORY, HOWEVER BAD THAT IS.
+            import ctypes
+            libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+            said = libc.syscall(ctypes.c_long(268 if os.uname().machine == 'x86_64' else 53), ctypes.c_long(-1), ctypes.c_char_p(os.path.abspath('a').encode()), ctypes.c_long(0o640))
+            print('absolute-rc=' + str(said), flush=True)
             print('python-rc=0', flush=True)
             "
             """);
         var ran = await InCell(w.Policy(), "/bin/sh", script);
         _output.WriteLine(ran.Out + ran.Err);
-        Says(ran, "ran-it", "chmod-rc=0", "touch-rc=0", "touch-d-rc=0", "cp-p-rc=0", "tar-rc=0", "touch-h-rc=0", "git-rc=0", "sed-rc=0", "python-rc=0");
+        Says(ran, "ran-it", "chmod-rc=0", "touch-rc=0", "touch-d-rc=0", "cp-p-rc=0", "tar-rc=0", "touch-h-rc=0", "git-rc=0", "sed-rc=0", "python-rc=0", "absolute-rc=0");
         // NOTHING OF THE CHANNEL OR THE LISTENER IS INHERITED: a listener in the cell's hands would let it answer its own calls.
         Says(ran, "fds=0 1 2 3");
         var a = Path.Combine(w.Ws, "a");

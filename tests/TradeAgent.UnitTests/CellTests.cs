@@ -445,7 +445,7 @@ public class CellSeccompTests
     {
         foreach (var nr in refused) Assert.Equal(Eperm, Run(arch, audit, nr, 3, 0, 0));
         foreach (var nr in mediated) Assert.Equal(Notify, Run(arch, audit, nr, 3, 0, 0));
-        foreach (var request in new ulong[] { 0x40086602, 0x40046602, 0x401C5820, 0x40806685, 0xFFFFFFFF_40086602 })
+        foreach (var request in new ulong[] { 0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A, 0xFFFFFFFF_40086602 })
             Assert.Equal(Eperm, Run(arch, audit, ioctl, 3, request));
         // WHAT AN ORDINARY PROGRAM ASKS OF ioctl, AND THE READ HALF OF THE SAME REQUESTS: untouched.
         foreach (var request in new ulong[] { 0x5401 /* TCGETS */, 0x541B /* FIONREAD */, 0x80086601 /* FS_IOC_GETFLAGS */, 0x801C581F /* FS_IOC_FSGETXATTR */ })
@@ -487,7 +487,7 @@ public class CellSeccompTests
 
     /// <summary>
     /// THE ONE JUDGEMENT THE SUPERVISOR MAKES: what the kernel names the descriptor lies in the granted workspace, by whole components. A sibling
-    /// sharing its prefix, the folder above, an unlinked file, a pipe and no name at all are refused.
+    /// sharing its prefix, the folder above, what was unlinked elsewhere, a pipe and no name at all are refused; what was unlinked here stays the cell's.
     /// </summary>
     [Theory]
     [InlineData("/home/a/ws", true)]
@@ -497,7 +497,9 @@ public class CellSeccompTests
     [InlineData("/home/a", false)]
     [InlineData("/home/a/.ssh/id_x", false)]
     [InlineData("/home/a/kit/tools/t", false)]
-    [InlineData("/home/a/ws/gone (deleted)", false)]
+    [InlineData("/home/a/ws/gone (deleted)", true)]
+    [InlineData("/home/a/kit/gone (deleted)", false)]
+    [InlineData("/memfd:x (deleted)", false)]
     [InlineData("pipe:[1234]", false)]
     [InlineData("", false)]
     [InlineData(null, false)]
