@@ -117,6 +117,27 @@ public class MaterialHashBoundTests
         Assert.False(Hashed(db, "inbox/huge.bin"));
     }
 
+    /// <summary>
+    /// WHAT THE BATCH DID NOT REACH IS SAID TOO (Codex review): the batch is one file wide and two files wait, neither finishable. Only the
+    /// first is tried, and the second stands in the count and in words, or a pass blocked by the first would leave it unsaid.
+    /// </summary>
+    [Fact]
+    public async Task A_file_past_the_batch_of_a_pass_that_deferred_is_counted_and_said_not_left_silent()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Sparse(Inbox(root, "first.bin"), 1L << 40);
+        Sparse(Inbox(root, "second.bin"), 1L << 41);
+        var scanner = new MaterialScanner(db, root, at => true) { HashesPerPass = 1, HashTimePerPass = TimeSpan.FromSeconds(1) };
+
+        var pass = await Bounded(() => scanner.Scan());
+
+        Assert.Equal((0, 2), (pass.Hashed, pass.HashDeferred));
+        Assert.Equal(2, pass.HashDeferrals.Count);
+        Assert.Contains("1 more file", pass.HashDeferrals[1], StringComparison.Ordinal);
+        Assert.Contains("not reached", pass.HashDeferrals[1], StringComparison.Ordinal);
+    }
+
     static void Sparse(string path, long length)
     {
         using var fs = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
