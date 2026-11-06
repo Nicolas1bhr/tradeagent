@@ -49,11 +49,11 @@ public static partial class LaunchEvidence
     /// not always long): "api key", "key", "token", "password", "passwd", "pwd", "secret", "credential", "authorization", with any prefix
     /// (<c>access_token</c>, <c>client_secret</c>, <c>sessionToken</c>; R29 F-C1), then an optional "provided", "given", "supplied", "used",
     /// "value", "was" or "is", then a ":" or "=", which may come after the quote that closes a JSON key's name. An opening quote may follow
-    /// it, and a space and an opening quote alone will do. A quoted value runs to the same quote, spaces included; any other to the next
+    /// it, and a space and an opening quote alone will do. A quoted value runs to the same quote unescaped, spaces included; any other to the next
     /// space, quote or separator, whatever it starts with but the scheme <see cref="Scheme"/> has already withheld. A word with no separator
     /// after it ("API key is invalid", <c>"code":"invalid_api_key"</c>) is the vendor's diagnosis and is kept.
     /// </summary>
-    [GeneratedRegex(@"(?i)(\b[a-z0-9_]*(?:api[ _-]?key|key|token|password|passwd|pwd|secret|credential|authorization)\b(?>(?:\s+(?:provided|given|supplied|used|value|was|is))?(?:\\?[""'`]?\s*[:=]\s*(\\?[""'`])?|\s+(\\?[""'`]))))(?!\[withheld\]|[a-z]+\s+\[withheld\])(?(2)(?:(?!(?-i:\2)).)+|(?(3)(?:(?!(?-i:\3)).)+|[^\s""',;\\]+))")]
+    [GeneratedRegex(@"(?i)(\b[a-z0-9_]*(?:api[ _-]?key|key|token|password|passwd|pwd|secret|credential|authorization)\b(?>(?:\s+(?:provided|given|supplied|used|value|was|is))?(?:\\?[""'`]?\s*[:=]\s*(\\?[""'`])?|\s+(\\?[""'`]))))(?!\[withheld\]|[a-z]+\s+\[withheld\])(?(2)(?:(?!(?-i:\2))(?:\\.|.))+|(?(3)(?:(?!(?-i:\3))(?:\\.|.))+|[^\s""',;\\]+))")]
     private static partial Regex Named();
 
     /// <summary>
@@ -64,10 +64,11 @@ public static partial class LaunchEvidence
     private static partial Regex Scheme();
 
     /// <summary>
-    /// A <c>Basic</c> VALUE WITH NO HEADER NAME BEFORE IT, in the shape base64 takes. A word in plain lower case is kept: "basic authentication
-    /// failed" is the vendor's diagnosis, and <see cref="Scheme"/> has already taken a lower-case value inside an Authorization header.
+    /// A <c>Basic</c> VALUE WITH NO HEADER NAME BEFORE IT, in the shape base64 takes. A plain word, lower case or capitalised, is kept: "basic
+    /// authentication failed" and "Basic Plan" are the vendor's diagnosis, and <see cref="Scheme"/> has already taken any value inside an
+    /// Authorization header. A real value of more than a few characters is almost never all one case.
     /// </summary>
-    [GeneratedRegex(@"\b((?i:basic)\s+)(?![a-z]+\b)[A-Za-z0-9+/]{4,}={0,2}")]
+    [GeneratedRegex(@"\b((?i:basic)\s+)(?![A-Z]?[a-z]+\b)[A-Za-z0-9+/]{4,}={0,2}")]
     private static partial Regex Basic();
 
     [GeneratedRegex(@"\b(?:sk|rk|pk)[-_][A-Za-z0-9_\-]{8,}|\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*|[A-Za-z0-9_\-+/=]{32,}")]
