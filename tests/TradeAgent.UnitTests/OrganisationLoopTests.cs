@@ -280,7 +280,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         await life.RunUntil(() => Ended(life, head) > headTurns, "the head's turn on the delivery ended");
         var judged = Ended(life, head);
         Served(life, head, judged, 5);
-        await life.RunUntil(() => life.Reached("executor-hung") && gw.Deployments.Open().Count > 0,
+        await life.RunUntil(() => life.Reached("executor-hung") && gw.Deployments.Open().Any(d => d.VersionId == winner),
             "the executor's turn on its notes began and the loop deployed the winner");
         Assert.Equal(MandateEventKind.Accepted, org.MandateStatus(mandate));
 
@@ -294,6 +294,8 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         // `loss-over-a-short-holdout`: inconclusive, observed on paper under `AllocationPolicy.InconclusiveV1` for `Inconclusive.Term`,
         // its verdict still refused, and no live authority with it. Anything else written for it — a favourable row, a second row, a
         // row that is not the envelope's share or not scoped to paper — is the losing verdict allocating something, and fails here.
+        // INTERIM, BY NAME: this reading stands only while the default holdout is shorter than `Inconclusive.ShortHoldout` (R29 F-B2: D11
+        // landed without D12). U-evidence-holdout-length (D12) restores "a loser allocates nothing" here, on a holdout of 365 days or more.
         var promotions = new Promotions(db);
         Assert.Equal(PromotionVerdict.PaperEligible, Assert.Single(promotions.For(winner)).Verdict);
         Assert.Equal(PromotionVerdict.Refused, Assert.Single(promotions.For(loser)).Verdict);
@@ -311,6 +313,8 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.Equal(2, paperStanding.Count);
         var deployment = Assert.Single(gw.Deployments.Open(), d => d.VersionId == winner);
         Assert.Equal((winner, allocation.Id, DeploymentState.Active), (deployment.VersionId, deployment.AllocationId, deployment.State));
+        // Any other open run can only be the loser's observation, on the row asserted above and nothing else.
+        Assert.All(gw.Deployments.Open().Where(d => d.Id != deployment.Id), d => Assert.Equal((loser, observed.Id), (d.VersionId, d.AllocationId)));
 
         // THE NOTES REACH THE AUTHOR: the referee's verdict note and the allocator's note name the executor beside research, each with
         // its wake — taken by the executor's turn now hanging.
