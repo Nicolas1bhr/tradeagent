@@ -515,8 +515,8 @@ public class TurnBoundsTests : IDisposable
         {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Working."}}
         """;
 
-    /// <summary>A hanging session whose last line said <paramref name="said"/>, metered, cancelled at its read once the line has been read.</summary>
-    async Task<(AgentTurnEnded Ended, AiAttempt Row)> CutAtTheRead(string name, string stream, Action<AgentSession> after)
+    /// <summary>A metered session that prints <paramref name="stream"/> and hangs, cancelled at its read once the model's line has been read.</summary>
+    async Task<(AgentTurnEnded Ended, AiAttempt Row)> CutAtTheRead(string name, string stream)
     {
         var meter = Meter();
         var chat = AgentRuntimeProbe.SessionOverStream(stream, manifest: VendorLimitTests.Codex, hangSeconds: 300, name: name);
@@ -525,7 +525,6 @@ public class TurnBoundsTests : IDisposable
         chat.TurnEnded += e => ended = e;
         using var cut = new CancellationTokenSource();
         chat.TurnAdded += t => { if (t.Role == ChatRole.Ai) cut.Cancel(); };
-        after(chat);
 
         // THE TOKEN, NOT THE TEARDOWN: killing the tree first would end the read at end-of-file, which returns what it read. Cancelled, the read throws.
         await chat.SendAsync("reply ok", cut.Token).WaitAsync(TimeSpan.FromSeconds(60));
@@ -539,7 +538,7 @@ public class TurnBoundsTests : IDisposable
     [Fact]
     public async Task A_cancelled_read_keeps_and_prices_the_usage_that_arrived()
     {
-        var (ended, row) = await CutAtTheRead(nameof(A_cancelled_read_keeps_and_prices_the_usage_that_arrived), MeasuredThenHung, _ => { });
+        var (ended, row) = await CutAtTheRead(nameof(A_cancelled_read_keeps_and_prices_the_usage_that_arrived), MeasuredThenHung);
 
         Assert.NotNull(ended.Usage);
         Assert.Equal(40000, row.InputTokens);
@@ -557,7 +556,7 @@ public class TurnBoundsTests : IDisposable
             {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
             {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Working."}}
             """;
-        var (ended, row) = await CutAtTheRead(nameof(A_cut_turn_that_measured_nothing_says_so_and_keeps_its_reservation), nothing, _ => { });
+        var (ended, row) = await CutAtTheRead(nameof(A_cut_turn_that_measured_nothing_says_so_and_keeps_its_reservation), nothing);
 
         Assert.Null(ended.Usage);
         Assert.Null(row.InputTokens);
@@ -622,7 +621,7 @@ public class TurnBoundsTests : IDisposable
     }
 
     /// <summary>
-    /// WHAT FINISHED IS NOT RUN TWICE. The one thing that tells them apart is a record the app wrote against that launch: the mandate's delivery (asked of the
+    /// WHAT FINISHED IS NOT RUN TWICE. The one thing that tells them apart is a record the app wrote against that launch: the decider's judgment (asked of the
     /// host) and the brief the owner's words became (the relay's measurement). The look beside them has no such record and comes back.
     /// </summary>
     [Fact]
@@ -632,18 +631,18 @@ public class TurnBoundsTests : IDisposable
         var events = new MissionEventStore(_db);
         var now = DateTimeOffset.UtcNow;
         var chat = RefusedSession(name, RefusedStream(WorkedFirst));
-        var mandate = MissionEventIds.ForRole("mandate-wake", Ops);
+        var judged = MissionEventIds.ForRole("delivery-wake", Ops);
         Assert.True(events.RecordOwnerMessage("brief Research on the skew", now));
         var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
         var look = MissionEventIds.ForRole(MissionEventIds.Review(now), Ops);
         events.Raise(look, MissionEventKind.Review, now, role: Ops);
-        events.Raise(mandate, MissionEventKind.Mandate, now, payload: "man-delivered", role: Ops);
+        events.Raise(judged, MissionEventKind.Delivery, now, payload: "man-judged", role: Ops);
 
         string? askedFor = null;
         var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
         {
             Clock = () => now,
-            Finished = (wake, attempt) => { askedFor = attempt; return wake.Id == mandate; },
+            Finished = (wake, attempt) => { askedFor = attempt; return wake.Id == judged; },
             Relayed = () => events.SettleWithoutTurn(owner, MissionEventDisposition.Delegated, "pub-brief")
         };
         var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
@@ -651,7 +650,7 @@ public class TurnBoundsTests : IDisposable
         await loop.TurnAsync();
 
         Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
-        var finished = events.Get(mandate)!;
+        var finished = events.Get(judged)!;
         Assert.True(finished.Consumed);
         Assert.Equal(MissionEventDisposition.Answered, finished.Disposition);
         Assert.Equal(finished.ConsumedBy, askedFor);
