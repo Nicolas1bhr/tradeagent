@@ -555,6 +555,18 @@ public sealed class StrategyStore(Database db)
     });
 
     /// <summary>
+    /// EVERY COMPUTATION THIS INSTALLATION HAS MADE, newest first: <see cref="Runs"/> without the rows that reuse another position's
+    /// (<c>U-backtest-dedupe-role</c>). A reuse row is who holds a measurement and measures nothing new, so what reports what was
+    /// measured reads this: positions repeating one request neither pad it nor push a distinct computation off a short list.
+    /// </summary>
+    public IReadOnlyList<StrategyRunRow> Computations(int limit = 100) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {RunCols} FROM strategy_run WHERE reuses_run IS NULL ORDER BY created_at DESC, id DESC LIMIT $n", ("$n", limit));
+        return ReadRuns(c);
+    });
+
+    /// <summary>
     /// EVERY RUN OF ONE VERSION THAT ONE ROLE COMPLETED, newest first — the measurement a caller has
     /// to have made before the app will spend a verdict on its program.
     ///
@@ -596,10 +608,10 @@ public sealed class StrategyStore(Database db)
         return ReadRuns(c);
     });
 
-    /// <summary>How many runs this installation has measured. What section 8 of the owner's report asks.</summary>
+    /// <summary>How many computations this installation has measured (<see cref="Computations"/>). What section 8 of the owner's report asks.</summary>
     public int RunCount => db.Read(_ =>
     {
-        using var c = db.Cmd("SELECT COUNT(*) FROM strategy_run");
+        using var c = db.Cmd("SELECT COUNT(*) FROM strategy_run WHERE reuses_run IS NULL");
         return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     });
 

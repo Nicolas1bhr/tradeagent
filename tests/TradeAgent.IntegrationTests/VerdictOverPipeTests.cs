@@ -852,6 +852,13 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
         Assert.Equal(2, store.Runs(1000).Count(r => r.VersionId == version));
         Assert.Equal(1, w.Gw.Campaigns.TrialsCharged(w.Campaign.Id));
 
+        // THE OWNER'S REPORT COUNTS WHAT WAS MEASURED (Codex review): one computation, however many positions hold a row of it, so
+        // positions repeating one request can neither pad its count nor push a distinct computation off its short list.
+        var report = DailyReportText.Render(w.Gw.Reports.Compose(DateTimeOffset.Now));
+        Assert.Contains($"backtest {first.Id[..12]}", report, StringComparison.Ordinal);
+        Assert.DoesNotContain($"backtest {mine[..12]}", report, StringComparison.Ordinal);
+        Assert.Equal(store.Runs(1000).Count(r => r.ReusesRun is null), store.RunCount);
+
         // AND ITS VERDICT IS JUDGED, on its own completed run.
         var reply = await AskVerdict(ops, version, dataset: w.Set.Id, rid: "v-ops");
         log.WriteLine(Json.Write(reply.Error ?? (object)Data(reply)));
