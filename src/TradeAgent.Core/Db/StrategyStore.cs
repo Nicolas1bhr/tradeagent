@@ -873,7 +873,7 @@ public sealed class StrategyStore(Database db)
         var first = closes.FirstClose.ToUniversalTime();
         var until = closes.Until?.ToUniversalTime();
         var reach = FeatureFeed.ReachOf(program.Features);
-        if (FeatureFeed.Reaching(holdout, reach, first, until) is not { } reached) return null;
+        if (FeatureFeed.Reaching(holdout, reach, first, until, FeatureFeed.SubjectsOf(program.Features)) is not { } reached) return null;
 
         var names = string.Join(", ", program.Features.Select(f => $"`{f.Name}`"));
         return $"the trades of run {Shown(asked)} are held back: its version reads the feature(s) {names} at the close of "

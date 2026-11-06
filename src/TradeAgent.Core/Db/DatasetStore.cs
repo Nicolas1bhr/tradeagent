@@ -426,8 +426,9 @@ public sealed class DatasetStore(Database db)
     });
 
     /// <summary>
-    /// THE FRESH HOLDOUTS STILL BEING COLLECTED, as windows with no end (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>):
-    /// read from the ledger at each call, as <see cref="All"/> is, so a window armed a second ago holds.
+    /// THE FRESH HOLDOUTS STILL BEING COLLECTED, as windows with no end over their own pairs (<c>U-evidence-campaign</c>;
+    /// <see cref="CampaignRenewal"/>; R30 D16): read from the ledger at each call, as <see cref="All"/> is, so a window armed a second
+    /// ago holds.
     /// </summary>
     public IReadOnlyList<Data.TapeHoldoutWindow> ForwardWindows() =>
         [.. new CampaignRenewal(db).Holding().Select(Data.TapeHoldoutWindow.Forward)];

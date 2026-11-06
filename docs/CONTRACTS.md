@@ -3939,13 +3939,28 @@ standard.
 `CampaignRenewal`). Not by `Renew`, which carries the parent's holdout and whose policy counts verdicts across the lineage: by
 the repo's own way on, a holdout over OTHER months, pressed for the owner only on months no verdict and no research read could
 have seen. (1) An open research campaign whose judgements (`JudgementsSpent`) or trials (`TrialsCharged`) reach a budget above
-zero is SPENT. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
+zero is SPENT, and so is one whose exploration pot is full and under which no parent can be promoted (`CampaignRenewal.ExplorationSpent`;
+R30 D15, R28 E2): no version stands Promoted, of any pair, and the campaign holds no version it could still promote, meaning a version
+of its pair, frozen before its cutoff, bounded, not retired and not yet judged under it, with a judgement left. Over history none
+qualifies, because a version made now is frozen after the cutoff, so every trial is an exploration and a first campaign's real
+budget is its pot; without this rule it sat refusing with nothing armed. **PaperEligible is not a promotable parent**: that would widen the
+search on an unproven basis. The budgets do not change, a campaign spent this way keeps any final judgements it has left, its refusal
+(`CampaignStore.Pot`) says what is spent, that it cannot be charged another such trial and what the next campaign waits for, and every
+turn's packet carries one line per spent campaign (`CampaignRenewal.SpentLines`, the Situation's `spent_campaigns` block) so that no
+turn pays to learn it from a refusal. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
 midnight strictly after now, every dataset's last close, every forward bar's close, every held window's end and every cutoff
 armed before — refused when any of those has no measurable end — written once by `Database.AddKvOnce`
 (`campaign_forward_holdout:<id>`), one window at a time PER PAIR (`U-evidence-breadth`: a spent ETHUSDT campaign does not wait
-for BTCUSDT's fresh month; each cutoff is still after every armed cutoff of every pair). (3) From that moment `TapeHoldout` holds `[cutoff, no end)` for every
-pipe caller and the referee's research evidence (`DatasetStore.ForwardWindows`) — not for the paper runner, which trades the
-present (a paper run's figures are not held back, as before) — and `data-list` names it. (4) Once `cutoff + 30 days`
+for BTCUSDT's fresh month; each cutoff is still after every armed cutoff of every pair). (3) From that moment `TapeHoldout` holds `[cutoff, no end)` **of the
+spent campaign's own pair** for every pipe caller and the referee's research evidence (`DatasetStore.ForwardWindows`,
+`TapeHoldoutWindow.OnlyPair`; R30 D16) — not for the paper runner, which trades the present (a paper run's figures are not held back,
+as before) — and `data-list` names it. Its pair's bars and forward bars are refused; on the tape its rows are refused, and so is a
+read naming no subject and a subject that is not one of the pairs the tape records (`TapeSourceCatalog.Universe`), such as a news
+item, because those say what its months did too. A window whose pair cannot be read holds every pair. **Correlated pairs still leak some information across a
+hold:** while BTCUSDT's fresh months are held, ETHUSDT's bars over the same days are served, and they carry much of what BTCUSDT did.
+That is a decided cost (R30 D16): campaigns and renewal are per pair, D15 spends campaigns sooner, and a hold over every pair would
+take the recent data of all five from the first campaign spent. A dataset's own cutoff is not narrowed: it still holds every pair
+(The holdout), and that includes the fresh months once the campaign over them opens. (4) Once `cutoff + 30 days`
 (`MinimumFreshDays`) has passed, the pass downloads the spent campaign's pair again (at most once a day) and
 `TradingGateway.OpenForwardCampaign` opens the next campaign through `SetHoldout` at the armed cutoff, in one transaction with
 the write-once successor (`campaign_forward_successor:<id>`) — only over an ACCEPTED download of the same source, pair and
@@ -4045,7 +4060,8 @@ past a spent budget and counted by nobody (the survey's probe, Q1.3). **Each pai
 a version names one instrument and is measured only on its bars (`InstrumentMatch`), so a run of an ETHUSDT version is
 research about ETHUSDT and is charged to ETHUSDT's campaigns — never to BTCUSDT's, which is another budget (charging every
 pair's campaign, as rule 1 did from 2026-10-09 to 2026-10-31, made five pairs' budgets one). **The holdout is NOT narrowed:**
-a cutoff still holds market time for every pair (The holdout), so no research of any pair reads any pair's held window. A
+a dataset's cutoff still holds market time for every pair (The holdout), so no research of any pair reads any pair's held window;
+only a fresh holdout still being collected holds its own pair alone (R30 D16). A
 campaign whose dataset the ledger no longer holds is of every pair (`CampaignStore.SamePair`). A campaign's
 **development months** are its dataset's bars before the cutoff, `[first_bar, holdout_from)`, read from the dataset ledger
 at each look. A research run's **span** is the market its bars cover — `TapeHoldout`'s span, from the open of the first bar
@@ -5021,7 +5037,8 @@ being measured can move. Two pots rather than two independent caps is what makes
 parent declaration safe to take: declaring one moves a trial between pots and **creates no allowance**.
 The honest limit, stated: the app cannot verify that a program is really derived from the parent it
 names, and a submitter whose exploration pot is full can reach the other pot by claiming a promoted
-ancestry — what it cannot do is widen the campaign. `CampaignExplorationBudget` is **50 of 200**, a
+ancestry — what it cannot do is widen the campaign. A full pot with no such ancestry possible is the
+campaign's end (The holdout, **A spent campaign is followed**; R30 D15). `CampaignExplorationBudget` is **50 of 200**, a
 choice, copied onto the campaign at open like the other two budgets, clamped to `[0, trial_budget]`;
 a campaign opened with none declared records its whole trial budget, which is what every campaign
 before schema 21 had. **`TrialRefusal` and `RegisterTrial` now ask ONE rule** (`TrialAdmission`, the

@@ -47,7 +47,7 @@ public static class TapeWakes
         // THE ROLE'S OWN WINDOWS, read from the dataset ledger now: the reads it would be refused are the reads this
         // wake may not point at.
         var windows = TapeHoldout.Pipe(Owner, new DatasetStore(db)).Windows();
-        var outside = owned.Where(i => !windows.Any(w => w.Holds(i.SourceTime))).ToList();
+        var outside = owned.Where(i => !windows.Any(w => w.Holds(i.SourceTime) && w.HoldsTapeOf(i.Subject))).ToList();
         if (outside.Count == 0) return false;
 
         return new MissionEventStore(db).RaiseCoalesced(new MissionEvent
@@ -76,7 +76,7 @@ public static class TapeWakes
         catch (Exception) { return null; }
         if (row?.Items is not { Count: > 0 } items) return null;
 
-        var outside = items.Where(i => !windows.Any(w => w.Holds(i.SourceTime))).ToList();
+        var outside = items.Where(i => !windows.Any(w => w.Holds(i.SourceTime) && w.HoldsTapeOf(i.Subject))).ToList();
         if (outside.Count == 0) return null;
         var now = Row(row.Source, row.Series, outside);
         return new TapeWakePayload(now.Source, now.Series, now.Subject, now.Count);

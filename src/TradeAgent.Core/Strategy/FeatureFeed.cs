@@ -190,17 +190,23 @@ public sealed class FeatureFeed : IDisposable
     internal static TimeSpan ReachOf(IReadOnlyList<FeatureDecl> features) => features.Max(f => FeatureEvaluator.Reach(f.Spec));
 
     /// <summary>
+    /// THE SUBJECTS <paramref name="features"/> READ ON THE TAPE, which decide whether a fresh holdout of one pair reaches them (R30 D16).
+    /// </summary>
+    internal static IReadOnlyCollection<string> SubjectsOf(IReadOnlyList<FeatureDecl> features) =>
+        [.. features.SelectMany(f => f.Spec.Inputs).Select(i => i.Subject).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
     /// WHERE THE READS THAT VALUE CLOSES FROM <paramref name="first"/> TO <paramref name="last"/> (null: no end known) START,
     /// AND THE TAPE HOLDOUT'S WORDS FOR THEM — from <paramref name="first"/> less <paramref name="reach"/> to
     /// <paramref name="last"/> — or null when they reach no window. The one arithmetic a feed decides a run or a slice by,
     /// and a reader decides by whether a recorded run's reads reach a window now (<c>U-run-trace</c>).
     /// </summary>
     internal static (DateTimeOffset From, string Why)? Reaching(
-        TapeHoldout holdout, TimeSpan reach, DateTimeOffset first, DateTimeOffset? last)
+        TapeHoldout holdout, TimeSpan reach, DateTimeOffset first, DateTimeOffset? last, IReadOnlyCollection<string> subjects)
     {
         ArgumentNullException.ThrowIfNull(holdout);
         var from = FeatureEvaluator.Minus(first, reach);
-        return holdout.Refusal(from, last) is { } why ? (from, why) : null;
+        return holdout.Refusal(from, last, subjects) is { } why ? (from, why) : null;
     }
 
     /// <summary>
@@ -210,7 +216,7 @@ public sealed class FeatureFeed : IDisposable
     string? Withholds(DateTimeOffset first, DateTimeOffset? last, bool whole)
     {
         if (_paper) return PaperWithholds(first, last, whole);
-        if (Reaching(_holdout, _reach, first, last) is not { } reached) return null;
+        if (Reaching(_holdout, _reach, first, last, SubjectsOf(_features)) is not { } reached) return null;
         var (from, why) = reached;
 
         var names = string.Join(", ", _features.Select(f => $"`{f.Name}`"));

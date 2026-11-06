@@ -5,12 +5,18 @@ namespace TradeAgent.Core.Db;
 
 /// <summary>
 /// ONE FRESH HOLDOUT THE APP ARMED WHEN A CAMPAIGN WAS SPENT (<c>U-evidence-campaign</c>; R25 D7): from <see cref="Cutoff"/> on,
-/// every bar of every pair, the forward bars and the tape are held back from every caller on the agent channel, until the
-/// campaign that judges them — <see cref="Successor"/> — opens over a download holding at least
-/// <see cref="CampaignRenewal.MinimumFreshDays"/> days of them.
+/// the spent campaign's own pair (<see cref="Pair"/>, R30 D16) — its bars, its forward bars and its rows on the tape — is held back
+/// from every caller on the agent channel, until the campaign that judges those months — <see cref="Successor"/> — opens over a download
+/// holding at least <see cref="CampaignRenewal.MinimumFreshDays"/> days of them.
 /// </summary>
 public sealed record ForwardHoldout(long SpentCampaignId, DateTimeOffset Cutoff, DateTimeOffset ArmedAt, string Spent, long? Successor)
 {
+    /// <summary>
+    /// THE ONE PAIR THIS WINDOW HOLDS, or null when it cannot be told: the spent campaign's dataset is gone, or the armed row cannot be
+    /// read. Null holds EVERY pair, because an unknown pair is never another pair (<see cref="CampaignStore.SamePair"/>).
+    /// </summary>
+    public string? Pair { get; init; }
+
     /// <summary>Whether the window is still held open-ended: armed, and its campaign not yet open.</summary>
     public bool Holding => Successor is null;
 
@@ -41,9 +47,11 @@ public sealed record ForwardHoldout(long SpentCampaignId, DateTimeOffset Cutoff,
 /// minutes already served, later would release minutes it held. One window is armed at a time FOR EACH PAIR, so each of a pair's
 /// windows starts after the last (<c>U-evidence-breadth</c>: each pair's campaign is its own budget, so a spent BTCUSDT campaign
 /// does not make a spent ETHUSDT campaign wait for BTCUSDT's fresh month first).</item>
-/// <item><b>Held from that moment.</b> <see cref="TapeHoldout"/> holds <c>[cutoff, no end)</c> for every pipe caller and the
-/// referee's research evidence, exactly as a dataset's window is held. NOT for the paper runner: it trades the present, which is
-/// what these minutes are, and a paper run's figures were never held back (<c>docs/CONTRACTS.md</c>, The holdout, "NOT covered").</item>
+/// <item><b>Held from that moment, on its own pair.</b> <see cref="TapeHoldout"/> holds <c>[cutoff, no end)</c> of the spent campaign's
+/// pair for every pipe caller and the referee's research evidence (R30 D16: campaigns and renewal are per pair, and a window that held
+/// every pair would take the recent data of all five from the first campaign spent). Correlated pairs therefore still leak a little
+/// across a hold, and <c>docs/CONTRACTS.md</c> says so. NOT for the paper runner: it trades the present, which is what these minutes
+/// are, and a paper run's figures were never held back (<c>docs/CONTRACTS.md</c>, The holdout, "NOT covered").</item>
 /// <item><b>Opened by the app, on enough of it.</b> A fresh download of the spent campaign's own pair, source and interval, holding
 /// no cutoff, with research months before the cutoff and at least <see cref="MinimumFreshDays"/> days of bars from it, while no
 /// other held window OF THE SAME PAIR reaches past the cutoff: the app sets the cutoff on it through the owner's own press path, which opens the
@@ -189,12 +197,11 @@ public sealed class CampaignRenewal(Database db)
     /// armed — nothing when nothing was spent, when every spent campaign's pair is still holding, or when nothing on record has a
     /// measurable end (<see cref="NextCutoff"/>).
     ///
-    /// <para><b>Per pair, and why that keeps the rule</b> (<c>U-evidence-breadth</c>). Each window still holds every pair's bars from
-    /// its cutoff on (<see cref="TapeHoldout"/>), and each cutoff is still after everything on record — every armed cutoff of every
-    /// pair included — so nothing at or after it was served to anyone. What a window is FOR is one pair's next campaign, whose
-    /// judgements count only that pair's (<see cref="CampaignStore.JudgementsSpent"/>); two pairs collecting at once share no budget.
-    /// A spent campaign whose pair cannot be read (its dataset gone) holds every pair back, as before: unknown is never "another
-    /// pair".</para>
+    /// <para><b>Per pair, and why that keeps the rule</b> (<c>U-evidence-breadth</c>; R30 D16). Each cutoff is still after everything on
+    /// record — every armed cutoff of every pair included — so nothing at or after it was served to anyone. What a window is FOR is one
+    /// pair's next campaign, whose judgements count only that pair's (<see cref="CampaignStore.JudgementsSpent"/>), so it holds that
+    /// pair and two pairs collecting at once share no budget. A spent campaign whose pair cannot be read (its dataset gone) holds every
+    /// pair back: unknown is never "another pair".</para>
     /// </summary>
     public IReadOnlyList<ForwardHoldout> Arm(DateTimeOffset now) => db.Write(_ =>
     {
@@ -217,7 +224,7 @@ public sealed class CampaignRenewal(Database db)
             // nothing, and the cutoff the first one recorded is the one every reader keeps holding from.
             if (!db.AddKvOnce(ArmedKey + Id(campaign.Id), $"{Sql.T(cutoff)}|{Sql.T(now)}|{spent}")) continue;
 
-            armed.Add(new ForwardHoldout(campaign.Id, cutoff, now.ToUniversalTime(), spent, null));
+            armed.Add(new ForwardHoldout(campaign.Id, cutoff, now.ToUniversalTime(), spent, null) { Pair = set.Pair });
             collecting.Add(set.Pair);
         }
         return (IReadOnlyList<ForwardHoldout>)armed;
@@ -285,7 +292,12 @@ public sealed class CampaignRenewal(Database db)
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var a) ? a : DateTimeOffset.MinValue;
         var successor = db.GetKv(SuccessorKey + Id(spentCampaignId)) is { } s
             && long.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var next) ? next : (long?)null;
-        return new ForwardHoldout(spentCampaignId, cutoff, armedAt, parts.Length == 3 ? parts[2] : "an unreadable record", successor);
+
+        // ITS PAIR, READ THROUGH THE CAMPAIGN'S DATASET; A ROW THAT CANNOT BE READ HOLDS EVERY PAIR, as it holds every instant.
+        var pair = cutoff == DateTimeOffset.MinValue
+            ? null
+            : PairOf(new CampaignStore(db), new DatasetStore(db), spentCampaignId);
+        return new ForwardHoldout(spentCampaignId, cutoff, armedAt, parts.Length == 3 ? parts[2] : "an unreadable record", successor) { Pair = pair };
     }
 
     /// <summary>
@@ -328,7 +340,7 @@ public sealed class CampaignRenewal(Database db)
 
         // NOTHING ELSE OF THE PAIR HELD REACHES PAST THE CUTOFF: months another campaign of this pair holds are months its judgements
         // read, and they count against this pair's next campaign (`CampaignStore.JudgementsSpent`). Another pair's held months are its
-        // own campaign's budget (U-evidence-breadth) — and still unread by research on every pair, `TapeHoldout` holding them.
+        // own campaign's budget (U-evidence-breadth).
         foreach (var window in TapeHoldout.WindowsOf(new DatasetStore(db).All()
                      .Where(s => s.Id != fresh.Id && CampaignStore.SamePair(s.Pair, fresh.Pair))))
             if (window.Until is not { } end || end > held.Cutoff)
@@ -356,7 +368,8 @@ public sealed class CampaignRenewal(Database db)
             ? (close - held.Cutoff).TotalDays
             : 0;
         return $"TradeAgent opens the next campaign by itself, and only on FRESH market data no verdict and no research read could "
-               + $"have seen: every bar from {held.Cutoff:u} on, which no caller on this channel is served until then. It waits for at "
+               + $"have seen: every bar of {held.Pair ?? "every pair"} from {held.Cutoff:u} on, which no caller on this channel is served "
+               + "until then. It waits for at "
                + $"least {MinimumFreshDays} days of those bars in a download — {have.ToString("0.#", CultureInfo.InvariantCulture)} of "
                + $"{MinimumFreshDays} so far — so the earliest it can open is {held.Earliest:u}; Binance publishes a month once the "
                + "month is complete.";
