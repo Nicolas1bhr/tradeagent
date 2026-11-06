@@ -1415,9 +1415,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
             // sweep — so once one run of this allocation exists, none is started for it until none would be.
             if (runs.Count > 0 && ForwardRuns.CannotRun(Strategies, allocation.VersionId, Tape, Datasets, now) is not null) continue;
 
-            // ONE WRITE WITH THE LAST LOOK AT THE STOP (R30 D19), so a stop that committed after `PaperStanding` was read starts no replacement: the two
-            // writes are serialised, and a stop after this one finds the run and the reconcile pass ends it in the stop's words.
-            var result = _db.Write(_ => _allocations.StopOf(allocation.VersionId, Connector.Id, account, now) is not null
+            // ONE WRITE WITH THE LAST LOOK AT THE STOP (R30 D19), on the clock at this write and not the sweep's own instant, so a stop that committed after
+            // `PaperStanding` was read starts no replacement: the two writes are serialised, and a stop after this one finds the run and the reconcile
+            // pass ends it in the stop's words.
+            var result = _db.Write(_ => _allocations.StopOf(allocation.VersionId, Connector.Id, account, Now) is not null
                 ? null
                 : _deployments.Start(new StrategyDeploymentRow(
                     "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,
