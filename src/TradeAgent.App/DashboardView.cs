@@ -502,7 +502,7 @@ sealed class DashboardPage
         // admits no turn today and none tomorrow, so the card must not say "starts again at 00:00".
         if (spend.CapCannotFundATurn)
             return $"{head}: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap} — but one turn "
-                   + $"can cost up to {MissionSituation.Money(spend.NextTurnReservation, spend.Currency)}, which is "
+                   + Labels.OneTurnSetsAside(spend.Class, MissionSituation.Money(spend.NextTurnReservation, spend.Currency)) + ", which is "
                    + "more than the whole limit, so the AI cannot start a turn at all. Raise the limit, or choose a "
                    + "cheaper model above.";
 

@@ -87,6 +87,17 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// WHAT THE NEXT TURN OF <paramref name="role"/> WOULD RESERVE, for the class its seat bills now (<c>U-turn-reservation</c>; the Costs page):
+    /// the meter's own rule, read only, or null while there is no meter. Never a throw: an unreadable seat reserves an unknown, never zero.
+    /// </summary>
+    internal SeatReservation? ReservationOf(string role)
+    {
+        if (Meter is not { } meter) return null;
+        var billed = meter.ClassOf(role);
+        return new SeatReservation(billed, meter.ReservationFor(role, billed));
+    }
+
     internal bool CellProofHeld => _db is { } d && new CellProofStore(d).HoldsProof();
 
     /// <summary>The public audit line (<c>U-org-audit-a</c>): its file, its sweep and its timer, owned here and nowhere an agent reaches.</summary>
@@ -2994,7 +3005,7 @@ public sealed class AppHost : IAsyncDisposable
             var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
             host.Gateway.Log.Activity(spend.CapCannotFundATurn
                     // Midnight does not repair this one, so the line must not promise that it will.
-                    ? $"One AI turn can cost up to {reservation}, which is more than the whole {cap}, so "
+                    ? $"One AI turn {Labels.OneTurnSetsAside(spend.Class, reservation)}, which is more than the whole {cap}, so "
                       + "the AI cannot start a turn at all. " + (spend.Class == BillingClasses.Plan ? Labels.TodayPlanRepair : Labels.TodayMoneyRepairOnTheOwnerPage)
                     : $"The AI has used {money} today, and the next turn would take it past its {cap}. "
                       + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. " + (spend.Class == BillingClasses.Plan

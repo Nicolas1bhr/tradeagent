@@ -709,6 +709,16 @@ public static partial class Labels
         + "full, and its units take no new turn until they are back inside their envelopes, so a plan limit can be passed by at most "
         + "the overrun of the turns already running when it filled, one per position.";
 
+    /// <summary>
+    /// WHAT ONE TURN SETS ASIDE, said for the class it is billed to (<c>U-turn-reservation</c>; R25 D13): a key turn — and one nobody
+    /// established the payer of — sets aside its whole allowance, which is what it can cost at most; a plan turn sets aside an estimate from
+    /// its seat's measured turns, which a turn can pass, so it is never called "up to".
+    /// </summary>
+    public static string OneTurnSetsAside(string billingClass, string amount) =>
+        Db.BillingClasses.Of(billingClass) == Db.BillingClasses.Plan
+            ? $"sets aside {amount} of plan capacity (an estimate from its measured turns; a turn can cost more)"
+            : $"can cost up to {amount}";
+
     /// <summary>A reservation that is the whole bound because the turn is billed to an API key (<c>U-turn-reservation</c>; the Costs page).</summary>
     public const string ReservationKeyBound =
         "billed to an API key — real money — so the whole turn allowance is set aside";
@@ -745,8 +755,8 @@ public static partial class Labels
 
     /// <summary>What the page says once the two boxes are written, naming what it works out to.</summary>
     public static string TurnAllowanceReads(long input, long output, string reservation) =>
-        $"Saved. One turn now sets aside up to {reservation}: {input:N0} input tokens and "
-        + $"{output:N0} output tokens.";
+        $"Saved. A turn billed to an API key now sets aside up to {reservation}: {input:N0} input tokens and "
+        + $"{output:N0} output tokens. A turn on your AI plan sets aside what its seat has measured to cost, never more than that.";
 
     /// <summary>
     /// How often, AT MOST, the AI is woken when nothing has happened, and the press that writes it. The fastest pace:

@@ -183,6 +183,32 @@ public static partial class Labels
     public const string CostsNothingToday = "Nothing spent today: no AI turn of this unit or any unit below it has run.";
     public const string CostsNoTurns = "No AI turn has been funded here today.";
 
+    /// <summary>
+    /// WHAT ONE TURN OF A POSITION SETS ASIDE AND WHY (<c>U-turn-reservation</c>; R25 D13): the figure the next launch would reserve and the
+    /// rule that sized it, in the words <see cref="Labels.ReservationKeyBound"/> and its siblings give.
+    /// </summary>
+    public static string CostsReservation(string position, string amount, string why) =>
+        $"A turn of {position} sets aside {amount}: {why}.";
+
+    /// <summary>
+    /// A TURN NOBODY CAN PRICE: the reservation is unknown, never zero — nothing is held back for it, so no limit stops it, and the page
+    /// says so rather than show a 0.
+    /// </summary>
+    public static string CostsReservationUnknown(string position, string why) =>
+        $"A turn of {position} sets aside an unknown amount ({why}) — not zero: nothing can be held back for it, so no limit stops it.";
+
+    /// <summary>
+    /// A UNIT WHOSE TURNS ARE BILLED TO THE PLAN: its plan limits are advisory, and by exactly how much (<c>U-turn-reservation</c>; R25 D13) —
+    /// a plan turn sets aside an estimate, so one that costs more passes the limit by its overrun.
+    /// </summary>
+    public const string CostsPlanAdvisory =
+        "The plan limits over these turns are advisory, not hard: a turn that costs more than it set aside is charged in full and this "
+        + "unit takes no new turn until it is back inside, so a limit can be passed by at most one turn's overrun for each position "
+        + "running when it filled. A turn billed to an API key, or to a sign-in nobody identified, still sets aside its whole allowance.";
+
+    /// <summary>A unit with no position that can take a turn: nothing to reserve.</summary>
+    public const string CostsNoSeat = "No position here takes a turn, so nothing is set aside.";
+
     public const string CostsPlanHeading = "Your ChatGPT plan";
     public const string CostsKeyHeading = "An API key";
     public const string CostsUnknownHeading = "Not established";

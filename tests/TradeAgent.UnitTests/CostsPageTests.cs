@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.LogicalTree;
+using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -39,6 +40,59 @@ public class CostsPageTests
         var noCost = Launch(db, Member, at.AddMinutes(4), SeatClasses.Cli, BillingClasses.Plan, reserved: 0m);
         Launch(db, Other, at.AddMinutes(5), SeatClasses.Harness, BillingClasses.Key, unit: Elsewhere);
         Unreported(db, noCost);
+    }
+
+    /// <summary>
+    /// What the meter would answer for the seeded chart (<c>U-turn-reservation</c>): <see cref="Head"/> on the plan, sized from measured turns;
+    /// <see cref="Member"/> on an API key, the whole bound; <see cref="Other"/> on a sign-in nobody identified, at a rate nobody can supply.
+    /// </summary>
+    static SeatReservation? Reserving(string position) => position switch
+    {
+        Head => new(BillingClasses.Plan, new TurnReservation(new TurnPrice(0.64m, "USD", null), ReservationRule.Measured, Labels.ReservationMeasured(20))
+            { Bound = 1.28m }),
+        Member => new(BillingClasses.Key, new TurnReservation(new TurnPrice(1.28m, "USD", null), ReservationRule.Bound, Labels.ReservationKeyBound)),
+        Other => new(BillingClasses.Unknown, new TurnReservation(TurnPrice.Unknown("no price is known for this model"), ReservationRule.Bound,
+            Labels.ReservationUnknownBound)),
+        _ => null
+    };
+
+    /// <summary>
+    /// EACH UNIT SAYS WHAT ONE TURN OF EACH OF ITS POSITIONS SETS ASIDE AND WHY (<c>U-turn-reservation</c>; R25 D13): a plan seat its measured
+    /// estimate and the rule, a key seat its whole allowance; where a plan seat is among them, that the unit's plan limits are ADVISORY and
+    /// passed by at most one turn's overrun per running position; and a turn nobody can price set aside as UNKNOWN, never as 0. The card shows
+    /// the line beneath its billing classes, in place.
+    /// RED at base: the Costs page said nothing about reservations.
+    /// </summary>
+    [Fact]
+    public void Each_unit_says_what_one_turn_sets_aside_and_why_unknown_is_never_zero_and_plan_limits_are_advisory()
+    {
+        using var db = TestEnv.NewDb();
+        Seed(db);
+
+        var words = CostsWords.Of(CostsRead.Of(new OrgStore(db), new AiAttemptStore(db), DateTimeOffset.UtcNow, "USD", Reserving), null);
+        var names = OrgNames.Of(new OrgStore(db).Units(), new OrgStore(db).Positions());
+
+        var team = words.Units.Single(u => u.Id == Team);
+        Assert.Equal(string.Join(" ",
+                Labels.CostsReservation(names.Position(Head), "0.64 USD", Labels.ReservationMeasured(20)),
+                Labels.CostsReservation(names.Position(Member), "1.28 USD", Labels.ReservationKeyBound),
+                Labels.CostsPlanAdvisory),
+            team.Basis);
+        Assert.Contains("advisory", team.Basis, StringComparison.Ordinal);
+        Assert.Contains("at most one turn's overrun", team.Basis, StringComparison.Ordinal);
+        Assert.Equal(team.Basis, team.Shown[^1]);
+
+        var elsewhere = words.Units.Single(u => u.Id == Elsewhere);
+        Assert.Equal(Labels.CostsReservationUnknown(names.Position(Other), "no price is known for this model"), elsewhere.Basis);
+        Assert.Contains("not zero", elsewhere.Basis, StringComparison.Ordinal);
+        Assert.DoesNotContain(" 0 USD", elsewhere.Basis, StringComparison.Ordinal);
+        Assert.DoesNotContain("advisory", elsewhere.Basis, StringComparison.Ordinal);   // no plan seat here: nothing advisory to say
+
+        // THE CARD SHOWS IT, in the same card the billing classes are in.
+        var page = new CostsPage(Sources(db) with { ReservationOf = Reserving });
+        page.Update();
+        Assert.Contains(Texts(page.CardOf(Team)!), t => t.IsVisible && t.Text == team.Basis);
+        Assert.Contains(Texts(page.CardOf(Elsewhere)!), t => t.IsVisible && t.Text == elsewhere.Basis);
     }
 
     /// <summary>
