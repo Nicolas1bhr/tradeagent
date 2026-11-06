@@ -1256,8 +1256,11 @@ public sealed class AppHost : IAsyncDisposable
             // next scheduled look to find out.
             _marketData = new MarketDataService(_db, nudge: () => Mission?.Wake());
             _evidence = new EvidenceCampaigns(() => Gateway,
-                (pair, now, progress, ct) => _marketData.CollectAsync(pair, now, progress, ct),
-                (pair, ct) => CheckInstrumentAsync(pair, ct));
+                // SETUP'S PRESS RECORDS A DOWNLOAD WHOLE OR NOT AT ALL (U-evidence-holdout-length); the renewal's records what arrived,
+                // its fresh months held from every pipe read from the moment they were armed.
+                (pair, now, progress, ct) => _marketData.CollectWholeAsync(pair, now, progress, ct),
+                (pair, ct) => CheckInstrumentAsync(pair, ct),
+                (pair, now, progress, ct) => _marketData.CollectAsync(pair, now, progress, ct));
 
             // THE FORWARD COLLECTOR, STARTED WITH THE APP. Both functions are read at every look
             // rather than captured: the owner changes the pair and flips the toggle on the Settings

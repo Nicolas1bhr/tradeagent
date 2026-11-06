@@ -24,11 +24,14 @@ public static class HoldoutLength
     public static string Words(TimeSpan? span, string subject = "Its holdout")
     {
         var year = (int)Inconclusive.ShortHoldout.TotalDays;
+        // TRUE OF EVERY VERDICT, the favourable one included (the Codex review's P2): over a short holdout the referee still promotes a
+        // version whose result clears its policy — the statistical test is sealed and gates nothing — so the sentence says that too.
         if (span is not { } s)
-            return $"{subject}'s end cannot be read, so it counts as under {year} days: no verdict over it is conclusive.";
+            return $"{subject}'s end cannot be read, so it counts as under {year} days — too short for a conclusive verdict.";
         return CanBeConclusive(s)
             ? $"{subject} spans {Days(s):N0} days — long enough for the referee to reach a conclusive verdict."
-            : $"{subject} spans {Days(s):N0} days, under {year}, so no verdict over it is conclusive: the referee's statistical test needs "
-              + $"{AlphaWealth.MinHoldoutDays:N0} days, and a version refused for a loss over it reaches paper only through the inconclusive path.";
+            : $"{subject} spans {Days(s):N0} days, under {year} — too short for a conclusive verdict: the referee's statistical test is not run "
+              + "over it, a version refused for a loss over it reaches paper only through the inconclusive path, and one profitable over it "
+              + "reaches paper on that result alone.";
     }
 }

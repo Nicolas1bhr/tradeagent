@@ -164,11 +164,13 @@ public class EvidenceCampaignTests
         Assert.Contains("35 of 36 periods collected", first.Words, StringComparison.Ordinal);
         Assert.Contains("Press again", first.Words, StringComparison.Ordinal);
         Assert.Equal([pair], first.Unfinished);
+        Assert.False(evidence.SetUpFinished());
 
         var second = await evidence.SetUpAsync(Now, [pair]);
         Assert.Equal(2, presses);
         Assert.Equal(DefaultCutoff, Assert.Single(second.Campaigns).HoldoutFrom);
         Assert.Empty(second.Unfinished);
+        Assert.True(evidence.SetUpFinished());
     }
 
     /// <summary>
@@ -554,6 +556,38 @@ public class EvidenceCampaignTests
     }
 
     /// <summary>
+    /// SETUP'S STEP STAYS WHILE ANY PAIR'S DOWNLOAD STOPPED PART WAY, EVEN WITH ANOTHER PAIR'S CAMPAIGN OPEN (the Codex review's P2): the
+    /// step's own check is <see cref="EvidenceCampaigns.SetUpFinished"/>, false until the press that finishes the pair, where
+    /// <see cref="EvidenceCampaigns.Ready"/> — any open campaign — was already true and moved the step on past its one retry button.
+    /// </summary>
+    [Fact]
+    public async Task Setups_step_stays_while_one_pairs_download_stopped_part_way_and_another_pairs_campaign_is_open()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var owned = db;
+        await using var gateway = gw;
+        var (whole, stopped) = (TestEnv.NewPair(), TestEnv.NewPair());
+        var presses = 0;
+        var evidence = new EvidenceCampaigns(() => gw, (p, _, _, _) =>
+        {
+            var partial = p == stopped && ++presses == 1;
+            return Task.FromResult(partial
+                ? new DataCollection(null, [new MonthResult("2026-09", MonthOutcome.Unreachable, null, "")], "35 of 36 periods arrived")
+                : new DataCollection(OnDisk(db, p, First, Last, $"v{presses + 1}"), [], "36 of 36 periods collected."));
+        });
+
+        var first = await evidence.SetUpAsync(Now, [whole, stopped]);
+        Assert.True(evidence.Ready());
+        Assert.Equal([stopped], first.Unfinished);
+        Assert.False(evidence.SetUpFinished());
+
+        var second = await evidence.SetUpAsync(Now, [whole, stopped]);
+        Assert.Empty(second.Unfinished);
+        Assert.True(evidence.SetUpFinished());
+        Assert.Equal(2, gw.Campaigns.All().Count);
+    }
+
+    /// <summary>
     /// THE OWNER'S PAGE SAYS, PER CAMPAIGN, WHETHER ITS HOLDOUT CAN YIELD A CONCLUSIVE VERDICT (<c>U-evidence-holdout-length</c> item 3):
     /// a campaign holding back twelve months — 365 days to its dataset's last close — can; one holding back three (92 days: a later
     /// cutoff the owner typed in Settings, or a renewal's fresh month) says no verdict over it is conclusive and names the inconclusive
@@ -577,7 +611,7 @@ public class EvidenceCampaignTests
         Assert.Contains("Its holdout spans 365 days — long enough for the referee to reach a conclusive verdict.", lines[year],
             StringComparison.Ordinal);
         Assert.DoesNotContain("inconclusive", lines[year], StringComparison.Ordinal);
-        Assert.Contains("Its holdout spans 92 days, under 365, so no verdict over it is conclusive", lines[quarter], StringComparison.Ordinal);
+        Assert.Contains("Its holdout spans 92 days, under 365 — too short for a conclusive verdict", lines[quarter], StringComparison.Ordinal);
         Assert.Contains("reaches paper only through the inconclusive path", lines[quarter], StringComparison.Ordinal);
     }
 
@@ -593,8 +627,9 @@ public class EvidenceCampaignTests
 
         var shorter = SettingsPage.HoldoutLengthNote(set, new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero))!.Value;
         Assert.False(shorter.Conclusive);
-        Assert.StartsWith("A holdout from 2026-07-01 00:00 UTC on BTCUSDT's newest download spans 92 days, under 365, so no verdict over it "
-            + "is conclusive", shorter.Words, StringComparison.Ordinal);
+        Assert.StartsWith("A holdout from 2026-07-01 00:00 UTC on BTCUSDT's newest download spans 92 days, under 365 — too short for a "
+            + "conclusive verdict", shorter.Words, StringComparison.Ordinal);
+        Assert.Contains("one profitable over it reaches paper on that result alone", shorter.Words, StringComparison.Ordinal);
         Assert.Contains("reaches paper only through the inconclusive path", shorter.Words, StringComparison.Ordinal);
 
         var year = SettingsPage.HoldoutLengthNote(set, DefaultCutoff)!.Value;

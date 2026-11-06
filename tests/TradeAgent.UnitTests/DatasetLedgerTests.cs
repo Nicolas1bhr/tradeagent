@@ -290,6 +290,44 @@ public class DatasetLedgerTests
     }
 
     /// <summary>
+    /// (iv) SETUP'S DOWNLOAD IS RECORDED WHOLE OR NOT AT ALL (<c>U-evidence-holdout-length</c>; the Codex review's P1): a dataset recorded
+    /// with a month missing is one no cutoff holds — every agent could read its last months, and its data wake tells Research to — and
+    /// the press that finishes it would then hold those months back as evidence nobody has seen. So a whole-only collection with a month
+    /// that did not arrive records no dataset and raises no wake, and keeps the months that did arrive on disk; the next one fetches only
+    /// the missing month and records the whole download. RED on the base behaviour (a stub that records whatever arrived).
+    /// </summary>
+    [Fact]
+    public async Task Setups_download_records_nothing_and_wakes_nobody_until_every_month_has_arrived()
+    {
+        var pair = TestEnv.NewPair();
+        var months = BinanceArchive.RecentCompleteMonths(Now);
+        var lost = months[5];
+        using var archive = new FakeArchive();
+        foreach (var m in months)
+            if (m == lost) archive.PublishWithWrongChecksum(pair, m, Rows(m));
+            else archive.Publish(pair, m, Rows(m));
+        using var db = TestEnv.NewDb();
+        var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
+
+        var first = await svc.CollectWholeAsync(pair, Now);
+        Assert.Null(first.Dataset);
+        Assert.False(first.Woke);
+        Assert.Null(svc.Store.Newest(pair));
+        Assert.Equal(MonthOutcome.ChecksumMismatch, Assert.Single(first.Months, m => m.Outcome != MonthOutcome.Collected).Outcome);
+        Assert.Contains("nothing was recorded", first.Summary, StringComparison.Ordinal);
+
+        archive.Publish(pair, lost, Rows(lost));
+        var before = archive.Requests.Count;
+        var second = await svc.CollectWholeAsync(pair, Now);
+
+        var zips = archive.Requests.Skip(before)
+            .Where(r => r.Method == "GET" && r.PathAndQuery.EndsWith(".zip", StringComparison.Ordinal)).Select(r => r.PathAndQuery).ToList();
+        Assert.Equal([FakeArchive.PathOf(pair, lost)], zips);
+        Assert.Equal(months.Count, second.Dataset!.Files.Count);
+        Assert.True(second.Woke);
+    }
+
+    /// <summary>
     /// OTHER BYTES ON BOTH NAMES REFUSE THE PERIOD, IN A SENTENCE NAMING THE FILE, and both files stay as they
     /// are. Nothing a fetch places is ever deleted or replaced, so a name that holds something else is never
     /// a name these bytes may take.

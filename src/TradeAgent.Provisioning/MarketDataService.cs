@@ -66,6 +66,18 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
         CollectAsync(_binance.Source(), _binance.Fetcher, pair, nowUtc, progress, ct, recordDecision);
 
     /// <summary>
+    /// SETUP'S DOWNLOAD: <see cref="CollectAsync(string, DateTimeOffset, IProgress{ProvisionProgress}, CancellationToken, Action{string})"/>,
+    /// recorded only WHOLE (<c>U-evidence-holdout-length</c>; the Codex review's P1). A month that did not arrive for a reason other than
+    /// the vendor's answer that it does not publish it leaves NO dataset row and raises no wake: a row with a month missing is one no
+    /// cutoff holds yet, every agent could read its last months — the wake would tell Research to — and the press that finishes it would
+    /// then hold those same months back as evidence nobody had seen. The months that did arrive stay kept on disk (write-once, outside
+    /// the workspace, read by no agent path), so the next press fetches only the rest (<see cref="CandleSourceClient"/>).
+    /// </summary>
+    public Task<DataCollection> CollectWholeAsync(
+        string pair, DateTimeOffset nowUtc, IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default) =>
+        CollectAsync(_binance.Source(), _binance.Fetcher, pair, nowUtc, progress, ct, null, whole: true);
+
+    /// <summary>
     /// Fetches every period <paramref name="source"/> declares for <paramref name="symbol"/>,
     /// normalises what arrived into one dataset file, and records the whole provenance.
     ///
@@ -82,12 +94,21 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
 
     async Task<DataCollection> CollectAsync(
         ICandleSource source, CandleSourceClient fetcher, string symbol, DateTimeOffset nowUtc,
-        IProgress<ProvisionProgress>? progress, CancellationToken ct, Action<string>? recordDecision)
+        IProgress<ProvisionProgress>? progress, CancellationToken ct, Action<string>? recordDecision, bool whole = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         symbol = source.RequireSymbol(symbol);
 
         var periods = await fetcher.CollectAsync(source, symbol, nowUtc, progress, ct, recordDecision);
+
+        // WHOLE OR NOTHING, where the caller asked for it (`CollectWholeAsync`): nothing is normalised and no row is written.
+        var unfinished = periods.Count(m => m.Outcome is not (MonthOutcome.Collected or MonthOutcome.NotPublished));
+        if (whole && unfinished > 0)
+            return new DataCollection(null, periods,
+                $"{periods.Count(m => m.Outcome == MonthOutcome.Collected)} of {periods.Count} periods arrived and {unfinished} did not "
+                + $"({string.Join("; ", periods.Where(m => m.Outcome is not (MonthOutcome.Collected or MonthOutcome.NotPublished)).Take(3).Select(m => m.Detail))}"
+                + (unfinished > 3 ? "; …" : "") + "), so nothing was recorded. The periods that arrived are kept, checked, and are not "
+                + "fetched again.");
         var collected = periods.Where(m => m.Outcome == MonthOutcome.Collected && m.File is not null)
                                .Select(m => m.File!)
                                .OrderBy(f => f.Month, StringComparer.Ordinal)

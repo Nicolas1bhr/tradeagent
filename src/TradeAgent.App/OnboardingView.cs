@@ -462,7 +462,7 @@ public sealed class OnboardingView
 
         // DONE THE MOMENT A CAMPAIGN OVER REAL HISTORY IS OPEN — whether this step's press opened it or the owner's Settings page did.
         OnboardingStep.EVIDENCE_HELD =>
-            () => Task.FromResult(_host.Evidence.Ready()),
+            () => Task.FromResult(_host.Evidence.SetUpFinished()),
 
         _ => null
     };

@@ -60,10 +60,16 @@ public sealed record CampaignStanding(string Pair, CampaignRow Campaign, int Jud
 /// The instrument check for a pair (<c>AppHost.CheckInstrumentAsync</c>): the venue's own step, without which no campaign can pin
 /// its judge's cost model and no run can round a size. Asked before each pair is held back; null asks nothing.
 /// </param>
+/// <param name="renew">
+/// The renewal's download of a spent campaign's pair (<see cref="RenewAsync"/>), when it is not <paramref name="collect"/> — the app's
+/// setup press records a download whole or not at all (<c>MarketDataService.CollectWholeAsync</c>), its renewal what arrived. Null:
+/// <paramref name="collect"/>.
+/// </param>
 public sealed class EvidenceCampaigns(
     Func<TradingGateway> gateway,
     Func<string, DateTimeOffset, IProgress<ProvisionProgress>?, CancellationToken, Task<DataCollection>> collect,
-    Func<string, CancellationToken, Task>? check = null)
+    Func<string, CancellationToken, Task>? check = null,
+    Func<string, DateTimeOffset, IProgress<ProvisionProgress>?, CancellationToken, Task<DataCollection>>? renew = null)
 {
     /// <summary>How long after a download that did not hold the minimum the next one is asked for.</summary>
     public static readonly TimeSpan RetryAfter = TimeSpan.FromHours(24);
@@ -79,6 +85,19 @@ public sealed class EvidenceCampaigns(
             && gw.Datasets.ById(c.HoldoutDatasetId) is { } set
             && EvaluationClass.Or(set.EvaluationClass) == EvaluationClass.Research);
     }
+
+    /// <summary>
+    /// WHETHER SETUP'S STEP IS DONE (the Codex review's P2): a campaign over real history is open (<see cref="Ready"/>) AND no pair's
+    /// download stopped part way at the last press — otherwise the step stays, so the same press can finish it. Kept in memory: after a
+    /// restart an unfinished pair is finished from Settings, whose Download press resumes as this one does.
+    /// </summary>
+    public bool SetUpFinished()
+    {
+        lock (_unfinished) { if (_unfinished.Count > 0) return false; }
+        return Ready();
+    }
+
+    readonly HashSet<string> _unfinished = new(StringComparer.Ordinal);
 
     /// <summary>
     /// THE PAIRS UNDER EVIDENCE NOW: every pair with an open campaign over real history, oldest campaign first, each once
@@ -148,6 +167,7 @@ public sealed class EvidenceCampaigns(
                 words.Add(said);
                 if (campaign is not null) opened.Add(campaign);
                 if (stopped) unfinished.Add(pair);
+                lock (_unfinished) { if (stopped) _unfinished.Add(pair); else _unfinished.Remove(pair); }
             }
             return new EvidenceSetup(Ready(), string.Join(" ", words), opened, unfinished);
         }
@@ -181,8 +201,8 @@ public sealed class EvidenceCampaigns(
             var collected = await collect(pair, now, progress, ct);
             var missing = Unfetched(collected.Months);
             if (collected.Dataset is not { } fresh || fresh.State != DatasetState.ACCEPTED)
-                return ($"{pair}: nothing was held back: {collected.Summary}" + (missing > 0 ? " Press again to ask once more." : ""),
-                    null, missing > 0);
+                return ($"{pair}: nothing was held back: {collected.Summary}"
+                    + (missing > 0 ? $" Press again: only the {missing:N0} that did not arrive are fetched." : ""), null, missing > 0);
 
             // NEVER HALF-HELD: a month that did not arrive — the vendor unreachable, a checksum that did not match, no checksum to pin it
             // to, its name taken here — would leave the holdout short or holed, or the research months cut, and a cutoff never moves
@@ -250,7 +270,7 @@ public sealed class EvidenceCampaigns(
 
                 _asked[held.SpentCampaignId] = now;
                 DataCollection collected;
-                try { collected = await collect(parent.Pair, now, null, ct); }
+                try { collected = await (renew ?? collect)(parent.Pair, now, null, ct); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
