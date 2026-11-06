@@ -45,7 +45,8 @@ public partial class PaperDeploymentTests
 
     /// <summary>
     /// THE SLOT FREES ONCE FLAT, NOT BEFORE (D19): a stop's close that comes back with no answer may be live at the platform, so the next version waits
-    /// for the slot even though its allocation is already written; once the close is settled that version runs, and the stopped one never does again.
+    /// for the slot even though its allocation is already written. Answered cancelled, the run's book is still long, so the close is sent again (the Codex
+    /// review's P1: RED with the slot freed over an open position nobody owns), and once it has filled that version runs. The stopped one never does again.
     /// </summary>
     [Fact]
     public async Task A_stopped_run_keeps_its_slot_until_it_is_flat_and_then_another_version_takes_it()
@@ -68,6 +69,7 @@ public partial class PaperDeploymentTests
         var whileOpen = gw.StartPaperDeploymentsDue(clock.At);
 
         gw.ForceResolve(gw.Deployments.OpsOf(run.Id).Single(o => !o.IsSettled).RequestId, ExecutionState.CANCELLED, "the owner confirmed nothing landed");
+        await gw.RefreshHealthAsync();
         await gw.ReconcilePaperDeploymentsAsync(clock.At);
 
         clock.At = At.AddMinutes(10);
@@ -75,9 +77,43 @@ public partial class PaperDeploymentTests
 
         log.WriteLine($"while the close is unanswered: {whileOpen}; once flat: {onceFlat}");
         Assert.Equal(0, whileOpen);
+        Assert.DoesNotContain(conn.Broker.Positions, p => p.Symbol == "BTCUSDT" && p.Quantity != 0m);
         Assert.Equal(1, onceFlat);
         Assert.Equal(next, gw.Deployments.Open().Single().VersionId);
         Assert.Single(gw.Deployments.All(), d => d.VersionId == stoppedVersion);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND A CLOSE THAT KEEPS BEING ANSWERED NO KEEPS THE SLOT: a stopped run whose close is refused by the venue each time is NOT closed, its line says so, and
+    /// no other version starts over the position.
+    /// </summary>
+    [Fact]
+    public async Task A_stopped_run_whose_close_is_answered_no_stays_owed_and_keeps_its_slot()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+
+        await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var run = gw.Deployments.Open().Single();
+        await SeedAPosition(gw, conn, run);
+
+        conn.Faults.RejectNext = 99;
+        await gw.StopPaperDeploymentAsync(run.Id, "the account owner");
+
+        var close = gw.Deployments.OpsOf(run.Id).Last(o => o.Kind == DeploymentOpKind.Flatten);
+        log.WriteLine($"the close: {close.State} {gw.GetRequest(close.RequestId)?.State} {close.Answer}");
+        Assert.Equal(ExecutionState.REJECTED, gw.GetRequest(close.RequestId)!.State);
+
+        Judged(db, PromotionVerdict.PaperEligible, threshold: 104);
+        clock.At = At.AddMinutes(5);
+        gw.AllocatePaperDue(clock.At);
+
+        Assert.Equal(0, gw.StartPaperDeploymentsDue(clock.At));
+        var line = gw.DeploymentReadings().Single(d => d.Id == run.Id).Line;
+        log.WriteLine(line);
+        Assert.Contains("NOT closed", line, StringComparison.Ordinal);
         await gw.DisposeAsync();
     }
 

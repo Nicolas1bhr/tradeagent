@@ -1415,12 +1415,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
             // sweep — so once one run of this allocation exists, none is started for it until none would be.
             if (runs.Count > 0 && ForwardRuns.CannotRun(Strategies, allocation.VersionId, Tape, Datasets, now) is not null) continue;
 
-            var result = _deployments.Start(new StrategyDeploymentRow(
-                "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,
-                envelope.Symbol, TradingMode.PAPER.ToString(), DeploymentState.Active,
-                null, now, null, null, null));
+            // ONE WRITE WITH THE LAST LOOK AT THE STOP (R30 D19), so a stop that committed after `PaperStanding` was read starts no replacement: the two
+            // writes are serialised, and a stop after this one finds the run and the reconcile pass ends it in the stop's words.
+            var result = _db.Write(_ => _allocations.StopOf(allocation.VersionId, Connector.Id, account, now) is not null
+                ? null
+                : _deployments.Start(new StrategyDeploymentRow(
+                    "", allocation.VersionId, allocation.Id, envelope.Id, Connector.Id, account,
+                    envelope.Symbol, TradingMode.PAPER.ToString(), DeploymentState.Active,
+                    null, now, null, null, null)));
 
-            if (!result.Ok || result.Deployment is not { } row) continue;
+            if (result is not { Ok: true, Deployment: { } row }) continue;
 
             started++;
             _log.Activity($"TradeAgent started a PAPER deployment of strategy version "
@@ -1455,13 +1459,30 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// live at the platform, holds the slot as an unresolved operation, and is never sent again here; and the END's
     /// own close resolves the flatten when there is nothing to send (<see cref="CloseItsOwnBookAsync"/>) — a flat book,
     /// or an account a close outside the run already flattened — so neither owes anything.</para>
+    ///
+    /// <para><b>A STOPPED run's end is not over until it is flat (R30 D19)</b>: its slot frees once flat, and its allocation ended first, so a close the
+    /// platform answered without closing the book, cancelled or rejected, is owed like one that never left (<see cref="StoppedAndStillHolding"/>). A
+    /// run that ended by itself reads as it always has.</para>
     /// </summary>
     bool OwesItsClose(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow> ops)
     {
         if (!deployment.IsEnded) return false;
-        return LatestFlatten(ops) is not { } latest
-               || Deployments.RefusedBeforeTheWire(latest, _requests.Get(latest.RequestId));
+        if (LatestFlatten(ops) is not { } latest) return true;
+        var request = _requests.Get(latest.RequestId);
+        return Deployments.RefusedBeforeTheWire(latest, request) || StoppedAndStillHolding(deployment, ops, request);
     }
+
+    /// <summary>
+    /// WHETHER A STOP ENDED THIS RUN AND ITS LATEST CLOSE ANSWERED WITHOUT TAKING WHAT IT HOLDS: the order is final and not filled, the run's own book is
+    /// still long, and the stop on the version came at or before the run's END, so a run that ended by itself earlier is not this. Sending again is
+    /// sound because <see cref="CloseItsOwnBookAsync"/> reads the account and the book first: a close outside the run ends in words with no order, and that
+    /// flatten has no order row to answer here.
+    /// </summary>
+    bool StoppedAndStillHolding(StrategyDeploymentRow deployment, IReadOnlyList<DeploymentOpRow> ops, ExecutionRequest? close) =>
+        close is { State: not ExecutionState.FILLED } && OrderStateMachine.IsTerminal(close.State)
+        && _allocations.StopOf(deployment.VersionId, deployment.ConnectorId, deployment.AccountId, Now) is { } stop
+        && deployment.EndedAt >= stop.At
+        && _deployments.BookOf(deployment, ops).Held > 0m;
 
     /// <summary>The run's latest flatten — its END's, or the maximum hold's before it — or null because it has none.</summary>
     static DeploymentOpRow? LatestFlatten(IReadOnlyList<DeploymentOpRow> ops) =>
@@ -2167,7 +2188,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// refuses the run's identity. Answers whether it wrote anything.
     ///
     /// <para><b>Owed means provably never sent</b> (<see cref="OwesItsClose"/>): the latest flatten refused before
-    /// the wire, or none written. A flatten that may have reached the wire is never sent again here — the
+    /// the wire, or none written, or a stopped run's flatten answered final and unfilled, which is an answer and not a
+    /// doubt. A flatten that may have reached the wire is never sent again here — the
     /// write-ahead row is how a restart tells "sent and lost" from "never sent", and closing again over a
     /// position the first close may have taken is the one reading that must not be made.</para>
     ///
