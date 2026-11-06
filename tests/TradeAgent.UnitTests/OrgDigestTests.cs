@@ -2,9 +2,14 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Board;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Oversight;
+using TradeAgent.Core.Strategy;
+using TradeAgent.Gateway;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,11 +27,17 @@ namespace TradeAgent.Tests.Unit;
 /// Every number below is worked out in the fixture's comments, not read back from the script. Time is fixed (<see cref="Now"/>) and the
 /// script runs in UTC, so "today" is 2026-10-31 and T0 is 2026-10-30T12:00Z.
 /// </summary>
-public class OrgDigestTests(ITestOutputHelper log)
+public partial class OrgDigestTests(ITestOutputHelper log)
 {
     static readonly DateTimeOffset Now = new(2026, 10, 31, 14, 0, 0, TimeSpan.Zero);
     static readonly DateTimeOffset T0 = new(2026, 10, 30, 12, 0, 0, TimeSpan.Zero);
     const string TradeHash = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12";
+
+    /// <summary>What the app writes for a paper mode (<c>AllocationStore.RecordPaper</c> refuses anything else). Never typed by hand.</summary>
+    static readonly string Paper = TradingMode.PAPER.ToString();
+
+    /// <summary>D19's stop row: <c>AllocationPolicy.StopV1</c> once U-paper-closure lands, read by name so this file compiles either side of it.</summary>
+    const string StopPolicy = "allocation-policy-stop-v1";
 
     static DateTimeOffset At(string iso) => DateTimeOffset.Parse(iso, System.Globalization.CultureInfo.InvariantCulture);
     static string Sha(string s) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
@@ -90,7 +101,10 @@ public class OrgDigestTests(ITestOutputHelper log)
                 tools.Record(new ToolCallRow { At = At("2026-10-31T09:10:00Z").AddMinutes(i), Attempt = "a2", Role = "pos-aaaaaa", Tool = "place_order", Served = false, Refusal = "no order verb is offered to this seat" });
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:20:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "wallet", Served = false, Refusal = "credentials are the owner's" });
             // A door call is spelled with underscores: the charter arrow is refused under its door name.
-            tools.Record(new ToolCallRow { At = At("2026-10-30T12:30:00Z"), Attempt = "a6", Role = "operations", Tool = "org_charter", Served = false, Refusal = "two structural changes this week" });
+            tools.Record(new ToolCallRow { At = At("2026-10-30T12:30:00Z"), Attempt = "a6", Role = "operations", Tool = BrokerDoor.VerbName(Ops.OrgCharter), Served = false, Refusal = "two structural changes this week" });
+            // A backtest goes through the `trade` tool, so its row names the tool and carries the op in its summary: this row is the tool's own.
+            var worker = new GrantedWorkerTools("pos-aaaaaa", () => root, () => "a2", gateway: null, ledger: tools, now: () => At("2026-10-31T09:32:00Z"));
+            Assert.False(worker.InvokeAsync(new ToolRequest("t1", GrantedWorkerTools.Trade, "{\"op\":\"backtest\"}")).GetAwaiter().GetResult().Served);
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:30:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "read", Served = true });
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:31:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "read", Served = true });
 
@@ -112,19 +126,19 @@ public class OrgDigestTests(ITestOutputHelper log)
             Assert.NotEqual(kept, dropped);
 
             db.Exec("PRAGMA foreign_keys=OFF;");
-            db.Exec("""
+            db.Exec($$"""
                 INSERT INTO org_position(id, unit_id, home_dir, status, seat_runtime, seat_model, created_at, ended_at) VALUES
-                  ('pos-aaaaaa', 'div-operations', 'h1', 'active', 'codex', 'gpt-5.6-sol', '2026-10-30T10:00:00.0000000Z', NULL),
-                  ('pos-bbbbbb', 'div-operations', 'h2', 'dormant', NULL, NULL, '2026-10-30T10:00:00.0000000Z', NULL),
-                  ('pos-cccccc', 'div-research', 'h3', 'ended', 'codex', 'gpt-5.6-sol', '2026-10-29T10:00:00.0000000Z', '2026-10-30T09:00:00.0000000Z');
+                  ('pos-aaaaaa', 'div-operations', 'h1', '{{OrgPositionStatus.Active}}', 'codex', 'gpt-5.6-sol', '2026-10-30T10:00:00.0000000Z', NULL),
+                  ('pos-bbbbbb', 'div-operations', 'h2', '{{OrgPositionStatus.Dormant}}', NULL, NULL, '2026-10-30T10:00:00.0000000Z', NULL),
+                  ('pos-cccccc', 'div-research', 'h3', '{{OrgPositionStatus.Ended}}', 'codex', 'gpt-5.6-sol', '2026-10-29T10:00:00.0000000Z', '2026-10-30T09:00:00.0000000Z');
                 INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES
-                  ('2026-10-30T13:00:00.0000000Z', 'div-operations', 'pos-aaaaaa', 'hired', 'chief', 'a'),
-                  ('2026-10-30T13:01:00.0000000Z', 'div-operations', 'pos-bbbbbb', 'hired', 'chief', 'b'),
-                  ('2026-10-30T13:02:00.0000000Z', 'div-operations', 'pos-aaaaaa', 'activated', 'chief', 'it activated itself'),
-                  ('2026-10-30T13:02:30.0000000Z', 'div-operations', 'pos-dddddd', 'activated', 'owner', 'the owner pressed: not the arrow'),
-                  ('2026-10-30T13:03:00.0000000Z', 'div-operations', NULL, 'chartered', 'operations', 'inside a6: the turn acted'),
-                  ('2026-10-31T10:00:00.0000000Z', 'div-operations', NULL, 'tilted', 'app', 'c'),
-                  ('2026-10-29T10:00:00.0000000Z', 'div-operations', NULL, 'tilted', 'app', 'before T0');
+                  ('2026-10-30T13:00:00.0000000Z', 'div-operations', 'pos-aaaaaa', '{{OrgEventKind.Hired}}', 'chief', 'a'),
+                  ('2026-10-30T13:01:00.0000000Z', 'div-operations', 'pos-bbbbbb', '{{OrgEventKind.Hired}}', 'chief', 'b'),
+                  ('2026-10-30T13:02:00.0000000Z', 'div-operations', 'pos-aaaaaa', '{{OrgEventKind.Activated}}', 'chief', 'it activated itself'),
+                  ('2026-10-30T13:02:30.0000000Z', 'div-operations', 'pos-dddddd', '{{OrgEventKind.Activated}}', '{{OrgDecider.Owner}}', 'the owner pressed: not the arrow'),
+                  ('2026-10-30T13:03:00.0000000Z', 'div-operations', NULL, '{{OrgEventKind.Chartered}}', '{{CouncilRoles.Operations}}', 'inside a6: the turn acted'),
+                  ('2026-10-31T10:00:00.0000000Z', 'div-operations', NULL, '{{OrgEventKind.Tilted}}', '{{OrgDecider.App}}', 'c'),
+                  ('2026-10-29T10:00:00.0000000Z', 'div-operations', NULL, '{{OrgEventKind.Tilted}}', '{{OrgDecider.App}}', 'before T0');
                 INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from) VALUES
                   (1, 'v1', '2026-10-31T01:00:00.0000000Z', '2026-01-01'),
                   (1, 'v2', '2026-10-31T02:00:00.0000000Z', '2026-01-01'),
@@ -134,42 +148,45 @@ public class OrgDigestTests(ITestOutputHelper log)
                   (2, 'v9', '2026-10-01T05:00:00.0000000Z', '2026-01-01');
                 INSERT INTO strategy_promotion(id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id, holdout_dataset_sha256,
                     execution_model, evaluator_version, holdout_run_id, verdict, reason, at) VALUES
-                  ('p1', 'v1', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'no-trade-on-the-holdout', '2026-10-31T01:30:00.0000000Z'),
-                  ('p2', 'v2', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'paper-eligible', 'meets-the-paper-policy-on-historical-evidence', '2026-10-31T02:30:00.0000000Z'),
-                  ('p0', 'v0', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T03:30:00.0000000Z'),
-                  ('p7', 'v7', 3, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T04:30:00.0000000Z'),
-                  ('p9', 'v9', 2, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T05:30:00.0000000Z');
+                  ('p1', 'v1', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', '{{PromotionVerdict.Refused}}', '{{PromotionReason.NoTrade}}', '2026-10-31T01:30:00.0000000Z'),
+                  ('p2', 'v2', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', '{{PromotionVerdict.PaperEligible}}', 'meets-the-paper-policy-on-historical-evidence', '2026-10-31T02:30:00.0000000Z'),
+                  ('p0', 'v0', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', '{{PromotionVerdict.Refused}}', 'not-profitable-after-costs', '2026-10-01T03:30:00.0000000Z'),
+                  ('p7', 'v7', 3, 's', 'b', 1, 'd', 'e', 'ev', 'r', '{{PromotionVerdict.Refused}}', 'not-profitable-after-costs', '2026-10-01T04:30:00.0000000Z'),
+                  ('p9', 'v9', 2, 's', 'b', 1, 'd', 'e', 'ev', 'r', '{{PromotionVerdict.Refused}}', 'not-profitable-after-costs', '2026-10-01T05:30:00.0000000Z');
                 INSERT INTO referee_holdout(campaign_id, version_id, method, research_row, holdout_days, z_status, alpha_j, wealth_before, wealth_after, addis_status, remembered, at) VALUES
-                  (1, 'v1', 1, 1, 30, 'inconclusive', '0.01', '1', '1', 'inconclusive', 0, '2026-10-31T01:20:00.0000000Z'),
+                  (1, 'v1', 1, 1, 30, 'inconclusive', '0.01', '1', '1', '{{AlphaWealth.Inconclusive}}', 0, '2026-10-31T01:20:00.0000000Z'),
                   (1, 'v2', 1, 1, 30, 'enforceable', '0.01', '1', '1', 'tested', 0, '2026-10-31T02:20:00.0000000Z');
                 INSERT INTO strategy_allocation(id, version_id, promotion_id, policy_version, max_quantity, currency, effective_from, effective_to, reason, at, mode) VALUES
-                  ('al1', 'v2', 'p2', 'pol', '1', 'USD', '2026-10-31T02:40:00.0000000Z', NULL, 'paper', '2026-10-31T02:40:00.0000000Z', 'paper'),
+                  ('al1', 'v2', 'p2', 'pol', '1', 'USD', '2026-10-31T02:40:00.0000000Z', NULL, 'paper', '2026-10-31T02:40:00.0000000Z', '{{Paper}}'),
                   -- A stop is written as a row with an empty window (D19): it is no allocation. An inconclusive slot costs its campaign a trial.
-                  ('al2', 'v2', 'p2', 'allocation-policy-stop-v1', '0', 'USD', '2026-10-31T03:00:00.0000000Z', '2026-10-31T03:00:00.0000000Z', 'stopped', '2026-10-31T03:00:00.0000000Z', 'paper'),
-                  ('al3', 'v1', 'p1', 'allocation-policy-inconclusive-v1', '1', 'USD', '2026-10-01T03:00:00.0000000Z', '2026-10-02T03:00:00.0000000Z', 'quota', '2026-10-01T03:00:00.0000000Z', 'paper');
+                  ('al2', 'v2', 'p2', '{{StopPolicy}}', '0', 'USD', '2026-10-31T03:00:00.0000000Z', '2026-10-31T03:00:00.0000000Z', 'stopped', '2026-10-31T03:00:00.0000000Z', '{{Paper}}'),
+                  ('al3', 'v1', 'p1', '{{AllocationPolicy.InconclusiveV1}}', '1', 'USD', '2026-10-01T03:00:00.0000000Z', '2026-10-02T03:00:00.0000000Z', 'quota', '2026-10-01T03:00:00.0000000Z', '{{Paper}}');
                 INSERT INTO paper_envelope(id, connector_id, account_id, symbol, currency, max_quantity, max_notional, max_deployments, granted_at, expires_at, reason, withdrawn_at) VALUES
                   ('env', 'paper', 'PAPER-1', 'BTCUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', NULL),
                   ('env-eth', 'paper', 'PAPER-1', 'ETHUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', NULL),
                   ('env-gone', 'paper', 'PAPER-1', 'XRPUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', '2026-10-02T00:00:00.0000000Z');
                 INSERT INTO publication(id, role, attempt, revision, kind, recipients, classification, created_at, content) VALUES
-                  ('pub-old', 'allocator', NULL, 1, 'note', 'research', 'council', '2026-10-01T00:00:00.0000000Z', 'before T0'),
-                  ('pub-1', 'allocator', NULL, 2, 'note', 'research,pos-aaaaaa', 'council', '2026-10-31T09:00:00.0000000Z', 'Forward paper run dep-1: 3 simulated fills.');
+                  ('pub-old', '{{TradingGateway.PaperAllocatorRole}}', NULL, 1, '{{PublicationKind.Note}}', 'research', 'council', '2026-10-01T00:00:00.0000000Z', 'before T0'),
+                  ('pub-1', '{{TradingGateway.PaperAllocatorRole}}', NULL, 2, '{{PublicationKind.Note}}', 'research,pos-aaaaaa', 'council', '2026-10-31T09:00:00.0000000Z', 'Forward paper run dep-1: 3 simulated fills.');
                 INSERT INTO org_mandate_event(mandate_id, at, kind, actor, attempt_id, reason, evidence) VALUES
-                  ('m1', '2026-10-31T09:05:00.0000000Z', 'issued', 'operations', 'a2', 'x', 'x'),
-                  ('m1', '2026-10-31T09:06:00.0000000Z', 'delivered', 'pos-aaaaaa', 'a2', 'x', 'x'),
-                  ('m1', '2026-10-31T09:07:00.0000000Z', 'rejected', 'operations', 'a2', 'x', 'x'),
-                  ('m0', '2026-10-29T09:00:00.0000000Z', 'accepted', 'operations', 'a7', 'before T0', 'x');
+                  ('m1', '2026-10-31T09:05:00.0000000Z', '{{MandateEventKind.Issued}}', 'operations', 'a2', 'x', 'x'),
+                  ('m1', '2026-10-31T09:06:00.0000000Z', '{{MandateEventKind.Delivered}}', 'pos-aaaaaa', 'a2', 'x', 'x'),
+                  ('m1', '2026-10-31T09:07:00.0000000Z', '{{MandateEventKind.Rejected}}', 'operations', 'a2', 'x', 'x'),
+                  ('m0', '2026-10-29T09:00:00.0000000Z', '{{MandateEventKind.Accepted}}', 'operations', 'a7', 'before T0', 'x');
                 INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills, exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt) VALUES
                   ('bt1', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T00:30:00.0000000Z', 'pos-aaaaaa', 'a2'),
                   ('bt2', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T00:40:00.0000000Z', 'pos-aaaaaa', 'a2'),
                   ('r', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T01:00:00.0000000Z', 'pos-aaaaaa', 'a2');
                 INSERT INTO ledger_entry(id, kind, author, created_at, attempt) VALUES
-                  (1, 'finding', 'operations', '2026-10-31T08:01:00.0000000Z', 'a1'),
-                  (2, 'decision', 'pos-aaaaaa', '2026-10-31T09:08:00.0000000Z', 'a2'),
-                  (3, 'kill', 'pos-aaaaaa', '2026-10-31T09:09:00.0000000Z', 'a2'),
-                  (4, 'finding', 'operations', '2026-10-01T08:01:00.0000000Z', 'a7');
-                INSERT INTO org_decision(id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at) VALUES
-                  ('dec-1', 'pos-aaaaaa', 'a2', 'family-kill', 'o', 'c', 'r', 2, '2026-10-31T09:08:00.0000000Z');
+                  (1, '{{LedgerKind.Finding}}', 'operations', '2026-10-31T08:01:00.0000000Z', 'a1'),
+                  (2, '{{LedgerKind.Decision}}', 'pos-aaaaaa', '2026-10-31T09:08:00.0000000Z', 'a2'),
+                  (3, '{{LedgerKind.Kill}}', 'pos-aaaaaa', '2026-10-31T09:09:00.0000000Z', 'a2'),
+                  (4, '{{LedgerKind.Finding}}', 'operations', '2026-10-01T08:01:00.0000000Z', 'a7');
+                INSERT INTO strategy_version(id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt) VALUES
+                  -- pos-aaaaaa took the run's note at 09:10: the version after it is an iteration, the one before it is not, and nobody else's is.
+                  ('vb', 's', 'c', 'm', 'b', 'ok', 0, '2026-10-31T09:09:00.0000000Z', 'pos-aaaaaa', 'a2'),
+                  ('vi', 's', 'c', 'm', 'b', 'ok', 0, '2026-10-31T09:11:00.0000000Z', 'pos-aaaaaa', 'a2'),
+                  ('vo', 's', 'c', 'm', 'b', 'ok', 0, '2026-10-31T09:12:00.0000000Z', 'operations', 'a1');
                 -- FORECASTS. pos-aaaaaa since T0: 3 written (2 scored), 1 resolved and scored, 1 void. One from before T0 resolved before T0: total 2.
                 INSERT INTO org_forecast(id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at) VALUES
                   ('fc-1', 'm1', 'pos-aaaaaa', 'a2', 1, 'p', 's', 't', '2026-12-01', '0.6', 1, NULL, '2026-10-31T09:00:00.0000000Z'),
@@ -177,9 +194,9 @@ public class OrgDigestTests(ITestOutputHelper log)
                   ('fc-3', 'm1', 'pos-aaaaaa', 'a2', 1, 'p', 's', 't', '2026-12-01', '0.6', 0, 'a vocabulary this build does not read', '2026-10-31T09:02:00.0000000Z'),
                   ('fc-0', 'm0', 'pos-aaaaaa', 'a7', 1, 'p', 's', 't', '2026-12-01', '0.6', 1, NULL, '2026-10-01T09:00:00.0000000Z');
                 INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES
-                  ('fc-1', 'yes', 'verdict', 'p2', 'w', '2026-10-31T10:00:00.0000000Z'),
-                  ('fc-2', 'void', 'verdict', 'p2', 'w', '2026-10-31T10:01:00.0000000Z'),
-                  ('fc-0', 'no', 'verdict', 'p0', 'w', '2026-10-02T10:00:00.0000000Z');
+                  ('fc-1', '{{ForecastOutcome.Yes}}', 'verdict', 'p2', 'w', '2026-10-31T10:00:00.0000000Z'),
+                  ('fc-2', '{{ForecastOutcome.Void}}', 'verdict', 'p2', 'w', '2026-10-31T10:01:00.0000000Z'),
+                  ('fc-0', '{{ForecastOutcome.No}}', 'verdict', 'p0', 'w', '2026-10-02T10:00:00.0000000Z');
                 -- CAMPAIGNS. #1 and #3 hold BTCUSDT over overlapping months; #2 holds ETHUSDT over the same ones; #4 is #1's older self, closed before T0.
                 INSERT INTO dataset(id, source, pair, interval, version, months_attempted, months_present, months_not_published, normalised_path, normalised_sha256, bars, first_bar, last_bar, gaps, gap_runs, gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state) VALUES
                   (1, 's', 'BTCUSDT', '1h', 'v', 1, 1, '', 'p', 'h', 1, '2025-01-01T00:00:00.0000000Z', '2026-06-01T00:00:00.0000000Z', 0, '', 0, 0, 0, 0, '2026-10-01', 'accepted'),
@@ -199,26 +216,26 @@ public class OrgDigestTests(ITestOutputHelper log)
                   (2, 'v9', 'run-4', 'research', 1, '2026-10-31T00:00:00.0000000Z', 1, 0);
                 -- THE WAKES OF THE TURNS. Failed and lost are told apart by the launch's state, and a word nobody has heard of stands as it is.
                 INSERT INTO mission_event(id, kind, created_at, due_at, consumed_at, consumed_by, disposition, disposition_detail, role) VALUES
-                  ('note:paper-run:dep-1:end', 'note', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:10:00.0000000Z', 'a2', 'answered', NULL, 'pos-aaaaaa'),
-                  ('wf', 'self', '2026-10-31T09:58:00.0000000Z', '2026-10-31T09:58:00.0000000Z', '2026-10-31T10:00:00.0000000Z', 'a3', 'failed', 'the turn failed', 'pos-aaaaaa'),
-                  ('wl', 'owner', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:30:00.0000000Z', 'a9', 'failed', 'the turn was lost', NULL),
-                  ('wl2', 'note', '2026-10-31T13:29:30.0000000Z', '2026-10-31T13:29:30.0000000Z', NULL, NULL, 'blocked', 'the seat is out of its envelope', 'pos-bbbbbb'),
-                  ('wl:after-lost', 'owner', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', NULL, 'superseded', 'x', 'pos-cccccc'),
+                  ('{{MissionEventIds.ForRole(MissionEventIds.PaperRun("dep-1", "end"), "pos-aaaaaa")}}', '{{PublicationKind.Note}}', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:10:00.0000000Z', 'a2', '{{MissionEventDisposition.Answered}}', NULL, 'pos-aaaaaa'),
+                  ('wf', 'self', '2026-10-31T09:58:00.0000000Z', '2026-10-31T09:58:00.0000000Z', '2026-10-31T10:00:00.0000000Z', 'a3', '{{MissionEventDisposition.Failed}}', 'the turn failed', 'pos-aaaaaa'),
+                  ('wl', 'owner', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:30:00.0000000Z', 'a9', '{{MissionEventDisposition.Failed}}', 'the turn was lost', NULL),
+                  ('wl2', 'note', '2026-10-31T13:29:30.0000000Z', '2026-10-31T13:29:30.0000000Z', NULL, NULL, '{{MissionEventDisposition.Blocked}}', 'the seat is out of its envelope', 'pos-bbbbbb'),
+                  ('{{"wl" + MissionLoop.AfterLost}}', 'owner', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', NULL, '{{MissionEventDisposition.Superseded}}', 'x', 'pos-cccccc'),
                   ('wr', 'self', '2026-10-31T07:00:00.0000000Z', '2026-10-31T07:00:00.0000000Z', '2026-10-31T08:00:00.0000000Z', 'a1', 'released', 'a word of a later build', NULL);
                 INSERT INTO strategy_deployment(id, version_id, allocation_id, envelope_id, connector_id, account_id, symbol, mode, state, started_at, ended_at, end_reason) VALUES
-                  ('dep-paper-active-0001', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'BTCUSDT', 'paper', 'active', '2026-10-30T13:00:00.0000000Z', NULL, NULL),
-                  ('dep-paper-ended-00002', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'ETHUSDT', 'paper', 'ended', '2026-10-20T13:00:00.0000000Z', '2026-10-21T13:00:00.0000000Z', 'term over'),
-                  ('dep-live-suspended-03', 'v2', 'al1', 'env', 'atas', 'LIVE-1', 'ES', 'live', 'suspended', '2026-10-30T13:00:00.0000000Z', NULL, NULL);
+                  ('dep-paper-active-0001', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'BTCUSDT', '{{Paper}}', '{{DeploymentState.Active}}', '2026-10-30T13:00:00.0000000Z', NULL, NULL),
+                  ('dep-paper-ended-00002', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'ETHUSDT', '{{Paper}}', '{{DeploymentState.Ended}}', '2026-10-20T13:00:00.0000000Z', '2026-10-21T13:00:00.0000000Z', 'term over'),
+                  ('dep-live-suspended-03', 'v2', 'al1', 'env', 'atas', 'LIVE-1', 'ES', '{{TradingMode.LIVE_CONFIRM}}', '{{DeploymentState.Suspended}}', '2026-10-30T13:00:00.0000000Z', NULL, NULL);
                 INSERT INTO deployment_op(request_id, deployment_id, bar_open_time, kind, intent, state, answer, created_at, resolved_at) VALUES
-                  ('r1', 'dep-paper-active-0001', 'b1', 'entry', '{}', 'resolved', NULL, '2026-10-30T14:00:00.0000000Z', '2026-10-30T14:00:01.0000000Z'),
-                  ('r2', 'dep-paper-active-0001', 'b2', 'exit', '{}', 'resolved', NULL, '2026-10-30T15:00:00.0000000Z', '2026-10-30T15:00:01.0000000Z'),
-                  ('r3', 'dep-paper-active-0001', 'b3', 'entry', '{}', 'refused', 'the envelope allows 1, the plan asked for 3', '2026-10-31T09:00:00.0000000Z', NULL),
-                  ('r4', 'dep-paper-active-0001', 'b4', 'entry', '{}', 'resolved', NULL, '2026-10-31T08:00:00.0000000Z', '2026-10-31T08:00:01.0000000Z');
+                  ('r1', 'dep-paper-active-0001', 'b1', 'entry', '{}', '{{DeploymentOpState.Resolved}}', NULL, '2026-10-30T14:00:00.0000000Z', '2026-10-30T14:00:01.0000000Z'),
+                  ('r2', 'dep-paper-active-0001', 'b2', 'exit', '{}', '{{DeploymentOpState.Resolved}}', NULL, '2026-10-30T15:00:00.0000000Z', '2026-10-30T15:00:01.0000000Z'),
+                  ('r3', 'dep-paper-active-0001', 'b3', 'entry', '{}', '{{DeploymentOpState.Refused}}', 'the envelope allows 1, the plan asked for 3', '2026-10-31T09:00:00.0000000Z', NULL),
+                  ('r4', 'dep-paper-active-0001', 'b4', 'entry', '{}', '{{DeploymentOpState.Resolved}}', NULL, '2026-10-31T08:00:00.0000000Z', '2026-10-31T08:00:01.0000000Z');
                 INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES
-                  ('2026-10-31T09:40:00.0000000Z', 'Ipc', 'op_refused', 'warn', '{"op":"hire","code":"INVALID_REQUEST","role":"pos-aaaaaa"}'),
-                  ('2026-10-31T09:41:00.0000000Z', 'Ipc', 'op_refused', 'warn', '{"op":"hire","code":"INVALID_REQUEST","role":"pos-aaaaaa"}'),
+                  ('2026-10-31T09:40:00.0000000Z', 'Ipc', '{{RefusalMark.Event}}', 'warn', '{"op":"{{Ops.OrgHire}}","code":"INVALID_REQUEST","role":"pos-aaaaaa"}'),
+                  ('2026-10-31T09:41:00.0000000Z', 'Ipc', '{{RefusalMark.Event}}', 'warn', '{"op":"{{Ops.OrgHire}}","code":"INVALID_REQUEST","role":"pos-aaaaaa"}'),
                   ('2026-10-31T09:42:00.0000000Z', 'Ipc', 'auth_rejected', 'warn', NULL),
-                  ('2026-10-31T09:43:00.0000000Z', 'Other', 'op_refused', 'warn', '{"op":"x"}');
+                  ('2026-10-31T09:43:00.0000000Z', 'Other', '{{RefusalMark.Event}}', 'warn', '{"op":"x"}');
                 """);
             db.Exec("PRAGMA foreign_keys=ON;");
         }
@@ -338,7 +355,7 @@ public class OrgDigestTests(ITestOutputHelper log)
         Assert.Equal(3, dep.GetProperty("by_mode_state").GetArrayLength());
         var listed = dep.GetProperty("deployments").EnumerateArray().ToList();
         Assert.Equal(2, listed.Count);
-        var paper = listed.Single(x => x.GetProperty("mode").GetString() == "paper");
+        var paper = listed.Single(x => x.GetProperty("mode").GetString() == Paper);
         Assert.Equal(3, paper.GetProperty("fills").GetInt32());
         Assert.Equal("10.0000", paper.GetProperty("realised").GetString());
         Assert.Equal("0.2000", paper.GetProperty("fees").GetString());
@@ -349,12 +366,12 @@ public class OrgDigestTests(ITestOutputHelper log)
 
         // 6. REFUSALS with their words and counts: the tool refusal x3, the other tool x1, the pipe's two kinds, the deployment gate's words.
         var refusals = d.GetProperty("refusals");
-        Assert.Equal(9, refusals.GetProperty("total").GetInt32());
+        Assert.Equal(10, refusals.GetProperty("total").GetInt32());
         var g0 = refusals.GetProperty("groups").EnumerateArray().ToList();
-        Assert.Equal(6, g0.Count);
+        Assert.Equal(7, g0.Count);
         Assert.Equal(3, g0[0].GetProperty("count").GetInt32());
         Assert.Equal("no order verb is offered to this seat", g0[0].GetProperty("words").GetString());
-        Assert.Contains(g0, g => g.GetProperty("source").GetString() == "pipe" && g.GetProperty("count").GetInt32() == 2 && g.GetProperty("words").GetString() == "op hire / INVALID_REQUEST");
+        Assert.Contains(g0, g => g.GetProperty("source").GetString() == "pipe" && g.GetProperty("count").GetInt32() == 2 && g.GetProperty("words").GetString() == "op org-hire / INVALID_REQUEST");
         Assert.Contains(g0, g => g.GetProperty("source").GetString() == "deployment-op" && g.GetProperty("words").GetString()!.StartsWith("the envelope allows 1", StringComparison.Ordinal));
 
         // 7. AI ERRORS: a3 and a4 share their vendor words (one group of 2, exit 1, offered 2 tools); a9 is LOST. 3 of 8 launches.
@@ -407,7 +424,8 @@ public class OrgDigestTests(ITestOutputHelper log)
 
         // ATTENTION: the live deployment, the stale tape, the overdue wake, the lost launch and the failures are all raised.
         var attention = string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
-        Assert.Contains("mode 'live'", attention);
+        Assert.Contains($"mode '{TradingMode.LIVE_CONFIRM}'", attention);
+        Assert.DoesNotContain($"mode '{Paper}'", attention);                              // a paper run is never called "NOT paper"
         Assert.Contains("overdue wake", attention);
         Assert.Contains("LOST", attention);
         Assert.Contains("beta last delivered 4h ago", attention);
@@ -444,17 +462,21 @@ public class OrgDigestTests(ITestOutputHelper log)
         Assert.Equal(("2026-10-30T14:00:00.0000000Z", 3), Reached("paper fill"));
         Assert.Equal(("2026-10-31T09:00:00.0000000Z", 1), Reached("note raised"));
         Assert.Equal(("2026-10-31T09:10:00.0000000Z", 1), Reached("note taken"));
-        Assert.Equal(("2026-10-31T09:08:00.0000000Z", 2), Reached("kill"));               // the family-kill decision and the ledger's kill entry
-        Assert.Equal((null, 0), Reached("iterate"));
+        Assert.Equal(("2026-10-31T09:09:00.0000000Z", 1), Reached("kill"));               // the author's ledger entry
+        Assert.Equal(("2026-10-31T09:11:00.0000000Z", 1), Reached("iterate"));            // vi, after the note was taken; not vb, before it, nor vo, another's
 
-        Assert.Equal(15, d.GetProperty("reached").GetInt32());
+        Assert.Equal(16, d.GetProperty("reached").GetInt32());
         Assert.Equal(17, d.GetProperty("of").GetInt32());
-        Assert.Equal(["accepted", "iterate"], d.GetProperty("not_reached").EnumerateArray().Select(a => a.GetString()!).ToArray());
+        Assert.Equal(["accepted"], d.GetProperty("not_reached").EnumerateArray().Select(a => a.GetString()!).ToArray());
 
         // The door's org_charter is the op's org-charter; the first refusal of the run is that one, in its own words and hour.
         Assert.Equal(1, arrows["charter"].GetProperty("refused").GetInt32());
         Assert.Equal("two structural changes this week", arrows["charter"].GetProperty("first_refusal").GetString());
         Assert.Equal("2026-10-30T12:30:00.0000000Z", d.GetProperty("first_refusal").GetProperty("at").GetString());
+        // A backtest refused through the `trade` tool is the backtest arrow's: the tool's own row, its op read from its summary.
+        Assert.Equal(1, arrows["backtest"].GetProperty("refused").GetInt32());
+        // And a pipe refusal is its op's, by the op's own name.
+        Assert.Equal(2, arrows["hire"].GetProperty("refused").GetInt32());
         Assert.Contains("keep", d.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
     }
 
@@ -576,14 +598,17 @@ public class OrgDigestTests(ITestOutputHelper log)
         {
             c.Open();
             using var cmd = c.CreateCommand();
-            cmd.CommandText = "PRAGMA foreign_keys=OFF; DROP TABLE org_forecast_resolution; DROP TABLE org_forecast; DROP TABLE org_decision; "
+            cmd.CommandText = "PRAGMA foreign_keys=OFF; DROP TABLE org_forecast_resolution; DROP TABLE org_forecast; DROP TABLE org_decision; DROP TABLE org_mandate_event; "
                               + "DROP TABLE paper_envelope; ALTER TABLE strategy_trial DROP COLUMN exploration;";
             cmd.ExecuteNonQuery();
         }
         var d = Json(f);
         Assert.Equal("org_forecast", d.GetProperty("signal").GetProperty("forecasts").GetProperty("absent").GetString());
-        var kill = d.GetProperty("arrows").GetProperty("arrows").EnumerateArray().Single(a => a.GetProperty("arrow").GetString() == "kill");
-        Assert.Equal("org_decision", kill.GetProperty("absent").GetString());
+        var accepted = d.GetProperty("arrows").GetProperty("arrows").EnumerateArray().Single(a => a.GetProperty("arrow").GetString() == "accepted");
+        Assert.Equal("org_mandate_event", accepted.GetProperty("absent").GetString());
+        // A home with no decisions table still reads the arrows that have another record: the ledger's kill entry.
+        var killed = d.GetProperty("arrows").GetProperty("arrows").EnumerateArray().Single(a => a.GetProperty("arrow").GetString() == "kill");
+        Assert.Equal(1, killed.GetProperty("count").GetInt32());
         Assert.Equal(JsonValueKind.Null, d.GetProperty("deployments").GetProperty("envelopes").ValueKind);
         Assert.Contains("org_decision", d.GetProperty("pace").GetProperty("act_tables_absent").EnumerateArray().Select(t => t.GetString()));
         Assert.Equal(JsonValueKind.Null, d.GetProperty("signal").GetProperty("campaigns").GetProperty("campaigns")[0].GetProperty("exploration").ValueKind);
@@ -629,6 +654,119 @@ public class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("AI day-total PASSED", attention, StringComparison.Ordinal);
         Assert.Contains("refused 5x: backtest: the same words, five times", attention, StringComparison.Ordinal);
         Assert.Contains("on failed turns", attention, StringComparison.Ordinal);
+    }
+
+    // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
+    /// <summary>
+    /// EVERY NAME IN THE DIGEST'S <c>class W</c>, TO WHAT THE APP WRITES. A constant here is the app's own, so a word renamed in the app and not in
+    /// the digest goes red, and a word this table does not list goes red too: a new comparison is traced before it lands.
+    /// </summary>
+    static Dictionary<string, object> WordsTheAppWrites() => new()
+    {
+        ["MODE_OBSERVE"] = TradingMode.OBSERVE.ToString(), ["MODE_PAPER"] = Paper,
+        ["DEPLOYMENT_ENDED"] = DeploymentState.Ended, ["DEPLOYMENT_OP_REFUSED"] = DeploymentOpState.Refused, ["POSITION_ACTIVE"] = OrgPositionStatus.Active,
+        ["VERDICT_PROMOTED"] = PromotionVerdict.Promoted, ["VERDICT_PAPER_ELIGIBLE"] = PromotionVerdict.PaperEligible, ["REASON_NO_TRADE"] = PromotionReason.NoTrade,
+        ["ADDIS_INCONCLUSIVE"] = AlphaWealth.Inconclusive,
+        ["ORG_CHARTERED"] = OrgEventKind.Chartered, ["ORG_HIRED"] = OrgEventKind.Hired, ["ORG_ACTIVATED"] = OrgEventKind.Activated,
+        ["DECIDER_OWNER"] = OrgDecider.Owner, ["DECIDER_APP"] = OrgDecider.App, ["DECIDER_BOARD"] = OrgDecider.Board,
+        ["MANDATE_ISSUED"] = MandateEventKind.Issued, ["MANDATE_DELIVERED"] = MandateEventKind.Delivered,
+        ["MANDATE_ACCEPTED"] = MandateEventKind.Accepted, ["MANDATE_REJECTED"] = MandateEventKind.Rejected,
+        ["DISPOSITION_BLOCKED"] = MissionEventDisposition.Blocked, ["DISPOSITION_FAILED"] = MissionEventDisposition.Failed,
+        ["WAKE_PAPER_RUN"] = MissionEventIds.PaperRun("", "")[..^1], ["WAKE_AFTER_LOST"] = MissionLoop.AfterLost,
+        ["PUBLICATION_ALLOCATOR"] = TradingGateway.PaperAllocatorRole, ["PUBLICATION_NOTE"] = PublicationKind.Note,
+        ["LEDGER_KILL"] = LedgerKind.Kill, ["OUTCOME_VOID"] = ForecastOutcome.Void, ["LOG_OP_REFUSED"] = RefusalMark.Event,
+        ["PIPE_REFUSALS"] = OrgSnapshot.PipeRefusalEvents, ["POLICY_INCONCLUSIVE"] = AllocationPolicy.InconclusiveV1,
+        ["OP_ORG_CHARTER"] = Ops.OrgCharter, ["OP_ORG_HIRE"] = Ops.OrgHire, ["OP_MANDATE_ASSIGN"] = Ops.MandateAssign, ["OP_MANDATE_DELIVER"] = Ops.MandateDeliver,
+        ["OP_MANDATE_ACCEPT"] = Ops.MandateAccept, ["OP_MANDATE_REJECT"] = Ops.MandateReject, ["OP_BACKTEST"] = Ops.Backtest, ["OP_VERDICT"] = Ops.Verdict,
+        ["TOOLS_CARRYING_AN_OP"] = new[] { GrantedWorkerTools.Trade, GrantedWorkerTools.Data, GrantedWorkerTools.Report },
+        ["ROLE_DEFAULT"] = CouncilRoles.Default, ["BOARD_PREFIX"] = BoardSeats.Prefix, ["CLIENT_ORDER_PREFIX"] = TradingGateway.ClientOrderIdFor(""),
+        ["SIDE_SELL"] = TradeAgent.ConnectorSdk.OrderSide.Sell.ToString(),
+        ["BILLING_PLAN"] = BillingClasses.Plan, ["BILLING_KEY"] = BillingClasses.Key, ["BILLING_UNKNOWN"] = BillingClasses.Unknown,
+    };
+
+    /// <summary>
+    /// THE WORDS THE APP HAS NO CONSTANT FOR: it spells them in one writer's text, so the digest's word is looked for there. A word moved or
+    /// respelled on either side goes red.
+    /// </summary>
+    static readonly (string Word, string File, string Writer)[] WordsInAWriter =
+    [
+        ("ATTEMPT_LAUNCHED", "src/TradeAgent.Core/Db/AiAttemptStore.cs", "WHERE id=$id AND state='{0}'"),
+        ("ATTEMPT_ENDED", "src/TradeAgent.Core/Db/AiAttemptStore.cs", "state='{0}', ended_at=$end"),
+        ("ATTEMPT_LOST", "src/TradeAgent.Core/Db/AiAttemptStore.cs", "SET state='{0}', ended_at=$at"),
+        ("PROOF_GAP", "src/TradeAgent.Core/Db/CellProofStore.cs", "row.Gap ? \"{0}\" : "),
+        ("BOARD_FOUNDED", "src/TradeAgent.Core/Board/BoardStore.cs", "VALUES($at, '{0}', 1, $schema, $share, $detail)"),
+        ("BOARD_BUDGET_SHARE", "src/TradeAgent.Core/Board/BoardStore.cs", "VALUES($at, '{0}', NULL, NULL, $share, NULL, $detail)"),
+        ("LOG_IPC", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"{0}\", \"protocol_rejected\""),
+        ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
+        ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
+    ];
+
+    [Fact]
+    public void Every_word_the_digest_compares_is_the_one_the_app_writes()
+    {
+        var script = Path.Combine(RepoRoot(), "tools", "org-digest.py");
+        if (OperatingSystem.IsWindows()) return;    // the script runs on the Linux host; the table it is held to compiles here regardless
+        var (exit, o, e) = Run(script, ["--vocabulary"]);
+        Assert.True(exit == 0, e);
+        var digest = JsonDocument.Parse(o).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+        string Word(string name) => digest[name].GetString()!;
+
+        var theApp = WordsTheAppWrites();
+        foreach (var (name, want) in theApp)
+        {
+            Assert.True(digest.ContainsKey(name), $"the digest no longer has {name}: take it out of this table with the comparison");
+            if (want is string[] many) Assert.Equal(many, digest[name].EnumerateArray().Select(w => w.GetString()!).ToArray());
+            else Assert.True(Word(name) == (string)want, $"{name} is '{Word(name)}' in the digest and '{want}' in the app");
+        }
+        foreach (var (name, file, writer) in WordsInAWriter)
+            Assert.True(File.ReadAllText(Path.Combine(RepoRoot(), file)).Contains(string.Format(System.Globalization.CultureInfo.InvariantCulture, writer, Word(name)), StringComparison.Ordinal),
+                $"{name} '{Word(name)}' is not what {file} writes");
+
+        // The two words of a decision the app reserves and no verb writes on main: held to its list, and said in the digest's words.
+        foreach (var name in new[] { "DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH" }) Assert.Contains(Word(name), OrgDecisionKind.Mandatory);
+
+        // The one word of a unit still landing: held to the app's constant from the moment it exists.
+        if (typeof(AllocationPolicy).GetField("StopV1") is { } stop) Assert.Equal((string)stop.GetValue(null)!, Word("POLICY_STOP"));
+        Assert.Equal(StopPolicy, Word("POLICY_STOP"));
+
+        // The setting's key, as the app serialises it, read from the app's own writer.
+        Assert.Contains($"\"{Word("SETTING_WORKS_ON_ITS_OWN")}\":", TradeAgent.Core.Json.Write(new TradeAgentSettings()), StringComparison.Ordinal);
+
+        // AND NOTHING IS LEFT UNTRACED: every word in the digest is in one of the tables above.
+        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "POLICY_STOP", "SETTING_WORKS_ON_ITS_OWN"]);
+        Assert.Empty(digest.Keys.Except(traced));
+    }
+
+    /// <summary>What a comparison against a column looks like when its word is typed in place, in SQL or in Python, instead of coming from <c>class W</c>.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex("""(?:=|<>|!=|\bIN\s*\(|\bLIKE)\s*'[^'{?]|\[["']\w+["']\]\)?(?:\.\w+\(\))?\s*(?:==|!=|\bnot in\b|\bin\b)\s*\(?(?:None,\s*)?["']""")]
+    private static partial System.Text.RegularExpressions.Regex TypedInPlace();
+
+    [Fact]
+    public void No_word_is_typed_into_a_comparison_outside_the_digests_vocabulary()
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), "tools", "org-digest.py"));
+        var (from, to) = (Array.FindIndex(lines, l => l.StartsWith("class W:", StringComparison.Ordinal)), Array.FindIndex(lines, l => l.StartsWith("ADMISSIBLE =", StringComparison.Ordinal)));
+        Assert.True(from > 0 && to > from, "the digest's vocabulary is not where this test looks");
+        var typed = lines.Select((l, i) => (Line: l, At: i)).Where(x => x.At < from || x.At > to)
+            .Where(x => !x.Line.TrimStart().StartsWith('#') && !x.Line.Contains("[\"app_db\"]", StringComparison.Ordinal))    // the digest's own field, not a column
+            .Where(x => TypedInPlace().IsMatch(x.Line)).Select(x => $"line {x.At + 1}: {x.Line.Trim()}").ToList();
+        Assert.True(typed.Count == 0, "a word typed into a comparison, not taken from class W:\n" + string.Join("\n", typed));
+    }
+
+    // ---- THE REAL LOOP -------------------------------------------------------------------------------------------------------
+    /// <summary>
+    /// THE DIGEST OVER A HOME EVERY WRITER OF THE APP WROTE: <see cref="OrganisationLoopTests"/> calls this at the end of the whole loop, so no
+    /// row here was typed by a test. It is how a word the fixture repeats wrongly would be seen: the loop reached these arrows, so the digest must say so.
+    /// </summary>
+    internal static JsonElement OnALiveHome(Database db)
+    {
+        var state = Path.Combine(TestEnv.Home, "orgdigest-live-" + Guid.NewGuid().ToString("n")[..10]);
+        Directory.CreateDirectory(state);
+        var image = Path.Combine(state, "tradeagent.db");
+        db.Read(_ => { db.Exec($"VACUUM INTO '{image.Replace("'", "''", StringComparison.Ordinal)}'"); return 0; });
+        var (exit, o, e) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), ["--state", state, "--since", "1d", "--no-systemd", "--json"]);
+        Assert.True(exit == 0, $"exit {exit}: {e}");
+        return JsonDocument.Parse(o).RootElement.Clone();
     }
 
     static (int, string, int, string) Cells(JsonElement p) =>
