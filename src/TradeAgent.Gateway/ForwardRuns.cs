@@ -42,8 +42,8 @@ public sealed record ForwardRunState(
 /// <para><b>TWO CLOCKS, AS THE BACKTEST HAS THEM</b> (<c>U-timeframe-b</c>). The MINUTE clock is the
 /// market's, and everything that protects a position runs on it: the operations that have an answer are
 /// settled, the losing half of a stop/target pair is cancelled, the stop and the target go to the venue
-/// when the entry fills — and back to it when a gate refuses an exit that took them off — and the maximum
-/// hold is enforced, in the pass over the minute that needs it.
+/// when the entry fills — and back to it when a gate refuses an exit that took them off, or refuses them —
+/// and the maximum hold is enforced, in the pass over the minute that needs it.
 /// The DECLARED clock is the program's: only when one of its bars has closed
 /// (<see cref="BarResampler"/>) is the evaluator stepped, on that bar. A program that declares no
 /// <c>bars</c> is the case where the two clocks are one, and it runs exactly as it always has.</para>
@@ -124,6 +124,18 @@ public sealed class ForwardRuns
 
     /// <summary>The series the runner reads. The one forward series this product collects.</summary>
     public string Source { get; init; } = ForwardBars.Source;
+
+    /// <summary>
+    /// HOW MANY TIMES ONE PROTECTIVE ORDER OF A POSITION IS ASKED FOR ON CONSECUTIVE MINUTES (<c>U-paper-t0</c> item 3): a quarter of an hour, which outlasts what a
+    /// minute's rate or a brief gate refuses. After that a gate that keeps refusing is asked once in <see cref="ProtectionAskedAtMostEvery"/>.
+    /// </summary>
+    public const int ProtectionAskedEveryMinute = 15;
+
+    /// <summary>
+    /// HOW OFTEN A PROTECTIVE ORDER THAT KEEPS BEING REFUSED IS ASKED FOR AFTER THAT: it never stops being asked for, because the position is still open without it,
+    /// and a run under a kill switch for three days writes some three hundred rows a kind rather than four thousand.
+    /// </summary>
+    public static readonly TimeSpan ProtectionAskedAtMostEvery = TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// EVERY ACTIVE DEPLOYMENT, ADVANCED OVER WHATEVER HAS CLOSED SINCE — and it never throws.
@@ -325,8 +337,12 @@ public sealed class ForwardRuns
             // the day's last bar, and marked at that bar's close. A bar replayed live again says the same words under the same id, and the event stays
             // keyed by the deployment and the date.
             if (live && dayClosed is { } day)
+            {
+                var closedBook = books.Book(day);
                 _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(day),
-                    $"the UTC day {MissionEventIds.DayOf(day)} closed over it", _now(), books.Book(day), closedAt);
+                    $"the UTC day {MissionEventIds.DayOf(day)} closed over it", _now(), closedBook, closedAt,
+                    _gateway.UnprotectedAtTheClose(deployment, closedBook, day));
+            }
 
             // AND FIRST, ON A LIVE MINUTE WHOSE BOOKS READ FLAT, NO STOP OR TARGET OF THE RUN IS LEFT WORKING
             // (`U-runner-refused-close`). The cancel below is keyed to the minute a closing fill landed on and to the
@@ -396,8 +412,8 @@ public sealed class ForwardRuns
             {
                 if (live)
                 {
-                    planned |= await CancelRestingAsync(
-                        deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
+                    // EVERY STOP AND TARGET OF THE RUN, NOT THE PAIR THE ENTRY'S FILL NAMED: one asked for again went out under a later minute's id (`U-paper-t0`).
+                    planned |= await CancelProtectionAsync(deployment, bar, () => seq++, ct);
                     stopRequest = targetRequest = null;
 
                     planned |= await FlattenAsync(deployment, bar, account, seq++,
@@ -520,14 +536,15 @@ public sealed class ForwardRuns
                 exited |= live && signalled.Kind != IntentKind.Enter;
             }
 
-            // AND LAST, AN EXIT REFUSED BEFORE THE WIRE PUTS THE STOP AND THE TARGET BACK, ON THE MINUTE IT WAS REFUSED
-            // (`U-runner-exit-hygiene-b`), on both clocks. Every exit takes them off the book before it goes, and a gate
-            // that then refuses the exit left the position open with neither. Asked after everything else this minute
-            // writes, so the run's latest word — an exit sent again, the maximum hold's close — is already on the ledger;
-            // and only of a run that has exited, on a minute that opened long in this pass's books — an exit is decided
-            // only from a long reading, and the books re-read below hold every fill these hold, on the same bars.
-            if (live && exited && opening.Position == PositionSide.Long)
-                planned |= await PutProtectionBackAsync(deployment, program, bars, grid, bar, () => seq++, ct);
+            // AND LAST, A POSITION WITHOUT ITS STOP OR ITS TARGET HAS THEM ASKED FOR: an exit refused before the wire puts them back on the minute it was refused
+            // (`U-runner-exit-hygiene-b`), on both clocks, because every exit takes them off the book before it goes and a gate that then refuses the exit left the
+            // position open with neither; and a protection that was itself refused is asked again on the next live minute (`U-paper-t0` item 3). Asked after
+            // everything else this minute writes, so the run's latest word — an exit sent again, the maximum hold's close — is already on the ledger; and only on a
+            // minute that opened long in this pass's books. Only the pass's newest minute is a moment the runner can speak for: a catch-up over a thousand of them
+            // asks once, on the last, and the books re-read below hold every fill these hold, on the same bars. `exited` is the cheap half for the older minutes.
+            var newest = i == bars.Count - 1;
+            if (live && (exited || newest) && opening.Position == PositionSide.Long)
+                planned |= await PutProtectionBackAsync(deployment, program, bars, grid, bar, newest, () => seq++, ct);
 
             // AND THE FRONTIER MOVES ONTO THIS BAR IF ANYTHING IT WROTE HAS NO ANSWER YET.
             if (planned && blocked is null
@@ -776,77 +793,73 @@ public sealed class ForwardRuns
             seq, ct);
 
     /// <summary>
-    /// AN EXIT REFUSED BEFORE THE WIRE PUTS THE RUN'S STOP AND TARGET BACK — at their own levels, sized from the books,
-    /// under this minute's ids — and this answers whether it wrote anything (<c>U-runner-exit-hygiene-b</c>).
+    /// A POSITION WITHOUT ITS STOP OR ITS TARGET HAS THEM ASKED FOR — at their own levels, sized from the books, under this minute's ids — and this answers whether it
+    /// wrote anything. Two ways here, and what they ask for is one reading (<see cref="TradingGateway.ProtectionMissing"/>).
     ///
-    /// <para><b>Only after a refusal that sent nothing.</b> The run's LATEST entry, exit or flatten must be an exit
-    /// <see cref="Deployments.RefusedBeforeTheWire"/> — the one predicate — so never while an exit is in flight: one at
-    /// the wire is about to end the position, and protection put back beside it fills too and sells what the exit sells.
-    /// Never past the maximum hold either: its own close is asked again on every minute and takes protection off first.</para>
+    /// <para><b>An exit refused before the wire</b> (<c>U-runner-exit-hygiene-b</c>) puts back what it took off on the minute it was refused. Only after a refusal
+    /// that sent nothing, the one predicate <see cref="Deployments.RefusedBeforeTheWire"/>, so never while an exit is in flight: one at the wire is about to end the
+    /// position, and protection put back beside it fills too and sells what the exit sells.</para>
     ///
-    /// <para><b>The books are re-read</b>, not the minute's reading, which a refused re-send has already marked flat:
-    /// long, or nothing goes back.</para>
+    /// <para><b>A protection that did not stand</b> (<c>U-paper-t0</c> item 3): refused before the wire, rejected at it, or gone from the book under a position still
+    /// open, is asked for again on the pass's newest live minute after the one it was last asked on. A position open without its protection is an unprotected
+    /// position whatever put it there, and nothing else would ever ask.</para>
     ///
-    /// <para><b>Each of the two goes back while none of its kind of the run may still be working</b>
-    /// (<see cref="MayBeWorking"/>) — a second stop beside one that may be resting sells twice — and each is the LATEST
-    /// of its kind written since the position's entry, at the level that operation carries. A kind the program never
-    /// declared has none, and nothing goes back for it. The orders are new: their own operations, their own <c>dp-</c>
-    /// and <c>TA-</c> ids, through every gate a protective order meets — the stale-close read among them, a stop and a
-    /// target being <c>OrderIntent.Close</c> — and settled on the venue's acknowledgement as <see cref="RestAsync"/>
-    /// settles the entry's. Nothing goes out again under an id that was refused: a re-place that a gate refuses too is
-    /// asked for afresh on the next live minute, by this same rule, under that minute's ids.</para>
+    /// <para><b>The books are re-read</b>, not the minute's reading, which a refused re-send has already marked flat: long, or nothing goes back. Never past the
+    /// maximum hold: its own close is asked again on every minute and takes protection off first.</para>
+    ///
+    /// <para><b>Each of the two goes back at most once a minute and while none of its kind of the run may still be working</b> — a second stop beside one that may be
+    /// resting sells twice — and each at the level its LATEST operation since the position's entry carries. A kind the program never declared has none, and nothing
+    /// goes back for it. The orders are new: their own operations, their own <c>dp-</c> and <c>TA-</c> ids, through every gate a protective order meets — the
+    /// stale-close read among them, a stop and a target being <c>OrderIntent.Close</c> — and settled on the venue's acknowledgement as <see cref="RestAsync"/>
+    /// settles the entry's. Nothing goes out again under an id that was refused.</para>
+    ///
+    /// <para><b>Bounded, and the same under replay.</b> Every number here is off the ledger and the bars, never a counter in this process: the asks of a kind since
+    /// the entry and the bar of the last one (<see cref="ProtectionDue"/>). The sequence is spent for each of the two whether or not it sends, so a pass that died
+    /// between them and the pass that replays the minute give each the same id: the one that went out collapses onto itself, and the other is not sent under it.</para>
     /// </summary>
     async Task<bool> PutProtectionBackAsync(StrategyDeploymentRow deployment, StrategyProgram program,
-        IReadOnlyList<ForwardBar> bars, BarGrid grid, KlineBar bar, Func<int> seq, CancellationToken ct)
+        IReadOnlyList<ForwardBar> bars, BarGrid grid, KlineBar bar, bool newest, Func<int> seq, CancellationToken ct)
     {
         var ops = _deployments.OpsOf(deployment.Id);
 
-        if (ops.LastOrDefault(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten)
-                is not { Kind: DeploymentOpKind.Exit } exit
-            || !Deployments.RefusedBeforeTheWire(exit, _gateway.Requests.Get(exit.RequestId)))
-            return false;
+        var latest = ops.LastOrDefault(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten);
+        if (latest is null or { Kind: DeploymentOpKind.Flatten }) return false;
+        var exitsOwnMinute = latest.Kind == DeploymentOpKind.Exit && latest.BarOpenTime == bar.OpenTime;
+        if (!newest && !exitsOwnMinute) return false;
+
+        var missing = _gateway.ProtectionMissing(ops);
+        if (missing.Count == 0) return false;
 
         var held = Books(deployment, bars, grid).At(bar, grid.ClosedThrough(bar.OpenTime));
         if (held.Position != PositionSide.Long) return false;
         if (program.MaxHoldBars is { } hold && held.BarsSinceEntry >= hold) return false;
 
-        var entry = -1;
-        for (var i = 0; i < ops.Count; i++)
-            if (ops[i].Kind == DeploymentOpKind.Entry) entry = i;
-        if (entry < 0) return false;
-
         var planned = false;
         foreach (var (kind, type) in Protection)
         {
-            if (ops.Any(o => o.Kind == kind && MayBeWorking(o))) continue;
+            var order = seq();
+            if (missing.FirstOrDefault(m => m.Latest.Kind == kind) is not { } gone
+                || !(exitsOwnMinute || ProtectionDue(gone, bar.OpenTime))
+                || LevelOf(gone.Latest, type) is not { } level) continue;
 
-            DeploymentOpRow? latest = null;
-            for (var i = entry + 1; i < ops.Count; i++)
-                if (ops[i].Kind == kind) latest = ops[i];
-            if (latest is null || LevelOf(latest, type) is not { } level) continue;
-
-            var (_, sent) = await RestAsync(deployment, bar, kind, type, level, held.Quantity, seq(), live: true, ct);
+            var (_, sent) = await RestAsync(deployment, bar, kind, type, level, held.Quantity, order, live: true, ct);
             planned |= sent;
         }
 
         return planned;
     }
 
+    /// <summary>
+    /// WHETHER THIS MINUTE MAY ASK FOR A PROTECTION AGAIN: a later minute than its last ask, every minute at first and then once in
+    /// <see cref="ProtectionAskedAtMostEvery"/> (<see cref="ProtectionAskedEveryMinute"/>). On the bars and the ledger alone, so a restart reaches the same answer.
+    /// </summary>
+    static bool ProtectionDue(MissingProtection gone, DateTimeOffset bar) =>
+        bar > gone.Latest.BarOpenTime
+        && (gone.Asks < ProtectionAskedEveryMinute || bar - gone.Latest.BarOpenTime >= ProtectionAskedAtMostEvery);
+
     /// <summary>A position's two protective orders, in the order <see cref="ProtectAsync"/> places them.</summary>
     static readonly (string Kind, OrderType Type)[] Protection =
         [(DeploymentOpKind.Stop, OrderType.Stop), (DeploymentOpKind.Target, OrderType.Limit)];
-
-    /// <summary>
-    /// WHETHER ONE OF THE RUN'S STOPS OR TARGETS MAY STILL BE WORKING AT THE VENUE: it did not end before the wire, and
-    /// its order row is not terminal — or there is no row yet behind an operation with no answer. UNKNOWN reads as
-    /// working: an order nobody can account for may be resting, and that is the direction that never sells twice.
-    /// </summary>
-    bool MayBeWorking(DeploymentOpRow op)
-    {
-        var row = _gateway.Requests.Get(op.RequestId);
-        if (Deployments.RefusedBeforeTheWire(op, row)) return false;
-        return row is null ? !op.IsSettled : !OrderStateMachine.IsTerminal(row.State);
-    }
 
     /// <summary>The level one stop or target went out at, off its own operation: a stop's trigger, a target's limit.</summary>
     static decimal? LevelOf(DeploymentOpRow op, OrderType type)

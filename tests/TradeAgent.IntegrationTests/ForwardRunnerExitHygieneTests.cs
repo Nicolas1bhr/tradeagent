@@ -165,10 +165,13 @@ public partial class ForwardRunnerTests
     /// connector reads <see cref="OrderIntent"/>, the hook a venue that shorts would honour as reduce-only. Everything
     /// else passes straight through; the rig disposes the paper connector itself.
     /// </summary>
-    sealed class PlacementWitness(PaperConnector inner) : ITradingConnector, IConnectorStatusDetail
+    sealed class PlacementWitness(PaperConnector inner, string? id = null) : ITradingConnector, IConnectorStatusDetail
     {
         readonly List<PlaceOrderCommand> _placed = [];
         int _closes;
+
+        /// <summary>What the venue answers a placement with instead of taking it, or null to take it: a definite refusal at the wire.</summary>
+        public Func<PlaceOrderCommand, Exception?>? Rejects { get; set; }
 
         /// <summary>Every <c>PlaceOrderAsync</c> command that reached the connector, in the order it arrived.</summary>
         public IReadOnlyList<PlaceOrderCommand> Placed { get { lock (_placed) return [.. _placed]; } }
@@ -176,7 +179,7 @@ public partial class ForwardRunnerTests
         /// <summary>Calls of the connector's own close, which builds its command where nobody can read it.</summary>
         public int Closes => Volatile.Read(ref _closes);
 
-        public string Id => inner.Id;
+        public string Id => id ?? inner.Id;
         public string DisplayName => inner.DisplayName;
         public ConnectorCapabilities Capabilities => inner.Capabilities;
         public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
@@ -200,7 +203,7 @@ public partial class ForwardRunnerTests
         public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
         {
             lock (_placed) _placed.Add(cmd);
-            return inner.PlaceOrderAsync(cmd, ct);
+            return Rejects?.Invoke(cmd) is { } no ? Task.FromException<OrderInfo>(no) : inner.PlaceOrderAsync(cmd, ct);
         }
 
         public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default) => inner.ModifyOrderAsync(cmd, ct);
