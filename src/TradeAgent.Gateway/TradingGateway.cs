@@ -4377,9 +4377,17 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         var r = Policy.Risk;
 
-        if (FoundingCoversThisVenue) await EnsureInstrumentsAsync(ct);
+        // THE VENUE'S LIST AS IT STANDS NOW, NOT AS IT STOOD AT THE FIRST LOOK (PREFLIGHT-2 blocker 1): onboarding reads it while only BTCUSDT is verified, and setup
+        // verifies the other pairs afterwards, so a list filled once left four of five pairs refused until a restart. See AskForTheInstrumentListAsync: a
+        // refused symbol does not reach the venue on every order, and a list that could not be read refuses in those words and allows nothing.
+        string? unread = null;
+        if (FoundingCoversThisVenue && (_instrumentCache.Count == 0 || !InstrumentAllowedHere(intent.Symbol)))
+            unread = await AskForTheInstrumentListAsync(ct);
         if (!InstrumentAllowedHere(intent.Symbol))
-            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{intent.Symbol} is not on the allowed instrument list");
+            throw unread is null
+                ? new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{intent.Symbol} is not on the allowed instrument list")
+                : new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                    $"the venue's instrument list could not be read ({unread}), so whether {intent.Symbol} is allowed cannot be checked");
 
         if (intent.Quantity <= 0)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "quantity must be greater than zero");
@@ -8993,6 +9001,39 @@ public sealed partial class TradingGateway : IAsyncDisposable
         }
 
         return was is not { } had || had == want || have != had;
+    }
+
+    /// <summary>
+    /// THE MOST OFTEN AN ORDER ASKS THE VENUE FOR ITS LIST (PREFLIGHT-2 blocker 1): once in this long, whoever asks and for whichever symbol. It is a bound on
+    /// the venue's list, not on one symbol's turn, because one read answers for every symbol. A symbol verified just after an ask waits this long at most.
+    /// </summary>
+    internal static readonly TimeSpan InstrumentListAskedAtMost = TimeSpan.FromMinutes(1);
+
+    readonly Lock _instrumentAsk = new();
+    DateTimeOffset? _instrumentsAskedAt;
+    string? _instrumentsUnread;
+
+    /// <summary>
+    /// ONE REAL READ OF THE VENUE'S LIST, AT MOST ONCE IN <see cref="InstrumentListAskedAtMost"/> — and it answers why the list could not be read, or null because
+    /// it could. A read that failed keeps the list the gateway holds and its reason stands until the next ask, so nothing is allowed on an unknown and the
+    /// refusals of the same minute say what the first one said. The distance is measured either way, so a clock set back cannot stop the asking.
+    /// </summary>
+    async Task<string?> AskForTheInstrumentListAsync(CancellationToken ct)
+    {
+        lock (_instrumentAsk)
+        {
+            var at = Now;
+            if (_instrumentsAskedAt is { } last && (at - last).Duration() < InstrumentListAskedAtMost) return _instrumentsUnread;
+            _instrumentsAskedAt = at;
+        }
+
+        try
+        {
+            await InstrumentsAsync(ct);
+            return _instrumentsUnread = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { return _instrumentsUnread = ex.Message.ReplaceLineEndings(" "); }
     }
 
     /// <summary>Tick sizes come from the instrument list, so it has to be there before judging one.</summary>

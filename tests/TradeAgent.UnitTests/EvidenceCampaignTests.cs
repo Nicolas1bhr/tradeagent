@@ -50,7 +50,7 @@ public class EvidenceCampaignTests
     /// A dataset the ledger recorded with its files on disk, so <c>DatasetStore.Checked</c> accepts it — the bars it names are the
     /// row's, the file a short stand-in the hash is taken of.
     /// </summary>
-    static DatasetRecord OnDisk(Database db, string pair, DateTimeOffset first, DateTimeOffset last, string version = "v1")
+    internal static DatasetRecord OnDisk(Database db, string pair, DateTimeOffset first, DateTimeOffset last, string version = "v1")
     {
         var dir = BinanceArchive.DatasetDir(pair);
         Directory.CreateDirectory(Path.Combine(dir, "raw"));

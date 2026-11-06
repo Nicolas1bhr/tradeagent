@@ -31,7 +31,8 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
     }
 
-    static VenueCatalogRead Catalogue() => new(
+    /// <summary>The catalogue as it stands when <paramref name="verified"/> are the instruments the app has checked.</summary>
+    static VenueCatalogRead Catalogue(params string[] verified) => new(
     [
         new VenueEntry
         {
@@ -42,9 +43,9 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
             Verified = true,
             Instruments =
             [
-                .. Pairs.Select(p => new VenueInstrumentEntry
+                .. verified.Select(p => new VenueInstrumentEntry
                 {
-                    Symbol = p.Pair, TickSize = 0.0001m, QuantityIncrement = 0.001m, Source = "declared by this test", Verified = true
+                    Symbol = p, TickSize = 0.0001m, QuantityIncrement = 0.001m, Source = "declared by this test", Verified = true
                 })
             ]
         }
@@ -128,18 +129,26 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         var clock = new Clock(Start);
         var bars = new ForwardBarStore(db);
         var source = new ForwardBarSource(bars);
+
+        // THE CATALOGUE GROWS AFTER THE GATEWAY'S FIRST LOOK, AS A REAL INSTALL'S DOES (PREFLIGHT-2 blocker 1): BTCUSDT is verified at onboarding and the other
+        // pairs by setup's press. A catalogue handed over whole here is how this class passed over four pairs that could not trade until a restart;
+        // PaperPairsAfterSetupTests walks that path through the app's own press.
+        var catalogue = Catalogue("BTCUSDT");
         var conn = new PaperConnector(new PaperConnectorOptions
         {
             Source = source,
             Clock = () => clock.At,
             BookFile = Path.Combine(TestEnv.Home, $"paper-run-{Guid.NewGuid():n}.db"),
-            Catalogue = Catalogue()
+            CatalogueNow = () => catalogue
         });
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock, MaxQuoteAge = TimeSpan.FromDays(3650) });
         gw.Update(s => s.SelectedAccountId = PaperConnector.TheAccount);
-        new VenueStore(db).Sync(Catalogue());
+        new VenueStore(db).Sync(catalogue);
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
+
+        catalogue = Catalogue([.. Pairs.Select(p => p.Pair)]);
+        new VenueStore(db).Sync(catalogue);
 
         foreach (var (pair, _) in Pairs) ForwardRunnerTests.Judged(db, Program(pair), Start, pair);
         Assert.Equal(Pairs.Length, gw.AllocatePaperDue(Start));

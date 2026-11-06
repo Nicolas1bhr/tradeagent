@@ -188,12 +188,16 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     /// </summary>
     public Exception? InstrumentsThrow;
 
+    /// <summary>Every read of the instrument list that reached the connector, counted apart from <see cref="Reads"/>: "how often did this ask the venue".</summary>
+    public int InstrumentReads;
+
     /// <summary>The list the instrument read returns instead of the simulator's. See <see cref="InstrumentsThrow"/>.</summary>
     public IReadOnlyList<InstrumentInfo>? InstrumentsAnswer;
 
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default)
     {
         Interlocked.Increment(ref Reads);
+        Interlocked.Increment(ref InstrumentReads);
         if (InstrumentsThrow is { } boom) return Task.FromException<IReadOnlyList<InstrumentInfo>>(boom);
         return InstrumentsAnswer is { } answer ? Task.FromResult(answer) : Inner.GetInstrumentsAsync(ct);
     }
