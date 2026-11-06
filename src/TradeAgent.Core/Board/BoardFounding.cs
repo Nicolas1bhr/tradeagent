@@ -65,6 +65,18 @@ public static class BoardFounding
     /// </summary>
     public const int FoundingOpenPositions = 15;
 
+    /// <summary>
+    /// THE MOST ORDERS A MINUTE A PAPER RUN'S OWN ORDERS GO OUT UNDER (PREFLIGHT-2 blocker 2; D20): FORTY-FIVE, the fifteen runs the founding envelopes allow
+    /// (<see cref="FoundingOpenPositions"/>) by an entry and its two protections, because the entries and the protections of runs that signal together fall in
+    /// one sliding minute, and six of them stripped ETH and XRP of both their stop and their target.
+    ///
+    /// <para><b>A CONSTANT OF THIS BUILD AND NOT A FIELD OF THE POLICY, the way R30 D18 left the flat one-order limit alone:</b> the founding row's
+    /// <see cref="RiskPolicy.MaxOrdersPerMinute"/> is shared across modes and stays 6, and every other caller, every other mode and every figure the board
+    /// decides is read from it (<c>TradingGateway.MaxOrdersPerMinuteFor</c>). So no act, verb or seat can reach this number, and an install that keeps its
+    /// founding row has it.</para>
+    /// </summary>
+    public const int PaperRunOrdersPerMinute = FoundingOpenPositions * 3;
+
     /// <summary>The founding policy, version 1. (Declared after <see cref="PaperPairs"/>: static fields initialise in order.)</summary>
     public static BoardPolicy V1 { get; } = new()
     {
@@ -123,7 +135,8 @@ public static class BoardFounding
         + "notional cap binding above each pair's floor price; three deployments per pair, each its third (D11 amended: one inconclusive "
         + "slot beside two favourable); no expiry while no board seat is active; at most 15 open positions, five pairs by three runs, paper "
         + "only (R25 D14); the most one run's order may be is its allocation, each pair's quantity divided by its three runs (R30 D18), and one "
-        + "order of any other caller stays at most 1";
+        + "order of any other caller stays at most 1; a paper run's own orders go out under 45 a minute, fifteen runs by an entry and its two "
+        + "protections (D20), and every other caller stays at 6";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family
