@@ -97,7 +97,7 @@ public static partial class Labels
     /// A POSITION STANDING ASIDE, on its row (<c>U-turn-bounds</c>): why, in the refusal's own words, and when it is tried again without anyone
     /// doing anything. <paramref name="at"/> is the local time.
     /// </summary>
-    public static string SeatStandingAside(string why, string at) => $"Not running for now: {why} TradeAgent looks at it again at {at}.";
+    public static string SeatStandingAside(string why, string at) => $"Not running for now: {why.TrimEnd('.', ' ')}. TradeAgent looks at it again at {at}.";
 
     /// <summary>
     /// THE SENTENCE A TURN IS ENDED IN FOR RUNNING PAST ITS WALL-CLOCK LIMIT (<c>U-turn-bounds</c>, R28 W2): the launch's row, the conversation, the

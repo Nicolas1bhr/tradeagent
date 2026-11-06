@@ -78,8 +78,7 @@ public static class SeatMarks
         lock (Gate)
         {
             if (!Marks.TryGetValue(key, out var mark)) return null;
-            if (launch is not null && ReferenceEquals(mark.Prober, launch)) return null;
-            if (mark.Until > now) return Words(mark);
+            if (mark.Until > now) return launch is not null && ReferenceEquals(mark.Prober, launch) ? null : Words(mark);
             if (launch is null) return null;
             Marks[key] = mark with { Until = now + ProbeWindow, Prober = launch };
             return null;
@@ -90,6 +89,18 @@ public static class SeatMarks
     public static void Clear(RuntimeManifest manifest, string? profile, string? model)
     {
         lock (Gate) Marks.Remove(Key(manifest, profile, model));
+    }
+
+    /// <summary>
+    /// THE PROBE <paramref name="launch"/> ENDED WITHOUT SAYING ANYTHING ABOUT THE SEAT (it failed for another reason, or hung): one probe was the
+    /// allowance, so the mark holds again for what it held, with no further strike, and the next probe is a later launch's. No probe of its, no change.
+    /// </summary>
+    public static void ProbeEnded(RuntimeManifest manifest, string? profile, string? model, object launch, DateTimeOffset? at = null)
+    {
+        var key = Key(manifest, profile, model);
+        lock (Gate)
+            if (Marks.TryGetValue(key, out var mark) && ReferenceEquals(mark.Prober, launch))
+                Marks[key] = mark with { Prober = null, Until = (at ?? DateTimeOffset.UtcNow) + Hold(mark.Strikes) };
     }
 
     /// <summary>Forgets every mark: a test's way to start clean.</summary>
