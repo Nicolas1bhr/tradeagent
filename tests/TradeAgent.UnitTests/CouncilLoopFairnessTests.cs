@@ -84,9 +84,10 @@ public partial class CouncilLoopTests
     /// <para>RED at base: the first sleep was twelve hours.</para>
     /// </summary>
     [Theory]
-    [InlineData(2.50, 5.00, "share of the day")]
-    [InlineData(5.00, 5.00, "daily spending limit")]
-    public async Task A_stopped_organisation_looks_again_within_its_bound_and_the_card_keeps_the_reset(double spent, double cap, string waiting)
+    [InlineData(2.50, 5.00, 0.5, "share of the day", true)]
+    [InlineData(5.00, 5.00, 0.5, "daily spending limit", true)]
+    [InlineData(0, 5.00, 0.01, "a larger share", false)]
+    public async Task A_stopped_organisation_looks_again_within_its_bound_and_the_card_keeps_the_reset(double spent, double cap, double share, string waiting, bool resetHelps)
     {
         var (db, root) = Workspace();
         using var _ = db;
@@ -99,7 +100,7 @@ public partial class CouncilLoopTests
             slept.TrySetResult(d);
             await Task.Delay(Timeout.Infinite, ct);
         });
-        host.Spending[CouncilRoles.Operations] = Reading(CouncilRoles.Operations, (decimal)spent, (decimal)cap, 0.5m) with { ResumesAt = resets };
+        host.Spending[CouncilRoles.Operations] = Reading(CouncilRoles.Operations, (decimal)spent, (decimal)cap, (decimal)share) with { ResumesAt = resets };
         host.Spending[CouncilRoles.Research] = host.Spending[CouncilRoles.Operations] with { Role = CouncilRoles.Research };
         Told(host, MissionEventKind.Fill, CouncilRoles.Operations, now.AddMinutes(-1));
 
@@ -108,7 +109,7 @@ public partial class CouncilLoopTests
 
         Assert.Equal(new MissionOptions().MaxDelay, first);
         var card = loop.Status;
-        Assert.Equal(resets, card.NextTurnAt);
+        Assert.Equal(resetHelps ? resets : null, card.NextTurnAt);
         Assert.Contains(waiting, card.WaitingFor, StringComparison.Ordinal);
         await loop.PauseAsync();
     }
@@ -359,6 +360,32 @@ public partial class CouncilLoopTests
         await loop.TurnAsync();
         Assert.All(taken, id => Assert.Equal(MissionEventDisposition.Failed, host.Events!.Get(id + MissionLoop.AfterLost)!.Disposition));
         Assert.Equal(kinds.Length, kinds.SelectMany(k => host.Events!.OfKind(k)).Count(e => e.Id.EndsWith(MissionLoop.AfterLost, StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// (R1d) ENDING A TURN BADLY BUYS NO EARLIER ONE. A member's own request and a hirer's wake about its hire, taken by a turn that fails, are told again at
+    /// the floor, counted from that turn; a hire's first wake, which names the hire itself, is told again now. RED before: all three due at once, a
+    /// position's exit code past the board's floor.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_turn_tells_what_a_position_bought_for_itself_again_at_its_floor()
+    {
+        var now = Noon();
+        var (host, db) = FairTeamHome(() => now, ShippedFloors);
+        using var _ = db;
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+        host.Conversations[FairMember].Exit = 1;
+        var own = Told(host, MissionEventKind.Self, FairMember, now);
+        var hirer = MissionEventIds.Activated("pos-fa1e00000009", FairMember, 1);
+        Assert.True(host.Events!.Raise(hirer, MissionEventKind.Activated, now, payload: "pos-fa1e00000009", role: FairMember));
+        var first = MissionEventIds.Activated(FairMember, FairMember, 2);
+        Assert.True(host.Events.Raise(first, MissionEventKind.Activated, now, payload: FairMember, role: FairMember));
+
+        await loop.TurnAsync();
+
+        Assert.Equal(now.AddMinutes(15), host.Events.Get(own + MissionLoop.AfterLost)!.DueAt);
+        Assert.Equal(now.AddMinutes(15), host.Events.Get(hirer + MissionLoop.AfterLost)!.DueAt);
+        Assert.Equal(now, host.Events.Get(first + MissionLoop.AfterLost)!.DueAt);
     }
 
     /// <summary>
