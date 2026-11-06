@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core;
@@ -147,6 +148,25 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
     /// <summary>Files hashed per pass, so one 4 GB drop cannot stall the pass that follows it.</summary>
     public int HashesPerPass { get; init; } = 24;
+
+    /// <summary>
+    /// BYTES HASHED PER PASS (<c>U-cards-2</c>): the sum of the sizes of the files a pass reads to hash. A file that would carry the
+    /// pass past it waits for the next pass, where it is read first — so a 4 GB drop is worked through, never abandoned — and
+    /// <see cref="HashesPerPass"/> alone bounded the COUNT: 24 files of 4 GB each, or one sparse terabyte, held the pass for as long as
+    /// the reads took.
+    /// </summary>
+    public long HashBytesPerPass { get; init; } = 2L << 30;
+
+    /// <summary>
+    /// WALL TIME HASHING MAY TAKE PER PASS (<c>U-cards-2</c>), across every file and inside one: a read that has not finished when it
+    /// runs out is stopped between reads, its row left unhashed and said so (<see cref="ScanResult.HashDeferrals"/>), and tried again
+    /// next pass. A file too large to finish inside it is retried each pass and never hashed — said each time, never skipped silently.
+    /// A third of the app's 30-second pass at most: the pass runs on the loop that also runs the trading pass.
+    /// </summary>
+    public TimeSpan HashTimePerPass { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How many of a pass's deferrals its result names in words; the count is all of them.</summary>
+    public const int DeferralsNamed = 10;
 
     public ScanResult Scan(CancellationToken ct = default, IReadOnlySet<string>? unsealed = null)
     {
@@ -314,9 +334,11 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 return 0;
             });
 
-        var hashed = HashPending(ct, unsealedHomes);
+        var (hashed, deferred, deferrals) = HashPending(ct, unsealedHomes);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated)
         {
+            HashDeferred = deferred,
+            HashDeferrals = deferrals,
             AddedBy = addedBy,
             Unreadable = unreadable.Count,
             // The owner's drop folder first, because that is the place they look after; then the homes.
@@ -419,15 +441,44 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// A row that fails either check is simply left unhashed: the next walk sees the new tuple and
     /// records it as the new version it is.
     /// </summary>
-    int HashPending(CancellationToken ct, IReadOnlySet<string> unsealedHomes)
+    (int Hashed, int Deferred, IReadOnlyList<string> Deferrals) HashPending(CancellationToken ct, IReadOnlySet<string> unsealedHomes)
     {
         var hashed = 0;
+
+        // BOUNDED IN BYTES AND IN WALL TIME (U-cards-2): the batch comes smallest first (NeedingHash), so the small files of a drop are
+        // not held behind its large one, a file no pass can finish never holds a batch's places against the files behind it, and the
+        // large one is first in a pass once the smaller are done. Whatever this pass does not reach or finish is DEFERRED, counted and
+        // said in words, and read again next pass.
+        var clock = Stopwatch.StartNew();
+        long spent = 0;
+        var deferred = 0;
+        var deferrals = new List<string>();
+        void Defer(Material m, string why)
+        {
+            deferred++;
+            if (deferrals.Count < DeferralsNamed)
+                deferrals.Add($"{m.RelPath} ({m.SizeBytes:N0} bytes) was not hashed this pass: {why} It is tried again next pass.");
+        }
+
         foreach (var m in _store.NeedingHash(HashesPerPass))
         {
             ct.ThrowIfCancellationRequested();
 
             // NOR IS A FILE IN AN UNSEALED HOME OPENED TO BE HASHED (U-org-lanes, review 2): the lane writing it has not committed.
             if (unsealedHomes.Any(h => m.RelPath.StartsWith(h + "/", StringComparison.Ordinal))) continue;
+
+            var left = HashTimePerPass - clock.Elapsed;
+            if (left <= TimeSpan.Zero)
+            {
+                Defer(m, $"this pass's {HashTimePerPass.TotalSeconds:0.#} s for hashing was spent.");
+                continue;
+            }
+            if (spent > 0 && spent + m.SizeBytes > HashBytesPerPass)
+            {
+                Defer(m, $"this pass's {HashBytesPerPass:N0} bytes for hashing would be passed; a file read first in a pass is read whole.");
+                continue;
+            }
+
             var full = Path.Combine(_root, m.RelPath.Replace('/', Path.DirectorySeparatorChar));
             try
             {
@@ -440,8 +491,17 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 if (!IsStill(fs, m)) continue;
 
                 // CANCELLABLE BETWEEN READS (U-exec-env-fix item 1): a cell can leave a sparse terabyte at any name in its home, and a
-                // pass that is asked to stop stops here too rather than at the end of the file.
-                var digest = Sha256Hex.Of(fs, ct);
+                // pass that is asked to stop stops here too rather than at the end of the file. The same cut-off is the pass's wall time.
+                spent += m.SizeBytes;
+                using var bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                bound.CancelAfter(left);
+                string digest;
+                try { digest = Sha256Hex.Of(fs, bound.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    Defer(m, $"it did not finish within the {HashTimePerPass.TotalSeconds:0.#} s a pass has for hashing.");
+                    continue;
+                }
                 if (!IsStill(fs, m)) continue;
 
                 _store.SetHash(m.Id, digest);
@@ -450,7 +510,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             catch (IOException) { }                 // still being written, or gone — the next pass retries
             catch (UnauthorizedAccessException) { }
         }
-        return hashed;
+        return (hashed, deferred, deferrals);
     }
 
     /// <summary>Is the open file still the one this row was written about?</summary>
