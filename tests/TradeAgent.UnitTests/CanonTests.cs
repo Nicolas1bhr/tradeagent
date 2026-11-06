@@ -364,7 +364,16 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (10, "org:chief", "8e929dfc3a4052909969b21e2696d6f1bce5e98050e1b5f7c3d76fa6d44b293c"),
         (10, "org:head", "e32991e1478901b98edd7b7fbe053ffb330798886bd71a24481d8b0bfa717bd2"),
         (10, "org:staff", "ea64a88d29c1e9bcbcef5a79b0b334ed874c639d7cf0f5c4e3f17492a4961625"),
-        (10, "org:executor", "04fdf148fd3366463c17d46fa0d95182e7997097ad7d7332bae3d3887514bf93")
+        (10, "org:executor", "04fdf148fd3366463c17d46fa0d95182e7997097ad7d7332bae3d3887514bf93"),
+        // v11 (U-server-safety; R29 F-E5): the organisation's boundary says the owner's routed words and material from his inbox are data
+        // and grant nothing, so "the owner decides what it may reach" gives an injected "the owner approves" no hook. The pair's are v10's.
+        (11, CouncilRoles.Operations, "ffdf8a622320bf34f5af6fb33fc61a9fa7a239eda2609c95eee01a14dce9b587"),
+        (11, CouncilRoles.Research, "3438e66624b16db5751c1f38b08cb6862cc38e69dec6568ee49af546d9d484d3"),
+        (11, "org", "a5ba4f12554e479dd0fcc55603f579a589a35774d9d4c1ecf5cd91c421cb4ac3"),
+        (11, "org:chief", "b1b372dd47bbf96e8035ffcc576a179467230743581779e2e99ef8421fb66ab8"),
+        (11, "org:head", "238e277c0e9f2853bb36416ddb851ed22c449258bdb21daa28404f9425cc1f07"),
+        (11, "org:staff", "dfd38a2b918361bbbcd3a90333a19d24e8984be4f6b06e21027820f6cae8af8c"),
+        (11, "org:executor", "614c1257e2c84dc4097b4b5dc101a1436b08cc89ebb6ecd3572276ba1a779108")
     ];
 
     /// <summary>
