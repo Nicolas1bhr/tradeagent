@@ -144,7 +144,7 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     /// </summary>
     public int HashDeferred { get; init; }
 
-    /// <summary>The deferrals in words — the file, its size, why — at most <see cref="MaterialScanner.DeferralsNamed"/> of them.</summary>
+    /// <summary>The deferrals in words — the file, its size, why — at most <see cref="MaterialScanner.DeferralsNamed"/> of them, then one line for the rows its batch did not reach.</summary>
     public IReadOnlyList<string> HashDeferrals { get; init; } = [];
 
     /// <summary>

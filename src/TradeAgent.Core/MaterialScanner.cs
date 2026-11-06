@@ -460,7 +460,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 deferrals.Add($"{m.RelPath} ({m.SizeBytes:N0} bytes) was not hashed this pass: {why} It is tried again next pass.");
         }
 
-        foreach (var m in _store.NeedingHash(HashesPerPass))
+        var batch = _store.NeedingHash(HashesPerPass);
+        foreach (var m in batch)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -510,6 +511,20 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             catch (IOException) { }                 // still being written, or gone — the next pass retries
             catch (UnauthorizedAccessException) { }
         }
+
+        // AND WHAT THE BATCH DID NOT REACH, when this pass deferred at all (Codex review): a pass held up by what it could not finish
+        // leaves the rows behind its batch waiting, and those are said too. A pass that deferred nothing stays silent: HashesPerPass is
+        // then only its pace, and the next pass takes them.
+        if (deferred > 0)
+        {
+            var past = _store.CountNeedingHash() - (batch.Count - hashed);
+            if (past > 0)
+            {
+                deferred += past;
+                deferrals.Add($"{past:N0} more file{(past == 1 ? "" : "s")} waiting to be hashed {(past == 1 ? "was" : "were")} not reached this pass. They are tried again next pass, smallest first.");
+            }
+        }
+
         return (hashed, deferred, deferrals);
     }
 

@@ -164,12 +164,19 @@ public sealed class MaterialStore(Database db)
         return Read(c);
     });
 
-    /// <summary>Rows still awaiting a hash, oldest first, so a big drop is worked through in order.</summary>
+    /// <summary>Rows still awaiting a hash, smallest first, so a file no pass can finish holds no place ahead of what can be finished.</summary>
     public IReadOnlyList<Material> NeedingHash(int limit) => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT {Cols} FROM material WHERE sha256 IS NULL AND removed_at IS NULL ORDER BY size_bytes, id LIMIT $n",
             ("$n", limit));
         return Read(c);
+    });
+
+    /// <summary>How many present rows still need a hash, past any batch <see cref="NeedingHash"/> returned.</summary>
+    public int CountNeedingHash() => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM material WHERE sha256 IS NULL AND removed_at IS NULL");
+        return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     });
 
     /// <summary>Every version ever seen at one path, including the ones that are gone.</summary>
