@@ -30,8 +30,8 @@ public static class HoldoutLength
             return $"{subject}'s end cannot be read, so it counts as under {year} days — too short for a conclusive verdict.";
         return CanBeConclusive(s)
             ? $"{subject} spans {Days(s):N0} days — long enough for the referee to reach a conclusive verdict."
-            : $"{subject} spans {Days(s):N0} days, under {year} — too short for a conclusive verdict: the referee's statistical test is not run "
-              + "over it, a version refused for a loss over it reaches paper only through the inconclusive path, and one profitable over it "
-              + "reaches paper on that result alone.";
+            : $"{subject} spans {Days(s):N0} days, under {year} — too short for a conclusive verdict: the referee's statistical test needs "
+              + $"{AlphaWealth.MinHoldoutDays:N0} known days, a version refused for a loss over it reaches paper only through the inconclusive "
+              + "path, and one profitable over it reaches paper on that result alone.";
     }
 }

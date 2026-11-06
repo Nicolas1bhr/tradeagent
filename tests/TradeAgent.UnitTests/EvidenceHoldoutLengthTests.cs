@@ -367,6 +367,56 @@ public class EvidenceHoldoutLengthTests
     }
 
     /// <summary>
+    /// D15: A PROMOTED PARENT WHOSE FAMILY HAS NOTHING LEFT KEEPS NOTHING UNSPENT (the Codex review's P2). A child of it is charged to the campaign
+    /// its family was first charged to as well as to this one, and once that campaign's whole budget is gone every child is refused, so
+    /// a later campaign of the pair with a full pot has no admissible trial left and must renew.
+    /// </summary>
+    [Fact]
+    public async Task A_promoted_parent_whose_family_has_spent_its_campaign_keeps_nothing_unspent()
+    {
+        var pair = TestEnv.NewPair();
+        using var archive = new FakeArchive();
+        var (gw, db, home) = await SetUp(archive, pair, Small);
+        using var owned = db;
+        await using var gateway = gw;
+        var parent = Freeze(db, Winning(pair), home.HoldoutFrom.AddDays(-1));
+        Assert.True(Trial(db, home, parent, "run-parent").Ok);
+        Assert.Equal(PromotionVerdict.Promoted, new Referee(db, () => Now).Verdict(parent, home.Id).Promotion!.Verdict);
+
+        var (held, later) = gw.SetHoldout(Recorded(db, pair, First, Last, "v2").Id, HeldFrom, EvaluationClass.Research);
+        Assert.True(held.Ok, held.Why);
+        FillThePot(db, later!, pair);
+        Assert.True(gw.Renewals.ParentCanBePromoted(later!));
+
+        FillThePot(db, home, pair);
+        for (var i = 0; i < home.RefinementBudget; i++)
+            Assert.True(Trial(db, home, Version(db, pair, $"refine-{i}", parent), $"run-refine-{i}").Ok);
+        Assert.False(gw.Renewals.ParentCanBePromoted(later!));
+        Assert.Equal(CampaignRenewal.ExplorationTrials, gw.Renewals.SpentOn(later!));
+    }
+
+    /// <summary>
+    /// D15: A DATASET TRADEAGENT NO LONGER VOUCHES FOR JUDGES NOTHING (the Codex review's P2): a measured, unjudged version cannot be promoted over
+    /// a rejected holdout, because no verdict run opens on it, so it keeps a full pot from nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_rejected_holdout_can_promote_nothing_so_a_full_pot_is_spent()
+    {
+        var pair = TestEnv.NewPair();
+        using var archive = new FakeArchive();
+        var (gw, db, campaign) = await SetUp(archive, pair, Small);
+        using var owned = db;
+        await using var gateway = gw;
+        Assert.True(Trial(db, campaign, Freeze(db, Winning(pair), campaign.HoldoutFrom.AddDays(-1)), "run-measured").Ok);
+        FillThePot(db, campaign, pair);
+        Assert.True(gw.Renewals.ParentCanBePromoted(campaign));
+
+        db.Exec($"UPDATE dataset SET state='{DatasetState.REJECTED}' WHERE id={campaign.HoldoutDatasetId.ToString(CultureInfo.InvariantCulture)}");
+
+        Assert.False(gw.Renewals.ParentCanBePromoted(campaign));
+    }
+
+    /// <summary>
     /// D15: A VERSION NOTHING CAN BRING TO A VERDICT KEEPS NOTHING UNSPENT (the Codex review's P1). Frozen before the cutoff, but with no completed
     /// run registered under the campaign: <c>trade verdict</c> would refuse it, and with the pot full the run it lacks is refused too, so
     /// it can never be promoted, and a campaign that waited for it would never renew.
@@ -441,6 +491,25 @@ public class EvidenceHoldoutLengthTests
         Assert.Single(lines, l => l.StartsWith($"{first}: campaign {newer.Id} has spent its exploration trials", StringComparison.Ordinal));
         Assert.Single(lines, l => l.StartsWith($"{second}: campaign {other.Id} ", StringComparison.Ordinal));
         Assert.DoesNotContain(lines, l => l.Contains($"campaign {older.Id} ", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// D15: A PAIR OUT OF JUDGEMENTS IS TOLD SO WITHOUT LOSING ONE IT PAID FOR (the Codex review's P2): a charge a stop or a crash left unanswered
+    /// stays obtainable, so the line says no NEW verdict and says that one can be asked for again.
+    /// </summary>
+    [Fact]
+    public async Task The_packet_keeps_a_charged_and_unanswered_verdict_obtainable()
+    {
+        var pair = TestEnv.NewPair();
+        var (gw, _, db) = await TestEnv.Ready(s => { Small(s); s.CampaignVerdictBudget = 1; });
+        using var owned = db;
+        await using var gateway = gw;
+        var (done, campaign) = gw.SetHoldout(Recorded(db, pair, First, Last).Id, HeldFrom, EvaluationClass.Research);
+        Assert.True(done.Ok, done.Why);
+        Assert.True(gw.Campaigns.ChargeVerdict(campaign!.Id, Version(db, pair, "charged"), Now).Ok);
+
+        Assert.Contains($"{pair}: campaign {campaign.Id} has spent its final judgements: it takes no new verdict, though one already charged and "
+            + "not answered can be asked for again.", Assert.Single(gw.Renewals.SpentLines()), StringComparison.Ordinal);
     }
 
     /// <summary>

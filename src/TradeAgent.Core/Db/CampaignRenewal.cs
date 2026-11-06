@@ -124,8 +124,10 @@ public sealed class CampaignRenewal(Database db)
     /// WHETHER A TRIAL CAN STILL DECLARE A PROMOTED PARENT UNDER THIS CAMPAIGN, which is the only thing that draws on its refinement pot
     /// (<see cref="CampaignStore.IsExploration"/>). True in two cases:
     /// <list type="bullet">
-    /// <item><b>A version stands Promoted.</b> Of any pair, as <see cref="CampaignStore.IsExploration"/> reads it: a child ported to this
-    /// pair is a refinement charged here. Read through <see cref="Promotions.Standing"/>, so a promotion since invalidated is none.</item>
+    /// <item><b>A version stands Promoted and a child of it would be admitted here.</b> Of any pair, as
+    /// <see cref="CampaignStore.IsExploration"/> reads it: a child ported to this pair is a refinement charged here. Read through
+    /// <see cref="Promotions.Standing"/>, so a promotion since invalidated is none, and through the admission rule itself
+    /// (<see cref="CampaignStore.AdmitsChildOf"/>), so a parent whose family has spent its own campaign keeps nothing unspent.</item>
     /// <item><b>This campaign could still promote one.</b> A version of its pair, frozen BEFORE its cutoff and bounded, with a completed run
     /// registered under this campaign's lineage (what <c>trade verdict</c> admits a version on, and with the pot full no such run can be
     /// made now), and no verdict recorded under this campaign. It must also be either already charged, which a stop or a crash leaves
@@ -142,10 +144,12 @@ public sealed class CampaignRenewal(Database db)
         return db.Read(_ =>
         {
             var promotions = new Promotions(db);
-            if (promotions.PromotedVersions().Any(version => promotions.Standing(version).IsPromoted)) return true;
-
-            if (new DatasetStore(db).ById(campaign.HoldoutDatasetId) is not { } set) return false;
             var campaigns = new CampaignStore(db);
+            if (promotions.PromotedVersions().Any(version => promotions.Standing(version).IsPromoted
+                                                             && campaigns.AdmitsChildOf(version, campaign.Id))) return true;
+
+            // A DATASET TRADEAGENT NO LONGER VOUCHES FOR JUDGES NOTHING, whatever waits to be judged on it.
+            if (new DatasetStore(db).ById(campaign.HoldoutDatasetId) is not { State: not DatasetState.REJECTED } set) return false;
             var room = campaigns.JudgementsSpent(campaign.Id) < campaign.VerdictBudget;
             var measured = campaigns.MeasuredVersions(campaign);
             var retired = new Retirements(db);
@@ -183,7 +187,7 @@ public sealed class CampaignRenewal(Database db)
             {
                 ExplorationTrials => "it takes no further run of a version without a promoted parent, and nothing can be promoted under it",
                 "research trials" => "it takes no further research run",
-                _ => "it takes no further verdict"
+                _ => "it takes no new verdict, though one already charged and not answered can be asked for again"
             };
             var kept = spent == "final judgements" || left == 0 ? "" : $", though {left} of its final judgements can still be asked for";
             var next = Of(campaign.Id) is { } held
