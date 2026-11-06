@@ -698,6 +698,8 @@ public sealed class AppHost : IAsyncDisposable
             Gateway.Log.TryEngineering("Workspace", result.Repaired ? "home_repaired" : "home_repair_failed", result.Repaired ? "info" : "warn",
                 metadataJson: Json.Write(new { role, aside = result.Aside, words = result.Words }));
         }
+        // THE REST WAS ABOUT THE FOLDER HE JUST REPAIRED (U-turn-bounds-2): its position looks now, not after a backoff that may be half an hour by then.
+        if (result.Repaired) Mission?.SeatChanged(role);
         return result.Words;
     }
 
