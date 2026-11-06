@@ -1268,8 +1268,12 @@ reported — its own trades, never a position of yours on the same account. **St
 ends the run in one press plus a confirm — it cancels whatever that run has working, closes what that
 run bought and nothing else, and records why. If something else already closed it — you pressed
 **Close all positions**, say — the run's line says its end found it closed outside the run, and
-nothing more is sent. It stops the *run* and not the grant: the envelope and the paper allocation
-stand, so TradeAgent may start a fresh run under them once the ended one is fully accounted for. If the close
+nothing more is sent. A stop ends the run and that version's place on paper on this account, whoever
+stopped it, you or the organisation: no fresh run of it starts, and it does not come back, not even
+under a new grant. The line says who stopped it and when. Its slot in the envelope frees once the
+ended run is fully accounted for, so another version can take it, and the grant itself stands. A run
+that ends by itself is different: its place on paper stands and TradeAgent may start a fresh run of
+it once the ended one is fully accounted for. If the close
 could not go out when the run ended — TradeAgent was installing an update, AI trading was stopped,
 the platform was not answering — the line says the run is ended and **NOT closed**, and why. Nothing
 was sent, so TradeAgent sends that close again by itself, at most once a minute, as soon as nothing

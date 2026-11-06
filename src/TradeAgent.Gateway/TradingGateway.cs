@@ -1597,12 +1597,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// WHY THIS RUN IS OVER, or null because it is not. Four reasons, each read from its own ledger at
-    /// this instant: the grant withdrawn or expired, no paper allocation standing, the allocation
-    /// superseded by a later one, and a verdict that no longer stands.
+    /// WHY THIS RUN IS OVER, or null because it is not. Five reasons, each read from its own ledger at
+    /// this instant: a stop, in its own words (R30 D19 — what a stop's END left unfinished, a run suspended
+    /// when it was stopped or a process that died between the two); the grant withdrawn or expired, no paper
+    /// allocation standing, the allocation superseded by a later one, and a verdict that no longer stands.
     /// </summary>
     string? DeploymentEndReason(StrategyDeploymentRow deployment, DateTimeOffset now)
     {
+        if (_allocations.StopOf(deployment.VersionId, deployment.ConnectorId, deployment.AccountId, now) is { } stop)
+            return stop.Reason;
+
         if (_envelopes.ById(deployment.EnvelopeId) is not { } envelope || !envelope.StandsAt(now))
             return "the paper envelope it was started under has been withdrawn or has expired";
 
@@ -1879,11 +1883,38 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// refusal became the run's latest word, "NOT closed" over a book the first close had flattened, and the
     /// next pass cancelled that close to close again. The wait is on this run only.</para>
     /// </summary>
-    public async Task<StrategyDeploymentRow?> EndPaperDeploymentAsync(string id, string reason,
-        CancellationToken ct = default)
+    public Task<StrategyDeploymentRow?> EndPaperDeploymentAsync(string id, string reason,
+        CancellationToken ct = default) =>
+        EndThroughItsGateAsync(id, reason, null, ct);
+
+    /// <summary>
+    /// AN OWNER'S OR AN ORGANISATION'S STOP (R30 D19; R28 P1, P4): the END above, and it ENDS THE ALLOCATION with the run. No replacement is
+    /// started for it, the app's policy does not put the version back on paper on this account, and the slot frees once the run is flat —
+    /// the same <see cref="HoldsItsSlot"/> every end waits on. <see cref="EndPaperDeploymentAsync"/> stays what a run that ends by itself
+    /// takes, and nothing changes for one of those: its allocation stands and its replacement waits for a flat end.
+    ///
+    /// <para><b>The ledger is written FIRST, inside the run's gate</b>, so a process that dies between the stop and the run's END leaves a
+    /// stop that holds: the reconcile pass finds the allocation stopped and ends the run in the stop's own words
+    /// (<see cref="DeploymentEndReason"/>), and no sweep can replace it meanwhile. A close passes the allocation gate with nothing standing,
+    /// as it always has, so ending the allocation first leaves nothing unable to close. A stop of a run already over still ends its allocation:
+    /// the caller asked that it not run again, and a run that ended by itself a moment earlier does not turn that into a no-op.</para>
+    ///
+    /// <para><b>A stop times a paper close, and it says so (R29 F-C5).</b> The run's line, its end note and the stop row each say who stopped
+    /// it and when, and the row keeps what the run held at that instant, so a stop placed to end a forward record at a chosen moment is
+    /// there to be read. Paper only, through every gate: the stop is <see cref="Deployments"/>' END with a row beside it, and it can start,
+    /// widen or move nothing.</para>
+    /// </summary>
+    public Task<StrategyDeploymentRow?> StopPaperDeploymentAsync(string id, string who, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(who);
+        return EndThroughItsGateAsync(id, $"stopped by {who}", who, ct);
+    }
+
+    /// <summary>The END through its run's gate, with the stop's ledger row first when <paramref name="stoppedBy"/> names one.</summary>
+    async Task<StrategyDeploymentRow?> EndThroughItsGateAsync(string id, string reason, string? stoppedBy, CancellationToken ct)
     {
         if (_deployments.ById(id) is not { } first) return null;
-        if (first.IsEnded) return first;
+        if (first.IsEnded && stoppedBy is null) return first;
 
         var gate = EndGateOf(first.Id);
         if (!await gate.WaitAsync(0, ct))
@@ -1897,9 +1928,25 @@ public sealed partial class TradingGateway : IAsyncDisposable
         {
             // THE ROW RE-READ INSIDE THE GATE: an END that finished while this one waited has answered it.
             if (_deployments.ById(id) is not { } deployment) return null;
+            if (stoppedBy is not null) EndTheAllocation(deployment, reason);
             return deployment.IsEnded ? deployment : await EndInsideItsGateAsync(deployment, reason, ct);
         }
         finally { gate.Release(); }
+    }
+
+    /// <summary>
+    /// THE STOP'S ROW ON THE ALLOCATION LEDGER (<see cref="Allocations.RecordStop"/>), naming who, when, the run and what it held then. A run
+    /// with no paper allocation on this ledger writes nothing and still ends: a refusal here is said in the engineering log, never a reason to
+    /// leave a run going that somebody stopped.
+    /// </summary>
+    void EndTheAllocation(StrategyDeploymentRow deployment, string reason)
+    {
+        var at = Now;
+        var said = $"{reason} at {at:yyyy-MM-dd HH:mm:ssK}, run {StrategyDeploymentRow.Short(deployment.Id)}." + BookSentence(_deployments.BookOf(deployment));
+        var result = _allocations.RecordStop(deployment.AllocationId, said, at);
+        _log.TryEngineering("Gateway", "paper_allocation_stopped", result.Ok ? "info" : "warn",
+            metadataJson: Json.Write(new { deployment = deployment.Id, allocation = deployment.AllocationId, result.Why }));
+        if (result.Ok) _log.Activity($"TradeAgent ended the paper allocation of strategy version {Short(deployment.VersionId)}: {said}");
     }
 
     /// <summary>
@@ -2327,7 +2374,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 + (fees > 0m ? $"{AllocationRow.Num(fees)} in declared costs" : "costs of nothing")
                 + $". The run is {deployment.State}"
                 + (deployment.EndReason is { Length: > 0 } end ? $" — {end}" : "")
-                + ". EVERY FIGURE HERE IS A DECLARED SIMULATION AT THE NEXT OPEN: the price existed "
+                + ". "
+                // A STOP CHOSE THIS INSTANT, AND THE AUTHOR READS THAT IT DID (R29 F-C5).
+                + (deployment.IsEnded && _allocations.StopOf(deployment.VersionId, deployment.ConnectorId, deployment.AccountId, now) is { } stop
+                    ? $"This run was ended by a stop and not by itself ({stop.Reason}): its forward record ends where that stop chose, and the "
+                      + "version does not return to paper on this account. "
+                    : "")
+                + "EVERY FIGURE HERE IS A DECLARED SIMULATION AT THE NEXT OPEN: the price existed "
                 + "at the open of a bar and nothing else is established — no fill, no queue position, "
                 + "no intrabar ordering"
                 + (fees > 0m ? "" : ", and a cost of nothing was MODELLED rather than measured")

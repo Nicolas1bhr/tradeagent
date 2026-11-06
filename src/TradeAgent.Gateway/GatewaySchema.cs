@@ -507,16 +507,18 @@ public static class GatewaySchema
             []),
 
         new(Core.Ops.DeploymentStop, "trade deployment stop --id <deployment>", true,
-            "ENDS ONE PAPER DEPLOYMENT: its working orders are cancelled, what the RUN itself holds — "
-            + "its own fills, never another run's or the account owner's on the same account — is closed "
-            + "with an ordinary market order, and the reason is recorded against the run. "
-            + "It only ever REMOVES exposure, which is why it is here at all when starting one is not "
-            + "— the same exception this channel already makes for 'close' and 'cancel'. WHAT IT DOES "
-            + "NOT DO: it does not withdraw the paper allocation or the account owner's envelope, both "
-            + "of which stand exactly as they did, and it cannot restart the run. A replacement waits "
-            + "until every operation of the ended run is settled, so an end whose close comes back "
-            + "UNKNOWN leaves this version with nothing running and nothing new started until that is "
-            + "resolved — which is the point. The close passes every gate an ordinary order passes.",
+            "ENDS ONE PAPER DEPLOYMENT AND THE VERSION'S PAPER ALLOCATION WITH IT: its working orders are "
+            + "cancelled, what the RUN itself holds — its own fills, never another run's or the account "
+            + "owner's on the same account — is closed with an ordinary market order, and who stopped it "
+            + "and when are recorded against the run and on the allocation ledger, with what the run held "
+            + "at that instant. No replacement starts, the version does not return to paper on this "
+            + "account, and nothing takes this back. It only ever REMOVES exposure, which is why it is here "
+            + "at all when starting one is not — the same exception this channel already makes for 'close' "
+            + "and 'cancel'. WHAT IT DOES NOT DO: it does not withdraw the account owner's envelope, which "
+            + "stands exactly as it did. The slot frees only once every operation of the ended run is "
+            + "settled, so an end whose close comes back UNKNOWN keeps the slot with nothing new started in "
+            + "it until that is resolved — which is the point. The close passes every gate an ordinary "
+            + "order passes.",
             [
                 new("id", "string", true, "The deployment's own id, as 'deployment-list' answered it. An id this installation does not hold is refused rather than ignored.")
             ]),

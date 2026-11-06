@@ -30,6 +30,14 @@ public static class AllocationPolicy
     /// refusal stays inconclusive and the term is open, and never in a live mode.
     /// </summary>
     public const string InconclusiveV1 = "allocation-policy-inconclusive-v1";
+
+    /// <summary>
+    /// THE STOP (R30 D19): the row an owner's or an organisation's stop writes, superseding every paper row of its version on its platform
+    /// and account. Its window is empty — it takes effect and ends at the one instant of the stop — and both its ceilings are zero, so it
+    /// never stands, never authorises and is never counted; what it does is END what was there (<see cref="AllocationRow.Ends"/>). Hashed
+    /// into the row's id like <see cref="V1"/>. The record of who stopped, when, and what the run held then is its <c>reason</c>.
+    /// </summary>
+    public const string StopV1 = "allocation-policy-stop-v1";
 }
 
 /// <summary>
@@ -149,6 +157,20 @@ public sealed record AllocationRow(
     /// </summary>
     public string EffectiveScope => IsPaper ? AllocationScope.Paper : AllocationScope.Live;
 
+    /// <summary>Whether this row is the record of a stop (<see cref="AllocationPolicy.StopV1"/>). Only ever a paper row.</summary>
+    public bool IsStop => IsPaper && string.Equals(PolicyVersion, AllocationPolicy.StopV1, StringComparison.Ordinal);
+
+    /// <summary>
+    /// WHETHER THIS STOP ENDS <paramref name="row"/>: a paper row of the same version on the same platform and account. By version and
+    /// account and not by one row, so a version holding two rows (an inconclusive slot and the favourable row after it) is stopped whole,
+    /// and the next grant of the pair is not the way back. Never a live row: nothing here can reach capital.
+    /// </summary>
+    public bool Ends(AllocationRow row) =>
+        IsStop && row is { IsPaper: true, IsStop: false }
+        && string.Equals(VersionId, row.VersionId, StringComparison.Ordinal)
+        && string.Equals(ConnectorId, row.ConnectorId, StringComparison.Ordinal)
+        && string.Equals(AccountId, row.AccountId, StringComparison.Ordinal);
+
     /// <summary>
     /// THE PAPER TUPLE, HASHED: the same seven facts in the same order, and then the five that make a
     /// paper allocation the thing it is — the scope word itself, the platform, the mode, the account
@@ -195,6 +217,9 @@ public sealed record AllocationRow(
     /// <summary>Whether this row is in force at <paramref name="now"/> by its own two instants.</summary>
     public bool StandsAt(DateTimeOffset now) =>
         EffectiveFrom <= now && (EffectiveTo is not { } to || now < to);
+
+    /// <summary>Whether this stop's instant has arrived at <paramref name="now"/>. A row that is not a stop has none.</summary>
+    public bool StoppedBy(DateTimeOffset now) => IsStop && EffectiveTo is { } to && to <= now;
 
     /// <summary>
     /// WHETHER A PROPOSED ALLOCATION GIVES A VERSION MORE ROOM THAN <paramref name="from"/> DOES.
@@ -317,9 +342,9 @@ public sealed record AllocationResult(bool Ok, string Why, AllocationRow? Alloca
 /// THE ALLOCATION LEDGER: WHAT CAPITAL THE OWNER PUT BEHIND A PROMOTED VERSION, WRITTEN ONCE.
 ///
 /// <para><b>The app is the only writer and there is no update and no delete.</b> Not "no pipe op" — no
-/// method at all: this class exposes TWO writes (<see cref="Record"/>, the owner's capital, and
-/// <see cref="RecordPaper"/>, the app's own policy inside an envelope the owner granted), both
-/// <c>ON CONFLICT DO NOTHING</c>, and the reads below. The same rule <see cref="Promotions"/> has, for
+/// method at all: this class exposes THREE writes (<see cref="Record"/>, the owner's capital,
+/// <see cref="RecordPaper"/>, the app's own policy inside an envelope the owner granted, and
+/// <see cref="RecordStop"/>, which only ever ends a paper row), all <c>ON CONFLICT DO NOTHING</c>, and the reads below. The same rule <see cref="Promotions"/> has, for
 /// a sharper version of the same reason: an allocation is the number the gateway refuses orders
 /// against, and a limit its subject could edit is not a limit. There is no <c>trade</c> verb and no
 /// pipe op behind any of this, so an agent that wanted more capital has nowhere to ask.</para>
@@ -334,7 +359,8 @@ public sealed record AllocationResult(bool Ok, string Why, AllocationRow? Alloca
 /// records a fresh allocation from a later instant — a smaller ceiling, or a zero — and
 /// <see cref="StandingForLive"/> answers with the newest row that stands. Nothing is ever overwritten,
 /// so the sequence of what was allowed when is on the table where a reader can see it. A PAPER row is
-/// withdrawn by withdrawing the ENVELOPE, which stops every row under it at once.</para>
+/// withdrawn by withdrawing the ENVELOPE, which stops every row under it at once, or ended, one version on one
+/// account, by a STOP (<see cref="RecordStop"/>; R30 D19), which is a row too.</para>
 /// </summary>
 public sealed class Allocations(Database db)
 {
@@ -482,6 +508,13 @@ public sealed class Allocations(Database db)
                 "a paper allocation names the scope, the platform, the mode, the account and the "
                 + "envelope it was written under, and this one does not, so nothing was written.", null);
 
+        // A STOP ENDED THIS VERSION'S PLACE ON PAPER HERE, AND THE APP'S POLICY DOES NOT PUT IT BACK (R30 D19): not on the next sweep, under a
+        // later verdict, or in the next grant of the pair. Asked first, so a stopped version is never charged a trial for a slot it cannot hold.
+        if (StopOf(allocation.VersionId, connector, account, now) is { } stop)
+            return new AllocationResult(false,
+                $"version {Short(allocation.VersionId)} was stopped on account {account} ({stop.Reason}) and a stop ends its place on paper "
+                + "there, so nothing was written.", null);
+
         var standing = _promotions.Standing(allocation.VersionId);
 
         // THE POLICY THE ROW NAMES IS ONE THIS BUILD APPLIES, or nothing is written: a paper row under a policy nobody
@@ -624,6 +657,69 @@ public sealed class Allocations(Database db)
     });
 
     /// <summary>
+    /// ENDS THE PAPER ALLOCATION <paramref name="allocationId"/> NAMES, ON THE WORD OF AN OWNER'S OR AN ORGANISATION'S STOP (R30 D19): one
+    /// superseding row with <c>effective_to</c> at this instant, its ceilings zero, its reason <paramref name="reason"/>. The rows under it
+    /// are not touched; every reader of paper rows stops seeing them at this instant (<see cref="AllocationRow.Ends"/>), and
+    /// <see cref="RecordPaper"/> refuses the version on this account from now on.
+    ///
+    /// <para><b>It only ever takes away.</b> A row that is not a paper row is refused, so a stop never touches capital; the row written
+    /// can authorise nothing, because its window is empty and its ceilings are zero; and nothing here widens, moves or starts anything. A
+    /// second stop of a version already stopped writes nothing and answers the first: the first stop is the record.</para>
+    /// </summary>
+    public AllocationResult RecordStop(string allocationId, string reason, DateTimeOffset now) => db.Write(_ =>
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        if (ById(allocationId) is not { IsPaper: true, IsStop: false, ConnectorId: { Length: > 0 } connector, AccountId: { Length: > 0 } account } row
+            || !string.Equals(row.Mode, TradingMode.PAPER.ToString(), StringComparison.Ordinal))
+            return new AllocationResult(false,
+                $"allocation {Short(allocationId)} is not a paper allocation on this ledger, so a stop wrote nothing to it: a stop ends a "
+                + "paper allocation and reaches nothing else.", null);
+
+        if (StopOf(row.VersionId, connector, account, now) is { } already)
+            return new AllocationResult(true, $"version {Short(row.VersionId)} is already stopped: {already.Reason}", already);
+
+        var stop = row with
+        {
+            PolicyVersion = AllocationPolicy.StopV1,
+            MaxQuantity = 0m,
+            MaxNotional = 0m,
+            EffectiveFrom = now,
+            EffectiveTo = now,
+            Reason = reason,
+            At = now
+        };
+        stop = stop with { Id = stop.ComputedId };
+        Insert(stop);
+
+        return new AllocationResult(true,
+            $"version {Short(row.VersionId)} no longer holds its place on paper on account {account}: {reason}", ById(stop.Id) ?? stop);
+    });
+
+    /// <summary>
+    /// THE STOP THAT ENDED A VERSION'S PLACE ON PAPER ON ONE PLATFORM AND ACCOUNT BY <paramref name="now"/>, or null because none has. What
+    /// says who stopped it and when.
+    /// </summary>
+    public AllocationRow? StopOf(string versionId, string connectorId, string accountId, DateTimeOffset now) =>
+        For(versionId).FirstOrDefault(a => a.IsStop && a.StoppedBy(now)
+                                           && string.Equals(a.ConnectorId, connectorId, StringComparison.Ordinal)
+                                           && string.Equals(a.AccountId, accountId, StringComparison.Ordinal));
+
+    /// <summary>EVERY STOP ON THE LEDGER BY <paramref name="now"/>, read once by a reader of many rows.</summary>
+    IReadOnlyList<AllocationRow> Stops(DateTimeOffset now) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {Cols} FROM strategy_allocation WHERE policy_version=$p", ("$p", AllocationPolicy.StopV1));
+        return (IReadOnlyList<AllocationRow>)[.. Read(c).Where(a => a.IsStop && a.StoppedBy(now))];
+    });
+
+    /// <summary>The rows of <paramref name="rows"/> no stop on the ledger at <paramref name="now"/> has ended.</summary>
+    IReadOnlyList<AllocationRow> NotStopped(IEnumerable<AllocationRow> rows, DateTimeOffset now)
+    {
+        var stops = Stops(now);
+        return [.. rows.Where(r => !stops.Any(s => s.Ends(r)))];
+    }
+
+    /// <summary>
     /// WHY THIS INCONCLUSIVE SLOT MAY NOT BE WRITTEN, in words, or null because it may (<c>U-referee-v2b</c>). Read inside
     /// <see cref="RecordPaper"/>'s write. Four questions, each about the ledger as it stands: ONE TERM PER VERSION — a
     /// version that has held a slot is never given another, so an ended term ends it; A THIRD OF THE SLOTS — the envelope's
@@ -696,7 +792,7 @@ public sealed class Allocations(Database db)
             $"SELECT {Cols} FROM strategy_allocation WHERE policy_version=$p "
             + "ORDER BY effective_from DESC, at DESC, id DESC",
             ("$p", AllocationPolicy.InconclusiveV1));
-        return (IReadOnlyList<AllocationRow>)[.. Read(c).Where(a => a.IsPaper && a.StandsAt(now))];
+        return NotStopped(Read(c).Where(a => a.IsPaper && a.StandsAt(now)), now);
     });
 
     /// <summary>
@@ -819,11 +915,14 @@ public sealed class Allocations(Database db)
     ///
     /// <para><b>The envelope is asked at this instant</b>, from its own ledger, and a row whose grant
     /// has expired or been withdrawn answers null here — not "an allocation with a note". That is what
-    /// makes one press on the withdrawal card stop every experiment underneath it.</para>
+    /// makes one press on the withdrawal card stop every experiment underneath it. A version STOPPED on this
+    /// account answers null the same way (<see cref="RecordStop"/>).</para>
     /// </summary>
     public AllocationStanding? StandingForPaper(string versionId, string connectorId, string accountId,
         DateTimeOffset now)
     {
+        if (StopOf(versionId, connectorId, accountId, now) is not null) return null;
+
         foreach (var row in For(versionId).Where(a => a.IsPaper && a.StandsAt(now)))
         {
             if (!string.Equals(row.ConnectorId, connectorId, StringComparison.Ordinal)) continue;
@@ -841,7 +940,8 @@ public sealed class Allocations(Database db)
     /// <summary>
     /// EVERY PAPER ALLOCATION IN FORCE IN ONE ENVELOPE AT <paramref name="now"/>, whichever version it
     /// names. What <see cref="RecordPaper"/> counts deployments with, and what the app's policy asks
-    /// before writing another.
+    /// before writing another. A stopped version's rows are not in it: its slot here is free the moment
+    /// it is stopped, and a run still closing keeps the envelope's room through <c>HoldsItsSlot</c> until it is flat.
     /// </summary>
     public IReadOnlyList<AllocationRow> InEnvelope(string envelopeId, DateTimeOffset now) => db.Read(_ =>
     {
@@ -849,7 +949,7 @@ public sealed class Allocations(Database db)
             $"SELECT {Cols} FROM strategy_allocation WHERE envelope_id=$e "
             + "ORDER BY effective_from DESC, at DESC, id DESC",
             ("$e", envelopeId));
-        return (IReadOnlyList<AllocationRow>)[.. Read(c).Where(a => a.IsPaper && a.StandsAt(now))];
+        return NotStopped(Read(c).Where(a => a.IsPaper && a.StandsAt(now)), now);
     });
 
     /// <summary>
@@ -876,8 +976,7 @@ public sealed class Allocations(Database db)
     /// still on the table and the experiment is over.</para>
     /// </summary>
     public IReadOnlyList<AllocationStanding> PaperStanding(DateTimeOffset now, int limit = 100) =>
-        [.. All(limit)
-            .Where(a => a.IsPaper && a.StandsAt(now))
+        [.. NotStopped(All(limit).Where(a => a.IsPaper && a.StandsAt(now)), now)
             .GroupBy(a => (a.VersionId, a.EnvelopeId))
             .Select(g => g.First())
             .Select(a => PaperStandingOf(a,

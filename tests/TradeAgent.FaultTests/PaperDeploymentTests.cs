@@ -162,6 +162,11 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
     /// operation has no answer still occupies its slot: "a replacement waits for a flat, reconciled
     /// end", because an order that may be live at the platform is exactly what a second run would be
     /// placed on top of.</para>
+    ///
+    /// <para><b>CHANGED OPENLY UNDER R30 D19.</b> This test asserted that an OWNER'S STOP is replaced once flat. D19 removed that meaning: a
+    /// stop ends the allocation (<see cref="A_stop_ends_the_allocation_and_no_sweep_starts_a_replacement"/>). What stands is what it now
+    /// says, the case D19 leaves alone: a run that ENDS BY ITSELF is replaced once flat. Only the end's words changed; every assertion is
+    /// as it was.</para>
     /// </summary>
     [Fact]
     public async Task A_standing_paper_allocation_starts_one_deployment_and_a_second_waits_while_max_deployments_is_full()
@@ -187,7 +192,7 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         // refusal, and the one a replacement must wait on.
         await SeedAPosition(gw, conn, open[0]);
         conn.Faults.DropBeforeBrokerAccept = 1;
-        await gw.EndPaperDeploymentAsync(open[0].Id, "test: the owner stopped it");
+        await gw.EndPaperDeploymentAsync(open[0].Id, "test: the run ended by itself");
 
         clock.At = At.AddMinutes(5);
         var whileUnreconciled = gw.StartPaperDeploymentsDue(clock.At);
@@ -209,6 +214,48 @@ public partial class PaperDeploymentTests(ITestOutputHelper log)
         Assert.Equal(0, whileUnreconciled);
         Assert.Equal(1, afterAFlatEnd);
         Assert.Equal(2, gw.Deployments.All().Count);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A STOP STOPS (R30 D19; R28 P1, whose scratch test this re-creates). An owner's or an organisation's stop ENDS the allocation: the
+    /// next sweep starts no replacement and the app's own policy does not put the version back, however many minutes pass.
+    ///
+    /// <para>RED at the base: <c>R28 sweep after the stop started: 1</c>. The allocation stood, so <c>HoldsItsSlot</c> freed the flat run and
+    /// <c>StartPaperDeploymentsDueCore</c> started a replacement for it, and the pair's slots filled and never emptied.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_stop_ends_the_allocation_and_no_sweep_starts_a_replacement()
+    {
+        var (gw, _, db, clock) = await Ready();
+        using var _1 = db;
+
+        var (envelope, version) = await Allocated(gw, db);
+        Assert.Equal(1, gw.StartPaperDeploymentsDue(At));
+        var run = gw.Deployments.Open().Single();
+        var allocated = gw.Allocations.ById(run.AllocationId)!;
+
+        var stopped = await gw.StopPaperDeploymentAsync(run.Id, "org/team-x");
+        Assert.True(stopped!.IsEnded);
+
+        clock.At = At.AddMinutes(1);
+        var written = gw.AllocatePaperDue(clock.At);
+        var started = gw.StartPaperDeploymentsDue(clock.At);
+
+        foreach (var d in gw.Deployments.All())
+            log.WriteLine($"R28 deployment {StrategyDeploymentRow.Short(d.Id)} alloc={d.AllocationId[..12]} {d.State} — {d.EndReason ?? "-"}");
+        log.WriteLine($"R28 sweep after the stop started: {started}, allocations written: {written}");
+
+        Assert.Equal(0, started);
+        Assert.Equal(0, written);
+        Assert.Single(gw.Deployments.All());
+        Assert.Empty(gw.Deployments.Open());
+
+        // ENDED, ON THE LEDGER AND IN EVERY READER — AND NOT EDITED: the row the run started under is on the table as it was written.
+        Assert.Null(gw.Allocations.StandingForPaper(version, gw.Connector.Id, run.AccountId, clock.At));
+        Assert.Empty(gw.Allocations.InEnvelope(envelope.Id, clock.At));
+        Assert.Empty(gw.Allocations.PaperStanding(clock.At));
+        Assert.Equal(allocated, gw.Allocations.ById(run.AllocationId));
         await gw.DisposeAsync();
     }
 

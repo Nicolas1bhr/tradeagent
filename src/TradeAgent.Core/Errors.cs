@@ -258,7 +258,7 @@ public static partial class Labels
     public const string StopDeployment = "Stop paper deployment";
 
     public const string StopDeploymentArmed =
-        "Confirm: cancel its orders, close what it has open, and end the run";
+        "Confirm: cancel its orders, close what it has open, end the run and take this version off paper";
 
     /// <summary>What the second press will do, in full, with the figures the owner typed.</summary>
     public static string EnvelopeArmed(string symbol, string quantity, string? value, DateTimeOffset until) =>
