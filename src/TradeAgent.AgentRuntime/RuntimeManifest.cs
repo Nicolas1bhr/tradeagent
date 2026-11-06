@@ -785,8 +785,8 @@ public sealed class RuntimeManifest
 
     /// <summary>
     /// THE VENDOR'S OWN SENTENCE FOR A SEAT WHOSE TOOLS CANNOT RUN (<c>U-cli-code-mode</c>): a regex matched against the message of a
-    /// warning item in the turn's stream. A match ends the seat's launches until its program, settings or model change or the app
-    /// restarts, names why, and gives the turn's wakes back. Data, like <see cref="UsageLimit"/>: the sentence is the vendor's, and a
+    /// warning item in the turn's stream. A match holds the seat's launches under <see cref="SeatMarks"/> until its program, settings or
+    /// model change or its hold ends and a probe turn runs clean, names why, and gives the turn's wakes back. Data, like <see cref="UsageLimit"/>: the sentence is the vendor's, and a
     /// reworded one is a one-line fix in <c>runtimes.json</c>. Null recognises nothing.
     /// </summary>
     public string? ToolsUnavailablePattern { get; set; }
