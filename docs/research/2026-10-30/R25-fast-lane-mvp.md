@@ -83,6 +83,11 @@ Real money stays closed in both: the board's live path exists in code, no live v
   day-total gate stays first. Also kept on his behalf: U-loop-e2e's budget fix — an idle legacy division (its director asleep, nothing active under
   it) counts 0 toward shares, so a fresh home's chief can charter.
 
+- **D14 (2026-11-01) — the founding paper policy allows 15 open positions:** U-evidence-breadth-paper (2a4a7edc) left the founding
+  `risk.max_open_positions` at 2 while D11 gave five pairs three deployments each, so the cap refused runs the envelopes allow. The founding value
+  becomes 15 (5 pairs × 3 deployments), PAPER ONLY: the founding policy's mode is paper with real money off, and the settings' survivable default
+  stays 2. The board narrows it later with one seat and widens it with two (R24). Landed by U-founding-carry (`BoardFounding.FoundingOpenPositions`).
+
 ## 5. Order
 Wave 1: `U-chief-wake-once` · `U-ci-fast-fixes` (gaps 8, 14) · `U-cell-windows` (gap 13, the provider and proof) · `U-org-canon` (gap 5).
 Wave 2: `U-org-autonomy` (gaps 3, 4, 6, 9, 10; D3–D6, D9) · `U-evidence-campaign` (gap 7; D7) · `U-seat-models` (D8) · `U-kit-socket` (gap 12; D10) ·

@@ -98,9 +98,10 @@ public class BoardTests(ITestOutputHelper log)
             (history.Version, history.Decider, history.Basis, history.Rationale, history.EvidenceClass, history.Score));
 
         // THE FOUNDING VALUES ARE THE BUILD'S CURRENT DEFAULTS where the settings still hold one — every limit but the allowlist,
-        // which has no default and is the orchestrator's ruled value, with the paper envelope (R24 § 4.5, Q3).
+        // which has no default and is the orchestrator's ruled value, with the paper envelope (R24 § 4.5, Q3) — and the open
+        // positions, the paper founding's fifteen (R25 D14), above the settings' survivable two.
         var defaults = new TradeAgentSettings();
-        Assert.Equal([Labels.InstrumentAllowlist], RiskPolicy.Changes(new RiskPolicy(), BoardFounding.V1.Risk));
+        Assert.Equal([Labels.MaxOpenPositions, Labels.InstrumentAllowlist], RiskPolicy.Changes(new RiskPolicy(), BoardFounding.V1.Risk));
         Assert.Equal(["BTCUSDT"], BoardFounding.V1.Risk.InstrumentAllowlist);
         // ONE ENVELOPE PER PAIR UNDER EVIDENCE (R25 D11 as amended; U-evidence-breadth-paper): 5,000 USDT and three deployments each, on the paper
         // venue only, no expiry — and each pair's quantity ceiling worth at least 5,000 USDT at its floor price, so the notional binds.
@@ -126,6 +127,28 @@ public class BoardTests(ITestOutputHelper log)
         // THE LIMITS THE STATUS SHOWS ARE THE POLICY'S, every one of them, the allowlist included (U-board-a2 item 8).
         Assert.Empty(RiskPolicy.Changes(status.Risk, inForce.Policy.Risk));
         Assert.Equal(["BTCUSDT"], status.Risk.InstrumentAllowlist);
+    }
+
+    /// <summary>
+    /// R25 D14 (<c>U-founding-carry</c>; decided by the orchestrator on the owner's behalf, 2026-11-01, his to overrule): THE FOUNDING
+    /// PAPER POLICY ALLOWS FIFTEEN OPEN POSITIONS — five pairs under evidence by three deployments each — and it is PAPER ONLY: the
+    /// founding policy's mode is paper with real money off, and the settings' own default (what an owner-set box would hold) stays the
+    /// survivable two. A fresh home's gateway reads 15 from the policy in force. RED before D14: the founding value was 2.
+    /// </summary>
+    [Fact]
+    public async Task The_founding_paper_policy_allows_fifteen_open_positions_five_pairs_by_three_runs()
+    {
+        Assert.Equal(15, BoardFounding.V1.Risk.MaxOpenPositions);
+        Assert.Equal(BoardFounding.PaperPairs.Count * BoardFounding.PaperDeployments, BoardFounding.V1.Risk.MaxOpenPositions);
+        Assert.Equal((TradingMode.PAPER, false), (BoardFounding.V1.Mode, BoardFounding.V1.LiveActivated));
+        Assert.Equal(2, new RiskPolicy().MaxOpenPositions);
+
+        using var db = TestEnv.NewDb();
+        var inForce = new BoardReader(db).InForce();
+        Assert.Contains(inForce.Fields, f => f.Name == "risk.max_open_positions" && f.Value == "15");
+        var (gw, _) = await Gateway(db);
+        await using var _gw = gw;
+        Assert.Equal(15, (await gw.StatusAsync()).Risk.MaxOpenPositions);
     }
 
     /// <summary>
