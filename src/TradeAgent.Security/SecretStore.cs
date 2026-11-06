@@ -145,9 +145,9 @@ public sealed class SingleInstanceLock : IDisposable
     public static SingleInstanceLock? TryAcquire(string? path = null)
     {
         var file = path ?? Paths.InstanceLockFile;
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             var fs = new FileStream(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             fs.SetLength(0);
             var pid = System.Text.Encoding.UTF8.GetBytes(Environment.ProcessId.ToString());

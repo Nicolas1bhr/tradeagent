@@ -60,7 +60,7 @@ public static partial class LaunchEvidence
     /// THE VALUE AFTER AN AUTHORIZATION SCHEME, whatever the scheme (<c>Bearer</c>, <c>Basic</c>, <c>Token</c>): the header's value, and a
     /// bearer value anywhere. The scheme's word is kept, because it says what was refused and nothing of the secret.
     /// </summary>
-    [GeneratedRegex(@"(?i)(\bbearer\s+|\b[a-z0-9_-]*authorization\\?[""'`]?\s*[:=]\s*\\?[""'`]?[a-z][a-z0-9_-]*\s+)[^\s""',;\\]+")]
+    [GeneratedRegex(@"(?i)(\bbearer\s+|\b[a-z0-9_]*authorization\\?[""'`]?\s*[:=]\s*\\?[""'`]?[a-z][a-z0-9_-]*\s+)[^\s""',;\\]+")]
     private static partial Regex Scheme();
 
     /// <summary>
