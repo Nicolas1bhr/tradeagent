@@ -420,14 +420,15 @@ public class ProvingHomeTests(ITestOutputHelper log)
 
     /// <summary>
     /// What <paramref name="code"/> (comments stripped, strings kept) names of the proving ground: a type of <paramref name="types"/> and its
-    /// member, the namespace, or its store by the words a raw query would use, <c>proving.db</c> and the <c>proving_</c> tables.
+    /// member, the namespace or an alias of it, or its store by the words a raw query would use, <c>proving.db</c> and the <c>proving_</c> tables.
     /// </summary>
     static IEnumerable<string> ProvingNames(string rel, string code, string[] types)
     {
         var named = new Regex(@"(?<![\w.])(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
         foreach (Match m in named.Matches(code))
             yield return $"{rel}: {m.Groups[1].Value}{(m.Groups[2].Success && char.IsUpper(m.Groups[2].Value[0]) ? "." + m.Groups[2].Value : "")}";
-        if (Regex.IsMatch(code, @"using\s+(static\s+)?TradeAgent\.Core\.Proving\s*;")) yield return $"{rel}: using TradeAgent.Core.Proving";
+        foreach (Match m in Regex.Matches(code, @"\busing\s+(?:static\s+)?(\w+\s*=\s*)?(?:global::)?TradeAgent\.Core\.Proving\b"))
+            yield return m.Groups[1].Success ? $"{rel}: an alias of the proving namespace" : $"{rel}: using TradeAgent.Core.Proving";
         foreach (Match m in Regex.Matches(code, @"proving(?:\.db|_\w*)", RegexOptions.IgnoreCase)) yield return $"{rel}: the words {m.Value}";
     }
 
@@ -482,6 +483,8 @@ public class ProvingHomeTests(ITestOutputHelper log)
         Assert.Equal(["x.cs: the words PROVING_RUN"], Names("""var rows = Read("select id from PROVING_RUN");"""));
         Assert.Equal(["x.cs: the words proving.db"], Names("""var f = Path.Combine(home, "proving.db");"""));
         Assert.Equal(["x.cs: using TradeAgent.Core.Proving"], Names("using TradeAgent.Core.Proving;"));
+        Assert.Equal(["x.cs: an alias of the proving namespace"], Names("using P = TradeAgent.Core.Proving; var s = new P.ProvingStore(path);"));
+        Assert.Equal(["x.cs: ProvingStore", "x.cs: an alias of the proving namespace"], Names("using S = global::TradeAgent.Core.Proving.ProvingStore;"));
         Assert.Empty(Names("var proving = false; Referee.Judge(version);"));
     }
 
