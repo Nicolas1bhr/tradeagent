@@ -73,6 +73,7 @@ public class OrgLanesTests : IDisposable
         Assert.DoesNotContain("buy nothing today", research);
 
         host.Refusals.Remove(Ops);
+        loop.SeatChanged(Ops);                                                       // a refused position stands aside (R28 W5): its rest is lifted here
         await loop.TurnAsync().WaitAsync(T);                                         // the chair's again
         var chair = Assert.Single(host.Conv(Ops).Sent);
         Assert.Contains("buy nothing today, just look", chair);

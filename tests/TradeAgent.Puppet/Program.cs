@@ -12,6 +12,7 @@ using TradeAgent.Tests.PuppetIo;
 //
 // Command line:  TradeAgent.Puppet --scripts <dir> [anything else, ignored]    one turn: the prompt is read from stdin
 //                TradeAgent.Puppet --version                                    answers its version and exits
+//                TradeAgent.Puppet --sleep                                      a child's life: sleeps until something ends it
 //
 // THE SCRIPT IS FOUND BY POSITION: the turn runs in the position's home, and the home's own folder name is the key —
 // <dir>/<key>.json holds {"turns": [[step, …], [step, …], …]}. The n-th turn of that position plays turns[n-1], the last one
@@ -25,6 +26,7 @@ using TradeAgent.Tests.PuppetIo;
 //   await <name>           waits until <dir>/<name> exists (five minutes at most, then exits 3)
 //   exit <n>               ends the turn with that code
 //   hang                   never ends on its own: only the turn's teardown ends it
+//   child <name>           starts a child of this puppet that never ends and holds the turn's stdout, and writes its id to <dir>/<name>.pid
 //   crash                  dies at once, with nothing flushed and no answer
 // In any step, {prompt:PATTERN} is replaced by PATTERN's first group as matched in this turn's prompt — what the seat was told, never
 // the database (U-org-scorecards-b fix pass 1); PATTERN holds no '}'. A pattern the prompt does not match ends the turn with code 4.
@@ -37,6 +39,12 @@ var argv = args.ToList();
 if (argv.Contains("--version"))
 {
     Console.WriteLine("tradeagent-puppet 1.0.0");
+    return 0;
+}
+
+if (argv.Contains("--sleep"))
+{
+    Thread.Sleep(Timeout.Infinite);
     return 0;
 }
 
@@ -141,6 +149,15 @@ foreach (var scripted in StepsFor(scripts, key, n))
         case "hang":
             Thread.Sleep(Timeout.Infinite);
             break;
+        case "child":
+        {
+            var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false };
+            start.ArgumentList.Add(Environment.GetCommandLineArgs()[0]);
+            start.ArgumentList.Add("--sleep");
+            using var child = Process.Start(start)!;
+            PuppetFiles.Write(Path.Combine(scripts, rest.Trim() + ".pid"), child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            break;
+        }
         case "crash":
             Process.GetCurrentProcess().Kill();
             break;

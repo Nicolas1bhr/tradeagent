@@ -70,6 +70,12 @@ public interface IAgentConversation
     Task StopAsync();
 
     /// <summary>
+    /// ENDS THE TURN IN FLIGHT BECAUSE IT RAN PAST ITS WALL-CLOCK LIMIT (<c>U-turn-bounds</c>, R28 W2): <see cref="CancelAsync"/>, and
+    /// <paramref name="words"/> are what the turn's end says (<see cref="AgentTurnEnded.TimedOut"/>), so the launch's row reads why it ended.
+    /// </summary>
+    Task TimedOutAsync(string words) => CancelAsync();
+
+    /// <summary>
     /// THE SAME STOP, ORDERED BY THE LOOP'S ROTATION, WITH WHY (<c>U-org-packets-a</c>; <see cref="SessionWhy"/>): the session is
     /// forgotten exactly as <see cref="StopAsync()"/> forgets it, and the next turn's record says why it is fresh. The default is
     /// the plain stop, for a conversation that records no session.
@@ -365,7 +371,7 @@ public sealed class AgentSession(
         // offered surface the app has checked, never one about a manifest with nothing to check.
         var seatClass = SeatClass;
         if (manifest.Seat is null && !BrokerSeat.IsVerified(seatClass))
-            return DeadSeats.Refusal(manifest, null, LaunchModel) is { } deadHere ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, deadHere) : Seated;
+            return SeatMarks.Refusal(manifest, null, LaunchModel, this) is { } deadHere ? SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, deadHere) : Seated;
         // NOTHING TO CHECK, AND NOTHING TO START: the turn itself says the runtime is not installed.
         if (resolveExecutable() is not { } exe)
             return BrokerSeat.IsVerified(seatClass)
@@ -380,7 +386,7 @@ public sealed class AgentSession(
             var verdict = Task.Run(() => SeatProfile.VerifyAsync(manifest, exe, argv, home, SeatProbe, launch, CancellationToken.None))
                 .GetAwaiter().GetResult();
             // A SEAT WHOSE TOOLS COULD NOT RUN ON ITS LAST TURN IS NOT STARTED AGAIN UNCHANGED (U-cli-code-mode).
-            if (!verdict.Refused && DeadSeats.Refusal(manifest, verdict.Profile, LaunchModel) is { } dead)
+            if (!verdict.Refused && SeatMarks.Refusal(manifest, verdict.Profile, LaunchModel, this) is { } dead)
                 return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, dead);
             // THE PROFILE THE ROW WILL CARRY, AND WHO ITS SIGN-IN BILLS (U-billing-followups item 1), held for the start to compare
             // against what it verifies itself — one pair, written at once, so the start never compares one admission's profile with
@@ -630,6 +636,12 @@ public sealed class AgentSession(
     IReadOnlyList<string>? _warnings;
     IReadOnlyList<string>? _errors;
     string? _toolsDead;
+
+    /// <summary>The vendor's refusal of the model of the turn in flight, in the app's sentence (<see cref="AgentTurnEnded.ModelRefused"/>); null otherwise.</summary>
+    ModelRefusal? _modelRefused;
+
+    /// <summary>The sentence the turn in flight was ended in for its wall-clock limit (<see cref="AgentTurnEnded.TimedOut"/>); null otherwise.</summary>
+    volatile string? _timedOut;
 
     public bool Busy => _busy;
 
@@ -881,6 +893,8 @@ public sealed class AgentSession(
         _warnings = null;
         _errors = null;
         _toolsDead = null;
+        _modelRefused = null;
+        _timedOut = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -888,7 +902,8 @@ public sealed class AgentSession(
         }
         catch (OperationCanceledException)
         {
-            raw = "Stopped.";
+            // STOPPED, OR PAST ITS LIMIT, in the words that say which (R28 W2).
+            raw = _timedOut ?? "Stopped.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
         }
         catch (GateRefusedException ex)
@@ -946,7 +961,10 @@ public sealed class AgentSession(
                 VendorWarnings = _warnings,
                 // AND THE RUNTIME'S OWN ERROR EVENTS (U-chief-wake-once): the vendor's 4xx or refusal, for the launch's row.
                 VendorErrors = _errors,
-                ToolsUnavailable = _toolsDead
+                ToolsUnavailable = _toolsDead,
+                // AND A MODEL THE VENDOR REFUSED, AND A TURN ENDED FOR ITS WALL-CLOCK LIMIT (U-turn-bounds).
+                ModelRefused = _modelRefused,
+                TimedOut = _timedOut
             });
         }
         return gateRefused;
@@ -1004,7 +1022,7 @@ public sealed class AgentSession(
         // the turn: a host with no meter starts turns too, and this is the last moment before the start.
         var seat = await SeatProfile.VerifyAsync(manifest, exe, args, workspace(), SeatProbe, launchSeat, ct);
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
-        if (DeadSeats.Refusal(manifest, seat.Profile, launchModel) is { } deadSeat)
+        if (SeatMarks.Refusal(manifest, seat.Profile, launchModel, this) is { } deadSeat)
             throw new TradeAgentException(ErrorCode.AI_SEAT_REFUSED, deadSeat);
 
         // THE PROFILE THE LEDGER RECORDED IS THE PROFILE THAT STARTS: a launch whose seat changed between its admission and this
@@ -1203,7 +1221,10 @@ public sealed class AgentSession(
         {
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
             _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
-            if (state.ToolsDead is { } vendorSaid) _toolsDead = DeadSeats.Mark(manifest, seat.Profile, launchModel, vendorSaid);
+            if (state.ToolsDead is { } vendorSaid) _toolsDead = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ToolsUnavailable, vendorSaid);
+            // A REFUSED MODEL HOLDS THE SEAT THE SAME WAY (R28 W6, D17), and carries the app's sentence out in place of the vendor's.
+            if (state.ModelRefused is { } refused)
+                _modelRefused = refused with { Message = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ModelRefused, refused.Message) };
         }
 
         // THE TURN'S PRESENCE: the material scanner cannot attest an inbox sighting to the account owner
@@ -1258,6 +1279,9 @@ public sealed class AgentSession(
             // THE VENDOR'S WARNINGS, AND A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): marked before the turn's last words, so the
             // next launch of the same seat is refused in the same sentence.
             KeepWarnings();
+            // A CLEAN END IS WHAT A PROBE WAS FOR (U-turn-bounds): nothing stands against this seat any more.
+            if (process.ExitCode == 0 && state.ToolsDead is null && state.ModelRefused is null)
+                SeatMarks.Clear(manifest, seat.Profile, launchModel);
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
             return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
         }
@@ -1426,7 +1450,7 @@ public sealed class AgentSession(
             var text = raw.Trim();
             if (text.Length > 0) AppendAi(text);
         }
-        else if (!state.ProducedAnyMessage && state.Limit is null)
+        else if (!state.ProducedAnyMessage && state.Limit is null && state.ModelRefused is null)
         {
             // Streaming was asked for but nothing recognisable arrived — a flag the runtime does not
             // have, or an event shape that changed. Showing the raw output is worse than useless
@@ -1447,6 +1471,10 @@ public sealed class AgentSession(
         else if (_toolsDead is { } dead)
         {
             Append(new ChatTurn(ChatRole.System, dead, DateTimeOffset.UtcNow));
+        }
+        else if (_modelRefused is { } refused)
+        {
+            Append(new ChatTurn(ChatRole.System, refused.Message, DateTimeOffset.UtcNow));
         }
         else if (exitCode != 0)
         {
@@ -1502,6 +1530,9 @@ public sealed class AgentSession(
 
         /// <summary>The first warning that says the seat's tools cannot run (<see cref="RuntimeManifest.ToolsUnavailablePattern"/>), or null.</summary>
         public string? ToolsDead { get; set; }
+
+        /// <summary>The vendor's refusal of the model, in its own words, or null (<see cref="RuntimeManifest.ModelRefusedPattern"/>).</summary>
+        public ModelRefusal? ModelRefused { get; set; }
 
         readonly List<string> _pending = [];
 
@@ -1574,6 +1605,13 @@ public sealed class AgentSession(
             if (manifest.UsageLimit?.Read(msg, DateTimeOffset.UtcNow) is { } limit)
             {
                 state.Limit ??= limit with { Vendor = manifest.DisplayName, BeforeAnyWork = !state.Worked };
+                return;
+            }
+
+            // AND THE VENDOR REFUSING THE MODEL (U-turn-bounds, R28 W6): the same reading, at the same moment, for the same reason.
+            if (manifest.RefusesModel(msg))
+            {
+                state.ModelRefused ??= new ModelRefusal(msg.Trim(), BeforeAnyWork: !state.Worked);
                 return;
             }
 
@@ -1784,6 +1822,16 @@ public sealed class AgentSession(
     /// tree kill could not: a grandchild that detached is no longer anybody's child, so a walk down
     /// parent links stops one level above it. The job still names it on Windows; on macOS and Linux
     /// the turn's session does, and its parent links are frozen before anything is killed.
+    /// </summary>
+    public Task TimedOutAsync(string words)
+    {
+        _timedOut = words;
+        return CancelAsync();
+    }
+
+    /// <summary>
+    /// Ends the turn in flight, its whole tree first. Teardown before the token, on purpose: on Windows a read of the turn's pipe does not
+    /// answer a token, it answers the writer's death.
     /// </summary>
     public async Task CancelAsync()
     {
