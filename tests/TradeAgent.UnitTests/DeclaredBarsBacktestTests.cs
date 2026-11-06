@@ -329,6 +329,27 @@ public class DeclaredBarsBacktestTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A VERDICT'S OWN BOUND SPEAKS IN A VERDICT'S WORDS (R25 D12): nobody can shorten a holdout, so the halt never tells the reader to, and it
+    /// says the size of the holdout stopped the run, not the program.
+    /// </summary>
+    [Fact]
+    public void A_verdicts_bound_says_the_holdout_stopped_the_run_and_asks_for_no_shorter_window()
+    {
+        var program = Program("""
+            instrument BTCUSDT
+            size fixed 1
+            stop percent 5
+            entry when close > 1000
+            """);
+
+        var run = Backtest.Run(program, Request(), Enumerable.Range(0, 4).Select(i => M(i, 100m, 100m, 100m, 100m)), maxBars: 3);
+
+        Assert.Equal(BacktestOutcome.FAULTED, run.Outcome);
+        Assert.Equal($"this holdout holds more than the 3 bars one verdict may evaluate, so the run halted at the bar before "
+            + $"{Start.AddMinutes(3):O}: the size of the holdout stopped it, not the program.", run.FaultReason);
+    }
+
+    /// <summary>
     /// `max_hold_bars` COUNTS DECLARED BARS. Entered on hour 1's close and filled at 02:01, a two-bar hold is reached
     /// at the close of hour 4 — the second hour after the one it filled in — and its market close, sent then, fills at
     /// 05:01's open, in hour 5; counted in minutes it would have been reached at 02:03.

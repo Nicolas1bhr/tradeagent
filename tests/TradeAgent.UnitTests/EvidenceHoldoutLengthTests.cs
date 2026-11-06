@@ -133,6 +133,62 @@ public class EvidenceHoldoutLengthTests
         Assert.Null(Inconclusive.Of(new Promotions(db).Standing(loser), span));
     }
 
+    /// <summary>
+    /// D12: A MINUTE PROGRAM IS JUDGED OVER EVERY BAR OF A DEFAULT YEAR, AT REAL SIZE. The proof above runs on an hour a day; this one is the full
+    /// 525,600 minutes of a default holdout, because that is where a verdict's run met <see cref="Backtest.MaxTracedBars"/>: every minute
+    /// program halted, came back <c>did-not-complete</c>, spent its judgement and ran no α-test (the Codex review's P1). Written as the
+    /// normalised file a download leaves, one research month before the year, and held back at <see cref="EvidenceDefaults.Cutoff"/>.
+    /// </summary>
+    [Fact]
+    public async Task A_minute_program_is_judged_over_every_bar_of_a_default_year()
+    {
+        var pair = TestEnv.NewPair();
+        var (gw, _, db) = await TestEnv.Ready();
+        using var owned = db;
+        await using var gateway = gw;
+
+        var first = new DateTimeOffset(2025, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var end = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+        var dir = BinanceArchive.DatasetDir(pair);
+        Directory.CreateDirectory(Path.Combine(dir, "raw"));
+        var raw = Path.Combine(dir, "raw", $"{pair}-{Guid.NewGuid():n}.zip");
+        File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
+        var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
+        var bars = 0;
+        using (var w = new StreamWriter(csv))
+        {
+            w.Write(KlineNormaliser.Header);
+            w.Write('\n');
+            for (var open = first; open < end; open = open.AddMinutes(1), bars++)
+            {
+                var close = open.DayOfYear % 4 == 3 ? 100 : 96 + bars / 3 % 10;
+                w.Write(string.Create(CultureInfo.InvariantCulture,
+                    $"{open.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1},{close - 1},{close},1.00\n"));
+            }
+        }
+
+        var last = end.AddMinutes(-1);
+        var id = gw.Datasets.Record(new DatasetRecord(0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 13, 13, [], csv,
+            DatasetStore.Sha256(csv)!, bars, first, last, 0, [], false, 0, 0, 0, Now, DatasetState.ACCEPTED, null,
+            [new DatasetFile("2026-09", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!, DatasetStore.Sha256(raw)!,
+                new FileInfo(raw).Length, first, KlineTimeUnit.Microseconds, raw)]));
+        var set = gw.Datasets.ById(id)!;
+        var (done, campaign) = gw.SetHoldout(id, EvidenceDefaults.Cutoff(set)!.Value, EvaluationClass.Research);
+        Assert.True(done.Ok, done.Why);
+        Assert.True(HoldoutLength.CanBeConclusive(gw.Campaigns.HoldoutSpan(campaign!.Id)));
+
+        var winner = Freeze(db, Winning(pair), Now);
+        var referee = new Referee(db, () => Now);
+        var judged = referee.Verdict(winner, campaign.Id);
+
+        Assert.True(judged.Ok, judged.Why);
+        Assert.Equal((PromotionVerdict.PaperEligible, PromotionReason.MetOnHistory), (judged.Promotion!.Verdict, judged.Promotion.Reason));
+        Assert.Equal(525_600, new StrategyStore(db).RunById(judged.Promotion.HoldoutRunId)!.Bars);
+        var step = referee.Holdouts.SealedOf(campaign.Id, winner)!;
+        Assert.Equal(365, step.HoldoutDays);
+        Assert.NotEqual(AlphaWealth.Inconclusive, step.AddisStatus);
+    }
+
     // ---- D15: a full exploration pot is spent when no parent can be promoted ------------------------------------------------------
 
     /// <summary>The budgets D15's tests run on: small, so a pot fills in two runs. Reading them back proves nothing moved them.</summary>
@@ -165,8 +221,9 @@ public class EvidenceHoldoutLengthTests
     /// <summary>The campaign's exploration pot filled by versions with no parent.</summary>
     static void FillThePot(Database db, CampaignRow campaign, string pair)
     {
-        for (var i = 0; i < campaign.ExplorationBudget; i++)
-            Assert.True(Trial(db, campaign, Version(db, pair, $"explore-{i}"), $"run-explore-{i}").Ok);
+        var left = campaign.ExplorationBudget - new CampaignStore(db).TrialsCharged(campaign.Id, exploration: true);
+        for (var i = 0; i < left; i++)
+            Assert.True(Trial(db, campaign, Version(db, pair, $"explore-{campaign.Id}-{i}"), $"run-explore-{campaign.Id}-{i}").Ok);
     }
 
     /// <summary>
@@ -297,6 +354,7 @@ public class EvidenceHoldoutLengthTests
         using var owned = db;
         await using var gateway = gw;
         var unjudged = Freeze(db, Losing(pair), campaign.HoldoutFrom.AddDays(-1));
+        Assert.True(Trial(db, campaign, unjudged, "run-unjudged").Ok);
         FillThePot(db, campaign, pair);
 
         Assert.True(gw.Renewals.ParentCanBePromoted(campaign));
@@ -306,6 +364,83 @@ public class EvidenceHoldoutLengthTests
 
         Assert.False(gw.Renewals.ParentCanBePromoted(campaign));
         Assert.Equal(CampaignRenewal.ExplorationTrials, gw.Renewals.SpentOn(campaign));
+    }
+
+    /// <summary>
+    /// D15: A VERSION NOTHING CAN BRING TO A VERDICT KEEPS NOTHING UNSPENT (the Codex review's P1). Frozen before the cutoff, but with no completed
+    /// run registered under the campaign: <c>trade verdict</c> would refuse it, and with the pot full the run it lacks is refused too, so
+    /// it can never be promoted, and a campaign that waited for it would never renew.
+    /// </summary>
+    [Fact]
+    public async Task A_version_with_no_registered_run_cannot_keep_a_full_pot_unspent()
+    {
+        var pair = TestEnv.NewPair();
+        using var archive = new FakeArchive();
+        var (gw, db, campaign) = await SetUp(archive, pair, Small);
+        using var owned = db;
+        await using var gateway = gw;
+        Freeze(db, Winning(pair), campaign.HoldoutFrom.AddDays(-1));
+        FillThePot(db, campaign, pair);
+
+        Assert.False(gw.Renewals.ParentCanBePromoted(campaign));
+        Assert.Equal(CampaignRenewal.ExplorationTrials, gw.Renewals.SpentOn(campaign));
+    }
+
+    /// <summary>
+    /// D15: A JUDGEMENT CHARGED AND NOT YET ANSWERED STILL COUNTS, BECAUSE IT CAN STILL PROMOTE (the Codex review's P2). The charge comes before the
+    /// run, so a stop or a crash leaves a charge with no verdict, and asking again judges the version at no second cost. Until a verdict
+    /// is recorded the campaign is not spent, even with its last judgement charged.
+    /// </summary>
+    [Fact]
+    public async Task A_judgement_charged_and_not_answered_keeps_a_full_pot_unspent_until_it_is_recorded()
+    {
+        var pair = TestEnv.NewPair();
+        using var archive = new FakeArchive();
+        var (gw, db, campaign) = await SetUp(archive, pair, s => { Small(s); s.CampaignVerdictBudget = 2; });
+        using var owned = db;
+        await using var gateway = gw;
+        var charged = Freeze(db, Winning(pair), campaign.HoldoutFrom.AddDays(-1));
+        Assert.True(Trial(db, campaign, charged, "run-charged").Ok);
+        FillThePot(db, campaign, pair);
+        Assert.True(gw.Campaigns.ChargeVerdict(campaign.Id, Version(db, pair, "judged-elsewhere"), Now).Ok);
+        Assert.True(gw.Campaigns.ChargeVerdict(campaign.Id, charged, Now).Ok);
+        Assert.Equal(2, gw.Campaigns.JudgementsSpent(campaign.Id));
+
+        Assert.True(gw.Renewals.ParentCanBePromoted(campaign));
+        Assert.False(gw.Renewals.ExplorationSpent(campaign));
+
+        Assert.Equal(PromotionVerdict.Promoted, new Referee(db, () => Now).Verdict(charged, campaign.Id).Promotion!.Verdict);
+        Assert.True(gw.Renewals.ParentCanBePromoted(campaign));
+    }
+
+    /// <summary>
+    /// D15: THE PACKET CARRIES ONE LINE PER PAIR, ITS NEWEST SPENT CAMPAIGN (the Codex review's P2). Renewal leaves a spent campaign open, so older
+    /// ones pile up: they must not crowd out the campaign a turn can act on, or the line it needs.
+    /// </summary>
+    [Fact]
+    public async Task The_packet_says_one_line_per_pair_its_newest_spent_campaign()
+    {
+        var (first, second) = (TestEnv.NewPair(), TestEnv.NewPair());
+        var (gw, _, db) = await TestEnv.Ready(Small);
+        using var owned = db;
+        await using var gateway = gw;
+        CampaignRow Open(string pair, string version)
+        {
+            var (done, campaign) = gw.SetHoldout(Recorded(db, pair, First, Last, version).Id, HeldFrom, EvaluationClass.Research);
+            Assert.True(done.Ok, done.Why);
+            FillThePot(db, campaign!, pair);
+            return campaign!;
+        }
+
+        var older = Open(first, "v1");
+        var newer = Open(first, "v2");
+        var other = Open(second, "v1");
+
+        var lines = gw.Renewals.SpentLines();
+        Assert.Equal(2, lines.Count);
+        Assert.Single(lines, l => l.StartsWith($"{first}: campaign {newer.Id} has spent its exploration trials", StringComparison.Ordinal));
+        Assert.Single(lines, l => l.StartsWith($"{second}: campaign {other.Id} ", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains($"campaign {older.Id} ", StringComparison.Ordinal));
     }
 
     /// <summary>
