@@ -954,6 +954,12 @@ public interface IMissionHost
     IReadOnlyList<LedgerListed>? Beliefs(string role) => null;
 
     /// <summary>
+    /// WHAT THE CAMPAIGNS HAVE SPENT, one line each (<c>CampaignRenewal.SpentLines</c>; R30 D15), or null where this host holds no ledger:
+    /// every turn reads this before it acts, so no turn pays to be refused for what the ledger already says.
+    /// </summary>
+    IReadOnlyList<string>? SpentCampaigns() => null;
+
+    /// <summary>
     /// THE HOLDOUT WINDOWS <paramref name="role"/>'S OWN READS ARE REFUSED, as the dataset ledger holds them NOW
     /// (<see cref="TapeHoldout.Pipe"/>, <c>U-reconcile-packet</c> review 1), or null where this host cannot say. The loop
     /// asks it when it admits a tape wake and when it renders the packet, so a window declared after the wake was raised
@@ -1138,6 +1144,16 @@ public sealed record MissionSituation
     /// and nothing the role wrote is shown beside it as though it were measured.
     /// </summary>
     public IReadOnlyList<LedgerListed>? Believed { get; init; }
+
+    /// <summary>
+    /// WHAT THE CAMPAIGNS HAVE SPENT (<see cref="IMissionHost.SpentCampaigns"/>): one line per open campaign that has spent something, each
+    /// saying what it can no longer be charged and when the next one can come. Rendered as the app's record, at most
+    /// <see cref="SpentLimit"/> lines.
+    /// </summary>
+    public IReadOnlyList<string> SpentCampaigns { get; init; } = [];
+
+    /// <summary>The most <see cref="SpentCampaigns"/> lines one packet carries: more pairs than the five setup offers, and bounded.</summary>
+    public const int SpentLimit = 8;
 
     /// <summary>
     /// WHAT IS WANTED: the work TradeAgent records as this role's (<see cref="RoleObjectives"/>), open now, or null
@@ -1374,6 +1390,17 @@ public sealed record MissionSituation
         if (!string.IsNullOrWhiteSpace(Guidance))
             b.AppendLine($"- The owner's guidance: {Guidance.Trim()}");
         Block("wanted");
+
+        // WHAT THE CAMPAIGNS HAVE SPENT, under the work and above the state (R30 D15): the turn reads what the ledger already says before
+        // it spends anything finding out.
+        if (SpentCampaigns.Count > 0)
+        {
+            b.AppendLine("- Research budgets already spent, from TradeAgent's ledger. Anything these lines rule out is refused in these words, "
+                         + "so do not spend this turn asking for it:");
+            foreach (var line in SpentCampaigns.Take(SpentLimit)) b.AppendLine($"  - {line}");
+            if (SpentCampaigns.Count > SpentLimit) b.AppendLine($"  - and {SpentCampaigns.Count - SpentLimit} more.");
+        }
+        Block("spent_campaigns");
 
         if (Role is { Length: > 0 } role)
             b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
@@ -3365,7 +3392,8 @@ public sealed class MissionLoop
                 // the attempt keeps the prompt's hash and the wakes name their attempt.
                 WhatChanged = Observations(wake, windows ?? [], spell),
                 Believed = believed,
-                Wanted = OpenObjectives(role)
+                Wanted = OpenObjectives(role),
+                SpentCampaigns = SpentCampaigns()
             };
             prompt = situation.Text(out packet);
             shown = situation.Inputs;
@@ -4506,6 +4534,13 @@ public sealed class MissionLoop
             catch (Exception) { /* an unreadable payload is not a delivery */ }
         }
         return list;
+    }
+
+    /// <summary>What the campaigns have spent, from the host; none where it holds no ledger or the ledger cannot be read.</summary>
+    IReadOnlyList<string> SpentCampaigns()
+    {
+        try { return _host.SpentCampaigns() ?? []; }
+        catch (Exception) { return []; }
     }
 
     /// <summary>The role's own open entries from the host, or null where it holds none or cannot be read.</summary>

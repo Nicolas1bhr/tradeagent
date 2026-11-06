@@ -978,8 +978,30 @@ public sealed class CampaignStore(Database db)
         return spent.HomePot >= rule.PotOf(home) ? Pot(rule, home, made, null) + Elsewhere : null;
     }
 
-    /// <summary>The sentence a spent POT answers with, naming which of the two had no room.</summary>
-    static string Pot(TrialAdmission rule, CampaignRow campaign, bool made, string? through) =>
+    /// <summary>
+    /// The sentence a spent POT answers with, naming which of the two had no room. A full exploration pot with no parent that can be
+    /// promoted is the campaign's end (<see cref="CampaignRenewal.ExplorationSpent"/>, R30 D15), and it answers in those words: what is
+    /// spent, that nothing more can be charged, and when the next campaign can come.
+    /// </summary>
+    string Pot(TrialAdmission rule, CampaignRow campaign, bool made, string? through)
+    {
+        var renewal = new CampaignRenewal(db);
+        if (rule.Exploration && renewal.ExplorationSpent(campaign))
+            return $"campaign {campaign.Id} has spent all {campaign.ExplorationBudget} of the trials it reserves for EXPLORATION — versions "
+                + "that declare no parent, or one nothing has promoted — and no parent can be promoted under it: nothing stands promoted "
+                + "and it holds no version it could still promote. A paper-eligible version is not a promoted parent. So this campaign "
+                + "cannot be charged another of these trials: "
+                + (made ? "this run is not recorded and its result is not served. " : "this run is refused before it is made. ")
+                + through
+                + "Asking again gets this same answer, whichever role, version, restart or download of these months asks, so do not "
+                + "spend a turn on it. Any final judgements it has left can still be asked for. "
+                + renewal.Next(campaign.Id);
+
+        return PotKept(rule, campaign, made, through);
+    }
+
+    /// <summary>A full pot with a way on: the other pot, or the owner's renewal.</summary>
+    static string PotKept(TrialAdmission rule, CampaignRow campaign, bool made, string? through) =>
         $"campaign {campaign.Id} has registered all {rule.PotOf(campaign)} of the trials it reserves for "
         + (rule.Exploration
             ? "EXPLORATION — versions that declare no parent, or one nothing has promoted — so "

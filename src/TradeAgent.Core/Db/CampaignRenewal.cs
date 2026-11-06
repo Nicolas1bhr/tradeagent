@@ -33,7 +33,7 @@ public sealed record ForwardHoldout(long SpentCampaignId, DateTimeOffset Cutoff,
 /// <list type="number">
 /// <item><b>Spent.</b> An open campaign over real history whose final judgements (<see cref="CampaignStore.JudgementsSpent"/>, every
 /// judgement over its months) or whose research trials (<see cref="CampaignStore.TrialsCharged(long)"/>) have reached a budget
-/// greater than zero.</item>
+/// greater than zero, or whose exploration pot is full with no parent that can be promoted (<see cref="ExplorationSpent"/>).</item>
 /// <item><b>Armed, once.</b> Its forward cutoff is the first UTC midnight STRICTLY AFTER the latest instant anything on record
 /// reaches: now, the close of every dataset's last bar, the close of every forward bar, the end of every held window, and every
 /// cutoff already armed. Nothing at or after it existed when it was armed, so nothing at or after it can have been served. It is
@@ -79,9 +79,13 @@ public sealed class CampaignRenewal(Database db)
     /// <summary>The kv key prefix of the campaign that opened over it: the spent campaign's id follows. Written once.</summary>
     internal const string SuccessorKey = "campaign_forward_successor:";
 
+    /// <summary>What <see cref="SpentOn"/> answers for a campaign spent by its full exploration pot (<see cref="ExplorationSpent"/>).</summary>
+    public const string ExplorationTrials = "exploration trials";
+
     /// <summary>
-    /// WHAT THIS CAMPAIGN HAS SPENT, in words ("final judgements", "research trials"), or null while it has room, is closed, or
-    /// was opened with no attempts of that kind at all (a zero budget is the owner's "none", not something to renew).
+    /// WHAT THIS CAMPAIGN HAS SPENT, in words ("final judgements", "research trials", <see cref="ExplorationTrials"/>), or null while it
+    /// has room, is closed, or was opened with no attempts of that kind at all (a zero budget is the owner's "none", not something to
+    /// renew).
     /// </summary>
     public string? SpentOn(CampaignRow campaign)
     {
@@ -90,7 +94,93 @@ public sealed class CampaignRenewal(Database db)
         var campaigns = new CampaignStore(db);
         if (campaign.VerdictBudget > 0 && campaigns.JudgementsSpent(campaign.Id) >= campaign.VerdictBudget) return "final judgements";
         if (campaign.TrialBudget > 0 && campaigns.TrialsCharged(campaign.Id) >= campaign.TrialBudget) return "research trials";
-        return null;
+        return ExplorationSpent(campaign) ? ExplorationTrials : null;
+    }
+
+    /// <summary>
+    /// WHETHER THIS CAMPAIGN'S EXPLORATION POT HAS BEEN ITS LAST TRIAL (R30 D15; R28 E2): the pot is full and no parent can be promoted,
+    /// so the refinement pot behind it can never be drawn on and every further trial is refused. Before this rule such a campaign sat
+    /// open with no way on: <see cref="SpentOn"/> counted only the whole trial budget, which a campaign whose every trial is an
+    /// exploration never reaches, so nothing ever armed its renewal. The budgets themselves do not change: not the trials, not the
+    /// verdicts, not the pot. A campaign counted spent this way keeps any final judgements it has left.
+    /// </summary>
+    public bool ExplorationSpent(CampaignRow campaign)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+        return campaign.IsOpen && campaign.ExplorationBudget > 0
+            && new CampaignStore(db).TrialsCharged(campaign.Id, exploration: true) >= campaign.ExplorationBudget
+            && !ParentCanBePromoted(campaign);
+    }
+
+    /// <summary>
+    /// WHETHER A TRIAL CAN STILL DECLARE A PROMOTED PARENT UNDER THIS CAMPAIGN, which is the only thing that draws on its refinement pot
+    /// (<see cref="CampaignStore.IsExploration"/>). True in two cases:
+    /// <list type="bullet">
+    /// <item><b>A version stands Promoted.</b> Of any pair, as <see cref="CampaignStore.IsExploration"/> reads it: a child ported to this
+    /// pair is a refinement charged here. Read through <see cref="Promotions.Standing"/>, so a promotion since invalidated is none.</item>
+    /// <item><b>This campaign could still promote one.</b> It has a judgement left and holds a version of its pair frozen BEFORE its
+    /// cutoff, not retired, bounded, and not yet judged under it. Only such a version can pass the policy's forward-evidence clause
+    /// (<see cref="Strategy.ScoringPolicyV1.Reason"/>). On a campaign over history no version qualifies, so this is what makes a first campaign's
+    /// pot its end; on one over fresh months, every version frozen before them does until it is judged.</item>
+    /// </list>
+    /// <para><b>A paper-eligible version is not a promotable parent</b> (R30 D15): it was measured on months that predate its freeze, and
+    /// counting it would widen the search budget on an unproven basis. Once this answers false it stays false, because a version made
+    /// later is frozen after the cutoff.</para>
+    /// </summary>
+    public bool ParentCanBePromoted(CampaignRow campaign)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+        return db.Read(_ =>
+        {
+            var promotions = new Promotions(db);
+            if (promotions.PromotedVersions().Any(version => promotions.Standing(version).IsPromoted)) return true;
+
+            var campaigns = new CampaignStore(db);
+            if (campaigns.JudgementsSpent(campaign.Id) >= campaign.VerdictBudget) return false;
+            if (new DatasetStore(db).ById(campaign.HoldoutDatasetId) is not { } set) return false;
+
+            var retired = new Retirements(db);
+            return new StrategyStore(db).VersionsFrozenBefore(campaign.HoldoutFrom).Any(version =>
+                version.Freshness is not null
+                && !campaigns.VerdictCharged(campaign.Id, version.Id)
+                && retired.Refusal(version.Id) is null
+                && Strategy.StrategyParser.Parse(version.Source).Program is { } program
+                && Strategy.InstrumentMatch.Refusal(program, set) is null);
+        });
+    }
+
+    /// <summary>
+    /// WHAT EVERY TURN IS TOLD BEFORE IT ACTS (R30 D15, "turns must not be sold a refusal twice without learning it"): one line per open
+    /// campaign over real history that has spent something, oldest pair first, each saying what is spent, what it can no longer be
+    /// charged and when the next one can come. The refusal itself reaches only the turn that asked, and a session can be rotated away
+    /// between turns, so without this every later turn pays again to learn the same sentence.
+    /// </summary>
+    public IReadOnlyList<string> SpentLines()
+    {
+        var campaigns = new CampaignStore(db);
+        var datasets = new DatasetStore(db);
+        var lines = new List<string>();
+        foreach (var campaign in campaigns.All().Where(c => c.IsOpen).OrderBy(c => c.Id))
+        {
+            if (datasets.ById(campaign.HoldoutDatasetId) is not { } set
+                || EvaluationClass.Or(set.EvaluationClass) != EvaluationClass.Research
+                || SpentOn(campaign) is not { } spent) continue;
+
+            var left = Math.Max(0, campaign.VerdictBudget - campaigns.JudgementsSpent(campaign.Id));
+            var charged = spent switch
+            {
+                ExplorationTrials => "it takes no further run of a version without a promoted parent, and nothing can be promoted under it",
+                "research trials" => "it takes no further research run",
+                _ => "it takes no further verdict"
+            };
+            var kept = spent == "final judgements" || left == 0 ? "" : $", though {left} of its final judgements can still be asked for";
+            var next = Of(campaign.Id) is { } held
+                ? held.Successor is { } open ? $"Campaign {open} follows it over fresh months."
+                  : $"The next {set.Pair} campaign opens no earlier than {held.Earliest:yyyy-MM-dd}."
+                : $"The next {set.Pair} campaign is at least {MinimumFreshDays} days away.";
+            lines.Add($"{set.Pair}: campaign {campaign.Id} has spent its {spent}: {charged}{kept}. {next}");
+        }
+        return lines;
     }
 
     /// <summary>

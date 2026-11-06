@@ -423,6 +423,18 @@ public sealed class StrategyStore(Database db)
     });
 
     /// <summary>
+    /// EVERY VERSION FROZEN BEFORE <paramref name="instant"/>, oldest first: the versions a holdout starting then can hold forward
+    /// evidence about, because <c>ScoringPolicyV1</c> refuses one frozen at or after a run's first bar. A version's <c>created_at</c> is
+    /// its freeze, and <see cref="Sql.T"/> writes every instant at one width, so the comparison is exact.
+    /// </summary>
+    public IReadOnlyList<StrategyVersionRow> VersionsFrozenBefore(DateTimeOffset instant) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {VersionCols} FROM strategy_version WHERE created_at < $at ORDER BY created_at, id", ("$at", Sql.T(instant)));
+        return ReadVersions(c);
+    });
+
+    /// <summary>
     /// Records one run and its closed trades in ONE transaction, or leaves the run that is already
     /// there alone — trades included, because a run's trades are part of the run and half of them is
     /// not a result. Returns the run id.
