@@ -97,7 +97,8 @@ public partial class BoardTurnTests
 
     /// <summary>
     /// THE BOARD'S SHARE IS ONE BUDGET ACROSS EVERY BILLING CLASS (BUDGET-001; the re-review's P1-1): with the share holding two board turns
-    /// and a half, two seats spend it in one class and a third seat's launch billed to the OTHER class is refused by the board's ceiling —
+    /// of the first class and half a turn of the other (a plan turn reserves its measured estimate, a key turn the whole bound —
+    /// <c>U-turn-reservation</c>), two seats spend it in one class and a third seat's launch billed to the OTHER class is refused by the board's ceiling —
     /// plan rows then a key launch, and key rows then a plan launch. RED before the fix: the board's ceiling counted only the launch's own
     /// class's rows, so each class could take the whole share. Watched red with the class filter restored.
     /// </summary>
@@ -112,14 +113,19 @@ public partial class BoardTurnTests
         var plan = 0m;
         var meter = Meter(db, _ => SeatClasses.Broker, cap: () => 1000m, planCap: () => plan);
         var reservation = meter.AdmissionRuleFor("board-1", spentIn).Reservation;
-        Assert.True(reservation > 0m, "a board turn reserved nothing");
-        plan = 2.5m * reservation / share;
+        var otherTurn = meter.AdmissionRuleFor("board-3", launchedIn).Reservation;
+        Assert.True(reservation > 0m && otherTurn > 0m, "a board turn reserved nothing");
+        plan = (2m * reservation + otherTurn / 2m) / share;
         var store = new AiAttemptStore(db);
-        AiAdmission Launch(string seat, string billing) => store.Begin(new AiAttempt
+        AiAdmission Launch(string seat, string billing)
         {
-            Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = DateTimeOffset.UtcNow, Role = seat, ReservedCost = reservation,
-            BillingClass = billing, Funding = []
-        }, admit: meter.AdmissionRuleFor(seat, billing));
+            var rule = meter.AdmissionRuleFor(seat, billing);
+            return store.Begin(new AiAttempt
+            {
+                Id = $"turn-{Guid.NewGuid():n}"[..17], StartedAt = DateTimeOffset.UtcNow, Role = seat, ReservedCost = rule.Reservation,
+                BillingClass = billing, Funding = []
+            }, admit: rule);
+        }
 
         foreach (var seat in new[] { "board-1", "board-2" })
         {
