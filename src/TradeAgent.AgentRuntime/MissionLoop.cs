@@ -4874,8 +4874,9 @@ public sealed class MissionLoop
                 // WHAT A FAILED TURN WAS TOLD IS TOLD AGAIN ONCE, as a lost turn's is (U-wake-fairness, R28 R1): nothing else brings back
                 // a hire's first wake, a note to a position with no clock, or a delivery waiting on its decider.
                 else if ((MissionEventStore.ToldKinds.Contains(e.Kind) || MissionEventStore.JudgmentKinds.Contains(e.Kind))
-                         && !e.Id.EndsWith(AfterLost, StringComparison.Ordinal))
-                    events.Raise(e.Id + AfterLost, e.Kind, _now(), e.Payload, e.Role);
+                         && !e.Id.EndsWith(AfterLost, StringComparison.Ordinal)
+                         && ToldAgainAt(e) is { } due)
+                    events.RaiseDue(e.Id + AfterLost, e.Kind, _now(), due, e.Payload, e.Role);
             }
         }
         catch (Exception)
@@ -4901,6 +4902,17 @@ public sealed class MissionLoop
         : ended?.ModelRefused is { BeforeAnyWork: true } refused ? refused.Message
         // AND A TURN ENDED AT ITS LIMIT (R28 W2): whatever it had done, nothing says it finished, so what it was woken for stays owed.
         : ended?.TimedOut;
+
+    /// <summary>
+    /// WHEN A FAILED TURN'S WAKE IS TOLD AGAIN, or null for never. Now, but for a wake the position bought for itself — its own request, or the wake
+    /// a hire bought its hirer — which keeps its floor, counted from the turn that failed: ending a turn badly buys no earlier one
+    /// (<c>U-wake-fairness</c>, the Codex review). A hire's first wake names the hire itself: it has no floor to pass.
+    /// </summary>
+    DateTimeOffset? ToldAgainAt(MissionEvent e)
+    {
+        var bought = e.Kind == MissionEventKind.Self || (e.Kind == MissionEventKind.Activated && e.Payload != e.Role);
+        return bought ? _host.OwnWakeDue(e.Role ?? CouncilRoles.Default, TimeSpan.Zero, _now()) : _now();
+    }
 
     /// <summary>What a wake given back by the loop's own stop says, and what the owner's words wait on until the next turn takes them.</summary>
     internal const string StoppedTurn =
@@ -5107,7 +5119,8 @@ public sealed class MissionLoop
 
         lock (_gate)
         {
-            _nextTurnAt = spend.ResumesAt;
+            // A SHARE TOO SMALL FOR ONE TURN NAMES NO TIME: midnight resets the total and not the arithmetic.
+            _nextTurnAt = spend.AdmitsGlobally && spend.RoleCannotFundATurn ? null : spend.ResumesAt;
             _cardKept = true;
             _waitingFor = spend.Role is { } r && !spend.RoleAdmitsAnotherTurn && spend.AdmitsGlobally
                 ? spend.RoleCannotFundATurn ? $"a larger share of the day for the {CouncilRoles.Title(r)}"
