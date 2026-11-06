@@ -490,6 +490,9 @@ public class OrgLedgerTests
         // model outside the catalog, the legacy pair, an ended position and a seat written in part. No op, door verb or trade verb reaches
         // it (OrgSeatsTests.The_owner_switches_a_positions_model_among_the_catalogs_only_while_no_board_seat_is_active).
         mandate = [.. mandate, "ChooseSeatModel"];
+        // REVISITED, OUT LOUD, BY U-wake-fairness (R28 W4): OwnWakeDue — when a position's own wake file may wake it. A read, called by the app's
+        // loop after a turn; it writes nothing, and no op, door verb or trade verb reaches it.
+        mandate = [.. mandate, "OwnWakeDue"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

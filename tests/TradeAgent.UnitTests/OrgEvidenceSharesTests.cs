@@ -422,8 +422,8 @@ public class OrgEvidenceSharesTests
         new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted, by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m }
     });
 
-    static IpcRequest ExperimentDivision() => Frame(Ops.OrgCharter, ("kind", OrgUnitKind.Division), ("ai_share", 0.1m),
-        ("rationale", "a bounded experiment division"), ("forecasts", UnitAdmissible()), ("collapse_by", DateTimeOffset.UtcNow.AddDays(60).ToString("O")));
+    static IpcRequest ExperimentDivision(string rationale = "a bounded experiment division") => Frame(Ops.OrgCharter, ("kind", OrgUnitKind.Division), ("ai_share", 0.1m),
+        ("rationale", rationale), ("forecasts", UnitAdmissible()), ("collapse_by", DateTimeOffset.UtcNow.AddDays(60).ToString("O")));
 
     /// <summary>
     /// The re-review's setting, through the REAL meter: the legacy pair's CLI seats bill the PLAN, whose capacity is 0; the chief's seat
@@ -541,7 +541,8 @@ public class OrgEvidenceSharesTests
             }
             return 0;
         });
-        var spent = await server.CallAsync(ExperimentDivision(), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        // ITS OWN REASON (U-wake-fairness, R28 R3): the same charter again would be the act already made, which the bounds no longer ask about.
+        var spent = await server.CallAsync(ExperimentDivision("a second bounded experiment division"), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
         Assert.False(spent.Ok, "a charter was written past a division whose split a position under it still spends");
         Assert.Contains("the split on the Safety page", spent.Error!.Message, StringComparison.Ordinal);
         Assert.Equal(before + 1, Divisions(db));
