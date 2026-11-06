@@ -14,7 +14,7 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// U-EVIDENCE-CAMPAIGN — THE DATA, THE HOLDOUT AND THE VERDICTS THAT LAST FOR DAYS UNATTENDED (R25 D7).
 ///
-/// <para><b>Item 1</b>: setup's one press holds back the last three complete months of the first download and never moves a
+/// <para><b>Item 1</b>: setup's one press holds back the last twelve of the first download's thirty-six complete months and never moves a
 /// cutoff that is already there. <b>Item 2</b>: a spent campaign is followed, by rule, only by one over FRESH market data — armed
 /// once at the first midnight after everything on record, held from every pipe read from that moment (never from the paper
 /// runner), opened by the app only on a download holding at least thirty days of it, with no other window past its cutoff — and
