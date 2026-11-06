@@ -1194,11 +1194,16 @@ public partial class CouncilLoopTests
         var (db, root) = Workspace();
         using var _ = db;
         var host = new CouncilHost(db, root, new Concurrency());
+        var now = DateTimeOffset.UtcNow;
         var loop = new MissionLoop(host, new MissionOptions
         {
             ReviewEvery = TimeSpan.Zero,
             TurnsPerSession = 2
-        });
+        }, now: () => now);
+
+        // WHAT A FAILED TURN COSTS IS ITS OWN POSITION'S REST (U-turn-bounds-2, changed in the open): this test read the 30 s and 60 s the turn returned, which
+        // the whole lane then slept. The turn now returns zero so the lane moves on, and the same doubling figures stand on the position.
+        TimeSpan RestOfTheChair() => loop.StandingAsideFor(CouncilRoles.Operations)!.Value.Until - now;
 
         var chair = host.Conversations[CouncilRoles.Operations];
         var research = host.Conversations[CouncilRoles.Research];
@@ -1213,7 +1218,9 @@ public partial class CouncilLoopTests
         for (var i = 1; i <= 2; i++)
         {
             Wake(CouncilRoles.Operations, i);
-            Assert.Equal(TimeSpan.FromSeconds(i == 1 ? 30 : 60), await loop.TurnAsync());
+            Assert.Equal(TimeSpan.Zero, await loop.TurnAsync());
+            Assert.Equal(TimeSpan.FromSeconds(i == 1 ? 30 : 60), RestOfTheChair());
+            now += RestOfTheChair();
         }
 
         Assert.Equal(2, chair.Sent.Count);
@@ -1233,7 +1240,8 @@ public partial class CouncilLoopTests
         // thirty seconds — a role that cannot start, retried as though it were healthy, because a
         // different role is. Its own third turn is also where its session is rotated.
         Wake(CouncilRoles.Operations, 4);
-        Assert.Equal(TimeSpan.FromSeconds(120), await loop.TurnAsync());
+        Assert.Equal(TimeSpan.Zero, await loop.TurnAsync());
+        Assert.Equal(TimeSpan.FromSeconds(120), RestOfTheChair());
         Assert.Equal(1, chair.Stops);
     }
 

@@ -125,6 +125,8 @@ public partial class CouncilLoopTests
                 () => new Dictionary<string, string>(), () => null);
             conversation.TurnEnded += endings.Add;
             host.Harnessed[Executor] = conversation;
+            // ANOTHER SEAT, so the rest its last failed turn bought is lifted (U-turn-bounds-2: that rest is the position's now, not a sleep this test skipped).
+            loop.SeatChanged(Executor);
             var before = endings.Count;
             SelfWake(host, Executor, tag);
             for (var i = 0; i < 12 && endings.Count == before; i++) await loop.TurnAsync();
@@ -198,6 +200,8 @@ public partial class CouncilLoopTests
                 () => new Dictionary<string, string>(), () => null);
             conversation.TurnEnded += endings.Add;
             host.Harnessed[Executor] = conversation;
+            // ANOTHER SEAT, so the rest its last failed turn bought is lifted (U-turn-bounds-2: that rest is the position's now, not a sleep this test skipped).
+            loop.SeatChanged(Executor);
             var before = endings.Count;
             SelfWake(host, Executor, tag);
             for (var i = 0; i < 12 && endings.Count == before; i++) await loop.TurnAsync();
