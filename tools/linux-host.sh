@@ -63,7 +63,9 @@ case "$verb" in
         while [ $# -gt 0 ]; do
             case "$1" in
                 --json) od_json=yes; shift ;;
-                --since) [ $# -ge 2 ] && [ -n "$2" ] || usage; od_since="$2"; shift 2 ;;
+                --since)
+                    if [ $# -lt 2 ] || [ -z "$2" ]; then usage; fi
+                    od_since="$2"; shift 2 ;;
                 *) usage ;;
             esac
         done
