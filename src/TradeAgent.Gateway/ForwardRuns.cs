@@ -260,6 +260,9 @@ public sealed class ForwardRuns
         // live minutes does not read the ledger again on each of them for a run that has never exited.
         var exited = written.Any(o => o.Kind == DeploymentOpKind.Exit);
 
+        // WHAT A DEAD PROCESS MAY HAVE LEFT WITHOUT ITS ANSWER (`AnswerResting`): almost always nothing.
+        var unanswered = written.Where(o => !o.IsSettled && o.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target).ToList();
+
         // WHAT EACH OF THIS RUN'S ENTRIES AND EXITS STOOD ON, by the close it names (`U-runner-features`): a replay that
         // reads anything else at that close is a run whose record of its own orders is no longer true. An exit sent again
         // keeps the close and the digest of the one it repeats.
@@ -362,9 +365,8 @@ public sealed class ForwardRuns
             if (landed.Any(f => f.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target
                                 or DeploymentOpKind.Exit or DeploymentOpKind.Flatten))
             {
-                if (live)
-                    planned |= await CancelRestingAsync(
-                        deployment, bar, [stopRequest, targetRequest], () => seq++, ct);
+                // EVERY STOP AND TARGET OF THE RUN, NOT THE PAIR THE ENTRY'S FILL NAMED: one asked for again went out under a later minute's id (`U-paper-t0`).
+                if (live) planned |= await CancelProtectionAsync(deployment, bar, () => seq++, ct);
                 stopRequest = targetRequest = null;
             }
 
@@ -545,6 +547,11 @@ public sealed class ForwardRuns
             var newest = i == bars.Count - 1;
             if (live && (exited || newest) && opening.Position == PositionSide.Long)
                 planned |= await PutProtectionBackAsync(deployment, program, bars, grid, bar, newest, () => seq++, ct);
+
+            // A STOP OR TARGET LEFT WITH NO ANSWER OVER AN ORDER THAT RESTS: a process that died between the venue's acknowledgement and `RestAsync`'s write. No terminal state
+            // answers it while the order rests, and one asked for again is rightly not asked for twice, so without this it holds the cursor, and the maximum hold behind
+            // it. Here and not at the settle, and after this minute's replay: the settle would move the cursor past a fill's minute before the replay wrote its other half.
+            if (live && unanswered.Count > 0) AnswerResting(unanswered, bar);
 
             // AND THE FRONTIER MOVES ONTO THIS BAR IF ANYTHING IT WROTE HAS NO ANSWER YET.
             if (planned && blocked is null
@@ -793,12 +800,22 @@ public sealed class ForwardRuns
             seq, ct);
 
     /// <summary>
+    /// THE OPERATIONS OF THIS MINUTE WHOSE ORDER RESTS AT THE VENUE, ANSWERED AS <see cref="RestAsync"/> ANSWERS THEM: the venue's acknowledgement is what a stop or target waits for.
+    /// </summary>
+    void AnswerResting(IReadOnlyList<DeploymentOpRow> unanswered, KlineBar bar)
+    {
+        foreach (var op in unanswered.Where(o => o.BarOpenTime == bar.OpenTime))
+            if (_gateway.Requests.Get(op.RequestId) is { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } row)
+                _deployments.Resolve(op.RequestId, TradingGateway.RestingAnswer(row.State), _now());
+    }
+
+    /// <summary>
     /// A POSITION WITHOUT ITS STOP OR ITS TARGET HAS THEM ASKED FOR — at their own levels, sized from the books, under this minute's ids — and this answers whether it
     /// wrote anything. Two ways here, and what they ask for is one reading (<see cref="TradingGateway.ProtectionMissing"/>).
     ///
-    /// <para><b>An exit refused before the wire</b> (<c>U-runner-exit-hygiene-b</c>) puts back what it took off on the minute it was refused. Only after a refusal
-    /// that sent nothing, the one predicate <see cref="Deployments.RefusedBeforeTheWire"/>, so never while an exit is in flight: one at the wire is about to end the
-    /// position, and protection put back beside it fills too and sells what the exit sells.</para>
+    /// <para><b>An exit that sent nothing or was answered with nothing</b> (<c>U-runner-exit-hygiene-b</c>; <see cref="TradingGateway.ProtectionMissing"/>) puts back what it
+    /// took off on the minute it was refused, and never while an exit is in flight: one at the wire is about to end the position, and protection put back beside it
+    /// fills too and sells what the exit sells.</para>
     ///
     /// <para><b>A protection that did not stand</b> (<c>U-paper-t0</c> item 3): refused before the wire, rejected at it, or gone from the book under a position still
     /// open, is asked for again on the pass's newest live minute after the one it was last asked on. A position open without its protection is an unprotected
