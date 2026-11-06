@@ -694,7 +694,8 @@ public partial class CellLinuxTests
     /// ROW (i), THE SURVEY'S Q-a IN FULL (fix pass 1, R1): the start benchmark runs every row a host can run without fixtures — beside
     /// the environment, state, login, inbox, egress, /tmp and route (a) rows: a real write and append to <c>state/</c> denied, AF_UNIX
     /// (a pathname socket and an abstract one) denied, a signal to the app and its <c>/proc/&lt;pid&gt;/environ</c> denied,
-    /// <c>io_uring_setup</c> denied, a write into another cgroup's <c>cgroup.procs</c> denied, and a setsid'd double fork ended by the
+    /// <c>io_uring_setup</c> denied, a mode, time, owner and extended attribute outside the workspace refused while the workspace keeps its
+    /// own (<c>U-cell-metadata</c>), a write into another cgroup's <c>cgroup.procs</c> denied, and a setsid'd double fork ended by the
     /// attempt's <c>cgroup.kill</c> — each held, and only then a proof.
     /// </summary>
     [LinuxFact]
@@ -707,7 +708,7 @@ public partial class CellLinuxTests
         Deployed(true);
         using var db = TestEnv.NewDb();
         var held = await Bench(db, codex, rows.Cgroups);
-        foreach (var name in new[] { "state-unwritable", "ipc-denied", "signals-environ-denied", "io-uring-denied", "cgroup-escape-denied", "descendants-cancelled" })
+        foreach (var name in new[] { "state-unwritable", "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled" })
             Assert.True(held.Rows.Any(r => r.Name == name && r.Held), $"the start benchmark holds no row '{name}':\n{Said(held)}");
         Assert.True(held.ProofId is not null, $"the benchmark wrote no proof:\n{Said(held)}");
     }
