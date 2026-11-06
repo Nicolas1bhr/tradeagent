@@ -670,6 +670,35 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         Assert.Contains("DECLARED SIMULATION AT THE NEXT OPEN", note.Content);
         Assert.Contains("never holdout evidence", note.Content);
         Assert.Equal(CouncilRoles.Research, note.Recipients);
+
+        // AND THE RUN'S EYES SEE IT (U-org-digest-fix): the monitor's digest over this very home, whose fill the venue made and whose rows the
+        // gateway wrote. The organisation's loop test has no fill in it, so this is where a fill is read as the app really writes it.
+        if (!OperatingSystem.IsWindows())
+        {
+            var arrows = DigestArrows(rig.Db).GetProperty("arrows").EnumerateArray().ToDictionary(a => a.GetProperty("arrow").GetString()!, a => a.GetProperty("count").GetInt32());
+            Assert.Equal(1, arrows["paper run"]);
+            Assert.Equal(1, arrows["paper fill"]);
+            Assert.True(arrows["note raised"] >= 1, "the run's note was raised and the digest reads none");
+        }
+    }
+
+    /// <summary>tools/org-digest.py over an image of a live home, read-only, as the host's verb runs it. T0 is far enough back for this rig's clock.</summary>
+    static System.Text.Json.JsonElement DigestArrows(Database db)
+    {
+        var state = Path.Combine(TestEnv.Home, "digest-run-" + Guid.NewGuid().ToString("n")[..10]);
+        Directory.CreateDirectory(state);
+        var image = Path.Combine(state, "tradeagent.db");
+        db.Read(_ => { db.Exec($"VACUUM INTO '{image.Replace("'", "''", StringComparison.Ordinal)}'"); return 0; });
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "tools"))) root = root.Parent;
+        var psi = new System.Diagnostics.ProcessStartInfo("python3") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in new[] { "-I", Path.Combine(root!.FullName, "tools", "org-digest.py"), "--state", state, "--since", "2000-01-01", "--no-systemd", "--json" }) psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var err = p.StandardError.ReadToEndAsync();
+        var o = p.StandardOutput.ReadToEnd();
+        Assert.True(p.WaitForExit(60_000), "the digest did not finish in a minute");
+        Assert.True(p.ExitCode == 0, err.Result);
+        return System.Text.Json.JsonDocument.Parse(o).RootElement.GetProperty("arrows").Clone();
     }
 
     // ---------------------------------------------------------------- (f)
