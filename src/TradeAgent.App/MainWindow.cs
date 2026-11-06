@@ -256,7 +256,7 @@ public sealed class MainWindow : Window
             Ui.Body(older.Message),
             problem,
             Ui.Row(Tokens.S3,
-                Ui.Confirm("Start fresh", OlderHome.ConfirmStartFresh, async () =>
+                Ui.Confirm("Start fresh", older.Policy is null ? OlderHome.ConfirmStartFresh : OlderHome.ConfirmStartFreshCarryingTape, async () =>
                 {
                     if (await _host.StartFreshAsync()) { await AfterStartAsync(); return; }
                     if (_host.OlderHome is not null) ShowOlderHome();

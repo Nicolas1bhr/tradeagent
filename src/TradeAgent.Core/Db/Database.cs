@@ -50,6 +50,11 @@ public sealed class Database : IDisposable
             // words naming both versions, untouched — not migrated, not even switched to WAL — and starting fresh is the owner's press.
             if (OlderHome.Refused(ReadMetaInt("schema_version") ?? 0) is { } older)
                 throw new OlderHomeException(HomeOf(file), older, Versions.App);
+            // A BOARD FOUNDED IN AN OLDER POLICY SHAPE, BEFORE ANYTHING IS WRITTEN (U-founding-carry): a home whose founding policy
+            // verifies but names fields this build does not write is refused in words naming both shapes, untouched — never read on a
+            // guess, never half-migrated — and starting fresh, which carries the tape, is the owner's press.
+            if (OlderHome.RefusedPolicy(_conn) is { } shape)
+                throw new OlderHomeException(HomeOf(file), shape, Versions.App);
             Proving.HomeMark.AfterCheck?.Invoke(file);
             Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
             ClaimKind(file);

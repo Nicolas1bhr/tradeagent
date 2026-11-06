@@ -1427,7 +1427,9 @@ public sealed class AppHost : IAsyncDisposable
         try
         {
             var home = Path.GetFullPath(dir);
-            return Core.OlderHome.RefusedSchema(home) is { } schema ? new OlderHomeException(home, schema, Versions.App) : null;
+            if (Core.OlderHome.RefusedSchema(home) is { } schema) return new OlderHomeException(home, schema, Versions.App);
+            // AND A BOARD FOUNDED IN AN OLDER POLICY SHAPE (U-founding-carry), read the same way: read-only, before the lock.
+            return Core.OlderHome.RefusedPolicy(home) is { } policy ? new OlderHomeException(home, policy, Versions.App) : null;
         }
         catch (Exception) { return null; }
     }
@@ -1440,7 +1442,9 @@ public sealed class AppHost : IAsyncDisposable
     /// up, in-process, never from the pipe or a verb. Lets go of the single-instance lock (its file is inside the home), moves the WHOLE
     /// older home aside by one rename (<see cref="Core.OlderHome.SetAside"/> — which re-reads it and refuses to move a home this build
     /// opens), recreates the managed folders and starts again in the new, empty home. Returns <see cref="StartAsync"/>'s answer; when the
-    /// move is refused the home stays where it was, the refusal stands, and <see cref="StartFreshProblem"/> says why.
+    /// move is refused the home stays where it was, the refusal stands, and <see cref="StartFreshProblem"/> says why. For a home refused
+    /// for its board's older founding policy (<c>U-founding-carry</c>) the move carries the market-context tape into the new home, and
+    /// the activity line says what happened to it.
     /// </summary>
     public async Task<bool> StartFreshAsync()
     {
@@ -1449,13 +1453,14 @@ public sealed class AppHost : IAsyncDisposable
         _lock = null;
         try
         {
-            var aside = Core.OlderHome.SetAside(Paths.Home, DateTimeOffset.UtcNow);
+            var aside = Core.OlderHome.SetAside(Paths.Home, DateTimeOffset.UtcNow, out var tape);
             OlderHome = null;
             StartFreshProblem = null;
             StartupProblem = null;
             var started = await StartAsync();
             if (started)
-                Gateway.Log.Activity($"You started fresh. The older TradeAgent folder is kept, whole, in {aside}.", "info");
+                Gateway.Log.Activity($"You started fresh. The older TradeAgent folder is kept, whole, in {aside}." + (tape is null ? "" : $" {tape}"),
+                    "info");
             return started;
         }
         catch (InvalidOperationException ex)
