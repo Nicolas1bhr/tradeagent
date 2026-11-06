@@ -212,15 +212,16 @@ public class AllocationLedgerTests
             // promotion under it stands, all computed from rows nobody edited. `StandingFor` became
             // `StandingForLive` and `StandingForPaper` at schema 25, which is why the list moved.
             .Where(n => n is not ("ById" or "For" or "All" or "Standing" or "PaperStanding"
-                        or "StandingForLive" or "StandingForPaper" or "InEnvelope"))
+                        or "StandingForLive" or "StandingForPaper" or "InEnvelope" or "StopOf"))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        // TWO WRITES AT SCHEMA 25 AND STILL EXACTLY TWO. `RecordPaper` is the app's own policy writing
+        // THREE WRITES, CHANGED OPENLY UNDER R30 D19. Two until then: `RecordPaper` is the app's own policy writing
         // a PAPER allocation inside an envelope the owner granted, and it is an INSERT with the same
-        // `ON CONFLICT DO NOTHING` as `Record`: what the list is guarding is that nothing here can
-        // edit, delete or withdraw a row, which is as true of the second writer as of the first.
-        Assert.Equal(["Record", "RecordPaper"], writes);
+        // `ON CONFLICT DO NOTHING` as `Record`. `RecordStop` is the stop D19 asked for, and it is that same INSERT: one
+        // superseding row, and the rows under it are not touched. What the list is guarding is that nothing here can
+        // edit, delete or withdraw a row, which is as true of the third writer as of the first.
+        Assert.Equal(["Record", "RecordPaper", "RecordStop"], writes);
         Assert.DoesNotContain(typeof(Allocations).GetMethods(), m =>
             m.Name.Contains("Update", StringComparison.OrdinalIgnoreCase)
             || m.Name.Contains("Delete", StringComparison.OrdinalIgnoreCase)

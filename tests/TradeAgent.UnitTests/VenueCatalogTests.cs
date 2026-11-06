@@ -238,6 +238,7 @@ public class VenueCatalogTests
                 ALTER TABLE boundary_submission DROP COLUMN recommendation;
                 ALTER TABLE boundary_submission DROP COLUMN baseline;
                 ALTER TABLE boundary_event DROP COLUMN review_baseline;
+                DROP INDEX ix_fill_scope;
                 ALTER TABLE fill DROP COLUMN connector;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy;
                 ALTER TABLE strategy_campaign DROP COLUMN paper_policy_sha256;
