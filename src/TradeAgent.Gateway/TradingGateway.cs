@@ -710,8 +710,11 @@ public sealed partial class TradingGateway : IAsyncDisposable
         _inForce is { CouldNotBeRead: false, Decider: BoardDecider.App, Basis: BoardBasis.Founding }
         && Policy.Risk.InstrumentAllowlist.Count == BoardFounding.V1.Risk.InstrumentAllowlist.Count
         && Policy.Risk.InstrumentAllowlist.All(BoardFounding.V1.Risk.InstrumentAllowed)
-        && Connector.Capabilities.IsPaper
-        && BoardFounding.AppPaperVenues.Contains(Connector.Id, StringComparer.Ordinal);
+        && OnAnAppPaperVenue;
+
+    /// <summary>Whether this connector is one of the app's own paper venues (<see cref="BoardFounding.AppPaperVenues"/>) and reports itself a practice platform.</summary>
+    bool OnAnAppPaperVenue =>
+        Connector.Capabilities.IsPaper && BoardFounding.AppPaperVenues.Contains(Connector.Id, StringComparer.Ordinal);
 
     /// <summary>
     /// THE ALLOWLIST AS IT APPLIES ON THIS VENUE: the policy's own list, or — only where <see cref="FoundingCoversThisVenue"/> — an
@@ -4357,15 +4360,51 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// test seam that moves it in memory (<see cref="UpdateRiskUnderTest"/>) and any policy moved without a version.
     /// </summary>
     bool FoundingOrderLimitStands =>
-        Policy.Risk.MaxOrderQuantity == BoardFounding.V1.Risk.MaxOrderQuantity
-        && _inForce is { CouldNotBeRead: false } held
-        && held.Fields.FirstOrDefault(f => f.Name == OrderLimitField) is { } set
+        Policy.Risk.MaxOrderQuantity == BoardFounding.V1.Risk.MaxOrderQuantity && SetByTheFounding(OrderLimitField);
+
+    /// <summary>
+    /// WHETHER <paramref name="field"/> OF THE RECORD THE GATEWAY HOLDS IS STILL THE FOUNDING RECORD'S, by who set it: the app, and no act since. Asked of the
+    /// record in hand, so one that could not be read is not founding.
+    /// </summary>
+    bool SetByTheFounding(string field) =>
+        _inForce is { CouldNotBeRead: false } held
+        && held.Fields.FirstOrDefault(f => f.Name == field) is { } set
         && (set.SetByVersion == held.Version
             ? held.Decider
             : _board.History().FirstOrDefault(v => v.Version == set.SetByVersion)?.Decider) == BoardDecider.App;
 
     /// <summary>The policy's one-order limit, as its body and its acts name it.</summary>
     const string OrderLimitField = "risk.max_order_quantity";
+
+    /// <summary>
+    /// THE MOST ORDERS A MINUTE FOR THIS CALLER (PREFLIGHT-2 blocker 2; D20), R30 D18's shape: <see cref="RiskPolicy.MaxOrdersPerMinute"/>, except for a paper run's
+    /// own order on one of the app's own paper venues while the policy still holds that limit's founding value, where it is
+    /// <see cref="BoardFounding.PaperRunOrdersPerMinute"/>. Six a minute refused the stops and targets of runs that signalled together, and a position without
+    /// them is the one thing a founding figure must not make.
+    ///
+    /// <para><b>One minute, counted once.</b> Every caller is measured against the same dispatches: a run's order counts toward what the flat figure allows the
+    /// next caller, so the owner's press, an agent's order and every other caller still see at most six a minute go out. What differs is only how far a run's
+    /// own order may go.</para>
+    ///
+    /// <para><b>It reaches nothing else, and nothing reaches it.</b> PAPER only, on a paper row, for the deployment identity, which nothing on the pipe can build
+    /// and which is refused outright in a live mode. "Founding" is who set the field, not what it says (<see cref="SetByTheFounding"/>): a figure the board
+    /// decides binds a run like every other caller, including a narrowing to 6 from something else, and a refused protection is asked again on a later minute
+    /// (<c>ForwardRuns</c>). The number is a constant of this build, so no act, verb or seat can widen it.</para>
+    /// </summary>
+    internal int MaxOrdersPerMinuteFor(string? run)
+    {
+        var flat = Policy.Risk.MaxOrdersPerMinute;
+        if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER || !OnAnAppPaperVenue) return flat;
+        if (flat != BoardFounding.V1.Risk.MaxOrdersPerMinute || !SetByTheFounding(RateField)) return flat;
+
+        return _deployments.ById(run) is { } deployment
+               && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false }
+            ? BoardFounding.PaperRunOrdersPerMinute
+            : flat;
+    }
+
+    /// <summary>The policy's rate limit, as its body and its acts name it.</summary>
+    const string RateField = "risk.max_orders_per_minute";
 
     /// <summary>
     /// Every per-order limit, and it ANSWERS WITH the reference price it established. The value the
@@ -4410,7 +4449,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // THE OPEN-POSITION CAP IS NOT HERE ANY MORE, and that is the same lesson one step further:
         // see OpenPositionCapOrThrow, which owns both the position read and the decision, inside the
         // dispatch gate.
-        RateLimitOrThrow(r.MaxOrdersPerMinute);
+        RateLimitOrThrow(MaxOrdersPerMinuteFor(run));
 
         // A price we trust is required for EVERY order, whether or not a value cap is set: an agent
         // sizing a market order from a stale quote is the failure this prevents. Its age is measured
@@ -7075,9 +7114,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// between — by the authorization re-check, or by a store that will not take the record — gives
     /// its place back rather than spending a minute's worth of budget on an order nobody placed.
     /// </summary>
-    DispatchSlot ReserveDispatchOrThrow()
+    DispatchSlot ReserveDispatchOrThrow(string? run = null)
     {
-        var limit = Policy.Risk.MaxOrdersPerMinute;
+        var limit = MaxOrdersPerMinuteFor(run);
         lock (_recentDispatches)
         {
             var at = Now;
@@ -8304,7 +8343,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // inside its bound when the risk check ran can be minutes past it by now.
         RefuseAStaleDecisionOrThrow(intent, stored.RequestId);
 
-        using var slot = ReserveDispatchOrThrow();
+        using var slot = ReserveDispatchOrThrow(ctx.DeploymentId);
 
         // Write-ahead: DISPATCHING is durable before the wire is touched, so a crash mid-flight is
         // recoverable as "we may have sent this" rather than lost entirely.
