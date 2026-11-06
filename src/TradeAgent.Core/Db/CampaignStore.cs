@@ -1027,6 +1027,22 @@ public sealed class CampaignStore(Database db)
         });
     }
 
+    /// <summary>
+    /// WHETHER A CHILD DECLARING <paramref name="parentId"/> WOULD BE ADMITTED UNDER THIS CAMPAIGN, by the rule the look and the gate ask: a
+    /// refinement, charged here and to the campaign its family was first charged to on this pair (<see cref="ChargedCampaignFor"/>).
+    /// </summary>
+    public bool AdmitsChildOf(string parentId, long campaignId) => db.Read(_ =>
+    {
+        var rule = new TrialAdmission
+        {
+            Charged = true,
+            Exploration = false,
+            RunCampaign = ById(campaignId),
+            HomeCampaign = ById(ChargedCampaignFor(parentId, campaignId))
+        };
+        return Refusal(rule, Counts(rule, null), made: false, null) is null;
+    });
+
     /// <summary>A full pot with a way on: the other pot, or the owner's renewal.</summary>
     static string PotKept(TrialAdmission rule, CampaignRow campaign, bool made, string? through) =>
         $"campaign {campaign.Id} has registered all {rule.PotOf(campaign)} of the trials it reserves for "
