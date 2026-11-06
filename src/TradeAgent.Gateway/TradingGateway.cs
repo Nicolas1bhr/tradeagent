@@ -1868,8 +1868,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// suspends instead. A flatten sent where the run was not started is an order on somebody else's
     /// book.</para>
     ///
-    /// <para><b>Who may ask.</b> The owner's one press plus a confirm, the app's own policy when the
-    /// grant or the verdict goes, and the version's own role over the pipe — ending only ever REMOVES
+    /// <para><b>Who may ask.</b> The app's own policy when the grant or the verdict goes, and the runner when a
+    /// run ends by itself; the owner's one press plus a confirm and the version's own role over the pipe come through
+    /// <see cref="StopPaperDeploymentAsync"/>, which also ends the allocation (R30 D19). Ending only ever REMOVES
     /// exposure, which is the same exception this product already makes for <c>close</c> and
     /// <c>cancel</c>. Nothing here can start one, widen one or move it somewhere else.</para>
     ///
@@ -1901,8 +1902,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     ///
     /// <para><b>A stop times a paper close, and it says so (R29 F-C5).</b> The run's line, its end note and the stop row each say who stopped
     /// it and when, and the row keeps what the run held at that instant, so a stop placed to end a forward record at a chosen moment is
-    /// there to be read. Paper only, through every gate: the stop is <see cref="Deployments"/>' END with a row beside it, and it can start,
-    /// widen or move nothing.</para>
+    /// there to be read. Paper only, through every gate: a stop is the same END with one row beside it, and it can start, widen or move
+    /// nothing.</para>
     /// </summary>
     public Task<StrategyDeploymentRow?> StopPaperDeploymentAsync(string id, string who, CancellationToken ct = default)
     {
@@ -2341,8 +2342,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// allocation.</para>
     ///
     /// <para><b>Its "net" is the run's P&amp;L</b> (R28 P3): realised after costs, plus what is still open marked at the last close. A day's note
-    /// passes <paramref name="through"/> and <paramref name="lastClose"/>, the end of that day and its last close, and is said by the runner only on
-    /// a live bar (R28 G1), so its figures are that day's and its publication id does not move.</para>
+    /// passes <paramref name="asOfDay"/> and <paramref name="lastClose"/>, the run's book at that day's last bar and that bar's close, and is said by
+    /// the runner only on a live bar (R28 G1), so its figures are that day's and its publication id does not move.</para>
     ///
     /// <para><b>The figures may cross, and that is the point.</b> A paper result is the ROLE'S OWN
     /// EXPERIMENT — the allocation was written for it, the bars post-date every freeze on this
@@ -2352,19 +2353,17 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// figure here is said to be a DECLARED SIMULATION at the next open.</para>
     /// </summary>
     public void TellResearchAboutARun(StrategyDeploymentRow deployment, string occasion,
-        string why, DateTimeOffset? at = null, DateTimeOffset? through = null, decimal? lastClose = null)
+        string why, DateTimeOffset? at = null, RunBook? asOfDay = null, decimal? lastClose = null)
     {
         ArgumentNullException.ThrowIfNull(deployment);
         var now = at ?? Now;
 
         try
         {
-            var ops = _deployments.OpsOf(deployment.Id);
-            var ledger = _fills.Scoped(deployment.ConnectorId, deployment.AccountId).Fills;
-
-            // THROUGH THAT DAY, OR THE WHOLE RUN (R28 G1): a day's figures are that day's, so its note reads the same however often its bar is
+            // THAT DAY'S BOOK, OR THE WHOLE RUN (R28 G1): a day's figures are that day's, so its note reads the same however often its bar is
             // replayed live and whatever the run does later. The end has no later, and a run's end marks at the newest close on the ledger.
-            var book = through is { } dayEnd ? _deployments.BookBefore(deployment, dayEnd, ops, ledger) : _deployments.BookOf(deployment, ops, ledger);
+            var book = asOfDay ?? _deployments.BookOf(deployment, _deployments.OpsOf(deployment.Id),
+                _fills.Scoped(deployment.ConnectorId, deployment.AccountId).Fills);
             var mark = lastClose ?? LastCloseOf(deployment.Symbol);
             var fees = book.Fees;
 
@@ -4307,21 +4306,43 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// holds at most that much (<see cref="AllocationCeilingOrThrow"/>), so its END can always send its close, even after a narrowing or a stop
     /// has ended the allocation: a limit read from what stands now would leave a position nobody could close.</para>
     ///
+    /// <para><b>A figure the board decides binds a run's opener, and never its close.</b> "Founding" is who set the field, not what it says
+    /// (<see cref="FoundingOrderLimitStands"/>): a board that narrowed to 1 from 2 decided 1, and reading that as the founding value would turn a
+    /// narrowing into a raise. A run's exit, stop, target and END carry <see cref="OrderIntent.Close"/> and stay at the allocation under any figure:
+    /// a limit narrowed below what a run holds must not leave it a position it can never close.</para>
+    ///
     /// <para><b>It reaches nothing else.</b> PAPER only, on a paper row, for the deployment identity, which is refused outright in a live mode:
-    /// the owner's press, an agent's order and every other caller are bound by the flat figure as before. A figure the board decides replaces the
-    /// founding one and binds a run too. Capital still binds either way: the allocation's quantity and value ceilings are asked inside the dispatch
-    /// gate, and the envelope's sum in <see cref="Allocations.RecordPaper"/>.</para>
+    /// the owner's press, an agent's order and every other caller are bound by the flat figure as before. Capital still binds either way: the
+    /// allocation's quantity and value ceilings are asked inside the dispatch gate, and the envelope's sum in
+    /// <see cref="Allocations.RecordPaper"/>.</para>
     /// </summary>
-    decimal MaxOrderQuantityFor(string? run)
+    decimal MaxOrderQuantityFor(PlaceIntent intent, string? run)
     {
         var flat = Policy.Risk.MaxOrderQuantity;
-        if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER || flat != BoardFounding.V1.Risk.MaxOrderQuantity) return flat;
+        if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER) return flat;
+        if (intent.Intent is not OrderIntent.Close && !FoundingOrderLimitStands) return flat;
 
         return _deployments.ById(run) is { } deployment
                && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false } allocation
             ? allocation.MaxQuantity
             : flat;
     }
+
+    /// <summary>
+    /// WHETHER THE ONE-ORDER LIMIT IN FORCE IS STILL THE FOUNDING RECORD'S, by who set the field: the app, and no act since. Equal in value and set by
+    /// the board is not it. Asked of the record the gateway holds, so a record that could not be read is not founding. The figure is read too, for the
+    /// test seam that moves it in memory (<see cref="UpdateRiskUnderTest"/>) and any policy moved without a version.
+    /// </summary>
+    bool FoundingOrderLimitStands =>
+        Policy.Risk.MaxOrderQuantity == BoardFounding.V1.Risk.MaxOrderQuantity
+        && _inForce is { CouldNotBeRead: false } held
+        && held.Fields.FirstOrDefault(f => f.Name == OrderLimitField) is { } set
+        && (set.SetByVersion == held.Version
+            ? held.Decider
+            : _board.History().FirstOrDefault(v => v.Version == set.SetByVersion)?.Decider) == BoardDecider.App;
+
+    /// <summary>The policy's one-order limit, as its body and its acts name it.</summary>
+    const string OrderLimitField = "risk.max_order_quantity";
 
     /// <summary>
     /// Every per-order limit, and it ANSWERS WITH the reference price it established. The value the
@@ -4340,7 +4361,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         if (intent.Quantity <= 0)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "quantity must be greater than zero");
 
-        if (MaxOrderQuantityFor(run) is var most && intent.Quantity > most)
+        if (MaxOrderQuantityFor(intent, run) is var most && intent.Quantity > most)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"quantity {intent.Quantity} exceeds the limit of {most}");
 
@@ -4455,7 +4476,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"{intent.Symbol} is not on the allowed instrument list");
 
-        if (MaxOrderQuantityFor(run) is var most && intent.Quantity > most)
+        if (MaxOrderQuantityFor(intent, run) is var most && intent.Quantity > most)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"quantity {intent.Quantity} exceeds the limit of {most}");
 

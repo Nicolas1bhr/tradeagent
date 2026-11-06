@@ -4642,14 +4642,17 @@ per deployment under *running forward on paper*, every line marked PAPER and no 
 policy, and it binds every caller but one: a paper run's own order, in PAPER, while that field holds its founding
 value, is bound by the run's allocation row instead (`TradingGateway.MaxOrderQuantityFor`), which is the pair's
 envelope quantity over its deployments, rounded down. The row is read by the id the run started under, so an END
-can always close what the run holds, even after a narrowing or a stop ended the allocation. A figure the board
-decides binds a run too. The allocation's quantity and value ceilings and the envelope's sum still bind as they did.
+can always close what the run holds, even after a narrowing or a stop ended the allocation. "Founding" is who set
+the field, not its value: a board that narrowed to 1 from 2 decided 1. A figure the board decides binds a run's
+openers; a run's exits, stops, targets and END stay at the allocation, so a narrowing never leaves it a position it
+cannot close. The allocation's quantity and value ceilings and the envelope's sum still bind as they did.
 
 **The note an author reads** (`TellResearchAboutARun`; R28 P3, G1). Its "net" is the run's P&L: realised after
 its costs, plus what it still holds at the last close against its average; with no close recorded the figure
 leaves the open quantity out and says so. A day's note is said by the runner on a LIVE bar only, the one that
-closes the day, with that day's fills (`Deployments.BookBefore`) and that day's last close, so its publication id
-does not move: the replay from minute one every 5 s, and a later fill, publish no past day again. The fills are
+closes the day, with the run's book through that day's last bar (fills on the bars they landed on, not their
+settlement stamps) and that bar's close, so its publication id does not move: the replay from minute one every
+5 s, and a later fill, publish no past day again. The fills are
 read through `ix_fill_scope` on `fill(account_id, connector, at)`, rung 54.
 
 ## The runner — `src/TradeAgent.Gateway/ForwardRuns.cs`, `src/TradeAgent.Platforms/ForwardBarSource.cs`

@@ -621,29 +621,9 @@ public sealed class Deployments(Database db)
         ArgumentNullException.ThrowIfNull(deployment);
         ops ??= OpsOf(deployment.Id);
         var fills = FillsOf(deployment, ops, ledger);
-        var walk = Walked(fills, out var unknownSide);
-        return walk.Book(unknownSide ?? Unaccounted(deployment.Id, fills));
-    }
 
-    /// <summary>
-    /// THE RUN'S OWN BOOK AS IT STOOD AT THE END OF A DAY (<see cref="RunBook"/>): the same walk over the fills stamped before
-    /// <paramref name="before"/>, and nothing later, so a day's figures are that day's however much the run has done since. Whether the
-    /// orders agree with the ledger is a question about the run now (<see cref="BookOf"/>), not asked of a past day; a fill on a side this
-    /// build does not know still says so.
-    /// </summary>
-    public RunBook BookBefore(StrategyDeploymentRow deployment, DateTimeOffset before, IReadOnlyList<DeploymentOpRow>? ops = null,
-        IReadOnlyList<Fill>? ledger = null)
-    {
-        ArgumentNullException.ThrowIfNull(deployment);
-        var walk = Walked(FillsOf(deployment, ops, ledger).Where(f => f.At < before), out var unknownSide);
-        return walk.Book(unknownSide);
-    }
-
-    /// <summary>The one walk of a run's fills (<see cref="RunBookWalk"/>), and the first fill on a side this build does not know, in words.</summary>
-    static RunBookWalk Walked(IEnumerable<Fill> fills, out string? unknownSide)
-    {
         var walk = new RunBookWalk();
-        unknownSide = null;
+        string? unknownSide = null;
         foreach (var fill in fills)
         {
             var buy = string.Equals(fill.Side, "Buy", StringComparison.OrdinalIgnoreCase);
@@ -653,7 +633,7 @@ public sealed class Deployments(Database db)
             walk.Apply(buy, fill.Quantity, fill.Price, fill.Fee);
         }
 
-        return walk;
+        return walk.Book(unknownSide ?? Unaccounted(deployment.Id, fills));
     }
 
     /// <summary>

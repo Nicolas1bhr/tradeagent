@@ -974,11 +974,15 @@ public sealed class Allocations(Database db)
     /// <para>A row whose grant no longer stands is listed and MARKED by the caller rather than
     /// filtered out, exactly as a withdrawn promotion is under <see cref="Standing"/>: the row is
     /// still on the table and the experiment is over.</para>
+    ///
+    /// <para><paramref name="limit"/> bounds what stands, read after every row is judged: stop rows and ended rows are never what pushes a row in
+    /// force off the list, or a run's replacement would stop being started when enough newer rows piled up.</para>
     /// </summary>
     public IReadOnlyList<AllocationStanding> PaperStanding(DateTimeOffset now, int limit = 100) =>
-        [.. NotStopped(All(limit).Where(a => a.IsPaper && a.StandsAt(now)), now)
+        [.. NotStopped(All(int.MaxValue).Where(a => a.IsPaper && a.StandsAt(now)), now)
             .GroupBy(a => (a.VersionId, a.EnvelopeId))
             .Select(g => g.First())
+            .Take(limit)
             .Select(a => PaperStandingOf(a,
                 a.EnvelopeId is { Length: > 0 } id && _envelopes.ById(id) is { } e && e.StandsAt(now)
                     ? e : null, now))];

@@ -43,6 +43,31 @@ public partial class PaperAllocationGateTests
     }
 
     /// <summary>
+    /// A ROW IN FORCE IS NOT PUSHED OFF THE LIST BY NEWER ROWS THAT ARE NOT (the Codex review's P2): the bound counts what stands. With the bound read first, a
+    /// stop row newer than a standing allocation hid it, and enough stops would have stopped the older version's replacement ever being started.
+    /// </summary>
+    [Fact]
+    public async Task The_paper_list_bounds_what_stands_and_not_what_was_written()
+    {
+        var (gw, _, db) = await Ready();
+        using var _1 = db;
+
+        var envelope = Slots(gw, 2);
+        var kept = Judged(db, PromotionVerdict.PaperEligible, 103);
+        Assert.True(gw.Allocations.RecordPaper(PaperRowFor(gw, kept, envelope, quantity: 1m), At).Ok);
+
+        var later = At.AddMinutes(1);
+        var stopped = Judged(db, PromotionVerdict.PaperEligible, 104);
+        var row = gw.Allocations.RecordPaper(PaperRowFor(gw, stopped, envelope, quantity: 1m) with { EffectiveFrom = later, At = later }, later);
+        Assert.True(row.Ok, row.Why);
+        Assert.True(gw.Allocations.RecordStop(row.Allocation!.Id, "stopped by pos-head", later.AddMinutes(1)).Ok);
+
+        var listed = gw.Allocations.PaperStanding(later.AddMinutes(2), limit: 1);
+        Assert.Equal(kept, Assert.Single(listed).Allocation.VersionId);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
     /// A STOP REACHES NOTHING BUT PAPER (the unit's "no path toward live"): a live row offered to it is refused in words and stays in force; a paper stop
     /// of a version that also holds capital leaves the capital where it is; a stop row is refused by both writers that could otherwise make it stand; and
     /// an id this ledger does not hold writes nothing.

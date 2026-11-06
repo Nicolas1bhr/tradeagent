@@ -94,10 +94,37 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// A VERSION WRITTEN AS A BOARD ACT'S, with raw SQL: the precondition the board tests write the same way. The allowlist names the pairs, because
+    /// the founding allowlist's reach over the venue's own list ends with the founding record.
+    /// </summary>
+    static void BoardDecides(Database db, decimal orderLimit)
+    {
+        var inForce = new BoardReader(db).InForce();
+        var risk = inForce.Policy.Risk;
+        risk.MaxOrderQuantity = orderLimit;
+        risk.InstrumentAllowlist = [.. Pairs.Select(p => p.Pair)];
+        var body = BoardPolicyBody.Canonical(inForce.Policy with { Risk = risk });
+        var act = $"bact-seed{inForce.Version + 1}";
+        var at = Sql.T(Start);
+        db.Write(_ =>
+        {
+            using (var c = db.Cmd("INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
+                                  + "VALUES($id, 'narrow', 'board-3', NULL, '[]', $sha, $v, 'the test seeds this version', '[]', NULL, NULL, $at)",
+                       ("$id", act), ("$sha", Sha256Hex.Of("[]")), ("$v", inForce.Version), ("$at", at)))
+                c.ExecuteNonQuery();
+            using var d = db.Cmd("INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, supersedes) "
+                                 + "VALUES($next, 'board', 'act', $act, $at, 'PAPER', 0, $body, $sha, $v)",
+                ("$next", inForce.Version + 1), ("$act", act), ("$at", at), ("$body", body), ("$sha", Sha256Hex.Of(body)), ("$v", inForce.Version));
+            return d.ExecuteNonQuery();
+        });
+    }
+
     /// <summary>A home as the founding policy leaves it: its envelopes granted by the first health pass, each pair's one judged version on paper.</summary>
-    static async Task<Rig> Founded()
+    static async Task<Rig> Founded(Action<Database>? board = null)
     {
         var db = TestEnv.NewDb();
+        board?.Invoke(db);
         var clock = new Clock(Start);
         var bars = new ForwardBarStore(db);
         var source = new ForwardBarSource(bars);
@@ -113,8 +140,6 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         new VenueStore(db).Sync(Catalogue());
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
-
-        Assert.Equal(BoardFounding.V1.Risk.MaxOrderQuantity, gw.Policy.Risk.MaxOrderQuantity);
 
         foreach (var (pair, _) in Pairs) ForwardRunnerTests.Judged(db, Program(pair), Start, pair);
         Assert.Equal(Pairs.Length, gw.AllocatePaperDue(Start));
@@ -197,6 +222,57 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         var overValue = await Asked(rig, "SOLUSDT", 10m);
         Assert.Contains("the capital allocated to it is", overValue, StringComparison.Ordinal);
         Assert.Empty(rig.Gw.Deployments.FillsOf(rig.RunOn("SOLUSDT")));
+    }
+
+    /// <summary>
+    /// A BOARD THAT SETTLES ON 1 DECIDED 1 (the Codex review's P1): 1 as a board's own figure, set by an act after it was 2, is equal to the founding value
+    /// and is not the founding record. A run's opener is bound by it. RED with the founding limit read by its value: 2 SOL passed at the share of 16.66….
+    /// </summary>
+    [Fact]
+    public async Task A_figure_the_board_decided_binds_a_runs_opener_even_when_it_equals_the_founding_one()
+    {
+        await using var rig = await Founded(db =>
+        {
+            BoardDecides(db, 2m);
+            BoardDecides(db, BoardFounding.V1.Risk.MaxOrderQuantity);
+        });
+        rig.Minute(1);
+
+        Assert.Equal(BoardFounding.V1.Risk.MaxOrderQuantity, rig.Gw.Policy.Risk.MaxOrderQuantity);
+        Assert.Contains("exceeds the limit of 1", await Asked(rig, "SOLUSDT", 2m), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A RUN CAN ALWAYS CLOSE WHAT IT HOLDS (the Codex review's P2): a run long 8 SOL when the limit is narrowed to 0.5, then stopped, sends its one close of
+    /// 8 and it fills. RED with the close held to the narrowed figure: refused before the wire, every minute, and the slot never freed.
+    /// </summary>
+    [Fact]
+    public async Task A_run_closes_what_it_holds_after_the_limit_is_narrowed_below_it()
+    {
+        await using var rig = await Founded();
+        for (var minute = 1; minute <= 3; minute++)
+        {
+            rig.Minute(minute);
+            await rig.Gw.RefreshHealthAsync();
+            await rig.Runner.AdvanceAsync();
+        }
+
+        var run = rig.RunOn("SOLUSDT");
+        var held = Assert.Single(rig.Gw.Deployments.FillsOf(run)).Quantity;
+
+        rig.Gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 0.5m);
+        await rig.Gw.StopPaperDeploymentAsync(run.Id, "the account owner");
+
+        for (var minute = 4; minute <= 5; minute++)
+        {
+            rig.Minute(minute);
+            await rig.Gw.RefreshHealthAsync();
+        }
+
+        var close = rig.Gw.Deployments.OpsOf(run.Id).Last(o => o.Kind == DeploymentOpKind.Flatten);
+        log.WriteLine($"the close of {held}: {close.State} {rig.Gw.GetRequest(close.RequestId)?.State} {close.Answer}");
+        Assert.Equal(ExecutionState.FILLED, rig.Gw.GetRequest(close.RequestId)!.State);
+        Assert.Equal(0m, rig.Gw.Deployments.BookOf(run).Held);
     }
 
     /// <summary>

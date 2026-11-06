@@ -25,9 +25,8 @@ public class ForwardRunDayNoteTests(ITestOutputHelper log)
         [.. new PublicationStore(rig.Db).By(TradingGateway.PaperAllocatorRole)
             .Where(n => n.Content.Contains($"the UTC day {day} closed over it", StringComparison.Ordinal))];
 
-    /// <summary>Costs the run was charged by <paramref name="before"/>, whatever the paper connector declares, so "net" can be stated exactly.</summary>
-    static decimal CostsBefore(ForwardRunnerTests.Rig rig, DateTimeOffset before) =>
-        rig.Gw.Deployments.FillsOf(rig.Deployment).Where(f => f.At < before).Sum(f => f.Fee ?? 0m);
+    /// <summary>Costs the run has been charged so far, whatever the paper connector declares, so "net" can be stated exactly.</summary>
+    static decimal Costs(ForwardRunnerTests.Rig rig) => rig.Gw.Deployments.FillsOf(rig.Deployment).Sum(f => f.Fee ?? 0m);
 
     /// <summary>In at 102 at minute 3's open, and flat 110 up to the bar before midnight.</summary>
     static async Task LongInto(ForwardRunnerTests.Rig rig)
@@ -69,7 +68,7 @@ public class ForwardRunDayNoteTests(ITestOutputHelper log)
 
         var note = Assert.Single(Notes(rig, Day));
         log.WriteLine(note.Content);
-        var net = 8m - CostsBefore(rig, Evening.AddMinutes(10));
+        var net = 8m - Costs(rig);
         Assert.Contains($"net {AllocationRow.Num(net)} after", note.Content, StringComparison.Ordinal);
         Assert.Contains("with 1 still open at an average of 102, marked at the last close of 110", note.Content, StringComparison.Ordinal);
     }
@@ -109,9 +108,6 @@ public class ForwardRunDayNoteTests(ITestOutputHelper log)
 
         await new ForwardRuns(rig.Gw, rig.Db, () => rig.Clock.At).AdvanceAsync();
 
-        // AND THE DAY'S FIGURES ARE THE DAY'S: said again with the next day's fill on the ledger, it is the same words under the same id.
-        rig.Gw.TellResearchAboutARun(rig.Deployment, Day, $"the UTC day {Day} closed over it", rig.Clock.At, Evening.AddMinutes(10), 110m);
-
         var notes = Notes(rig, Day);
         foreach (var n in notes) log.WriteLine($"{n.Id[..12]}: {n.Content[..90]}");
         Assert.Equal(said.Id, Assert.Single(notes).Id);
@@ -122,9 +118,62 @@ public class ForwardRunDayNoteTests(ITestOutputHelper log)
 
         var next = Assert.Single(Notes(rig, NextDay));
         log.WriteLine(next.Content);
-        var net = -21m - CostsBefore(rig, Evening.AddMinutes(1450));
+        var net = -21m - Costs(rig);
         Assert.Contains($"net {AllocationRow.Num(net)} after", next.Content, StringComparison.Ordinal);
         Assert.DoesNotContain("still open", next.Content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A FILL ON THE DAY'S LAST BAR IS THAT DAY'S (Codex review): it is stamped when it settled, after midnight, and it landed on the 23:59 bar. Its day's
+    /// note counts it and marks it at that bar's close. RED with the day cut on the fill's stamp: <c>0 simulated fills</c>, a day that closed long read as flat.
+    /// </summary>
+    [Fact]
+    public async Task A_fill_on_the_days_last_bar_is_in_that_days_note()
+    {
+        await using var rig = await ForwardRunnerTests.ReadyAsync(Program, origin: Evening);
+
+        for (var minute = 1; minute <= 6; minute++)
+        {
+            rig.Bar(minute, 99m, 99m, 99m, 99m);
+            await rig.Runner.AdvanceAsync();
+        }
+
+        rig.Bar(7, 99m, 101m, 98m, 101m);
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(8, 101m, 102m, 100m, 101m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(9, 102m, 110m, 101m, 110m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+
+        var fill = Assert.Single(rig.Gw.Deployments.FillsOf(rig.Deployment));
+        log.WriteLine($"the fill: {fill.Price}, stamped {fill.At:u}");
+        Assert.True(fill.At >= Evening.AddMinutes(10), "the fixture is about a fill stamped after the day it landed on");
+
+        rig.Bar(10, 111m, 111m, 111m, 111m);
+        await rig.Runner.AdvanceAsync();
+
+        var note = Assert.Single(Notes(rig, Day));
+        log.WriteLine(note.Content);
+        Assert.Contains("1 simulated fill,", note.Content, StringComparison.Ordinal);
+        Assert.Contains($"net {AllocationRow.Num(8m - Costs(rig))} after", note.Content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A BAR REPLAYED BEHIND THE CURSOR SAYS NOTHING (R28 G1): every pass replays from minute one, and a day boundary the cursor has passed is accounted
+    /// for. A note is said on a live bar or not at all, even for a day that has none. RED with the note said on every boundary replayed.
+    /// </summary>
+    [Fact]
+    public async Task A_day_boundary_behind_the_cursor_says_nothing()
+    {
+        await using var rig = await ForwardRunnerTests.ReadyAsync(Program, origin: Evening);
+        rig.Minutes(1, 12, _ => 99m);
+
+        Assert.True(rig.Gw.Deployments.AdvanceCursor(rig.Deployment.Id, Evening.AddMinutes(11)));
+        await rig.Runner.AdvanceAsync();
+
+        Assert.Empty(Notes(rig, Day));
     }
 
     /// <summary>A RUN'S END SAYS ITS P&amp;L TOO (R28 P3): a close that rests until the next open leaves the run holding at the end, marked at the newest close.</summary>
@@ -140,7 +189,7 @@ public class ForwardRunDayNoteTests(ITestOutputHelper log)
         var note = Assert.Single(new PublicationStore(rig.Db).By(TradingGateway.PaperAllocatorRole),
             n => n.Content.Contains("test: the run ended by itself", StringComparison.Ordinal));
         log.WriteLine(note.Content);
-        var net = 8m - CostsBefore(rig, rig.Clock.At.AddMinutes(1));
+        var net = 8m - Costs(rig);
         Assert.Contains($"net {AllocationRow.Num(net)} after", note.Content, StringComparison.Ordinal);
         Assert.Contains("marked at the last close of 110", note.Content, StringComparison.Ordinal);
     }
