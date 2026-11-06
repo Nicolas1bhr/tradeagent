@@ -88,7 +88,7 @@ class W:
     PIPE_REFUSALS = ("grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused", "op_refused")
     # strategy_allocation.policy_version
     POLICY_INCONCLUSIVE = "allocation-policy-inconclusive-v1"   # a slot that costs its campaign a trial
-    POLICY_STOP = "allocation-policy-stop-v1"                   # D19's stop, a row with an empty window: U-paper-closure's, not an allocation
+    POLICY_STOP = "allocation-policy-stop-v1"                   # D19's stop, a row with an empty window: not an allocation
     # tool_call.tool: a door verb is its op with _ for -; `trade`, `data` and `report` carry the op in the argument ("trade backtest")
     OP_ORG_CHARTER, OP_ORG_HIRE = "org-charter", "org-hire"
     OP_MANDATE_ASSIGN, OP_MANDATE_DELIVER, OP_MANDATE_ACCEPT, OP_MANDATE_REJECT = "mandate-assign", "mandate-deliver", "mandate-accept", "mandate-reject"

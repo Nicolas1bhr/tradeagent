@@ -36,9 +36,6 @@ public partial class OrgDigestTests(ITestOutputHelper log)
     /// <summary>What the app writes for a paper mode (<c>AllocationStore.RecordPaper</c> refuses anything else). Never typed by hand.</summary>
     static readonly string Paper = TradingMode.PAPER.ToString();
 
-    /// <summary>D19's stop row: <c>AllocationPolicy.StopV1</c> once U-paper-closure lands, read by name so this file compiles either side of it.</summary>
-    const string StopPolicy = "allocation-policy-stop-v1";
-
     static DateTimeOffset At(string iso) => DateTimeOffset.Parse(iso, System.Globalization.CultureInfo.InvariantCulture);
     static string Sha(string s) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
 
@@ -159,7 +156,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
                 INSERT INTO strategy_allocation(id, version_id, promotion_id, policy_version, max_quantity, currency, effective_from, effective_to, reason, at, mode) VALUES
                   ('al1', 'v2', 'p2', 'pol', '1', 'USD', '2026-10-31T02:40:00.0000000Z', NULL, 'paper', '2026-10-31T02:40:00.0000000Z', '{{Paper}}'),
                   -- A stop is written as a row with an empty window (D19): it is no allocation. An inconclusive slot costs its campaign a trial.
-                  ('al2', 'v2', 'p2', '{{StopPolicy}}', '0', 'USD', '2026-10-31T03:00:00.0000000Z', '2026-10-31T03:00:00.0000000Z', 'stopped', '2026-10-31T03:00:00.0000000Z', '{{Paper}}'),
+                  ('al2', 'v2', 'p2', '{{AllocationPolicy.StopV1}}', '0', 'USD', '2026-10-31T03:00:00.0000000Z', '2026-10-31T03:00:00.0000000Z', 'stopped', '2026-10-31T03:00:00.0000000Z', '{{Paper}}'),
                   ('al3', 'v1', 'p1', '{{AllocationPolicy.InconclusiveV1}}', '1', 'USD', '2026-10-01T03:00:00.0000000Z', '2026-10-02T03:00:00.0000000Z', 'quota', '2026-10-01T03:00:00.0000000Z', '{{Paper}}');
                 INSERT INTO paper_envelope(id, connector_id, account_id, symbol, currency, max_quantity, max_notional, max_deployments, granted_at, expires_at, reason, withdrawn_at) VALUES
                   ('env', 'paper', 'PAPER-1', 'BTCUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', NULL),
@@ -675,7 +672,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ["WAKE_PAPER_RUN"] = MissionEventIds.PaperRun("", "")[..^1], ["WAKE_AFTER_LOST"] = MissionLoop.AfterLost,
         ["PUBLICATION_ALLOCATOR"] = TradingGateway.PaperAllocatorRole, ["PUBLICATION_NOTE"] = PublicationKind.Note,
         ["LEDGER_KILL"] = LedgerKind.Kill, ["OUTCOME_VOID"] = ForecastOutcome.Void, ["LOG_OP_REFUSED"] = RefusalMark.Event,
-        ["PIPE_REFUSALS"] = OrgSnapshot.PipeRefusalEvents, ["POLICY_INCONCLUSIVE"] = AllocationPolicy.InconclusiveV1,
+        ["PIPE_REFUSALS"] = OrgSnapshot.PipeRefusalEvents, ["POLICY_INCONCLUSIVE"] = AllocationPolicy.InconclusiveV1, ["POLICY_STOP"] = AllocationPolicy.StopV1,
         ["OP_ORG_CHARTER"] = Ops.OrgCharter, ["OP_ORG_HIRE"] = Ops.OrgHire, ["OP_MANDATE_ASSIGN"] = Ops.MandateAssign, ["OP_MANDATE_DELIVER"] = Ops.MandateDeliver,
         ["OP_MANDATE_ACCEPT"] = Ops.MandateAccept, ["OP_MANDATE_REJECT"] = Ops.MandateReject, ["OP_BACKTEST"] = Ops.Backtest, ["OP_VERDICT"] = Ops.Verdict,
         ["TOOLS_CARRYING_AN_OP"] = new[] { GrantedWorkerTools.Trade, GrantedWorkerTools.Data, GrantedWorkerTools.Report },
@@ -725,15 +722,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         // The two words of a decision the app reserves and no verb writes on main: held to its list, and said in the digest's words.
         foreach (var name in new[] { "DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH" }) Assert.Contains(Word(name), OrgDecisionKind.Mandatory);
 
-        // The one word of a unit still landing: held to the app's constant from the moment it exists.
-        if (typeof(AllocationPolicy).GetField("StopV1") is { } stop) Assert.Equal((string)stop.GetValue(null)!, Word("POLICY_STOP"));
-        Assert.Equal(StopPolicy, Word("POLICY_STOP"));
-
         // The setting's key, as the app serialises it, read from the app's own writer.
         Assert.Contains($"\"{Word("SETTING_WORKS_ON_ITS_OWN")}\":", TradeAgent.Core.Json.Write(new TradeAgentSettings()), StringComparison.Ordinal);
 
         // AND NOTHING IS LEFT UNTRACED: every word in the digest is in one of the tables above.
-        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "POLICY_STOP", "SETTING_WORKS_ON_ITS_OWN"]);
+        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "SETTING_WORKS_ON_ITS_OWN"]);
         Assert.Empty(digest.Keys.Except(traced));
     }
 
