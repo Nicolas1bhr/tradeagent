@@ -248,7 +248,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Single(life.Host.Wakes!.OfKind(MissionEventKind.Owner));
         Assert.Equal(1, Occurrences(life.Prompt(chief, 2)!, words));
         Assert.Contains(MissionSituation.OwnerWordsAreData, life.Prompt(chief, 2)!, StringComparison.Ordinal);
-        Assert.Empty(life.AttemptsOf(Chair).Where(a => life.Events().Any(e => e.ConsumedBy == a.Id && e.Kind == MissionEventKind.Owner)));
+        Assert.DoesNotContain(life.AttemptsOf(Chair), a => life.Events().Any(e => e.ConsumedBy == a.Id && e.Kind == MissionEventKind.Owner));
 
         var asked = Assert.Single(life.Host.Wakes.OfKind(MissionEventKind.Self), e => e.Role == chief);
         Assert.True(asked.DueAt >= next.StartedAt.AddMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]),
