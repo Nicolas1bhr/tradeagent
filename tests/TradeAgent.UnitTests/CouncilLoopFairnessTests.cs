@@ -332,8 +332,9 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
-    /// (R1c) WHAT A FAILED TURN WAS TOLD IS TOLD AGAIN ONCE. A hire's first wake and a note are taken by a turn that fails: each settles <c>failed</c> and is
-    /// raised once, as a lost turn's is, and a second failure raises nothing more. The owner's press is no told wake. RED at base: gone with the turn.
+    /// (R1c) WHAT A FAILED TURN WAS TOLD IS TOLD AGAIN ONCE. A hire's first wake, a note and a delivery waiting on its decider are taken by a turn that fails:
+    /// each settles <c>failed</c> and is raised once, as a lost turn's is, and a second failure raises nothing more. RED at base: gone with the turn, and a
+    /// delivery's judgment owed with no wake, the sweep raising one only for a LOST launch.
     /// </summary>
     [Fact]
     public async Task What_a_failed_turn_was_told_is_told_again_once()
@@ -343,7 +344,8 @@ public partial class CouncilLoopTests
         using var _ = db;
         var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
         host.Conversations[FairMember].Exit = 1;
-        var taken = new[] { MissionEventKind.Activated, MissionEventKind.Note }.Select(k => Told(host, k, FairMember, now)).ToList();
+        string[] kinds = [MissionEventKind.Activated, MissionEventKind.Note, MissionEventKind.Delivery];
+        var taken = kinds.Select(k => Told(host, k, FairMember, now)).ToList();
 
         await loop.TurnAsync();
 
@@ -356,8 +358,7 @@ public partial class CouncilLoopTests
         now = now.AddHours(1);
         await loop.TurnAsync();
         Assert.All(taken, id => Assert.Equal(MissionEventDisposition.Failed, host.Events!.Get(id + MissionLoop.AfterLost)!.Disposition));
-        Assert.Equal(2, new[] { MissionEventKind.Activated, MissionEventKind.Note }
-            .SelectMany(k => host.Events!.OfKind(k)).Count(e => e.Id.EndsWith(MissionLoop.AfterLost, StringComparison.Ordinal)));
+        Assert.Equal(kinds.Length, kinds.SelectMany(k => host.Events!.OfKind(k)).Count(e => e.Id.EndsWith(MissionLoop.AfterLost, StringComparison.Ordinal)));
     }
 
     /// <summary>

@@ -49,8 +49,8 @@ public sealed partial class GatewayPipeServer
             decision = DecisionReply(made.Decision),
             repeated = made.Repeated,
             note = made.Repeated
-                ? "This charter went in already: the same kind, shares and rationale as the unit named here, which stands, so nothing was "
-                  + "written and no structural change was spent. To charter a second unit, give it its own rationale."
+                ? "This charter went in already: the same act as the unit named here, which stands, so nothing was written and no "
+                  + "structural change was spent; dates alone do not make a new act. To charter a second unit, give it its own rationale."
                 : "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
                   + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
                   + "own ledger entry, marked claim — and its unit-admissible forecast resolves at its date from the referee's verdicts "

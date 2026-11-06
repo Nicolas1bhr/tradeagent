@@ -1415,6 +1415,12 @@ public sealed class MissionEventStore(Database db)
         ], StringComparer.Ordinal)
     ];
 
+    /// <summary>
+    /// A DECIDER'S JUDGMENT WAKES (<c>U-wake-fairness</c>, the Codex review): the sweep raises these again only for a LOST launch, so what a turn
+    /// that FAILED took is told again where it failed. Keeping them out of <see cref="ToldKinds"/> keeps a lost one from being raised twice.
+    /// </summary>
+    public static readonly IReadOnlyList<string> JudgmentKinds = [MissionEventKind.Delivery, MissionEventKind.Escalation, MissionEventKind.Proposal];
+
     /// <summary>The SQL list of <see cref="ToldKinds"/>: the table's own constants, so nothing an agent wrote reaches it.</summary>
     static readonly string ToldSql = string.Join(",", ToldKinds.Select(k => $"'{k}'"));
 
