@@ -4628,7 +4628,8 @@ ceilings zero, the row it supersedes untouched) before the END's cancels and clo
 gate. Every reader of paper rows drops that version on that platform and account from that instant, so no
 replacement starts, its inconclusive slot frees and `RecordPaper` refuses to put the version back there,
 under any verdict and in any later grant of the pair; the run keeps its envelope's room through
-`HoldsItsSlot` until it is flat. A process that dies between the row and the END leaves the stop standing,
+`HoldsItsSlot` until it is flat, and a stopped run's close answered cancelled or rejected with its book still long
+stays owed and is sent again. A process that dies between the row and the END leaves the stop standing,
 and the reconcile pass ends the run in the stop's words. A run that ends by itself takes
 `EndPaperDeploymentAsync` and nothing about it changed: its allocation stands and its replacement waits for
 a flat, reconciled end. **A stop times a paper close** (R29 F-C5): who stopped, when, the run and what it
