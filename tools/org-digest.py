@@ -8,15 +8,25 @@ home's codex folder or anything holding the owner's auth.json, never names the h
 
   org-digest.py [--home /var/lib/tradeagent | --state <dir>] [--since <T0>] [--json]
 
-  --since   T0: an ISO date or date-time (no zone = the host's local zone), or a span back from now: 72h, 3d. Default: the start
-            of the host's local day (the owner's day: the one the AI's daily ceilings reset on).
-  --json    the whole digest as one JSON object; otherwise a human digest of at most 60 lines.
+  --since   T0: an ISO date or date-time (no zone = the host's local zone; the app's own stored instants are accepted as they are),
+            or a span back from now: 72h, 3d. Default: the start of the host's local day (the owner's day: the one the AI's daily
+            ceilings reset on).
+  --json    the whole digest as one JSON object; otherwise a human digest of at most 60 lines, one line per fact.
   --now     (tests) the instant "now" is, ISO with a zone.   --no-systemd   (tests) do not ask systemd about the unit.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
 
 Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, strategy_*, fill, cell_proof,
 tape_fetch). A deployment's profit and loss is a SIMULATION (paper): a book of fills at modelled prices, never money. A cost is the
 AI's list-price equivalent, never a bill. A section that cannot be read says so; it is never a guess and never a zero.
+
+WHAT THE RUN MUST MEASURE (R26 § 4), from the app's own records: each arrow of the loop, first reached and how often, with its first
+refusal in words (arrows); turns per position per day, list-price cost per turn by seat, the idle-turn share, the wait behind the
+lane, vendor-limit refusals (pace); forecasts written and resolved per manager with the days to 50 each, trials and verdicts spent
+against each campaign's budgets, admissible candidates (signal). What the records cannot answer is said, never estimated: a "keep"
+has no record of its own, and whether a fresh session found a finding again from the ledger is not recorded anywhere.
+
+THE SCHEMA MOVES UNDER THIS FILE, so a table or column a home does not have yet is named as absent in the part that needed it, and a
+word this file has not heard of (a wake's disposition, a launch's state) is shown as it stands, never folded into another.
 """
 import argparse
 import datetime as dt
@@ -25,6 +35,7 @@ import json
 import os
 import re
 import sqlite3
+import statistics
 import subprocess
 import sys
 import urllib.parse
@@ -36,6 +47,17 @@ DEFAULT_POSITION = "operations"          # CouncilRoles.Default: a launch row wi
 BOARD_PREFIX = "board-"                  # BoardSeats.Prefix: a board seat's launches are rows whose role starts with it
 PIPE_REFUSALS = ("grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused", "op_refused")
 MAX_LINES = 60
+PAPER_RUN_WAKE = "note:paper-run:"       # MissionEventIds.PaperRun: the wake that carries a forward run's figures back to its author
+LOST_WAKE_SUFFIX = ":after-lost"         # MissionLoop.AfterLost: a told-something wake raised again after a lost turn
+INCONCLUSIVE_POLICY = "allocation-policy-inconclusive-v1"   # AllocationPolicy.InconclusiveV1: a slot that costs its campaign a trial
+REPEATED_REFUSAL = 5                     # the 72-hour brief's "act on": the same words refused five times
+MISSION_FAILED = "failed"                 # MissionEventDisposition.Failed
+ADMISSIBLE = ("promoted", "paper-eligible")                 # PromotionVerdict: the two classes a version can be carried forward on
+FORECASTS_TO_SCORE = 50                  # R26 § 4: the resolved forecasts a manager needs before its calibration can be read
+# The tables whose rows name the launch that wrote them: a turn that left a row in one of these did something.
+ACT_TABLES = ("org_mandate_event", "org_delivery", "org_decision", "org_forecast", "org_escalation", "org_lateral", "ledger_entry",
+              "publication", "strategy_version", "strategy_run", "board_act", "board_forecast")
+VENDOR_LIMIT_WORDS = re.compile(r"\b429\b|rate.?limit|usage.?limit|quota|too many requests|limit (?:reached|exceeded)", re.IGNORECASE)
 
 
 # ---- time ------------------------------------------------------------------------------------------------------------------
@@ -73,6 +95,9 @@ def parse_since(text, now):
         return now - (dt.timedelta(hours=int(m.group(1))) if m.group(2) == "h" else dt.timedelta(days=int(m.group(1))))
     m = re.match(r"^(\d{4}-\d\d-\d\d)(?:[T ](\d\d:\d\d)(?::(\d\d))?)?(Z|[+-]\d\d:\d\d)?$", t)
     if not m:
+        exact = parse_ts(t) if re.search(r"(Z|[+-]\d\d:\d\d)$", t) else None   # an instant as the app stores or prints it, fractions included
+        if exact is not None:
+            return exact
         raise ValueError(f"'{text}' is not a T0: use an ISO date or date-time (2026-10-30, 2026-10-30T18:00Z) or a span like 72h")
     clock = (m.group(2) or "00:00") + ":" + (m.group(3) or "00")
     if m.group(4):
@@ -121,6 +146,35 @@ class Digest:
         self.app, self.tape, self.state, self.now, self.since, self.opts = app, tape, state, now, since, opts
         self.day_from, self.day_to = local_day(now)
         self.since_s, self.day_from_s, self.day_to_s, self.now_s = stored(since), stored(self.day_from), stored(self.day_to), stored(now)
+        self.days = max((now - since).total_seconds() / 86400, 1 / 24)   # the rates' denominator: an hour at least, so a first turn is not a rate of thousands
+        self._columns = {}
+
+    def columns(self, table):
+        if table not in self._columns:
+            self._columns[table] = {r["name"] for r in self.app.execute(f"PRAGMA table_info({table})")}
+        return self._columns[table]
+
+    def has(self, table, *columns):
+        have = self.columns(table)
+        return bool(have) and all(c in have for c in columns)
+
+    def per_day(self, n):
+        return round(n / self.days, 2)
+
+    # -- 0. which home this is, and whether the AI is working
+    def app_state(self):
+        schema = self.app.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        working = None
+        row = self.app.execute("SELECT value FROM kv WHERE key = 'settings'").fetchone() if self.has("kv", "key", "value") else None
+        if row:
+            try:
+                settings = json.loads(row[0])     # one word is taken from it and the rest is never kept or shown
+                for name in ("ai_works_on_its_own", "AiWorksOnItsOwn", "aiWorksOnItsOwn"):
+                    if isinstance(settings, dict) and name in settings:
+                        working = bool(settings[name])
+            except ValueError:
+                pass
+        return {"schema": schema[0] if schema else None, "ai_works_on_its_own": working}
 
     # -- 1. positions by status and model
     def positions(self):
@@ -204,7 +258,9 @@ class Digest:
     def deployments(self):
         allocs = self.app.execute(
             "SELECT COUNT(*) AS n, SUM(CASE WHEN effective_to IS NULL THEN 1 ELSE 0 END) AS open, "
-            "SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END) AS new FROM strategy_allocation", (self.since_s,)).fetchone()
+            "SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END) AS new FROM strategy_allocation WHERE policy_version NOT LIKE '%-stop-%'",
+            (self.since_s,)).fetchone()
+        stops = self.app.execute("SELECT COUNT(*) FROM strategy_allocation WHERE policy_version LIKE '%-stop-%' AND at >= ?", (self.since_s,)).fetchone()[0]
         rows = self.app.execute(
             "SELECT id, version_id, connector_id, account_id, symbol, mode, state, started_at, ended_at, end_reason, suspended_reason "
             "FROM strategy_deployment ORDER BY started_at DESC, id").fetchall()
@@ -224,9 +280,26 @@ class Digest:
                            "started_at": r["started_at"], "end_reason": r["end_reason"], "suspended_reason": r["suspended_reason"],
                            **self.pnl(fills, r["account_id"], r["symbol"])})
         return {"label": "SIMULATION: paper deployments, modelled fills; not money", "allocations": {
-                    "total": allocs["n"], "open": allocs["open"] or 0, "new_since": allocs["new"] or 0},
+                    "total": allocs["n"], "open": allocs["open"] or 0, "new_since": allocs["new"] or 0, "stopped_since": stops},
                 "by_mode_state": [{"mode": m, "state": s, "count": n} for (m, s), n in sorted(by.items())],
-                "deployments": listed}
+                "deployments": listed, "envelopes": self.envelopes(), "notes": self.paper_notes()}
+
+    def envelopes(self):
+        """Evidence per pair: each pair's standing paper envelope and how many of its runs are open."""
+        if not self.has("paper_envelope", "symbol", "max_deployments", "expires_at", "withdrawn_at"):
+            return None
+        rows = self.app.execute(
+            "SELECT e.symbol, e.max_deployments, e.max_quantity, e.max_notional, e.currency, e.expires_at, "
+            "(SELECT COUNT(*) FROM strategy_deployment d WHERE d.envelope_id = e.id AND d.state <> 'ended') AS open "
+            "FROM paper_envelope e WHERE e.withdrawn_at IS NULL AND e.expires_at > ? ORDER BY e.symbol, e.granted_at", (self.now_s,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def paper_notes(self):
+        """What the app told a run's author: the notes it published, and the last one's words (a simulation's figures, never money)."""
+        rows = self.app.execute(
+            "SELECT content, created_at FROM publication WHERE role = 'allocator' AND kind = 'note' AND created_at >= ? ORDER BY created_at DESC, id",
+            (self.since_s,)).fetchall()
+        return {"since": len(rows), "last_at": rows[0]["created_at"] if rows else None, "last": short(rows[0]["content"], 150) if rows else None}
 
     def pnl(self, fills, account, symbol):
         qty, avg, realised, fees, unknown_fees = Decimal(0), Decimal(0), Decimal(0), Decimal(0), 0
@@ -301,14 +374,14 @@ class Digest:
         groups, exits = {}, {}
         bad = 0
         for r in rows:
-            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or r["state"] == "LOST"
+            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or r["state"] not in ("ENDED", "LAUNCHED")
             if r["exit_code"] is not None:
                 exits[str(r["exit_code"])] = exits.get(str(r["exit_code"]), 0) + 1
             if not failed:
                 continue
             bad += 1
             said = short(r["vendor_said"], 120) if r["vendor_said"] else ""
-            key = (r["state"] if r["state"] == "LOST" else "ENDED", r["exit_code"], said)
+            key = (r["state"], r["exit_code"], said)
             g = groups.setdefault(key, {"state": key[0], "exit_code": r["exit_code"], "vendor_said": said or None, "count": 0, "last_at": None,
                                         "positions": set(), "model": r["model"], "offered_tools": None})
             g["count"] += 1
@@ -373,12 +446,222 @@ class Digest:
             out.append({"position": pid, "next_due": p["next_due"] if p else None, "kind": p["kind"] if p else None,
                         "in_seconds": int((due - self.now).total_seconds()) if due else None, "pending": p["pending"] if p else 0,
                         "last_consumed_at": last.get(pid)})
-        dispositions = {(r["disposition"] or "none"): r["n"] for r in self.app.execute(
-            "SELECT disposition, COUNT(*) AS n FROM mission_event WHERE consumed_at >= ? GROUP BY disposition", (self.since_s,))}
-        return {"active_positions": out, "consumed_since_by_disposition": dispositions,
+        dispositions, lost, failed = {}, 0, 0
+        # A LOST TURN IS NOT A FAILED ONE: a restart took it, and its wakes read `failed` only where the loop has settled them. The
+        # launch's own state tells them apart; a disposition this file has not heard of stands as its own word.
+        for r in self.app.execute(
+                "SELECT e.disposition, a.state, COUNT(*) AS n FROM mission_event e LEFT JOIN ai_attempt a ON a.id = e.consumed_by "
+                "WHERE e.consumed_at >= ? GROUP BY e.disposition, a.state", (self.since_s,)):
+            word = r["disposition"] or "none"
+            dispositions[word] = dispositions.get(word, 0) + r["n"]
+            if r["state"] == "LOST":
+                lost += r["n"]
+            elif word == MISSION_FAILED:
+                failed += r["n"]
+        after_lost = self.app.execute("SELECT COUNT(*) FROM mission_event WHERE id LIKE ? AND created_at >= ?",
+                                      ("%" + LOST_WAKE_SUFFIX, self.since_s)).fetchone()[0]
+        blocked = [{"words": short(r["disposition_detail"]), "count": r["n"], "roles": r["roles"].split(",")[:4] if r["roles"] else [], "oldest_due": r["oldest"]}
+                   for r in self.app.execute(
+                       "SELECT disposition_detail, COUNT(*) AS n, GROUP_CONCAT(DISTINCT COALESCE(role, ?)) AS roles, MIN(due_at) AS oldest FROM mission_event "
+                       "WHERE consumed_at IS NULL AND disposition = 'blocked' GROUP BY disposition_detail ORDER BY n DESC", (DEFAULT_POSITION,))]
+        return {"active_positions": out, "consumed_since_by_disposition": dispositions, "failed_turn_wakes_since": failed, "lost_turn_wakes_since": lost,
+                "raised_again_after_lost_since": after_lost, "blocked_now": blocked,
                 "overdue": [o["position"] for o in out if o["in_seconds"] is not None and o["in_seconds"] < 0]}
 
-    # -- 10. is the cell proof current?
+    # -- 10. R26 § 4 (1): where the loop breaks: each arrow, first reached and how often, and its first refusal in words
+    def arrow_specs(self):
+        t0 = self.since_s
+        events = lambda kind: ("org_event", f"SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = '{kind}' AND at >= ?", (t0,))
+        mandate = lambda kind: ("org_mandate_event", f"SELECT MIN(at), COUNT(*) FROM org_mandate_event WHERE kind = '{kind}' AND at >= ?", (t0,))
+        return (
+            ("charter", events("chartered"), ("org-charter",)),
+            ("hire", events("hired"), ("org-hire",)),
+            # A hire that activated itself is decided by the hiring head; the owner's own activation is not this arrow.
+            ("self-activation", ("org_event", "SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = 'activated' "
+                                              "AND decider NOT IN ('owner', 'app', 'board') AND at >= ?", (t0,)), ()),
+            ("mandate", mandate("issued"), ("mandate-assign",)),
+            ("delivery", mandate("delivered"), ("mandate-deliver",)),
+            ("accepted", mandate("accepted"), ("mandate-accept",)),
+            ("rejected", mandate("rejected"), ("mandate-reject",)),
+            ("backtest", ("strategy_run", "SELECT MIN(created_at), COUNT(*) FROM strategy_run WHERE created_at >= ? AND id NOT IN "
+                                          "(SELECT holdout_run_id FROM strategy_promotion WHERE holdout_run_id IS NOT NULL)", (t0,)), ("backtest",)),
+            ("verdict asked", ("strategy_verdict", "SELECT MIN(requested_at), COUNT(*) FROM strategy_verdict WHERE requested_at >= ?", (t0,)), ("verdict",)),
+            ("verdict given", ("strategy_promotion", "SELECT MIN(at), COUNT(*) FROM strategy_promotion WHERE at >= ?", (t0,)), ()),
+            # An owner's or organisation's stop is written as an allocation row too (D19): it is not an allocation.
+            ("paper allocation", ("strategy_allocation", "SELECT MIN(at), COUNT(*) FROM strategy_allocation WHERE mode = 'paper' "
+                                                         "AND policy_version NOT LIKE '%-stop-%' AND at >= ?", (t0,)), ()),
+            ("paper run", ("strategy_deployment", "SELECT MIN(started_at), COUNT(*) FROM strategy_deployment WHERE mode = 'paper' AND started_at >= ?", (t0,)), ()),
+            ("paper fill", ("deployment_op", "SELECT MIN(f.at), COUNT(*) FROM fill f JOIN deployment_op o ON (f.request_id = o.request_id OR "
+                                             "f.client_order_id = 'TA-' || o.request_id) JOIN strategy_deployment d ON d.id = o.deployment_id "
+                                             "WHERE d.mode = 'paper' AND f.at >= ?", (t0,)), ()),
+            ("note raised", ("mission_event", "SELECT MIN(created_at), COUNT(*) FROM mission_event WHERE id LIKE ? AND created_at >= ?",
+                             (PAPER_RUN_WAKE + "%", t0)), ()),
+            ("note taken", ("mission_event", "SELECT MIN(consumed_at), COUNT(*) FROM mission_event WHERE id LIKE ? AND consumed_at >= ? "
+                                             "AND consumed_by IN (SELECT id FROM ai_attempt)", (PAPER_RUN_WAKE + "%", t0)), ()),
+            ("kill", ("org_decision", "SELECT MIN(at), COUNT(*) FROM (SELECT at FROM org_decision WHERE kind = 'family-kill' AND at >= ? "
+                                      "UNION ALL SELECT created_at FROM ledger_entry WHERE kind = 'kill' AND created_at >= ?)", (t0, t0)), ()),
+            ("iterate", ("org_decision", "SELECT MIN(at), COUNT(*) FROM org_decision WHERE kind = 'family-branch' AND at >= ?", (t0,)), ()),
+        )
+
+    def arrows(self):
+        refused = {}
+        first_any = None
+        for r in self.app.execute("SELECT at, tool, refusal FROM tool_call WHERE served = 0 AND at >= ? ORDER BY at, id", (self.since_s,)):
+            item = {"at": r["at"], "what": r["tool"], "words": short(r["refusal"])}
+            first_any = first_any or item
+            refused.setdefault(r["tool"].replace("_", "-"), []).append(item)
+        for r in self.app.execute("SELECT metadata, at FROM engineering_log WHERE component = 'Ipc' AND event = 'op_refused' AND at >= ? ORDER BY at, id",
+                                  (self.since_s,)):
+            try:
+                meta = json.loads(r["metadata"]) if r["metadata"] else {}
+            except ValueError:
+                meta = {}
+            op = meta.get("op") if isinstance(meta, dict) else None
+            if op:
+                item = {"at": r["at"], "what": op, "words": f"refused at the pipe: {meta.get('code') or '-'}"}
+                first_any = first_any if first_any and first_any["at"] <= item["at"] else item
+                refused.setdefault(op.replace("_", "-"), []).append(item)
+        rows = []
+        for name, (table, sql, args), tools in self.arrow_specs():
+            row = {"arrow": name, "first_at": None, "count": 0, "refused": 0, "first_refused_at": None, "first_refusal": None}
+            if self.has(table):
+                first, count = self.app.execute(sql, args).fetchone()
+                row.update(first_at=first, count=count)
+            else:
+                row["absent"] = table
+            hits = sorted((i for t in tools for i in refused.get(t, [])), key=lambda i: i["at"])
+            if hits:
+                row.update(refused=len(hits), first_refused_at=hits[0]["at"], first_refusal=hits[0]["words"])
+            rows.append(row)
+        return {"arrows": rows, "reached": sum(1 for r in rows if r["count"]), "of": len(rows),
+                "not_reached": [r["arrow"] for r in rows if not r["count"]], "first_refusal": first_any,
+                "cannot_be_read": "a keep has no record of its own: only a kill or a branch is written down"}
+
+    # -- 11. R26 § 4 (2): what a turn costs and how fast turns come
+    def acted(self):
+        """The launches since T0 that left a row of work under their own id, in any table that names its launch."""
+        ids = set()
+        for table in ACT_TABLES:
+            for col in ("attempt_id", "attempt"):
+                if self.has(table, col):
+                    ids.update(r[0] for r in self.app.execute(
+                        f"SELECT DISTINCT {col} FROM {table} WHERE {col} IN (SELECT id FROM ai_attempt WHERE started_at >= ?)", (self.since_s,)))
+        return ids
+
+    def pace(self):
+        rows = self.app.execute(
+            "SELECT id, role, state, exit_code, reserved_cost, cost, vendor_said, started_at, ended_at, "
+            "COALESCE(effective_model, requested_model) AS model FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)).fetchall()
+        acted = self.acted()
+        # A head's chart act names no launch, only its decider: it counts for the turn of that position it fell inside.
+        chart = [(r["decider"], r["at"]) for r in self.app.execute(
+            "SELECT decider, at FROM org_event WHERE at >= ? AND decider NOT IN ('owner', 'app', 'board')", (self.since_s,))]
+        per, limit_hits, first_limit = {}, 0, None
+        for r in rows:
+            pos = position_of(r["role"])
+            p = per.setdefault(pos, {"position": pos, "turns": 0, "cost": Decimal(0), "clean": 0, "idle": 0, "models": set(), "waits": []})
+            p["turns"] += 1
+            p["cost"] += charge(r)
+            if r["model"]:
+                p["models"].add(r["model"])
+            if r["state"] == "ENDED" and r["exit_code"] == 0:
+                p["clean"] += 1
+                inside = any(who == pos and r["started_at"] <= at <= (r["ended_at"] or self.now_s) for who, at in chart)
+                if r["id"] not in acted and not inside:
+                    p["idle"] += 1
+            if r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"]):
+                limit_hits += 1
+                first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"])}
+        waits = []
+        for r in self.app.execute("SELECT role, created_at, due_at, consumed_at FROM mission_event WHERE consumed_at >= ? AND consumed_by IN (SELECT id FROM ai_attempt)",
+                                  (self.since_s,)):
+            due = max(d for d in (parse_ts(r["created_at"]), parse_ts(r["due_at"])) if d is not None)
+            took = max(0, int((parse_ts(r["consumed_at"]) - due).total_seconds()))
+            waits.append(took)
+            per.setdefault(position_of(r["role"]), {"position": position_of(r["role"]), "turns": 0, "cost": Decimal(0), "clean": 0, "idle": 0,
+                                                    "models": set(), "waits": []})["waits"].append(took)
+        out = []
+        for p in sorted(per.values(), key=lambda p: (-p["cost"], p["position"])):
+            out.append({"position": p["position"], "models": sorted(p["models"]), "turns": p["turns"], "turns_per_day": self.per_day(p["turns"]),
+                        "cost_per_turn": money(p["cost"] / p["turns"]) if p["turns"] else None, "clean_turns": p["clean"], "idle_turns": p["idle"],
+                        "wait_median_s": int(statistics.median(p["waits"])) if p["waits"] else None, "wait_max_s": max(p["waits"]) if p["waits"] else None})
+        turns, cost = sum(p["turns"] for p in per.values()), sum((p["cost"] for p in per.values()), Decimal(0))
+        clean, idle = sum(p["clean"] for p in per.values()), sum(p["idle"] for p in per.values())
+        return {"days": round(self.days, 2), "turns": turns, "turns_per_day": self.per_day(turns), "cost_per_turn": money(cost / turns) if turns else None,
+                "clean_turns": clean, "idle_turns": idle, "idle_share_pct": str((Decimal(idle) / clean * 100).quantize(Decimal("0.1"))) if clean else None,
+                "wait_median_s": int(statistics.median(waits)) if waits else None, "wait_max_s": max(waits) if waits else None,
+                "vendor_limit_refusals": limit_hits, "first_vendor_limit": first_limit, "positions": out,
+                "words": "idle = a launch that ended cleanly and left no row of work under its id and no chart act in its span; "
+                         "wait = a wake's due time to the launch that took it; vendor limits are read from the vendor's words"}
+
+    # -- 12. R26 § 4 (3): how fast the run produces scorable signal
+    def signal(self):
+        return {"forecasts": self.forecasts(), "campaigns": self.campaigns(), "candidates": self.candidates(), "ledger": self.ledger(),
+                "cannot_be_read": "whether a fresh session found a finding again from the ledger is not recorded anywhere"}
+
+    def forecasts(self):
+        if not self.has("org_forecast", "forecaster", "scored", "at") or not self.has("org_forecast_resolution", "forecast_id", "outcome", "at"):
+            return {"absent": "org_forecast"}
+        per = {}
+        blank = lambda who: {"position": who, "written_since": 0, "scored_since": 0, "resolved_since": 0, "resolved_total": 0}
+        for r in self.app.execute("SELECT forecaster, COUNT(*) AS n, SUM(scored) AS s FROM org_forecast WHERE at >= ? GROUP BY forecaster", (self.since_s,)):
+            per[r["forecaster"]] = {**blank(r["forecaster"]), "written_since": r["n"], "scored_since": r["s"] or 0}
+        for r in self.app.execute("SELECT f.forecaster, r.at FROM org_forecast_resolution r JOIN org_forecast f ON f.id = r.forecast_id "
+                                  "WHERE f.scored = 1 AND r.outcome <> 'void'"):
+            p = per.setdefault(r["forecaster"], blank(r["forecaster"]))
+            p["resolved_total"] += 1
+            if r["at"] >= self.since_s:
+                p["resolved_since"] += 1
+        out = []
+        for p in sorted(per.values(), key=lambda p: (-p["resolved_total"], p["position"])):
+            rate = p["resolved_since"] / self.days
+            left = max(0, FORECASTS_TO_SCORE - p["resolved_total"])
+            out.append({**p, "written_per_day": self.per_day(p["written_since"]), "resolved_per_day": self.per_day(p["resolved_since"]),
+                        "days_to_50": 0 if not left else (round(left / rate, 1) if rate else None)})
+        return {"managers": out, "words": "resolved = scored and not void; days to 50 at the rate since T0; none = nothing resolved yet"}
+
+    def campaigns(self):
+        if not self.has("strategy_campaign", "trial_budget", "verdict_budget"):
+            return {"absent": "strategy_campaign"}
+        pots = self.has("strategy_campaign", "exploration_budget") and self.has("strategy_trial", "exploration", "charged_to")
+        every = self.app.execute("SELECT c.*, d.pair FROM strategy_campaign c LEFT JOIN dataset d ON d.id = c.holdout_dataset_id ORDER BY c.id").fetchall()
+        parent = {c["id"]: c["renewed_from"] for c in every}
+        by_lineage = {}
+        for r in self.app.execute("SELECT DISTINCT p.campaign_id, a.version_id FROM strategy_allocation a JOIN strategy_promotion p ON p.id = a.promotion_id "
+                                  "WHERE a.policy_version = ?", (INCONCLUSIVE_POLICY,)):
+            by_lineage.setdefault(r[0], set()).add(r[1])
+        out = []
+        for c in every:
+            if c["closed_at"] is not None and c["closed_at"] < self.since_s:
+                continue
+            chain, at = set(), c["id"]
+            while at is not None and at not in chain:      # CampaignStore.Lineage: this campaign and every one it was renewed from
+                chain.add(at)
+                at = parent.get(at)
+            slots = set().union(*(by_lineage.get(i, set()) for i in chain))
+            where = "(campaign_id = ? OR charged_to = ?)" if pots else "campaign_id = ?"
+            ids = (c["id"], c["id"]) if pots else (c["id"],)
+            trials = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND {where}", ids).fetchone()[0] + len(slots)
+            explore = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND exploration = 1 AND {where}", ids).fetchone()[0] if pots else None
+            verdicts = self.app.execute("SELECT COUNT(*) FROM strategy_verdict WHERE campaign_id = ?", (c["id"],)).fetchone()[0]
+            out.append({"id": c["id"], "pair": c["pair"], "name": c["name"], "closed": c["closed_at"] is not None, "renewed_from": c["renewed_from"],
+                        "trials": trials, "trial_budget": c["trial_budget"], "exploration": explore, "exploration_budget": c["exploration_budget"] if pots else None,
+                        "verdicts": verdicts, "verdict_budget": c["verdict_budget"], "holdout_from": c["holdout_from"]})
+        return {"campaigns": out}
+
+    def candidates(self):
+        marks = ",".join("?" * len(ADMISSIBLE))
+        rows = self.app.execute(f"SELECT verdict, COUNT(DISTINCT version_id) AS n, COUNT(DISTINCT CASE WHEN at >= ? THEN version_id END) AS s "
+                                f"FROM strategy_promotion WHERE verdict IN ({marks}) GROUP BY verdict", (self.since_s, *ADMISSIBLE)).fetchall()
+        return {"admissible_total": sum(r["n"] for r in rows), "admissible_since": sum(r["s"] for r in rows),
+                "by_class": {r["verdict"]: {"total": r["n"], "since": r["s"]} for r in rows}}
+
+    def ledger(self):
+        if not self.has("ledger_entry", "kind", "created_at"):
+            return {"absent": "ledger_entry"}
+        return {r["kind"]: r["n"] for r in self.app.execute("SELECT kind, COUNT(*) AS n FROM ledger_entry WHERE created_at >= ? GROUP BY kind", (self.since_s,))}
+
+    # -- 13. is the cell proof current?
     def cell_proof(self):
         identity = self.host_identity()
         proofs = self.app.execute(
@@ -432,7 +715,7 @@ class Digest:
         except OSError:
             return None
 
-    # -- 11. the tape's health line
+    # -- 14. the tape's health line
     def tape_health(self):
         out = {"service": self.service()}
         if self.tape is None:
@@ -480,9 +763,9 @@ class Digest:
         return {"active": facts.get("ActiveState"), "restarts": facts.get("NRestarts"), "since": facts.get("ActiveEnterTimestamp") or None} if facts else None
 
 
-SECTIONS = (("positions", "positions"), ("turns", "turns"), ("org_events", "org_events"), ("verdicts", "verdicts"),
-            ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("day_total", "day_total"),
-            ("wakes", "wakes"), ("cell_proof", "cell_proof"), ("tape_health", "tape_health"))
+SECTIONS = (("app", "app_state"), ("positions", "positions"), ("turns", "turns"), ("org_events", "org_events"), ("arrows", "arrows"),
+            ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("pace", "pace"),
+            ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("cell_proof", "cell_proof"), ("tape_health", "tape_health"))
 
 
 def build(app_path, tape_path, state, now, since, opts):
@@ -513,6 +796,15 @@ def build(app_path, tape_path, state, now, since, opts):
 
 def attention(d):
     flags = []
+    if d.get("app", {}).get("ai_works_on_its_own") is False:
+        flags.append("the AI is NOT set to work on its own: nothing turns")
+    dt_ = d.get("day_total", {})
+    plan_total = dec(dt_.get("board_policy", {}).get("plan_day_total"))
+    if plan_total and (dec(dt_.get("plan_counted")) or Decimal(0)) > plan_total:
+        flags.append(f"AI day-total PASSED: {dt_['plan_counted']} of {money(plan_total)}")
+    for g in d.get("refusals", {}).get("groups", []):
+        if g["count"] >= REPEATED_REFUSAL:
+            flags.append(f"refused {g['count']}x: {g['what']}: {short(g['words'], 90)}")
     dep = d.get("deployments", {})
     for g in dep.get("by_mode_state", []):
         if g["mode"] != "paper" and g["state"] != "ended":
@@ -524,6 +816,10 @@ def attention(d):
         flags.append("cell proof currency unknown: " + str(cp.get("why", "")))
     er = d.get("errors", {})
     lost = sum(g["count"] for g in er.get("groups", []) if g["state"] == "LOST")
+    wk = d.get("wakes", {})
+    if wk.get("failed_turn_wakes_since") or wk.get("lost_turn_wakes_since"):
+        flags.append(f"wakes: {wk.get('failed_turn_wakes_since', 0)} on failed turns, {wk.get('lost_turn_wakes_since', 0)} on lost turns, "
+                     f"{wk.get('raised_again_after_lost_since', 0)} raised again")
     if lost:
         flags.append(f"{lost} AI launch(es) LOST since T0")
     if er.get("failed_since"):
@@ -539,6 +835,8 @@ def attention(d):
     svc = t.get("service") or {}
     if svc and svc.get("active") not in (None, "active"):
         flags.append(f"tradeagent.service is {svc['active']}")
+    if svc and svc.get("restarts") not in (None, "0"):
+        flags.append(f"systemd restarted tradeagent.service {svc['restarts']} time(s) since it was last started by hand")
     bp = d.get("day_total", {}).get("board_policy", {})
     if bp.get("mode") not in (None, "OBSERVE", "PAPER"):
         flags.append(f"board policy mode is {bp['mode']}")
@@ -557,6 +855,11 @@ def age(seconds):
     return text if seconds >= 0 else "-" + text
 
 
+def stamp(text):
+    """A stored instant, short: 11-07 14:02."""
+    return f"{text[5:10]} {text[11:16]}" if text else "-"
+
+
 def render(d, cap):
     L = []
     more = lambda items, n, label="more": (items[:n], f"  (+{len(items) - n} {label})" if len(items) > n else None)
@@ -573,7 +876,9 @@ def render(d, cap):
             return True
         return False
 
-    L.append(f"ORG DIGEST (read-only)  now {d['now'][:19]}Z  since T0 {d['since'][:19]}Z  app-db {d['app_db']}  tape-db {d['tape_db']}")
+    app = d.get("app", {})
+    working = {True: "on", False: "OFF", None: "?"}[app.get("ai_works_on_its_own")]
+    L.append(f"ORG DIGEST (read-only)  now {d['now'][:19]}Z  since T0 {d['since'][:19]}Z  app-db {d['app_db']} schema {app.get('schema')}  tape-db {d['tape_db']}  AI on its own {working}")
     if d["attention"]:
         L.append("ATTENTION")
         add_list(d["attention"], cap["attention"], lambda a: "  ! " + a)
@@ -588,7 +893,13 @@ def render(d, cap):
     if not unread("turns/cost", s):
         t = s["total"]
         L.append(f"turns/cost (list-price equiv., not a bill)  today {t['turns_today']} / {t['cost_today']}   since T0 {t['turns_since']} / {t['cost_since']}")
-        add_list(s["positions"], cap["turns"], lambda p: f"  {p['position']:<14} today {p['turns_today']:>3} / {p['cost_today']:<9} since {p['turns_since']:>3} / {p['cost_since']}")
+        seats = {p["position"]: p for p in d.get("pace", {}).get("positions", [])}
+
+        def seat(p):
+            x = seats.get(p["position"])
+            return (f"  {x['turns_per_day']}/day, {x['cost_per_turn']}/turn, idle {x['idle_turns']}/{x['clean_turns']}, wait {age(x['wait_median_s'])}/{age(x['wait_max_s'])}"
+                    if x and x["turns"] else "")
+        add_list(s["positions"], cap["turns"], lambda p: f"  {p['position']:<14} today {p['turns_today']:>3} / {p['cost_today']:<9} since {p['turns_since']:>3} / {p['cost_since']}" + seat(p))
 
     s = d["org_events"]
     if not unread("org events", s):
@@ -596,6 +907,16 @@ def render(d, cap):
         add_list(s["events"], cap["events"], lambda e: f"  {e['kind']:<18} {e['count']:>4}  last {e['last_at'][:19] if e['last_at'] else '-'}  by {'/'.join(sorted(e['deciders']))}")
         if s["mandate_events"]:
             L.append("  mandate events: " + ", ".join(f"{m['kind']} {m['count']}" for m in s["mandate_events"][:5]))
+
+    s = d["arrows"]
+    if not unread("arrows", s):
+        L.append(f"arrows reached since T0: {s['reached']} of {s['of']}" + (f"; not yet: {', '.join(s['not_reached'])}" if s["not_reached"] else ""))
+        shown = [a for a in s["arrows"] if a["count"] or a["refused"]]
+        add_list(shown, cap["arrows"], lambda a: f"  {a['arrow']:<16} x{a['count']:<4} first {stamp(a['first_at'])}" + (
+            f"  refused x{a['refused']}, first {stamp(a['first_refused_at'])}: {short(a['first_refusal'], 80)}" if a["refused"] else ""))
+        if s["first_refusal"]:
+            f = s["first_refusal"]
+            L.append(f"  first refusal of the run {stamp(f['at'])} {f['what']}: {short(f['words'], 90)}")
 
     s = d["verdicts"]
     if not unread("verdicts", s):
@@ -610,6 +931,10 @@ def render(d, cap):
         L.append(f"deployments (SIMULATION, paper fills; not money): {modes}; allocations {a['open']} open of {a['total']} ({a['new_since']} new)")
         add_list(s["deployments"], cap["deployments"], lambda x: f"  {x['id']} {x['symbol']} {x['mode']}/{x['state']}  fills {x['fills']}  realised {x['realised']}  "
                  f"unrealised {x['unrealised'] if x['unrealised'] is not None else '?'}  fees {x['fees']}" + (f"(+{x['fees_unknown_fills']} unknown)" if x["fees_unknown_fills"] else ""))
+        if s["envelopes"]:
+            L.append("  envelopes (runs open/allowed): " + ", ".join(f"{e['symbol']} {e['open']}/{e['max_deployments']}" for e in s["envelopes"][:6]))
+        if s["notes"]["since"]:
+            L.append(f"  paper notes since T0: {s['notes']['since']}; last {stamp(s['notes']['last_at'])}: {s['notes']['last']}")
 
     s = d["refusals"]
     if not unread("refusals", s):
@@ -623,6 +948,34 @@ def render(d, cap):
         add_list(s["groups"], cap["errors"], lambda g: f"  {g['count']:>3}x {g['state']} exit {g['exit_code']} {','.join(g['positions'])}: "
                  f"{g['vendor_said'] or '(no vendor words)'}" + (f" [offered {g['offered_tools']} tools]" if g["offered_tools"] is not None else ""))
 
+    s = d["pace"]
+    if not unread("pace", s):
+        L.append(f"pace over {s['days']} days: {s['turns_per_day']} turns/day, {s['cost_per_turn'] or '-'}/turn, idle {s['idle_turns']} of {s['clean_turns']} clean turns"
+                 f" ({s['idle_share_pct'] or '-'}%), wake wait median {age(s['wait_median_s'])} max {age(s['wait_max_s'])}, vendor limits {s['vendor_limit_refusals']}")
+        if s["first_vendor_limit"]:
+            f = s["first_vendor_limit"]
+            L.append(f"  first vendor limit {stamp(f['at'])} {f['position']}: {short(f['words'], 90)}")
+
+    s = d["signal"]
+    if not unread("signal", s):
+        fc = s["forecasts"]
+        if "absent" in fc:
+            L.append(f"forecasts: {fc['absent']} is not on this home")
+        else:
+            L.append(f"forecasts: {len(fc['managers'])} manager(s) wrote or resolved since T0" if fc["managers"] else "forecasts: none written or resolved since T0")
+            add_list(fc["managers"], cap["forecasts"], lambda m: f"  {m['position']:<14} written {m['written_since']} ({m['written_per_day']}/day), resolved {m['resolved_since']} "
+                     f"({m['resolved_per_day']}/day), total {m['resolved_total']}, days to {FORECASTS_TO_SCORE}: {m['days_to_50'] if m['days_to_50'] is not None else 'none yet'}")
+        cs = s["campaigns"]
+        if "absent" in cs:
+            L.append(f"campaigns: {cs['absent']} is not on this home")
+        else:
+            L.append(f"campaigns: {len(cs['campaigns'])} open or closed since T0" + ("" if cs["campaigns"] else "  (none)"))
+            add_list(cs["campaigns"], cap["campaigns"], lambda c: f"  {c['pair'] or '?'} #{c['id']}{' closed' if c['closed'] else ''}: trials {c['trials']}/{c['trial_budget']}"
+                     + (f", exploration {c['exploration']}/{c['exploration_budget']}" if c["exploration"] is not None else "") + f", verdicts {c['verdicts']}/{c['verdict_budget']}")
+        ca, lg = s["candidates"], s["ledger"]
+        L.append(f"admissible candidates: {ca['admissible_since']} since T0, {ca['admissible_total']} ever; ledger since T0: " +
+                 (", ".join(f"{k} {v}" for k, v in sorted(lg.items()) if k != "absent") or "nothing"))
+
     s = d["day_total"]
     if not unread("AI day-total", s):
         b = s["board_policy"]
@@ -635,6 +988,9 @@ def render(d, cap):
         L.append("next wake per active position:" + ("" if s["active_positions"] else " (no active position)"))
         add_list(s["active_positions"], cap["wakes"], lambda w: f"  {w['position']:<14} " + (
             f"{w['kind']} in {age(w['in_seconds'])} ({w['pending']} pending)" if w["next_due"] else "no wake queued") + f"  last woken {w['last_consumed_at'][:19] if w['last_consumed_at'] else '-'}")
+        taken = ", ".join(f"{k} {v}" for k, v in sorted(s["consumed_since_by_disposition"].items())) or "none"
+        L.append(f"  wakes taken since T0: {taken}; on failed turns {s['failed_turn_wakes_since']}, on lost turns {s['lost_turn_wakes_since']}, raised again {s['raised_again_after_lost_since']}")
+        add_list(s["blocked_now"], cap["blocked"], lambda b: f"  blocked x{b['count']} ({','.join(b['roles'])}): {b['words']}")
 
     s = d["cell_proof"]
     if not unread("cell proof", s):
@@ -655,10 +1011,10 @@ def render(d, cap):
 
 
 def human(d):
-    caps = [dict(attention=4, positions=5, turns=7, events=6, deployments=5, refusals=6, errors=5, wakes=6),
-            dict(attention=3, positions=3, turns=4, events=3, deployments=3, refusals=3, errors=3, wakes=3),
-            dict(attention=2, positions=2, turns=2, events=2, deployments=1, refusals=2, errors=2, wakes=2),
-            dict(attention=1, positions=1, turns=1, events=1, deployments=0, refusals=1, errors=1, wakes=1)]
+    caps = [dict(attention=6, positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, wakes=6, blocked=2),
+            dict(attention=4, positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, wakes=3, blocked=1),
+            dict(attention=3, positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, wakes=2, blocked=1),
+            dict(attention=2, positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, wakes=1, blocked=1)]
     for cap in caps:
         lines = render(d, cap)
         if len(lines) <= MAX_LINES:
