@@ -643,9 +643,6 @@ public sealed class AgentSession(
     /// <summary>What the stream of the turn in flight has reported using so far, held outside the read (<see cref="AgentTurnEnded.Usage"/>); null until it reports.</summary>
     TurnUsage? _usage;
 
-    /// <summary>Whether the last turn was ended at its wall-clock limit, as its <see cref="TurnEnded"/> said.</summary>
-    bool _endedOverLimit;
-
     /// <summary>The sentence the turn in flight was ended in for its wall-clock limit (<see cref="AgentTurnEnded.TimedOut"/>); null otherwise.</summary>
     volatile string? _timedOut;
 
@@ -779,9 +776,7 @@ public sealed class AgentSession(
         // words of a turn ended at its wall-clock limit (U-turn-bounds-2): nothing says they were answered.
         //
         // THE OWNER'S TURN HAS THE LIMIT A MISSION TURN HAS: nothing else ends a stalled vendor here, and his conversation would stay Busy for ever.
-        var limit = TurnClock.Of(TurnLimit, SeatSpec.VendorTurnLimit);
-        var refused = await TurnClock.RunAsync(limit, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(limit)), () => RunAsync(message, ct));
-        if (refused is not null || _endedOverLimit) Keep(message);
+        if (await RunAsync(message, ct, TurnClock.Of(TurnLimit, SeatSpec.VendorTurnLimit))) Keep(message);
     }
 
     /// <inheritdoc />
@@ -877,15 +872,19 @@ public sealed class AgentSession(
     /// <see cref="TurnEnded"/> is raised on EVERY path out, including the ones where no child ever
     /// started, because the mission loop's backoff and `U-meter`'s prices are both counting turns and
     /// a turn that vanished silently is one neither of them can account for.
+    ///
+    /// <para>Answers whether nothing answered the words: the gate refused the turn at its last check, or it was ended at its limit. Answered here and never kept
+    /// in a field, so a turn started from this one's own ending cannot wipe it. <paramref name="limit"/> is the clock of a turn no loop is watching.</para>
     /// </summary>
-    async Task<LateRefusal?> RunAsync(string message, CancellationToken ct)
+    async Task<bool> RunAsync(string message, CancellationToken ct, TimeSpan? limit = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var exitCode = -1;
         var raw = "";
-        VendorLimit? limit = null;
+        VendorLimit? vendorLimit = null;
         LateRefusal? gateRefused = null;
         var ran = false;
+        var overTheClock = false;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -894,7 +893,7 @@ public sealed class AgentSession(
             raw = $"{manifest.DisplayName} is not installed, so the message was not sent.";
             Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
-            return null;
+            return false;
         }
 
         SetBusy(true);
@@ -910,11 +909,11 @@ public sealed class AgentSession(
         _modelRefused = null;
         _timedOut = null;
         _usage = null;
-        _endedOverLimit = false;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var clock = limit is { } most ? new TurnClock(most, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(most))) : null;
         try
         {
-            (exitCode, raw, _, limit) = await RunTurnAsync(exe, message, _cts.Token);
+            (exitCode, raw, _, vendorLimit) = await RunTurnAsync(exe, message, _cts.Token);
             ran = true;
         }
         catch (OperationCanceledException)
@@ -944,6 +943,8 @@ public sealed class AgentSession(
         {
             // A CLAIM THE TURN NEVER TOOK — it threw before its launch — is given back, not left holding the next one.
             Unclaim();
+            // ITS CLOCK STOPS WHILE THE TURN IS STILL ITS OWN, so nothing of it can reach a turn started after this one.
+            if (clock is not null) await clock.StopAsync();
             _current = null;
             _cts?.Dispose();
             _cts = null;
@@ -951,7 +952,7 @@ public sealed class AgentSession(
 
             // A TURN THAT ENDED CLEAN IN THE SAME INSTANT AS ITS LIMIT ENDED CLEAN.
             var overLimit = exitCode == 0 ? null : _timedOut;
-            _endedOverLimit = overLimit is not null;
+            overTheClock = overLimit is not null;
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow)
             {
                 // What the RUNTIME said this turn used, or null where it said nothing. Carried out
@@ -964,7 +965,7 @@ public sealed class AgentSession(
                 UsageUnreported = _session is not null && (!ran || overLimit is not null) ? AgentTurnEnded.UsageOfACutTurn(_usage) : null,
                 // And the vendor's refusal, for the same reason: one reading of the stream, carried
                 // to the loop that has to wait for it and the meter that has to price it.
-                Limit = limit,
+                Limit = vendorLimit,
                 // AND WHAT THE TEARDOWN COULD NOT END. The meter closes this turn's row on this event; a
                 // process of the turn still running past that is spend no ceiling sees, so the meter holds
                 // the next launch while any of these is the same process and still running.
@@ -991,7 +992,7 @@ public sealed class AgentSession(
                 TimedOut = overLimit
             });
         }
-        return gateRefused;
+        return gateRefused is not null || overTheClock;
     }
 
     async Task<(int ExitCode, string Raw, TurnUsage? Usage, VendorLimit? Limit)> RunTurnAsync(string exe, string message,

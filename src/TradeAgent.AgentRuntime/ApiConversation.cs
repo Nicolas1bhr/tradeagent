@@ -288,9 +288,7 @@ public sealed class ApiConversation(
 
         // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: the owner's words are kept — see AgentSession.SendAsync.
         // So are the words of a turn ended at its wall-clock limit, which the owner's turn has as a mission turn does (U-turn-bounds-2).
-        var limit = TurnClock.Of(TurnLimit, SeatSpec.HarnessTurnLimit);
-        var refused = await TurnClock.RunAsync(limit, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(limit)), () => RunAsync(message, ct));
-        if (refused is not null || _endedOverLimit) Keep(message);
+        if (await RunAsync(message, ct, TurnClock.Of(TurnLimit, SeatSpec.HarnessTurnLimit))) Keep(message);
     }
 
     /// <inheritdoc />
@@ -332,9 +330,6 @@ public sealed class ApiConversation(
     /// <summary>The sentence the turn in flight was ended in for its wall-clock limit; null otherwise (<see cref="AgentTurnEnded.TimedOut"/>).</summary>
     volatile string? _timedOut;
 
-    /// <summary>Whether the last turn was ended at its wall-clock limit, as its <see cref="TurnEnded"/> said.</summary>
-    bool _endedOverLimit;
-
     /// <summary>What the requests of the turn in flight have reported using so far, held outside the loop that sends them (<c>U-turn-bounds-2</c>).</summary>
     TurnUsage? _soFar;
 
@@ -349,9 +344,10 @@ public sealed class ApiConversation(
 
     /// <summary>
     /// One turn: the role's mission and the Situation in, the provider's tool-calling loop executed
-    /// BY THIS METHOD, and one <see cref="TurnEnded"/> out whatever happened.
+    /// BY THIS METHOD, and one <see cref="TurnEnded"/> out whatever happened. Answers whether nothing answered the words, as
+    /// <see cref="AgentSession"/>'s does; <paramref name="limit"/> is the clock of a turn no loop is watching.
     /// </summary>
-    async Task<LateRefusal?> RunAsync(string message, CancellationToken ct)
+    async Task<bool> RunAsync(string message, CancellationToken ct, TimeSpan? limit = null)
     {
         var startedAt = _now();
         var transcript = new Transcript();
@@ -392,7 +388,7 @@ public sealed class ApiConversation(
                 Outcome = EndedKeyRefused,
                 KeyWithheld = said
             });
-            return null;
+            return false;
         }
 
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
@@ -411,7 +407,7 @@ public sealed class ApiConversation(
                 Outcome = EndedNotStarted,
                 KeyNotHeld = Labels.HarnessKeyNotHeld
             });
-            return null;
+            return false;
         }
 
         SetBusy(true);
@@ -419,9 +415,10 @@ public sealed class ApiConversation(
         _sent = false;
         _accepted = false;
         _timedOut = null;
-        _endedOverLimit = false;
         _soFar = null;
+        var overTheClock = false;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var clock = limit is { } most ? new TurnClock(most, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(most))) : null;
         try
         {
             (exitCode, usage, outcome, cut, unreported, unsent) = await RunRequestsAsync(endpoint, released, message, transcript, _cts.Token);
@@ -429,9 +426,7 @@ public sealed class ApiConversation(
         catch (OperationCanceledException)
         {
             (exitCode, outcome) = (NotStarted, EndedCancelled);
-            // WHAT ITS FINISHED REQUESTS MEASURED STAYS MEASURED (U-turn-bounds-2), and the row says the rest was not.
-            usage = _soFar;
-            if (_sent) unreported = AgentTurnEnded.UsageOfACutTurn(usage);
+            KeepWhatWasMeasured();
             Append(new ChatTurn(ChatRole.System, _timedOut ?? "Stopped.", _now()));
             transcript.Note("the turn was cancelled");
         }
@@ -448,24 +443,28 @@ public sealed class ApiConversation(
         catch (TradeAgentException ex)
         {
             (exitCode, outcome) = (ProviderFailed, EndedProviderFailed);
+            KeepWhatWasMeasured();
             Append(new ChatTurn(ChatRole.System, ex.Message, _now()));
             transcript.Note(ex.Message);
         }
         catch (Exception ex)
         {
             (exitCode, outcome) = (ProviderFailed, EndedProviderFailed);
+            KeepWhatWasMeasured();
             Append(new ChatTurn(ChatRole.System, $"The AI could not be reached: {ex.Message}", _now()));
             transcript.Note(ex.Message);
         }
         finally
         {
+            // ITS CLOCK STOPS WHILE THE TURN IS STILL ITS OWN, so nothing of it can reach a turn started after this one.
+            if (clock is not null) await clock.StopAsync();
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
             // A TURN THAT COMPLETED IN THE SAME INSTANT AS ITS LIMIT COMPLETED.
             var timedOut = outcome == EndedCompleted ? null : _timedOut;
             _timedOut = null;
-            _endedOverLimit = timedOut is not null;
+            overTheClock = timedOut is not null;
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, _now() - startedAt, transcript.Text, _now())
             {
                 // NULL WHEN NOTHING REPORTED ANY, never a zero. A turn whose usage never arrived is
@@ -507,7 +506,14 @@ public sealed class ApiConversation(
                 NoRequestAccepted = _sent && !_accepted
             });
         }
-        return gateRefused;
+        return gateRefused is not null || overTheClock;
+
+        // WHAT ITS FINISHED REQUESTS MEASURED STAYS MEASURED (U-turn-bounds-2) on every way out that is not its own end, and the row says the rest was not.
+        void KeepWhatWasMeasured()
+        {
+            usage = _soFar;
+            if (_sent) unreported = AgentTurnEnded.UsageOfACutTurn(usage);
+        }
     }
 
     /// <summary>
@@ -625,7 +631,12 @@ public sealed class ApiConversation(
 
             var answer = await PostAsync(endpoint, key, body, ct);
             if (answer.Usage is { } reported) _soFar = total = total is null ? reported : total.Plus(reported);
-            else unmeasured ??= requests;
+            else
+            {
+                // A SUM OF THE OTHERS WOULD PRICE THIS RESPONSE AT NOTHING: see AgentTurnEnded.UsageUnreported.
+                unmeasured ??= requests;
+                _soFar = null;
+            }
 
             if (answer.Text is { Length: > 0 } text)
             {

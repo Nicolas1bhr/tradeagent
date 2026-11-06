@@ -4956,12 +4956,19 @@ public sealed class MissionLoop
     /// the turn's stream or its words: for the owner's words, the brief that launch published (<see cref="MissionEventDisposition.Delegated"/>, the
     /// relay's measurement, written in this same commit before this runs); for a wake that asks the organisation for an act, that act, on that subject,
     /// recorded against that launch (<see cref="IMissionHost.WakeFinished"/>). What no record speaks for is not finished: a look, a note, a report read. At
-    /// least once, stated: such a wake runs again rather than be lost, and the verbs refuse a second act on what is closed.
+    /// least once, stated: such a wake runs again rather than be lost, and the verbs refuse a second act on what is closed. A record that cannot be read
+    /// says nothing, so it finishes nothing: thrown out of the settling, no wake would be given back, and a closed attempt's wakes have no other way home.
     /// </summary>
-    bool FinishedOnRecord(MissionEventStore events, MissionEvent e, string attempt) =>
-        e.Kind == MissionEventKind.Owner
-            ? events.Get(e.Id)?.Disposition == MissionEventDisposition.Delegated
-            : e.Kind != MissionEventKind.OwnerWake && _host.WakeFinished(e, attempt);
+    bool FinishedOnRecord(MissionEventStore events, MissionEvent e, string attempt)
+    {
+        try
+        {
+            return e.Kind == MissionEventKind.Owner
+                ? events.Get(e.Id)?.Disposition == MissionEventDisposition.Delegated
+                : e.Kind != MissionEventKind.OwnerWake && _host.WakeFinished(e, attempt);
+        }
+        catch (Exception) { return false; }
+    }
 
     /// <summary>
     /// WHEN A FAILED TURN'S WAKE IS TOLD AGAIN, or null for never. Now, but for a wake the position bought for itself — its own request, or the wake

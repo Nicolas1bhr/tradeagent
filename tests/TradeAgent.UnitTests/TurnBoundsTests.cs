@@ -661,6 +661,32 @@ public class TurnBoundsTests : IDisposable
     }
 
     /// <summary>
+    /// A RECORD THAT CANNOT BE READ FINISHES NOTHING (the Codex review): the read threw inside the settling, so no wake was given back while the attempt still
+    /// closed, and a closed attempt's wakes have no other way home. Now it reads as not finished, and the wake is owed again.
+    /// </summary>
+    [Fact]
+    public async Task A_record_that_cannot_be_read_gives_the_wake_back()
+    {
+        var name = nameof(A_record_that_cannot_be_read_gives_the_wake_back);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = RefusedSession(name, RefusedStream(WorkedFirst));
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), Ops);
+        events.Raise(look, MissionEventKind.Review, now, role: Ops);
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now,
+            Finished = (_, _) => throw new InvalidOperationException("the record could not be read")
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        await loop.TurnAsync();
+
+        Assert.Single(host.Opened);
+        Assert.False(events.Get(look)!.Consumed, "a wake was stranded on a closed attempt");
+    }
+
+    /// <summary>
     /// A RECORD SPEAKS ONLY FOR ITS OWN LAUNCH AND ITS OWN SUBJECT: a holder's delivery, a decider's judgment, a reviewer's answer. Another launch's act, an
     /// act of the wrong side, or a kind that asks for no act finishes nothing.
     /// </summary>
@@ -813,6 +839,28 @@ public class TurnBoundsTests : IDisposable
         Assert.DoesNotContain("exit", said, StringComparison.OrdinalIgnoreCase);
 
         Assert.Contains(life.Host.Wakes!.OfKind(MissionEventKind.Owner), e => !e.Consumed && (e.Payload ?? "").Contains(words, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// RED before the Codex review's fix pass: the first turn's ending was read from a field after Busy had cleared, so a second turn started from the first's
+    /// own ending wiped it and the first's words were lost. Each turn answers for its own words now, and each clock stops before its turn is over.
+    /// </summary>
+    [Fact]
+    public async Task A_chat_turn_started_as_another_ends_past_its_limit_loses_neither_ones_words()
+    {
+        var chat = AgentRuntimeProbe.SessionOverStream(MeasuredThenHung, manifest: VendorLimitTests.Codex, hangSeconds: 300,
+            name: nameof(A_chat_turn_started_as_another_ends_past_its_limit_loses_neither_ones_words));
+        var kept = new List<string>();
+        chat.RecordTyped = text => { lock (kept) kept.Add(text); return true; };
+        chat.TurnLimit = () => TimeSpan.FromSeconds(1);
+        Task? second = null;
+        chat.TurnEnded += _ => second ??= chat.SendAsync("the second words");
+
+        await chat.SendAsync("the first words").WaitAsync(TimeSpan.FromSeconds(60));
+        await second!.WaitAsync(TimeSpan.FromSeconds(60));
+
+        Assert.Equal(["the first words", "the second words"], kept.Order(StringComparer.Ordinal));
+        Assert.False(chat.Busy);
     }
 
     /// <summary>A CHAT TURN THAT ENDS CLEAN IN TIME NEVER HEARS OF THE LIMIT: no words, no keeping, and a later turn is not told an old one's ending.</summary>
