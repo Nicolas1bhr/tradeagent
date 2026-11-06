@@ -68,6 +68,7 @@ public class InvariantRegistryTests
         var bad = TreeSources.Value.Where(t => named.Contains(t.Name))
             .Select(t => (t.Name, Why: Hollow(t, InvariantRegistry.RunsOn(t.Name)))).Where(t => t.Why is not null).ToList();
         Assert.True(bad.Count == 0, "the registry leans on tests that cannot fail: " + string.Join("; ", bad.Select(b => $"{b.Name} ({b.Why})")));
+        Assert.Empty(InvariantRegistry.NotEverywhere.Keys.Except(named)); // the record speaks only of tests the registry leans on
     }
 
     /// <summary>
