@@ -57,6 +57,29 @@ public class GlanceWordsTests
         Assert.Contains("A paper result is a simulation: no real money was made or lost.", line.Details, StringComparison.Ordinal);
     }
 
+    /// <summary>A RUN HOLDING A POSITION WITHOUT ITS STOP OR TARGET LEADS THE CARD, IN CAUTION, IN THE RUN'S OWN WORDS (<c>U-paper-t0</c> item 3); a protected one changes nothing.</summary>
+    [Fact]
+    public void A_run_standing_unprotected_leads_the_card_in_caution()
+    {
+        var held = new RunBook(0.5m, 60000m, 0m, 0m, 1, 0, null);
+        const string bare = "UNPROTECTED: it holds 0.5 with no stop resting at the venue.";
+        var r = Read() with
+        {
+            PaperRuns =
+            [
+                new GlancePaperRun("v-1a2b3c4d5e6f", "BTCUSDT", "active", held),
+                new GlancePaperRun("v-ffffeeeedddd", "ETHUSDT", "active", held, bare)
+            ]
+        };
+
+        var line = Line(r, GlanceWords.Paper);
+        Assert.True(line.Caution);
+        Assert.StartsWith("v-ffffeeeedddd in ETHUSDT, active:", line.Line, StringComparison.Ordinal);
+        Assert.EndsWith(bare, line.Line, StringComparison.Ordinal);
+
+        Assert.False(Line(Read() with { PaperRuns = [new GlancePaperRun("v-1a2b3c4d5e6f", "BTCUSDT", "active", held)] }, GlanceWords.Paper).Caution);
+    }
+
     [Fact]
     public void A_part_that_could_not_be_read_says_why_and_draws_no_figure()
     {

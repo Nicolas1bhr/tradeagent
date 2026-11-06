@@ -428,6 +428,12 @@ public sealed record IntentDecision(
 /// operation with no answer is an order that may be live at the platform, nothing re-sends it, and no
 /// replacement run starts until it is settled.</para>
 /// </summary>
+/// <summary>
+/// ONE OF A POSITION'S TWO PROTECTIVE ORDERS THAT IS NOT AT THE VENUE (<c>TradingGateway.ProtectionMissing</c>): the latest operation of its kind since the entry, and how many
+/// of that kind the position has asked for.
+/// </summary>
+public sealed record MissingProtection(DeploymentOpRow Latest, int Asks);
+
 public sealed record StatusDeployment(
     string Id, string Version, string Symbol, string State, string? Why,
     DateTimeOffset StartedAt, DateTimeOffset? CursorOpenTime, int Operations, int Unresolved);

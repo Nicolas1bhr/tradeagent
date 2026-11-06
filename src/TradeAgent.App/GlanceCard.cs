@@ -11,7 +11,7 @@ namespace TradeAgent.App;
 sealed record GlanceCampaign(string Name, int TrialsUsed, int TrialBudget, int VerdictsUsed, int VerdictBudget);
 
 /// <summary>One paper run as the deployment ledger reads it: which version, where, its state and its own book (a simulation).</summary>
-sealed record GlancePaperRun(string Version, string Symbol, string State, RunBook? Book);
+sealed record GlancePaperRun(string Version, string Symbol, string State, RunBook? Book, string? Unprotected = null);
 
 /// <summary>
 /// ONE READ OF THE ORGANISATION FOR "AT A GLANCE" (<c>U-ui-glance</c>), every figure from a store a page already reads: the chart and its
@@ -88,7 +88,7 @@ sealed record GlanceRead
             .Select(c => new GlanceCampaign($"{c.Pair}, campaign {c.Campaign.Id}", c.Trials, c.Campaign.TrialBudget, c.Judgements, c.Campaign.VerdictBudget))
             .ToList());
         var paper = Part("paper", () => host.Gateway.DeploymentReadings().Where(d => d.Outstanding)
-            .Select(d => new GlancePaperRun(StrategyDeploymentRow.Short(d.VersionId), d.Symbol, d.State, d.Book)).ToList());
+            .Select(d => new GlancePaperRun(StrategyDeploymentRow.Short(d.VersionId), d.Symbol, d.State, d.Book, d.Unprotected)).ToList());
         var wakes = Part("wakes", () => host.Db is { } db ? new MissionEventStore(db).NextDueByRole() : null);
 
         string? loop;
@@ -229,8 +229,11 @@ static class GlanceWords
         const string label = "Paper runs (simulations)";
         if (r.PaperRuns is not { } runs) return new(Paper, label, Unread(r, "paper", "The paper runs"), Caution: true);
         if (runs.Count == 0) return new(Paper, label, "None is running: nothing is being tried on paper.");
-        var lines = runs.Select(p => $"{p.Version} in {p.Symbol}, {p.State}: {Result(p.Book)}").ToList();
-        return new(Paper, label, lines[0], string.Join("\n", lines.Skip(1).Append("A paper result is a simulation: no real money was made or lost.")));
+        // A RUN WITHOUT ITS PROTECTION GOES FIRST AND IN CAUTION'S COLOUR (U-paper-t0 item 3): it is the line of this card somebody would want to see.
+        var lines = runs.OrderBy(p => p.Unprotected is null)
+            .Select(p => $"{p.Version} in {p.Symbol}, {p.State}: {Result(p.Book)}" + (p.Unprotected is { } bare ? $" {bare}" : "")).ToList();
+        return new(Paper, label, lines[0], string.Join("\n", lines.Skip(1).Append("A paper result is a simulation: no real money was made or lost.")),
+            Caution: runs.Any(p => p.Unprotected is not null));
 
         static string Result(RunBook? book) => book switch
         {

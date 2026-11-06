@@ -596,7 +596,7 @@ public class PaperBooksTests(ITestOutputHelper log)
     /// <see cref="Show"/> serves them again. Everything else passes straight through; the rig disposes the paper
     /// connector itself.
     /// </summary>
-    sealed class LedgerBlind : ITradingConnector, IConnectorStatusDetail
+    internal sealed class LedgerBlind : ITradingConnector, IConnectorStatusDetail
     {
         readonly PaperConnector _inner;
         readonly HashSet<string> _hidden = new(StringComparer.Ordinal);
