@@ -87,6 +87,17 @@ public sealed class ToolCallStore(Database db)
         Query("SELECT id, at, attempt, role, tool, argument, bytes, served, refusal FROM tool_call "
               + "WHERE at>=$f AND at<$t ORDER BY id", ("$f", Sql.T(from)), ("$t", Sql.T(to)));
 
+    /// <summary>
+    /// THE BYTES ONE ROLE WAS SERVED BY ONE TOOL SINCE AN INSTANT: the count a bound can stand on (<c>DataExports</c>), because no name in a
+    /// folder changes it and nothing but this class writes the rows it adds up. A refused call was served nothing.
+    /// </summary>
+    public long BytesServed(string role, string tool, DateTimeOffset since) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COALESCE(SUM(bytes), 0) FROM tool_call WHERE role=$r AND tool=$t AND served=1 AND at>=$s",
+            ("$r", role), ("$t", tool), ("$s", Sql.T(since)));
+        return Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    });
+
     IReadOnlyList<ToolCallRow> Query(string sql, params (string, object?)[] ps) => db.Read(_ =>
     {
         var rows = new List<ToolCallRow>();

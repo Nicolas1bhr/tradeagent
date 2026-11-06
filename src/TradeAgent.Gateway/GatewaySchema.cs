@@ -278,7 +278,9 @@ public static class GatewaySchema
             + "Refused exactly as 'data bars' is — a window reaching the dataset's 'holdout_from', another dataset's holdout window or "
             + "the fresh holdout being collected (all in 'trade data list') is HOLDOUT_WITHHELD and NOTHING is written, never cut "
             + $"short. 'to' is required. At most {Core.Data.DataExports.MaxBars} bars a file and {Core.Data.DataExports.MaxFiles} "
-            + "export files in the folder — delete one of yours to make room; the same window again rewrites its file. Every export "
+            + "export files in the folder — delete one of yours to make room; the same window again rewrites its file. Your position is "
+            + $"written at most {Core.Data.DataExports.MaxBytesPerDay} bytes of exports in any {Core.Data.DataExports.BoundWindow.TotalHours:0} "
+            + "hours, every export counted, whatever becomes of its file. Every export "
             + "is recorded as a read of your position. A backtest still runs through 'trade backtest', which is what is charged.",
             [
                 new("dataset", "number", true, "The dataset's ledger id, from 'trade data list'."),

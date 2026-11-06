@@ -14,8 +14,14 @@ namespace TradeAgent.Core.Data;
 /// is REFUSED with nothing written, never clipped. An export is a read: the caller's code reading the file learns exactly what a
 /// <c>data-bars</c> answer over the same window would have told its model.</para>
 ///
-/// <para><b>Bounded.</b> At most <see cref="MaxBars"/> bars a file and <see cref="MaxFiles"/> files in the folder, so a position cannot
-/// fill the machine's disk by asking; a file of the same window is written again in place.</para>
+/// <para><b>Bounded by what the position was written, not by what its folder looks like now.</b> At most <see cref="MaxBars"/> bars a file,
+/// <see cref="MaxFiles"/> exports in the folder, and <see cref="MaxBytesPerDay"/> bytes to one position in any <see cref="BoundWindow"/>,
+/// counted from the observed-deliveries ledger (<c>tool_call</c>). The folder's count reads names, and a name is a cell's to change: code in a
+/// cell moved each export aside and asked again (R29 F-B3), so that count alone bounded nothing. The ledger is the app's own, so no rename,
+/// move, link or delete changes what it counts. Asking for a window again counts too, because the file it would replace may have been
+/// linked aside. So asking places at most <see cref="MaxBytesPerDay"/> a day per position on the disk.</para>
+///
+/// <para><b>What this does not bound:</b> code in a cell writing into its own home itself. That is not an ask, and nothing here sees it.</para>
 /// </summary>
 public static class DataExports
 {
@@ -25,10 +31,16 @@ public static class DataExports
     /// <summary>The most export files the folder may hold; a position deletes one of its own to make room.</summary>
     public const int MaxFiles = 4;
 
+    /// <summary>The most bytes of exports one position is written in any <see cref="BoundWindow"/>: about eight files of <see cref="MaxBars"/> bars.</summary>
+    public const long MaxBytesPerDay = 100L * 1024 * 1024;
+
+    /// <summary>The rolling window <see cref="MaxBytesPerDay"/> is counted over.</summary>
+    public static readonly TimeSpan BoundWindow = TimeSpan.FromHours(24);
+
     /// <summary>The folder, relative to the caller's home, that exports are written to.</summary>
     public const string Folder = "data";
 
-    /// <summary>The prefix of every export's file name — what the folder count counts.</summary>
+    /// <summary>The prefix of every export's file name: what the folder count counts, and a name the cell can change.</summary>
     public const string Prefix = "export-";
 
     /// <summary>
