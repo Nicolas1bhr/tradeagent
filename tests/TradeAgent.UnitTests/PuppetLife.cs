@@ -63,7 +63,8 @@ static class Puppet
     /// A puppet manifest: the real codex event stream (<c>--json</c>), the prompt on stdin, the scripts in
     /// <paramref name="scripts"/>, and the seat class its test declares — <see cref="SeatPlan.PuppetClass"/> unless named.
     /// </summary>
-    public static RuntimeManifest Manifest(string scripts, string? seatClass = null, IReadOnlyDictionary<string, string>? seatClasses = null)
+    public static RuntimeManifest Manifest(string scripts, string? seatClass = null, IReadOnlyDictionary<string, string>? seatClasses = null,
+        string? billingClass = null)
     {
         string[] turn = [Dll, "--scripts", scripts, "{prompt}"];
         return new RuntimeManifest
@@ -83,7 +84,9 @@ static class Puppet
             Puppet = true,
             PuppetSeatClass = seatClass ?? SeatPlan.PuppetClass,
             // A CLASS PER ROLE where the life names one (U-board-b2): a board seat plays the class it was founded on.
-            PuppetSeatClasses = seatClasses
+            PuppetSeatClasses = seatClasses,
+            // WHO ITS SIGN-IN BILLS, where the life declares it (U-turn-reservation): unknown otherwise, as a seat nobody read.
+            PuppetBillingClass = billingClass
         };
     }
 
@@ -145,20 +148,22 @@ sealed class PuppetLife : IAsyncDisposable
     /// </summary>
     Func<Database, ITradingConnector>? _connector;
 
-    PuppetLife(string scripts, string? seatClass, IReadOnlyDictionary<string, string>? seatClasses = null)
+    PuppetLife(string scripts, string? seatClass, IReadOnlyDictionary<string, string>? seatClasses = null, string? billingClass = null)
     {
         Scripts = scripts;
-        Manifest = Puppet.Manifest(scripts, seatClass, seatClasses);
+        Manifest = Puppet.Manifest(scripts, seatClass, seatClasses, billingClass);
     }
 
     /// <summary>
     /// A LIFE'S FIRST START: a fresh database, finished setup, the owner's own rate set (so every reservation is a real sum and
     /// every turn a priced one), <paramref name="seed"/> applied to the database before anything reads it, and the puppet started
-    /// through the supervisor's own prepare and start.
+    /// through the supervisor's own prepare and start. <paramref name="billingClass"/>: who the puppet's sign-in bills — <c>unknown</c>
+    /// unless named, as a seat nobody read (<c>U-turn-reservation</c>).
     /// </summary>
     public static async Task<PuppetLife> Begin(string name, Action<Database>? seed = null, string? seatClass = null,
         Action<TradeAgentSettings>? settings = null, Func<BoardPolicy, BoardPolicy>? policy = null,
-        IReadOnlyDictionary<string, string>? seatClasses = null, Func<Database, ITradingConnector>? connector = null)
+        IReadOnlyDictionary<string, string>? seatClasses = null, Func<Database, ITradingConnector>? connector = null,
+        string? billingClass = null)
     {
         // WHAT THE LIFE IS ABOUT TO TAKE from the assembly's other classes, noted before it takes anything and put back at its end.
         var found = ProcessWide.Note();
@@ -167,7 +172,7 @@ sealed class PuppetLife : IAsyncDisposable
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT")))
             Environment.SetEnvironmentVariable("DOTNET_ROOT", Puppet.DotnetRoot);
 
-        var life = new PuppetLife(Puppet.NewScripts(name), seatClass, seatClasses)
+        var life = new PuppetLife(Puppet.NewScripts(name), seatClass, seatClasses, billingClass)
             { _found = found, _policy = policy, _connector = connector };
         DeployTrade();
 
