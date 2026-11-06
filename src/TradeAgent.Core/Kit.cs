@@ -554,16 +554,32 @@ public static class Kit
 
     /// <summary>
     /// A KIT SET ASIDE CARRIES NO CELL'S GRANT (<c>U-kit-socket-2</c>): on Windows a running cell's slot holds a read-and-execute ACE on
-    /// the kit's folder, and a folder moved keeps its ACL — so the folder set aside, which a failed delete could leave in the staging
-    /// folder, would stay readable to that slot's next cell, past its sweep (which revokes by the kit's own path). The explicit
-    /// AppContainer ACEs come off its top folder at once, and what it held inherited goes with them. Never throws: what stays grants only
-    /// a read of an old kit, and the next install or removal tries again.
+    /// the kit's folder AND ANOTHER ON ITS <c>tools/</c> (Codex review: one grant per policy path), and a folder moved keeps its ACL — so the
+    /// folder set aside, which a failed delete could leave in the staging folder, would stay readable and runnable to that slot's next
+    /// cell, past its sweep (which revokes by the kit's own paths). The explicit AppContainer ACEs come off every folder and file in it, at
+    /// once, and what each held inherited goes with them; a kit holds no links, and the walk would not cross one. Never throws, and one that
+    /// will not come off stops no other: what stays grants only a read of an old kit, and the next install or removal tries again.
+    /// <paramref name="purge"/> is what takes an item's ACEs off: the app's own unless a test watches the walk.
     /// </summary>
-    static void Ungrant(string aside)
+    internal static void Ungrant(string aside, Action<FileSystemInfo>? purge = null)
     {
-        if (!OperatingSystem.IsWindows()) return;
-        try { AppContainerCell.PurgeContainerAces(new DirectoryInfo(aside)); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { /* see above */ }
+        if (purge is null)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            purge = AppContainerCell.PurgeContainerAces;
+        }
+        try
+        {
+            var top = new DirectoryInfo(aside);
+            var within = top.EnumerateFileSystemInfos("*", new EnumerationOptions
+            {
+                RecurseSubdirectories = true, IgnoreInaccessible = false, AttributesToSkip = FileAttributes.ReparsePoint
+            });
+            foreach (var item in within.Prepend(top))
+                try { purge(item); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { /* see above */ }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* see above */ }
     }
 
     const UnixFileMode ReadOnlyDir = UnixFileMode.UserRead | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute

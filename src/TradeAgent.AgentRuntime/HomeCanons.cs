@@ -105,6 +105,16 @@ public static class HomeCanons
     }
 
     /// <summary>
+    /// A START WROTE ITS HOMES WITH THE KIT IT READ BEFORE ITS AWAITS (Codex review): <paramref name="built"/>, read before the runtime was
+    /// detected. An install or removal in between told the homes that existed then, and the start then wrote its older reading over them
+    /// or into homes nobody had told. The start calls this straight after its homes are built, with the kit as it is <paramref name="now"/>:
+    /// the same kit, nothing to do (null); another, every home is told as <see cref="Refresh"/> tells it. A change after this call finds
+    /// every home built, so <see cref="Refresh"/> alone reaches them.
+    /// </summary>
+    public static Reach? Settle(Kit.View? built, Kit.View? now, AppFileManifest? files = null) =>
+        built?.Hash == now?.Hash ? null : Refresh(now, files);
+
+    /// <summary>
     /// HOLDS THE HOME AT <paramref name="folder"/> FOR ONE TURN: no kit change touches its canon until the returned handle is disposed, and
     /// a change that waited is applied then. A home no start registered (a test's own folder) is held by nothing. Disposing never throws:
     /// a change that could not be applied then waits again, for the next turn's end.

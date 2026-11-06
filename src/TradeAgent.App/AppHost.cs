@@ -2593,7 +2593,11 @@ public sealed class AppHost : IAsyncDisposable
             // "no manifest for 'codex'" and "runtimes.json could not be read" are different mornings,
             // only one of which has a repair the owner can perform.
             var manifest = RuntimeCatalog.Require(Gateway.Settings.SelectedRuntimeId ?? "opencode");
-            await Agent.PrepareAsync(manifest, WorkspaceContext());
+            var context = WorkspaceContext();
+            await Agent.PrepareAsync(manifest, context);
+            // A KIT CHANGED WHILE THIS START WAS ON ITS WAY (U-kit-socket-2, Codex review) reaches the homes it just wrote with its older reading.
+            if (HomeCanons.Settle(context.Kit, Kit.Granted()) is { } told)
+                Gateway.Log.Activity($"The head-start kit changed while the AI was starting; every seat is told of it: {told.Words}.");
             await Agent.StartAsync();
         }
         catch (Exception ex)
