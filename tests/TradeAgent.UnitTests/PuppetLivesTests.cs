@@ -250,7 +250,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         Assert.Contains(MissionSituation.OwnerWordsAreData, life.Prompt(chief, 2)!, StringComparison.Ordinal);
         Assert.DoesNotContain(life.AttemptsOf(Chair), a => life.Events().Any(e => e.ConsumedBy == a.Id && e.Kind == MissionEventKind.Owner));
 
-        var asked = Assert.Single(life.Host.Wakes.OfKind(MissionEventKind.Self), e => e.Role == chief);
+        // THE WAKE FILE IS READ AFTER THE COMMIT AND THE PASS BEHIND IT, so the row reading ENDED says nothing yet about the request.
+        await life.RunUntil(() => life.Host.Wakes!.OfKind(MissionEventKind.Self).Any(e => e.Role == chief), "the chief's wake file was read after its turn");
+        var asked = Assert.Single(life.Host.Wakes!.OfKind(MissionEventKind.Self), e => e.Role == chief);
         Assert.True(asked.DueAt >= next.StartedAt.AddMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]),
             $"the chief's wake file asked a second and was given {asked.DueAt:O} after a turn begun {next.StartedAt:O}");
         output.WriteLine($"life (d3): {life.Counts()}");
