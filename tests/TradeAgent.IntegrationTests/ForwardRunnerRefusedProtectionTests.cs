@@ -153,6 +153,33 @@ public partial class ForwardRunnerTests
         Assert.Equal(2, (await WorkingProtection(rig)).Count);
     }
 
+    /// <summary>
+    /// THE PRICE WENT THROUGH THE STOP WHILE IT WAS REFUSED: PREFLIGHT-2's position that "still held from entry after a 10% fall". Asked for once the gate lifts, it fires on the
+    /// next open it can and the position is out, rather than resting above a market it has already left. Nothing about the fall changes what is asked for: the level is the
+    /// program's, measured from the price paid.
+    /// </summary>
+    [Fact]
+    public async Task A_stop_asked_for_after_the_price_fell_through_it_closes_the_position()
+    {
+        await using var rig = await ReadyAsync(ProgramText("stop percent 5\ntarget percent 50\n", "entry when close > 99"));
+        var (stop, _) = await RefusedProtectionAsync(rig, lifted: false);
+        Assert.Equal(DeploymentOpState.Refused, stop.State);
+
+        // A 7 % FALL, ABOVE THE PROGRAM'S OWN EXIT AT 90 AND THROUGH THE STOP AT 95, WITH THE GATE STILL DOWN.
+        await QuietMinuteAsync(rig, 4, 93m);
+        rig.Gw.UpdateRiskUnderTest(r => r.MaxOrdersPerMinute = 1000);
+        await QuietMinuteAsync(rig, 5, 93m);
+        await QuietMinuteAsync(rig, 6, 93m);
+        await QuietMinuteAsync(rig, 7, 93m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        Show(log, rig);
+
+        var asked = rig.Gw.Deployments.OpsOf(rig.Deployment.Id).Last(o => o.Kind == DeploymentOpKind.Stop);
+        Assert.Equal(ExecutionState.FILLED, rig.Gw.Requests.Get(asked.RequestId)!.State);
+        Assert.Equal(0m, await Position(rig));
+    }
+
     // ---------------------------------------------------------------- replay and restart
 
     /// <summary>
@@ -186,6 +213,35 @@ public partial class ForwardRunnerTests
 
         Assert.Equal(asked, second.Gw.Deployments.OpsOf(id).Select(o => o.RequestId));
         Assert.Equal(2, (await WorkingProtection(second)).Count);
+    }
+
+    /// <summary>
+    /// A PROCESS THAT DIED BETWEEN THE VENUE'S ACKNOWLEDGEMENT AND ITS WRITE HOLDS NOTHING BACK (the Codex review). The order rests and its operation has no answer; nothing asks for
+    /// it again, rightly, so its row answers it, and the cursor and the maximum hold behind it move. RED without that: the operation stayed <c>dispatched</c>, every later minute
+    /// sat behind it, and the maximum hold never closed the position.
+    /// </summary>
+    [Fact]
+    public async Task A_protection_resting_when_the_process_died_is_answered_by_its_row()
+    {
+        await using var rig = await ReadyAsync(ProgramText("max_hold_bars 3\nstop percent 5\ntarget percent 50\n", "entry when close > 99"));
+        await RefusedProtectionAsync(rig);
+        await QuietMinuteAsync(rig, 4);
+        var stop = Assert.Single(await WorkingProtection(rig), w => w.Op.Kind == DeploymentOpKind.Stop).Op;
+
+        rig.Db.Write(_ =>
+        {
+            using var c = rig.Db.Cmd("UPDATE deployment_op SET state='dispatched', answer=NULL, resolved_at=NULL WHERE request_id=$id", ("$id", stop.RequestId));
+            return c.ExecuteNonQuery();
+        });
+        Assert.Equal(DeploymentOpState.Dispatched, rig.Gw.Deployments.OpById(stop.RequestId)!.State);
+
+        await QuietMinuteAsync(rig, 5);
+        await QuietMinuteAsync(rig, 6);
+        Show(log, rig);
+
+        Assert.Equal(DeploymentOpState.Resolved, rig.Gw.Deployments.OpById(stop.RequestId)!.State);
+        Assert.Contains("resting at the venue", rig.Gw.Deployments.OpById(stop.RequestId)!.Answer, StringComparison.Ordinal);
+        Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Flatten);
     }
 
     // ---------------------------------------------------------------- bounded
@@ -284,6 +340,38 @@ public partial class ForwardRunnerTests
     }
 
     /// <summary>
+    /// A FILL THE LEDGER HOLDS IS THE OTHER WAY ROUND (the Codex review): a stop that filled part of the position and then left the book, with every fill on the ledger, leaves a
+    /// long the books can size and nothing protecting it. The rest is asked for, at the same level, sized from the books.
+    /// </summary>
+    [Fact]
+    public async Task What_a_part_filled_stop_left_behind_is_asked_for_once_the_ledger_holds_the_fill()
+    {
+        await using var rig = await ReadyAsync(ProgramText("stop percent 5\ntarget percent 50\n", "entry when close > 99"));
+        await RefusedProtectionAsync(rig);
+        await QuietMinuteAsync(rig, 4);
+        var working = await WorkingProtection(rig);
+        var stop = Assert.Single(working, w => w.Op.Kind == DeploymentOpKind.Stop);
+
+        // THE VENUE'S ANSWER, AS THE LEDGER WOULD HOLD IT: 0.4 of the 1 sold at 95, and the rest of the order cancelled.
+        await rig.Conn.CancelOrderAsync(stop.Order.ConnectorOrderId);
+        rig.Db.Write(_ =>
+        {
+            using var c = rig.Db.Cmd("UPDATE execution_request SET execution_state='CANCELLED', filled_quantity=0.4 WHERE request_id=$id", ("$id", stop.Op.RequestId));
+            return c.ExecuteNonQuery();
+        });
+        Assert.True(rig.Gw.Fills.Record(new Fill(PaperConnector.TheAccount, "part-fill", rig.Clock.At, "BTCUSDT", nameof(OrderSide.Sell), 0.4m, 95m,
+            stop.Order.ConnectorOrderId, TradingGateway.ClientOrderIdFor(stop.Op.RequestId), stop.Op.RequestId, null, FillSource.Event, 0m, rig.Clock.At)
+        {
+            ConnectorId = rig.Conn.Id
+        }));
+        await QuietMinuteAsync(rig, 5);
+        Show(log, rig);
+
+        var left = Assert.Single(await WorkingProtection(rig), w => w.Op.Kind == DeploymentOpKind.Stop);
+        Assert.Equal((0.6m, (decimal?)95m), (left.Order.Quantity, left.Order.StopPrice));
+    }
+
+    /// <summary>
     /// THE MAXIMUM HOLD TAKES OFF WHAT WAS ASKED FOR AGAIN TOO. It used to name the two ids the entry's fill gave it, and a stop that went out later under its own minute's
     /// id would still be resting when the close went out: two sells under one long.
     /// </summary>
@@ -375,6 +463,35 @@ public partial class ForwardRunnerTests
         var next = Assert.Single(Notes(rig, "2026-09-20"));
         log.WriteLine(next.Content);
         Assert.DoesNotContain("UNPROTECTED", next.Content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A DAY'S NOTE READS THAT DAY, NOT TODAY (the Codex review): the record of a stop resting at the close can change afterwards, while the boundary minute is still replayed live, and a
+    /// reading of what the row says now would make that day's note new. Its words and its id stay.
+    /// </summary>
+    [Fact]
+    public async Task What_happens_to_a_protection_after_the_close_does_not_move_that_days_note()
+    {
+        var evening = new DateTimeOffset(2026, 9, 19, 23, 50, 0, TimeSpan.Zero);
+        await using var rig = await ReadyAsync(Protected, origin: evening);
+        await RefusedProtectionAsync(rig, rate: 1000);
+        var stop = Assert.Single(await WorkingProtection(rig), w => w.Op.Kind == DeploymentOpKind.Stop).Op;
+        for (var minute = 4; minute <= 10; minute++) await QuietMinuteAsync(rig, minute);
+
+        static IReadOnlyList<Publication> Notes(Rig r) =>
+            [.. new PublicationStore(r.Db).By(TradingGateway.PaperAllocatorRole)
+                .Where(n => n.Content.Contains("the UTC day 2026-09-19 closed over it", StringComparison.Ordinal))];
+        var note = Assert.Single(Notes(rig));
+        Assert.DoesNotContain("UNPROTECTED", note.Content, StringComparison.Ordinal);
+
+        rig.Db.Write(_ =>
+        {
+            using var c = rig.Db.Cmd("UPDATE execution_request SET execution_state='REJECTED' WHERE request_id=$id", ("$id", stop.RequestId));
+            return c.ExecuteNonQuery();
+        });
+        await rig.Runner.AdvanceAsync();
+
+        Assert.Equal(note.Id, Assert.Single(Notes(rig)).Id);
     }
 
     // ---------------------------------------------------------------- the founding rate, off the app's own paper venues (D20)

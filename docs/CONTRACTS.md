@@ -4910,9 +4910,10 @@ decides again on a later bar).
 **A PROTECTION THAT DID NOT STAND IS ASKED FOR AGAIN** (`U-paper-t0` item 3). A position open without a stop or target it
 declared is an unprotected position, whatever put it there: refused before the wire, rejected at it, or gone from the
 book while the position stayed. `TradingGateway.ProtectionMissing` is the one reading: the latest of a kind since the
-run's latest entry, when none of its kind may still be working and its row carries no fill, and nothing while an
-exit or a flatten is on its way. An order with a fill on its row is NOT missing, whatever the books read: the row can
-say FILLED while the fill is on its way to the ledger, and a second stop in that gap sells what the first one sold. On
+run's latest entry, when none of its kind may still be working, and nothing while an exit or a flatten is on its way.
+While the run's book is incomplete an order with a fill on its row is NOT missing, whatever the books read: the row can
+say FILLED while the fill is on its way to the ledger, and a second stop in that gap sells what the first one sold; with
+the book whole, what a part fill left behind is a position with nothing protecting it, and it is asked for. On
 the newest minute of a pass, when that minute is live and later than the last ask, the runner asks for what is missing
 at the level its operation carries, sized from the books, under that minute's own ids and every gate
 (`PutProtectionBackAsync`, the same path as the paragraph below). **Bounded:** each kind on each of the first
@@ -4922,9 +4923,11 @@ runner can speak for. **The same under replay and a restart:** every number is o
 sequence is spent for each kind whether or not it sends, so a pass that died between the two gives the replay the same
 ids. **Said on every surface:** while it stands so, `DeploymentLine` carries "UNPROTECTED: it holds … with no stop …
 resting at the venue", and so the report, `status.deployments`' reason and the glance card, which leads with that run in
-caution. A UTC day's note says so of that day's close, reading only what that minute's operations hold and what never
-stood, so its words and its id do not move on a replay. The maximum hold cancels every stop and target of the run, not
-the pair the entry's fill named: one asked for again went out under a later id. **NOT claimed:** a protection whose
+caution. A UTC day's note says so of that day's close, reading only that minute's operations and their own settled answers
+for what never stood, so its words and its id do not move on a replay. The maximum hold cancels every stop and target of
+the run, not the pair the entry's fill named: one asked for again went out under a later id. A stop or target is answered
+by the venue's acknowledgement, and the settle writes that from its order row too (`SettleDeploymentOps`), so a process
+that died between the acknowledgement and the write holds neither the cursor nor the maximum hold. **NOT claimed:** a protection whose
 level or size came to nothing at the fill (`NoTrade`) wrote no operation, so nothing asks for it and no surface says it.
 
 **A REFUSED EXIT PUTS THE STOP AND THE TARGET BACK, ON ITS OWN MINUTE** (`U-runner-exit-hygiene-b`). Last on each live
