@@ -212,6 +212,20 @@ public static class OlderHome
     /// </summary>
     public static string SetAside(string home, DateTimeOffset at, out string? tape)
     {
+        // WHAT THE PRESS'S CALLER HEARS IS ONE REFUSAL (R29 F-C4): a database that cannot be opened or a folder that cannot be read is a refused
+        // press with the home where it was, in words, and never a fault out of the owner's button.
+        try { return Aside(home, at, out tape); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException)
+        {
+            throw new InvalidOperationException(
+                $"TradeAgent could not read the older folder {home} ({ex.Message}), so it was not moved and nothing was deleted. Check that no " +
+                "other program has it open and press Start fresh again.", ex);
+        }
+    }
+
+    /// <summary>The press itself: see <see cref="SetAside(string, DateTimeOffset, out string?)"/>.</summary>
+    static string Aside(string home, DateTimeOffset at, out string? tape)
+    {
         tape = null;
         var full = Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string label;
@@ -250,7 +264,13 @@ public static class OlderHome
                 $"Windows would not move {full} aside — a program still has a file in it open ({ex.Message}). Nothing was moved or " +
                 "deleted; close that program and press Start fresh again.", ex);
         }
-        Directory.CreateDirectory(full);
+        try { Directory.CreateDirectory(full); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"The older folder is kept, whole, in {aside}, but a new one could not be made at {full} ({ex.Message}). Nothing was deleted. " +
+                "Close TradeAgent and open it again.", ex);
+        }
         if (staged is not null) tape = Promote(staged, aside, full);
         return aside;
     }

@@ -1,7 +1,11 @@
 using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
+using TradeAgent.AgentRuntime;
+using TradeAgent.App;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -14,6 +18,55 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class OlderHomeTests
 {
+    /// <summary>
+    /// F-C4 (R29): A DATABASE THE PRESS CANNOT OPEN IS A REFUSAL IN WORDS, WITH THE HOME WHERE IT WAS. It was a <see cref="SqliteException"/> out of
+    /// the owner's button, which catches only the press's own refusal.
+    /// </summary>
+    [UnixFact]
+    public void A_home_the_press_cannot_read_is_refused_in_words_and_stays()
+    {
+        if (OperatingSystem.IsWindows()) return;   // the fact is skipped there: this line is for the platform analyzer
+        using var scratch = TestEnv.NewScratch("older-home");
+        var home = OldHome(scratch.Dir, 2);
+        var file = Path.Combine(home, "state", "tradeagent.db");
+        File.SetUnixFileMode(file, UnixFileMode.None);
+        try
+        {
+            var refused = Assert.Throws<InvalidOperationException>(() => OlderHome.SetAside(home, DateTimeOffset.UtcNow));
+            Assert.Contains("was not moved and nothing was deleted", refused.Message, StringComparison.Ordinal);
+            Assert.True(File.Exists(file));
+            Assert.Single(Directory.GetDirectories(scratch.Dir));
+        }
+        finally { File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+    }
+
+    /// <summary>
+    /// F-C4 (R29): A REFUSED PRESS GIVES BACK THE LOCK IT LET GO, AND TAKES NONE IT DID NOT HOLD. The lock goes first because its file is inside the
+    /// home. A refusal read before the lock held none, and taking one then would write into a home this build refuses.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_start_fresh_takes_back_the_lock_it_let_go()
+    {
+        using var db = TestEnv.NewDb();
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        var refused = new OlderHomeException(Paths.Home, 2, Versions.App);
+
+        // THE TEST HOME IS NO OLDER HOME, SO THE PRESS REFUSES TO MOVE IT: a refusal of the real press, with nothing to set up.
+        host.OlderHome = refused;
+        host.InstanceLock = SingleInstanceLock.TryAcquire();
+        Assert.NotNull(host.InstanceLock);
+        Assert.False(await host.StartFreshAsync());
+        Assert.NotNull(host.StartFreshProblem);
+        Assert.Same(refused, host.OlderHome);
+        Assert.NotNull(host.InstanceLock);
+        Assert.Null(SingleInstanceLock.TryAcquire());
+
+        host.InstanceLock.Dispose();
+        host.InstanceLock = null;
+        Assert.False(await host.StartFreshAsync());
+        Assert.Null(host.InstanceLock);
+    }
+
     /// <summary>A home as v0.1.x left it: an unmarked database stamped at <paramref name="schema"/>, with a record in it, and a workspace file.</summary>
     static string OldHome(string root, int schema)
     {

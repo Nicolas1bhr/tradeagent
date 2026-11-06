@@ -1469,20 +1469,22 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>The older home this start refused (<see cref="OlderHomeException"/>), while it stands; null otherwise.</summary>
-    public OlderHomeException? OlderHome { get; private set; }
+    public OlderHomeException? OlderHome { get; internal set; }
 
     /// <summary>
     /// THE OWNER'S START-FRESH PRESS, the second of two (<c>U-windows-release</c>): reachable only from the refusal screen this start put
     /// up, in-process, never from the pipe or a verb. Lets go of the single-instance lock (its file is inside the home), moves the WHOLE
     /// older home aside by one rename (<see cref="Core.OlderHome.SetAside"/> — which re-reads it and refuses to move a home this build
     /// opens), recreates the managed folders and starts again in the new, empty home. Returns <see cref="StartAsync"/>'s answer; when the
-    /// move is refused the home stays where it was, the refusal stands, and <see cref="StartFreshProblem"/> says why. For a home refused
+    /// move is refused the home stays where it was, the refusal stands, <see cref="StartFreshProblem"/> says why, and a lock this press let go
+    /// is taken back (R29 F-C4; a refusal read before the lock held none, and none is taken in a home this build refuses). For a home refused
     /// for its board's older founding policy (<c>U-founding-carry</c>) the move carries the market-context tape into the new home, and
     /// the activity line says what happened to it.
     /// </summary>
     public async Task<bool> StartFreshAsync()
     {
         if (OlderHome is null) return false;
+        var lockHeld = _lock is not null;
         _lock?.Dispose();
         _lock = null;
         try
@@ -1505,9 +1507,17 @@ public sealed class AppHost : IAsyncDisposable
         catch (InvalidOperationException ex)
         {
             StartFreshProblem = ex.Message;
+            if (lockHeld)
+            {
+                _lock = SingleInstanceLock.TryAcquire();
+                SingleInstance = _lock is not null;
+            }
             return false;
         }
     }
+
+    /// <summary>The single-instance lock as this host holds it. Read and set by a test standing in for a refusal that came after the lock.</summary>
+    internal SingleInstanceLock? InstanceLock { get => _lock; set => _lock = value; }
 
     /// <summary>Why the last start-fresh press moved nothing, in the owner's words; null when it has not been refused.</summary>
     public string? StartFreshProblem { get; private set; }
