@@ -333,6 +333,8 @@ public static class RouteA
                 ? "egress web: Landlock connect to TCP 443 alone and no bind, seccomp listen, fast-open and datagrams"
                 : "egress none: Landlock connect and bind, seccomp listen and datagrams"),
             Harness("network", EnforcementClass.Advisory, "the harness reaches its provider and anything else its account can"),
+            Cell("attributes", EnforcementClass.HardApp, "seccomp refuses owners, extended attributes and inode flags and stops every mode and time change; the supervisor, outside the cell, answers those for the granted workspace alone"),
+            Harness("attributes", EnforcementClass.Mediated, unconfined),
             Cell("descendants-cancellation", EnforcementClass.HardPlatform, "the attempt's cgroup: cgroup.kill ends every descendant"),
             Harness("descendants-cancellation", EnforcementClass.HardPlatform, "the attempt's cgroup, harness leaf"),
             Cell("broker-reach", EnforcementClass.HardPlatform, web

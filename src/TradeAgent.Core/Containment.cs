@@ -175,6 +175,7 @@ public static class ContainedLaunch
         var started = ProcessTable.Read(self)?.Start ?? 0;
 
         Process command;
+        CellMediator.Channel? mediator = null;
         try
         {
             // STDIO INHERITED, NOT REDIRECTED: the command writes into the pipes the app is reading, and
@@ -188,12 +189,21 @@ public static class ContainedLaunch
                 psi.FileName = again[0];
                 foreach (var a in again.Skip(1)) psi.ArgumentList.Add(a);
                 psi.ArgumentList.Add(CellExecFlag);
+                // THE CHANNEL THE STAGE HANDS BACK THE FILTER'S LISTENER ON (U-cell-metadata), the one descriptor it inherits: this process
+                // stays outside the cell for the cell's whole life, so it is the one that answers what the filter stops.
+                if (OperatingSystem.IsLinux())
+                {
+                    mediator = CellMediator.Open();
+                    psi.ArgumentList.Add(CellMediator.HandoffFlag);
+                    psi.ArgumentList.Add(mediator.Stage.ToString(CultureInfo.InvariantCulture));
+                }
                 psi.ArgumentList.Add(cellPolicy);
                 psi.ArgumentList.Add(run[0]);
                 StageEnvironment(psi);
             }
             foreach (var a in run.Skip(1)) psi.ArgumentList.Add(a);
             command = Process.Start(psi) ?? throw new InvalidOperationException("the program did not start");
+            mediator?.Serve();
         }
         catch (Exception ex)
         {
@@ -357,6 +367,17 @@ public static class CellStage
     /// <summary>Runs the stage. Returns only when it failed — the exit code — having said why on <paramref name="error"/>.</summary>
     public static int Run(IReadOnlyList<string> argv, TextWriter error)
     {
+        int? handoff = null;
+        if (argv.Count > 1 && argv[0] == CellMediator.HandoffFlag)
+        {
+            if (!int.TryParse(argv[1], NumberStyles.None, CultureInfo.InvariantCulture, out var fd))
+            {
+                error.WriteLine($"trade: {CellMediator.HandoffFlag} needs a descriptor");
+                return 2;
+            }
+            handoff = fd;
+            argv = [.. argv.Skip(2)];
+        }
         if (argv.Count < 2)
         {
             error.WriteLine($"trade: {ContainedLaunch.CellExecFlag} needs a policy file and a program to run");
@@ -394,8 +415,11 @@ public static class CellStage
         try { Directory.SetCurrentDirectory(policy.Workspace); }
         catch (Exception ex) { return Refuse($"could not move into the workspace {policy.Workspace} ({ex.Message})"); }
 
+        // NO SUPERVISOR TO HOLD THE LISTENER, NO CELL: every mode and time change in it would stall on a listener nobody answers.
+        if (handoff is not { } channel) return Refuse($"{ContainedLaunch.CellExecFlag} is started by a supervisor, which hands it {CellMediator.HandoffFlag}");
+
         error.Flush();
-        var failure = CellNative.Enter(policy, program, argv.Skip(2).ToList());
+        var failure = CellNative.Enter(policy, program, argv.Skip(2).ToList(), channel);
         return Refuse(failure.Sentence);
     }
 

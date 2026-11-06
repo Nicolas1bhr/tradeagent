@@ -20,6 +20,15 @@ namespace TradeAgent.Core;
 /// this rule a cell ran <c>systemd-run --user</c> and read a planted ledger), no <c>io_uring</c> (its socket and connect
 /// operations never pass <c>socket(2)</c>), no kernel keyrings, <c>bpf</c>, <c>perf_event_open</c> or <c>userfaultfd</c>, and any
 /// other architecture's system calls killed. no_new_privs — no setuid gain, and Landlock's precondition.</para>
+///
+/// <para><b>What Landlock has no right for: a file's attributes</b> (<c>U-cell-metadata</c>; R29 F-D1). Landlock governs opening,
+/// creating and removing, not a mode, an owner, a time, an extended attribute or an inode flag, so a cell running as the owner's
+/// uid could change any of them on anything that uid owns, granted or not — and a POSIX ACL is a mode by another name, and a
+/// read-only descriptor is all <c>fchmod</c> and <c>futimens</c> ask for. seccomp cannot read a path, so it cannot tell the
+/// workspace from the rest, and a cell's own <c>chmod +x</c>, <c>pip install</c> and <c>tar x</c> need the workspace to keep them.
+/// So: owners, extended attributes and inode flags are refused outright (<see cref="SeccompProgram"/>), and mode and time changes
+/// stop at the kernel and go to the launch's supervisor, outside the cell, which answers them only for the granted workspace
+/// (<see cref="CellMediator"/>). Every other object: EPERM. With no supervisor the kernel fails those calls itself.</para>
 /// </summary>
 public static class CellNative
 {
@@ -60,7 +69,7 @@ public static class CellNative
 
     // ---- seccomp (include/uapi/linux/seccomp.h, filter.h, audit.h) -------------------------------------------------
 
-    const uint SeccompRetKillProcess = 0x80000000, SeccompRetErrno = 0x00050000, SeccompRetAllow = 0x7fff0000;
+    const uint SeccompRetKillProcess = 0x80000000, SeccompRetErrno = 0x00050000, SeccompRetUserNotif = 0x7fc00000, SeccompRetAllow = 0x7fff0000;
     const uint EPERM = 1, EACCES = 13;
     const uint AuditArchX64 = 0xC000003E, AuditArchArm64 = 0xC00000B7;
     const uint X32SyscallBit = 0x40000000;
@@ -69,19 +78,54 @@ public static class CellNative
 
     /// <summary>
     /// The system calls the filter reads by number: <c>socket</c>, <c>socketpair</c>, <c>listen</c>, the three sends whose flags it
-    /// reads, and the denied ones; everything else passes to Landlock.
+    /// reads, <c>ioctl</c>, the denied ones and the mediated ones; everything else passes to Landlock. <c>Seccomp</c> is the call that
+    /// installs it.
     /// </summary>
-    sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint Listen, uint Sendto, uint Sendmsg, uint Sendmmsg, uint[] Denied);
+    internal sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint Listen, uint Sendto, uint Sendmsg, uint Sendmmsg, uint Ioctl, uint Seccomp,
+        uint[] Denied, uint[] Mediated);
 
-    static Table? TableFor(Architecture arch) => arch switch
+    /// <summary>The filesystem calls a kernel gives every architecture one number for: <c>fchmodat2</c>, <c>setxattrat</c>, <c>removexattrat</c>, <c>file_setattr</c>.</summary>
+    internal const uint SysFchmodat2 = 452, SysSetxattrat = 463, SysRemovexattrat = 466, SysFileSetattr = 469;
+
+    /// <summary>
+    /// THE INODE FLAG REQUESTS (<c>include/uapi/linux/fs.h</c>, <c>fsverity.h</c>): <c>FS_IOC_SETFLAGS</c> in both widths, <c>FS_IOC_FSSETXATTR</c>,
+    /// <c>FS_IOC_ENABLE_VERITY</c>. A read-only descriptor and being the owner is all each asks, and <c>ioctl</c> carries its request in a
+    /// 32-bit word, so the low word of the argument is what the kernel acts on. Device ioctls are Landlock's, and every other request is
+    /// allowed.
+    /// </summary>
+    internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x401C5820, 0x40806685];
+
+    internal static Table? TableFor(Architecture arch) => arch switch
     {
-        // io_uring_setup/enter/register, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd
-        Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, [425, 426, 427, 250, 248, 249, 321, 298, 323]),
-        Architecture.Arm64 => new(AuditArchArm64, 198, 199, 201, 206, 211, 269, [425, 426, 427, 219, 217, 218, 280, 241, 282]),
+        Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, 16, 317,
+        [
+            425, 426, 427, 250, 248, 249, 321, 298, 323,                // io_uring_setup/enter/register, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd
+            92, 93, 94, 260,                                            // chown, fchown, lchown, fchownat
+            188, 189, 190, 197, 198, 199,                               // setxattr, lsetxattr, fsetxattr, removexattr, lremovexattr, fremovexattr
+            SysSetxattrat, SysRemovexattrat, SysFileSetattr
+        ],
+        [
+            90, 91, 268, SysFchmodat2,                                  // chmod, fchmod, fchmodat, fchmodat2
+            132, 235, 261, 280                                          // utime, utimes, futimesat, utimensat
+        ]),
+        Architecture.Arm64 => new(AuditArchArm64, 198, 199, 201, 206, 211, 269, 29, 277,
+        [
+            425, 426, 427, 219, 217, 218, 280, 241, 282,
+            54, 55,                                                     // fchownat, fchown (arm64 has no chown or lchown)
+            5, 6, 7, 14, 15, 16,                                        // setxattr, lsetxattr, fsetxattr, removexattr, lremovexattr, fremovexattr
+            SysSetxattrat, SysRemovexattrat, SysFileSetattr
+        ],
+        [
+            52, 53, SysFchmodat2,                                       // fchmod, fchmodat, fchmodat2 (arm64 has no chmod)
+            88                                                          // utimensat (arm64 has no utime, utimes or futimesat)
+        ]),
         _ => null
     };
 
-    const int PR_SET_SECCOMP = 22, PR_SET_NO_NEW_PRIVS = 38, SECCOMP_MODE_FILTER = 2;
+    const int PR_SET_NO_NEW_PRIVS = 38, SECCOMP_SET_MODE_FILTER = 1;
+
+    /// <summary><c>SECCOMP_FILTER_FLAG_NEW_LISTENER</c> (the listener the supervisor answers on) and <c>_WAIT_KILLABLE_RECV</c> (a signal does not undo a call the supervisor is already answering).</summary>
+    const int SeccompNewListener = 1 << 3, SeccompWaitKillableRecv = 1 << 5;
     const int O_CLOEXEC = 0x80000, O_PATH = 0x200000, ENOENT = 2, ENOTDIR = 20;
 
     /// <summary><c>O_NOFOLLOW</c>: 0400000 on x86-64, 0100000 on arm64 (its own <c>asm/fcntl.h</c>).</summary>
@@ -232,12 +276,14 @@ public static class CellNative
     /// <summary>
     /// ENTERS THE CELL AND BECOMES <paramref name="program"/>: never returns when it works. In order, on the calling thread:
     /// the Landlock ruleset is built from <paramref name="policy"/> (nothing is restricted yet); <c>no_new_privs</c>; the seccomp
-    /// filter; <c>landlock_restrict_self</c>; every descriptor above 2 marked close-on-exec; SIGPIPE and the signal mask put back
-    /// to what a program expects; <c>execve</c> with an environment built from the policy alone. A failure at any step returns
-    /// that step — the caller exits 126 and starts nothing.
+    /// filter, whose listener and the workspace the ruleset granted go to the supervisor over <paramref name="handoff"/> and leave this
+    /// process before anything of the cell can reach them; <c>landlock_restrict_self</c>; every descriptor above 2 marked close-on-exec;
+    /// SIGPIPE and the signal mask put back to what a program expects; <c>execve</c> with an environment built from the policy alone.
+    /// A failure at any step returns that step — the caller exits 126 and starts nothing.
     /// </summary>
     /// <param name="program">An absolute path the policy lets the cell run.</param>
-    public static Failure Enter(CellPolicy policy, string program, IReadOnlyList<string> args)
+    /// <param name="handoff">The stage's end of the launch's channel to its supervisor (<see cref="CellMediator.Open"/>).</param>
+    public static Failure Enter(CellPolicy policy, string program, IReadOnlyList<string> args, int handoff)
     {
         ArgumentNullException.ThrowIfNull(policy);
         if (!OperatingSystem.IsLinux()) return new Failure("the platform check (not Linux)", 0);
@@ -248,17 +294,24 @@ public static class CellNative
         // EVERYTHING THE LAST CALLS NEED IS MADE NOW, while the thread may still read the runtime's files: the P/Invoke stubs
         // bound, the strings and arrays in unmanaged memory. After landlock_restrict_self nothing here opens a file.
         Marshal.PrelinkAll(typeof(CellNative));
+        Marshal.PrelinkAll(typeof(CellMediator));
         var path = Utf8(program);
         var argv = Vector([program, .. args]);
         var envp = Vector([.. policy.Environment.Select(e => e.Key + "=" + e.Value)]);
         var filter = Program(SeccompProgram(RuntimeInformation.ProcessArchitecture, policy.Egress.DatagramsOpen));
         var emptyMask = Zeroed(128);
 
-        var ruleset = Ruleset(policy, out var failure);
+        var ruleset = Ruleset(policy, out var failure, out var workspace);
         if (ruleset < 0) return failure!;
+        var handover = CellMediator.Handover(workspace!);
 
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return Fail("prctl(PR_SET_NO_NEW_PRIVS)");
-        if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, (nuint)filter, 0, 0) != 0) return Fail("installing the seccomp filter");
+        var seccomp = (nint)TableFor(RuntimeInformation.ProcessArchitecture)!.Seccomp;
+        var listener = (int)Syscall3(seccomp, SECCOMP_SET_MODE_FILTER, SeccompNewListener | SeccompWaitKillableRecv, filter);
+        if (listener < 0) return Fail("installing the seccomp filter");
+        if (CellMediator.Send(handoff, listener, handover) != 0) return Fail("handing the filter's listener to the supervisor");
+        close(listener);
+        close(handoff);
         if (Syscall3(SysLandlockRestrictSelf, ruleset, 0, 0) != 0) return Fail("landlock_restrict_self");
         close(ruleset);
 
@@ -277,10 +330,15 @@ public static class CellNative
     internal static Action<string>? BeforeGrantOpen;
 
     /// <summary>The ruleset's descriptor, or -1 with the failure: every right handled, each policy path granted only its own.</summary>
-    internal static int Ruleset(CellPolicy policy, out Failure? failed)
+    internal static int Ruleset(CellPolicy policy, out Failure? failed) => Ruleset(policy, out failed, out _);
+
+    /// <inheritdoc cref="Ruleset(CellPolicy, out Failure?)"/>
+    /// <param name="granted">Where the workspace's descriptor really led: the one directory this ruleset lets the cell write.</param>
+    internal static int Ruleset(CellPolicy policy, out Failure? failed, out string? granted)
     {
         Failure? failure = null;
         failed = null;
+        granted = null;
         var handled = HandledFs(LandlockAbi().Abi);
         var attr = Zeroed(24);
         Marshal.WriteInt64(attr, 0, (long)handled);
@@ -361,7 +419,11 @@ public static class CellNative
             Marshal.WriteInt64(rule, 8, port);
             if (Syscall4(SysLandlockAddRule, fd, LANDLOCK_RULE_NET_PORT, rule, 0) != 0) { failure = Fail($"granting TCP port {port}"); ok = false; }
         }
-        if (ok) return fd;
+        if (ok)
+        {
+            granted = workspace;
+            return fd;
+        }
         close(fd);
         failed = failure;
         return -1;
@@ -384,6 +446,14 @@ public static class CellNative
     /// only): <c>listen()</c> — on a socket nobody bound it picks an ephemeral port itself, so a cell would serve without a bind —
     /// EACCES; and a send with <c>MSG_FASTOPEN</c> (<c>sendto</c>, <c>sendmsg</c>, <c>sendmmsg</c>), which opens a TCP connection
     /// without the <c>connect</c> call Landlock checks — EACCES. Everything else: allowed, and Landlock's.</para>
+    ///
+    /// <para><b>A file's attributes, which Landlock does not see</b> (<c>U-cell-metadata</c>; every <c>*at</c> and <c>*at2</c> form): an
+    /// owner (<c>chown</c>, <c>fchown</c>, <c>lchown</c>, <c>fchownat</c>), an extended attribute (<c>setxattr</c>, its <c>l</c>, <c>f</c> and
+    /// <c>at</c> forms, <c>removexattr</c>'s, and through them a POSIX ACL), <c>file_setattr</c> and the inode flag requests of <c>ioctl</c>
+    /// (<see cref="AttributeIoctls"/>): EPERM, in the workspace too — no tool a cell runs needs them there, and <c>cp -p</c> and its
+    /// like read EPERM as "not root". A mode (<c>chmod</c>, <c>fchmod</c>, <c>fchmodat</c>, <c>fchmodat2</c>) and a time (<c>utime</c>,
+    /// <c>utimes</c>, <c>futimesat</c>, <c>utimensat</c>, which is <c>futimens</c> too): a user notification, because the tools a cell
+    /// runs do need those in the workspace and the filter cannot read a path. <see cref="CellMediator"/> answers them.</para>
     /// </summary>
     /// <summary>
     /// WHAT THE KERNEL IS TOLD, AS ONE STRING (<c>U-cell-linux-c</c> item 5): the seccomp program's bytes for this processor and the
@@ -401,6 +471,8 @@ public static class CellNative
         b.Ld(0);
         if (architecture == Architecture.X64) b.Jge(X32SyscallBit, "eperm", null);
         foreach (var nr in t.Denied) b.Jeq(nr, "eperm", null);
+        foreach (var nr in t.Mediated) b.Jeq(nr, "notify", null);
+        b.Jeq(t.Ioctl, "ioctl", null);
         b.Jeq(t.Listen, "eacces", null);
         b.Jeq(t.Sendto, "flags3", null);
         b.Jeq(t.Sendmmsg, "flags3", null);
@@ -415,9 +487,12 @@ public static class CellNative
         b.Label("stream").Ld(32).Jeq(0, "allow", null).Jeq(IPPROTO_TCP, "allow", "eacces");
         b.Label("socketpair").Ld(16).Jeq(AF_UNIX, null, "eacces");
         b.Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "allow", null).Jeq(SOCK_SEQPACKET, "allow", "eacces");
+        b.Label("ioctl").Ld(24);
+        foreach (var request in AttributeIoctls) b.Jeq(request, "eperm", null);
         b.Label("allow").Ret(SeccompRetAllow);
         b.Label("eacces").Ret(SeccompRetErrno | EACCES);
         b.Label("eperm").Ret(SeccompRetErrno | EPERM);
+        b.Label("notify").Ret(SeccompRetUserNotif);
         b.Label("kill").Ret(SeccompRetKillProcess);
         return b.Assemble();
     }

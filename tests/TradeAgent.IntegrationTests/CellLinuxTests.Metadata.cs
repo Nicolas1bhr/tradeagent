@@ -196,7 +196,9 @@ public partial class CellLinuxTests
         Assert.True(open.Count == 0, $"these calls were let through in the cell ({open.Count}):\n" + string.Join('\n', open));
         Assert.Equal(before.Out, after.Out);
         var refused = ran.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(l => l != "probe-done").ToList();
-        Assert.All(refused, l => Assert.True(l.EndsWith(" errno=1", StringComparison.Ordinal) || l.Contains(" via-symlink ", StringComparison.Ordinal) || HostHasNoSuchCall.Any(l.EndsWith), l));
+        // EPERM FROM EVERY ONE, AND ONE KIND OF NOT-FOUND: /proc/self/fd/<n> is the SUPERVISOR's table when the supervisor reads it, so it either refuses a
+        // magic link (EPERM) or finds no such descriptor (ENOENT). Neither reaches the object, and the snapshot above says so.
+        Assert.All(refused, l => Assert.True(l.EndsWith(" errno=1", StringComparison.Ordinal) || (l.StartsWith("fchmodat-procfd ", StringComparison.Ordinal) && l.EndsWith(" errno=2", StringComparison.Ordinal)), l));
 
         // THE KIT'S HASH COVERS ITS RUN BITS: one cell's flip would have withdrawn the kit from every other cell.
         Assert.Equal(m.Kit.Hash, Kit.HashOf(m.Kit.Dir));
@@ -225,6 +227,7 @@ public partial class CellLinuxTests
             ln -s tool.sh lnk && touch -h -d 2001-09-09T01:46:40Z lnk && echo touch-h-rc=$?
             git init -q repo && cd repo && git config user.email x@example.invalid && git config user.name x && echo f > f && git add f && git commit -qm one && echo git-rc=$?
             cd .. ; sed -i s/x/z/ a && echo sed-rc=$?
+            echo fds=$(ls /proc/self/fd | tr '\n' ' ')
             python3 -I -c "
             import os, shutil, stat
             shutil.copy2('tool.sh', 'tool.copy')
@@ -238,6 +241,8 @@ public partial class CellLinuxTests
         var ran = await InCell(w.Policy(), "/bin/sh", script);
         _output.WriteLine(ran.Out + ran.Err);
         Says(ran, "ran-it", "chmod-rc=0", "touch-rc=0", "touch-d-rc=0", "cp-p-rc=0", "tar-rc=0", "touch-h-rc=0", "git-rc=0", "sed-rc=0", "python-rc=0");
+        // NOTHING OF THE CHANNEL OR THE LISTENER IS INHERITED: a listener in the cell's hands would let it answer its own calls.
+        Says(ran, "fds=0 1 2 3");
         var a = Path.Combine(w.Ws, "a");
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, File.GetUnixFileMode(a));
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1000000000).UtcDateTime, File.GetLastWriteTimeUtc(a));

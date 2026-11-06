@@ -425,11 +425,84 @@ public class CellGrantTests
 /// </summary>
 public class CellSeccompTests
 {
-    const uint Allow = 0x7fff0000, Eacces = 0x00050000 | 13, Eperm = 0x00050000 | 1, Kill = 0x80000000;
+    const uint Allow = 0x7fff0000, Eacces = 0x00050000 | 13, Eperm = 0x00050000 | 1, Notify = 0x7fc00000, Kill = 0x80000000;
     const uint X64 = 0xC000003E, Arm64 = 0xC00000B7, I386 = 0x40000003;
 
     static uint Run(System.Runtime.InteropServices.Architecture arch, uint auditArch, uint nr, params ulong[] args) =>
         RunProgram(CellNative.SeccompProgram(arch), auditArch, nr, args);
+
+    /// <summary>
+    /// A FILE'S ATTRIBUTES (<c>U-cell-metadata</c>; R29 F-D1), number by number on both architectures: every owner, extended-attribute and
+    /// flag call is EPERM, every mode and time call goes to the supervisor, and a number left out of either list would be ALLOW and no
+    /// other row of this class would notice. The inode flag requests go by the low word of the argument, as the kernel reads them.
+    /// </summary>
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64,
+        new uint[] { 92, 93, 94, 260, 188, 189, 190, 197, 198, 199, 463, 466, 469 }, new uint[] { 90, 91, 268, 452, 132, 235, 261, 280 }, 16u)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64,
+        new uint[] { 54, 55, 5, 6, 7, 14, 15, 16, 463, 466, 469 }, new uint[] { 52, 53, 452, 88 }, 29u)]
+    public void Attribute_calls_are_refused_or_mediated_by_number(System.Runtime.InteropServices.Architecture arch, uint audit, uint[] refused, uint[] mediated, uint ioctl)
+    {
+        foreach (var nr in refused) Assert.Equal(Eperm, Run(arch, audit, nr, 3, 0, 0));
+        foreach (var nr in mediated) Assert.Equal(Notify, Run(arch, audit, nr, 3, 0, 0));
+        foreach (var request in new ulong[] { 0x40086602, 0x40046602, 0x401C5820, 0x40806685, 0xFFFFFFFF_40086602 })
+            Assert.Equal(Eperm, Run(arch, audit, ioctl, 3, request));
+        // WHAT AN ORDINARY PROGRAM ASKS OF ioctl, AND THE READ HALF OF THE SAME REQUESTS: untouched.
+        foreach (var request in new ulong[] { 0x5401 /* TCGETS */, 0x541B /* FIONREAD */, 0x80086601 /* FS_IOC_GETFLAGS */, 0x801C581F /* FS_IOC_FSGETXATTR */ })
+            Assert.Equal(Allow, Run(arch, audit, ioctl, 3, request));
+    }
+
+    /// <summary>
+    /// WHAT THE SUPERVISOR TAKES OUT OF EACH MEDIATED CALL: the object's directory, path or descriptor, the mode or the times with the shape they
+    /// are in, and the flags, from the argument the kernel's own entry point reads them from. A wrong slot would chmod the wrong thing.
+    /// </summary>
+    [Fact]
+    public void Each_mediated_call_decodes_from_the_arguments_the_kernel_reads()
+    {
+        const System.Runtime.InteropServices.Architecture X = System.Runtime.InteropServices.Architecture.X64, A = System.Runtime.InteropServices.Architecture.Arm64;
+        const ulong Cwd = 0xFFFFFF9C;   // AT_FDCWD as the 64-bit argument of a 32-bit int
+        var chmod = CellMediator.Decode(X, 90, [0x1000, 0x1ED, 0, 0, 0, 0])!;
+        Assert.Equal((-100, 0x1000UL, false, 0x1EDU, CellMediator.Times.None), (chmod.Dirfd, chmod.Path, chmod.ByDescriptor, chmod.Mode, chmod.Shape));
+        foreach (var fchmod in new[] { CellMediator.Decode(X, 91, [7, 0x1A0, 0, 0, 0, 0])!, CellMediator.Decode(A, 52, [7, 0x1A0, 0, 0, 0, 0])! })
+            Assert.Equal((7, true, 0x1A0U), (fchmod.Dirfd, fchmod.ByDescriptor, fchmod.Mode));
+        foreach (var at in new[] { CellMediator.Decode(X, 268, [Cwd, 0x2000, 0x180, 0, 0, 0])!, CellMediator.Decode(A, 53, [Cwd, 0x2000, 0x180, 0, 0, 0])! })
+            Assert.Equal((-100, 0x2000UL, 0x180U, 0), (at.Dirfd, at.Path, at.Mode, at.Flags));
+        var at2 = CellMediator.Decode(X, 452, [5, 0x3000, 0x1C0, 0x1000, 0, 0])!;
+        Assert.Equal((5, 0x3000UL, 0x1C0U, 0x1000), (at2.Dirfd, at2.Path, at2.Mode, at2.Flags));
+
+        var utime = CellMediator.Decode(X, 132, [0x1000, 0x4000, 0, 0, 0, 0])!;
+        Assert.Equal((-100, 0x1000UL, 0x4000UL, CellMediator.Times.Utimbuf), (utime.Dirfd, utime.Path, utime.TimesAt, utime.Shape));
+        var utimes = CellMediator.Decode(X, 235, [0x1000, 0x4000, 0, 0, 0, 0])!;
+        Assert.Equal((0x1000UL, 0x4000UL, CellMediator.Times.Timeval), (utimes.Path, utimes.TimesAt, utimes.Shape));
+        var futimesat = CellMediator.Decode(X, 261, [9, 0x1000, 0x4000, 0, 0, 0])!;
+        Assert.Equal((9, 0x1000UL, 0x4000UL, CellMediator.Times.Timeval), (futimesat.Dirfd, futimesat.Path, futimesat.TimesAt, futimesat.Shape));
+        foreach (var at in new[] { CellMediator.Decode(X, 280, [8, 0x1000, 0x4000, 0x100, 0, 0])!, CellMediator.Decode(A, 88, [8, 0x1000, 0x4000, 0x100, 0, 0])! })
+            Assert.Equal((8, 0x1000UL, false, 0x4000UL, CellMediator.Times.Timespec, 0x100), (at.Dirfd, at.Path, at.ByDescriptor, at.TimesAt, at.Shape, at.Flags));
+        var futimens = CellMediator.Decode(X, 280, [8, 0, 0x4000, 0, 0, 0])!;
+        Assert.True(futimens.ByDescriptor);
+
+        Assert.Null(CellMediator.Decode(X, 92, [0, 0, 0, 0, 0, 0]));
+        Assert.Null(CellMediator.Decode(A, 90, [0, 0, 0, 0, 0, 0]));   // arm64's 90 is not chmod
+    }
+
+    /// <summary>
+    /// THE ONE JUDGEMENT THE SUPERVISOR MAKES: what the kernel names the descriptor lies in the granted workspace, by whole components. A sibling
+    /// sharing its prefix, the folder above, an unlinked file, a pipe and no name at all are refused.
+    /// </summary>
+    [Theory]
+    [InlineData("/home/a/ws", true)]
+    [InlineData("/home/a/ws/f", true)]
+    [InlineData("/home/a/ws/deep/er/f", true)]
+    [InlineData("/home/a/ws-other/f", false)]
+    [InlineData("/home/a", false)]
+    [InlineData("/home/a/.ssh/id_x", false)]
+    [InlineData("/home/a/kit/tools/t", false)]
+    [InlineData("/home/a/ws/gone (deleted)", false)]
+    [InlineData("pipe:[1234]", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Only_what_lies_in_the_workspace_is_answered(string? target, bool answered) =>
+        Assert.Equal(answered, CellMediator.Inside(target, "/home/a/ws"));
 
     static uint RunProgram(byte[] code, uint auditArch, uint nr, params ulong[] args)
     {
