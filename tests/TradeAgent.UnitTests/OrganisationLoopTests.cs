@@ -37,8 +37,16 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath);
     }
 
-    static readonly DateTimeOffset Bar0 = new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
-    const int Bars = 120, HoldoutAtBar = 60;
+    static readonly DateTimeOffset Bar0 = new(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>The research minutes before the cutoff, from <see cref="Bar0"/>.</summary>
+    const int HoldoutAtBar = 60;
+
+    /// <summary>
+    /// THE HELD-BACK DAYS: a year and a day, each with <see cref="SessionBars"/> minutes at its end. The same calendar as a real default
+    /// holdout at a sliver of its rows, so the span and the known days the referee reads are a real year (R25 D12).
+    /// </summary>
+    const int HeldDays = 366, SessionBars = 30, Bars = HoldoutAtBar + HeldDays * SessionBars;
 
     /// <summary>Buys the dip and sells the rip over bars cycling 96 → 105, three minutes a level: profitable over the held-back months (RefereeVerdictTests).</summary>
     const string Winning =
@@ -47,6 +55,10 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
     /// <summary>The same program the other way up: it loses.</summary>
     const string Losing =
         "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\nexit when close < 97\nentry when close > 103\n";
+
+    /// <summary>A program whose entry is never true: it closes no trade, which tells the referee nothing about it, however long the holdout.</summary>
+    const string NeverTrades =
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\nexit when close > 1000\nentry when close < 1\n";
 
     static string Word(object value) => JsonSerializer.Serialize(value).Replace("\"", "\\\"", StringComparison.Ordinal);
 
@@ -71,9 +83,10 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
     });
 
     /// <summary>
-    /// THE OWNER'S DATA AND HIS HOLDOUT, as the setup's EVIDENCE_HELD press leaves them (<c>U-evidence-campaign</c>) — but with bars this
-    /// test writes instead of a download: a BTCUSDT dataset of <see cref="Bars"/> one-minute bars, and his cutoff set through the gateway's
-    /// own <see cref="TradingGateway.SetHoldout"/> (the only writer), which opens the campaign verdicts are spent from.
+    /// THE OWNER'S DATA AND HIS HOLDOUT, as the setup's EVIDENCE_HELD press leaves them (<c>U-evidence-campaign</c>; R25 D12) — but with bars
+    /// this test writes instead of a download: a BTCUSDT dataset of <see cref="HoldoutAtBar"/> research minutes and then a holdout that
+    /// spans a year, and his cutoff set through the gateway's own <see cref="TradingGateway.SetHoldout"/> (the only writer), which opens
+    /// the campaign verdicts are spent from.
     /// </summary>
     static (DatasetRecord Set, CampaignRow Campaign) OwnersData(TradingGateway gw)
     {
@@ -83,18 +96,26 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
         var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
         var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
-        for (var i = 0; i < Bars; i++)
+
+        // EACH LEVEL HELD THREE MINUTES, as RefereeVerdictTests' bars (U-backtest-parity): an order fills two minutes after the minute
+        // it was learnt on, at the level it was learnt at, so "winning" and "losing" stay true by construction.
+        void Minute(DateTimeOffset open, int i, bool flat)
         {
-            // EACH LEVEL HELD THREE MINUTES, as RefereeVerdictTests' bars (U-backtest-parity): an order fills two minutes after the minute
-            // it was learnt on, at the level it was learnt at, so "winning" and "losing" stay true by construction.
-            var close = 96m + i / 3 % 10;
+            var close = flat ? 100m : 96m + i / 3 % 10;
             text.Append(CultureInfo.InvariantCulture,
-                $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
+                $"{open.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
         }
+
+        for (var i = 0; i < HoldoutAtBar; i++) Minute(Bar0.AddMinutes(i), i, flat: false);
+
+        // EVERY DAY'S LAST MINUTES, so the last bar closes a full year and more after the cutoff; every fourth day flat, so the days differ.
+        for (var day = 0; day < HeldDays; day++)
+            for (var i = 0; i < SessionBars; i++)
+                Minute(Bar0.AddDays(day + 1).AddMinutes(i - SessionBars), i, flat: day % 4 == 3);
         File.WriteAllText(csv, text.ToString());
         var id = gw.Datasets.Record(new DatasetRecord(
             0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2026-08"],
-            csv, DatasetStore.Sha256(csv)!, Bars, Bar0, Bar0.AddMinutes(Bars - 1), 0, [], false,
+            csv, DatasetStore.Sha256(csv)!, Bars, Bar0, Bar0.AddDays(HeldDays).AddMinutes(-1), 0, [], false,
             0, 0, 0, Bar0, DatasetState.ACCEPTED, null,
             [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
                 DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)]));
@@ -125,9 +146,11 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
     /// owner's data and holdout; the owner appoints and activates the chief, lets the AI work on its own and wakes the chief once; the chief
     /// charters a division with a share, appoints its head — who activates itself inside the gate and is woken — and asks for its own next
     /// wake; the head charters a team, hires an executor (activated and woken the same way) and assigns it a mandate; the executor writes
-    /// two programs in its home, backtests both through the door and delivers them; the head accepts, reproduces both runs and spends two
-    /// verdicts: the winner is paper-eligible and allocated to paper by app policy, deployed on the loop's next tick; the loser is refused
-    /// and allocated nothing. The notes reach the author; the service restarts mid-turn and loses nothing; the author lists its deployment
+    /// three programs in its home, backtests them through the door and delivers them; the head accepts, reproduces the runs and spends three
+    /// verdicts over a holdout of a year: the winner is paper-eligible and allocated to paper by app policy, deployed on the loop's next
+    /// tick; the loser is refused and allocated NOTHING, because over that span a loss is an answer; the third never traded, which is the
+    /// one refusal still inconclusive over a year, and it is observed on paper through the inconclusive path alone. The notes reach the
+    /// author; the service restarts mid-turn and loses nothing; the author lists its deployment
     /// and stops it, and the run note reaches it; the owner's words reach the chief; every turn's cost is on the pages' own reads.
     /// </summary>
     [Fact]
@@ -200,7 +223,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         [
             $"trade org charter team 0.25 \"a team to author and test candidates\" --forecasts {Forecasts()} --collapse-by {collapse}",
             $"trade org hire {{out:\"unit\":\\s*\"([^\"]+)\"}} \"an executor to author candidates\" --forecasts {Forecasts()}",
-            $"trade mandate assign {{out:\"position\":\\s*\"([^\"]+)\"}} \"author two BTCUSDT programs and backtest each on dataset {set.Id}\" "
+            $"trade mandate assign {{out:\"position\":\\s*\"([^\"]+)\"}} \"author three BTCUSDT programs and backtest each on dataset {set.Id}\" "
             + $"--kind task --shape report --due {due} --allocation 5",
             "signal head-staffed", "await head-go",
             "usage 300 0 30", "final Staffed a team and assigned the work."
@@ -234,27 +257,29 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         // ---- 4. THE EXECUTOR: two programs in its own home, a backtest of each through the door, delivered with both versions as refs.
         var winner = StrategyParser.Parse(Winning).Program!.StrategyId;
         var loser = StrategyParser.Parse(Losing).Program!.StrategyId;
+        var unanswered = StrategyParser.Parse(NeverTrades).Program!.StrategyId;
         var to = cutoff.AddMinutes(-1).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         string Backtest(string file, string from = "") => $"trade backtest --strategy {file} --dataset {set.Id}{from} --to {to} --fees 0.001 --increment 1";
         // THE HEAD'S REPRODUCTION starts ten bars in: a run's id is its version, dataset, window and model, never its role, so the very same
         // ask would be answered with the executor's own run row — and a verdict is spent only on the spender's own completed run.
         var later = $" --from {Bar0.AddMinutes(10).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)}";
-        var refs = Word(new[] { new { kind = "version", id = winner }, new { kind = "version", id = loser } });
+        var refs = Word(new[] { new { kind = "version", id = winner }, new { kind = "version", id = loser }, new { kind = "version", id = unanswered } });
         life.Script(executor,
         [
-            Write("trading/dip.strategy", Winning), Write("trading/rip.strategy", Losing),
-            Backtest("trading/dip.strategy"), Backtest("trading/rip.strategy"),
+            Write("trading/dip.strategy", Winning), Write("trading/rip.strategy", Losing), Write("trading/idle.strategy", NeverTrades),
+            Backtest("trading/dip.strategy"), Backtest("trading/rip.strategy"), Backtest("trading/idle.strategy"),
             "trade mandate list",
-            $"trade mandate deliver {{out:\"mandate\":\\s*\"([^\"]+)\"}} \"two candidates backtested on the research months: dip and rip\" --refs {refs}",
-            "signal delivered", "await executor-go", "usage 900 0 90", "final Delivered two candidates."
+            $"trade mandate deliver {{out:\"mandate\":\\s*\"([^\"]+)\"}} \"three candidates backtested on the research months: dip, rip and idle\" --refs {refs}",
+            "signal delivered", "await executor-go", "usage 900 0 90", "final Delivered three candidates."
         ]);
         life.Release("head-go");
         await life.RunUntil(() => Ended(life, head) >= 1, "the head's first turn ended");
         Served(life, head, 1, 3);
         await life.RunUntil(() => life.Reached("delivered"), "the executor delivered");
-        Served(life, executor, 1, 4);
-        var runs = gw.Strategies.CompletedRunsOf(winner, executor).Concat(gw.Strategies.CompletedRunsOf(loser, executor)).ToList();
-        Assert.Equal(2, runs.Count);
+        Served(life, executor, 1, 5);
+        var runs = gw.Strategies.CompletedRunsOf(winner, executor).Concat(gw.Strategies.CompletedRunsOf(loser, executor))
+            .Concat(gw.Strategies.CompletedRunsOf(unanswered, executor)).ToList();
+        Assert.Equal(3, runs.Count);
         var executorTurn = Assert.Single(life.AttemptsOf(executor));
         Assert.All(runs, r => Assert.Equal((executor, executorTurn.Id), (r.Role, r.Attempt)));
         // A TEAM TURN FITS AT THE FOUNDING SHARES (U-turn-reservation; R25 D13): the team is a quarter of a quarter of the founding 40 a day,
@@ -268,57 +293,61 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var delivery = org.Deliveries(mandate)[^1];
         Assert.All(org.Checks(delivery.Id), c => Assert.True(c.Passed, $"{c.Check}: {c.Reason}"));
 
-        // ---- 5. THE HEAD ACCEPTS, REPRODUCES BOTH RUNS AND SPENDS TWO VERDICTS. The executor's later turns hang, so the restart below
+        // ---- 5. THE HEAD ACCEPTS, REPRODUCES THE RUNS AND SPENDS THREE VERDICTS. The executor's later turns hang, so the restart below
         // lands in the middle of one.
         life.Script(executor, ["signal executor-hung", "hang"]);
         life.Script(head, headHire,
         [
             $"trade mandate accept {delivery.Id}",
-            Write("trading/dip.strategy", Winning), Write("trading/rip.strategy", Losing),
-            Backtest("trading/dip.strategy", later), Backtest("trading/rip.strategy", later),
-            $"trade verdict --version {winner}", $"trade verdict --version {loser}",
+            Write("trading/dip.strategy", Winning), Write("trading/rip.strategy", Losing), Write("trading/idle.strategy", NeverTrades),
+            Backtest("trading/dip.strategy", later), Backtest("trading/rip.strategy", later), Backtest("trading/idle.strategy", later),
+            $"trade verdict --version {winner}", $"trade verdict --version {loser}", $"trade verdict --version {unanswered}",
             "usage 700 0 70", "final Accepted, reproduced, judged."
         ]);
         var headTurns = Ended(life, head);
         life.Release("executor-go");
         await life.RunUntil(() => Ended(life, head) > headTurns, "the head's turn on the delivery ended");
         var judged = Ended(life, head);
-        Served(life, head, judged, 5);
+        Served(life, head, judged, 7);
         await life.RunUntil(() => life.Reached("executor-hung") && gw.Deployments.Open().Any(d => d.VersionId == winner),
             "the executor's turn on its notes began and the loop deployed the winner");
         Assert.Equal(MandateEventKind.Accepted, org.MandateStatus(mandate));
 
         // THE WINNER: paper-eligible by the campaign's paper arm (frozen after the cutoff), allocated by the app's policy inside the
-        // founding envelope, and deployed on the loop's tick. THE LOSER: refused on its figures, and allocated nothing on its verdict —
-        // no row under the app's favourable policy, and never the winner's.
+        // founding envelope, and deployed on the loop's tick. THE LOSER: refused on its figures, and allocated NOTHING.
         //
-        // WHAT R25 D11 AS AMENDED CHANGED HERE (744d815, U-evidence-breadth-paper): the founding envelope now carries three deployments,
-        // so the one inconclusive path into paper (U-referee-v2b, `Inconclusive.Slots`) holds one slot per pair — D11 was amended for
-        // exactly that. This life's holdout is an hour, under `Inconclusive.ShortHoldout`, so the loser's refusal is by contract a
-        // `loss-over-a-short-holdout`: inconclusive, observed on paper under `AllocationPolicy.InconclusiveV1` for `Inconclusive.Term`,
-        // its verdict still refused, and no live authority with it. Anything else written for it — a favourable row, a second row, a
-        // row that is not the envelope's share or not scoped to paper — is the losing verdict allocating something, and fails here.
-        // INTERIM, BY NAME: this reading stands only while the default holdout is shorter than `Inconclusive.ShortHoldout` (R29 F-B2: D11
-        // landed without D12). U-evidence-holdout-length (D12) restores "a loser allocates nothing" here, on a holdout of 365 days or more.
+        // R29 F-B2, FIXED AT ITS CAUSE (R25 D12). The holdout here is a year, so a loss is an answer and neither inconclusive class reads
+        // it: no row of any kind, under any policy, stands for the loser. The interim reading of this test (e7ef3062, while D11 stood without
+        // D12) let the loser's refusal take the inconclusive slot over an hour's holdout; that reading is gone, and so is its cause.
         var promotions = new Promotions(db);
         Assert.Equal(PromotionVerdict.PaperEligible, Assert.Single(promotions.For(winner)).Verdict);
-        Assert.Equal(PromotionVerdict.Refused, Assert.Single(promotions.For(loser)).Verdict);
+        var refused = Assert.Single(promotions.For(loser));
+        Assert.Equal((PromotionVerdict.Refused, PromotionReason.NotProfitable), (refused.Verdict, refused.Reason));
+        var span = gw.Campaigns.HoldoutSpan(campaign.Id);
+        Assert.True(HoldoutLength.CanBeConclusive(span), $"this life's holdout spans {span}");
+        Assert.Empty(gw.Allocations.For(loser));
+        Assert.Null(Inconclusive.Of(promotions.Standing(loser), span));
+        Assert.NotEqual(AlphaWealth.Inconclusive, new RefereeHoldout(db).SealedOf(campaign.Id, loser)!.AddisStatus);
         var paperStanding = gw.Allocations.PaperStanding(DateTimeOffset.UtcNow);
         var allocation = Assert.Single(paperStanding, a => a.Allocation.PolicyVersion == AllocationPolicy.V1).Allocation;
         Assert.Equal((winner, PaperConnector.ConnectorId, PaperConnector.TheAccount), (allocation.VersionId, allocation.ConnectorId, allocation.AccountId));
-        Assert.DoesNotContain(paperStanding, a => a.Allocation.VersionId == loser && a.Allocation.PolicyVersion != AllocationPolicy.InconclusiveV1);
-        var observed = Assert.Single(gw.Allocations.For(loser));
+
+        // THE INCONCLUSIVE PATH, WHICH STAYS: a version that closed no trade is a refusal that says nothing about its edge, however long the
+        // holdout (`Inconclusive.TooFewEvents`), and it alone is observed on paper, as the envelope's share, scoped to paper, for exactly
+        // one term, its verdict still refused. These are the assertions e7ef3062 made of the loser's row, and they stay true of this one.
+        Assert.Equal(PromotionReason.NoTrade, Assert.Single(promotions.For(unanswered)).Reason);
+        var observed = Assert.Single(gw.Allocations.For(unanswered));
         Assert.Equal((AllocationPolicy.InconclusiveV1, AllocationScope.Paper, PaperConnector.ConnectorId, PaperConnector.TheAccount, allocation.MaxQuantity, allocation.MaxNotional),
             (observed.PolicyVersion, observed.Scope, observed.ConnectorId, observed.AccountId, observed.MaxQuantity, observed.MaxNotional));
         Assert.Equal(Inconclusive.Term, observed.EffectiveTo - observed.EffectiveFrom);
-        var observedStanding = Assert.Single(paperStanding, a => a.Allocation.VersionId == loser);
-        Assert.Equal((Inconclusive.ShortHoldoutLoss, PromotionState.Refused, false, false),
+        var observedStanding = Assert.Single(paperStanding, a => a.Allocation.VersionId == unanswered);
+        Assert.Equal((Inconclusive.TooFewEvents, PromotionState.Refused, false, false),
             (observedStanding.InconclusiveClass, observedStanding.Promotion.State, observedStanding.Promotion.IsPromoted, observedStanding.Promotion.IsPaperEligible));
         Assert.Equal(2, paperStanding.Count);
         var deployment = Assert.Single(gw.Deployments.Open(), d => d.VersionId == winner);
         Assert.Equal((winner, allocation.Id, DeploymentState.Active), (deployment.VersionId, deployment.AllocationId, deployment.State));
-        // Any other open run can only be the loser's observation, on the row asserted above and nothing else.
-        Assert.All(gw.Deployments.Open().Where(d => d.Id != deployment.Id), d => Assert.Equal((loser, observed.Id), (d.VersionId, d.AllocationId)));
+        // Any other open run can only be that observation, on the row asserted above and nothing else: never the loser's.
+        Assert.All(gw.Deployments.Open().Where(d => d.Id != deployment.Id), d => Assert.Equal((unanswered, observed.Id), (d.VersionId, d.AllocationId)));
 
         // THE NOTES REACH THE AUTHOR: the referee's verdict note and the allocator's note name the executor beside research, each with
         // its wake — taken by the executor's turn now hanging.

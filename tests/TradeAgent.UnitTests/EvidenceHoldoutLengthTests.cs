@@ -219,9 +219,11 @@ public class EvidenceHoldoutLengthTests
 
         Assert.True(gw.Campaigns.ChargeVerdict(campaign.Id, third, Now).Ok);
 
+        // THE OWNER'S PAGE: what can be spent, never the 10 the budget names while only the pot's 2 can be reached.
         var page = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
-        Assert.Contains($"Its exploration trials are spent; the next {pair} campaign waits for fresh bars", Assert.Single(page.Standings()).Line(Now),
-            StringComparison.Ordinal);
+        var line = Assert.Single(page.Standings()).Line(Now);
+        Assert.Contains("2 of 3 final judgements and 0 of 2 research runs left", line, StringComparison.Ordinal);
+        Assert.Contains($"Its exploration trials are spent; the next {pair} campaign waits for fresh bars", line, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -271,6 +273,8 @@ public class EvidenceHoldoutLengthTests
         Assert.True(gw.Renewals.ParentCanBePromoted(campaign));
         Assert.Null(gw.Renewals.SpentOn(campaign));
         Assert.Empty(gw.Renewals.Arm(Now));
+        var page = new EvidenceCampaigns(() => gw, (_, _, _, _) => throw new InvalidOperationException("nothing is downloaded"));
+        Assert.Contains("and 8 of 10 research runs left", Assert.Single(page.Standings()).Line(Now), StringComparison.Ordinal);
 
         Assert.True(Trial(db, campaign, Version(db, pair, "refinement", parent), "run-refinement").Ok);
         Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id, exploration: false));
@@ -400,11 +404,11 @@ public class EvidenceHoldoutLengthTests
         var pipe = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets);
 
         // THE BARS: the minutes TradeAgent collected, and a fresher download of each pair with no cutoff of its own.
+        Assert.Null(pipe.ForwardRefusal(other, from, to));
         var refused = pipe.ForwardRefusal(held, from, to);
         Assert.Contains($"{held}'s bars, from every dataset and the forward bars, are held back", refused, StringComparison.Ordinal);
         Assert.DoesNotContain("every pair", refused, StringComparison.Ordinal);
         Assert.DoesNotContain("a correlated pair", refused, StringComparison.Ordinal);
-        Assert.Null(pipe.ForwardRefusal(other, from, to));
         Assert.NotNull(pipe.Refusal(Recorded(db, held, First, armed.Cutoff.AddDays(3), "v2"), from, to));
         Assert.Null(pipe.Refusal(Recorded(db, other, First, armed.Cutoff.AddDays(3)), from, to));
 
@@ -425,8 +429,10 @@ public class EvidenceHoldoutLengthTests
         Assert.NotNull(Read(premium, series, null).Refusal);
         Assert.NotNull(Read(GdeltGkg.Source, GdeltGkg.ItemsSeries, null).Refusal);
         Assert.NotNull(Read(GdeltGkg.Source, GdeltGkg.ItemsSeries, "item-1").Refusal);
+        Assert.Contains($"name as 'subject' a pair other than {held}", Read(premium, series, null).Refusal, StringComparison.Ordinal);
         Assert.NotNull(pipe.Refusal(from, to, [other, held]));
         Assert.Null(pipe.Refusal(from, to, [other, "SOLUSDT"]));
+        Assert.NotNull(pipe.Refusal(from, to, Array.Empty<string>()));
 
         Assert.NotNull(tape.AsOf(pipe, premium, series, held, to).Refusal);
         Assert.Equal(other, tape.AsOf(pipe, premium, series, other, to).Row!.Subject);

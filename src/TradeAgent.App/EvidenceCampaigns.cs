@@ -25,13 +25,24 @@ public sealed record CampaignStanding(string Pair, CampaignRow Campaign, int Jud
     ForwardHoldout? Renewal, string Next, TimeSpan? Holdout)
 {
     public int JudgementsLeft => Math.Max(0, Campaign.VerdictBudget - Judgements);
-    public int TrialsLeft => Math.Max(0, Campaign.TrialBudget - Trials);
+
+    /// <summary>
+    /// THE RESEARCH RUNS THIS CAMPAIGN CAN ACTUALLY TAKE (R28 E2): its whole budget while a parent can be promoted, and only its exploration
+    /// pot while none can, because the rest is reserved for refinements of a promoted parent. Saying 200 where 50 can be spent would claim
+    /// more than the ledger does. Null when <see cref="CampaignRenewal.ParentCanBePromoted"/> found a parent.
+    /// </summary>
+    public (int Budget, int Charged)? ExplorationOnly { get; init; }
+
+    public int TrialBudget => ExplorationOnly?.Budget ?? Campaign.TrialBudget;
+
+    public int TrialsLeft => Math.Min(Math.Max(0, Campaign.TrialBudget - Trials),
+        ExplorationOnly is { } pot ? Math.Max(0, pot.Budget - pot.Charged) : int.MaxValue);
 
     /// <summary>The line the owner reads: what is left, and — once spent — what the next campaign of this pair waits for and until when.</summary>
     public string Line(DateTimeOffset now)
     {
         var line = $"{Pair}, campaign {Campaign.Id}, held back from {Campaign.HoldoutFrom.UtcDateTime:yyyy-MM-dd} UTC: "
-            + $"{JudgementsLeft:N0} of {Campaign.VerdictBudget:N0} final judgements and {TrialsLeft:N0} of {Campaign.TrialBudget:N0} "
+            + $"{JudgementsLeft:N0} of {Campaign.VerdictBudget:N0} final judgements and {TrialsLeft:N0} of {TrialBudget:N0} "
             + "research runs left. " + HoldoutLength.Words(Holdout);
         if (Spent is null) return line;
         if (Renewal is { Successor: { } next }) return line + $" Its {Spent} are spent; campaign {next} follows it over fresh months.";
@@ -129,7 +140,12 @@ public sealed class EvidenceCampaigns(
             var spent = renewals.SpentOn(campaign);
             rows.Add(new CampaignStanding(set.Pair, campaign, gw.Campaigns.JudgementsSpent(campaign.Id),
                 gw.Campaigns.TrialsCharged(campaign.Id), spent, renewals.Of(campaign.Id),
-                spent is null ? "" : renewals.Next(campaign.Id), gw.Campaigns.HoldoutSpan(campaign.Id)));
+                spent is null ? "" : renewals.Next(campaign.Id), gw.Campaigns.HoldoutSpan(campaign.Id))
+            {
+                ExplorationOnly = renewals.ParentCanBePromoted(campaign)
+                    ? null
+                    : (campaign.ExplorationBudget, gw.Campaigns.TrialsCharged(campaign.Id, exploration: true))
+            });
         }
         return [.. rows.OrderBy(r => r.Pair, StringComparer.Ordinal).ThenBy(r => r.Campaign.Id)];
     }
