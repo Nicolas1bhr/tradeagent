@@ -33,8 +33,14 @@ So all power goes to reaching T0 honestly and soon. MVP-W moves in parallel wher
 | 7 | One bad stream or hung turn cannot stall a seat; a refused role cannot block the lane | W1, W2, W5, W6, D17 | `U-turn-bounds` |
 | 8 | Waits are fair and floored; a restart keeps its work; the owner's words reach the chief | W3, W4, W7, R1, R2, R3, F-A1, F-A2, F-C2 | `U-wake-fairness` |
 | 9 | The run's eyes | — | `U-org-digest` |
+| 10 | Real agents cannot harm the server they share; agents are told inbox text grants nothing | F-B3, F-C1, F-C3, F-E5 | `U-server-safety` |
+| 11 | Every pair can trade on paper; every position keeps its protection | PREFLIGHT-2 blockers 1, 2; D20 | `U-paper-t0` |
+| 12 | The chief acts without being asked, and a backstop in code holds if it doesn't | PREFLIGHT-2; D21 | `U-chief-moves` |
+| 13 | An executor's first backtest cannot waste a trial | row 4's card | `U-backtest-cap` |
 
-Anything unfinished at the call may ship as a new kit mid-run, because an install keeps the home. Items 1–6 may not: they decide whether what the run produces is evidence.
+Rows 10–13 were added on 2026-11-06, the same evening. Row 10 because this section had not weighed that the run means real agents, unattended, on the owner's real server beside his other services. Rows 11–13 came from an independent pre-flight of the landed code, which found three blockers that every unit's own tests had passed over.
+
+Anything unfinished at the call may ship as a new kit mid-run, because an install keeps the home. Items 1–6 and 11 may not: they decide whether what the run produces is evidence, or are written once at founding.
 
 ## 4. Decided by the orchestrator on the owner's behalf, 2026-11-06 (his to overrule)
 - **D15 (E2):** a campaign counts as spent when its exploration pot is full and no parent of it can be Promoted, which arms renewal. PaperEligible does NOT become a
@@ -52,5 +58,9 @@ Anything unfinished at the call may ship as a new kit mid-run, because an instal
 2. **MVP-W in parallel:** `U-atas-home-no-atas-build`, `U-kit-socket-2`, `U-cell-windows-egress`, then the DRAFT 0.2.0 release and the Windows sitting.
 3. **R29's other findings:** F-B1 (a design question: serve less, or judge a version only on bars after its own freeze), F-E1, F-D1, F-B3, F-C1.
 4. The rest of the stranded units, each re-judged against what the run measured.
+
+## 4b. Added the same evening, 2026-11-06 (his to overrule)
+- **D20 (PREFLIGHT-2 blocker 2):** the founding orders-per-minute limit is 45 in PAPER only (15 runs × entry + 2 protections), so a burst cannot strip a position of its stop and target. Every other mode and caller stays at 6. A refused protection is asked again.
+- **D21:** a chief with nothing chartered, or whose last turn asked for no wake, gets its next wake on a short floor instead of the 24-hour ceiling, inside the same floors and envelopes, until the organisation has work moving. The one real chief turn so far read, wrote a lesson and asked for nothing; prose alone is not relied on.
 
 *Sets order and records decisions only. It marks nothing fixed.*
