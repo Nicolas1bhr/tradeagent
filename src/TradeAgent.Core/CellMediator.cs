@@ -244,11 +244,12 @@ public sealed class CellMediator
     }
 
     /// <summary>
-    /// WHAT THE KERNEL NAMES AN OPEN DESCRIPTOR, JUDGED: inside the granted workspace, and a path at all. An object that has been unlinked,
-    /// a pipe, a socket and an anonymous file have no such name, and an ordinary file whose name merely ends the same way loses nothing it needs.
+    /// WHAT THE KERNEL NAMES AN OPEN DESCRIPTOR, JUDGED: inside the granted workspace, by whole components. A file unlinked while open keeps
+    /// the name it had with <c> (deleted)</c> after it, so what was the workspace's stays the cell's — a temporary file's mode, say —
+    /// and a pipe, a socket and an anonymous file have no name there at all. One name is enough, because a cell cannot give what lies
+    /// outside a second name inside: Landlock refuses a hard link from a place the ruleset grants no <c>REFER</c>.
     /// </summary>
-    internal static bool Inside(string? target, string workspace) =>
-        target is not null && target.StartsWith('/') && !target.EndsWith(" (deleted)", StringComparison.Ordinal) && CellPolicy.Within(target, workspace, windows: false);
+    internal static bool Inside(string? target, string workspace) => target is not null && CellPolicy.Within(target, workspace, windows: false);
 
     /// <summary>One call being answered. Its descriptors live for the answer and no longer.</summary>
     sealed class Request(int listener, long id, int pid, Call call, string workspace)
@@ -261,32 +262,41 @@ public sealed class CellMediator
             if ((call.Flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0) return EINVAL;
             if (call.ByDescriptor && (call.Flags & AT_SYMLINK_NOFOLLOW) != 0) return EINVAL;
             if (call.ByDescriptor && call.Dirfd == AT_FDCWD) return call.Shape == Times.None ? EBADF : EFAULT;
-            var dir = open(call.Dirfd == AT_FDCWD ? $"/proc/{pid}/cwd" : $"/proc/{pid}/fd/{call.Dirfd}", O_PATH | O_CLOEXEC);
-            if (dir < 0) return Marshal.GetLastPInvokeError() == ENOENT ? EBADF : EPERM;
+            int dir = -1, obj = -1;
             try
             {
                 if (!call.ByDescriptor || call.TimesAt != 0) _mem = open($"/proc/{pid}/mem", O_RDONLY | O_CLOEXEC);
                 // THE TASK IS STILL THE ONE THAT ASKED: a pid can be reused, and what was just opened under it counts only if this holds.
                 if (!StillAsking()) return ENOENT;
-                var obj = dir;
-                try
+                byte[]? path = null;
+                if (!call.ByDescriptor)
                 {
-                    if (!call.ByDescriptor)
-                    {
-                        if (_mem < 0) return EPERM;
-                        var path = Text(call.Path, out var unreadable);
-                        if (path is null) return unreadable;
-                        if (path.Length > 1) obj = Resolve(dir, path);
-                        else if ((call.Flags & AT_EMPTY_PATH) == 0) return ENOENT;
-                        if (obj < 0) return Marshal.GetLastPInvokeError() is ELOOP ? EPERM : Marshal.GetLastPInvokeError();
-                    }
-                    return Act(obj);
+                    if (_mem < 0) return EPERM;
+                    path = Text(call.Path, out var unreadable);
+                    if (path is null) return unreadable;
+                    if (path.Length == 1 && (call.Flags & AT_EMPTY_PATH) == 0) return ENOENT;
                 }
-                finally { if (obj != dir && obj >= 0) close(obj); }
+                // AN ABSOLUTE PATH IGNORES ITS DIRECTORY, AS THE KERNEL DOES: an invalid one is no error then.
+                var absolute = path is { Length: > 1 } && path[0] == (byte)'/';
+                if (!absolute)
+                {
+                    dir = open(call.Dirfd == AT_FDCWD ? $"/proc/{pid}/cwd" : $"/proc/{pid}/fd/{call.Dirfd}", O_PATH | O_CLOEXEC);
+                    if (dir < 0) return Marshal.GetLastPInvokeError() == ENOENT ? EBADF : EPERM;
+                    if (!StillAsking()) return ENOENT;
+                }
+                if (path is not { Length: > 1 }) return Act(dir);
+                obj = Resolve(absolute ? AT_FDCWD : dir, path);
+                if (obj < 0)
+                {
+                    var errno = Marshal.GetLastPInvokeError();
+                    return errno == ELOOP ? EPERM : errno;
+                }
+                return Act(obj);
             }
             finally
             {
-                close(dir);
+                if (obj >= 0) close(obj);
+                if (dir >= 0) close(dir);
                 if (_mem >= 0) close(_mem);
             }
         }
