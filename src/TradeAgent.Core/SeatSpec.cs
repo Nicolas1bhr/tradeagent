@@ -13,7 +13,10 @@ public enum TurnBound
     /// <summary>The app's own harness composes every request and sends none that could pass the allowance: the turn is held to it.</summary>
     Enforced,
 
-    /// <summary>A vendor's program runs the turn and nothing here can stop it mid-turn: the reservation is the only bound.</summary>
+    /// <summary>
+    /// A vendor's program runs the turn and nothing here can hold it to its allowance mid-turn: the reservation is the only bound on what it costs.
+    /// Its time is bounded apart (<see cref="SeatSpec.WallClock"/>).
+    /// </summary>
     Reservation
 }
 
