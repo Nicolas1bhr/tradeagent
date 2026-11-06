@@ -265,12 +265,9 @@ public class SeatHomeTests
     /// read the credential it keeps. The foreign folder is one every machine has and no test account owns: the system's own
     /// (<c>/usr</c>; <c>System32</c>, owned by TrustedInstaller). Its mode is unchanged afterwards and the program never ran.
     /// </summary>
-    [Fact]
+    [NotAsRootFact("every folder is root's own: there is no foreign owner to refuse, and the check would make /usr owner-only")]
     public async Task A_seat_home_owned_by_another_account_is_refused()
     {
-        // AS ROOT EVERY FOLDER IS THE PROCESS'S OWN: there is no foreign owner to refuse, and the check would make /usr owner-only.
-        if (!OperatingSystem.IsWindows() && Environment.IsPrivilegedProcess) return;
-
         var (codex, exe, dump) = Seat(nameof(A_seat_home_owned_by_another_account_is_refused));
         var foreign = OperatingSystem.IsWindows() ? Environment.GetFolderPath(Environment.SpecialFolder.System) : "/usr";
         var mode = OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(foreign);
