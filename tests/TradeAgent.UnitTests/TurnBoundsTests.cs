@@ -420,7 +420,7 @@ public class TurnBoundsTests : IDisposable
         Assert.Equal(AiAttemptState.ENDED, row.State);
         Assert.Equal(0m, row.Cost);
         Assert.Contains(Refused, RefusedOn(row));
-        Assert.Equal(row.Context is { } context && context.Contains(ModelRefusal.Ended, StringComparison.Ordinal), true);
+        Assert.Contains(ModelRefusal.Ended, row.Context);
         Assert.Equal(0m, meter.Today.Spent + meter.Today.Reserved);
 
         var next = meter.Begin("a second look", role: Ops);
