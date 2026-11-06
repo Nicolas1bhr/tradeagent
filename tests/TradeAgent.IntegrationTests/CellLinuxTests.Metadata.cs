@@ -142,7 +142,7 @@ public partial class CellLinuxTests
             var ssh = Path.Combine(w.Home, ".ssh", "id_x");
             var tool = kit.ToolPath(KitFixture.Tool);
             // THE KIT WRITABLE BY ITS MODE, AS THE KIT'S OWN ROW HAS IT: a user attribute needs write permission, and a denial must be the cell's.
-            File.SetUnixFileMode(tool, File.GetUnixFileMode(tool) | UnixFileMode.UserWrite);
+            if (OperatingSystem.IsLinux()) File.SetUnixFileMode(tool, File.GetUnixFileMode(tool) | UnixFileMode.UserWrite);
             var led = Path.Combine(w.Ws, "leads-out");
             File.CreateSymbolicLink(led, file);
             foreach (var p in new[] { input, file, outside, ssh, tool })
@@ -214,6 +214,7 @@ public partial class CellLinuxTests
     public async Task A_cells_own_workspace_keeps_its_modes_times_and_tools()
     {
         PlatformIsACells();
+        if (!OperatingSystem.IsLinux()) return;
         var w = new World("meta-ws");
         var script = w.Script("own.sh", """
             set -u
