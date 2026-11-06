@@ -4,7 +4,7 @@
 READ-ONLY, ALL OF IT. tools/linux-host.sh org-digest sends this file over ssh and runs it as the app's own account, against the
 app's two state databases (state/tradeagent.db, state/tape.db) and nothing else: every database is opened with SQLite's
 mode=ro and PRAGMA query_only=ON, so a statement that wrote would fail rather than run. It never reads a credential, the seat
-home's codex folder or anything holding the owner's auth.json, never names the host, and never writes a file.
+home's codex folder or anything holding the owner's sign-in, never names the host, and never writes a file.
 
   org-digest.py [--home /var/lib/tradeagent | --state <dir>] [--since <T0>] [--json]
 
@@ -105,10 +105,48 @@ def parse_since(text, now):
     return dt.datetime.fromisoformat(f"{m.group(1)}T{clock}").astimezone().astimezone(dt.timezone.utc)
 
 
+def parse_day(text):
+    """A cutoff as a row holds it: an instant, or the bare date a row may carry (midnight UTC)."""
+    t = str(text or "").strip()
+    return parse_ts(t if re.search(r"[T ]", t) else t + "T00:00:00Z")
+
+
+BAR_UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def dataset_close(last_bar, interval):
+    """CampaignStore.Close: the close of a dataset's last bar; None (a span with no end, never guessed short) where it cannot be read."""
+    last = parse_ts(last_bar)
+    m = re.fullmatch(r"(\d+)([mhdw])", str(interval or ""))
+    return last + dt.timedelta(seconds=int(m.group(1)) * BAR_UNITS[m.group(2)]) if last is not None and m else None
+
+
+def spans_overlap(a, b, c, d):
+    """CampaignStore.Overlaps: [a, b) and [c, d) share market time; a None start or end is no bound on that side."""
+    return (b is None or c is None or b > c) and (d is None or a is None or a < d)
+
+
 # ---- reading ---------------------------------------------------------------------------------------------------------------
+def wal_mode(path):
+    """The database header's read-version byte (offset 18): 2 is WAL. Read from the file, because a PRAGMA would need it open."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(20)
+        return len(head) == 20 and head[18] == 2
+    except OSError:
+        return False
+
+
 def open_ro(path):
-    """A database opened so that it CANNOT be written: SQLite's own read-only mode, and query_only on top of it."""
-    conn = sqlite3.connect("file:" + urllib.parse.quote(path) + "?mode=ro", uri=True, timeout=5)
+    """A database opened so that it CANNOT be written: SQLite's own read-only mode, and query_only on top of it.
+
+    WHILE THE APP IS STOPPED (the run's deliberate restart) a WAL database has no -wal or -shm beside it, and a read-only connection can
+    neither make them nor open without them. Nothing is writing then, so the file is read as it stands (immutable), which creates
+    nothing; while the app runs its -wal exists and the ordinary read-only path sees its uncheckpointed rows."""
+    uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+    if wal_mode(path) and not os.path.exists(path + "-wal"):
+        uri += "&immutable=1"
+    conn = sqlite3.connect(uri, uri=True, timeout=5)
     conn.execute("PRAGMA query_only=ON")
     conn.row_factory = sqlite3.Row
     return conn
@@ -539,20 +577,22 @@ class Digest:
 
     # -- 11. R26 § 4 (2): what a turn costs and how fast turns come
     def acted(self):
-        """The launches since T0 that left a row of work under their own id, in any table that names its launch."""
-        ids = set()
+        """The launches since T0 that left a row of work under their own id, and the act tables this home could not answer for."""
+        ids, unread = set(), []
         for table in ACT_TABLES:
-            for col in ("attempt_id", "attempt"):
-                if self.has(table, col):
-                    ids.update(r[0] for r in self.app.execute(
-                        f"SELECT DISTINCT {col} FROM {table} WHERE {col} IN (SELECT id FROM ai_attempt WHERE started_at >= ?)", (self.since_s,)))
-        return ids
+            col = next((c for c in ("attempt_id", "attempt") if self.has(table, c)), None)
+            if col is None:
+                unread.append(table)
+                continue
+            ids.update(r[0] for r in self.app.execute(
+                f"SELECT DISTINCT {col} FROM {table} WHERE {col} IN (SELECT id FROM ai_attempt WHERE started_at >= ?)", (self.since_s,)))
+        return ids, unread
 
     def pace(self):
         rows = self.app.execute(
             "SELECT id, role, state, exit_code, reserved_cost, cost, vendor_said, started_at, ended_at, "
             "COALESCE(effective_model, requested_model) AS model FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)).fetchall()
-        acted = self.acted()
+        acted, unread = self.acted()
         # A head's chart act names no launch, only its decider: it counts for the turn of that position it fell inside.
         chart = [(r["decider"], r["at"]) for r in self.app.execute(
             "SELECT decider, at FROM org_event WHERE at >= ? AND decider NOT IN ('owner', 'app', 'board')", (self.since_s,))]
@@ -590,7 +630,7 @@ class Digest:
         return {"days": round(self.days, 2), "turns": turns, "turns_per_day": self.per_day(turns), "cost_per_turn": money(cost / turns) if turns else None,
                 "clean_turns": clean, "idle_turns": idle, "idle_share_pct": str((Decimal(idle) / clean * 100).quantize(Decimal("0.1"))) if clean else None,
                 "wait_median_s": int(statistics.median(waits)) if waits else None, "wait_max_s": max(waits) if waits else None,
-                "vendor_limit_refusals": limit_hits, "first_vendor_limit": first_limit, "positions": out,
+                "vendor_limit_refusals": limit_hits, "first_vendor_limit": first_limit, "positions": out, "act_tables_absent": unread,
                 "words": "idle = a launch that ended cleanly and left no row of work under its id and no chart act in its span; "
                          "wait = a wake's due time to the launch that took it; vendor limits are read from the vendor's words"}
 
@@ -624,12 +664,13 @@ class Digest:
         if not self.has("strategy_campaign", "trial_budget", "verdict_budget"):
             return {"absent": "strategy_campaign"}
         pots = self.has("strategy_campaign", "exploration_budget") and self.has("strategy_trial", "exploration", "charged_to")
-        every = self.app.execute("SELECT c.*, d.pair FROM strategy_campaign c LEFT JOIN dataset d ON d.id = c.holdout_dataset_id ORDER BY c.id").fetchall()
+        every = self.app.execute("SELECT c.*, d.pair, d.last_bar, d.interval FROM strategy_campaign c LEFT JOIN dataset d ON d.id = c.holdout_dataset_id ORDER BY c.id").fetchall()
         parent = {c["id"]: c["renewed_from"] for c in every}
         by_lineage = {}
         for r in self.app.execute("SELECT DISTINCT p.campaign_id, a.version_id FROM strategy_allocation a JOIN strategy_promotion p ON p.id = a.promotion_id "
                                   "WHERE a.policy_version = ?", (INCONCLUSIVE_POLICY,)):
             by_lineage.setdefault(r[0], set()).add(r[1])
+        spans = self.judgement_spans()
         out = []
         for c in every:
             if c["closed_at"] is not None and c["closed_at"] < self.since_s:
@@ -643,11 +684,25 @@ class Digest:
             ids = (c["id"], c["id"]) if pots else (c["id"],)
             trials = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND {where}", ids).fetchone()[0] + len(slots)
             explore = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND exploration = 1 AND {where}", ids).fetchone()[0] if pots else None
-            verdicts = self.app.execute("SELECT COUNT(*) FROM strategy_verdict WHERE campaign_id = ?", (c["id"],)).fetchone()[0]
+            verdicts = self.judgements_spent(c, chain, spans)
             out.append({"id": c["id"], "pair": c["pair"], "name": c["name"], "closed": c["closed_at"] is not None, "renewed_from": c["renewed_from"],
                         "trials": trials, "trial_budget": c["trial_budget"], "exploration": explore, "exploration_budget": c["exploration_budget"] if pots else None,
                         "verdicts": verdicts, "verdict_budget": c["verdict_budget"], "holdout_from": c["holdout_from"]})
         return {"campaigns": out}
+
+    def judgement_spans(self):
+        """Every verdict charged, as the market time it read: CampaignStore.JudgementSpans, from the same recorded facts."""
+        return [(r["campaign_id"], parse_day(r["holdout_from"]), dataset_close(r["last_bar"], r["interval"]), r["pair"]) for r in self.app.execute(
+            "SELECT v.campaign_id, v.holdout_from, d.last_bar, d.interval, d.pair FROM strategy_verdict v JOIN strategy_campaign c ON c.id = v.campaign_id "
+            "LEFT JOIN dataset d ON d.id = c.holdout_dataset_id")]
+
+    @staticmethod
+    def judgements_spent(campaign, chain, spans):
+        """CampaignStore.JudgementsSpent, what the budget refuses by: a verdict of this campaign's renewal lineage, or of any campaign of
+        the same pair whose read span overlaps this campaign's. Never this campaign's own rows alone: that reads low on a second press."""
+        start, close, pair = parse_day(campaign["holdout_from"]), dataset_close(campaign["last_bar"], campaign["interval"]), campaign["pair"]
+        return sum(1 for owner, v_from, v_close, v_pair in spans
+                   if owner in chain or (v_pair is None or pair is None or v_pair == pair) and spans_overlap(v_from, v_close, start, close))
 
     def candidates(self):
         marks = ",".join("?" * len(ADMISSIBLE))

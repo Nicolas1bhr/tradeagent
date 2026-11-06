@@ -89,6 +89,8 @@ public class OrgDigestTests(ITestOutputHelper log)
             for (var i = 0; i < 3; i++)
                 tools.Record(new ToolCallRow { At = At("2026-10-31T09:10:00Z").AddMinutes(i), Attempt = "a2", Role = "pos-aaaaaa", Tool = "place_order", Served = false, Refusal = "no order verb is offered to this seat" });
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:20:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "wallet", Served = false, Refusal = "credentials are the owner's" });
+            // A door call is spelled with underscores: the charter arrow is refused under its door name.
+            tools.Record(new ToolCallRow { At = At("2026-10-30T12:30:00Z"), Attempt = "a6", Role = "operations", Tool = "org_charter", Served = false, Refusal = "two structural changes this week" });
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:30:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "read", Served = true });
             tools.Record(new ToolCallRow { At = At("2026-10-31T09:31:00Z"), Attempt = "a2", Role = "pos-aaaaaa", Tool = "read", Served = true });
 
@@ -116,25 +118,93 @@ public class OrgDigestTests(ITestOutputHelper log)
                   ('pos-bbbbbb', 'div-operations', 'h2', 'dormant', NULL, NULL, '2026-10-30T10:00:00.0000000Z', NULL),
                   ('pos-cccccc', 'div-research', 'h3', 'ended', 'codex', 'gpt-5.6-sol', '2026-10-29T10:00:00.0000000Z', '2026-10-30T09:00:00.0000000Z');
                 INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES
-                  ('2026-10-30T10:00:00.0000000Z', 'div-operations', 'pos-aaaaaa', 'hired', 'chief', 'a'),
-                  ('2026-10-30T10:01:00.0000000Z', 'div-operations', 'pos-bbbbbb', 'hired', 'chief', 'b'),
+                  ('2026-10-30T13:00:00.0000000Z', 'div-operations', 'pos-aaaaaa', 'hired', 'chief', 'a'),
+                  ('2026-10-30T13:01:00.0000000Z', 'div-operations', 'pos-bbbbbb', 'hired', 'chief', 'b'),
+                  ('2026-10-30T13:02:00.0000000Z', 'div-operations', 'pos-aaaaaa', 'activated', 'chief', 'it activated itself'),
+                  ('2026-10-30T13:02:30.0000000Z', 'div-operations', 'pos-dddddd', 'activated', 'owner', 'the owner pressed: not the arrow'),
+                  ('2026-10-30T13:03:00.0000000Z', 'div-operations', NULL, 'chartered', 'operations', 'inside a6: the turn acted'),
                   ('2026-10-31T10:00:00.0000000Z', 'div-operations', NULL, 'tilted', 'app', 'c'),
                   ('2026-10-29T10:00:00.0000000Z', 'div-operations', NULL, 'tilted', 'app', 'before T0');
                 INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from) VALUES
                   (1, 'v1', '2026-10-31T01:00:00.0000000Z', '2026-01-01'),
                   (1, 'v2', '2026-10-31T02:00:00.0000000Z', '2026-01-01'),
                   (1, 'v3', '2026-10-31T03:00:00.0000000Z', '2026-01-01'),
-                  (1, 'v0', '2026-10-01T03:00:00.0000000Z', '2026-01-01');
+                  (1, 'v0', '2026-10-01T03:00:00.0000000Z', '2026-01-01'),
+                  (3, 'v7', '2026-10-01T04:00:00.0000000Z', '2026-01-01'),
+                  (2, 'v9', '2026-10-01T05:00:00.0000000Z', '2026-01-01');
                 INSERT INTO strategy_promotion(id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id, holdout_dataset_sha256,
                     execution_model, evaluator_version, holdout_run_id, verdict, reason, at) VALUES
                   ('p1', 'v1', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'no-trade-on-the-holdout', '2026-10-31T01:30:00.0000000Z'),
                   ('p2', 'v2', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'paper-eligible', 'meets-the-paper-policy-on-historical-evidence', '2026-10-31T02:30:00.0000000Z'),
-                  ('p0', 'v0', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T03:30:00.0000000Z');
+                  ('p0', 'v0', 1, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T03:30:00.0000000Z'),
+                  ('p7', 'v7', 3, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T04:30:00.0000000Z'),
+                  ('p9', 'v9', 2, 's', 'b', 1, 'd', 'e', 'ev', 'r', 'refused', 'not-profitable-after-costs', '2026-10-01T05:30:00.0000000Z');
                 INSERT INTO referee_holdout(campaign_id, version_id, method, research_row, holdout_days, z_status, alpha_j, wealth_before, wealth_after, addis_status, remembered, at) VALUES
                   (1, 'v1', 1, 1, 30, 'inconclusive', '0.01', '1', '1', 'inconclusive', 0, '2026-10-31T01:20:00.0000000Z'),
                   (1, 'v2', 1, 1, 30, 'enforceable', '0.01', '1', '1', 'tested', 0, '2026-10-31T02:20:00.0000000Z');
-                INSERT INTO strategy_allocation(id, version_id, promotion_id, policy_version, max_quantity, currency, effective_from, effective_to, reason, at) VALUES
-                  ('al1', 'v2', 'p2', 'pol', '1', 'USD', '2026-10-31T02:40:00.0000000Z', NULL, 'paper', '2026-10-31T02:40:00.0000000Z');
+                INSERT INTO strategy_allocation(id, version_id, promotion_id, policy_version, max_quantity, currency, effective_from, effective_to, reason, at, mode) VALUES
+                  ('al1', 'v2', 'p2', 'pol', '1', 'USD', '2026-10-31T02:40:00.0000000Z', NULL, 'paper', '2026-10-31T02:40:00.0000000Z', 'paper'),
+                  -- A stop is written as a row with an empty window (D19): it is no allocation. An inconclusive slot costs its campaign a trial.
+                  ('al2', 'v2', 'p2', 'allocation-policy-stop-v1', '0', 'USD', '2026-10-31T03:00:00.0000000Z', '2026-10-31T03:00:00.0000000Z', 'stopped', '2026-10-31T03:00:00.0000000Z', 'paper'),
+                  ('al3', 'v1', 'p1', 'allocation-policy-inconclusive-v1', '1', 'USD', '2026-10-01T03:00:00.0000000Z', '2026-10-02T03:00:00.0000000Z', 'quota', '2026-10-01T03:00:00.0000000Z', 'paper');
+                INSERT INTO paper_envelope(id, connector_id, account_id, symbol, currency, max_quantity, max_notional, max_deployments, granted_at, expires_at, reason, withdrawn_at) VALUES
+                  ('env', 'paper', 'PAPER-1', 'BTCUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', NULL),
+                  ('env-eth', 'paper', 'PAPER-1', 'ETHUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', NULL),
+                  ('env-gone', 'paper', 'PAPER-1', 'XRPUSDT', 'USDT', '1', '5000', 3, '2026-10-01T00:00:00.0000000Z', '2027-10-01T00:00:00.0000000Z', 'founding', '2026-10-02T00:00:00.0000000Z');
+                INSERT INTO publication(id, role, attempt, revision, kind, recipients, classification, created_at, content) VALUES
+                  ('pub-old', 'allocator', NULL, 1, 'note', 'research', 'council', '2026-10-01T00:00:00.0000000Z', 'before T0'),
+                  ('pub-1', 'allocator', NULL, 2, 'note', 'research,pos-aaaaaa', 'council', '2026-10-31T09:00:00.0000000Z', 'Forward paper run dep-1: 3 simulated fills.');
+                INSERT INTO org_mandate_event(mandate_id, at, kind, actor, attempt_id, reason, evidence) VALUES
+                  ('m1', '2026-10-31T09:05:00.0000000Z', 'issued', 'operations', 'a2', 'x', 'x'),
+                  ('m1', '2026-10-31T09:06:00.0000000Z', 'delivered', 'pos-aaaaaa', 'a2', 'x', 'x'),
+                  ('m1', '2026-10-31T09:07:00.0000000Z', 'rejected', 'operations', 'a2', 'x', 'x'),
+                  ('m0', '2026-10-29T09:00:00.0000000Z', 'accepted', 'operations', 'a7', 'before T0', 'x');
+                INSERT INTO strategy_run(id, version_id, dataset_id, dataset_sha256, execution_model, outcome, bars, trades, wins, intents, fills, exposure_bars, missing_minutes, faults, trace_sha256, created_at, role, attempt) VALUES
+                  ('bt1', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T00:30:00.0000000Z', 'pos-aaaaaa', 'a2'),
+                  ('bt2', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T00:40:00.0000000Z', 'pos-aaaaaa', 'a2'),
+                  ('r', 'v2', 1, 'd', 'e', 'completed', 1, 0, 0, 0, 0, 0, 0, 0, 't', '2026-10-31T01:00:00.0000000Z', 'pos-aaaaaa', 'a2');
+                INSERT INTO ledger_entry(id, kind, author, created_at, attempt) VALUES
+                  (1, 'finding', 'operations', '2026-10-31T08:01:00.0000000Z', 'a1'),
+                  (2, 'decision', 'pos-aaaaaa', '2026-10-31T09:08:00.0000000Z', 'a2'),
+                  (3, 'kill', 'pos-aaaaaa', '2026-10-31T09:09:00.0000000Z', 'a2'),
+                  (4, 'finding', 'operations', '2026-10-01T08:01:00.0000000Z', 'a7');
+                INSERT INTO org_decision(id, position, attempt_id, kind, options, choice, refs, ledger_entry_id, at) VALUES
+                  ('dec-1', 'pos-aaaaaa', 'a2', 'family-kill', 'o', 'c', 'r', 2, '2026-10-31T09:08:00.0000000Z');
+                -- FORECASTS. pos-aaaaaa since T0: 3 written (2 scored), 1 resolved and scored, 1 void. One from before T0 resolved before T0: total 2.
+                INSERT INTO org_forecast(id, mandate_id, forecaster, attempt_id, vocabulary, predicate, subject, target, resolve_by, probability, scored, unscored_why, at) VALUES
+                  ('fc-1', 'm1', 'pos-aaaaaa', 'a2', 1, 'p', 's', 't', '2026-12-01', '0.6', 1, NULL, '2026-10-31T09:00:00.0000000Z'),
+                  ('fc-2', 'm1', 'pos-aaaaaa', 'a2', 1, 'p', 's', 't', '2026-12-01', '0.6', 1, NULL, '2026-10-31T09:01:00.0000000Z'),
+                  ('fc-3', 'm1', 'pos-aaaaaa', 'a2', 1, 'p', 's', 't', '2026-12-01', '0.6', 0, 'a vocabulary this build does not read', '2026-10-31T09:02:00.0000000Z'),
+                  ('fc-0', 'm0', 'pos-aaaaaa', 'a7', 1, 'p', 's', 't', '2026-12-01', '0.6', 1, NULL, '2026-10-01T09:00:00.0000000Z');
+                INSERT INTO org_forecast_resolution(forecast_id, outcome, record_kind, record_id, why, at) VALUES
+                  ('fc-1', 'yes', 'verdict', 'p2', 'w', '2026-10-31T10:00:00.0000000Z'),
+                  ('fc-2', 'void', 'verdict', 'p2', 'w', '2026-10-31T10:01:00.0000000Z'),
+                  ('fc-0', 'no', 'verdict', 'p0', 'w', '2026-10-02T10:00:00.0000000Z');
+                -- CAMPAIGNS. #1 and #3 hold BTCUSDT over overlapping months; #2 holds ETHUSDT over the same ones; #4 is #1's older self, closed before T0.
+                INSERT INTO dataset(id, source, pair, interval, version, months_attempted, months_present, months_not_published, normalised_path, normalised_sha256, bars, first_bar, last_bar, gaps, gap_runs, gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state) VALUES
+                  (1, 's', 'BTCUSDT', '1h', 'v', 1, 1, '', 'p', 'h', 1, '2025-01-01T00:00:00.0000000Z', '2026-06-01T00:00:00.0000000Z', 0, '', 0, 0, 0, 0, '2026-10-01', 'accepted'),
+                  (2, 's', 'ETHUSDT', '1h', 'v', 1, 1, '', 'p', 'h', 1, '2025-01-01T00:00:00.0000000Z', '2026-06-01T00:00:00.0000000Z', 0, '', 0, 0, 0, 0, '2026-10-01', 'accepted'),
+                  (3, 's', 'BTCUSDT', '1h', 'v', 1, 1, '', 'p', 'h', 1, '2025-01-01T00:00:00.0000000Z', '2026-06-01T00:00:00.0000000Z', 0, '', 0, 0, 0, 0, '2026-10-01', 'accepted'),
+                  (4, 's', 'BTCUSDT', '1h', 'v', 1, 1, '', 'p', 'h', 1, '2024-01-01T00:00:00.0000000Z', '2025-01-01T00:00:00.0000000Z', 0, '', 0, 0, 0, 0, '2026-10-01', 'accepted');
+                INSERT INTO strategy_campaign(id, name, scoring_policy, scoring_policy_sha256, trial_budget, verdict_budget, holdout_dataset_id, holdout_from, opened_at, renewed_from, closed_at, exploration_budget) VALUES
+                  (4, 'old', 'p', 'h', 200, 3, 4, '2024-06-01T00:00:00.0000000Z', '2026-01-01', NULL, '2026-02-01T00:00:00.0000000Z', 50),
+                  (1, 'btc', 'p', 'h', 200, 3, 1, '2026-01-01T00:00:00.0000000Z', '2026-02-01', 4, NULL, 50),
+                  (2, 'eth', 'p', 'h', 200, 3, 2, '2026-01-01T00:00:00.0000000Z', '2026-02-01', NULL, NULL, 50),
+                  (3, 'btc again', 'p', 'h', 200, 3, 3, '2026-01-01T00:00:00.0000000Z', '2026-02-01', NULL, NULL, 50);
+                INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at, charged_to, exploration) VALUES
+                  (1, 'v1', 'run-1', 'research', 1, '2026-10-31T00:00:00.0000000Z', NULL, 0),
+                  (1, 'v2', 'run-1', 'research', 1, '2026-10-31T00:00:00.0000000Z', NULL, 0),
+                  (1, 'v1', 'run-2', 'research', 1, '2026-10-31T00:00:00.0000000Z', NULL, 1),
+                  (1, 'v1', 'run-3', 'fixture', 0, '2026-10-31T00:00:00.0000000Z', NULL, 0),
+                  (2, 'v9', 'run-4', 'research', 1, '2026-10-31T00:00:00.0000000Z', 1, 0);
+                -- THE WAKES OF THE TURNS. Failed and lost are told apart by the launch's state, and a word nobody has heard of stands as it is.
+                INSERT INTO mission_event(id, kind, created_at, due_at, consumed_at, consumed_by, disposition, disposition_detail, role) VALUES
+                  ('note:paper-run:dep-1:end', 'note', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:00:00.0000000Z', '2026-10-31T09:10:00.0000000Z', 'a2', 'answered', NULL, 'pos-aaaaaa'),
+                  ('wf', 'self', '2026-10-31T09:58:00.0000000Z', '2026-10-31T09:58:00.0000000Z', '2026-10-31T10:00:00.0000000Z', 'a3', 'failed', 'the turn failed', 'pos-aaaaaa'),
+                  ('wl', 'owner', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:29:00.0000000Z', '2026-10-31T13:30:00.0000000Z', 'a9', 'failed', 'the turn was lost', NULL),
+                  ('wl2', 'note', '2026-10-31T13:29:30.0000000Z', '2026-10-31T13:29:30.0000000Z', NULL, NULL, 'blocked', 'the seat is out of its envelope', 'pos-bbbbbb'),
+                  ('wl:after-lost', 'owner', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', '2026-10-31T13:51:00.0000000Z', NULL, 'superseded', 'x', 'pos-cccccc'),
+                  ('wr', 'self', '2026-10-31T07:00:00.0000000Z', '2026-10-31T07:00:00.0000000Z', '2026-10-31T08:00:00.0000000Z', 'a1', 'released', 'a word of a later build', NULL);
                 INSERT INTO strategy_deployment(id, version_id, allocation_id, envelope_id, connector_id, account_id, symbol, mode, state, started_at, ended_at, end_reason) VALUES
                   ('dep-paper-active-0001', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'BTCUSDT', 'paper', 'active', '2026-10-30T13:00:00.0000000Z', NULL, NULL),
                   ('dep-paper-ended-00002', 'v2', 'al1', 'env', 'paper', 'PAPER-1', 'ETHUSDT', 'paper', 'ended', '2026-10-20T13:00:00.0000000Z', '2026-10-21T13:00:00.0000000Z', 'term over'),
@@ -279,9 +349,9 @@ public class OrgDigestTests(ITestOutputHelper log)
 
         // 6. REFUSALS with their words and counts: the tool refusal x3, the other tool x1, the pipe's two kinds, the deployment gate's words.
         var refusals = d.GetProperty("refusals");
-        Assert.Equal(8, refusals.GetProperty("total").GetInt32());
+        Assert.Equal(9, refusals.GetProperty("total").GetInt32());
         var g0 = refusals.GetProperty("groups").EnumerateArray().ToList();
-        Assert.Equal(5, g0.Count);
+        Assert.Equal(6, g0.Count);
         Assert.Equal(3, g0[0].GetProperty("count").GetInt32());
         Assert.Equal("no order verb is offered to this seat", g0[0].GetProperty("words").GetString());
         Assert.Contains(g0, g => g.GetProperty("source").GetString() == "pipe" && g.GetProperty("count").GetInt32() == 2 && g.GetProperty("words").GetString() == "op hire / INVALID_REQUEST");
@@ -343,8 +413,222 @@ public class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("beta last delivered 4h ago", attention);
         Assert.Contains("parse failure", attention);
 
+        // ON MAIN'S SCHEMA NOTHING THIS FILE NAMES IS MISSING: `absent` is for a home behind or ahead of main, and a misnamed table would hide behind it.
+        Assert.DoesNotContain("\"absent\"", d.GetRawText(), StringComparison.Ordinal);
+        Assert.Empty(d.GetProperty("pace").GetProperty("act_tables_absent").EnumerateArray());
+        Assert.False(string.IsNullOrEmpty(d.GetProperty("app").GetProperty("schema").GetString()));
+
         // READ-ONLY, ON DISK: not one byte of either database moved.
         Assert.Equal(before, (Hash(Path.Combine(f.State, "tradeagent.db")), Hash(Path.Combine(f.State, "tape.db"))));
+    }
+
+    [UnixFact]
+    public void Each_arrow_says_when_it_was_first_reached_how_often_and_its_first_refusal_in_words()
+    {
+        var d = Json(Build()).GetProperty("arrows");
+        var arrows = d.GetProperty("arrows").EnumerateArray().ToDictionary(a => a.GetProperty("arrow").GetString()!);
+        (string? First, int Count) Reached(string name) => (arrows[name].GetProperty("first_at").GetString(), arrows[name].GetProperty("count").GetInt32());
+
+        Assert.Equal(("2026-10-30T13:03:00.0000000Z", 1), Reached("charter"));
+        Assert.Equal(("2026-10-30T13:00:00.0000000Z", 2), Reached("hire"));
+        Assert.Equal(("2026-10-30T13:02:00.0000000Z", 1), Reached("self-activation"));   // the owner's press is not this arrow
+        Assert.Equal(("2026-10-31T09:05:00.0000000Z", 1), Reached("mandate"));
+        Assert.Equal(("2026-10-31T09:06:00.0000000Z", 1), Reached("delivery"));
+        Assert.Equal((null, 0), Reached("accepted"));                                     // m0's is before T0
+        Assert.Equal(("2026-10-31T09:07:00.0000000Z", 1), Reached("rejected"));
+        Assert.Equal(("2026-10-31T00:30:00.0000000Z", 2), Reached("backtest"));           // the verdict's own holdout run 'r' is no backtest
+        Assert.Equal(("2026-10-31T01:00:00.0000000Z", 3), Reached("verdict asked"));
+        Assert.Equal(("2026-10-31T01:30:00.0000000Z", 2), Reached("verdict given"));
+        Assert.Equal(("2026-10-31T02:40:00.0000000Z", 1), Reached("paper allocation"));   // the stop row and the older slot are not
+        Assert.Equal(("2026-10-30T13:00:00.0000000Z", 1), Reached("paper run"));          // a live row and an older paper one are not
+        Assert.Equal(("2026-10-30T14:00:00.0000000Z", 3), Reached("paper fill"));
+        Assert.Equal(("2026-10-31T09:00:00.0000000Z", 1), Reached("note raised"));
+        Assert.Equal(("2026-10-31T09:10:00.0000000Z", 1), Reached("note taken"));
+        Assert.Equal(("2026-10-31T09:08:00.0000000Z", 2), Reached("kill"));               // the family-kill decision and the ledger's kill entry
+        Assert.Equal((null, 0), Reached("iterate"));
+
+        Assert.Equal(15, d.GetProperty("reached").GetInt32());
+        Assert.Equal(17, d.GetProperty("of").GetInt32());
+        Assert.Equal(["accepted", "iterate"], d.GetProperty("not_reached").EnumerateArray().Select(a => a.GetString()!).ToArray());
+
+        // The door's org_charter is the op's org-charter; the first refusal of the run is that one, in its own words and hour.
+        Assert.Equal(1, arrows["charter"].GetProperty("refused").GetInt32());
+        Assert.Equal("two structural changes this week", arrows["charter"].GetProperty("first_refusal").GetString());
+        Assert.Equal("2026-10-30T12:30:00.0000000Z", d.GetProperty("first_refusal").GetProperty("at").GetString());
+        Assert.Contains("keep", d.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void The_pace_is_turns_per_day_cost_per_turn_the_idle_share_and_the_wait_behind_the_lane()
+    {
+        var p = Json(Build()).GetProperty("pace");
+
+        // T0 to Now is 26 hours, 1.0833 days. 8 launches, 8.7 charged.
+        Assert.Equal(1.08, p.GetProperty("days").GetDouble());
+        Assert.Equal(8, p.GetProperty("turns").GetInt32());
+        Assert.Equal(7.38, p.GetProperty("turns_per_day").GetDouble());
+        Assert.Equal("1.0875", p.GetProperty("cost_per_turn").GetString());
+
+        // Clean endings: a1, a2, a5, a6. a1 wrote a ledger entry, a2 a mandate event, a6's span holds its chart act (a charter names no
+        // launch). a5 left nothing: one idle of four. a3 and a4 failed, a9 was lost and a8 is open: none of them is a clean turn.
+        Assert.Equal(4, p.GetProperty("clean_turns").GetInt32());
+        Assert.Equal(1, p.GetProperty("idle_turns").GetInt32());
+        Assert.Equal("25.0", p.GetProperty("idle_share_pct").GetString());
+
+        // The waits, due to taken: 600 and 120 on pos-aaaaaa, 60 and 3600 on operations. Median of the four 360, max 3600.
+        Assert.Equal(360, p.GetProperty("wait_median_s").GetInt32());
+        Assert.Equal(3600, p.GetProperty("wait_max_s").GetInt32());
+        var seats = p.GetProperty("positions").EnumerateArray().ToDictionary(x => x.GetProperty("position").GetString()!);
+        Assert.Equal(360, seats["pos-aaaaaa"].GetProperty("wait_median_s").GetInt32());
+        Assert.Equal(600, seats["pos-aaaaaa"].GetProperty("wait_max_s").GetInt32());
+        Assert.Equal(1830, seats["operations"].GetProperty("wait_median_s").GetInt32());
+        Assert.Equal("1.3250", seats["operations"].GetProperty("cost_per_turn").GetString());   // 5.3 over 4 turns
+        Assert.Equal(3.69, seats["operations"].GetProperty("turns_per_day").GetDouble());
+        Assert.Equal("gpt-5.6-sol", Assert.Single(seats["pos-aaaaaa"].GetProperty("models").EnumerateArray()).GetString());
+        Assert.Equal(1, seats["board-1"].GetProperty("idle_turns").GetInt32());
+
+        // The vendor's own words: a3 and a4 are 429s.
+        Assert.Equal(2, p.GetProperty("vendor_limit_refusals").GetInt32());
+        Assert.Equal("pos-aaaaaa", p.GetProperty("first_vendor_limit").GetProperty("position").GetString());
+    }
+
+    [UnixFact]
+    public void The_signal_is_forecasts_to_fifty_and_budgets_spent_as_the_apps_own_gates_count_them()
+    {
+        var f = Build();
+        var s = Json(f).GetProperty("signal");
+
+        // pos-aaaaaa: written 3 since T0 (one unscored); resolved scored non-void 1 since T0, 2 in all. 48 left at 1 in 1.0833 days = 52.0 days.
+        var m = Assert.Single(s.GetProperty("forecasts").GetProperty("managers").EnumerateArray());
+        Assert.Equal("pos-aaaaaa", m.GetProperty("position").GetString());
+        Assert.Equal(3, m.GetProperty("written_since").GetInt32());
+        Assert.Equal(2, m.GetProperty("scored_since").GetInt32());
+        Assert.Equal(1, m.GetProperty("resolved_since").GetInt32());
+        Assert.Equal(2, m.GetProperty("resolved_total").GetInt32());
+        Assert.Equal(52.0, m.GetProperty("days_to_50").GetDouble());
+
+        var byId = s.GetProperty("campaigns").GetProperty("campaigns").EnumerateArray().ToDictionary(c => c.GetProperty("id").GetInt32());
+        Assert.False(byId.ContainsKey(4));                                                 // closed before T0
+        var btc = byId[1];
+        Assert.Equal("BTCUSDT", btc.GetProperty("pair").GetString());
+        Assert.Equal(1, btc.GetProperty("exploration").GetInt32());
+        Assert.Equal(50, btc.GetProperty("exploration_budget").GetInt32());
+
+        // AND THE FIGURES ARE THE APP'S OWN: CampaignStore's gates read the same rows and must agree, whatever the home holds.
+        using var db = new Database(Path.Combine(f.State, "tradeagent.db"));
+        var store = new CampaignStore(db);
+        foreach (var id in new long[] { 1, 2, 3 })
+        {
+            Assert.Equal(store.TrialsCharged(id), byId[(int)id].GetProperty("trials").GetInt32());
+            Assert.Equal(store.JudgementsSpent(id), byId[(int)id].GetProperty("verdicts").GetInt32());
+        }
+        // run-1 twice is one trial, run-3 was not charged, run-4 was charged here from #2, and the inconclusive slot is one: 4.
+        Assert.Equal(4, btc.GetProperty("trials").GetInt32());
+        // Worked by hand too: #1's four, and #3's over the same months of the same pair; never #2's, another pair's.
+        Assert.Equal(5, btc.GetProperty("verdicts").GetInt32());
+        Assert.Equal(5, byId[3].GetProperty("verdicts").GetInt32());
+        Assert.Equal(1, byId[2].GetProperty("verdicts").GetInt32());
+
+        Assert.Equal(1, s.GetProperty("candidates").GetProperty("admissible_since").GetInt32());   // p2, paper-eligible
+        Assert.Equal(1, s.GetProperty("ledger").GetProperty("finding").GetInt32());
+        Assert.Contains("found a finding again", s.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_failed_turns_wakes_and_a_lost_turns_are_told_apart_and_a_new_word_stands_as_it_is()
+    {
+        var f = Build();
+        var d = Json(f);
+        var w = d.GetProperty("wakes");
+        Assert.Equal(1, w.GetProperty("failed_turn_wakes_since").GetInt32());              // wf, on a3
+        Assert.Equal(1, w.GetProperty("lost_turn_wakes_since").GetInt32());                // wl reads `failed`, but a9 was LOST
+        Assert.Equal(1, w.GetProperty("raised_again_after_lost_since").GetInt32());
+        Assert.Equal(1, w.GetProperty("consumed_since_by_disposition").GetProperty("released").GetInt32());
+        var blocked = Assert.Single(w.GetProperty("blocked_now").EnumerateArray());
+        Assert.Equal("the seat is out of its envelope", blocked.GetProperty("words").GetString());
+        Assert.Equal("pos-bbbbbb", Assert.Single(blocked.GetProperty("roles").EnumerateArray()).GetString());
+
+        // A launch's state this file has not heard of is an error in its own word, never folded into ENDED.
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+            db.Exec("INSERT INTO ai_attempt(id, started_at, runtime, state, reserved_cost, role) VALUES('a-new', '2026-10-31T12:30:00.0000000Z', 'codex', 'TIMED-OUT', '0.1', 'pos-aaaaaa');");
+        var errors = Json(f).GetProperty("errors");
+        Assert.Contains(errors.GetProperty("groups").EnumerateArray(), g => g.GetProperty("state").GetString() == "TIMED-OUT");
+    }
+
+    [UnixFact]
+    public void Evidence_per_pair_and_the_paper_notes_are_read()
+    {
+        var dep = Json(Build()).GetProperty("deployments");
+        var envelopes = dep.GetProperty("envelopes").EnumerateArray().ToDictionary(e => e.GetProperty("symbol").GetString()!);
+        Assert.Equal(2, envelopes.Count);                                                  // XRPUSDT's was withdrawn
+        Assert.Equal(2, envelopes["BTCUSDT"].GetProperty("open").GetInt32());              // the active run and the suspended one; an ended run holds no slot
+        Assert.Equal(3, envelopes["BTCUSDT"].GetProperty("max_deployments").GetInt32());
+        Assert.Equal(1, dep.GetProperty("allocations").GetProperty("stopped_since").GetInt32());
+        Assert.Equal(1, dep.GetProperty("notes").GetProperty("since").GetInt32());
+        Assert.StartsWith("Forward paper run", dep.GetProperty("notes").GetProperty("last").GetString(), StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_home_behind_main_names_what_it_lacks_and_every_other_section_still_reads()
+    {
+        var f = Build();
+        using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(f.State, "tradeagent.db")};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "PRAGMA foreign_keys=OFF; DROP TABLE org_forecast_resolution; DROP TABLE org_forecast; DROP TABLE org_decision; "
+                              + "DROP TABLE paper_envelope; ALTER TABLE strategy_trial DROP COLUMN exploration;";
+            cmd.ExecuteNonQuery();
+        }
+        var d = Json(f);
+        Assert.Equal("org_forecast", d.GetProperty("signal").GetProperty("forecasts").GetProperty("absent").GetString());
+        var kill = d.GetProperty("arrows").GetProperty("arrows").EnumerateArray().Single(a => a.GetProperty("arrow").GetString() == "kill");
+        Assert.Equal("org_decision", kill.GetProperty("absent").GetString());
+        Assert.Equal(JsonValueKind.Null, d.GetProperty("deployments").GetProperty("envelopes").ValueKind);
+        Assert.Contains("org_decision", d.GetProperty("pace").GetProperty("act_tables_absent").EnumerateArray().Select(t => t.GetString()));
+        Assert.Equal(JsonValueKind.Null, d.GetProperty("signal").GetProperty("campaigns").GetProperty("campaigns")[0].GetProperty("exploration").ValueKind);
+        Assert.DoesNotContain(d.GetProperty("attention").EnumerateArray(), a => a.GetString()!.Contains("unreadable", StringComparison.Ordinal));
+        var (exit, text, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
+        Assert.True(exit == 0, err);
+        Assert.Contains("forecasts: org_forecast is not on this home", text, StringComparison.Ordinal);
+    }
+
+    [UnixFact]
+    public void A_stopped_apps_home_is_read_as_it_stands_and_a_running_apps_unsaved_rows_are_seen()
+    {
+        // The deliberate restart: the app is down, so its WAL databases have no -wal beside them, and nothing appears beside them after.
+        var f = Build();
+        var before = Directory.GetFiles(f.State).Order().ToArray();
+        Assert.Equal("present", Json(f).GetProperty("app_db").GetString());
+        Assert.Equal(before, Directory.GetFiles(f.State).Order().ToArray());
+
+        // The app running: a writer holds the database open with a row only in its -wal, and the digest reads that row, not a stale file.
+        using var running = new Database(Path.Combine(f.State, "tradeagent.db"));
+        running.Exec("INSERT INTO org_event(at, unit_id, kind, decider, detail) VALUES('2026-10-31T13:59:00.0000000Z', 'div-operations', 'only-in-the-wal', 'app', 'd');");
+        Assert.True(File.Exists(Path.Combine(f.State, "tradeagent.db-wal")));
+        var kinds = Json(f).GetProperty("org_events").GetProperty("events").EnumerateArray().Select(e => e.GetProperty("kind").GetString());
+        Assert.Contains("only-in-the-wal", kinds);
+    }
+
+    [UnixFact]
+    public void The_monitors_act_on_list_is_raised_at_the_top()
+    {
+        var f = Build();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var attempts = new AiAttemptStore(db);
+            Attempt(attempts, "over", null, "2026-10-31T13:00:00Z", BillingClasses.Plan, "gpt-5.6-sol", 1m, 1000m, 0);   // past any day-total
+            var tools = new ToolCallStore(db);
+            for (var i = 0; i < 5; i++)
+                tools.Record(new ToolCallRow { At = At("2026-10-31T12:00:00Z").AddMinutes(i), Attempt = "a2", Role = "pos-aaaaaa", Tool = "backtest", Served = false, Refusal = "the same words, five times" });
+            db.SetKv("settings", TradeAgent.Core.Json.Write(new TradeAgentSettings { AiWorksOnItsOwn = false }));
+        }
+        var d = Json(f);
+        var attention = string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+        Assert.Contains("NOT set to work on its own", attention, StringComparison.Ordinal);    // proves the app's own spelling of the setting
+        Assert.Contains("AI day-total PASSED", attention, StringComparison.Ordinal);
+        Assert.Contains("refused 5x: backtest: the same words, five times", attention, StringComparison.Ordinal);
+        Assert.Contains("on failed turns", attention, StringComparison.Ordinal);
     }
 
     static (int, string, int, string) Cells(JsonElement p) =>
@@ -392,8 +676,9 @@ public class OrgDigestTests(ITestOutputHelper log)
         log.WriteLine(text);
         var lines = text.TrimEnd('\n').Split('\n');
         Assert.InRange(lines.Length, 20, 60);
-        foreach (var word in new[] { "positions:", "turns/cost", "org events since T0", "verdicts:", "deployments (SIMULATION", "refusals since T0", "AI launches since T0",
-                                     "AI day-total", "next wake per active position", "cell proof:", "tape:" })
+        foreach (var word in new[] { "positions:", "turns/cost", "org events since T0", "arrows reached since T0", "verdicts:", "deployments (SIMULATION", "refusals since T0",
+                                     "AI launches since T0", "pace over", "forecasts:", "campaigns:", "admissible candidates:", "AI day-total", "next wake per active position",
+                                     "cell proof:", "tape:" })
             Assert.Contains(lines, l => l.StartsWith(word, StringComparison.Ordinal));
         Assert.DoesNotContain(lines, l => l.Length > 400);
     }
