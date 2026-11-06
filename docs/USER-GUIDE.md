@@ -139,6 +139,16 @@ Four more things worth knowing:
 - **The check needs the internet, and that is all it needs it for.** If your machine is offline the
   Settings page says it could not check, and nothing else changes.
 
+
+**If a new version will not open your folder, it says so and changes nothing.** A folder set up by an earlier build can hold something this
+version cannot read without guessing: an older founding policy, for example, with one paper envelope where this version has one for each
+pair. TradeAgent then shows what it found and offers **Start fresh**, which asks a second time. That moves the old folder aside whole, under a
+name beside the new one, and deletes nothing in it. You will set TradeAgent up again and sign in to the AI again. When it was the founding
+policy that stopped it, the market-context tape is copied into the new folder byte for byte, so what it recorded stays true, and the old
+folder keeps its own copy. If the tape cannot be copied, nothing moves and you can press again. If it is another layout, or damaged, the new
+folder starts without it and the page says where it is kept. If another TradeAgent is still running on that folder, nothing moves until
+you close it.
+
 ## Setting it up
 
 The app walks you through it. **There are sixteen screens, and the counter at the top of each one says so —
