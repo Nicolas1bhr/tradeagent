@@ -8,8 +8,10 @@ namespace TradeAgent.Core.Db;
 /// <see cref="Cap"/> times the floor and never past the level's ceiling. A floor of zero is the re-wake due at once — the sweep
 /// as it was before this unit.
 ///
-/// <para><b>What it never delays.</b> It shapes ONLY the sweep's re-raise of an owed mandate after a launch of it: the issued
-/// wake, code's retry, the decider's rejection, the holder's own requested wake and the owner's words keep their time.</para>
+/// <para><b>What it never delays.</b> In the sweep it shapes ONLY the re-raise of an owed mandate after a launch of it: the issued
+/// wake, code's retry, the decider's rejection and the owner's words keep their time. A position's own request, by verb or by wake file,
+/// and the wake a hire buys its hirer are held to <see cref="Floor"/> where they are written (<see cref="OrgStore.RequestWake"/>,
+/// <see cref="OrgStore.OwnWakeDue"/>, <see cref="OrgStore.Hire"/>): nothing a position does for itself passes the floor.</para>
 ///
 /// <para><b>The security board's policy</b> (<c>BoardPolicy.RewakeFloorMinutes</c>, <c>U-board-a2</c>; the app's founding value until the
 /// board decides): no verb, no pipe op and no agent reaches it.</para>

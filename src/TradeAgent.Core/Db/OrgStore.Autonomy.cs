@@ -44,9 +44,7 @@ public sealed partial class OrgStore
             throw Refused($"the security board's policy holds no ceiling for the {level} level, so no clock wakes {r.Caller} and it asks for "
                           + "none: work addressed to it still wakes it.");
 
-        // ANCHORED AT THE LAST WOKEN TURN (the floor is BETWEEN wakes): a position never woken is anchored now.
-        var anchor = new AiAttemptStore(db).LastWoken(r.Caller)?.StartedAt ?? now;
-        if (anchor > now) anchor = now;
+        var anchor = WakeAnchor(r.Caller, now);
         var due = now + r.After;
         var soonest = anchor + floor;
         var latest = anchor + ceiling;
@@ -72,6 +70,33 @@ public sealed partial class OrgStore
             throw Refused($"this launch of {r.Caller} has asked for its wake already: one request a launch.");
         return new WakeAsked(id, due, level, floor, ceiling);
     });
+
+    /// <summary>
+    /// THE SAME LAW ON THE WAKE FILE (<c>U-wake-fairness</c>, R28 W4, R29 F-A2; R25 D5): when a position's own <c>next.json</c> may wake it,
+    /// or null where it asks for nothing. A cell has no other way to ask, so a floor kept only on <see cref="RequestWake"/> was no floor.
+    /// The file asks and is not answered, so where the verb refuses in words this moves the time to the floor: at least
+    /// <see cref="RewakeFloors.Floor"/> after the position's last woken turn began. One pending request per position: a second asks for
+    /// nothing. A position no longer active asks for nothing. The legacy pair sit outside the chart's levels and keep the time they asked.
+    /// </summary>
+    public DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, RewakeFloors policy, DateTimeOffset now) => db.Read(_ =>
+    {
+        var due = now + asked;
+        if (CouncilRoles.IsKnown(role)) return due;
+        if (Roster().FirstOrDefault(p => p.Id == role) is not { } position) return (DateTimeOffset?)null;
+        if (new MissionEventStore(db).Pending(MissionEventKind.Self, role) is { Count: > 0 }) return null;
+        var soonest = WakeAnchor(role, now) + policy.Floor(position.Level);
+        return due < soonest ? soonest : due;
+    });
+
+    /// <summary>
+    /// WHAT A POSITION'S FLOOR IS COUNTED FROM (the floor is BETWEEN wakes): when its last woken turn began. A position never woken is
+    /// anchored now.
+    /// </summary>
+    DateTimeOffset WakeAnchor(string position, DateTimeOffset now)
+    {
+        var anchor = new AiAttemptStore(db).LastWoken(position)?.StartedAt ?? now;
+        return anchor > now ? now : anchor;
+    }
 
     /// <summary>A span in whole minutes, as the policy states its floors.</summary>
     static string Minutes(TimeSpan span) =>

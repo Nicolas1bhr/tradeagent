@@ -165,9 +165,8 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         const string head = "pos-5e55ee000001", member = "pos-5e55ee000002", team = "team-5e55ee00";
         await using var life = await PuppetLife.Begin("lost-told", seed: SeedTeam(team, head, member));
         life.Script(member, ["signal took-them", "hang"], ["usage 40 0 4", "final Read them."]);
-        var told = new[] { MissionEventKind.Note, MissionEventKind.Verdict }
-            .Select(kind => MissionEventIds.ForRole($"{kind}:lost-told-{Guid.NewGuid():n}", member)).ToArray();
-        var kinds = new[] { MissionEventKind.Note, MissionEventKind.Verdict };
+        var kinds = new[] { MissionEventKind.Note, MissionEventKind.Verdict, MissionEventKind.Activated, MissionEventKind.Self, MissionEventKind.Fill };
+        var told = kinds.Select(kind => MissionEventIds.ForRole($"{kind}:lost-told-{Guid.NewGuid():n}", member)).ToArray();
         for (var i = 0; i < told.Length; i++)
             Assert.True(life.Host.Wakes!.Raise(told[i], kinds[i], DateTimeOffset.UtcNow.AddSeconds(-1), role: member));
         await life.RunUntil(() => life.Reached("took-them"), "the executor took what it was told and hung");
@@ -186,8 +185,75 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
             Assert.True(retry is not null, $"{id} was not raised again: {life.State()}");
             Assert.Equal((settled.Kind, member, next.Id), (retry!.Kind, retry.Role, retry.ConsumedBy));
         }
-        Assert.Equal(2, life.Events().Count(e => e.Id.EndsWith(":after-lost", StringComparison.Ordinal)));
+        Assert.Equal(kinds.Length, life.Events().Count(e => e.Id.EndsWith(":after-lost", StringComparison.Ordinal)));
         Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(life.Host.Db).Get(hung.Id)!.State);
+    }
+
+    /// <summary>
+    /// (d3) THE RUN'S DELIBERATE RESTART LOSES NOTHING (<c>U-wake-fairness</c>; R28 R1, R2, W4). The active chief's real puppet hangs in a turn holding the
+    /// owner's words, a note, a hire's first wake and a fill; the service is told to stop, as systemd tells it: the attempt closes ENDED, not LOST, and every
+    /// wake is unconsumed again, with no outcome and no copy. The new process serves them all in one turn of the chief, which quotes the owner's words once
+    /// as data; the chair, asleep under the chief, is never given them. That turn's wake file, on the real host, is held to the chief's floor.
+    ///
+    /// <para>RED at base: all settled <c>failed</c> by a row the LOST recoveries never read, the fill and the hire's wake gone, and the words retried to the
+    /// sleeping chair.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_deliberate_restart_keeps_every_wake_and_the_owners_words_reach_the_active_chief()
+    {
+        const string chief = "pos-5e55cc000001", words = "Keep the book flat through the restart.";
+        await using var life = await PuppetLife.Begin("restart-kept", seed: db => db.Write(_ =>
+        {
+            foreach (var sql in new[]
+                     {
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{chief}', '{OrgIds.Root}', 'org/{chief}', 'active', '2026-11-06T12:00:00.0000000Z')",
+                         $"UPDATE org_unit SET head_position_id='{chief}' WHERE id='{OrgIds.Root}'"
+                     })
+            {
+                using var c = db.Cmd(sql);
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        }));
+        life.Script(chief, ["signal hung", "hang"],
+            ["write .tradeagent/next.json {\"after_seconds\": 1}", "usage 40 0 4", "final The book stays flat."]);
+        var wakes = life.Host.Wakes!;
+        Assert.Equal(chief, wakes.OwnerRecipient());
+
+        var kinds = new[] { MissionEventKind.Note, MissionEventKind.Activated, MissionEventKind.Fill };
+        var told = kinds.Select(kind => MissionEventIds.ForRole($"{kind}:kept-{Guid.NewGuid():n}", chief)).ToArray();
+        for (var i = 0; i < told.Length; i++)
+            Assert.True(wakes.Raise(told[i], kinds[i], DateTimeOffset.UtcNow.AddSeconds(-1), role: chief));
+        Assert.True(life.Host.RecordOwnerMessage(words));
+        var said = Assert.Single(wakes.OfKind(MissionEventKind.Owner));
+        var taken = told.Append(said.Id).ToList();
+
+        await life.RunUntil(() => life.Reached("hung"), "the chief's puppet took its wakes and hung");
+        var stopped = Assert.Single(life.AttemptsOf(chief));
+        Assert.All(taken, id => Assert.Equal(stopped.Id, life.Host.Wakes!.Get(id)!.ConsumedBy));
+
+        await life.RestartCleanly();
+
+        await life.RunUntil(() => life.AttemptsOf(chief).Count(a => a.State == AiAttemptState.ENDED) == 2, "the chief's next turn ended");
+        var attempts = life.AttemptsOf(chief);
+        Assert.Equal(AiAttemptState.ENDED, new AiAttemptStore(life.Host.Db).Get(stopped.Id)!.State);
+        var next = attempts.Single(a => a.Id != stopped.Id);
+        Assert.All(taken, id =>
+        {
+            var row = life.Host.Wakes!.Get(id)!;
+            Assert.True(row.ConsumedBy == next.Id, $"{id} went to {row.ConsumedBy}, {row.Disposition}: {life.State()}");
+            Assert.Equal(MissionEventDisposition.Answered, row.Disposition);
+        });
+        Assert.DoesNotContain(life.Events(), e => e.Id.EndsWith(":after-lost", StringComparison.Ordinal));
+        Assert.Single(life.Host.Wakes!.OfKind(MissionEventKind.Owner));
+        Assert.Equal(1, Occurrences(life.Prompt(chief, 2)!, words));
+        Assert.Contains(MissionSituation.OwnerWordsAreData, life.Prompt(chief, 2)!, StringComparison.Ordinal);
+        Assert.Empty(life.AttemptsOf(Chair).Where(a => life.Events().Any(e => e.ConsumedBy == a.Id && e.Kind == MissionEventKind.Owner)));
+
+        var asked = Assert.Single(life.Host.Wakes.OfKind(MissionEventKind.Self), e => e.Role == chief);
+        Assert.True(asked.DueAt >= next.StartedAt.AddMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]),
+            $"the chief's wake file asked a second and was given {asked.DueAt:O} after a turn begun {next.StartedAt:O}");
+        output.WriteLine($"life (d3): {life.Counts()}");
     }
 
     /// <summary>

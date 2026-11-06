@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -45,6 +46,60 @@ public partial class OrgAutonomyTests
     });
 
     static List<MissionEvent> ActivatedWakes(Database db) => new MissionEventStore(db).OfKind(MissionEventKind.Activated);
+
+    /// <summary>
+    /// (F-A1) HIRE AND RETIRE IN A CYCLE BUY A HEAD NO WAKE PAST ITS FLOOR (<c>U-wake-fairness</c>; R29 F-A1's reproduction). Under one head launch, whose own
+    /// <c>org-wake</c> the floor refuses at a minute, five cycles of hire and retire each still activate the hire and wake it and its hirer (R25 D3 stands) —
+    /// and each wake to the head is due no sooner than the 60 minutes it could have asked for.
+    ///
+    /// <para>RED at base: <c>ACTIVATED WAKES TO THE HEAD: 5</c>, every one due the moment of its hire: a head woken back-to-back past the board's floor.</para>
+    /// </summary>
+    [Fact]
+    public async Task Hire_and_retire_in_a_cycle_buy_a_head_no_wake_before_its_floor()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Host(gw, db, _ => SeatClasses.Broker);
+        var events = new MissionEventStore(db);
+
+        var began = DateTimeOffset.UtcNow;
+        var launch = Launch(db, Head);
+        Assert.True(events.Raise(MissionEventIds.Self("took-the-head"), MissionEventKind.Self, began, role: Head));
+        Assert.Equal(1, events.Consume([MissionEventIds.Self("took-the-head")], launch, began));
+        var anchor = new AiAttemptStore(db).LastWoken(Head)!.StartedAt;
+
+        var asked = await server.CallAsync(WakeFrame(1), Head, launch);
+        Assert.False(asked.Ok);
+        Assert.Contains("the security board's floor", asked.Error!.Message, StringComparison.Ordinal);
+
+        var unit = SubUnit(db, "team-a7a7c0d1");
+        var forecasts = JsonSerializer.Serialize(new[]
+        {
+            new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted, by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m }
+        });
+        var hires = new List<string>();
+        for (var cycle = 0; cycle < 5; cycle++)
+        {
+            var hired = await server.CallAsync(HireFrame(unit), Head, launch);
+            Assert.True(hired.Ok, hired.Error?.Message);
+            var id = Body(hired).GetProperty("position").GetString()!;
+            Assert.Equal(OrgPositionStatus.Active, Body(hired).GetProperty("status").GetString());
+            hires.Add(id);
+            var retired = await server.CallAsync(Frame(Ops.OrgRetire, ("position", id), ("rationale", "the cycle"), ("forecasts", forecasts)), Head, launch);
+            Assert.True(retired.Ok, retired.Error?.Message);
+        }
+
+        var toHead = ActivatedWakes(db).Where(w => w.Role == Head).ToList();
+        Assert.Equal(5, toHead.Count);
+        Assert.All(toHead, w => Assert.True(w.DueAt >= anchor.AddMinutes(60), $"the head's wake {w.Id} was due {w.DueAt:O}, before its floor from {anchor:O}"));
+        Assert.Empty(events.DueFor(Head, DateTimeOffset.UtcNow.AddMinutes(59).AddSeconds(-30)).Where(w => w.Kind == MissionEventKind.Activated));
+
+        // A HIRE IS STILL WOKEN AT ONCE: it has had no turn, so it has no floor to pass.
+        var hire = ActivatedWakes(db).Single(w => w.Role == hires[^1]);
+        Assert.True(hire.DueAt <= DateTimeOffset.UtcNow);
+    }
 
     /// <summary>
     /// (2a) A HIRE ONTO A BROKER SEAT — OR A CELL SEAT — THE GATE ADMITS, WITH ROOM IN ITS DAY, ACTIVATES ITSELF IN THE SAME WRITE: it is

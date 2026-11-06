@@ -2836,6 +2836,14 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public void StartPaperDeploymentsDue(DateTimeOffset now) => host.Gateway.StartPaperDeploymentsDue(now);
 
+        /// <summary>A position's own wake file, held to the security board's floor IN FORCE (<c>U-wake-fairness</c>; <see cref="OrgStore.OwnWakeDue"/>).</summary>
+        public DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now)
+        {
+            if (host._db is not { } db) return now + asked;
+            var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Policy) : RewakeFloors.From(null, null);
+            return new OrgStore(db).OwnWakeDue(role, asked, floors, now);
+        }
+
         /// <summary>The organisation's sweep over the mandates (<c>U-org-assignments-a</c>): it writes org records and wakes, never a turn.</summary>
         public void SweepMandates(DateTimeOffset now)
         {
@@ -3050,21 +3058,31 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public void SpendCapReached(AiSpendToday reading)
         {
+            host.Gateway.Log.Activity(SpendStopLine(reading), "warn");
+            host.Changed?.Invoke();
+        }
+
+        /// <summary>
+        /// THAT LINE, for the reading that stopped a turn. Static, so the words can be read back without a running app. One position's
+        /// funding running out is not the AI stopping, and its line names no limit that has room (<c>U-wake-fairness</c>, R28 C1).
+        /// </summary>
+        internal static string SpendStopLine(AiSpendToday reading)
+        {
+            if (reading.AdmitsGlobally && !reading.RoleAdmitsAnotherTurn) return Labels.ShareStopped(reading);
+
             // THE CEILING THAT STOPPED IT, IN ITS OWN WORDS (U-billing-classes): the plan's capacity is never called money.
             var spend = reading.Binding;
             var money = MissionSituation.Money(spend.Spent, spend.Currency);
             var cap = MissionSituation.Money(spend.Cap, spend.Currency) + " " + spend.CeilingWords("your");
             var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
-            host.Gateway.Log.Activity(spend.CapCannotFundATurn
-                    // Midnight does not repair this one, so the line must not promise that it will.
-                    ? $"One AI turn {Labels.OneTurnSetsAside(spend.Class, reservation)}, which is more than the whole {cap}, so "
-                      + "the AI cannot start a turn at all. " + (spend.Class == BillingClasses.Plan ? Labels.TodayPlanRepair : Labels.TodayMoneyRepairOnTheOwnerPage)
-                    : $"The AI has used {money} today, and the next turn would take it past its {cap}. "
-                      + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. " + (spend.Class == BillingClasses.Plan
-                          ? $"Only the security board can raise its plan day-total sooner; the {Labels.BoardPage} page shows it."
-                          : $"Raise the limit on the {Labels.OwnerPage} page to let it carry on."),
-                "warn");
-            host.Changed?.Invoke();
+            return spend.CapCannotFundATurn
+                // Midnight does not repair this one, so the line must not promise that it will.
+                ? $"One AI turn {Labels.OneTurnSetsAside(spend.Class, reservation)}, which is more than the whole {cap}, so "
+                  + "the AI cannot start a turn at all. " + (spend.Class == BillingClasses.Plan ? Labels.TodayPlanRepair : Labels.TodayMoneyRepairOnTheOwnerPage)
+                : $"The AI has used {money} today, and the next turn would take it past its {cap}. "
+                  + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. " + (spend.Class == BillingClasses.Plan
+                      ? $"Only the security board can raise its plan day-total sooner; the {Labels.BoardPage} page shows it."
+                      : $"Raise the limit on the {Labels.OwnerPage} page to let it carry on.");
         }
 
         /// <summary>

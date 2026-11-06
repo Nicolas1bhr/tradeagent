@@ -805,7 +805,8 @@ public static class Canon
         That is the only thing in that file and it means "wake me in fifteen minutes" — for a download
         that is still running, a session that opens later, a backtest you want to check on.
         The delay is capped at {{wake_cap}}, the file is read and deleted after every turn, and it is
-        a request rather than a promise: anything that happens before then wakes you sooner.
+        a request rather than a promise: anything that happens before then wakes you sooner, and in an
+        organisation no request wakes you sooner than your level's floor.
         {{end}}
 
         **Your memory is your files and your research ledger.** {{if resumes}}Every so often{{else}}Every turn{{end}} you start again in a fresh session with no
@@ -1117,7 +1118,9 @@ public static class Canon
         {{if wake}}
 
         `{{wake_file}}` holding `{"after_seconds": 900}` asks for your next wake fifteen minutes on. The delay is capped at
-        {{wake_cap}}, the file is read and deleted after every turn, and anything that happens before then wakes you sooner.
+        {{wake_cap}}, the file is read and deleted after every turn, and anything that happens before then wakes you sooner. No
+        request wakes you sooner than the security board's floor for your level, counted from when your last woken turn began, and
+        one request stands at a time.
         {{end}}
 
         ## Data and its held-back months
