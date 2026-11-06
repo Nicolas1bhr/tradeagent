@@ -436,6 +436,44 @@ public class KitTests
     }
 
     /// <summary>
+    /// A KIT SET ASIDE GIVES UP EVERY GRANT IN IT, NOT ONLY ITS TOP'S (<c>U-kit-socket-2</c>, Codex review): a Windows cell's slot holds one
+    /// explicit ACE on the kit and another on its <c>tools/</c>, and the walk that takes them off must reach both. The walk itself, on any
+    /// platform; the next test holds the real ACEs on Windows. RED, only the top purged: <see cref="Kit.Ungrant"/> → "Not found: …/tools".
+    /// </summary>
+    [Fact]
+    public void A_kit_set_aside_gives_up_the_grant_on_every_folder_in_it_not_only_its_top()
+    {
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), ["alpha"], ["beta.cmd"]), home);
+        var purged = new List<string>();
+        Kit.Ungrant(view!.Dir, item => purged.Add(Path.TrimEndingDirectorySeparator(item.FullName)));
+        Assert.Contains(Path.TrimEndingDirectorySeparator(view.Dir), purged);
+        Assert.Contains(Path.TrimEndingDirectorySeparator(view.Tools!), purged);
+    }
+
+    /// <summary>The same with real ACEs: granted as a slot is, on the kit and on its tools; set aside, neither folder names a container.</summary>
+    [WindowsUnitFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public void On_windows_a_kit_set_aside_carries_no_ace_of_a_cell_on_its_top_or_its_tools()
+    {
+        const string Slot = "S-1-15-2-1-2-3-4-5-6-7";
+        var home = NewHome();
+        var (view, _) = Kit.Install(Fixture(Source(home), ["alpha"], ["beta.cmd"]), home);
+        string[] granted = [view!.Dir, view.Tools!];
+        foreach (var folder in granted) AppContainerCell.Grant(folder, Slot, System.Security.AccessControl.FileSystemRights.ReadAndExecute);
+        Assert.All(granted, folder => Assert.True(Aces(folder) > 0, $"the grant on {folder} was not made"));
+
+        Kit.Ungrant(view.Dir);
+
+        Assert.All(granted, folder => Assert.Equal(0, Aces(folder)));
+
+        static int Aces(string folder) => new DirectoryInfo(folder).GetAccessControl()
+            .GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier))
+            .Cast<System.Security.AccessControl.FileSystemAccessRule>()
+            .Count(r => r.IdentityReference.Value == Slot);
+    }
+
+    /// <summary>
     /// ON WINDOWS THE HARNESS'S SKILL ROOT IS A JUNCTION, NEVER A SYMLINK (<c>U-kit-socket-2</c>): made without elevation or Developer Mode,
     /// leading to the kit's own <c>skills/</c>; the attempt's homes are removed without walking it — the kit and its hash untouched.
     /// </summary>

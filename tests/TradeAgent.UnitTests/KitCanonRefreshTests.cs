@@ -94,6 +94,25 @@ public class KitCanonRefreshTests(ITestOutputHelper log) : IDisposable
     }
 
     /// <summary>
+    /// A KIT CHANGED WHILE A START WAS ON ITS WAY (Codex review): the start read no kit, the owner installed one before its homes were
+    /// written, so the homes say none. Settling with the kit as it is now tells them; the same kit changes nothing.
+    /// </summary>
+    [Fact]
+    public void A_kit_changed_while_a_start_was_on_its_way_reaches_the_homes_that_start_wrote()
+    {
+        var files = new AppFileManifest(Path.Combine(_root, "app-files-settle.tsv"));
+        var home = WorkspaceBuilder.Build(Ctx(CouncilRoles.Operations), Path.Combine(_root, "ws-settle"), files);
+        SaysKit(home, CouncilRoles.Operations, null, files, "after the start");
+
+        var a = Installed("Kit A", "alpha-tool");
+        Assert.Equal((1, 0, 0), HomeCanons.Settle(null, a, files) is { } reach ? (reach.Now, reach.AfterTheirTurn, reach.Failed.Count) : (0, 0, 0));
+        SaysKit(home, CouncilRoles.Operations, a, files, "after the settling");
+
+        Assert.Null(HomeCanons.Settle(a, a, files));
+        Assert.Null(HomeCanons.Settle(null, null, files));
+    }
+
+    /// <summary>
     /// A TURN IN FLIGHT KEEPS THE CANON IT STARTED WITH: a real child process launched in the chair's home (it waits three seconds before
     /// it answers) holds the home; an install meanwhile leaves its AGENTS.md, its kept text and its record as they were and is said to wait;
     /// when the turn ends the home has the kit's canon. MUTANT (the session does not hold its home, AgentSession.RunTurnAsync) → "the
