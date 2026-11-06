@@ -93,6 +93,20 @@ public static partial class Labels
     public static string SeatModelSwitch(string model) => $"Run on {model}";
     public static string SeatModelSwitchConfirm(string model) => $"Press again: set this position to run on {model} from its next turn";
 
+    /// <summary>
+    /// A POSITION STANDING ASIDE, on its row (<c>U-turn-bounds</c>): why, in the refusal's own words, and when it is tried again without anyone
+    /// doing anything. <paramref name="at"/> is the local time.
+    /// </summary>
+    public static string SeatStandingAside(string why, string at) => $"Not running for now: {why} TradeAgent looks at it again at {at}.";
+
+    /// <summary>
+    /// THE SENTENCE A TURN IS ENDED IN FOR RUNNING PAST ITS WALL-CLOCK LIMIT (<c>U-turn-bounds</c>, R28 W2): the launch's row, the conversation, the
+    /// position's row and its own next turn all read these same words.
+    /// </summary>
+    public static string TurnPastItsLimit(TimeSpan limit) =>
+        $"This turn ran for {(limit.TotalMinutes >= 1 ? $"{limit.TotalMinutes:0} minutes" : $"{limit.TotalSeconds:0} seconds")} without finishing, past the most " +
+        "one turn may run, so TradeAgent ended it and every program it had started. What it was woken for stays owed, and it is tried again.";
+
     public const string ChiefAppoint = "Appoint a chief";
     public const string ChiefAppointConfirm = "Press again: appoint a chief on the chosen seat, dormant until you activate it";
     public const string ChiefReplace = "Replace the chief";

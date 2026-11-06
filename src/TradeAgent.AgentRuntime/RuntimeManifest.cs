@@ -501,6 +501,17 @@ public sealed class UsageLimitPlan
 }
 
 /// <summary>
+/// A VENDOR'S REFUSAL OF THE MODEL A TURN ASKED FOR (<c>U-turn-bounds</c>, R28 W6): <paramref name="Message"/> is the app's sentence once the seat is
+/// marked, and <paramref name="BeforeAnyWork"/> says whether anything of the turn had shown when it came, settled at that moment as
+/// <see cref="VendorLimit.BeforeAnyWork"/> is.
+/// </summary>
+public sealed record ModelRefusal(string Message, bool BeforeAnyWork)
+{
+    /// <summary>The coded word a launch refused this way carries in <c>ai_attempt.context</c>.</summary>
+    public const string Ended = "VENDOR_MODEL_REFUSED";
+}
+
+/// <summary>
 /// A VENDOR'S REFUSAL OF ONE TURN FOR ITS OWN USAGE LIMIT, as that turn's stream said it — the typed
 /// reason a turn ended, where the only other evidence is an exit code of 1.
 /// </summary>
@@ -795,6 +806,23 @@ public sealed class RuntimeManifest
     /// reworded one is a one-line fix in <c>runtimes.json</c>. Null recognises nothing.
     /// </summary>
     public string? ToolsUnavailablePattern { get; set; }
+
+    /// <summary>
+    /// THE VENDOR'S OWN SENTENCE FOR REFUSING A SEAT'S MODEL (<c>U-turn-bounds</c>, R28 W6, R30 D17): a regex matched against the message of the
+    /// stream's error event, where the usage limit is read. A match holds the seat under <see cref="SeatMarks"/>, gives the turn's wakes back and,
+    /// before any work, charges it nothing. Nothing switches the model. Data: a reworded sentence is a one-line fix in <c>runtimes.json</c>.
+    /// Null recognises nothing.
+    /// </summary>
+    public string? ModelRefusedPattern { get; set; }
+
+    /// <summary>Whether <paramref name="message"/> is this vendor's refusal of the model. Never throws: an override that will not compile recognises nothing.</summary>
+    public bool RefusesModel(string? message)
+    {
+        if (ModelRefusedPattern is not { Length: > 0 } pattern || string.IsNullOrWhiteSpace(message)) return false;
+        try { return Regex.IsMatch(message, pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); }
+        catch (ArgumentException) { return false; }
+        catch (RegexMatchTimeoutException) { return false; }
+    }
 
     /// <summary>
     /// ENVIRONMENT VARIABLE NAMES THIS VENDOR'S CLI READS, and the only names outside TradeAgent's
@@ -1361,6 +1389,12 @@ public static class RuntimeCatalog
             // fallback metadata; this can degrade performance and cause issues." (vendor core/src/session/turn_context.rs) — a seat whose
             // model resolved to no catalog entry is offered tools no check has seen. The surface dry run reads the same pattern.
             ToolsUnavailablePattern = "Code Mode is unavailable because|Defaulting to fallback metadata",
+            // A REFUSED MODEL, IN THE SERVER'S WORDS (U-turn-bounds, R28 W6). Read 2026-11-06 from the vendor's source at rust-v0.160.1: a 400's body
+            // reaches the stream's error event whole as InvalidRequest (codex-api/src/api_bridge.rs) and a 404's as "unexpected status 404: …"
+            // (protocol/src/error.rs); the two sentences are the vendor's own test fixtures for those answers (core/tests/suite/compact.rs:2603 and
+            // :307). The third is the public API's answer, from memory of it. NOT VERIFIED against the live service: no model has been refused
+            // on the owner's plan yet.
+            ModelRefusedPattern = "model is not supported when using Codex|[Mm]odel not found|does not exist or you do not have access",
             UsageLimit = new UsageLimitPlan
             {
                 Pattern = "You['\u2019]ve hit your usage limit",

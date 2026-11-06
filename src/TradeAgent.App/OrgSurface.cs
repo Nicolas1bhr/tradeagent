@@ -51,6 +51,9 @@ sealed record OrgSurfaceSources
     /// <summary>Why a position's folder refuses its launches because the last start could not rebuild it, or null (<see cref="AppHost.HomeRefusalFor"/>).</summary>
     public Func<string, string?> HomeRefusal { get; init; } = _ => null;
 
+    /// <summary>Why a position is not running for now and when it is looked at again, or null (<see cref="AppHost.StandingAsideFor"/>).</summary>
+    public Func<string, string?> StandingAside { get; init; } = _ => null;
+
     /// <summary>The owner's repair of a position's folder, returning its words (<see cref="AppHost.RepairHome"/>); null where there is no host, and no press is drawn.</summary>
     public Func<string, string>? RepairHome { get; init; }
 
@@ -94,6 +97,7 @@ sealed record OrgSurfaceSources
         ProofHeld = () => host.CellProofHeld,
         Currency = () => host.SpendToday.Currency,
         HomeRefusal = host.HomeRefusalFor,
+        StandingAside = host.StandingAsideFor,
         RepairHome = host.RepairHome,
         SeatModels = host.SeatModels,
         ChooseModel = host.ChooseSeatModel,

@@ -323,6 +323,16 @@ public sealed class ApiConversation(
 
     public Task StopAsync() => CancelAsync();
 
+    /// <summary>The sentence the turn in flight was ended in for its wall-clock limit; null otherwise (<see cref="AgentTurnEnded.TimedOut"/>).</summary>
+    volatile string? _timedOut;
+
+    /// <inheritdoc />
+    public Task TimedOutAsync(string words)
+    {
+        _timedOut = words;
+        return CancelAsync();
+    }
+
     // ---- the turn ---------------------------------------------------------------------------------
 
     /// <summary>
@@ -404,7 +414,7 @@ public sealed class ApiConversation(
         catch (OperationCanceledException)
         {
             (exitCode, outcome) = (NotStarted, EndedCancelled);
-            Append(new ChatTurn(ChatRole.System, "Stopped.", _now()));
+            Append(new ChatTurn(ChatRole.System, _timedOut ?? "Stopped.", _now()));
             transcript.Note("the turn was cancelled");
         }
         catch (GateRefusedException ex)
@@ -434,6 +444,8 @@ public sealed class ApiConversation(
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
+            var timedOut = _timedOut;
+            _timedOut = null;
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, _now() - startedAt, transcript.Text, _now())
             {
                 // NULL WHEN NOTHING REPORTED ANY, never a zero. A turn whose usage never arrived is
@@ -457,6 +469,9 @@ public sealed class ApiConversation(
                 // half-written report with no explanation spends its next turn — at the owner's
                 // expense — finding out where the rest of it went.
                 Cut = cut,
+
+                // AND A TURN ENDED FOR ITS WALL-CLOCK LIMIT (U-turn-bounds): read once, here, and forgotten with the turn.
+                TimedOut = timedOut,
 
                 // AND THE GATE'S LAST-CHECK REFUSAL, with its kind, where there was one.
                 GateRefused = gateRefused,

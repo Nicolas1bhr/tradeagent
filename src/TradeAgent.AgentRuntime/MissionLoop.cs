@@ -281,6 +281,23 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
 {
     public bool Failed => ExitCode != 0;
 
+    /// <summary>The ledger's word (<see cref="Outcome"/>'s place in <c>ai_attempt.context</c>) for a turn ended at its wall-clock limit.</summary>
+    public const string EndedTimedOut = "TURN_TIME_LIMIT";
+
+    /// <summary>
+    /// THE SENTENCE A TURN WAS ENDED IN FOR RUNNING PAST ITS WALL-CLOCK LIMIT (<c>U-turn-bounds</c>, R28 W2), or null. Its whole tree is gone by then.
+    /// It keeps its reservation, because a process that ran that long is spend nobody can call zero, and it gives back every wake it took,
+    /// because nothing reported it finished.
+    /// </summary>
+    public string? TimedOut { get; init; }
+
+    /// <summary>
+    /// THE VENDOR'S REFUSAL OF THIS TURN'S MODEL, in the app's sentence, or null (<c>U-turn-bounds</c>, R28 W6, R30 D17). Read by the session from the
+    /// stream, through the manifest's pattern, and carried out as the usage limit is: the meter charges it nothing before any work, the loop gives
+    /// back its wakes and steps its position aside, and <see cref="SeatMarks"/> holds the seat.
+    /// </summary>
+    public ModelRefusal? ModelRefused { get; init; }
+
     /// <summary>
     /// The tokens the runtime reported for this turn, or NULL when it reported none — which is a
     /// different fact from a turn that used nothing, and is why this is nullable rather than a zeroed
@@ -506,6 +523,12 @@ public interface IMissionHost
     /// test, a build with one agent prepared — keeps behaving as it did.
     /// </summary>
     IAgentConversation? ConversationFor(string role) => Conversation;
+
+    /// <summary>
+    /// THE LONGEST ONE TURN OF <paramref name="role"/> MAY RUN ON THE WALL CLOCK (<c>U-turn-bounds</c>, R28 W2), from its seat
+    /// (<see cref="SeatSpec.WallClock"/>). A host that resolves no seat answers the vendor's limit: no turn runs unbounded.
+    /// </summary>
+    TimeSpan TurnLimit(string role) => SeatSpec.VendorTurnLimit;
 
     /// <summary>
     /// WHY A POSITION MAY NOT TURN, typed, or null when it may (<c>U-org-principals</c>; typed by <c>U-org-wakes</c>, the
@@ -2592,7 +2615,7 @@ public sealed class MissionLoop
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
         // this is the second half of the same promise for a turn whose task the wait above gave up
         // on: a lease nothing releases is a role that never works again.
-        lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
+        lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _stoodAside.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
         Changed?.Invoke();
     }
 
@@ -2834,6 +2857,105 @@ public sealed class MissionLoop
     /// </summary>
     readonly Dictionary<string, DateTimeOffset> _restUntil = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// THE POSITIONS STANDING ASIDE (<c>U-turn-bounds</c>, R28 W5): each one its seat or its launch refused, or its turn hung, why in words, until when,
+    /// and how many times in a row. The wakes stay due and every pick steps over it, in the serial loop as in the dispatcher, so it is not the
+    /// oldest due for the lane and nothing is asked of it until the time beside it. Unlike <see cref="_restUntil"/> the serial loop reads this one.
+    /// </summary>
+    readonly Dictionary<string, Aside> _stoodAside = new(StringComparer.Ordinal);
+
+    readonly record struct Aside(string Why, DateTimeOffset Until, int Times);
+
+    /// <summary>Whether <paramref name="role"/> is standing aside now. Takes the lock.</summary>
+    bool StandingAside(string role)
+    {
+        lock (_gate) return _stoodAside.TryGetValue(role, out var aside) && aside.Until > _now();
+    }
+
+    /// <summary>
+    /// STEPS <paramref name="role"/> ASIDE until its backoff ends: <paramref name="rest"/>, or for a position refused again, the failure backoff by
+    /// how many times in a row. Answers zero, so the lane looks again at once and is given to whoever else is due; with nobody, that look
+    /// sleeps until the first rest ends (<see cref="WaitingForTheAside"/>). The refusal is told once per cause, not once per look.
+    /// </summary>
+    TimeSpan StepAside(string role, string why, TimeSpan? rest = null)
+    {
+        DateTimeOffset until;
+        bool told;
+        lock (_gate)
+        {
+            var times = _stoodAside.TryGetValue(role, out var was) ? was.Times + 1 : 1;
+            told = was.Why == why;
+            until = _now() + (rest ?? Backoff(times));
+            _stoodAside[role] = new Aside(why, until, times);
+            _refusedLast[role] = $"its seat to be tried again at {until.ToLocalTime():HH:mm} ({why})";
+            _role = role;
+        }
+        if (!told) Refused?.Invoke($"{CouncilRoles.Title(role)}: {why}");
+        Changed?.Invoke();
+        return TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// EVERY POSITION THAT IS DUE IS STANDING ASIDE, so nothing can be launched and nothing needs a look until the first of them may try again, the
+    /// next wake of a position that is not aside, or a boundary's deadline (R28 W8). A due wake that cannot be served is no reason to sweep every
+    /// five seconds.
+    /// </summary>
+    TimeSpan WaitingForTheAside(MissionEventStore events)
+    {
+        var now = _now();
+        DateTimeOffset? next;
+        string? whose;
+        string? why = null;
+        HashSet<string> aside;
+        lock (_gate)
+        {
+            aside = [.. _stoodAside.Where(a => a.Value.Until > now).Select(a => a.Key)];
+            var first = _stoodAside.Where(a => a.Value.Until > now).OrderBy(a => a.Value.Until).Select(a => (KeyValuePair<string, Aside>?)a).FirstOrDefault();
+            next = first?.Value.Until;
+            whose = first?.Key;
+            if (whose is not null) _refusedLast.TryGetValue(whose, out why);
+        }
+
+        try
+        {
+            foreach (var (role, due) in events.NextDueByRole())
+                if (!aside.Contains(role) && (next is null || due < next)) next = due;
+        }
+        catch (Exception) { /* the rests alone decide this wait; the next look reads the queue again */ }
+        if (NextBoundaryDeadline() is { } deadline && (next is null || deadline < next)) next = deadline;
+
+        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; }
+        Changed?.Invoke();
+
+        if (next is null) return _options.MaxDelay;
+        var wait = next.Value - _now();
+        return wait <= TimeSpan.Zero ? _options.BusyRetry
+            : wait > _options.MaxDelay ? _options.MaxDelay
+            : wait;
+    }
+
+    /// <summary>The sentence <paramref name="role"/> stands aside in and when it is tried again, or null while it does not. What the pages show.</summary>
+    public (string Why, DateTimeOffset Until)? StandingAsideFor(string role)
+    {
+        lock (_gate)
+            return _stoodAside.TryGetValue(role, out var aside) && aside.Until > _now() ? (aside.Why, aside.Until) : null;
+    }
+
+    /// <summary>
+    /// THE OWNER CHANGED THIS POSITION'S SEAT, so what stood it aside no longer describes it: its next look is now, on the seat he chose, and a
+    /// seat is asked again at its admission.
+    /// </summary>
+    public void SeatChanged(string role)
+    {
+        lock (_gate)
+        {
+            _stoodAside.Remove(role);
+            _refusedLast.Remove(role);
+        }
+        Changed?.Invoke();
+        Wake();
+    }
+
     /// <summary>The lane tasks still running, so Pause can wait for every one of them.</summary>
     readonly HashSet<Task> _laneTasks = [];
 
@@ -2850,7 +2972,7 @@ public sealed class MissionLoop
     {
         var now = _now();
         lock (_gate)
-            foreach (var until in _restUntil.Values)
+            foreach (var until in _restUntil.Values.Concat(_stoodAside.Values.Select(a => a.Until)))
                 if (until > now && until - now < wait) wait = until - now;
         return wait;
     }
@@ -2939,15 +3061,27 @@ public sealed class MissionLoop
         {
             // A ROLE WHOSE ONLY DUE WAKES ARE TAPE WAKES IT CANNOT CHECK NOW IS NOT A CANDIDATE: the wakes wait for the
             // next look, and they do not stand in front of another role's.
-            var due = RolesDue(events).Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
-            if (due.Count == 0) return new Picked([], Idle(events));
+            var queued = RolesDue(events);
+
+            // A POSITION STANDING ASIDE IS NOT A CANDIDATE AND IS NOT ASKED (U-turn-bounds, R28 W5): it is not the lane's oldest due, the others are served,
+            // and no seam, no seat check and no write is spent on it until its backoff ends.
+            var due = queued.Where(r => !StandingAside(r)).ToList();
+            var servable = due.Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
+
+            // ONE WHOSE ONLY WAKES CANNOT BE CHECKED STANDS ASIDE TOO (R28 W8): its windows could not be read, and reading them again in five seconds costs a sweep.
+            foreach (var role in due.Except(servable))
+                StepAside(role, "the tape wakes it holds can be checked once its holdout windows can be read");
+            if (servable.Count == 0)
+                return new Picked([], queued.Count > 0 ? WaitingForTheAside(events) : Idle(events));
+            due = servable;
 
             // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of
             // a position that cannot run would be chosen on every pass and the legacy pair would never turn. WHAT BECOMES OF
             // ITS WAKES is the refusal's kind (U-org-wakes, ORCHESTRATION § 2.5): refused for what it IS, they settle,
             // recorded, never retried; refused for this host or this launch — or by a seam that threw — they are kept.
             due = [.. due.Where(r => Runnable(events, r))];
-            if (due.Count == 0) return new Picked([], _options.BusyRetry);
+            if (due.Count == 0)
+                return new Picked([], queued.Any(StandingAside) ? WaitingForTheAside(events) : _options.BusyRetry);
 
             // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
             // role that has spent its share is. Without this line a second caller always collides
@@ -3339,13 +3473,17 @@ public sealed class MissionLoop
             // not only onto an owner's message, which is the one wake that already carried it.
             if (admission.Ceiling == AiAdmission.Ledger) return LedgerRefused(role, admission);
 
+            // REFUSED FOR ITS SEAT OR THIS HOST (U-turn-bounds, R28 W5): it steps aside under a backoff, keeping every wake, and the lane goes to whoever
+            // else is due. Left to the look below it would be the oldest due again in five seconds, and with one lane no other position would ever turn.
+            if (admission.Kind == RefusalKind.HostOrLaunch && admission.Refusal is { Length: > 0 } seatRefused) return StepAside(role, seatRefused);
+
             Changed?.Invoke();
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
 
         // LAUNCHED, so the minted id is the row's now and nothing forgets it — and a launch refusal kept for this position
         // is no longer the reason it waits.
-        lock (_gate) _refusedLast.Remove(role);
+        lock (_gate) { _refusedLast.Remove(role); _stoodAside.Remove(role); }
         minted.Launched();
 
         // A LEDGER THAT TAKES ROWS AGAIN HAS NOTHING LEFT TO SAY: the next refusal, for whatever cause,
@@ -3395,9 +3533,45 @@ public sealed class MissionLoop
         var fencedTurn = false;
         void Watch(AgentTurnEnded e) => ended = e;
         conversation.TurnEnded += Watch;
+
+        // ---- THE TURN'S WALL-CLOCK LIMIT (U-turn-bounds, R28 W2) ------------------------------------
+        // Nothing else ends a turn whose vendor stalled: the cgroup bounds processes and memory, not time, and a read of its stdout waits for
+        // end-of-file. Past the seat's limit the conversation's teardown ends the whole tree (the attempt's cgroup, the job object, the session),
+        // the session reports why, and the finally below commits it as any other ending: row closed, lease dropped, wakes given back.
+        //
+        // REAL TIME, never the loop's injected clock or delay: a stalled vendor stalls on the wall. And AWAITED before anything is released, so a
+        // limit firing as the turn ends can never reach the next turn of this conversation (as the fence's hand-over does).
+        var limit = TurnLimitOf(role);
+        var overLimit = Labels.TurnPastItsLimit(limit);
+        var timedOut = false;
+        using var clockStopped = new CancellationTokenSource();
+        async Task TheClock()
+        {
+            try { await Task.Delay(limit, clockStopped.Token); }
+            catch (OperationCanceledException) { return; }
+            Volatile.Write(ref timedOut, true);
+            try { await conversation.TimedOutAsync(overLimit); }
+            catch (Exception) { /* a conversation that cannot end its turn has nothing running to end; the token is still told */ }
+            try { own.Cancel(); }
+            catch (ObjectDisposedException) { /* its turn is over; nothing of it runs */ }
+        }
+        var clock = TheClock();
+
         try { await conversation.SendMissionAsync(prompt, own.Token); }
+        catch (OperationCanceledException) when (Volatile.Read(ref timedOut) && !ct.IsCancellationRequested)
+        {
+            /* the limit's own cancel, out of a conversation that throws it: the ending is settled below, and the loop is not paused */
+        }
         finally
         {
+            clockStopped.Cancel();
+            await clock;
+
+            // WHAT ENDED IT, said on the ending the commit reads. Only a turn that did not finish on its own: a turn that ended clean in the same
+            // instant as its limit is a turn that ended clean.
+            if (timedOut && (ended?.Failed ?? true))
+                ended = (ended ?? new AgentTurnEnded(-1, limit, overLimit, _now())) with { TimedOut = overLimit };
+
             // A turn that threw its way out — cancelled, or a runtime that will not start — must not
             // leave the card reading "working" for ever over a turn that is not happening.
             conversation.TurnEnded -= Watch;
@@ -3489,13 +3663,27 @@ public sealed class MissionLoop
         // THE VENDOR REFUSED THIS TURN FOR ITS USAGE LIMIT: every launch on its runtime waits until the
         // time it named — or, where it named none, the backoff any failed turn gets. The wait is the
         // HOLD's and not a sleep's, so a wake that arrives meanwhile finds it too.
-        if (ended?.Limit is { } limit)
+        if (ended?.Limit is { } vendorLimit)
         {
-            Hold(role, limit, errors);
+            Hold(role, vendorLimit, errors);
             return Holding(role);
         }
 
+        // A SEAT THAT CANNOT WORK NOW, OR A TURN THAT HUNG (U-turn-bounds, R28 W2, W5, W6), STANDS ASIDE under its failure backoff. Slept here, the same wait
+        // would stop every other position on the lane for it.
+        if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable) is { } trouble)
+            return StepAside(role, trouble, Backoff(errors));
+
         return failed ? Backoff(errors) : NextWait(events, attemptId, role, wake);
+    }
+
+    /// <summary>
+    /// THIS ROLE'S TURN LIMIT FROM THE HOST. Never throws, and never no limit: a host that cannot say answers the vendor's, as does a nonsense answer.
+    /// </summary>
+    TimeSpan TurnLimitOf(string role)
+    {
+        try { return _host.TurnLimit(role) is { Ticks: > 0 } limit ? limit : SeatSpec.VendorTurnLimit; }
+        catch (Exception) { return SeatSpec.VendorTurnLimit; }
     }
 
     /// <summary>
@@ -3930,11 +4118,20 @@ public sealed class MissionLoop
     {
         TurnRefusal? refusal;
         try { refusal = _host.ActivationRefusal(role); }
-        catch (Exception) { return false; }
+        catch (Exception ex)
+        {
+            StepAside(role, $"TradeAgent could not read whether it may turn ({ex.Message})");
+            return false;
+        }
         if (refusal is null) return true;
 
         if (refusal.Kind == RefusalKind.Position) SettleRefused(events, role, refusal.Words);
-        else BlockOwnerWords(events, role, refusal.Words);
+        else
+        {
+            // REFUSED FOR THIS HOST OR THIS LAUNCH, IT STEPS ASIDE (U-turn-bounds, R28 W5 and W8): the words are written once per backoff, not once per look.
+            BlockOwnerWords(events, role, refusal.Words);
+            StepAside(role, refusal.Words);
+        }
         return false;
     }
 
@@ -4141,7 +4338,8 @@ public sealed class MissionLoop
     {
         lock (_gate)
         {
-            if (ended?.Cut is { Length: > 0 } why) _cutLastTurn[role] = why;
+            // A TURN ENDED AT ITS WALL-CLOCK LIMIT WAS CUT TOO, and left whatever it was doing half done: the next one is told (R28 W2).
+            if ((ended?.Cut ?? ended?.TimedOut) is { Length: > 0 } why) _cutLastTurn[role] = why;
             else _cutLastTurn.Remove(role);
         }
     }
@@ -4610,16 +4808,19 @@ public sealed class MissionLoop
 
     /// <summary>
     /// THE SENTENCE OF A REFUSAL THAT LET THE TURN DO NO WORK, or null where the turn ran: the activation gate's at its last
-    /// check, the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>), or a seat whose tools could not
-    /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>). Such a turn answered
-    /// nothing, so it gives back every wake it took and every word typed into it.
+    /// check, the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>), a seat whose tools could not
+    /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>), a model the vendor refused before any work, or a turn ended at its wall-clock limit.
+    /// Such a turn answered nothing, so it gives back every wake it took and every word typed into it.
     /// </summary>
     static string? UnworkedRefusal(AgentTurnEnded? ended) =>
         ended?.GateRefused is { } late ? late.Refusal.Words
         : ended?.Limit is { BeforeAnyWork: true } limit ? limit.Message
         // A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): the model wrote, but nothing it tried ran, so nothing was answered.
         : ended?.ToolsUnavailable is { } dead ? dead
-        : null;
+        // A MODEL THE VENDOR REFUSED BEFORE ANY WORK (U-turn-bounds, D17): nothing was answered, and the wakes are not silently spent on it.
+        : ended?.ModelRefused is { BeforeAnyWork: true } refused ? refused.Message
+        // AND A TURN ENDED AT ITS LIMIT (R28 W2): whatever it had done, nothing says it finished, so what it was woken for stays owed.
+        : ended?.TimedOut;
 
     /// <summary>
     /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the chair's next turn — carrying which message it retries and why. A

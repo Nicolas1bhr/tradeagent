@@ -832,7 +832,9 @@ public sealed class TurnMeter
     /// process started and no request was sent, and the row says so with the refusal's kind. And so is the harness's first request
     /// withheld for its size (<see cref="AgentTurnEnded.FirstRequestWithheld"/>, <c>U-org-seats</c> fix pass 1): nothing of the turn was
     /// posted. And so is a launch the conversation refused because its seat's billing class moved between admission and exec
-    /// (<see cref="AgentTurnEnded.BillingMoved"/>, <c>U-billing-followups</c> fix pass 1): no process started.</item>
+    /// (<see cref="AgentTurnEnded.BillingMoved"/>, <c>U-billing-followups</c> fix pass 1): no process started. And so is a turn whose model the
+    /// vendor refused before any work (<see cref="AgentTurnEnded.ModelRefused"/>, <c>U-turn-bounds</c>, D17): read as the usage limit is, by the
+    /// manifest's own pattern over the stream's error event, with nothing of the turn shown before it.</item>
     /// <item><b>No usage otherwise</b> — unknown, and <see cref="AiAttemptStore.End"/> charges the
     /// reservation, as before: a turn that showed work, or whose stream said nothing recognisable, may
     /// have been billed for requests nothing measured, and unknown is never zero. That includes a turn
@@ -844,7 +846,7 @@ public sealed class TurnMeter
         ended.Usage is null
         && (ended.Limit is { BeforeAnyWork: true } || ended.KeyWithheld is not null || ended.KeyNotHeld is not null
             || ended.GateRefused is { BeforeAnyWork: true } || ended.FirstRequestWithheld is not null
-            || ended.BillingMoved is not null)
+            || ended.BillingMoved is not null || ended.ModelRefused is { BeforeAnyWork: true })
             ? new TurnPrice(0m, Currency(), null)
             : CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
 
@@ -885,11 +887,13 @@ public sealed class TurnMeter
     /// </summary>
     static TurnContext ContextOf(AgentTurnEnded ended, int? promptChars, PacketBytes? packet) =>
         TurnContext.Read(ended.Raw, promptChars, ended.Usage,
-            ended.Outcome ?? (ended.Limit is null ? null : VendorLimit.Ended))
+            ended.Outcome ?? (ended.Limit is not null ? VendorLimit.Ended
+                : ended.ModelRefused is not null ? ModelRefusal.Ended
+                : ended.TimedOut is not null ? AgentTurnEnded.EndedTimedOut : null))
         with
         {
             Refused = ended.Limit?.Message ?? ended.KeyWithheld ?? ended.KeyNotHeld ?? ended.GateRefused?.Refusal.Words
-                ?? ended.FirstRequestWithheld ?? ended.BillingMoved ?? ended.ToolsUnavailable,
+                ?? ended.FirstRequestWithheld ?? ended.BillingMoved ?? ended.ToolsUnavailable ?? ended.ModelRefused?.Message ?? ended.TimedOut,
             GateKind = ended.GateRefused?.Refusal.Kind.ToString(),
             CanonVersion = ended.Canon?.Version,
             CanonSha256 = ended.Canon?.Sha256,

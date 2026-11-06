@@ -479,6 +479,12 @@ public sealed class AppHost : IAsyncDisposable
             seated?.Allowance ?? AppAllowance);
     }
 
+    /// <summary>A test's own limit on a turn, in place of the seat's, so a hung puppet is seen ending in seconds. Null in the product.</summary>
+    internal TimeSpan? TurnLimitUnderTest { get; set; }
+
+    /// <summary>THE WALL-CLOCK LIMIT OF ONE TURN OF <paramref name="role"/> (<c>U-turn-bounds</c>): its seat's. A seat that cannot be read launches nothing.</summary>
+    public TimeSpan TurnLimit(string role) => TurnLimitUnderTest ?? SeatFor(role).WallClock;
+
     /// <summary>
     /// THE CHAIR'S SEAT FOR A LAUNCH NOBODY NAMED (the owner's typed turn): the app's own runtime and model, the app-wide allowance.
     /// </summary>
@@ -643,6 +649,14 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public string HomeFor(string role) =>
         Agent?.Workspaces.TryGetValue(role, out var w) == true && w.Length > 0 ? w : Paths.RoleHome(role);
+
+    /// <summary>
+    /// WHY <paramref name="role"/> IS NOT RUNNING FOR NOW AND WHEN IT IS LOOKED AT AGAIN (<c>U-turn-bounds</c>), in the owner's words, or null. What the chart
+    /// page shows on its row.
+    /// </summary>
+    internal string? StandingAsideFor(string role) => Mission?.StandingAsideFor(role) is { } aside
+        ? Labels.SeatStandingAside(aside.Why, aside.Until.ToLocalTime().ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture))
+        : null;
 
     /// <summary>
     /// WHY <paramref name="role"/>'S FOLDER REFUSES ITS LAUNCHES — the last start could not rebuild it (<see cref="WorkspaceBuilder.RefusalFor"/>)
@@ -1875,6 +1889,8 @@ public sealed class AppHost : IAsyncDisposable
         try { runtime = SeatRuntimeFor(position) ?? Gateway.Settings.SelectedRuntimeId; }
         catch (Exception) { runtime = Gateway.Settings.SelectedRuntimeId; }
         var was = org.ChooseSeatModel(position, model, BrokerSeat.IsCatalogModel, runtime, KnownRuntime, DateTimeOffset.UtcNow);
+        // WHATEVER STOOD IT ASIDE WAS ABOUT THE SEAT IT JUST LEFT: its next look is now.
+        Mission?.SeatChanged(position);
         return $"You set {position} to run on {BrokerSeat.ModelWords(model)}" +
                $"{(was is null ? "" : $", in place of {was}")}. Its next turn runs on it, after its offered tools are checked for that model.";
     });
@@ -2738,6 +2754,9 @@ public sealed class AppHost : IAsyncDisposable
 
         /// <summary>The activation seam's refusal for one position. See <see cref="AppHost.ActivationRefusal"/>.</summary>
         public TurnRefusal? ActivationRefusal(string role) => host.ActivationRefusal(role);
+
+        /// <summary>One turn's wall-clock limit. See <see cref="AppHost.TurnLimit"/>.</summary>
+        public TimeSpan TurnLimit(string role) => host.TurnLimit(role);
 
         /// <summary>
         /// Every active position as the chart holds it now — kind, unit depth, level (<see cref="OrgStore.Roster"/>,

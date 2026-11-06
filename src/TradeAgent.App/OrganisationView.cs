@@ -42,7 +42,7 @@ sealed record OrganisationRead(
 /// calibration as the app scores it at read (empty where no scorecard was read) and, where its home folder is refused, the refusal's sentence.
 /// </summary>
 sealed record OrgPositionWords(string Id, string Role, string Status, string Seat, string Cell, string Billing, string Calibration = "", string? HomeRefusal = null,
-    string? Model = null)
+    string? Model = null, string? Aside = null)
 {
     /// <summary>The position's readable name (<see cref="OrgNames"/>); its id stays beside it on the page.</summary>
     public string Name { get; init; } = Id;
@@ -60,7 +60,8 @@ sealed record OrgUnitWords(string Id, int Depth, string Title, string Line, IRea
 sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUnitWords> Units)
 {
     /// <summary>The words of one read, or of records that could not be read (<paramref name="read"/> null, <paramref name="unreadable"/> the reason).</summary>
-    public static OrganisationWords Of(OrganisationRead? read, string? unreadable, Func<string, string?>? homeRefusal = null)
+    public static OrganisationWords Of(OrganisationRead? read, string? unreadable, Func<string, string?>? homeRefusal = null,
+        Func<string, string?>? standingAside = null)
     {
         if (read is null)
             return new OrganisationWords(unreadable is { Length: > 0 } ? Labels.SurfaceUnreadable(unreadable) : Labels.SurfaceNotRead, "", []);
@@ -77,7 +78,8 @@ sealed record OrganisationWords(string Status, string Proof, IReadOnlyList<OrgUn
             {
                 Name = names.Position(p.Id),
                 Calibration = read.Calibration is { } cards && cards.TryGetValue(p.Id, out var card) ? Labels.CalibrationWords(card) : "",
-                HomeRefusal = homeRefusal?.Invoke(p.Id)
+                HomeRefusal = homeRefusal?.Invoke(p.Id),
+                Aside = standingAside?.Invoke(p.Id)
             }).ToList();
             return new OrgUnitWords(unit.Id, depth, names.Unit(unit.Id), UnitLine(unit, byUnit[unit.Id], names), positions, unit.HeadPositionId);
         }).ToList();
@@ -209,7 +211,7 @@ sealed class OrganisationPage
         {
             if (_src.Org() is { } org && _src.Attempts() is { } attempts)
             {
-                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf, _src.Scorecards()), null, _src.HomeRefusal);
+                words = OrganisationWords.Of(OrganisationRead.From(org, attempts, _src.ProofHeld(), _src.SeatOf, _src.Scorecards()), null, _src.HomeRefusal, _src.StandingAside);
                 read = true;
             }
             else words = OrganisationWords.Of(null, null);
@@ -270,6 +272,8 @@ sealed class OrganisationPage
         // THE OWNER'S REPAIR (U-repair-position-home): the refusal's sentence and its two-press button, made the first time this row's folder is
         // refused and kept — hidden, and disarmed, once the refusal is gone — and the words of the last repair under them.
         var refusal = Ui.With(Small(), t => t.Foreground = Theme.Caution);
+        // WHY IT IS NOT RUNNING FOR NOW (U-turn-bounds): the seat's trouble, in its own sentence, and when it is looked at again.
+        var aside = Ui.With(Small(), t => t.Foreground = Theme.Caution);
         var repaired = Small();
         var repair = new StackPanel { Spacing = Theme.S1 };
         Button? press = null;
@@ -278,7 +282,7 @@ sealed class OrganisationPage
         var models = new WrapPanel { Orientation = Orientation.Horizontal };
         var switched = Small();
         IReadOnlyList<string> offered = [];
-        var row = Ui.Col(Theme.S1, head, role, seat, models, switched, cell, billing, calibration, refusal, repair, repaired);
+        var row = Ui.Col(Theme.S1, head, role, seat, aside, models, switched, cell, billing, calibration, refusal, repair, repaired);
         row.Margin = new Thickness(Theme.S3, 0, 0, 0);
 
         return (row, p =>
@@ -295,6 +299,8 @@ sealed class OrganisationPage
             if (billing.IsVisible != p.Billing.Length > 0) billing.IsVisible = p.Billing.Length > 0;
             OrgText.Set(calibration, p.Calibration);
             if (calibration.IsVisible != p.Calibration.Length > 0) calibration.IsVisible = p.Calibration.Length > 0;
+            OrgText.Set(aside, p.Aside ?? "");
+            aside.IsVisible = p.Aside is not null;
             OrgText.Set(refusal, p.HomeRefusal ?? "");
             refusal.IsVisible = p.HomeRefusal is not null;
             if (p.HomeRefusal is not null && press is null && _src.RepairHome is { } act)

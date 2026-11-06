@@ -95,6 +95,9 @@ public sealed class RoutedChat : IAgentConversation
 
     public Task CancelAsync() => _chief.CancelAsync();
 
+    /// <inheritdoc />
+    public Task TimedOutAsync(string words) => _chief.TimedOutAsync(words);
+
     /// <summary>The owner's chat never stops the chief's session; the loop owns it.</summary>
     public Task StopAsync() => Task.CompletedTask;
 }
