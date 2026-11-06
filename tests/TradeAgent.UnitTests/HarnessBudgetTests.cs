@@ -116,6 +116,30 @@ public class HarnessBudgetTests : IDisposable
         Assert.NotEqual(row.ReservedCost, row.Cost);
     }
 
+    /// <summary>
+    /// WHAT FINISHED REQUESTS MEASURED SURVIVES A LATER REQUEST'S FAILURE (the Codex review). The first request reports; the second is refused. RED before the fix
+    /// pass: only a cancelled turn kept the figures, so this one was charged its reservation with the tokens gone. A response that reported nothing leaves no sum.
+    /// </summary>
+    [Fact]
+    public async Task A_harness_turn_failed_at_a_later_request_keeps_what_the_earlier_ones_measured()
+    {
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 5_000, output: 50));
+        var requests = 0;
+        provider.Arriving = () => { if (Interlocked.Increment(ref requests) == 2) provider.AlwaysAnswer = System.Net.HttpStatusCode.Unauthorized; };
+
+        using var runtime = Runtime(provider, TurnAllowance.From(3_000_000, 20_000));
+        var conversation = Research(runtime);
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        await conversation.SendMissionAsync("## Situation");
+
+        Assert.Equal(ApiConversation.EndedProviderFailed, ended!.Outcome);
+        Assert.Equal(5_000, ended.Usage!.InputTokens);
+        Assert.Contains("was not measured", ended.UsageUnreported);
+    }
+
     // ---- the bound, before each request -----------------------------------------------------------
 
     /// <summary>
