@@ -745,7 +745,7 @@ public sealed class ForwardRuns
 
         if (_gateway.Requests.Get(request) is
             { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED } row)
-            _deployments.Resolve(request, $"{row.State} — resting at the venue", _now());
+            _deployments.Resolve(request, TradingGateway.RestingAnswer(row.State), _now());
 
         return (request, true);
     }
@@ -827,7 +827,7 @@ public sealed class ForwardRuns
         var exitsOwnMinute = latest.Kind == DeploymentOpKind.Exit && latest.BarOpenTime == bar.OpenTime;
         if (!newest && !exitsOwnMinute) return false;
 
-        var missing = _gateway.ProtectionMissing(ops);
+        var missing = _gateway.ProtectionMissing(ops, _deployments.BookOf(deployment, ops));
         if (missing.Count == 0) return false;
 
         var held = Books(deployment, bars, grid).At(bar, grid.ClosedThrough(bar.OpenTime));

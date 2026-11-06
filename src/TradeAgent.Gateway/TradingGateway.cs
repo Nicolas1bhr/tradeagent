@@ -1216,7 +1216,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             var unresolved = ops.Count(o => !o.IsSettled);
             var owed = CloseOwedBecause(d, ops);
             var book = _deployments.BookOf(d, ops, ledger);
-            var unprotected = !d.IsEnded && book.Held > 0m && ProtectionMissing(ops) is { Count: > 0 } missing
+            var unprotected = !d.IsEnded && book.Held > 0m && ProtectionMissing(ops, book) is { Count: > 0 } missing
                 ? $"UNPROTECTED: it holds {AllocationRow.Num(book.Held)} with {MissingWords(missing)}. TradeAgent keeps asking for it by itself while the run is active."
                 : null;
             return new DeploymentReading(
@@ -1244,7 +1244,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 .Select(d => new StatusDeployment(d.Id, Short(d.VersionId), d.Symbol, d.State,
                     d.CloseOwed is { } owed
                         ? $"{d.EndReason ?? "no reason recorded"}. {OwedSentence(owed)}"
-                        : d.Unprotected ?? d.SuspendedReason ?? d.EndReason,
+                        : string.Join(" ", new[] { d.SuspendedReason ?? d.EndReason, d.Unprotected }.Where(w => w is { Length: > 0 })) is { Length: > 0 } why ? why : null,
                     d.StartedAt, d.CursorOpenTime, d.Operations, d.Unresolved))
                 .ToList();
             return shown.Count == 0 ? null : shown;
@@ -1304,24 +1304,39 @@ public sealed partial class TradingGateway : IAsyncDisposable
         return line;
     }
 
-    /// <summary>
-    /// WHAT A RUN'S POSITION DECLARED AND DOES NOT HAVE AT THE VENUE, read off the run's own operations (<c>U-paper-t0</c> item 3): the one reading the runner asks again
-    /// by and every surface says. Whether a position is open is the caller's to ask, of the books; this says what is missing from one if there is. Empty while the
-    /// run's latest word is an exit or a flatten on its way, which takes the protection off first on purpose.
-    ///
-    /// <para><b>Each of the stop and the target</b>: the latest of its kind since the run's latest entry, when it stood and is gone or never stood. A kind with no
-    /// operation since the entry was never declared. A kind with one that <see cref="ProtectionMayBeWorking"/>, of any age, is there as far as anyone can say — UNKNOWN
-    /// reads as working, the direction that never sells twice. And an order with a fill on its row is NOT missing, however the books read: the record can say FILLED
-    /// while the fill is still on its way to the ledger, and a second stop asked for in that gap sells what the first one sold.</para>
-    ///
-    /// <para><b><paramref name="asOf"/></b> reads the position at a past minute's close, for a note whose words must not move when it is replayed: only what that
-    /// minute's operations say, and only what never stood, refused before the wire or rejected at it, which is settled for good. A stop that was resting then and was
-    /// cancelled since must not read as missing then.</para>
-    /// </summary>
-    internal IReadOnlyList<MissingProtection> ProtectionMissing(IReadOnlyList<DeploymentOpRow> ops, DateTimeOffset? asOf = null)
-    {
-        if (asOf is { } close) ops = [.. ops.Where(o => o.BarOpenTime <= close)];
+    /// <summary>The answer a stop or target's operation carries once the venue holds it.</summary>
+    internal static string RestingAnswer(ExecutionState state) => $"{state} — resting at the venue";
 
+    /// <summary>
+    /// WHAT A RUN'S POSITION DECLARED AND DOES NOT HAVE AT THE VENUE NOW, read off the run's own operations (<c>U-paper-t0</c> item 3): the one reading the runner asks again
+    /// by and every surface says. Whether a position is open is the caller's to ask, of the books; this says what is missing from one if there is.
+    ///
+    /// <para><b>Each of the stop and the target</b>: the latest of its kind since the run's latest entry, when nothing of its kind <see cref="ProtectionMayBeWorking"/>, of
+    /// any age: UNKNOWN reads as working, the direction that never sells twice. And while the run's <paramref name="book"/> is incomplete an order with a fill on its row
+    /// is NOT missing, however the books read: the record can say FILLED while the fill is still on its way to the ledger, and a second stop asked for in that gap sells
+    /// what the first one sold. With the book whole, what is still held after a fill is a position with nothing protecting it.</para>
+    /// </summary>
+    internal IReadOnlyList<MissingProtection> ProtectionMissing(IReadOnlyList<DeploymentOpRow> ops, RunBook book) =>
+        LatestProtection(ops, last =>
+            !ops.Any(o => o.Kind == last.Kind && ProtectionMayBeWorking(o))
+            && (book.Complete || _requests.Get(last.RequestId) is not { FilledQuantity: > 0m }));
+
+    /// <summary>
+    /// THE SAME AT THE CLOSE OF A PAST MINUTE, for a note whose words must not move when it is replayed: only what that minute's operations say, and only what never stood,
+    /// refused before the wire or rejected at it, read off the operation's own settled answer. What the row says now is about now: a stop resting at that close and
+    /// cancelled or rejected since did not read as missing then.
+    /// </summary>
+    IReadOnlyList<MissingProtection> ProtectionThatNeverStood(IReadOnlyList<DeploymentOpRow> ops, DateTimeOffset close) =>
+        LatestProtection([.. ops.Where(o => o.BarOpenTime <= close)], last =>
+            Deployments.RefusedBeforeTheWire(last, _requests.Get(last.RequestId))
+            || last.Answer?.StartsWith(nameof(ExecutionState.REJECTED), StringComparison.Ordinal) == true);
+
+    /// <summary>
+    /// THE LATEST STOP AND THE LATEST TARGET SINCE THE RUN'S LATEST ENTRY THAT <paramref name="gone"/> SAYS OF: a kind with no operation since the entry was never declared. Empty
+    /// while the run's latest word is an exit or a flatten on its way, which takes the protection off first on purpose.
+    /// </summary>
+    IReadOnlyList<MissingProtection> LatestProtection(IReadOnlyList<DeploymentOpRow> ops, Func<DeploymentOpRow, bool> gone)
+    {
         var latest = ops.LastOrDefault(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten);
         if (latest is null) return [];
         if (latest.Kind != DeploymentOpKind.Entry && !Deployments.RefusedBeforeTheWire(latest, _requests.Get(latest.RequestId))) return [];
@@ -1335,13 +1350,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         foreach (var kind in new[] { DeploymentOpKind.Stop, DeploymentOpKind.Target })
         {
             var asked = ops.Skip(entry + 1).Where(o => o.Kind == kind).ToList();
-            if (asked.Count == 0) continue;
-            var last = asked[^1];
-            var row = _requests.Get(last.RequestId);
-            var gone = asOf is null
-                ? !ops.Any(o => o.Kind == kind && ProtectionMayBeWorking(o)) && row is not { FilledQuantity: > 0m }
-                : Deployments.RefusedBeforeTheWire(last, row) || row is { State: ExecutionState.REJECTED };
-            if (gone) missing.Add(new MissingProtection(last, asked.Count));
+            if (asked.Count > 0 && gone(asked[^1])) missing.Add(new MissingProtection(asked[^1], asked.Count));
         }
 
         return missing;
@@ -1368,10 +1377,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
     /// <summary>
     /// THE DAY NOTE'S SENTENCE (<c>U-paper-t0</c> item 3): that the position stood unprotected at the close of the minute named, or null. Read at that minute, so a replay of
-    /// the bar that closes the day says the same words under the same id (<see cref="ProtectionMissing"/>).
+    /// the bar that closes the day says the same words under the same id (<see cref="ProtectionThatNeverStood"/>).
     /// </summary>
     internal string? UnprotectedAtTheClose(StrategyDeploymentRow deployment, RunBook book, DateTimeOffset close) =>
-        book.Held > 0m && ProtectionMissing(_deployments.OpsOf(deployment.Id), close) is { Count: > 0 } missing
+        book.Held > 0m && ProtectionThatNeverStood(_deployments.OpsOf(deployment.Id), close) is { Count: > 0 } missing
             ? $"UNPROTECTED at that day's close: it held {AllocationRow.Num(book.Held)} with {MissingWords(missing)}"
             : null;
 
@@ -1786,6 +1795,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
             if (request.State == ExecutionState.CREATED)
             {
                 if (SettleAStrandedDispatch(deployment, op, request, now)) settled++;
+                continue;
+            }
+
+            // A STOP OR A TARGET IS ANSWERED BY THE VENUE'S ACKNOWLEDGEMENT (ForwardRuns.RestAsync), and a process that died between the acknowledgement and that
+            // write left an operation no terminal state answers while the order rests: the cursor held, and the minute's other protection and the maximum hold
+            // behind it. Replaying the entry's protection used to write it by chance; one asked for again is, rightly, not asked for twice (the Codex review).
+            if (op.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target
+                && request is { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED })
+            {
+                if (_deployments.Resolve(op.RequestId, RestingAnswer(request.State), now)) settled++;
                 continue;
             }
 
@@ -4123,6 +4142,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     public async Task<IReadOnlyList<InstrumentInfo>> InstrumentsAsync(CancellationToken ct = default)
     {
         _instrumentCache = await Connector.GetInstrumentsAsync(ct);
+        _instrumentsUnread = null;
         return _instrumentCache;
     }
 
@@ -9154,7 +9174,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         try
         {
             await InstrumentsAsync(ct);
-            return _instrumentsUnread = null;
+            return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { return _instrumentsUnread = ex.Message.ReplaceLineEndings(" "); }
