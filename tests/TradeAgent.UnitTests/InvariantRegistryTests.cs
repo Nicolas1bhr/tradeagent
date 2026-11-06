@@ -94,6 +94,7 @@ public class InvariantRegistryTests
         Assert.Null(Read("[Fact] public void T() { Assert.True(a); if (b) return; Assert.True(c); }"));
         Assert.Null(Read("[Theory, InlineData(1)] public void T(int x) { Assert.Equal(1, x); }"));
         Assert.Null(Read("[Fact] public Task T() => OnThePage((p, h) => { Assert.NotNull(p); return Task.CompletedTask; });"));
+        Assert.Contains("returns before", Read("[Fact] public Task T() => OnThePage((p, h) => { if (OperatingSystem.IsWindows()) return Task.CompletedTask; Assert.NotNull(p); return Task.CompletedTask; });"));
         Assert.Null(Read("[Fact] public void T() { Action a = () => { if (x) return; Go(); }; a(); Assert.True(true); }"));
         Assert.Null(Read("[Fact] public Task T() { return OnThePage((p, h) => { Assert.NotNull(p); }); }"));
         Assert.Null(Hollow(Parse("[Fact(Skip = \"why\")] public void T() { Assert.True(true); }"), ProofPlatform.None));
@@ -108,22 +109,26 @@ public class InvariantRegistryTests
         if (Regex.IsMatch(t.Attributes, @"\bSkip\s*=") && runsOn != ProofPlatform.None) return "skipped, and the record does not say so";
         if (t.Body.Trim(' ', '\t', '\r', '\n', '{', '}').Length == 0) return "empty";
         if (!Assertion.IsMatch(t.Body)) return "asserts nothing";
-        return ExitsBeforeProof(t, @"\breturn\b[^;]*;") ? "returns before its first assertion" : null;
+        return ExitsBeforeProof(t.Body, @"\breturn\b[^;]*;") ? "returns before its first assertion" : null;
     }
 
     static readonly Regex Assertion = new(@"\bAssert\w*\s*[.(<]");
 
+    static readonly Regex Lambda = new(@"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}");
+
     /// <summary>
-    /// Whether <paramref name="exit"/> stands in <paramref name="t"/>'s own body, lambdas read out, before its first assertion there and with
-    /// code still after it: a Task's closing <c>return Run(...)</c> is its body, not a way out of it.
+    /// Whether <paramref name="exit"/> stands in <paramref name="body"/>'s own code, lambdas read out, before its first assertion there and with
+    /// code still after it: a Task's closing <c>return Run(...)</c> is its body, not a way out of it. A lambda that holds assertions is read
+    /// the same way, because a callback that leaves first asserts nothing either; one that holds none is a helper, and its returns are its own.
     /// </summary>
-    static bool ExitsBeforeProof(TestSource t, string exit)
+    static bool ExitsBeforeProof(string body, string exit)
     {
-        var own = Regex.Replace(t.Body, @"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}", " ");
+        var own = Lambda.Replace(body, " ");
         var first = Assertion.Match(own);
         var leaves = Regex.Match(own, exit);
-        if (!leaves.Success || (first.Success && first.Index < leaves.Index)) return false;
-        return own[(leaves.Index + leaves.Length)..].Trim(' ', '\t', '\r', '\n', '{', '}', ';').Length > 0;
+        if (leaves.Success && (!first.Success || leaves.Index < first.Index)
+            && own[(leaves.Index + leaves.Length)..].Trim(' ', '\t', '\r', '\n', '{', '}', ';').Length > 0) return true;
+        return Lambda.Matches(body).Any(l => Assertion.IsMatch(l.Value) && ExitsBeforeProof(l.Value[(l.Value.IndexOf('{') + 1)..^1], exit));
     }
 
     /// <summary>
@@ -148,6 +153,8 @@ public class InvariantRegistryTests
         Assert.True(PassesSilently(Parse("[Theory, InlineData(1)] public void T(int x) { if (OperatingSystem.IsWindows()) return; Assert.True(true); }")));
         Assert.True(PassesSilently(Parse("[Fact] public Task T() { if (OperatingSystem.IsWindows()) return Task.CompletedTask; Assert.True(true); return Done; }")));
 
+        Assert.True(PassesSilently(Parse("[Fact] public Task T() => OnThePage(p => { if (OperatingSystem.IsWindows()) return; Assert.NotNull(p); });")));
+
         Assert.False(PassesSilently(Parse("[OnlyOnFact(\"why\", \"linux\")] public void T() { if (!OperatingSystem.IsLinux()) return; Assert.True(true); }")));
         Assert.False(PassesSilently(Parse("[Fact] public void T() { Assert.True(a); if (OperatingSystem.IsWindows()) return; Assert.True(b); }")));
         Assert.False(PassesSilently(Parse("[Fact] public void T() { if (OperatingSystem.IsWindows()) Go(); Assert.True(a); }")));
@@ -156,7 +163,7 @@ public class InvariantRegistryTests
 
     static bool PassesSilently(TestSource t) =>
         Regex.IsMatch(t.Attributes, @"[\[,]\s*(?:Fact|Theory)\b")
-        && ExitsBeforeProof(t, @"\bif\s*\([^;{}]*OperatingSystem\.Is\w+\(\)[^;{}]*\)\s*\{?\s*return\b[^;]*;");
+        && ExitsBeforeProof(t.Body, @"\bif\s*\([^;{}]*OperatingSystem\.Is\w+\(\)[^;{}]*\)\s*\{?\s*return\b[^;]*;");
 
     /// <summary>One test's source, through the same scan the tree goes through.</summary>
     static TestSource Parse(string test)

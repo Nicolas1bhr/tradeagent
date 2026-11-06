@@ -365,16 +365,14 @@ public class ProvingHomeTests(ITestOutputHelper log)
     /// THE EVIDENCE PATH (<c>docs/ORCHESTRATION.md</c> § 8, SIM-001: "the proving ground's store read by no evidence path"): ALL OF <c>src/</c>
     /// BUT THE PROVING GROUND'S OWN FOLDER (R29 F-E4). A hand-picked list of the files that judge and record missed the ones that serve —
     /// the allocation and deployment stores, the pipe, the app's pages — and every file added after it, so no file is left to be remembered.
-    /// The registry alone is left out: it holds this ground's file and test names as data, and no code path reads it
-    /// (<c>InvariantRegistryTests.No_code_path_but_the_owners_oversight_page_reads_the_registry</c>).
+    /// The registry's strings alone are not read: they are this ground's file and test names, held as data. Its code is read as all the rest is.
     /// </summary>
     static IEnumerable<string> EvidencePath(string root)
     {
         var src = Path.Combine(root, "src");
         return Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories)
             .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
-            .Where(f => !f.StartsWith("src/TradeAgent.Core/Proving/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal) && !f.Contains("/obj/", StringComparison.Ordinal))
-            .Where(f => f != "src/TradeAgent.Core/InvariantRegistry.cs");
+            .Where(f => !f.StartsWith("src/TradeAgent.Core/Proving/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal) && !f.Contains("/obj/", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -424,7 +422,7 @@ public class ProvingHomeTests(ITestOutputHelper log)
     /// </summary>
     static IEnumerable<string> ProvingNames(string rel, string code, string[] types)
     {
-        var named = new Regex(@"(?<![\w.])(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
+        var named = new Regex(@"(?<!\w)(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
         foreach (Match m in named.Matches(code))
             yield return $"{rel}: {m.Groups[1].Value}{(m.Groups[2].Success && char.IsUpper(m.Groups[2].Value[0]) ? "." + m.Groups[2].Value : "")}";
         foreach (Match m in Regex.Matches(code, @"\busing\s+(?:static\s+)?(\w+\s*=\s*)?(?:global::)?TradeAgent\.Core\.Proving\b"))
@@ -464,7 +462,8 @@ public class ProvingHomeTests(ITestOutputHelper log)
 
         var found = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var rel in files)
-            found.UnionWith(ProvingNames(rel, InvariantRegistryTests.Strip(File.ReadAllText(Path.Combine(root, rel)), keepStrings: true), types));
+            found.UnionWith(ProvingNames(rel, InvariantRegistryTests.Strip(File.ReadAllText(Path.Combine(root, rel)),
+                keepStrings: rel != "src/TradeAgent.Core/InvariantRegistry.cs"), types));
 
         foreach (var f in found) log.WriteLine(f);
         Assert.Equal(Allowed.Order(StringComparer.Ordinal).ToArray(), found.ToArray());
@@ -483,7 +482,8 @@ public class ProvingHomeTests(ITestOutputHelper log)
         Assert.Equal(["x.cs: the words PROVING_RUN"], Names("""var rows = Read("select id from PROVING_RUN");"""));
         Assert.Equal(["x.cs: the words proving.db"], Names("""var f = Path.Combine(home, "proving.db");"""));
         Assert.Equal(["x.cs: using TradeAgent.Core.Proving"], Names("using TradeAgent.Core.Proving;"));
-        Assert.Equal(["x.cs: an alias of the proving namespace"], Names("using P = TradeAgent.Core.Proving; var s = new P.ProvingStore(path);"));
+        Assert.Equal(["x.cs: ProvingStore", "x.cs: an alias of the proving namespace"], Names("using P = TradeAgent.Core.Proving; var s = new P.ProvingStore(path);"));
+        Assert.Equal(["x.cs: ProvingStore"], Names("using C = TradeAgent.Core; var s = new C.Proving.ProvingStore(path);"));
         Assert.Equal(["x.cs: ProvingStore", "x.cs: an alias of the proving namespace"], Names("using S = global::TradeAgent.Core.Proving.ProvingStore;"));
         Assert.Empty(Names("var proving = false; Referee.Judge(version);"));
     }
