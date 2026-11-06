@@ -757,6 +757,13 @@ public static class SeatProfile
         VerifyAsync(manifest, exe, argv, workingDirectory, probe, SeatLaunch.Cli, ct);
 
     /// <summary>
+    /// THE VERDICT ON A SEAT WITH NOTHING TO VERIFY: nothing refused, and who pays <c>unknown</c> — except a test host's puppet whose test
+    /// declared its sign-in's class (<see cref="RuntimeManifest.TestHostPuppetBilling"/>, <c>U-turn-reservation</c>).
+    /// </summary>
+    public static SeatVerdict Unverified(RuntimeManifest manifest) =>
+        manifest.TestHostPuppetBilling is { } billed ? SeatVerdict.None with { BillingClass = billed } : SeatVerdict.None;
+
+    /// <summary>
     /// <see cref="VerifyAsync(RuntimeManifest, string, IReadOnlyList{string}, string, ISeatProbe, CancellationToken)"/> FOR ONE SEAT
     /// CLASS (<c>U-thinking-seats-c</c>): that class's deny set, keys, environment and allowlists. For the broker class, before
     /// anything is probed: its fields are this build's (<see cref="BrokerSeat.OverrideRefusal"/>), the door is open, and the argv
@@ -764,13 +771,6 @@ public static class SeatProfile
     /// expected set (<see cref="BrokerSeat.VerifySurfaceAsync"/>) — so a broker seat that would be offered a host tool or <c>exec</c>
     /// is refused before its admission writes anything.
     /// </summary>
-    /// <summary>
-    /// THE VERDICT ON A SEAT WITH NOTHING TO VERIFY: nothing refused, and who pays <c>unknown</c> — except a test host's puppet whose test
-    /// declared its sign-in's class (<see cref="RuntimeManifest.TestHostPuppetBilling"/>, <c>U-turn-reservation</c>).
-    /// </summary>
-    public static SeatVerdict Unverified(RuntimeManifest manifest) =>
-        manifest.TestHostPuppetBilling is { } billed ? SeatVerdict.None with { BillingClass = billed } : SeatVerdict.None;
-
     public static async Task<SeatVerdict> VerifyAsync(RuntimeManifest manifest, string exe, IReadOnlyList<string> argv,
         string workingDirectory, ISeatProbe probe, SeatLaunch launch, CancellationToken ct)
     {
