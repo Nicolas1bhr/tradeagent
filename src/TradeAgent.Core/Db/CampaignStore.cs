@@ -997,7 +997,34 @@ public sealed class CampaignStore(Database db)
                 + "spend a turn on it. Any final judgements it has left can still be asked for. "
                 + renewal.Next(campaign.Id);
 
-        return PotKept(rule, campaign, made, through);
+        return PotKept(rule, campaign, made, through)
+            + (rule.Exploration && campaign.IsOpen && campaign.ExplorationBudget > 0
+                ? " A parent can still be promoted here: a version that declares one that stands promoted draws on the other pot, and a "
+                  + "final judgement on a version frozen before this campaign's cutoff can promote one."
+                : "");
+    }
+
+    /// <summary>
+    /// EVERY VERSION WITH A COMPLETED RUN OVER THIS CAMPAIGN'S OWN DATASET REGISTERED ANYWHERE IN ITS LINEAGE: what <c>trade verdict</c>
+    /// admits a version on, because a judgement is spent only on a program already measured on the months it was allowed to see.
+    /// </summary>
+    public IReadOnlySet<string> MeasuredVersions(CampaignRow campaign)
+    {
+        ArgumentNullException.ThrowIfNull(campaign);
+        return db.Read(_ =>
+        {
+            var versions = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var link in Lineage(campaign.Id))
+            {
+                using var c = db.Cmd("""
+                    SELECT DISTINCT t.version_id FROM strategy_trial t JOIN strategy_run r ON r.id = t.run_id
+                     WHERE t.campaign_id=$id AND r.dataset_id=$set AND r.outcome=$outcome
+                    """, ("$id", link), ("$set", campaign.HoldoutDatasetId), ("$outcome", nameof(Strategy.BacktestOutcome.COMPLETED)));
+                using var r = c.ExecuteReader();
+                while (r.Read()) versions.Add(r.GetString(0));
+            }
+            return (IReadOnlySet<string>)versions;
+        });
     }
 
     /// <summary>A full pot with a way on: the other pot, or the owner's renewal.</summary>

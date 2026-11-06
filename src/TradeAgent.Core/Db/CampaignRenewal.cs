@@ -126,14 +126,15 @@ public sealed class CampaignRenewal(Database db)
     /// <list type="bullet">
     /// <item><b>A version stands Promoted.</b> Of any pair, as <see cref="CampaignStore.IsExploration"/> reads it: a child ported to this
     /// pair is a refinement charged here. Read through <see cref="Promotions.Standing"/>, so a promotion since invalidated is none.</item>
-    /// <item><b>This campaign could still promote one.</b> It has a judgement left and holds a version of its pair frozen BEFORE its
-    /// cutoff, not retired, bounded, and not yet judged under it. Only such a version can pass the policy's forward-evidence clause
-    /// (<see cref="Strategy.ScoringPolicyV1.Reason"/>). On a campaign over history no version qualifies, so this is what makes a first campaign's
-    /// pot its end; on one over fresh months, every version frozen before them does until it is judged.</item>
+    /// <item><b>This campaign could still promote one.</b> A version of its pair, frozen BEFORE its cutoff and bounded, with a completed run
+    /// registered under this campaign's lineage (what <c>trade verdict</c> admits a version on, and with the pot full no such run can be
+    /// made now), and no verdict recorded under this campaign. It must also be either already charged, which a stop or a crash leaves
+    /// obtainable at no second cost, or not retired with a judgement left. Only a version frozen before the cutoff can pass the policy's
+    /// forward-evidence clause (<see cref="Strategy.ScoringPolicyV1.Reason"/>). On a campaign over history no version qualifies, so this
+    /// is what makes a first campaign's pot its end; on one over fresh months, a version measured there does until it is judged.</item>
     /// </list>
     /// <para><b>A paper-eligible version is not a promotable parent</b> (R30 D15): it was measured on months that predate its freeze, and
-    /// counting it would widen the search budget on an unproven basis. Once this answers false it stays false, because a version made
-    /// later is frozen after the cutoff.</para>
+    /// counting it would widen the search budget on an unproven basis.</para>
     /// </summary>
     public bool ParentCanBePromoted(CampaignRow campaign)
     {
@@ -143,35 +144,38 @@ public sealed class CampaignRenewal(Database db)
             var promotions = new Promotions(db);
             if (promotions.PromotedVersions().Any(version => promotions.Standing(version).IsPromoted)) return true;
 
-            var campaigns = new CampaignStore(db);
-            if (campaigns.JudgementsSpent(campaign.Id) >= campaign.VerdictBudget) return false;
             if (new DatasetStore(db).ById(campaign.HoldoutDatasetId) is not { } set) return false;
-
+            var campaigns = new CampaignStore(db);
+            var room = campaigns.JudgementsSpent(campaign.Id) < campaign.VerdictBudget;
+            var measured = campaigns.MeasuredVersions(campaign);
             var retired = new Retirements(db);
             return new StrategyStore(db).VersionsFrozenBefore(campaign.HoldoutFrom).Any(version =>
-                version.Freshness is not null
-                && !campaigns.VerdictCharged(campaign.Id, version.Id)
-                && retired.Refusal(version.Id) is null
+                measured.Contains(version.Id)
+                && version.Freshness is not null
+                && promotions.Standing(version.Id, campaign.Id).State == PromotionState.Unjudged
+                && (campaigns.VerdictCharged(campaign.Id, version.Id) || (room && retired.Refusal(version.Id) is null))
                 && Strategy.StrategyParser.Parse(version.Source).Program is { } program
                 && Strategy.InstrumentMatch.Refusal(program, set) is null);
         });
     }
 
     /// <summary>
-    /// WHAT EVERY TURN IS TOLD BEFORE IT ACTS (R30 D15, "turns must not be sold a refusal twice without learning it"): one line per open
-    /// campaign over real history that has spent something, oldest pair first, each saying what is spent, what it can no longer be
-    /// charged and when the next one can come. The refusal itself reaches only the turn that asked, and a session can be rotated away
-    /// between turns, so without this every later turn pays again to learn the same sentence.
+    /// WHAT EVERY TURN IS TOLD BEFORE IT ACTS (R30 D15, "turns must not be sold a refusal twice without learning it"): one line per pair,
+    /// for its newest open campaign over real history that has spent something, saying what is spent, what it can no longer be charged
+    /// and when the next one can come. One per pair because renewal leaves a spent campaign open, so older ones would otherwise pile up
+    /// over the ones a turn can act on. The refusal itself reaches only the turn that asked, and a session can be rotated away between
+    /// turns, so without this every later turn pays again to learn the same sentence.
     /// </summary>
     public IReadOnlyList<string> SpentLines()
     {
         var campaigns = new CampaignStore(db);
         var datasets = new DatasetStore(db);
-        var lines = new List<string>();
-        foreach (var campaign in campaigns.All().Where(c => c.IsOpen).OrderBy(c => c.Id))
+        var lines = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var campaign in campaigns.All().Where(c => c.IsOpen).OrderByDescending(c => c.Id))
         {
             if (datasets.ById(campaign.HoldoutDatasetId) is not { } set
                 || EvaluationClass.Or(set.EvaluationClass) != EvaluationClass.Research
+                || lines.ContainsKey(set.Pair)
                 || SpentOn(campaign) is not { } spent) continue;
 
             var left = Math.Max(0, campaign.VerdictBudget - campaigns.JudgementsSpent(campaign.Id));
@@ -186,9 +190,9 @@ public sealed class CampaignRenewal(Database db)
                 ? held.Successor is { } open ? $"Campaign {open} follows it over fresh months."
                   : $"The next {set.Pair} campaign opens no earlier than {held.Earliest:yyyy-MM-dd}."
                 : $"The next {set.Pair} campaign is at least {MinimumFreshDays} days away.";
-            lines.Add($"{set.Pair}: campaign {campaign.Id} has spent its {spent}: {charged}{kept}. {next}");
+            lines[set.Pair] = $"{set.Pair}: campaign {campaign.Id} has spent its {spent}: {charged}{kept}. {next}";
         }
-        return lines;
+        return [.. lines.Values];
     }
 
     /// <summary>
@@ -383,8 +387,9 @@ public sealed class CampaignRenewal(Database db)
     {
         if (Of(campaignId) is { } held)
             return held.Successor is { } open && new CampaignStore(db).ById(open) is { } next
-                ? $"Campaign {open} has opened after it over fresh months from {held.Cutoff:u} — dataset {next.HoldoutDatasetId}: run "
-                  + "trials over that dataset's months before the cutoff and ask for judgements there."
+                ? $"Campaign {open} has opened after it over fresh months from {held.Cutoff:u} — dataset {next.HoldoutDatasetId}: ask for "
+                  + "judgements there. A research run over that dataset is refused wherever it reaches months any campaign holds back, "
+                  + "and charged to this campaign too wherever it overlaps this campaign's research months."
                 : Waiting(held, null);
 
         var campaigns = new CampaignStore(db);

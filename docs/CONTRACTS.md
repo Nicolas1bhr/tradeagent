@@ -2820,7 +2820,9 @@ reproduces the same trace byte for byte and the same id; a changed fee is a diff
 verdict is taken ONCE, at the start (`BarFeed.Open`), and a `REJECTED` dataset serves nothing; the sha
 the run actually fed on is copied onto the run row, so a rejection discovered later is traceable to every
 run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused rather than queued, and
-a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
+a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated. A verdict's run reads the whole holdout,
+which no caller can shorten, so the referee's audience runs to `Backtest.MaxJudgedBars`, every minute of the longest download this
+app makes: a default year is 525,600 bars of a minute program, and under the research bound every such verdict came back `did not complete`.
 
 **Every recorded run keeps its daily net returns at 1× and 2× the venue cost model** (`U-trial-returns`, schema 32;
 `docs/EDGE-FACTORY.md` § 4.5, E1). Every run `Backtests.Record` records — charged, a fixture or under no campaign — keeps
@@ -3941,13 +3943,14 @@ the repo's own way on, a holdout over OTHER months, pressed for the owner only o
 have seen. (1) An open research campaign whose judgements (`JudgementsSpent`) or trials (`TrialsCharged`) reach a budget above
 zero is SPENT, and so is one whose exploration pot is full and under which no parent can be promoted (`CampaignRenewal.ExplorationSpent`;
 R30 D15, R28 E2): no version stands Promoted, of any pair, and the campaign holds no version it could still promote, meaning a version
-of its pair, frozen before its cutoff, bounded, not retired and not yet judged under it, with a judgement left. Over history none
+of its pair, frozen before its cutoff, bounded, with a completed run registered under its lineage (what `trade verdict` admits on), not
+yet judged under it, and either not retired with a judgement left or already charged, which a stop or a crash leaves obtainable. Over history none
 qualifies, because a version made now is frozen after the cutoff, so every trial is an exploration and a first campaign's real
 budget is its pot; without this rule it sat refusing with nothing armed. **PaperEligible is not a promotable parent**: that would widen the
 search on an unproven basis. The budgets do not change, a campaign spent this way keeps any final judgements it has left, its refusal
 (`CampaignStore.Pot`) says what is spent, that it cannot be charged another such trial and what the next campaign waits for, and every
-turn's packet carries one line per spent campaign (`CampaignRenewal.SpentLines`, the Situation's `spent_campaigns` block) so that no
-turn pays to learn it from a refusal. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
+turn's packet carries one line per pair, its newest spent campaign (`CampaignRenewal.SpentLines`, the Situation's `spent_campaigns`
+block), so that no turn pays to learn it from a refusal. (2) The app's pass (`EvidenceCampaigns.RenewAsync`, every five minutes) ARMS its fresh cutoff: the first UTC
 midnight strictly after now, every dataset's last close, every forward bar's close, every held window's end and every cutoff
 armed before — refused when any of those has no measurable end — written once by `Database.AddKvOnce`
 (`campaign_forward_holdout:<id>`), one window at a time PER PAIR (`U-evidence-breadth`: a spent ETHUSDT campaign does not wait

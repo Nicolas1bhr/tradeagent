@@ -376,8 +376,21 @@ public static class Backtest
     /// truncating: a result quietly computed over the first part of a window is a result about a period
     /// nobody chose and cannot see the edge of. The halt is a defined fault, so the metrics carry
     /// "the run halted at bar 200000" in their own list of what is missing.</para>
+    ///
+    /// <para>A verdict has no window to shorten, so its run has its own bound: <see cref="MaxJudgedBars"/>.</para>
     /// </summary>
     public const int MaxTracedBars = 200_000;
+
+    /// <summary>
+    /// THE MOST BARS A VERDICT'S RUN EVALUATES: every minute of the longest download this app makes, so no holdout of one can outrun it.
+    ///
+    /// <para><b>Why a verdict has its own bound</b> (R25 D12; found by the Codex review of <c>U-evidence-holdout-length</c>). A research run is
+    /// asked for a shorter window; a verdict reads everything from the campaign's cutoff on, and the default holdout is a year: 525,600
+    /// bars of a minute program, past <see cref="MaxTracedBars"/>. Under that bound every such version halted, and a halted run is
+    /// <c>did-not-complete</c>, a final refusal blaming the program, with its judgement spent and no α-test run. It is rare, three a
+    /// pair, and it is the run the whole of the evidence stands on, so the memory is spent here and nowhere else.</para>
+    /// </summary>
+    public const int MaxJudgedBars = Data.BinanceArchive.MonthsWanted * 31 * 1440;
 
     /// <summary>
     /// THE DECLARATION KINDS THE BACKTEST IMPLEMENTS: every one this build parses (<see cref="StrategyDeclarations.All"/>).
@@ -435,7 +448,8 @@ public static class Backtest
         IEnumerable<KlineBar> bars,
         EvaluationLimits? limits = null,
         CancellationToken stop = default,
-        FeatureFeed? features = null)
+        FeatureFeed? features = null,
+        int maxBars = MaxTracedBars)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(request);
@@ -543,7 +557,7 @@ public static class Backtest
             // among them. The run halts before the bar this minute opens is evaluated: before this minute is applied, or,
             // when it is past a bar still to decide, once that bar is decided from the books this minute leaves — the
             // only books it is ever decided from — so the run evaluates the cap's bars and not one more.
-            var capped = opens && evaluated + (passed is null ? 0 : 1) >= MaxTracedBars;
+            var capped = opens && evaluated + (passed is null ? 0 : 1) >= maxBars;
             if (capped && passed is null)
             {
                 Capped(minute);
@@ -846,7 +860,11 @@ public static class Backtest
         // THE CAP'S HALT, before the bar this minute opens, in words.
         void Capped(KlineBar minute)
         {
-            if (resampler is null)
+            if (maxBars != MaxTracedBars)
+                Halt(ordinal, minute.OpenTime,
+                    $"this holdout holds more than the {maxBars} bars one verdict may evaluate, so the run halted at the bar " +
+                    $"before {minute.OpenTime:O}: the size of the holdout stopped it, not the program.");
+            else if (resampler is null)
                 Halt(ordinal, minute.OpenTime,
                     $"this window holds more than the {MaxTracedBars} bars one run may trace " +
                     $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
@@ -983,7 +1001,9 @@ public static class Backtest
 
         try
         {
-            var result = Run(program, request, feed.Bars(from, to), limits, stop, features);
+            // A VERDICT READS ITS WHOLE HOLDOUT, WHICH NO CALLER CAN SHORTEN: the referee's run takes the bound made for it (R25 D12).
+            var result = Run(program, request, feed.Bars(from, to), limits, stop, features,
+                audience.MayReadHoldout ? MaxJudgedBars : MaxTracedBars);
 
             // A CUTOFF SET WHILE THE RUN READ halted it before the slice reaching the new window: refused in those
             // words, never answered as a run of the program on the values before it.

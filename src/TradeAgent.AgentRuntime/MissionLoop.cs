@@ -1123,14 +1123,10 @@ public sealed record MissionSituation
     public IReadOnlyList<LedgerListed>? Believed { get; init; }
 
     /// <summary>
-    /// WHAT THE CAMPAIGNS HAVE SPENT (<see cref="IMissionHost.SpentCampaigns"/>): one line per open campaign that has spent something, each
-    /// saying what it can no longer be charged and when the next one can come. Rendered as the app's record, at most
-    /// <see cref="SpentLimit"/> lines.
+    /// WHAT THE CAMPAIGNS HAVE SPENT (<see cref="IMissionHost.SpentCampaigns"/>): one line per pair with a spent campaign, saying what it can no
+    /// longer be charged and when the next one can come. Rendered as the app's record, every line: bounded by the pairs under evidence.
     /// </summary>
     public IReadOnlyList<string> SpentCampaigns { get; init; } = [];
-
-    /// <summary>The most <see cref="SpentCampaigns"/> lines one packet carries: more pairs than the five setup offers, and bounded.</summary>
-    public const int SpentLimit = 8;
 
     /// <summary>
     /// WHAT IS WANTED: the work TradeAgent records as this role's (<see cref="RoleObjectives"/>), open now, or null
@@ -1374,8 +1370,7 @@ public sealed record MissionSituation
         {
             b.AppendLine("- Research budgets already spent, from TradeAgent's ledger. Anything these lines rule out is refused in these words, "
                          + "so do not spend this turn asking for it:");
-            foreach (var line in SpentCampaigns.Take(SpentLimit)) b.AppendLine($"  - {line}");
-            if (SpentCampaigns.Count > SpentLimit) b.AppendLine($"  - and {SpentCampaigns.Count - SpentLimit} more.");
+            foreach (var line in SpentCampaigns) b.AppendLine($"  - {line}");
         }
         Block("spent_campaigns");
 
