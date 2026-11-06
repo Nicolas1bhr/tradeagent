@@ -41,6 +41,16 @@ public class FoundingCarryTests(ITestOutputHelper log)
         return TapeJson.Canonical(body.ToJsonString());
     }
 
+    /// <summary>
+    /// THE FOUNDING BODY THE SERVER'S KIT REALLY WROTE: read out of a home founded by that kit's own code (commit 9836e38b, schema 52), not
+    /// built from today's. The server's home holds exactly this row, so the refusal is proved on it and not only on a likeness of it.
+    /// </summary>
+    const string ServerKitBody = """
+        {"head_ceiling_hours":24,"lanes":1,"lanes_per_cell_class":1,"lanes_per_pool":1,"live_activated":false,"mode":"PAPER","paper_envelope":{"account":"PAPER-1","connector":"paper","days":null,"deployments":1,"instrument":"BTCUSDT","max_notional":5000,"max_quantity":0.05},"plan_day_total":40,"review_minutes":30,"rewake_floor_minutes":{"department":240,"executor":15,"team":60},"risk":{"instrument_allowlist":["BTCUSDT"],"loss_min_closure_hours":24,"loss_strike_window_days":7,"max_daily_loss":0,"max_loss_per_trade":0,"max_notional_per_order":0,"max_open_positions":2,"max_order_quantity":1,"max_orders_per_minute":6,"valuation_loss_exit_minutes":15},"role_shares":{},"turn_allowance_input":1200000,"turn_allowance_output":20000}
+        """;
+
+    const string ServerKitBodySha = "ab6ca90507fccd95f3dd320306f3f33f2fed376fc19da57b4c6783ffca0c6c09";
+
     static void Raw(string file, string sql, params (string, object?)[] ps)
     {
         using var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString());
@@ -316,6 +326,108 @@ public class FoundingCarryTests(ITestOutputHelper log)
         Assert.Contains("it is marked 'proving', not a real home's", words);
         Assert.Equal(before, Fingerprint(aside));
         Assert.Equal([], Directory.GetFiles(home, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(home, f)));
+    }
+
+    /// <summary>
+    /// THE BODY THE SERVER'S KIT WROTE VERIFIES AND READS AS THE OLDER SHAPE: its own hash, its own canonical spelling, one field apart from
+    /// this build's. If this stops holding, the server's home would not get the refusal and its way on.
+    /// </summary>
+    [Fact]
+    public void The_body_the_servers_kit_really_wrote_is_read_as_the_older_shape()
+    {
+        var shape = BoardPolicyBody.OlderShape(ServerKitBody, ServerKitBodySha);
+        Assert.NotNull(shape);
+        Assert.Equal("paper_envelope", Assert.Single(shape.Value.Theirs));
+        Assert.Equal("paper_envelopes", Assert.Single(shape.Value.Ours));
+    }
+
+    /// <summary>
+    /// A HOME ANOTHER TRADEAGENT STILL HOLDS IS NOT MOVED, AND NOTHING OF IT IS COPIED: the refusal is read before the instance lock, so an
+    /// older app still running on the folder can reach this press. Linux would rename the folder under it, and a tape and its -wal copied
+    /// while it writes can disagree. RED before the hold: the home was moved with the lock held.
+    /// </summary>
+    [Fact]
+    public void A_home_another_TradeAgent_still_holds_is_not_moved_and_nothing_of_it_is_copied()
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var before = Fingerprint(home);
+        var refused = Assert.ThrowsAny<InvalidOperationException>(() =>
+        {
+            using var running = TradeAgent.Security.SingleInstanceLock.TryAcquire(Path.Combine(home, "state", "gateway.lock"));
+            Assert.NotNull(running);
+            OlderHome.SetAside(home, Noon, out _);
+        });
+        log.WriteLine(refused.Message);
+
+        Assert.Contains("still running", refused.Message);
+        Assert.True(File.Exists(Path.Combine(home, "state", "tradeagent.db")));
+        Assert.Equal(before.Keys.Order(), Fingerprint(home).Keys.Where(k => !k.EndsWith("gateway.lock", StringComparison.Ordinal)).Order());
+        Assert.Equal([Path.GetFileName(home)], Directory.GetFileSystemEntries(scratch.Dir).Select(Path.GetFileName));
+    }
+
+    /// <summary>
+    /// A TAPE THAT CANNOT BE COPIED MOVES NOTHING: the copy is made BEFORE the home moves, so a full disk leaves the home refused, whole and
+    /// where it was, and the press can simply be made again. RED before: the home moved first, and a failed copy left it set aside with
+    /// the new home running without its tape.
+    /// </summary>
+    [Fact]
+    public void A_tape_that_cannot_be_copied_moves_nothing_and_the_press_can_be_made_again()
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var before = Fingerprint(home);
+        var blocked = $"{Path.GetFullPath(home)}-tape-carrying-20261030-120000";
+        File.WriteAllText(blocked, "a file where the copy would go");
+
+        var refused = Assert.Throws<InvalidOperationException>(() => OlderHome.SetAside(home, Noon, out _));
+        log.WriteLine(refused.Message);
+
+        Assert.Contains("was not moved", refused.Message);
+        Assert.Equal(before, Fingerprint(home));
+        File.Delete(blocked);
+
+        var aside = OlderHome.SetAside(home, Noon, out var words);
+        Assert.Contains("copied into the new folder byte for byte", words);
+        Assert.Equal(before, Fingerprint(aside));
+        Assert.Equal(Hash(Path.Combine(aside, "state", "tape.db")), Hash(Path.Combine(home, "state", "tape.db")));
+    }
+
+    /// <summary>
+    /// THE COPY LEAVES NOTHING BEHIND: no staging folder stays beside the two homes once the tape has taken its name. RED if it did.
+    /// </summary>
+    [Fact]
+    public void A_carried_tape_leaves_no_staging_folder_beside_the_homes()
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var aside = OlderHome.SetAside(home, Noon, out _);
+        Assert.Equal(new[] { Path.GetFileName(home), Path.GetFileName(aside) }.Order(StringComparer.Ordinal),
+            Directory.GetFileSystemEntries(scratch.Dir).Select(e => Path.GetFileName(e)!).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// A TAPE THAT FAILS SQLITE'S OWN CHECK IS NOT CARRIED: its layout row reads fine, a page of its records does not. It stays, whole, in the
+    /// old home, and the words say so. RED with the layout row the only check: the damaged copy took the tape's name in the new home.
+    /// </summary>
+    [Fact]
+    public void A_tape_that_fails_its_own_check_is_not_carried()
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var tape = Path.Combine(home, "state", "tape.db");
+        var bytes = File.ReadAllBytes(tape);
+        var page = (bytes[16] << 8) | bytes[17];
+        Array.Fill(bytes, (byte)0xFF, bytes.Length - page, page);
+        File.WriteAllBytes(tape, bytes);
+        var before = Fingerprint(home);
+
+        var aside = OlderHome.SetAside(home, Noon, out var words);
+        log.WriteLine(words);
+
+        Assert.Contains("was not carried", words);
+        Assert.Equal(before, Fingerprint(aside));
+        Assert.False(File.Exists(Path.Combine(home, "state", "tape.db")));
     }
 
     /// <summary>

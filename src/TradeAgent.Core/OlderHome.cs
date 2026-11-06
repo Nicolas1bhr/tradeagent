@@ -207,7 +207,7 @@ public static class OlderHome
 
     /// <summary>
     /// <see cref="SetAside(string, DateTimeOffset)"/>, and for a home refused for its older founding policy the market-context tape
-    /// CARRIED into the new home (<see cref="CarryTape"/>): <paramref name="tape"/> says in words what happened to it, or is null when
+    /// CARRIED into the new home (<see cref="StageTape"/>): <paramref name="tape"/> says in words what happened to it, or is null when
     /// the home was refused for its schema (a published release's home, which predates the tape) or held no tape.
     /// </summary>
     public static string SetAside(string home, DateTimeOffset at, out string? tape)
@@ -230,73 +230,133 @@ public static class OlderHome
         var aside = $"{full}-from-{label}-{at.UtcDateTime:yyyyMMdd-HHmmss}";
         if (Directory.Exists(aside) || File.Exists(aside))
             throw new InvalidOperationException($"{aside} already exists, so the older home was not moved. Press Start fresh again in a second.");
+
+        // THE HOME IS OURS WHILE THE TAPE IS COPIED, AND THE COPY COMES BEFORE THE MOVE: the refusal is read before the instance lock, so an
+        // older app may still be running on this folder. Its lock is let go before the rename, which Windows refuses over an open file.
+        StagedTape? staged = null;
+        using (Hold(full))
+            if (carry) staged = StageTape(full, at);
+
         try
         {
             Directory.Move(full, aside);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            if (staged is not null) RemoveFolder(staged.Folder);
             throw new InvalidOperationException(
                 $"Windows would not move {full} aside — a program still has a file in it open ({ex.Message}). Nothing was moved or " +
                 "deleted; close that program and press Start fresh again.", ex);
         }
         Directory.CreateDirectory(full);
-        if (carry) tape = CarryTape(aside, full);
+        if (staged is not null) tape = Promote(staged, aside, full);
         return aside;
     }
 
     /// <summary>
-    /// THE TAPE, CARRIED (<c>U-founding-carry</c>): the market-context tape is a point-in-time record nobody can backfill, and it holds
-    /// nothing of the board's policy — what a vendor published, when it arrived, and which revision it is. So a start-fresh over a home
-    /// refused for its older founding policy COPIES <c>state/tape.db</c> (and its <c>-wal</c>, which holds committed rows not yet
-    /// checkpointed) from the home set aside into the new one, and the set-aside home keeps its own, untouched.
-    ///
-    /// <para><b>Only a tape this build reads as it is.</b> The copy is made beside its final name, a plain copy of the bytes, and its own
-    /// ladder version read from the copy, read-only: only a tape at
-    /// <see cref="TapeStore.Schema"/>, marked a real home's (or unmarked, which every real tape before the mark is), takes the tape's
-    /// name in the new home. Anything else — another layout version, a proving ground's tape, a file that cannot be copied or read — is not carried: the copy is removed (it was ours; the original stays whole in the old folder) and the words say why.
-    /// A decision or lens row naming an attempt names one recorded in the set-aside home; those ids carry a GUID, so nothing the new
-    /// home records can ever take one of them.</para>
+    /// THE HOME'S INSTANCE LOCK, HELD, or null where the home has none — nothing is created or written in the older home. A lock another
+    /// process holds refuses in words: a running app is still writing there, so it is neither moved nor copied.
     /// </summary>
-    internal static string CarryTape(string aside, string home)
+    static FileStream? Hold(string home)
     {
-        var from = Path.Combine(aside, "state", "tape.db");
-        if (!File.Exists(from)) return "The old folder held no market-context tape, so there was none to carry.";
-        var state = Path.Combine(home, "state");
-        Directory.CreateDirectory(state);
-        var to = Path.Combine(state, "tape.db");
-        var staged = to + ".carrying";
-        var pairs = new List<(string From, string Staged, string To)> { (from, staged, to) };
-        if (File.Exists(from + "-wal")) pairs.Add((from + "-wal", staged + "-wal", to + "-wal"));
+        var file = Path.Combine(home, "state", "gateway.lock");
+        if (!File.Exists(file)) return null;
+        try { return new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"Another TradeAgent is still running on {home}, so the older home was not moved and nothing was copied. Close it and press Start fresh again.", ex);
+        }
+    }
 
-        string? why;
+    /// <summary>A tape's verified copy waiting in <paramref name="Folder"/>, or the words saying why there is none to carry.</summary>
+    sealed record StagedTape(string Folder, string? File, string? Refused);
+
+    /// <summary>
+    /// THE TAPE, COPIED AND CHECKED BEFORE THE HOME MOVES (<c>U-founding-carry</c>): the market-context tape is a point-in-time record nobody
+    /// can backfill, and it holds nothing of the board's policy — what a vendor published, when it arrived, and which revision it is. So a
+    /// start-fresh over a home refused for its older founding policy copies <c>state/tape.db</c> (and its <c>-wal</c>, which holds committed
+    /// rows not yet checkpointed) into a folder beside the home, and the home set aside keeps its own, untouched.
+    ///
+    /// <para><b>Before the move, so a failed copy costs nothing:</b> one that cannot be made — a full disk — refuses the press with the home
+    /// whole and where it was, and the press can be made again. A crash here leaves the same. The copy's stay on the disk is the long part
+    /// of this press; what remains after the move is two renames, and a crash between them leaves the tape whole in the old folder.</para>
+    ///
+    /// <para><b>Only a tape this build reads as it is.</b> Only a tape at <see cref="TapeStore.Schema"/>, marked a real home's (or unmarked,
+    /// which every real tape before the mark is), that passes SQLite's own check, is carried. Anything else — another layout version, a
+    /// proving ground's tape, a damaged file — is not: retrying would not change it, so the home still moves and the words say so.
+    /// A decision or lens row naming an attempt names one recorded in the set-aside home; those ids carry a GUID, so nothing the new home
+    /// records can ever take one of them.</para>
+    /// </summary>
+    static StagedTape StageTape(string home, DateTimeOffset at)
+    {
+        var from = Path.Combine(home, "state", "tape.db");
+        if (!File.Exists(from)) return new StagedTape("", null, null);
+
+        // A PRESS A CRASH CUT SHORT left its copy here; the original is still in this home, so the copy is only ours to clear.
+        foreach (var stale in Directory.GetDirectories(Path.GetDirectoryName(home)!, Path.GetFileName(home) + "-tape-carrying-*"))
+            RemoveFolder(stale);
+
+        var folder = $"{home}-tape-carrying-{at.UtcDateTime:yyyyMMdd-HHmmss}";
+        var staged = Path.Combine(folder, "tape.db");
         try
         {
-            foreach (var (f, st, _) in pairs) File.Copy(f, st, overwrite: false);
-            why = TapeRefusal(staged);
+            Directory.CreateDirectory(folder);
+            File.Copy(from, staged, overwrite: false);
+            if (File.Exists(from + "-wal")) File.Copy(from + "-wal", staged + "-wal", overwrite: false);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            why = $"it could not be copied or read ({ex.Message})";
+            RemoveFolder(folder);
+            throw new InvalidOperationException(
+                $"The market-context tape could not be copied ({ex.Message}), so the older home was not moved and nothing was deleted. Make room on the disk and press Start fresh again.", ex);
         }
 
-        if (why is null)
+        string? why;
+        try { why = TapeRefusal(staged); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException) { why = $"it could not be read ({ex.Message})"; }
+        if (why is null) return new StagedTape(folder, staged, null);
+        RemoveFolder(folder);
+        return new StagedTape(folder, null, why);
+    }
+
+    /// <summary>The checked copy takes the tape's name in the new home, and the words say what happened to the tape.</summary>
+    static string Promote(StagedTape staged, string aside, string home)
+    {
+        if (staged.Refused is { } why) return $"The market-context tape was not carried into the new folder: {why}. It is kept, whole, in {aside}.";
+        if (staged.File is not { } file) return "The old folder held no market-context tape, so there was none to carry.";
+
+        var state = Path.Combine(home, "state");
+        var to = Path.Combine(state, "tape.db");
+        try
         {
+            Directory.CreateDirectory(state);
             // THE -WAL FIRST, THEN THE TAPE: a tape that takes its name stands with every row it committed.
-            foreach (var (_, st, t) in Enumerable.Reverse(pairs)) File.Move(st, t);
-            Remove(staged + "-shm");
-            return $"The market-context tape was copied into the new folder byte for byte (layout version {TapeStore.Schema}); the old " +
-                   "folder keeps its own.";
+            if (File.Exists(file + "-wal")) File.Move(file + "-wal", to + "-wal");
+            File.Move(file, to);
         }
-        foreach (var (_, st, _) in pairs) Remove(st);
-        Remove(staged + "-shm");
-        return $"The market-context tape was not carried into the new folder: {why}. It is kept, whole, in {aside}.";
-
-        static void Remove(string file)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            try { if (File.Exists(file)) File.Delete(file); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            // A -WAL LEFT WITH NO TAPE BESIDE IT WOULD BE REPLAYED INTO THE NEXT ONE.
+            RemoveFile(to + "-wal");
+            RemoveFolder(staged.Folder);
+            return $"The market-context tape was not carried into the new folder: it could not be put in place ({ex.Message}). It is kept, whole, in {aside}.";
         }
+        RemoveFolder(staged.Folder);
+        return $"The market-context tape was copied into the new folder byte for byte (layout version {TapeStore.Schema}); the old " +
+               "folder keeps its own.";
+    }
+
+    static void RemoveFile(string file)
+    {
+        try { if (File.Exists(file)) File.Delete(file); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    static void RemoveFolder(string folder)
+    {
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>Why a staged copy of a tape is not one this build carries, or null. Read-only; the connection let go before return.</summary>
@@ -323,7 +383,11 @@ public static class OlderHome
             var word = Proving.HomeMark.Read(c, "tape_meta");
             if (Proving.HomeMark.Refusal("the market-context tape", file, word, Proving.HomeKind.Real) is not null)
                 return $"it is marked '{word}', not a real home's";
-            return null;
+            // THE LAYOUT ROW READING IS NOT THE RECORDS READING: SQLite walks every page of the copy.
+            using var check = c.CreateCommand();
+            check.CommandText = "PRAGMA quick_check(1)";
+            var verdict = Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture);
+            return verdict == "ok" ? null : $"it failed its own check ({verdict})";
         }
         finally { SqliteConnection.ClearAllPools(); }
     }
