@@ -13,8 +13,8 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// U-EVIDENCE-CAMPAIGN ITEM 3 — THE RESEARCH MONTHS OF A DATASET, AS A FILE IN THE CALLER'S OWN FOLDER (<c>data-export</c>).
 ///
-/// <para>Never a held-back bar (the reader's own refusal, with nothing written), bounded in bars and in files, written into the caller's
-/// home through the no-follow writer so a link planted at the name leads nowhere, and recorded as a read of that position in the
+/// <para>Never a held-back bar (the reader's own refusal, with nothing written), bounded in bars, in files and in what the ledger says the
+/// position was written, written into the caller's home through the no-follow writer so a link planted at the name leads nowhere, and recorded as a read of that position in the
 /// observed-deliveries ledger.</para>
 /// </summary>
 public class DataExportTests
@@ -174,5 +174,122 @@ public class DataExportTests
         Assert.True(done.Ok, done.Error?.Message);
         Assert.Equal("not the gateway's to write", File.ReadAllText(victim));
         Assert.Null(new FileInfo(Path.Combine(rig.Home, relative)).LinkTarget);
+    }
+
+    /// <summary>What the ledger says this position was already written, as an earlier export's row: the app's record, which a cell cannot touch.</summary>
+    static void Charged(Rig rig, long bytes, string? role = null, DateTimeOffset? at = null, bool served = true) =>
+        Assert.True(new ToolCallStore(rig.Db).Record(new ToolCallRow
+        {
+            At = at ?? DateTimeOffset.UtcNow,
+            Attempt = "attempt-earlier",
+            Role = role ?? CouncilRoles.Research,
+            Tool = Ops.DataExport,
+            Argument = "an earlier export",
+            Bytes = bytes,
+            Served = served,
+            Refusal = served ? null : "refused"
+        }) > 0);
+
+    /// <summary>
+    /// F-B3 (R29): THE FOLDER'S COUNT READS NAMES, AND A NAME IS THE CELL'S TO CHANGE. Code in a cell moves each export out of the name the
+    /// count reads and asks again; what bounds the position is the ledger of what it was written, so the same asks stop at the bound.
+    /// </summary>
+    [Fact]
+    public async Task A_rename_does_not_escape_the_bound_on_what_a_position_is_written()
+    {
+        await using var rig = await Ready();
+        var dataset = ("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture));
+        var window = ("to", Iso(Cutoff.AddMinutes(-1)));
+        var folder = Path.Combine(rig.Home, DataExports.Folder);
+        var kept = Path.Combine(folder, "kept");
+        Directory.CreateDirectory(kept);
+
+        Assert.True((await rig.ExportAsync(dataset, window)).Ok);
+        var size = Exports(rig.Db).Single().Bytes;
+        // ROOM FOR EXACTLY TWO MORE OF THIS SIZE: the bound is in megabytes and this dataset's files are in kilobytes.
+        Charged(rig, DataExports.MaxBytesPerDay - (3 * size));
+
+        var written = 1;
+        IpcResponse last = null!;
+        for (var i = 0; i < 10; i++)
+        {
+            foreach (var file in Directory.EnumerateFiles(folder, DataExports.Prefix + "*"))
+                File.Move(file, Path.Combine(kept, $"renamed-{i}-{Path.GetFileName(file)}"));
+            last = await rig.ExportAsync(dataset, window);
+            if (last.Ok) written++;
+        }
+
+        Assert.Equal(3, written);
+        Assert.False(last.Ok);
+        Assert.Contains("the most one position is written", last.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(3, Exports(rig.Db).Count);
+        Assert.Empty(Directory.EnumerateFiles(folder, DataExports.Prefix + "*"));
+    }
+
+    /// <summary>THE BOUND IS THIS POSITION'S OWN LAST DAY: another position's bytes, a day-old row and a refused ask are not what it was written.</summary>
+    [Fact]
+    public async Task The_bound_counts_only_what_this_position_was_written_in_the_last_day()
+    {
+        await using var rig = await Ready();
+        var dataset = ("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture));
+        var window = ("to", Iso(Cutoff.AddMinutes(-1)));
+
+        Charged(rig, DataExports.MaxBytesPerDay, role: CouncilRoles.Operations);
+        Charged(rig, DataExports.MaxBytesPerDay, at: DateTimeOffset.UtcNow - DataExports.BoundWindow - TimeSpan.FromMinutes(1));
+        Charged(rig, DataExports.MaxBytesPerDay, served: false);
+        var served = await rig.ExportAsync(dataset, window);
+        Assert.True(served.Ok, served.Error?.Message);
+
+        Charged(rig, DataExports.MaxBytesPerDay);
+        var refused = await rig.ExportAsync(dataset, window);
+        Assert.False(refused.Ok);
+        Assert.Contains("Nothing was written", refused.Error!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE COUNT, THE WRITE AND THE RECORD UNDER ONE GATE: the record is what the next ask counts, so two asks at once must not both see the
+    /// same room, each in a window of its own so no two share a file. <b>And a refusal lets go of the gate:</b> a lock in the method whose filter
+    /// reads <c>is A or B</c> never does in a Release build (<see cref="GatewayPipeServer"/>'s <c>PlaceExport</c>), so the first refusal left
+    /// every other ask here waiting for good. The wait is bounded so that shows as a failure and not as a suite that never ends.
+    /// </summary>
+    [Fact]
+    public async Task Asks_at_the_same_moment_do_not_share_the_room_left_in_the_bound()
+    {
+        await using var rig = await Ready();
+        var dataset = ("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture));
+        var to = ("to", Iso(Cutoff.AddMinutes(-1)));
+
+        Assert.True((await rig.ExportAsync(dataset, to)).Ok);
+        var size = Exports(rig.Db).Single().Bytes;
+        TestEnv.DeleteQuietly(Path.Combine(rig.Home, DataExports.Folder));
+        // ROOM FOR ONE AND A HALF: every window below is at most one bar shorter per step, so one fits and no second does.
+        Charged(rig, DataExports.MaxBytesPerDay - size - (size * 3 / 2));
+
+        var answers = await Task.WhenAll(Enumerable.Range(0, 2 * DataExports.MaxFiles).Select(i =>
+            Task.Run(() => rig.ExportAsync(dataset, ("from", Iso(Start.AddMinutes(i))), to)))).WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Single(answers, a => a.Ok);
+        Assert.True(new ToolCallStore(rig.Db).BytesServed(CouncilRoles.Research, Ops.DataExport, Start) <= DataExports.MaxBytesPerDay);
+    }
+
+    /// <summary>
+    /// AN EXPORT THE LEDGER COULD NOT RECORD IS NOT WRITTEN: that row is the read this position is charged with and what the bound counts, so a
+    /// file standing without one would be a read nobody can see and bytes the bound never counted.
+    /// </summary>
+    [Fact]
+    public async Task An_export_the_ledger_could_not_record_leaves_no_file()
+    {
+        await using var rig = await Ready();
+        rig.Db.Write(_ =>
+        {
+            using var c = rig.Db.Cmd("CREATE TEMP TRIGGER no_record BEFORE INSERT ON tool_call BEGIN SELECT RAISE(ABORT, 'the ledger refuses'); END");
+            return c.ExecuteNonQuery();
+        });
+
+        var refused = await rig.ExportAsync(("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture)), ("to", Iso(Cutoff.AddMinutes(-1))));
+
+        Assert.False(refused.Ok);
+        Assert.Contains("Nothing was written", refused.Error!.Message, StringComparison.Ordinal);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(rig.Home, DataExports.Folder), DataExports.Prefix + "*"));
     }
 }

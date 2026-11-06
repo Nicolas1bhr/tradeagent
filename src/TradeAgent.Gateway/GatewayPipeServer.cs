@@ -3466,13 +3466,15 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// <para><b>The holdout is decided by the reader, exactly as for <c>data-bars</c> and the evaluator</b>: <see cref="DatasetReader.Read"/>
     /// with the caller's pipe holdout asks the dataset's own cutoff and then every other window — the fresh holdout being collected
     /// included — before a byte of the file is read, and a refusal writes NOTHING. 'to' is required: a window with no end is the whole
-    /// dataset, and an export is bounded by what it names. Over <see cref="DataExports.MaxBars"/> bars, or into a folder already holding
-    /// <see cref="DataExports.MaxFiles"/> exports, is refused naming the bound, never cut short.</para>
+    /// dataset, and an export is bounded by what it names. Over <see cref="DataExports.MaxBars"/> bars, into a folder already holding
+    /// <see cref="DataExports.MaxFiles"/> exports, or past the position's <see cref="DataExports.MaxBytesPerDay"/> in the ledger, is refused
+    /// naming the bound, never cut short.</para>
     ///
     /// <para><b>Written into the caller's own home and nowhere else</b> — the active position's folder (<c>Paths.RoleHome</c>), through
     /// <see cref="HomeFiles.Write"/>, which follows no link at any component and replaces whatever is at the name unread, so a link a cell
     /// planted there points nowhere this writes. <b>And recorded as a read of that position</b>: one <c>tool_call</c> row — the
-    /// observed-deliveries ledger, which no op writes — with the attempt, the position, the dataset, the window, the file and its bytes.</para>
+    /// observed-deliveries ledger, which no op writes — with the attempt, the position, the dataset, the window, the file and its bytes. That
+    /// row is also what the byte bound counts, so a file the ledger could not record is taken back and the export is refused.</para>
     /// </summary>
     object DataExport(AgentContext ctx, IpcRequest req)
     {
@@ -3527,16 +3529,17 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         var bytes = DataExports.Csv(window.Bars);
         try
         {
-            // THE COUNT AND THE WRITE UNDER ONE GATE (the Codex review's P2): two exports at once must not both see room for one.
-            lock (ExportGate)
+            PlaceExport(position, home, relative, bytes, new ToolCallRow
             {
-                var held = Exports(home);
-                if (held.Count >= DataExports.MaxFiles && !held.Contains(relative[(DataExports.Folder.Length + 1)..]))
-                    throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                        $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
-                        + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
-                HomeFiles.Write(home, relative, bytes);
-            }
+                At = DateTimeOffset.UtcNow,
+                Attempt = ctx.AttemptId,
+                Role = position,
+                Tool = Core.Ops.DataExport,
+                Argument = $"dataset {id} {set.Pair} {set.Interval} {set.Version}, {window.Bars.Count} bars "
+                           + $"{window.Bars[0].OpenTime:u} to {window.Bars[^1].OpenTime:u} -> {relative}",
+                Bytes = bytes.Length,
+                Served = true
+            });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -3544,28 +3547,55 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 $"the export could not be written into your folder: {ex.Message} Nothing else was changed.");
         }
 
-        // A READ OF THIS POSITION, RECORDED: the observed-deliveries ledger, beside every door call (`ToolCallStore` never throws).
-        gateway.ToolCalls.Record(new ToolCallRow
-        {
-            At = DateTimeOffset.UtcNow,
-            Attempt = ctx.AttemptId,
-            Role = position,
-            Tool = Core.Ops.DataExport,
-            Argument = $"dataset {id} {set.Pair} {set.Interval} {set.Version}, {window.Bars.Count} bars "
-                       + $"{window.Bars[0].OpenTime:u} to {window.Bars[^1].OpenTime:u} -> {relative}",
-            Bytes = bytes.Length,
-            Served = true
-        });
-
         return new DataExportReply(relative, set.Id, set.Pair, set.Interval, set.Version, window.Bars[0].OpenTime,
             window.Bars[^1].OpenTime, window.Bars.Count, bytes.Length,
             $"The bars are in your own folder at '{relative}', as '{KlineNormaliser.HeaderWithQuality}' rows in UTC, ascending, nothing "
             + "filled in — for your own code to read. They are the months before every holdout and are hypothesis evidence: no fill, no "
             + "queue position, no intrabar ordering. A backtest still runs through 'trade backtest', which is what is charged and "
-            + $"recorded. The folder keeps at most {DataExports.MaxFiles} exports; exporting the same window again rewrites its file.");
+            + $"recorded. The folder keeps at most {DataExports.MaxFiles} exports; exporting the same window again rewrites its file. You are "
+            + $"written at most {DataExports.MaxBytesPerDay} bytes of exports in any {DataExports.BoundWindow.TotalHours:0} hours, every "
+            + "export counted, however its file is named or moved afterwards.");
     }
 
-    /// <summary>The one gate every export's count and write pass, in this process.</summary>
+    /// <summary>
+    /// THE COUNTS, THE WRITE AND THE RECORD UNDER ONE GATE (the Codex review's P2): the record is what the next ask counts, so two exports at once
+    /// must not both see room for one. Refused by the bound, or by the folder's count, it throws with nothing written.
+    ///
+    /// <para><b>In a method of its own, and it stays one.</b> In a Release build a <c>lock</c> inside a <c>try</c> whose filter reads
+    /// <c>when (ex is A or B)</c> never lets go of the lock on a throw: the filter runs before the <c>finally</c>, and the C# compiler gives the
+    /// pattern's temporary and the lock's taken-flag one slot. Measured on SDK 10.0.402 in a few lines (Debug and <c>||</c> both let go). So a
+    /// refusal here held the gate for good, and the next export from another thread never came back.</para>
+    /// </summary>
+    void PlaceExport(string position, string home, string relative, byte[] bytes, ToolCallRow row)
+    {
+        lock (ExportGate)
+        {
+            var written = gateway.ToolCalls.BytesServed(position, Core.Ops.DataExport, DateTimeOffset.UtcNow - DataExports.BoundWindow);
+            if (written + bytes.Length > DataExports.MaxBytesPerDay)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"this export is {bytes.Length} bytes and you have been written {written} in the last "
+                    + $"{DataExports.BoundWindow.TotalHours:0} hours; {DataExports.MaxBytesPerDay} is the most one position is written in that "
+                    + "time, whatever became of the files since. Export a shorter window, or ask again once the oldest has aged out. "
+                    + "Nothing was written.");
+            var held = Exports(home);
+            if (held.Count >= DataExports.MaxFiles && !held.Contains(relative[(DataExports.Folder.Length + 1)..]))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"your '{DataExports.Folder}' folder already holds {held.Count} exports, the most it may: "
+                    + string.Join(", ", held) + ". Delete one you no longer need and ask again. Nothing was written.");
+            HomeFiles.Write(home, relative, bytes);
+
+            // A READ OF THIS POSITION, RECORDED: the observed-deliveries ledger, beside every door call (`ToolCallStore` never throws, and answers 0
+            // for a row it could not write: a file standing without its row is a read nobody sees and bytes no bound counts).
+            if (gateway.ToolCalls.Record(row) == 0)
+            {
+                HomeFiles.Remove(home, relative);
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    "the export could not be recorded, and an export TradeAgent has no record of is not kept. Ask again. Nothing was written.");
+            }
+        }
+    }
+
+    /// <summary>The one gate every export's counts, write and record pass, in this process.</summary>
     static readonly object ExportGate = new();
 
     /// <summary>The export files in the caller's folder, by name, read without following a link; none when there is no folder.</summary>
