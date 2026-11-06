@@ -340,6 +340,43 @@ jobs:
           # passed. A green whose second trx exists is a green that needed two attempts.
           path: '**/results*.trx'
 
+  # WHAT THE PROTECTIONS PAGE SAYS RAN, DID RUN (R29 F-E1). The owner's Oversight page shows a protection as enforced only where the
+  # tests named for it run, and InvariantRegistry.NotEverywhere is the record of where they do not. This job is BEHIND `test` because it
+  # is that record's evidence: it reads every result of THIS run, on all three platforms, and is red unless each named test ran and
+  # passed exactly where the record says. So the only way past a named test that stopped running somewhere is to say so in the record,
+  # and the page then says so too. A run with a red test job is already red, so this is skipped there, not run on half the results.
+  # Not named test*: land.sh reads every test* job's build log, and this builds one project to run one row.
+  proof-record:
+    needs: [dedupe-gate, test]
+    if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.test.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: test-results-*
+          path: ${{ runner.temp }}/run-results
+      - name: Compare the record with what this run measured
+        shell: bash
+        env:
+          TA_RUN_RESULTS: ${{ runner.temp }}/run-results
+        run: |
+          set -euo pipefail
+          dotnet test tests/TradeAgent.UnitTests -c Release \
+            --filter "FullyQualifiedName=TradeAgent.Tests.Unit.InvariantRunsTests.The_record_of_where_each_named_test_runs_is_what_this_run_measured" \
+            --logger "trx;LogFileName=proof-record.trx"
+          # THE ROW RAN AND HELD, read from its trx: a filter that matches nothing exits 0, and a skipped row is not a held one.
+          counts=$(tr '\r\n' '  ' < tests/TradeAgent.UnitTests/TestResults/proof-record.trx | grep -o '<Counters [^>]*>' \
+            | sed -E 's/.* total="([0-9]+)" executed="([0-9]+)" passed="([0-9]+)".*/\1 \2 \3/')
+          read -r total executed passed <<< "$counts"
+          echo "the proof record: $total total, $executed executed, $passed passed"
+          [ "$total" -eq 1 ] && [ "$executed" -eq 1 ] && [ "$passed" -eq 1 ] \
+            || { echo "::error title=The proof record::$total total, $executed executed, $passed passed: the comparison itself must run and hold"; exit 1; }
+
   # NOT BEHIND `test`, deliberately (U-ci-shards), as package-linux is not: it builds the installer from the
   # same tree and tests nothing, and waiting for the suites only put its four minutes after the slowest of
   # them. The run is still green only when every job is, and a release is still cut by hand from a green run.
