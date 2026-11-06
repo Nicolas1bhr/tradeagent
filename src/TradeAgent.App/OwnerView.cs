@@ -1287,9 +1287,10 @@ sealed class OwnerPage
             // EACH PAIR'S ENVELOPE AND ITS USE (U-evidence-breadth-paper): the pair's ceilings, then how many of its runs are taken
             // and by which versions — read from the deployment ledger, the runs not yet accounted for included.
             var runs = _host.Gateway.DeploymentReadings().Where(d => d.Outstanding).ToList();
-            _envelopeValue.Text = standing.Count == 0
-                ? "nothing — TradeAgent may start no paper experiments of its own"
-                : string.Join("; ", standing.Select(e => EnvelopeLine(e, runs)));
+            _envelopeValue.Text = (standing.Count == 0
+                    ? "nothing — TradeAgent may start no paper experiments of its own"
+                    : string.Join("; ", standing.Select(e => EnvelopeLine(e, runs))))
+                + (_host.Gateway.Connector.Id == Platforms.Connectors.Simulator ? ". " + Labels.SimulatorRunsNoStrategies : "");
 
             _withdrawEnvelope.IsEnabled = standing.Count > 0;
         }

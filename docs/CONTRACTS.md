@@ -4673,6 +4673,25 @@ the field, not its value: a board that narrowed to 1 from 2 decided 1. A figure 
 openers; a run's exits, stops, targets and END stay at the allocation, so a narrowing never leaves it a position it
 cannot close. The allocation's quantity and value ceilings and the envelope's sum still bind as they did.
 
+**The founding order rate (PREFLIGHT-2 blocker 2; D20).** `risk.max_orders_per_minute` stays 6 in the founding
+policy, the row every mode shares, and it binds every caller but one: a paper run's own order, in PAPER, on one of
+the app's own paper venues, while that field is still the founding record's, goes out under
+`BoardFounding.PaperRunOrdersPerMinute`, 45 (`TradingGateway.MaxOrdersPerMinuteFor`): the fifteen runs the founding
+envelopes allow by an entry and its two protections, which runs that signal together put in one sliding minute. Six
+stripped ETH and XRP of both their stop and their target. There is one minute's count: a run's orders count toward what
+the flat figure allows the next caller, so every other caller still sees at most six go out. "Founding" is who set the
+field, as for D18, and a figure the board decides binds a run like every other caller. 45 is a constant of this
+build and no policy field, so no act, verb or seat can widen it, and a home that keeps its founding row has it. A
+cancel takes no place in the count, as it never has.
+
+**The founding allowlist reads the venue's list as it stands** (PREFLIGHT-2 blocker 1). A symbol missing from the list
+the gateway holds, on a venue the founding allowlist covers, asks the venue for its list once before it is refused,
+at most once in `InstrumentListAskedAtMost` (a minute) whoever asks and for whichever symbol, because one read
+answers for all of them. Still missing, it is refused as it was. A read that failed leaves the list in hand, refuses
+with `RISK_CHECK_UNAVAILABLE` in those words until the next ask, and allows nothing. Before this the list filled once,
+while empty, so onboarding's look at BTCUSDT alone left every pair setup verified afterwards refused until a restart.
+A policy's own list, and any venue the founding reach does not cover, never asks: there is no venue's list to read.
+
 **The note an author reads** (`TellResearchAboutARun`; R28 P3, G1). Its "net" is the run's P&L: realised after
 its costs, plus what it still holds at the last close against its average; with no close recorded the figure
 leaves the open quantity out and says so. A day's note is said by the runner on a LIVE bar only, the one that
@@ -4717,7 +4736,8 @@ the other half of the stop/target pair is cancelled; when the entry filled on it
 venue; the maximum hold is asked, counted in the program's bars through the last of them that has closed — its reading
 handed to the evaluator on every pass that reaches the minute, its cancel and close only on the live one; on a minute
 that closes no declared bar, an exit refused before the wire is sent again (below); the program is asked; last, after
-an exit refused before the wire, the stop and the target go back (below); and a UTC day that closed is told to Research.
+an exit refused before the wire, the stop and the target go back, and a protection that did not stand is asked for
+again (both below); and a UTC day that closed is told to Research.
 Only the STEP waits for the declared clock: the evaluator is asked on the bar
 `BarResampler` builds from the run's minutes, when that bar's last minute closes — or on the first minute past its end
 when the data does not have its last minutes, and then two bars can close on one minute and are asked in order. What a
@@ -4868,6 +4888,26 @@ first connector read settled lands on a minute that pass then moved the cursor o
 refused before. **NOT claimed**: an exit sent again past its decision's bounds; a refused entry sent again (the program
 decides again on a later bar).
 
+**A PROTECTION THAT DID NOT STAND IS ASKED FOR AGAIN** (`U-paper-t0` item 3). A position open without a stop or target it
+declared is an unprotected position, whatever put it there: refused before the wire, rejected at it, or gone from the
+book while the position stayed. `TradingGateway.ProtectionMissing` is the one reading: the latest of a kind since the
+run's latest entry, when none of its kind may still be working and its row carries no fill, and nothing while an
+exit or a flatten is on its way. An order with a fill on its row is NOT missing, whatever the books read: the row can
+say FILLED while the fill is on its way to the ledger, and a second stop in that gap sells what the first one sold. On
+the newest minute of a pass, when that minute is live and later than the last ask, the runner asks for what is missing
+at the level its operation carries, sized from the books, under that minute's own ids and every gate
+(`PutProtectionBackAsync`, the same path as the paragraph below). **Bounded:** each kind on each of the first
+`ProtectionAskedEveryMinute` (15) minutes, then once in `ProtectionAskedAtMostEvery` (15 minutes), for as long as the
+position stands without it; and a catch-up over a thousand minutes asks once, because only the newest is a moment the
+runner can speak for. **The same under replay and a restart:** every number is off the ledger and the bars, and the
+sequence is spent for each kind whether or not it sends, so a pass that died between the two gives the replay the same
+ids. **Said on every surface:** while it stands so, `DeploymentLine` carries "UNPROTECTED: it holds … with no stop …
+resting at the venue", and so the report, `status.deployments`' reason and the glance card, which leads with that run in
+caution. A UTC day's note says so of that day's close, reading only what that minute's operations hold and what never
+stood, so its words and its id do not move on a replay. The maximum hold cancels every stop and target of the run, not
+the pair the entry's fill named: one asked for again went out under a later id. **NOT claimed:** a protection whose
+level or size came to nothing at the fill (`NoTrade`) wrote no operation, so nothing asks for it and no surface says it.
+
 **A REFUSED EXIT PUTS THE STOP AND THE TARGET BACK, ON ITS OWN MINUTE** (`U-runner-exit-hygiene-b`). Last on each live
 minute, on both clocks: while the books — re-read, not the minute's reading, which a refused re-send marks flat — read
 long, the run's latest entry, exit or flatten is an exit refused before the wire (`Deployments.RefusedBeforeTheWire`, the
@@ -4879,10 +4919,10 @@ read too, a stop and a target being `OrderIntent.Close` — and resolved on the 
 So on the minute of the refusal itself, and never while an exit is in flight: an exit at the wire is about to end the
 position, and protection beside it would sell what it sells. Never past the maximum hold, whose own close is asked again
 each minute. It sends nothing again under an id that was refused: a re-place a gate refuses too is a new order, asked
-for on the next live minute under that minute's ids, until one works. **What it leaves, NOT claimed:** the position is
+for on the pass's newest live minute under that minute's ids, boundedly as above, until one works. **What it leaves, NOT claimed:** the position is
 unprotected from the exit's cancel to the re-place — on paper, the minute in progress, an order being judged from the
-next bar's open after it; while a gate refuses the re-place too (the rate limit; `POSITION_MOVED`), asked again each
-live minute until it works; and the kill switch, the mode or the update window engaged BETWEEN the cancel and the exit
+next bar's open after it; while a gate refuses the re-place too (the rate limit; `POSITION_MOVED`), asked again as
+above until it works; and the kill switch, the mode or the update window engaged BETWEEN the cancel and the exit
 refuse the re-place as well, so the position is without its stop and target until they lift (engaged before the
 cancel, they refuse the cancel and keep them). **Why not exit-first** — keeping the protection until the exit has filled: an oversell is impossible only
 where the venue refuses it (the paper book — "The paper connector" — and a spot venue); the built-in Simulator and

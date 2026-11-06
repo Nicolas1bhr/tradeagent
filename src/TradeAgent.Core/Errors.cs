@@ -1095,6 +1095,22 @@ public static partial class Labels
     public const string MaxOpenPositions = "Most positions it may hold at once";
     public const string MaxOrdersPerMinute = "Most orders per minute";
 
+    /// <summary>
+    /// WHAT THE PRACTICE SIMULATOR IS, PLAINLY (<c>U-paper-t0</c> item 4): it was offered as the recommended place to start and allocated nothing, without a word, because the
+    /// founding envelopes stand on the app's own paper venue and it lists no pair under evidence, at prices it makes up. It cannot run the organisation's strategies and is
+    /// not made to: a paper record over invented prices would be no record. The same sentence on every surface that offers it.
+    /// </summary>
+    public const string SimulatorPlainly =
+        "A built-in fake account with made-up prices, for looking around. Nothing here is real and nothing can be lost, and no strategy runs on it: "
+        + "what the AI team judges only goes on paper on TradeAgent paper.";
+
+    /// <summary>What TradeAgent paper is, plainly: the recommended place to start, on the setup screen.</summary>
+    public const string PaperPlainly = "Real prices, simulated fills, no money. This is where the AI team's strategies run. Start here.";
+
+    /// <summary>Said beside the paper envelopes while the practice simulator is the platform in use: they stand on TradeAgent paper, and nothing they allow runs here.</summary>
+    public const string SimulatorRunsNoStrategies =
+        "You are on the practice simulator, where no strategy runs: nothing here goes on paper until you switch to TradeAgent paper under Settings.";
+
     /// <summary>The per-position loss budget. Everything else on the page bounds an ORDER.</summary>
     public const string MaxLossPerTrade = "Most it may lose on one position";
 
