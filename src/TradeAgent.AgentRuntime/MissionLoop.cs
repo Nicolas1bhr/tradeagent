@@ -2945,13 +2945,14 @@ public sealed class MissionLoop
     /// <param name="quiet">An ordinary failed turn: the card and the turn's own row already say it, and a refusal line would call it one.</param>
     TimeSpan StepAside(string role, string why, TimeSpan? rest = null, bool quiet = false)
     {
-        DateTimeOffset until;
+        TimeSpan wait;
         bool told;
         lock (_gate)
         {
             var times = _stoodAside.TryGetValue(role, out var was) ? was.Times + 1 : 1;
             told = was.Why == why;
-            until = _now() + (rest ?? Backoff(times));
+            wait = rest ?? Backoff(times);
+            var until = _now() + wait;
             _stoodAside[role] = new Aside(why, until, times);
             _refusedLast[role] = $"its seat to be tried again at {until.ToLocalTime():HH:mm} ({why})";
             _role = role;
@@ -2960,7 +2961,7 @@ public sealed class MissionLoop
         Changed?.Invoke();
 
         // A HOST WITH NO WAKE QUEUE HAS NOBODY ELSE TO SERVE AND NO PICK TO STEP OVER IT: its one role sleeps the rest.
-        return _host.Events is null ? until - _now() : TimeSpan.Zero;
+        return _host.Events is null ? wait : TimeSpan.Zero;
     }
 
     /// <summary>

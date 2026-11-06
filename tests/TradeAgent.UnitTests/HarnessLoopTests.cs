@@ -486,6 +486,8 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
         // and ORGANISATION § 10 serves it before a "housekeeping" look of any age — Research's own request is its peer.
         host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Self("after-the-cut"), CouncilRoles.Research),
             MissionEventKind.Self, DateTimeOffset.UtcNow.AddMinutes(-2), role: CouncilRoles.Research);
+        // THE OWNER'S PRESS LIFTS THE REST, so a test need not sit it out (U-turn-bounds-2: a failed turn's backoff is its position's now, and this test used to skip a sleep).
+        loop.SeatChanged(CouncilRoles.Research);
         await loop.TurnAsync();
 
         var next = Assert.Single(host.Opened.Skip(1)).Prompt;
