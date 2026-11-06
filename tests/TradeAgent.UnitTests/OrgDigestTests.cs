@@ -698,11 +698,10 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
     ];
 
-    [Fact]
+    [OnlyOnFact("the script runs on the Linux host; the table it is held to compiles here regardless", "linux", "macos")]
     public void Every_word_the_digest_compares_is_the_one_the_app_writes()
     {
         var script = Path.Combine(RepoRoot(), "tools", "org-digest.py");
-        if (OperatingSystem.IsWindows()) return;    // the script runs on the Linux host; the table it is held to compiles here regardless
         var (exit, o, e) = Run(script, ["--vocabulary"]);
         Assert.True(exit == 0, e);
         var digest = JsonDocument.Parse(o).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
