@@ -779,6 +779,24 @@ public static partial class Labels
     /// What the card waits for while a material pass is owed (<c>U-org-lanes</c>): new turns wait for the AI's turns already
     /// running to end, so the owner's inbox can be checked with nothing running beside it.
     /// </summary>
+    /// <summary>Why the owner's words wait when the funding of their recipient is spent and the day's ceiling is not reached (<c>U-wake-fairness</c>, R28 C1).</summary>
+    public const string ShareOfTheDaySpent =
+        "the part of the day's AI budget that pays for this position is spent, so it takes no turn until that part resets at midnight; "
+        + "the day's overall ceiling is not reached";
+
+    /// <summary>The same when that funding is smaller than one turn: no reset is promised, because none would help.</summary>
+    public const string ShareCannotFundATurn =
+        "the part of the day's AI budget that pays for this position is too small for even one turn, so it takes no turn until that part "
+        + "is made larger; the day's overall ceiling is not reached";
+
+    /// <summary>The activity line for one position's funding running out: the organisation carries on, and only that position waits.</summary>
+    public static string ShareStopped(AiSpendToday reading) => reading.RoleCannotFundATurn
+        ? "One position's part of today's AI budget is too small for even one turn, so it cannot start one until that part is made larger. "
+          + "The day's overall ceiling is not reached, and the rest of the organisation keeps working."
+        : FormattableString.Invariant(
+            $"One position has spent its part of today's AI budget and takes no turn until {reading.ResumesAt.ToLocalTime():HH:mm}. ")
+          + "The day's overall ceiling is not reached, and the rest of the organisation keeps working.";
+
     public const string WaitingForQuietToCheckTheInbox =
         "the AI's running turns to end, so TradeAgent can check your inbox with nothing running beside it";
 

@@ -333,6 +333,17 @@ sealed class PuppetLife : IAsyncDisposable
         await Compose(next, _connector?.Invoke(next) ?? new FakeConnector(new FakeBroker()));
     }
 
+    /// <summary>
+    /// A DELIBERATE RESTART: the service told to stop, as systemd tells it. The AI is stopped first, the way every quit stops it, so the turn in flight
+    /// ends and commits while the database is open; then the same database is opened by a new host, as the app's start does (<c>U-wake-fairness</c>).
+    /// </summary>
+    public async Task RestartCleanly()
+    {
+        await Close();
+        var next = new Database(DatabasePath);
+        await Compose(next, _connector?.Invoke(next) ?? new FakeConnector(new FakeBroker()));
+    }
+
     // ---- the stores ------------------------------------------------------------------------------------------------------
 
     public List<AiAttempt> Attempts() =>

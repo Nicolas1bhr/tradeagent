@@ -305,6 +305,13 @@ public static class WakePriority
         [MissionEventKind.Output] = WakeClass.Housekeeping
     };
 
+    /// <summary>
+    /// HOW LONG A DUE HOUSEKEEPING WAKE WAITS BEHIND THE RESEARCH QUEUE BEFORE IT STANDS IN IT (<see cref="MissionEventStore.Queue"/>). An hour:
+    /// the floor between a team head's wakes, so an overdue ceiling costs a position at most one more of its own turns' spacing. It moves
+    /// a wake in the queue, and raises, spends and admits nothing.
+    /// </summary>
+    public static readonly TimeSpan HousekeepingAgesAfter = TimeSpan.FromHours(1);
+
     /// <summary>The class of <paramref name="kind"/>, or null for a kind the table does not know.</summary>
     public static WakeClass? ClassOf(string? kind) =>
         kind is not null && Table.TryGetValue(kind, out var c) ? c : null;
@@ -882,16 +889,25 @@ public sealed class MissionEventStore(Database db)
     /// ORGANISATION § 10 class among its due wakes (<see cref="WakePriority"/>), then the oldest due AT that class, then its id.
     /// The loop breaks a tie of class and age by unit depth before the id — the chart is not this table's to read. A row of a
     /// kind the table does not class is never served.
+    ///
+    /// <para><b>HOUSEKEEPING AGES</b> (<c>U-wake-fairness</c>, R28 W7): a housekeeping wake due longer than
+    /// <see cref="WakePriority.HousekeepingAgesAfter"/> ranks as research, keeping its due time. On one lane, strict class order let
+    /// self-waking research positions hold a head's 24-hour ceiling back for ever. Aged, it stands in the research queue by age, so a
+    /// research wake due after it never passes it: its wait is the ageing plus the research wakes already older than it. The classes
+    /// above research keep their order; none of them is a wake a position raises for itself.</para>
     /// </summary>
     public List<DueRole> Queue(DateTimeOffset now) => db.Read(_ =>
     {
         using var c = db.Cmd($"""
-            WITH d AS (SELECT COALESCE(role,$chair) AS r, {WakePriority.Sql("kind")} AS c, due_at
+            WITH d AS (SELECT COALESCE(role,$chair) AS r,
+                              CASE WHEN {WakePriority.Sql("kind")} = $housekeeping AND due_at <= $aged THEN $research
+                                   ELSE {WakePriority.Sql("kind")} END AS c, due_at
                          FROM mission_event WHERE consumed_at IS NULL AND due_at <= $now),
                  top AS (SELECT r, MIN(c) AS c FROM d WHERE c IS NOT NULL GROUP BY r)
             SELECT d.r, top.c, MIN(d.due_at) FROM d JOIN top ON top.r = d.r AND top.c = d.c
              GROUP BY d.r, top.c ORDER BY top.c, MIN(d.due_at), d.r
-            """, ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default));
+            """, ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default), ("$aged", Sql.T(now - WakePriority.HousekeepingAgesAfter)),
+            ("$housekeeping", (int)WakeClass.Housekeeping), ("$research", (int)WakeClass.Research));
         using var r = c.ExecuteReader();
         var list = new List<DueRole>();
         while (r.Read()) list.Add(new DueRole(r.GetString(0), (WakeClass)r.GetInt64(1), Sql.Time(r.GetValue(2))));
@@ -905,6 +921,16 @@ public sealed class MissionEventStore(Database db)
     public DateTimeOffset? NextDueAt() => db.Read(_ =>
     {
         using var c = db.Cmd("SELECT MIN(due_at) FROM mission_event WHERE consumed_at IS NULL");
+        return Sql.TimeN(c.ExecuteScalar());
+    });
+
+    /// <summary>
+    /// The earliest unconsumed wake still to come after <paramref name="now"/>, or null: what a loop whose due roles cannot be afforded
+    /// wakes for (<c>U-wake-fairness</c>), where <see cref="NextDueAt"/> would answer the unaffordable wake itself.
+    /// </summary>
+    public DateTimeOffset? NextDueAfter(DateTimeOffset now) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT MIN(due_at) FROM mission_event WHERE consumed_at IS NULL AND due_at > $now", ("$now", Sql.T(now)));
         return Sql.TimeN(c.ExecuteScalar());
     });
 
@@ -1374,21 +1400,33 @@ public sealed class MissionEventStore(Database db)
     });
 
     /// <summary>
-    /// THE KINDS A POSITION IS TOLD SOMETHING BY (<c>U-loop-e2e</c>): a note and a verdict addressed to it — what a lost turn took and no clock
-    /// brings back to a position beyond the pair. Each consumed by a launch the restart's meter declared LOST, unsettled: what
-    /// <see cref="LostOwnerWords"/> is for the owner's words.
+    /// THE KINDS A POSITION IS TOLD SOMETHING BY (<c>U-loop-e2e</c>; <c>U-wake-fairness</c>, R28 R1): everything a turn that was lost or failed
+    /// took and nothing else brings back — a note, a verdict, a hire's first wake, a position's own request, a fill, a report. The rest
+    /// have their own road: the owner's words (<see cref="LostOwnerWords"/>), his pressed wake (served once, U-chief-wake-once), a mandate's
+    /// wakes (the sweep), and the clock's (the schedule).
     /// </summary>
-    public static readonly IReadOnlyList<string> ToldKinds = [MissionEventKind.Note, MissionEventKind.Verdict];
+    public static readonly IReadOnlyList<string> ToldKinds =
+    [
+        .. WakePriority.Table.Keys.Except(
+        [
+            MissionEventKind.Owner, MissionEventKind.OwnerWake,
+            MissionEventKind.Mandate, MissionEventKind.Delivery, MissionEventKind.Escalation, MissionEventKind.Proposal,
+            MissionEventKind.Review, MissionEventKind.Renewal, MissionEventKind.Ceiling, MissionEventKind.Output
+        ], StringComparer.Ordinal)
+    ];
+
+    /// <summary>The SQL list of <see cref="ToldKinds"/>: the table's own constants, so nothing an agent wrote reaches it.</summary>
+    static readonly string ToldSql = string.Join(",", ToldKinds.Select(k => $"'{k}'"));
 
     /// <summary>The wakes of <see cref="ToldKinds"/> a LOST launch consumed and nothing settled, oldest first.</summary>
     public List<MissionEvent> LostTold() => db.Read(_ =>
     {
         using var c = db.Cmd($"""
             SELECT {Cols} FROM mission_event e
-             WHERE e.kind IN ($note, $verdict) AND e.consumed_at IS NOT NULL AND e.disposition IS NULL
+             WHERE e.kind IN ({ToldSql}) AND e.consumed_at IS NOT NULL AND e.disposition IS NULL
                AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = e.consumed_by AND a.state = 'LOST')
              ORDER BY e.created_at, e.rowid
-            """, ("$note", MissionEventKind.Note), ("$verdict", MissionEventKind.Verdict));
+            """);
         using var r = c.ExecuteReader();
         var list = new List<MissionEvent>();
         while (r.Read()) list.Add(Read(r));
@@ -1398,13 +1436,12 @@ public sealed class MissionEventStore(Database db)
     /// <summary>Settles one wake <see cref="LostTold"/> found <c>failed</c>, saying why — only while it still reads so. Answers whether this call did.</summary>
     public bool SettleLostTold(string id, string detail) => db.Write(_ =>
     {
-        using var c = db.Cmd("""
+        using var c = db.Cmd($"""
             UPDATE mission_event SET disposition = $failed, disposition_detail = $detail
-             WHERE id = $id AND kind IN ($note, $verdict) AND consumed_at IS NOT NULL AND disposition IS NULL
+             WHERE id = $id AND kind IN ({ToldSql}) AND consumed_at IS NOT NULL AND disposition IS NULL
                AND EXISTS (SELECT 1 FROM ai_attempt a WHERE a.id = mission_event.consumed_by AND a.state = 'LOST')
             """,
-            ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id),
-            ("$note", MissionEventKind.Note), ("$verdict", MissionEventKind.Verdict));
+            ("$failed", MissionEventDisposition.Failed), ("$detail", detail), ("$id", id));
         return c.ExecuteNonQuery() == 1;
     });
 

@@ -10,7 +10,7 @@ public partial class OrgStructureTests
 {
     /// <summary>A team under <see cref="Div"/>, chartered by <see cref="Head"/> citing current work: vacant, no position yet.</summary>
     static string Team(Database db, OrgStore org, DateTimeOffset? collapse = null) =>
-        org.Charter(Ask(refs: collapse is null ? [CurrentRun(db)] : [], collapse: collapse), Metered, Now).Unit.Id;
+        org.Charter(Ask(refs: collapse is null ? [CurrentRun(db)] : [], collapse: collapse) with { Rationale = $"its own family, {Guid.NewGuid():n}" }, Metered, Now).Unit.Id;
 
     static HireRequest HireAsk(string unit, string caller = Head, bool asHead = false, IReadOnlyList<OrgRef>? refs = null,
         IReadOnlyList<ForecastClaim>? forecasts = null) =>

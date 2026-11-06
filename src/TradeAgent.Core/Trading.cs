@@ -987,6 +987,13 @@ public sealed record AiSpendToday
     public bool RoleAdmitsAnotherTurn =>
         (Role is null || RoleSpent + RoleReserved + NextTurnReservation <= RoleCap) && (PlanReading?.RoleAdmitsAnotherTurn ?? true);
 
+    /// <summary>
+    /// THE ROLE'S OWN SHARE IS SMALLER THAN ONE TURN'S WORST CASE: <see cref="CapCannotFundATurn"/>'s fact one level down, a funding chain
+    /// no reset can make admit a turn, whatever room the day has (<c>U-wake-fairness</c>, R28 C1). Words only: it admits nothing.
+    /// </summary>
+    public bool RoleCannotFundATurn =>
+        Metered && Role is not null && NextTurnReservation > RoleCap || PlanReading is { RoleCannotFundATurn: true };
+
     /// <summary>What is left of this role's slice after what it has spent and committed.</summary>
     public decimal RoleRemaining => Role is null ? Cap - Spent - Reserved
         : RoleCap - RoleSpent - RoleReserved;

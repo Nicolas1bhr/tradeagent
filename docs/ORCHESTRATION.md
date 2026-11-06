@@ -213,7 +213,13 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   disposition and never retries; **a refusal about the host or the launch** — no proven cell on the host, the no-unconfined-neighbour rule, no
   launcher, a held order grant, an unwritable ledger — steps over and keeps every wake, under backoff. **The owner's words are never settled by
   a refusal of either kind:** they stay owed, and his surface shows them undelivered with the reason (the O3 survey, 2026-10-11).
-- **Priority:** ORGANISATION § 10's order, read from there and never restated; oldest due first within a class; ties by unit depth, then id.
+- **Priority:** ORGANISATION § 10's order, read from there and never restated; oldest due first within a class; ties by unit depth, then id. A
+  housekeeping wake overdue by an hour ranks as research by its own age, so self-waking research cannot hold a head's ceiling back on one lane (`U-wake-fairness`).
+- **Waits are bounded and fair (`U-wake-fairness`).** One position's spent funding never sets the organisation's sleep: while only unaffordable positions are due, the loop
+  wakes for the next wake due and looks again at least every `MaxDelay`, its card still naming the reset. No wake a position buys for itself passes its level's floor,
+  counted from its last woken turn: `org-wake`, the wake file (a cell's only way to ask; a request below the floor moves up to it) and a self-activating hire's wake to its hirer.
+- **A stop keeps its work (`U-wake-fairness`).** A turn the loop's own stop ended, a quit's included, gives back every wake it took, the owner's words on their own row; only his
+  pressed wake stays served once. What a lost or failed turn took is told again once. The owner's retried words go to his recipient now: the active chief, never a sleeping chair.
 - **Objectives per position kind** (extending `RoleObjectives`): a wake is a divergence between the observed and the desired world. A head owns its
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
   open mandate and its own requested wakes, never an app timer or heartbeat. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
@@ -327,7 +333,7 @@ One authority implementation (Law 8): the organisation's verbs join the gateway'
 - **Heads:** `assign` (a leaf mandate into its own subtree), `accept` or `reject` a delivery (a rejection names a failed check or a stated defect),
   `rescope`, `cancel`, `escalate`; service requests to another division's head.
 - **Unit heads:** `charter`, `close`, `merge`, `hire`, `retire`, `tilt` — each a decision record with a forecast, inside the throttles (a unit lives
-  14 days; two structural changes a week; a tilt moves a share by at most 20 points a week, ORGANISATION § 8), shown on the owner's chart and vetoable (ORGANISATION § 3).
+  14 days; two structural changes a week, a repeated charter being the same act and spending none; a tilt moves a share by at most 20 points a week, ORGANISATION § 8), shown on the owner's chart and vetoable (ORGANISATION § 3).
 - **Executors:** `deliver` (a sealed manifest, a report, deviations named), `decline` with a reason, `propose`, `note` (lateral, inside its
   information grant); helpers as child attempts inside its own allocation and capability subset.
 - **One rights matrix** (actor × target × operation, data the app enforces): reserved identities — anything about `operations` is the owner's two

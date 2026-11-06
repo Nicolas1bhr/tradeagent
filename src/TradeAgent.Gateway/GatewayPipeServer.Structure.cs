@@ -47,10 +47,14 @@ public sealed partial class GatewayPipeServer
             trial_share = made.Unit.TrialShare,
             verdict_share = made.Unit.VerdictShare,
             decision = DecisionReply(made.Decision),
-            note = "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
-                   + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
-                   + "own ledger entry, marked claim — and its unit-admissible forecast resolves at its date from the referee's verdicts "
-                   + "on versions the unit's launches funded. It counts toward the organisation's two structural changes a week."
+            repeated = made.Repeated,
+            note = made.Repeated
+                ? "This charter went in already: the same kind, shares and rationale as the unit named here, which stands, so nothing was "
+                  + "written and no structural change was spent. To charter a second unit, give it its own rationale."
+                : "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
+                  + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
+                  + "own ledger entry, marked claim — and its unit-admissible forecast resolves at its date from the referee's verdicts "
+                  + "on versions the unit's launches funded. It counts toward the organisation's two structural changes a week."
         };
     }
 
@@ -64,7 +68,7 @@ public sealed partial class GatewayPipeServer
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var hired = Gateway.Org.Hire(new HireRequest(caller, ctx.AttemptId, Require(req, "unit"), NamedFlag(req, "head", whenAbsent: false),
             Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow,
-            SelfActivationRefusal);
+            SelfActivationRefusal, RewakeFloors.Of(Gateway.Policy));
         var active = hired.Dormant is null;
         return new
         {
@@ -76,7 +80,8 @@ public sealed partial class GatewayPipeServer
             decision = DecisionReply(hired.Decision),
             note = (active
                        ? "Hired and ACTIVE: the activation gate admits it on its seat and one turn of it fits its unit's envelope and the "
-                         + "day-total, so it activated itself in the same write, and TradeAgent wakes it and you once each. "
+                         + "day-total, so it activated itself in the same write. TradeAgent wakes it now, and wakes you once about it, no "
+                         + "sooner than the security board's floor between your wakes. "
                        : "Hired DORMANT: it runs nothing until it is activated — 'dormant_because' says why it did not activate itself. ")
                    + "The position's id and home are TradeAgent's. The hire is your 'hire' decision, the rationale your own ledger entry, "
                    + "marked claim; the owner can veto it, which ends it."

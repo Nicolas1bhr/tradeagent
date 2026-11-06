@@ -98,7 +98,13 @@ public partial class CouncilLoopTests
             using (presence?.Enter() ?? Nothing)
             {
                 OnTurn?.Invoke();
-                await Task.Delay(2, ct);
+                if (Hang is { } hang)
+                {
+                    Hanging.TrySetResult();
+                    await hang.Task;
+                    Exit = -1;
+                }
+                else await Task.Delay(2, ct);
             }
 
             var turn = new ChatTurn(ChatRole.Ai, $"{role} did its turn.", DateTimeOffset.UtcNow);
@@ -150,7 +156,19 @@ public partial class CouncilLoopTests
 
         /// <summary>What the next turn reports it used, or null for a turn that reports none (<c>U-org-packets-a</c>).</summary>
         public TurnUsage? Usage { get; set; }
-        public Task CancelAsync() => Task.CompletedTask;
+
+        /// <summary>While set, a turn hangs until it is cancelled and then ends as a cancelled turn does: exit -1 (<c>U-wake-fairness</c>).</summary>
+        public TaskCompletionSource? Hang { get; set; }
+
+        /// <summary>Completes when a turn has reached <see cref="Hang"/>.</summary>
+        public TaskCompletionSource Hanging { get; } = new();
+
+        public Task CancelAsync()
+        {
+            Hang?.TrySetResult();
+            return Task.CompletedTask;
+        }
+
         public void Queue(string message) { }
     }
 
@@ -276,6 +294,10 @@ public partial class CouncilLoopTests
         {
             if (Floors is { } floors) new OrgStore(_db).Sweep(now, floors);
         }
+
+        /// <summary>A position's own wake file under <see cref="Floors"/>, as the app's host reads it; with none, the time asked.</summary>
+        public DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now) =>
+            Floors is { } floors ? new OrgStore(_db).OwnWakeDue(role, asked, floors, now) : now + asked;
 
         /// <summary>
         /// WHETHER A TURN THIS HOST LAUNCHED IS ENDED IN THE LEDGER WHEN IT COMMITS, at this host's clock, as the meter ends one that

@@ -720,6 +720,13 @@ public interface IMissionHost
     PacketVerb? VerbsFor(string role) => null;
 
     /// <summary>
+    /// WHEN <paramref name="role"/>'S OWN WAKE FILE MAY WAKE IT, or null where it asks for nothing (<c>U-wake-fairness</c>, R28 W4, R29 F-A2;
+    /// <see cref="OrgStore.OwnWakeDue"/>). <paramref name="asked"/> is already capped by <see cref="MissionOptions.MaxDelay"/>. The default is
+    /// a host with no chart: the time asked.
+    /// </summary>
+    DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now) => now + asked;
+
+    /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
     /// (<c>U-board-b2</c> item 4): composed by the app from the board's records alone, or null for a host that composes none — whose
     /// board seats then launch nothing.
@@ -1956,6 +1963,15 @@ public sealed class MissionLoop
     DateTimeOffset? _nextTurnAt;
     string? _waitingFor;
 
+    /// <summary>The next sleep is a re-check under a ceiling, so it leaves <see cref="_nextTurnAt"/> at the reset (<see cref="Rechecked"/>).</summary>
+    bool _cardKept;
+
+    /// <summary>
+    /// <see cref="PauseAsync"/> IS ENDING THE TURNS: the loop's own stop, a quit's included, so a turn that fails meanwhile was stopped
+    /// rather than wrong, and gives back what it took (<c>U-wake-fairness</c>, R28 R1; <see cref="Settle"/>). Under the lock.
+    /// </summary>
+    bool _stopping;
+
     /// <summary>
     /// EACH POSITION'S NEWEST REFUSAL, as the card says it, until that position next launches, another reason replaces it, or
     /// nothing is due at all: a launch refusal (<see cref="AiAdmission.Launch"/>), the ledger's (<see cref="AiAdmission.Ledger"/>)
@@ -2582,7 +2598,7 @@ public sealed class MissionLoop
         CancellationTokenSource? cts;
         Task? run;
         List<IAgentConversation> turning;
-        lock (_gate) { cts = _cts; run = _running; _cts = null; _running = null; turning = [.. _conversations.Values]; }
+        lock (_gate) { cts = _cts; run = _running; _cts = null; _running = null; turning = [.. _conversations.Values]; _stopping = true; }
 
         // EVERY ROLE'S TURN ENDED FIRST, AND ITS WHOLE TREE WITH IT, BEFORE THE TOKEN (U-agent-tree). Pause
         // means the AI is stopped: each conversation's CancelAsync runs the turn's teardown and returns once
@@ -2615,7 +2631,7 @@ public sealed class MissionLoop
         // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
         // this is the second half of the same promise for a turn whose task the wait above gave up
         // on: a lease nothing releases is a role that never works again.
-        lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _stoodAside.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); }
+        lock (_gate) { _turning.Clear(); _lanes.Clear(); _dispatched.Clear(); _restUntil.Clear(); _stoodAside.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; _refusedLast.Clear(); _stopping = false; }
         Changed?.Invoke();
     }
 
@@ -2704,7 +2720,8 @@ public sealed class MissionLoop
         {
             if (wait > TimeSpan.Zero)
             {
-                lock (_gate) _nextTurnAt = _now() + wait;
+                // THE CARD KEEPS THE RESET IT WAS GIVEN: a re-check on the way there is no time the next turn is expected.
+                lock (_gate) { if (!_cardKept) _nextTurnAt = _now() + wait; _cardKept = false; }
                 Changed?.Invoke();
                 try { await WaitAsync(wait, ct); }
                 catch (OperationCanceledException) { return; }
@@ -3115,8 +3132,9 @@ public sealed class MissionLoop
                 // The message stays unconsumed and is still owed a turn; this is the standing reason
                 // it has not had one, and recording it costs nothing — which is the point, because
                 // the thing that stopped the turn is that there is no money left to spend on one.
-                BlockOwnerMessages(events, "the day's AI spending ceiling is reached, so no turn can "
-                                           + "be taken until it resets");
+                // EACH RECIPIENT'S OWN REASON, READ FROM ITS OWN READING (U-wake-fairness, R28 C1): a position whose funding is spent has
+                // not reached the day's ceiling, and a sentence saying it had would send the owner to the wrong page.
+                foreach (var stopped in free) BlockOwnerMessages(events, NoTurnWords(Spend(stopped)), stopped);
                 return new Picked([], CappedUntilMidnight(Spend(free[0])) ?? _options.BusyRetry);
             }
             return new Picked(open, TimeSpan.Zero);
@@ -3610,12 +3628,14 @@ public sealed class MissionLoop
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
             // What the packet showed is recorded against the ROW's id only: a host with no ledger has no row to record it on.
-            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : shown, fence);
+            bool stopped;
+            lock (_gate) stopped = _stopping && fence is null && (ended?.Failed ?? true);
+            Commit(role, attemptId, events, wake, ended, consumer, recorded is null ? [] : shown, fence, stopped);
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
-            // before any work (U-vendor-limit-wakes).
-            if (UnworkedRefusal(ended) is not null) lock (_gate) OweTyped(role, typed);
+            // before any work (U-vendor-limit-wakes), or one the loop's own stop ended (U-wake-fairness).
+            if (stopped || UnworkedRefusal(ended) is not null) lock (_gate) OweTyped(role, typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
             // than after it, so a turn that threw its way out still settles the question — a turn
@@ -4099,16 +4119,26 @@ public sealed class MissionLoop
     /// gets one the moment the day turns over. Never throws: a disposition is a record, and a loop
     /// that stopped over one would turn bookkeeping into an AI that stopped working.
     /// </summary>
-    void BlockOwnerMessages(MissionEventStore events, string why)
+    void BlockOwnerMessages(MissionEventStore events, string why, string? role = null)
     {
         try
         {
             foreach (var e in events.Due(_now()))
-                if (e.Kind == MissionEventKind.Owner)
+                if (e.Kind == MissionEventKind.Owner && (role is null || (e.Role ?? CouncilRoles.Default) == role))
                     events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, why);
         }
         catch (Exception) { /* the same queue the turn could not be afforded out of */ }
     }
+
+    /// <summary>
+    /// WHY NO TURN CAN BE AFFORDED, IN THE OWNER'S WORDS, for the reading that stopped it: the day's ceiling only where the day's ceiling
+    /// is what stopped it. Funding spent says so and that the day's ceiling is not reached; funding too small for one turn promises no
+    /// reset, because midnight resets the total and not the arithmetic (U-wake-fairness, R28 C1).
+    /// </summary>
+    static string NoTurnWords(AiSpendToday spend) =>
+        !spend.AdmitsGlobally ? "the day's AI spending ceiling is reached, so no turn can be taken until it resets"
+        : spend.RoleCannotFundATurn ? Labels.ShareCannotFundATurn
+        : Labels.ShareOfTheDaySpent;
 
     /// <summary>
     /// WHETHER THE HOST'S ACTIVATION SEAM LETS THIS POSITION TURN NOW, and what a refusal does to its wakes
@@ -4293,7 +4323,8 @@ public sealed class MissionLoop
     /// a bookkeeping failure into an AI that stopped working.
     /// </summary>
     void Commit(string role, string? attempt, MissionEventStore? events,
-        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer, IReadOnlyList<PacketInput> shown, string? fence = null)
+        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended, string consumer, IReadOnlyList<PacketInput> shown, string? fence = null,
+        bool stopped = false)
     {
         var failed = ended?.Failed ?? true;
         try
@@ -4307,12 +4338,13 @@ public sealed class MissionLoop
             // session (its process never started, or a harness turn handed no request over — part a's record), a harness turn whose
             // requests no provider accepted (none connected, or each was answered outside 2xx — fix pass 2), one the gate refused at
             // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
-            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too.
+            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too, and
+            // nor does a turn the loop's own stop ended, whose wakes go back with what they showed (U-wake-fairness).
             _host.CommitTurn(role, attempt, () =>
             {
-                if (events is not null) Settle(events, wake, failed, ended, consumer, fenced: fence is not null);
+                if (events is not null) Settle(events, wake, failed, ended, consumer, fenced: fence is not null, stopped: stopped);
                 if (attempt is not null && shown.Count > 0 && ended is { Session: not null, NoRequestAccepted: false }
-                    && UnworkedRefusal(ended) is null)
+                    && UnworkedRefusal(ended) is null && !stopped)
                     _host.RecordInputs(attempt, shown);
             });
         }
@@ -4458,7 +4490,12 @@ public sealed class MissionLoop
             var id = MissionEventIds.Self(attemptId is { Length: > 0 } a
                 ? a
                 : now.UtcDateTime.ToString("yyyyMMddHHmmssfff"));
-            try { events.RaiseDue(id, MissionEventKind.Self, now, now + asked, role: role); }
+            // WHEN IT MAY BE WOKEN IS THE HOST'S TO SAY (U-wake-fairness, R28 W4, R29 F-A2): the wake file is the path a cell has, and the
+            // board's floor is not skipped by taking it. A seam that throws raises nothing: the saving direction.
+            try
+            {
+                if (_host.OwnWakeDue(role, asked, now) is { } due) events.RaiseDue(id, MissionEventKind.Self, now, due, role: role);
+            }
             catch (Exception) { /* the schedule below still gives the loop something to wake for */ }
         }
 
@@ -4763,10 +4800,13 @@ public sealed class MissionLoop
     /// the work happened.</para>
     /// </summary>
     void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer,
-        bool fenced = false)
+        bool fenced = false, bool stopped = false)
     {
         if (wake.Count == 0) return;
-        if (UnworkedRefusal(ended) is { } why)
+
+        // A TURN THE LOOP'S OWN STOP ENDED FINISHED NOTHING (U-wake-fairness, R28 R1): a quit is no failure of the turn, and a row closed
+        // ENDED is one the LOST recoveries never look at, so a `failed` here lost every wake in it at each deliberate restart.
+        if ((stopped ? StoppedTurn : UnworkedRefusal(ended)) is { } why)
         {
             try
             {
@@ -4795,11 +4835,16 @@ public sealed class MissionLoop
             {
                 events.Settle(e.Id, disposition);
                 // A FENCED TURN IS NEVER RETRIED HERE (U-org-verbs-b): its wakes were kept or withdrawn by the transition that fenced it.
-                if (!failed || fenced || e.Kind != MissionEventKind.Owner) continue;
+                if (!failed || fenced) continue;
 
-                RetryOnce(events, e, ended?.Raw is { Length: > 0 } raw
-                    ? raw[..Math.Min(raw.Length, 500)]
-                    : "the turn ended without a reply");
+                if (e.Kind == MissionEventKind.Owner)
+                    RetryOnce(events, e, ended?.Raw is { Length: > 0 } raw
+                        ? raw[..Math.Min(raw.Length, 500)]
+                        : "the turn ended without a reply");
+                // WHAT A FAILED TURN WAS TOLD IS TOLD AGAIN ONCE, as a lost turn's is (U-wake-fairness, R28 R1): nothing else brings back
+                // a hire's first wake, or a note to a position with no clock.
+                else if (MissionEventStore.ToldKinds.Contains(e.Kind) && !e.Id.EndsWith(AfterLost, StringComparison.Ordinal))
+                    events.Raise(e.Id + AfterLost, e.Kind, _now(), e.Payload, e.Role);
             }
         }
         catch (Exception)
@@ -4826,10 +4871,16 @@ public sealed class MissionLoop
         // AND A TURN ENDED AT ITS LIMIT (R28 W2): whatever it had done, nothing says it finished, so what it was woken for stays owed.
         : ended?.TimedOut;
 
+    /// <summary>What a wake given back by the loop's own stop says, and what the owner's words wait on until the next turn takes them.</summary>
+    internal const string StoppedTurn =
+        "TradeAgent stopped while the turn that took this was running, so it goes to the next turn";
+
     /// <summary>
-    /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the chair's next turn — carrying which message it retries and why. A
-    /// message that is itself a retry is left as it is: the owner can see both rows and ask again in their own words.
-    /// Answers false only when the retry was owed and its row did not go in.
+    /// RAISES THE OWNER'S WORDS AGAIN, ONCE, for the next turn of whoever takes his words now — the active chief, or the chair where there
+    /// is none (<see cref="MissionEventStore.OwnerRecipient"/>; <c>U-wake-fairness</c>, R28 R2, R29 F-C2, R25 D4). Never the role the
+    /// message first went to: a chair asleep under a chief would hold it for ever. They stay his quoted words, data for that turn, granting
+    /// nothing. The row carries which message it retries and why. A message that is itself a retry is left as it is: the owner can see
+    /// both rows and ask again in their own words. Answers false only when the retry was owed and its row did not go in.
     /// </summary>
     bool RetryOnce(MissionEventStore events, MissionEvent e, string failure)
     {
@@ -4839,7 +4890,7 @@ public sealed class MissionLoop
         var seq = events.NextOwnerSequence();
         return events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
             Json.Write(said with { RetryOf = e.Id, Failure = failure }),
-            CouncilRoles.Operations);   // the chair's, as the message it retries was
+            events.OwnerRecipient());
     }
 
     /// <summary>The failure a lost turn's retry carries: what the app knows, and nothing it does not.</summary>
@@ -4994,9 +5045,9 @@ public sealed class MissionLoop
     /// <see cref="AiSpendToday.AdmitsAnotherTurn"/>: what has been spent, plus what is committed and
     /// unresolved, plus what THIS turn would commit, against the ceiling.
     ///
-    /// The wait is until local MIDNIGHT rather than the backoff's half hour, because that is when
-    /// the number this refuses on stops being today's — waking every thirty minutes to re-read the
-    /// same total would be the loop asking the same question all night and getting the same answer.
+    /// THE CARD SAYS LOCAL MIDNIGHT, because that is when the number this refuses on stops being today's. THE LOOP DOES NOT SLEEP THAT
+    /// LONG (<c>U-wake-fairness</c>, R28 W3): this reading is one role's, and the roles beside it may have room — see
+    /// <see cref="Rechecked"/>.
     ///
     /// The card is left reading "waiting until 00:00" rather than "paused": the owner has not paused
     /// anything and their permission is intact, so a card saying they had would be the software
@@ -5026,8 +5077,10 @@ public sealed class MissionLoop
         lock (_gate)
         {
             _nextTurnAt = spend.ResumesAt;
+            _cardKept = true;
             _waitingFor = spend.Role is { } r && !spend.RoleAdmitsAnotherTurn && spend.AdmitsGlobally
-                ? $"the {CouncilRoles.Title(r)}'s share of the day to reset"
+                ? spend.RoleCannotFundATurn ? $"a larger share of the day for the {CouncilRoles.Title(r)}"
+                : $"the {CouncilRoles.Title(r)}'s share of the day to reset"
                 // THE CEILING THAT STOPPED IT, by name (U-billing-classes): the plan's capacity is not the money limit.
                 : spend.Binding.Class == BillingClasses.Plan ? "the daily plan-capacity limit to reset"
                 : "the daily spending limit to reset";
@@ -5039,7 +5092,28 @@ public sealed class MissionLoop
         var wait = spend.ResumesAt - _now();
         // A resume time already behind us would busy-spin the loop against a total that is about to
         // roll over anyway. One BusyRetry is the smallest honest wait.
-        return wait > TimeSpan.Zero ? wait : _options.BusyRetry;
+        return wait > TimeSpan.Zero ? Rechecked(wait) : _options.BusyRetry;
+    }
+
+    /// <summary>
+    /// THE SLEEP OF A LOOP WHOSE DUE ROLES CANNOT BE AFFORDED (<c>U-wake-fairness</c>, R28 W3): one role's ceiling never sets the
+    /// organisation's sleep. The wait is the reset's, cut to the next wake due later — any role's, because that role's reading may have
+    /// room: an envelope is one unit's, and a seat on another billing class is held to another ceiling — to the next boundary's
+    /// deadline, and to <see cref="MissionOptions.MaxDelay"/>, so the sweeps go on and a raised limit is read within that bound. A wake
+    /// due later never moves the loop by itself, so without this it is missed until midnight. A look that finds the same total
+    /// launches nothing and costs one sweep. A host with no wake queue has nothing else to wake for.
+    /// </summary>
+    TimeSpan Rechecked(TimeSpan untilReset)
+    {
+        if (_host.Events is not { } events) return untilReset;
+        var wait = untilReset < _options.MaxDelay ? untilReset : _options.MaxDelay;
+        var now = _now();
+        DateTimeOffset? next;
+        try { next = events.NextDueAfter(now); }
+        catch (Exception) { next = null; }
+        foreach (var at in new[] { next, NextBoundaryDeadline() })
+            if (at is { } t && t > now && t - now < wait) wait = t - now;
+        return wait;
     }
 
     /// <summary>

@@ -92,8 +92,11 @@ public sealed record HireRequest(
 /// </summary>
 public sealed record Hired(OrgPositionRow Position, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId, string? Dormant = null);
 
-/// <summary>What a charter wrote: the unit, its <c>charter</c> decision, the forecasts on it and the <c>chartered</c> event's id.</summary>
-public sealed record Chartered(OrgUnitRow Unit, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId);
+/// <summary>
+/// What a charter wrote: the unit, its <c>charter</c> decision, the forecasts on it and the <c>chartered</c> event's id. <see cref="Repeated"/>:
+/// nothing was written, because this call repeated that act (<see cref="OrgStore.Charter"/>).
+/// </summary>
+public sealed record Chartered(OrgUnitRow Unit, DecisionRow Decision, IReadOnlyList<ForecastRow> Forecasts, long EventId, bool Repeated = false);
 
 /// <summary>
 /// THE STRUCTURAL VERBS (<c>U-org-verbs-c</c>, O6 part c; ORCHESTRATION § 2.9; ORGANISATION §§ 2, 3, 5): a head charters a unit under
@@ -136,6 +139,10 @@ public sealed partial class OrgStore
 
         if (parent.Status == OrgUnitStatus.Closed)
             throw Refused($"{OrgEnvelopes.NameOf(parent.Id)} is closed: nothing is chartered under a closed unit.");
+
+        // THE SAME CHARTER AGAIN IS THE SAME ACT (U-wake-fairness, R28 R3), answered before every bound the first one consumed: the door
+        // mints each call a fresh request id, so a model unsure whether its charter went in would spend a week's second structural act.
+        if (RepeatedCharter(r, parent, now) is { } same) return same;
         if (KindRefusal(r.Kind, parent) is { } badKind) throw Refused(badKind);
 
         // A FOURTH MANAGER LAYER IS THE EARNING TEST'S, NEVER A DEPTH CONSTANT'S (VISION § 3): the new unit's head would be a manager
@@ -240,9 +247,50 @@ public sealed partial class OrgStore
             c.ExecuteNonQuery();
         var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: id)).ToList();
         var eventId = Event(now, id, null, OrgEventKind.Chartered, r.Caller,
-            $"unit={id} kind={r.Kind} parent={parent.Id} share={Sql.D(r.AiShare)} decision={decision.Id} {route}");
+            $"unit={id} kind={r.Kind} parent={parent.Id} share={Sql.D(r.AiShare)} decision={decision.Id} {ContentMark}{CharterContent(r)} {route}");
         return new Chartered(Units().Single(u => u.Id == id), decision, forecasts, eventId);
     });
+
+    /// <summary>What a <c>chartered</c> event's detail names its content with (<see cref="CharterContent"/>).</summary>
+    const string ContentMark = "content=";
+
+    /// <summary>
+    /// WHAT MAKES TWO CHARTERS ONE ACT: the unit asked for — its kind, its shares — and the reason given. Options, citations, forecasts and
+    /// a collapse date are left out: a model repeating a call it is unsure of may date them afresh, and a second unit with the same reason
+    /// is said by giving a different one. A hash, because the detail is the app's composed line and the rationale is the author's words.
+    /// </summary>
+    static string CharterContent(CharterRequest r) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Write(new
+        {
+            r.Kind, Share = Sql.D(r.AiShare), Trials = r.TrialShare is { } t ? Sql.D(t) : null, Verdicts = r.VerdictShare is { } v ? Sql.D(v) : null,
+            r.Rationale
+        }))))[..16].ToLowerInvariant();
+
+    /// <summary>
+    /// THE CHARTER <paramref name="r"/> REPEATS, as what it wrote, or null: the caller's own under the same parent, of the same content
+    /// (<see cref="CharterContent"/>), inside the throttle's trailing week — the only span in which a repeat could spend anything — and
+    /// still open: a unit closed or vetoed since is over, and chartering it again is a new act.
+    /// </summary>
+    Chartered? RepeatedCharter(CharterRequest r, OrgUnitRow parent, DateTimeOffset now)
+    {
+        long eventId;
+        string unitId;
+        using (var c = db.Cmd("""
+            SELECT e.id, e.unit_id FROM org_event e JOIN org_unit u ON u.id = e.unit_id
+             WHERE e.kind = $kind AND e.position_id IS NULL AND e.decider = $caller AND e.at > $since
+               AND u.parent_id = $parent AND u.status <> $closed AND instr(e.detail, $content) > 0
+             ORDER BY e.id LIMIT 1
+            """, ("$kind", OrgEventKind.Chartered), ("$caller", r.Caller), ("$since", Sql.T(now.AddDays(-7))), ("$parent", parent.Id),
+            ("$closed", OrgUnitStatus.Closed), ("$content", $" {ContentMark}{CharterContent(r)} ")))
+        using (var read = c.ExecuteReader())
+        {
+            if (!read.Read()) return null;
+            (eventId, unitId) = (read.GetInt64(0), read.GetString(1));
+        }
+        var unit = Units().Single(u => u.Id == unitId);
+        var decision = unit.CharterDecisionId is { } id ? Decision(id) : null;
+        return decision is null ? null : new Chartered(unit, decision, ForecastsOn(decision.Id), eventId, Repeated: true);
+    }
 
     /// <summary>
     /// HIRES A POSITION INTO A UNIT (ORGANISATION § 2 :107 — only the head of the unit's PARENT hires; survey Q3): the app mints the id,
@@ -262,7 +310,7 @@ public sealed partial class OrgStore
     /// <see cref="Hired.Dormant"/> says why. Never the chief: a hire is never the root's head. The owner's veto of the hire still ends it.</para>
     /// </summary>
     /// <exception cref="TradeAgentException">Refused; nothing was written.</exception>
-    public Hired Hire(HireRequest r, DateTimeOffset now, Func<string, string?>? activation = null) => db.Write(_ =>
+    public Hired Hire(HireRequest r, DateTimeOffset now, Func<string, string?>? activation = null, RewakeFloors? floors = null) => db.Write(_ =>
     {
         if (IsAppPrincipal(r.Caller) || Position(r.Caller) is not { Status: OrgPositionStatus.Active })
             throw Forbidden($"'{r.Caller}' is no active position: a position is hired by the head whose launch asks it.");
@@ -345,7 +393,7 @@ public sealed partial class OrgStore
                 if (c.ExecuteNonQuery() != 1) throw Damaged($"{id} was not dormant in the write that hired it");
             var activated = Event(now, unit.Id, id, OrgEventKind.Activated, r.Caller,
                 $"position={id} unit={unit.Id} was={OrgPositionStatus.Dormant} by=hire event={eventId.ToString(CultureInfo.InvariantCulture)}");
-            WakeActivated(id, r.Caller, activated, now);
+            WakeActivated(id, r.Caller, activated, now, floors);
         }
         return new Hired(Position(id)!, decision, forecasts, eventId, dormant);
     });
@@ -447,16 +495,33 @@ public sealed partial class OrgStore
     /// AN ACTIVATION'S TWO WAKES (<c>U-org-autonomy</c>; gap 5): one <see cref="MissionEventKind.Activated"/> to the position, and one to the head
     /// that hired it where that is a position — never the app, the owner or the board. Inside the caller's write; a wake not written throws, so
     /// the activation is not written either.
+    ///
+    /// <para><b>A HIRER THAT ACTIVATED ITS OWN HIRE IS HELD TO ITS FLOOR</b> (<c>U-wake-fairness</c>, R29 F-A1; R25 D3 stands: the hire activates
+    /// itself and both are woken): <paramref name="floors"/> is the policy in force on the path where the hirer's own verb buys the wake, and
+    /// its wake is due no sooner than <see cref="RequestWake"/> would let it ask — hire and retire in a cycle no longer waken a head past the
+    /// floor. The new position has no floor to pass: it has had no turn. Null floors: the owner's activation, which no position buys.</para>
     /// </summary>
-    void WakeActivated(string position, string? hirer, long activatedEvent, DateTimeOffset now)
+    void WakeActivated(string position, string? hirer, long activatedEvent, DateTimeOffset now, RewakeFloors? floors = null)
     {
         var events = new MissionEventStore(db);
         foreach (var to in new[] { position, hirer }.OfType<string>().Distinct(StringComparer.Ordinal))
         {
             if (to != position && (IsAppPrincipal(to) || !CouncilRoles.IsPositionId(to) || Position(to) is null)) continue;
-            if (!events.Raise(MissionEventIds.Activated(position, to, activatedEvent), MissionEventKind.Activated, now, payload: position, role: to))
+            var due = to == position || floors is null ? now : HirerWakeDue(to, floors, now);
+            if (!events.RaiseDue(MissionEventIds.Activated(position, to, activatedEvent), MissionEventKind.Activated, now, due, payload: position, role: to))
                 throw Damaged($"the activation wake of {position} to {to} was written already");
         }
+    }
+
+    /// <summary>
+    /// When a hirer's own hire may wake it: its level's floor after its last woken turn began, or now once that has passed. A hirer the
+    /// chart cannot place takes the largest floor, as the sweep's re-wake does: the saving direction.
+    /// </summary>
+    DateTimeOffset HirerWakeDue(string hirer, RewakeFloors floors, DateTimeOffset now)
+    {
+        var level = Roster().FirstOrDefault(p => p.Id == hirer)?.Level ?? floors.Largest;
+        var soonest = WakeAnchor(hirer, now) + floors.Floor(level);
+        return soonest > now ? soonest : now;
     }
 
     /// <summary>ONE <c>org_event</c>, inside the caller's write; its detail is the app's, from ids and fixed words. Answers its id.</summary>

@@ -64,8 +64,9 @@ public partial class CouncilLoopTests
     /// (h) A MEMBER THAT NEVER DELIVERS SPENDS THREE TURNS WHERE IT SPENT EVERY TICK. Over an hour of the loop's clock, ticking each
     /// minute: under the shipped floors the member turns at T, T + 15 and T + 45 — its issued wake, then the sweep's re-wake a floor
     /// and then two floors after each undelivered turn — every one charged to its mandate; with every floor zero, as before this
-    /// unit, it turns on every tick. And a member that asks, in its own <c>next.json</c>, to be woken in 60 s is woken then and that
-    /// turn serves the mandate: the re-wake rides with its own request.
+    /// unit, it turns on every tick. And a member that asks, in its own <c>next.json</c>, to be woken in 60 s is held to its 15-minute
+    /// floor, which no request passes (<c>U-wake-fairness</c>, R28 W4), and that turn serves the mandate: the re-wake rides with its own
+    /// request.
     ///
     /// <para>RED at base: the shipped run turned on every tick too — sixty paid turns.</para>
     /// </summary>
@@ -91,7 +92,7 @@ public partial class CouncilLoopTests
         var asked = await Hour(shipped, "next.json 60 s", asks: 60);
         using (asked.Db)
         {
-            Assert.Equal([0, 1], asked.Minutes.Take(2));
+            Assert.Equal([0, 15], asked.Minutes.Take(2));
             Assert.Equal(asked.Mandate.Id, asked.Served[1]);
             var second = new AiAttemptStore(asked.Db).Between(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1))
                 .Where(a => a.Role == Executor).OrderBy(a => a.StartedAt).ElementAt(1);

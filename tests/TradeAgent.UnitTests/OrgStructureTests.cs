@@ -109,6 +109,48 @@ public partial class OrgStructureTests
     // ---- item 3: org-charter ----------------------------------------------------------------------------------------
 
     /// <summary>
+    /// (R3) THE SAME CHARTER AGAIN IS THE SAME ACT (<c>U-wake-fairness</c>, R28 R3). Repeated by a model unsure it went in, under a fresh launch and with its
+    /// forecast dated afresh, it answers the unit it made and writes nothing, so a week's two structural changes are not spent by one: a different
+    /// rationale, and then a different share, are new acts, and past the throttle a repeat is still answered, not refused. A unit closed since is
+    /// over, and chartering it again is a new act.
+    ///
+    /// <para>RED at base: each call was a new unit, and the repeat spent the week's second structural change.</para>
+    /// </summary>
+    [Fact]
+    public void A_repeated_charter_is_the_same_act_and_spends_no_second_structural_change()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var run = CurrentRun(db);
+
+        var first = org.Charter(Ask(refs: [run]), Metered, Now);
+        Assert.False(first.Repeated);
+
+        var before = Written(db);
+        var again = org.Charter(Ask(refs: [run], forecasts: [Admissible(Now.AddDays(46))]) with { Attempt = "turn-test-2" }, Metered, Now.AddMinutes(5));
+        Assert.True(again.Repeated);
+        Assert.Equal((first.Unit.Id, first.Decision.Id, first.EventId), (again.Unit.Id, again.Decision.Id, again.EventId));
+        Assert.Equal(first.Forecasts.Select(f => f.Id), again.Forecasts.Select(f => f.Id));
+        Assert.Equal(before, Written(db));
+
+        var second = org.Charter(Ask(refs: [run]) with { Rationale = "the basis family earns its own team" }, Metered, Now.AddMinutes(6));
+        Assert.False(second.Repeated);
+        Assert.NotEqual(first.Unit.Id, second.Unit.Id);
+
+        // THE WEEK'S TWO ARE SPENT, BY TWO ACTS: a third is refused, and a repeat of either is still that act, past every bound it consumed.
+        Assert.Contains("the most it makes in a week", Assert.Throws<TradeAgentException>(() =>
+            org.Charter(Ask(refs: [run]) with { Rationale = "a third family" }, Metered, Now.AddMinutes(7))).Message, StringComparison.Ordinal);
+        Assert.True(org.Charter(Ask(refs: [run]), Metered, Now.AddMinutes(8)).Repeated);
+
+        // PAST THE WEEK, OR WITH THE UNIT CLOSED, THE SAME CONTENT IS A NEW ACT.
+        var week = Now.AddDays(8);
+        var anew = org.Charter(Ask(refs: [run]), Metered, week);
+        Assert.False(anew.Repeated);
+        Exec(db, "UPDATE org_unit SET status='closed' WHERE id=$u", ("$u", anew.Unit.Id));
+        Assert.False(org.Charter(Ask(refs: [run]), Metered, week.AddMinutes(1)).Repeated);
+    }
+
+    /// <summary>
     /// (3a) A CHARTER WRITES THE UNIT, ITS DECISION, ITS LEDGER ENTRY, ITS FORECAST AND ITS EVENT IN ONE WRITE: the division's head
     /// charters a team under it citing a run its subtree funded — the unit (kind team, head VACANT, active, the share as its envelope,
     /// its charter decision named), the <c>charter</c> decision with the rationale as the head's own ledger entry, a v2
@@ -295,10 +337,11 @@ public partial class OrgStructureTests
             using var c = db.Cmd("SELECT detail FROM org_event WHERE id=$id", ("$id", first.EventId));
             return (string)c.ExecuteScalar()!;
         }), StringComparison.Ordinal);
-        org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)), Metered, Now.AddMinutes(1));
+        // EACH ITS OWN REASON (U-wake-fairness): the same charter again is the same act, which the test above owns.
+        org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)) with { Rationale = "a second family" }, Metered, Now.AddMinutes(1));
         Assert.Contains("the most it makes in a week", Assert.Throws<TradeAgentException>(() =>
-            org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)), Metered, Now.AddMinutes(2))).Message, StringComparison.Ordinal);
+            org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)) with { Rationale = "a third family" }, Metered, Now.AddMinutes(2))).Message, StringComparison.Ordinal);
         // A WEEK LATER THE THROTTLE HAS ROOM AGAIN.
-        org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)), Metered, Now.AddDays(8));
+        org.Charter(Ask(share: 0.2m, collapse: Now.AddDays(60)) with { Rationale = "a third family" }, Metered, Now.AddDays(8));
     }
 }
