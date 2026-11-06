@@ -628,6 +628,7 @@ public class EvidenceHoldoutLengthTests
 
         Assert.Empty(Read(premium, series, held).Rows);
         Assert.Contains($"{held}'s rows on the tape", Read(premium, series, held).Refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("whatever their source, series or subject", Read(premium, series, held).Refusal, StringComparison.Ordinal);
         Assert.Equal(other, Assert.Single(Read(premium, series, other).Rows).Subject);
         Assert.Null(Read(premium, series, other).Refusal);
         Assert.NotNull(Read(premium, series, null).Refusal);

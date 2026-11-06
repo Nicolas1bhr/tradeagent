@@ -258,7 +258,7 @@ public sealed class TapeHoldout
         };
 
         return string.Join("; ", reached.Select(w => w.Words)) + $" — and {asked}, which reaches "
-            + (reached.Count == 1 ? "it. " : "them. ") + Why() + Repair(reached);
+            + (reached.Count == 1 ? "it. " : "them. ") + Why(reached) + Repair(reached);
     }
 
     /// <summary>
@@ -287,7 +287,7 @@ public sealed class TapeHoldout
 
         return string.Join("; ", inside.Select(w => w.Words))
             + $" — and the newest reading of {row.Source} {row.Series} {row.Subject} that had arrived by {asOf:u} is stamped "
-            + "inside it. " + Why() + "Ask as of an earlier instant, or read a window of source time outside it.";
+            + "inside it. " + Why(inside) + "Ask as of an earlier instant, or read a window of source time outside it.";
     }
 
     /// <summary>
@@ -375,10 +375,16 @@ public sealed class TapeHoldout
         };
     }
 
-    string Why() =>
-        "Rows recorded over a holdout are the private evaluation evidence the research process never sees: whatever "
-        + "their source, series or subject — a price, a rate, a news item — a row stamped inside the window says what "
-        + "those months did. TradeAgent serves them to no caller on this channel — not to "
+    string Why(IReadOnlyList<TapeHoldoutWindow> reached) =>
+        // A FRESH HOLDOUT OF ONE PAIR SERVES OTHER PAIRS' ROWS (R30 D16), so a refusal by those alone does not say every subject is held.
+        (reached.All(w => w.OnlyPair is not null)
+            ? "Rows recorded over a holdout about its pair, or about no one pair, are the private evaluation evidence the research process "
+              + "never sees: whatever their source or series — a price, a rate, a news item — a row stamped inside the window says what "
+              + "those months did. "
+            : "Rows recorded over a holdout are the private evaluation evidence the research process never sees: whatever "
+              + "their source, series or subject — a price, a rate, a news item — a row stamped inside the window says what "
+              + "those months did. ")
+        + "TradeAgent serves them to no caller on this channel — not to "
         + $"{Who}, not to either director, not to a connection that proved no role at all. This is REFUSED rather "
         + "than quietly cut short at the window, because an answer silently clipped is a different window from the one "
         + "you asked for, and a row once served can never become holdout again. ";
