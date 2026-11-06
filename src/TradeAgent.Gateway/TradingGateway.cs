@@ -1946,7 +1946,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
         var result = _allocations.RecordStop(deployment.AllocationId, said, at);
         _log.TryEngineering("Gateway", "paper_allocation_stopped", result.Ok ? "info" : "warn",
             metadataJson: Json.Write(new { deployment = deployment.Id, allocation = deployment.AllocationId, result.Why }));
-        if (result.Ok) _log.Activity($"TradeAgent ended the paper allocation of strategy version {Short(deployment.VersionId)}: {said}");
+        if (result.Allocation is { } written && string.Equals(written.Reason, said, StringComparison.Ordinal))
+            _log.Activity($"TradeAgent ended the paper allocation of strategy version {Short(deployment.VersionId)}: {said}");
     }
 
     /// <summary>
@@ -4297,12 +4298,38 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE MOST ONE ORDER MAY BE FOR THIS CALLER (R30 D18; R28 P2): <see cref="RiskPolicy.MaxOrderQuantity"/>, except for a paper run's own order
+    /// while the policy still holds that limit's founding value, where it is the run's allocation ceiling: the pair's envelope quantity divided
+    /// by its deployments, rounded down (<see cref="PaperEnvelopeRow.ShareOf"/>). A flat 1 sat below every envelope that is not BTC or ETH and
+    /// refused each normal entry on the other pairs; the envelopes are set so capital binds, and this is what lets it.
+    ///
+    /// <para><b>It is the ALLOCATION'S row, read by the id the run was started under</b>, not the policy's terms and not what stands now. A run
+    /// holds at most that much (<see cref="AllocationCeilingOrThrow"/>), so its END can always send its close, even after a narrowing or a stop
+    /// has ended the allocation: a limit read from what stands now would leave a position nobody could close.</para>
+    ///
+    /// <para><b>It reaches nothing else.</b> PAPER only, on a paper row, for the deployment identity, which is refused outright in a live mode:
+    /// the owner's press, an agent's order and every other caller are bound by the flat figure as before. A figure the board decides replaces the
+    /// founding one and binds a run too. Capital still binds either way: the allocation's quantity and value ceilings are asked inside the dispatch
+    /// gate, and the envelope's sum in <see cref="Allocations.RecordPaper"/>.</para>
+    /// </summary>
+    decimal MaxOrderQuantityFor(string? run)
+    {
+        var flat = Policy.Risk.MaxOrderQuantity;
+        if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER || flat != BoardFounding.V1.Risk.MaxOrderQuantity) return flat;
+
+        return _deployments.ById(run) is { } deployment
+               && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false } allocation
+            ? allocation.MaxQuantity
+            : flat;
+    }
+
+    /// <summary>
     /// Every per-order limit, and it ANSWERS WITH the reference price it established. The value the
     /// notional cap multiplied is the one the allocation's own value ceiling multiplies inside the
     /// dispatch gate (<see cref="AllocationCeilingOrThrow"/>), so the two are stated against one
     /// price rather than two reads that can disagree.
     /// </summary>
-    async Task<OrderPricing> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
+    async Task<OrderPricing> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct, string? run = null)
     {
         var r = Policy.Risk;
 
@@ -4313,9 +4340,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
         if (intent.Quantity <= 0)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "quantity must be greater than zero");
 
-        if (intent.Quantity > r.MaxOrderQuantity)
+        if (MaxOrderQuantityFor(run) is var most && intent.Quantity > most)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
-                $"quantity {intent.Quantity} exceeds the limit of {r.MaxOrderQuantity}");
+                $"quantity {intent.Quantity} exceeds the limit of {most}");
 
         // Paper mode must never reach a real-money account, whatever the agent asked for.
         if (Policy.Mode == TradingMode.PAPER && !(account.IsSimulated || Connector.Capabilities.IsPaper))
@@ -4420,7 +4447,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// broken, TradeAgent could not work out whether one would be, and an unknown on the money path
     /// is refused rather than waved through.</para>
     /// </summary>
-    void PerOrderLimitsAtDispatchOrThrow(PlaceIntent intent, OrderPricing priced)
+    void PerOrderLimitsAtDispatchOrThrow(PlaceIntent intent, OrderPricing priced, string? run = null)
     {
         var r = Policy.Risk;
 
@@ -4428,9 +4455,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"{intent.Symbol} is not on the allowed instrument list");
 
-        if (intent.Quantity > r.MaxOrderQuantity)
+        if (MaxOrderQuantityFor(run) is var most && intent.Quantity > most)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
-                $"quantity {intent.Quantity} exceeds the limit of {r.MaxOrderQuantity}");
+                $"quantity {intent.Quantity} exceeds the limit of {most}");
 
         // ON THE GATEWAY'S CLOCK, read now, after the reads — the one RefuseAStaleDecisionOrThrow
         // reads a moment later (U-runner-forward).
@@ -7117,7 +7144,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
         // AND THE FOUR NUMBERS THE OWNER SET, ASKED AGAIN AFTER EVERY AWAITED READ ABOVE. It awaits
         // nothing: see PerOrderLimitsAtDispatchOrThrow.
-        PerOrderLimitsAtDispatchOrThrow(intent, priced);
+        PerOrderLimitsAtDispatchOrThrow(intent, priced, run);
 
         // THE ONE THAT ANSWERS WITH A ROW. See AllocationCeilingOrThrow: what a promoted version may
         // be HOLDING is a question about the position, so it is decided here with the other three
@@ -7148,7 +7175,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // value ceiling multiplies the same reference the notional cap does, so the two limits are
         // stated in one number; a second quote read inside the gate would be a second answer to the
         // same question and an awaited round trip in the one place that must stay short.
-        var priced = await RiskCheckOrThrow(intent, account, ct);
+        var priced = await RiskCheckOrThrow(intent, account, ct, ctx.DeploymentId);
 
         var record = new ExecutionRequest
         {

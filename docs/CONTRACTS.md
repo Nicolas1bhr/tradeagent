@@ -4638,6 +4638,13 @@ refused, and a position still stops only its own subtree's paper runs. `status.d
 unresolved operation or a close its END still owes, and section 4 of the owner's report prints one line
 per deployment under *running forward on paper*, every line marked PAPER and no live authority.
 
+**The founding limit on one order, per pair (R30 D18).** `risk.max_order_quantity` stays 1 in the founding
+policy, and it binds every caller but one: a paper run's own order, in PAPER, while that field holds its founding
+value, is bound by the run's allocation row instead (`TradingGateway.MaxOrderQuantityFor`), which is the pair's
+envelope quantity over its deployments, rounded down. The row is read by the id the run started under, so an END
+can always close what the run holds, even after a narrowing or a stop ended the allocation. A figure the board
+decides binds a run too. The allocation's quantity and value ceilings and the envelope's sum still bind as they did.
+
 **The note an author reads** (`TellResearchAboutARun`; R28 P3, G1). Its "net" is the run's P&L: realised after
 its costs, plus what it still holds at the last close against its average; with no close recorded the figure
 leaves the open quantity out and says so. A day's note is said by the runner on a LIVE bar only, the one that

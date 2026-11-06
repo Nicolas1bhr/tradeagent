@@ -42,6 +42,11 @@ public static class BoardFounding
     /// ceiling can ever let a pair's runs hold more than 5,000 USDT together (each run's share is both ceilings divided by three, so
     /// the same holds per run). The pairs are exactly the ones set up under evidence (a test
     /// holds them equal to <see cref="EvidenceDefaults.Pairs"/>).
+    ///
+    /// <para><b>AND THE MOST ONE RUN'S ORDER MAY BE, PER PAIR (R30 D18):</b> its share, each figure here divided by <see cref="PaperDeployments"/>:
+    /// BTC 0.0333…, ETH 0.8333…, SOL 16.66…, BNB 3.33…, XRP 1,666.66…. It is not a second number to keep equal: the run's allocation is that share
+    /// and the gateway reads the row (<c>TradingGateway.MaxOrderQuantityFor</c>), so capital binds, not the flat <see cref="RiskPolicy.MaxOrderQuantity"/>
+    /// of 1, which stays the limit on every other caller and in every mode but paper.</para>
     /// </summary>
     public static IReadOnlyList<(string Instrument, decimal MaxQuantity)> PaperPairs { get; } =
     [
@@ -117,7 +122,8 @@ public static class BoardFounding
         + "BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000 — each pair at most 5,000 USDT notional in all, the "
         + "notional cap binding above each pair's floor price; three deployments per pair, each its third (D11 amended: one inconclusive "
         + "slot beside two favourable); no expiry while no board seat is active; at most 15 open positions, five pairs by three runs, paper "
-        + "only (R25 D14)";
+        + "only (R25 D14); the most one run's order may be is its allocation, each pair's quantity divided by its three runs (R30 D18), and one "
+        + "order of any other caller stays at most 1";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family
