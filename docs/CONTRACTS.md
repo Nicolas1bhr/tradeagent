@@ -3953,8 +3953,8 @@ standard.
 
 **A spent campaign is followed by one over FRESH months, by the app's rule and unattended** (`U-evidence-campaign`; R25 D7,
 `CampaignRenewal`). Not by `Renew`, which carries the parent's holdout and whose policy counts verdicts across the lineage: by
-the repo's own way on, a holdout over OTHER months, pressed for the owner only on months no verdict and no research read could
-have seen. (1) An open research campaign whose judgements (`JudgementsSpent`) or trials (`TrialsCharged`) reach a budget above
+the repo's own way on, a holdout over OTHER months, pressed for the owner only on months no verdict has judged and no data read
+has returned, which is not the same as unseen (the end of this paragraph says what is still served). (1) An open research campaign whose judgements (`JudgementsSpent`) or trials (`TrialsCharged`) reach a budget above
 zero is SPENT, and so is one whose exploration pot is full and under which no parent can be promoted (`CampaignRenewal.ExplorationSpent`;
 R30 D15, R28 E2): no version stands Promoted, of any pair, and the campaign holds no version it could still promote, meaning a version
 of its pair, frozen before its cutoff, bounded, with a completed run registered under its lineage (what `trade verdict` admits on), not

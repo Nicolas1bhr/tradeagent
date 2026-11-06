@@ -82,7 +82,7 @@ public sealed record TapeHoldoutWindow(
 
     string WordsOf(string held) => ForwardOf is { } spent
         ? $"campaign {spent} has spent its attempts, and the campaign after it is held over FRESH market data from {From:u} on, "
-          + $"which nothing has seen: from that instant {held} held back with no end until that campaign opens, once a download "
+          + $"which no data read has returned: from that instant {held} held back with no end until that campaign opens, once a download "
           + $"holds at least {CampaignRenewal.MinimumFreshDays} days of it"
         : $"dataset {DatasetId} ({Pair} {Interval} {Version}) holds out every bar from {From:u} onwards, so {held} held "
         + (Until is { } end
