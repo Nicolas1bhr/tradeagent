@@ -702,9 +702,11 @@ public class BudgetReservationTests : IDisposable
         var host = new StaleHost(meter) { Wakes = events };
         var options = new MissionOptions();
         var waits = new List<TimeSpan>();
+        // THE SLEEP MOVES THE CLOCK (U-turn-bounds-2, changed in the open): a lasting bar is that position's rest now, and a rest ends when its time has passed. The
+        // old loop slept a bigger number each time whatever the clock read; the doubling this test reads is unchanged.
         var loop = new MissionLoop(host, options, now: () => now, delay: (d, ct) =>
         {
-            lock (waits) waits.Add(d);
+            lock (waits) { waits.Add(d); now += d; }
             return Task.Delay(1, ct);
         });
         host.Conv.Bar = new LaunchBar("TradeAgent's own trade command is not at /nowhere/trade. Restart TradeAgent", Lasting: true);

@@ -963,6 +963,57 @@ public class TurnBoundsTests : IDisposable
         Assert.False(Assert.Single(events.OfKind(MissionEventKind.Review), e => e.Role == Ops || e.Role is null).Consumed);
     }
 
+    /// <summary>ONE POSITION'S BAR IS NOT ANOTHER'S REASON (the Codex review): the barred position's words say why, and words waiting for a healthy position stay clean.</summary>
+    [Fact]
+    public async Task A_lasting_bar_marks_only_its_own_positions_words()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(events.RecordOwnerMessage("how is the book?", now - TimeSpan.FromMinutes(3)));
+        var theirs = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        const string healthy = "owner:healthy";
+        events.Raise(healthy, MissionEventKind.Owner, now - TimeSpan.FromMinutes(2), "{}", Research);
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        host.Conv(Ops).Bar = new LaunchBar("this position's home could not be rebuilt", Lasting: true);
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        await loop.TurnAsync();
+
+        Assert.Equal(MissionEventDisposition.Blocked, events.Get(theirs)!.Disposition);
+        Assert.Null(events.Get(healthy)!.Disposition);
+    }
+
+    /// <summary>
+    /// THE OWNER'S REPAIR LIFTS THE REST IT WAS ABOUT (the Codex review), whole host: a refused home stands its position aside, the press rebuilds the folder, and
+    /// the next look serves the position without sitting out a backoff that may be half an hour by then. Windows repairs no folder, so there the rest stands.
+    /// </summary>
+    [Fact]
+    public async Task Repairing_a_refused_home_lifts_its_positions_rest()
+    {
+        await using var life = await PuppetLife.Begin("repair-lifts");
+        life.Script(Research, ["final Back at work."]);
+        var home = life.Host.HomeFor(Research);
+        var canon = Path.Combine(home, Canon.CliFile);
+        File.Delete(canon);
+        Directory.CreateDirectory(canon);
+        WorkspaceBuilder.Refuse(home, Research, "its canon file is a folder");
+
+        life.Wake(Research);
+        await life.RunUntil(() => life.Host.Mission.StandingAsideFor(Research) is not null, "the refused home stood its position aside");
+        Assert.Equal(0, life.Turns(Research));
+
+        var said = life.Host.RepairHome(Research);
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.NotNull(life.Host.Mission.StandingAsideFor(Research));
+            return;
+        }
+        Assert.Null(WorkspaceBuilder.RefusalFor(home));
+        Assert.True(life.Host.Mission.StandingAsideFor(Research) is null, $"the repaired position still rests ({said})");
+        await life.RunUntil(() => life.Turns(Research) == 1, "the repaired position turned");
+    }
+
     /// <summary>A PASSING BAR IS NO REFUSAL: another turn holds the launch for a moment, the position stays a candidate, and nothing stands it aside.</summary>
     [Fact]
     public async Task A_position_barred_for_a_moment_does_not_stand_aside()

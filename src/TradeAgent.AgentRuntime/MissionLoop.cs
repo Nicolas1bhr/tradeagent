@@ -5289,7 +5289,8 @@ public sealed class MissionLoop
             try { _host.LaunchBarred(role, bar.Why, bar.Lasting); }
             catch (Exception) { /* a line about a launch is never worth the loop */ }
         }
-        if (bar.Lasting && events is not null) BlockOwnerMessages(events, bar.Why);
+        // THIS POSITION'S WORDS, and only theirs: one broken home is no reason on another position's message, and the others are being served.
+        if (bar.Lasting && events is not null) BlockOwnerMessages(events, bar.Why, role);
 
         Changed?.Invoke();
         if (!bar.Lasting) return _options.BusyRetry;
