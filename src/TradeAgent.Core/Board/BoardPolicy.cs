@@ -264,6 +264,62 @@ public static class BoardPolicyBody
     }
 
     /// <summary>
+    /// A POLICY IN AN OLDER SHAPE, NAMED (<c>U-founding-carry</c>): for a body that VERIFIES — its own hash, its own canonical
+    /// spelling — but is not a policy this build reads because its FIELDS are not the ones this build writes, the field paths only
+    /// it names (<c>paper_envelope</c>) and the ones only this build names (<c>paper_envelopes</c>); a path under one that is
+    /// missing whole from the other shape is not repeated. Null for a body this build reads; for one that does not verify (corrupt —
+    /// refused as unreadable, never excused as older); and for one whose fields are this build's but whose values it refuses. The
+    /// values of an older body are never read: only its field names are compared, so nothing is guessed from it.
+    /// </summary>
+    public static (IReadOnlyList<string> Theirs, IReadOnlyList<string> Ours)? OlderShape(string body, string sha256)
+    {
+        if (!string.Equals(Sha256(body), sha256, StringComparison.Ordinal)) return null;
+        try
+        {
+            if (!string.Equals(TapeJson.Canonical(body), body, StringComparison.Ordinal)) return null;
+        }
+        catch (JsonException) { return null; }
+        if (Read(body, sha256).Policy is not null) return null;
+
+        HashSet<string> theirs, ours;
+        try
+        {
+            theirs = FieldPaths(body);
+            ours = FieldPaths(Canonical(BoardFounding.V1));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return null; }
+        var onlyTheirs = Only(theirs, ours);
+        var onlyOurs = Only(ours, theirs);
+        return onlyTheirs.Count == 0 && onlyOurs.Count == 0 ? null : (onlyTheirs, onlyOurs);
+
+        static List<string> Only(HashSet<string> a, HashSet<string> b) =>
+            [.. a.Where(p => !b.Contains(p) && (Parent(p) is not { } up || b.Contains(up))).Order(StringComparer.Ordinal)];
+
+        static string? Parent(string path) => path.LastIndexOf('.') is var i and > 0 ? path[..i] : null;
+    }
+
+    /// <summary>The field paths a body names: every object's keys, walked — a map's keys are data, so a map is one path.</summary>
+    static HashSet<string> FieldPaths(string canonicalBody)
+    {
+        using var doc = JsonDocument.Parse(canonicalBody);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("a policy body is one JSON object");
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        Walk(doc.RootElement, "");
+        return paths;
+
+        void Walk(JsonElement e, string path)
+        {
+            foreach (var p in e.EnumerateObject())
+            {
+                var at = path.Length == 0 ? p.Name : $"{path}.{p.Name}";
+                paths.Add(at);
+                if (p.Value.ValueKind == JsonValueKind.Object && at is not ("role_shares" or "rewake_floor_minutes" or "paper_envelopes"))
+                    Walk(p.Value, at);
+            }
+        }
+    }
+
+    /// <summary>
     /// EVERY FIELD OF A BODY, FLATTENED, as the Board page shows one: its path (<c>risk.max_order_quantity</c>), and its value as text
     /// — a number as written, a word as itself, a list joined, null as <c>none</c>. In the body's own (ordinal) order.
     /// </summary>
