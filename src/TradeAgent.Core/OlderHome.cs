@@ -231,11 +231,13 @@ public static class OlderHome
         if (Directory.Exists(aside) || File.Exists(aside))
             throw new InvalidOperationException($"{aside} already exists, so the older home was not moved. Press Start fresh again in a second.");
 
-        // THE HOME IS OURS WHILE THE TAPE IS COPIED, AND THE COPY COMES BEFORE THE MOVE: the refusal is read before the instance lock, so an
-        // older app may still be running on this folder. Its lock is let go before the rename, which Windows refuses over an open file.
-        StagedTape? staged = null;
-        using (Hold(full))
-            if (carry) staged = StageTape(full, at);
+        // THE HOME IS OURS WHILE THE TAPE IS COPIED AND WHILE IT MOVES, AND THE COPY COMES BEFORE THE MOVE: the refusal is read before the
+        // instance lock, so an older app may still be running on this folder. Windows refuses a rename over any open file, ours included,
+        // so there the lock is let go first and the rename itself refuses a running app; Linux and macOS rename under an open file, so
+        // there the lock is held across the rename and no app can take it in between.
+        using var held = Hold(full);
+        var staged = carry ? StageTape(full, at) : null;
+        if (OperatingSystem.IsWindows()) held?.Dispose();
 
         try
         {
@@ -293,11 +295,11 @@ public static class OlderHome
         var from = Path.Combine(home, "state", "tape.db");
         if (!File.Exists(from)) return new StagedTape("", null, null);
 
-        // A PRESS A CRASH CUT SHORT left its copy here; the original is still in this home, so the copy is only ours to clear.
-        foreach (var stale in Directory.GetDirectories(Path.GetDirectoryName(home)!, Path.GetFileName(home) + "-tape-carrying-*"))
-            RemoveFolder(stale);
-
+        // ONLY A FOLDER THIS PRESS MADE IS EVER REMOVED: a name already taken beside the home is not ours, whatever it holds. So a copy a
+        // crash left behind stays where it is, a spare copy and nothing worse, and is never deleted by a name that merely looks right.
         var folder = $"{home}-tape-carrying-{at.UtcDateTime:yyyyMMdd-HHmmss}";
+        if (Directory.Exists(folder) || File.Exists(folder))
+            throw new InvalidOperationException($"{folder} already exists, so the older home was not moved. Press Start fresh again in a second.");
         var staged = Path.Combine(folder, "tape.db");
         try
         {

@@ -394,6 +394,25 @@ public class FoundingCarryTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A FOLDER BESIDE THE HOME IS NEVER REMOVED FOR ITS NAME: one the owner keeps, named like a staging folder, is there after the press with
+    /// every file as it was. Only a folder this press made is ours to clear. RED before: a press removed every sibling matching the pattern.
+    /// </summary>
+    [Fact]
+    public void A_folder_beside_the_home_is_never_removed_for_its_name()
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var his = $"{Path.GetFullPath(home)}-tape-carrying-my-backup";
+        Directory.CreateDirectory(his);
+        File.WriteAllText(Path.Combine(his, "keep.txt"), "the owner's own file");
+
+        OlderHome.SetAside(home, Noon, out var words);
+
+        Assert.Contains("copied into the new folder byte for byte", words);
+        Assert.Equal("the owner's own file", File.ReadAllText(Path.Combine(his, "keep.txt")));
+    }
+
+    /// <summary>
     /// THE COPY LEAVES NOTHING BEHIND: no staging folder stays beside the two homes once the tape has taken its name. RED if it did.
     /// </summary>
     [Fact]
