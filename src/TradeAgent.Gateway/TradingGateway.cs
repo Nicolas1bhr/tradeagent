@@ -307,7 +307,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
         return (true,
             $"Campaign {spentCampaignId} had spent its {held.Spent}; campaign {campaign.Id} now judges strategies on fresh market data "
-            + $"from {held.Cutoff:u} on (dataset {freshDatasetId}), which no verdict and no research read had seen. "
+            + $"from {held.Cutoff:u} on (dataset {freshDatasetId}), which no verdict had judged and no data read had returned. "
             + CampaignStore.PressNote(campaign, _campaigns.JudgementsSpent(campaign.Id), _campaigns.OverTheSameMonths(campaign.Id)),
             campaign);
     });

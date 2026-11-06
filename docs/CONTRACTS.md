@@ -3985,8 +3985,13 @@ interval, holding no cutoff, with bars before the cutoff and at least thirty day
 SAME PAIR reaches past it (another pair's held months are its own campaign's budget, and still unread by research). Until then every spent-budget sentence and the Settings line say what it waits for, in days. Nothing is re-keyed: the
 spent campaign stays open (its cutoff cannot move later, its development months stay charged to it, a family rooted there stays
 charged there); the successor is a new lineage over new months, so its judgements and its α-wealth start over those months, as an
-owner's press on other months always did. The live quote and the cells' web egress still show the present to every agent: the
-fresh window binds the app's own paths, as every holdout does until containment (`docs/EDGE-FACTORY.md` § 6.11).
+owner's press on other months always did. **What a fresh window withholds is the data calls, and only those** (R29 F-B1): bars,
+forward bars, the tape, exports and backtests over its minutes. Live quotes, orders, executions, positions and P&L over the same
+minutes are still served to every seat, a paper run's fills and notes with them, and the cells' web egress shows the present
+too: the window binds the app's data paths, as every holdout does until containment (`docs/EDGE-FACTORY.md` § 6.11). So D7's
+"data no prior verdict or research could read" holds for those data calls and no further: a seat can rebuild the held minutes by
+polling quotes, and a deployed version's author sees its fills and P&L over them and can submit a variant judged on them.
+Serving less, or judging a version only on bars after its own freeze, is decided after the run (R30 § 5).
 
 **A campaign fixes TWO standards at open, and both are copied and never updated.** `scoring_policy` is
 `CampaignPolicy.V1`; `paper_policy` is `CampaignPolicy.PaperV1` (schema **23**), which is V1's three
@@ -4556,11 +4561,11 @@ words, and its last arm now says how a verdict is asked for — `trade verdict -
 by the campaign's budget of final judgements, answering with the verdict and the reason class and never
 a figure.
 
-**The honest limit, stated, again.** Nothing runs a paper allocation. No runner emits a forward intent
-yet, so what this unit closes is the arrow from a verdict to an allocation the gateway will honour, and
-the experiment the allocation is for does not exist until something dispatches one. **`U-deployment`
-closed the next link and not that one:** there is now a RUN with an identity, a cursor and a write-ahead
-operation ledger, and the thing that still does not exist is a runner emitting an entry.
+**What this unit closed, and what closed after it.** This unit closed the arrow from a verdict to an allocation the
+gateway will honour. `U-deployment` closed the next link: a RUN with an identity, a cursor and a write-ahead operation
+ledger. The runner closed the last (The runner, `ForwardRuns`, below): an allocation's frozen program is now driven on closed
+forward bars and its orders are dispatched, so a paper allocation runs. As of 2026-11-06 that path has not yet run with a real
+model in any seat (R30 § 1).
 
 ## The paper deployment — `src/TradeAgent.Core/Db/DeploymentStore.cs`, `Gateway/TradingGateway.cs`
 
