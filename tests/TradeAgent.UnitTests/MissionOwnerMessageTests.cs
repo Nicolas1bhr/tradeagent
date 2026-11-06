@@ -216,7 +216,9 @@ public class MissionOwnerMessageTests
 
         // ONCE. A message that makes the runtime fall over must not be retried for ever at the price
         // of a turn each time; the second failure is recorded and left, and the owner can ask again
-        // in their own words.
+        // in their own words. THE RETRY WAITS OUT THE POSITION'S REST (U-turn-bounds-2, changed in the open: the failed turn's backoff is its position's now,
+        // and this test drove past a sleep); lifted here so a test need not sit it out.
+        loop.SeatChanged(CouncilRoles.Operations);
         await loop.TurnAsync();
         Assert.Contains("close everything", conversation.Sent[1]);
         Assert.Equal(2, events.OfKind(MissionEventKind.Owner).Count);
