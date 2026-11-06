@@ -521,7 +521,7 @@ public sealed class OnboardingView
             Numbered(1, "Set up the AI",
                 "TradeAgent downloads and installs everything it needs, by itself. You will never be asked to type anything technical."),
             Numbered(2, "Connect to your trading platform",
-                "Start with the built-in practice simulator. Move to ATAS whenever you are ready."),
+                "Start on TradeAgent paper: real prices, simulated fills, no money. Move to a real platform whenever you are ready."),
             Numbered(3, "Decide what the AI may do",
                 "Watch only, suggest and ask, or trade. You choose, and you can change your mind at any time."))),
         Ui.Primary("Get started", Act(() => Done(OnboardingStep.WELCOME))));
@@ -881,36 +881,30 @@ public sealed class OnboardingView
             : "If your browser did not open, go to this address"), row);
     }
 
-    Screen ChoosePlatform() => new(
-        "You can switch later, and you will still choose separately whether real money is allowed.",
-        Ui.Col(Theme.S3,
-            Choice("Practice simulator",
-                Ui.Muted("A built-in fake account. Nothing here is real and nothing can be lost. Start here."),
-                Ui.Pill("RECOMMENDED", Theme.Positive),
-                Act(async () =>
-                {
-                    await _host.SwitchConnectorAsync("fake");
-                    Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
-                })),
-            // A BUILD WITHOUT THE ATAS ADAPTER (U-windows-release — every CI build) offers TradeAgent's own paper venue where ATAS would
-            // be, and says why in the installer's words; the switch itself refuses ATAS too (AppHost.SwitchConnectorAsync).
+    /// <summary>
+    /// THE PLATFORM CHOICE, RECOMMENDED WHERE THE ORGANISATION'S WORK CAN ACTUALLY RUN (<c>U-paper-t0</c> item 4): TradeAgent paper, in every build, because the founding
+    /// envelopes stand there. The practice simulator stays on offer and says what it is; ATAS is offered in a build that carries its adapter, and a build without one
+    /// says why in the installer's words (U-windows-release); the switch itself refuses ATAS too (AppHost.SwitchConnectorAsync).
+    /// </summary>
+    Screen ChoosePlatform()
+    {
+        Button Platform(string title, string detail, bool recommended, string id) =>
+            Choice(title, Ui.Muted(detail), recommended ? Ui.Pill("RECOMMENDED", Theme.Positive) : null, Act(async () =>
+            {
+                await _host.SwitchConnectorAsync(id);
+                Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
+            }));
+
+        var paper = Platform("TradeAgent paper",
+            Labels.PaperPlainly + (_host.AtasInThisBuild ? "" : " " + BuildContents.AtasNotInThisBuild), true, Platforms.Connectors.Paper);
+        var simulator = Platform("Practice simulator", Labels.SimulatorPlainly, false, Platforms.Connectors.Simulator);
+
+        return new Screen("You can switch later, and you will still choose separately whether real money is allowed.",
             _host.AtasInThisBuild
-                ? Choice("ATAS",
-                    Ui.Muted("Your real trading platform. TradeAgent connects to it and stays inside the limits you set."),
-                    null,
-                    Act(async () =>
-                    {
-                        await _host.SwitchConnectorAsync("atas");
-                        Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
-                    }))
-                : Choice("TradeAgent paper",
-                    Ui.Muted("Real prices, simulated fills, no money. " + BuildContents.AtasNotInThisBuild),
-                    null,
-                    Act(async () =>
-                    {
-                        await _host.SwitchConnectorAsync(Platforms.Connectors.Paper);
-                        Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
-                    }))));
+                ? Ui.Col(Theme.S3, paper, simulator, Platform("ATAS",
+                    "Your real trading platform. TradeAgent connects to it and stays inside the limits you set.", false, Platforms.Connectors.Atas))
+                : Ui.Col(Theme.S3, paper, simulator));
+    }
 
     Screen FindAtas()
     {

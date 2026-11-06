@@ -212,11 +212,9 @@ sealed class SettingsPage
             _platformNote,
             _switchBusy,
             Ui.Divider(),
-            Option("Practice simulator", Ui.Pill("RECOMMENDED", Theme.Positive), _fakeInUse,
-                "A built-in fake account. Nothing here is real and nothing can be lost.",
-                _fakeButton),
+            Option("Practice simulator", null, _fakeInUse, Labels.SimulatorPlainly, _fakeButton),
             Ui.Divider(),
-            Option("TradeAgent paper — real prices, simulated fills", null, _paperInUse,
+            Option("TradeAgent paper — real prices, simulated fills", Ui.Pill("RECOMMENDED", Theme.Positive), _paperInUse,
                 "The prices are the ones TradeAgent is collecting; the fills are simulated inside "
                 + "TradeAgent and reach no exchange. It is how a strategy is tried on a market that "
                 + "is still moving. A fill here is a simulation, never proof that the price could "
@@ -434,8 +432,8 @@ sealed class SettingsPage
         // The right-hand column answers the question this page raises and nothing else answers:
         // what does pressing one of these actually do to my money and my open orders?
         var explain = Ui.Section("What these change", Ui.Col(Theme.S3,
-            Ui.Body("The platform is where orders actually go. The practice simulator is built into TradeAgent " +
-                    "and risks nothing. ATAS is your own trading program on this computer."),
+            Ui.Body("The platform is where orders actually go. TradeAgent paper and the practice simulator are built into " +
+                    "TradeAgent and risk nothing, and the AI team's strategies only run on paper. ATAS is your own trading program on this computer."),
             Ui.Divider(),
             Ui.Body("The account is the only one the AI is allowed to see and trade. It never touches another one."),
             Ui.Divider(),

@@ -168,8 +168,10 @@ These are all sixteen, by the name each one shows at the top.
 5. **Sign in to your AI account** — press **Sign in** and your web browser opens on the right page.
    TradeAgent notices when you are done. If the browser does not open, the screen gives you the link
    to copy. Passes by itself once you are signed in.
-6. **Choose your trading platform** — the built-in **practice simulator** (recommended, and the place
-   to start) or **ATAS**.
+6. **Choose your trading platform** — **TradeAgent paper** (recommended, and the place to start: real
+   prices, simulated fills, no money, and the one place the AI team's strategies run), the built-in
+   **practice simulator** (a fake account with made-up prices, for looking around; no strategy runs on
+   it) or, in a build that has it, **ATAS**.
 7. **Finding ATAS** — only if you chose ATAS. Passes by itself once ATAS is on the machine. See the
    next section.
 8. **Installing the ATAS bridge** — TradeAgent puts a small piece of itself inside ATAS so the two
@@ -204,8 +206,10 @@ reporting, not something to work around.
 
 ## TradeAgent paper — real prices, simulated fills
 
-On the Settings page, between the practice simulator and ATAS, there is a third platform called
-**TradeAgent paper**. It uses the prices TradeAgent has actually been collecting, and it fills orders
+On the setup screen and the Settings page, beside the practice simulator and ATAS, there is a platform called
+**TradeAgent paper**, and it is the recommended one: the AI team's strategies run here and nowhere else, because
+this is where the paper allowances the app starts with stand. On the practice simulator, a fake account with
+made-up prices, no strategy goes on paper at all, and the Owner page says so. TradeAgent paper uses the prices TradeAgent has actually been collecting, and it fills orders
 **inside TradeAgent**: nothing reaches an exchange, no broker is involved, and nothing can be lost. It
 is one press to switch to, like the simulator, because there is nothing at stake. What it is for is
 the question a backtest cannot answer — how a strategy behaves on a market that is still moving —

@@ -462,6 +462,83 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// THE PLATFORM RECOMMENDED IS ONE THE ORGANISATION'S WORK CAN RUN ON (<c>U-paper-t0</c> item 4). "Practice simulator (RECOMMENDED)" silently allocated nothing: the founding
+    /// envelopes stand on the paper venue, and it lists no pair under evidence. On the setup screen in either build TradeAgent paper comes first with the pill, the simulator
+    /// says what it is, and ATAS is offered only by a build that has it. RED at the base: the pill stood on the simulator and said "Start here".
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task The_setup_screen_recommends_the_platform_strategies_run_on(bool atasInThisBuild)
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"platform-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        host.AtasInThisBuild = atasInThisBuild;
+        try
+        {
+            var onboarding = new OnboardingStore(db);
+            foreach (var step in OnboardingSteps.Order.TakeWhile(s => s != OnboardingStep.TRADING_PLATFORM_SELECTED)) onboarding.Complete(step);
+
+            List<string> texts = [];
+            HeadlessUi.Run(() =>
+            {
+                var screen = new OnboardingView(host, () => { }).Build();
+                var win = new Window { Width = 1280, Height = 800, Content = screen };
+                win.Show();
+                win.UpdateLayout();
+                texts = [.. screen.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)];
+                win.Close();
+            });
+
+            var paper = texts.IndexOf("TradeAgent paper");
+            var simulator = texts.IndexOf("Practice simulator");
+            output.WriteLine(string.Join(" | ", texts.Skip(paper)));
+            Assert.InRange(paper, 0, simulator);
+            Assert.Equal("RECOMMENDED", texts[paper + 1]);
+            Assert.Single(texts, t => t == "RECOMMENDED");
+            Assert.Equal(Labels.SimulatorPlainly, texts[simulator + 1]);
+            Assert.Equal(atasInThisBuild, texts.Contains("ATAS"));
+            Assert.Equal(atasInThisBuild, !texts.Contains(Labels.PaperPlainly + " " + BuildContents.AtasNotInThisBuild));
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
+    /// THE SAME ON THE PAGES (<c>U-paper-t0</c> item 4): Settings says what the simulator is and puts the pill on paper, and the Owner page, whose envelopes stand on paper, says on
+    /// the simulator that nothing they allow runs here. Every render here is on the simulator, the platform a fresh install starts on.
+    /// </summary>
+    [Fact]
+    public async Task The_pages_say_plainly_that_no_strategy_runs_on_the_simulator()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"simulator-{Guid.NewGuid():n}.db"));
+        var frames = RenderAll(db, "simulator", 1280, 800);
+
+        var owner = frames.Single(f => f.Page == "owner").Texts;
+        Assert.Contains(owner, t => t.EndsWith(Labels.SimulatorRunsNoStrategies, StringComparison.Ordinal));
+
+        // THE PLATFORM'S THREE LIVE IN A FOLD OF THAT PAGE: the section itself, laid out.
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            List<string> texts = [];
+            HeadlessUi.Run(() =>
+            {
+                var section = new SettingsPage(host).Platform;
+                var win = new Window { Width = 1280, Height = 800, Content = section };
+                win.Show();
+                win.UpdateLayout();
+                texts = [.. section.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)];
+                win.Close();
+            });
+            output.WriteLine(string.Join(" | ", texts));
+            Assert.Equal(Labels.SimulatorPlainly, texts.SkipWhile(t => t != "Practice simulator").Skip(1).First(t => t != "IN USE"));
+            Assert.Equal("RECOMMENDED", texts[texts.IndexOf("TradeAgent paper — real prices, simulated fills") + 1]);
+            Assert.Single(texts, t => t == "RECOMMENDED");
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE DASHBOARD'S COST LINE NAMES THE SEAT'S MODEL AS THE SEAT'S (seen on the owner's screen, 2026-10-30): "running gpt-5.6-sol" stood
     /// beside a day's figure a chief on gpt-6-luna had spent. The figure is every position's; the model is the one this role's next turn asks for.
     /// </summary>
