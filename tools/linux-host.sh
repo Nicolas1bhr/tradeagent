@@ -3,6 +3,7 @@
 #
 #   tools/linux-host.sh recon                          read-only: what the machine is, before anything is installed
 #   tools/linux-host.sh health                         the tape as the kit reads it (kit/tape-health), systemd's restarts
+#   tools/linux-host.sh org-digest [--since <T0>] [--json]   the AI organisation as the app's databases record it (read-only; tools/org-digest.py)
 #   tools/linux-host.sh install <tarball> "<word>"     stop -> back up the home's databases -> the kit -> health
 #   tools/linux-host.sh stop "<word>"                  systemctl stop tradeagent.service; the data stays
 #
@@ -29,7 +30,7 @@ kit="$here/../packaging/linux"
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 
-usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # word_ok "<word>" "<zone>": today's date in that zone, then at least three characters of the owner's own words.
 word_ok() {
@@ -55,8 +56,19 @@ need_word() {
     }
 }
 
+od_since="" od_json=no
 case "$verb" in
     recon | health) [ $# -eq 0 ] || usage ;;
+    org-digest)
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --json) od_json=yes; shift ;;
+                --since) [ $# -ge 2 ] && [ -n "$2" ] || usage; od_since="$2"; shift 2 ;;
+                *) usage ;;
+            esac
+        done
+        # T0 goes onto a remote command line: a date, a date-time or a span (72h), and nothing a shell would read as more.
+        case "$od_since" in *[!0-9A-Za-z:.+-]*) usage ;; esac ;;
     install) [ $# -eq 2 ] || usage ;;
     stop) [ $# -eq 1 ] || usage ;;
     *) usage ;;
@@ -107,6 +119,15 @@ REMOTE
 health() {
     lx_ssh 'sudo -n /opt/tradeagent/kit/tape-health' \
         || { echo "linux-host: tape-health did not run: the kit is not installed yet, or its version predates it (run install)." >&2; exit 1; }
+}
+
+# org_digest: tools/org-digest.py on stdin, run by python3 as the app's own account, against the app's databases opened read-only.
+# It reads state and writes nothing: no file is put on the host, nothing started or stopped, no credential or auth file opened.
+org_digest() {
+    local args=(--home /var/lib/tradeagent)
+    [ -z "$od_since" ] || args+=(--since "$od_since")
+    [ "$od_json" = no ] || args+=(--json)
+    lx_ssh "sudo -n -u tradeagent python3 -I - $(printf '%q ' "${args[@]}")" < "$here/org-digest.py"
 }
 
 install_kit() {
@@ -189,6 +210,7 @@ REMOTE
 case "$verb" in
     recon) recon ;;
     health) health ;;
+    org-digest) org_digest ;;
     install) install_kit "$1" "$2" ;;
     stop)
         lx_root "$1" << 'REMOTE'
