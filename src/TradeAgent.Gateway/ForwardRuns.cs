@@ -256,6 +256,7 @@ public sealed class ForwardRuns
         var replayed = 0;
         var skipped = 0;
         DateTimeOffset? last = null;
+        decimal lastClose = 0m;
         AccountReading? account = null;
         StrategyIntent? entrySignal = null;
         string? stopRequest = null;
@@ -297,16 +298,14 @@ public sealed class ForwardRuns
                     + $"into this program's {grid.Spelled} bars: {unbuildable}", ct,
                     state, replayed, skipped, last, account);
 
-            // A UTC DAY THAT CLOSED OVER THIS RUN IS ONE THING TO SAY, ONCE. The boundary is the first
-            // bar of a new UTC date, and the note is about the day that ended — keyed by the
-            // deployment and that date, so replaying the week raises ids the queue already holds.
-            if (last is { } before && before.UtcDateTime.Date != bar.OpenTime.UtcDateTime.Date)
-                _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(before),
-                    $"the UTC day {MissionEventIds.DayOf(before)} closed over it", _now());
+            // THE BOUNDARY IS THE FIRST BAR OF A NEW UTC DATE, and what closed there is the day of the bar before it, at that bar's close.
+            var dayClosed = last is { } before && before.UtcDateTime.Date != bar.OpenTime.UtcDateTime.Date ? before : (DateTimeOffset?)null;
+            var closedAt = lastClose;
 
             // THE ACCOUNT AT THIS MINUTE, WITH THE BARS HELD COUNTED IN THE PROGRAM'S OWN BARS: through the
             // last of them that has closed by the end of this minute. On one-minute bars that is this minute.
             last = bar.OpenTime;
+            lastClose = bar.Close;
             account = books.At(bar, grid.ClosedThrough(bar.OpenTime));
             var opening = account;
             var seq = 0;
@@ -318,6 +317,16 @@ public sealed class ForwardRuns
             // minute that is over.
             var live = bar.OpenTime > (deployment.CursorOpenTime ?? DateTimeOffset.MinValue)
                        && (blocked is not { } wall || bar.OpenTime <= wall);
+
+            // A UTC DAY THAT CLOSED OVER THIS RUN IS ONE THING TO SAY, ONCE, AND ONLY ON A LIVE BAR (R28 G1). Every pass replays from the first
+            // minute, every 5 s, so a note said on every boundary replayed read the run's current totals into each past day: a new publication,
+            // new deliveries and a new file per past day per fill. Said here it is said when the day closes, about that day: the figures are built
+            // through that day and marked at its last close (`TellResearchAboutARun`), so a bar replayed live again says the same words under the
+            // same id, and the event stays keyed by the deployment and the date.
+            if (live && dayClosed is { } day)
+                _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(day),
+                    $"the UTC day {MissionEventIds.DayOf(day)} closed over it", _now(),
+                    new DateTimeOffset(day.UtcDateTime.Date.AddDays(1), TimeSpan.Zero), closedAt);
 
             // AND FIRST, ON A LIVE MINUTE WHOSE BOOKS READ FLAT, NO STOP OR TARGET OF THE RUN IS LEFT WORKING
             // (`U-runner-refused-close`). The cancel below is keyed to the minute a closing fill landed on and to the

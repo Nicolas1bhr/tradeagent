@@ -1060,8 +1060,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
             + ". TradeAgent wrote this itself, under the paper "
             + "envelope that stands on this account; there is no command that asks for one and none that "
             + "widens it. It carries NO LIVE AUTHORITY and no capital: it authorises nothing in a "
-            + "real-money mode, on any other platform or on any other account. Nothing runs it yet — "
-            + "the allocation is what a forward paper run would be dispatched under, and only forward "
+            + "real-money mode, on any other platform or on any other account. TradeAgent starts a "
+            + "forward paper run under it as soon as the envelope has a free slot, and only forward "
             + "evidence collected after the version's freeze can promote it.";
 
         try
@@ -2339,6 +2339,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <see cref="TellResearch(AllocationRow, PaperEnvelopeRow, DateTimeOffset)"/> has, keyed by the
     /// allocation.</para>
     ///
+    /// <para><b>Its "net" is the run's P&amp;L</b> (R28 P3): realised after costs, plus what is still open marked at the last close. A day's note
+    /// passes <paramref name="through"/> and <paramref name="lastClose"/>, the end of that day and its last close, and is said by the runner only on
+    /// a live bar (R28 G1), so its figures are that day's and its publication id does not move.</para>
+    ///
     /// <para><b>The figures may cross, and that is the point.</b> A paper result is the ROLE'S OWN
     /// EXPERIMENT — the allocation was written for it, the bars post-date every freeze on this
     /// installation, and no verdict is ever taken over them — so it is not holdout evidence and the
@@ -2347,31 +2351,38 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// figure here is said to be a DECLARED SIMULATION at the next open.</para>
     /// </summary>
     public void TellResearchAboutARun(StrategyDeploymentRow deployment, string occasion,
-        string why, DateTimeOffset? at = null)
+        string why, DateTimeOffset? at = null, DateTimeOffset? through = null, decimal? lastClose = null)
     {
         ArgumentNullException.ThrowIfNull(deployment);
         var now = at ?? Now;
 
         try
         {
-            var requests = _deployments.OpsOf(deployment.Id)
-                .Select(o => o.RequestId).ToHashSet(StringComparer.Ordinal);
-            var fills = _fills.Scoped(deployment.ConnectorId, deployment.AccountId).Fills
-                .Where(f => f.RequestId is { Length: > 0 } r && requests.Contains(r))
-                .ToList();
+            var ops = _deployments.OpsOf(deployment.Id);
+            var ledger = _fills.Scoped(deployment.ConnectorId, deployment.AccountId).Fills;
 
-            var fees = fills.Sum(f => f.Fee ?? 0m);
-            var net = fills.Sum(f =>
-                string.Equals(f.Side, OrderSide.Sell.ToString(), StringComparison.OrdinalIgnoreCase)
-                    ? f.Quantity * f.Price
-                    : -f.Quantity * f.Price) - fees;
+            // THROUGH THAT DAY, OR THE WHOLE RUN (R28 G1): a day's figures are that day's, so its note reads the same however often its bar is
+            // replayed live and whatever the run does later. The end has no later, and a run's end marks at the newest close on the ledger.
+            var book = through is { } dayEnd ? _deployments.BookBefore(deployment, dayEnd, ops, ledger) : _deployments.BookOf(deployment, ops, ledger);
+            var mark = lastClose ?? LastCloseOf(deployment.Symbol);
+            var fees = book.Fees;
+
+            // P&L, NOT CASH FLOW (R28 P3): what the run realised after its costs, and what it still holds at the last close against what it paid.
+            // Summing sells less buys read a long position as a loss of about its notional, and this figure is an author's keep/kill input.
+            var net = book.RealisedAfterCosts + (book.Held > 0m && mark is { } marked ? book.Held * (marked - book.Average) : 0m);
 
             var content =
                 $"Forward paper run {StrategyDeploymentRow.Short(deployment.Id)} of version "
                 + $"{Short(deployment.VersionId)} in {deployment.Symbol}: {why}. "
-                + $"{fills.Count} simulated fill{(fills.Count == 1 ? "" : "s")}, "
+                + $"{book.Fills} simulated fill{(book.Fills == 1 ? "" : "s")}, "
                 + $"net {AllocationRow.Num(net)} after "
                 + (fees > 0m ? $"{AllocationRow.Num(fees)} in declared costs" : "costs of nothing")
+                + (book.Held <= 0m
+                    ? ""
+                    : mark is { } shown
+                        ? $", with {AllocationRow.Num(book.Held)} still open at an average of {AllocationRow.Num(book.Average)}, marked at the last close of {AllocationRow.Num(shown)}"
+                        : $", leaving out the {AllocationRow.Num(book.Held)} still open at an average of {AllocationRow.Num(book.Average)}: no close is recorded to mark it at")
+                + (book.Incomplete is { } incomplete ? $". Its book is INCOMPLETE: {incomplete}" : "")
                 + $". The run is {deployment.State}"
                 + (deployment.EndReason is { Length: > 0 } end ? $" — {end}" : "")
                 + ". "
@@ -2408,6 +2419,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 metadataJson: Json.Write(new { deployment = deployment.Id, occasion }));
         }
     }
+
+    /// <summary>The newest recorded close of <paramref name="symbol"/>'s forward minutes, or null because none is recorded.</summary>
+    decimal? LastCloseOf(string symbol) =>
+        _forward.LastOpen(Core.Data.ForwardBars.Source, symbol) is { } open
+            ? _forward.Bar(Core.Data.ForwardBars.Source, symbol, open)?.Close
+            : null;
 
     /// <summary>
     /// THE RUNNER'S ONE WAY ONTO THE MONEY PATH — <see cref="ForwardRuns"/>, and nothing else calls

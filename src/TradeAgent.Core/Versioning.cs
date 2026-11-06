@@ -489,8 +489,15 @@ public static class Versions
     /// INSERT trigger per artifact table in <c>ArtifactLineage.Kinds</c> — version, run, delivery, ledger entry, decision, forecast —
     /// refusing a row with no author position, or no attempt while a position wrote it. No backfill: a row before the rung reads
     /// "not recorded".</para>
+    ///
+    /// <para><b>54 — a paper run's fills, read by account, platform and time</b> (<c>U-paper-closure</c>, rung <see cref="FillScopeIndexRung"/>,
+    /// after <c>U-lineage-check</c>'s 53; R28 G1): the index <c>ix_fill_scope</c> on <c>fill(account_id, connector, at)</c>, the shape
+    /// <c>FillStore.Scoped</c> reads. An index and nothing else: no row moves.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ArtifactLineageRung;
+    public const int DatabaseSchemaVersion = FillScopeIndexRung;
+
+    /// <summary>The fill-scope index's rung, spelled once (<c>U-paper-closure</c>); a unit overtaken renumbers it here.</summary>
+    public const int FillScopeIndexRung = 54;
 
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;

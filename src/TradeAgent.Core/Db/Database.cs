@@ -3308,6 +3308,17 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{artifactLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{artifactLineageRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE: a unit overtaken renumbers it in Versions, nothing else.
+        const int fillScopeIndexRung = Versions.FillScopeIndexRung;
+        if (have < fillScopeIndexRung)
+        {
+            // A PAPER RUN'S FILLS ARE READ BY ACCOUNT, PLATFORM AND TIME (`U-paper-closure`, R28 G1): every note an author reads about a run, and every
+            // scoped figure, walks `FillStore.Scoped`'s `WHERE account_id=… AND connector=… ORDER BY at`. An index and nothing else, IF NOT EXISTS, the
+            // stamp last: a crash between them runs this again over what it made.
+            Exec("CREATE INDEX IF NOT EXISTS ix_fill_scope ON fill(account_id, connector, at);");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{fillScopeIndexRung}') ON CONFLICT(key) DO UPDATE SET value='{fillScopeIndexRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
