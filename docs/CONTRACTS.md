@@ -4621,7 +4621,20 @@ an agent that wanted a deployment has nowhere to ask — the rule `Allocations` 
 is in `Ops.Mutating` and ENDS one, which is reachable from that channel because it only ever removes
 exposure — the same reduction-only exception `close` and `cancel` already have. The owner's own press,
 **Stop paper deployment** on the Safety page, is one press plus a confirm for the reason Withdraw is:
-nothing takes it back. `status.deployments` lists what is not over plus every ended run with an
+nothing takes it back. **A stop ENDS THE ALLOCATION (R30 D19).** Both go through
+`TradingGateway.StopPaperDeploymentAsync`, which writes one superseding row on the allocation ledger
+(`Allocations.RecordStop`, policy `allocation-policy-stop-v1`: an empty window at the stop's instant, both
+ceilings zero, the row it supersedes untouched) before the END's cancels and close, inside the run's own
+gate. Every reader of paper rows drops that version on that platform and account from that instant, so no
+replacement starts, its inconclusive slot frees and `RecordPaper` refuses to put the version back there,
+under any verdict and in any later grant of the pair; the run keeps its envelope's room through
+`HoldsItsSlot` until it is flat. A process that dies between the row and the END leaves the stop standing,
+and the reconcile pass ends the run in the stop's words. A run that ends by itself takes
+`EndPaperDeploymentAsync` and nothing about it changed: its allocation stands and its replacement waits for
+a flat, reconciled end. **A stop times a paper close** (R29 F-C5): who stopped, when, the run and what it
+held at that instant are on the stop row, the run's end reason and line and its end note, so a stop placed
+to end a forward record at a chosen moment can be read. The row cannot authorise anything, a live row is
+refused, and a position still stops only its own subtree's paper runs. `status.deployments` lists what is not over plus every ended run with an
 unresolved operation or a close its END still owes, and section 4 of the owner's report prints one line
 per deployment under *running forward on paper*, every line marked PAPER and no live authority.
 

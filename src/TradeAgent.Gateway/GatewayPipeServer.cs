@@ -4099,9 +4099,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             d.Line))]);
 
     /// <summary>
-    /// ENDS ONE PAPER DEPLOYMENT. Cancels what it has working, closes what the RUN holds — its own book,
-    /// never another run's or the owner's (<c>U-paper-books</c>) — records the reason, and leaves the
-    /// allocation and the grant exactly where they were.
+    /// STOPS ONE PAPER DEPLOYMENT. Cancels what it has working, closes what the RUN holds — its own book,
+    /// never another run's or the owner's (<c>U-paper-books</c>) — records who stopped it, and ENDS ITS
+    /// ALLOCATION (R30 D19): no replacement runs, the version does not return to paper on this account, and
+    /// the slot frees once the run is flat. The grant stays exactly where it was.
     ///
     /// <para>It is reachable from here, when starting one is not, because it only ever REMOVES
     /// exposure. A caller that has to have a role that may place orders (it IS in
@@ -4132,7 +4133,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 $"there is no deployment {Short(id)} on this installation. 'deployment-list' says "
                 + "what there is.");
 
-        var ended = await gateway.EndPaperDeploymentAsync(id, $"stopped by {who}", ct)
+        var ended = await gateway.StopPaperDeploymentAsync(id, who, ct)
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"deployment {Short(id)} could not be read back after being ended");
 

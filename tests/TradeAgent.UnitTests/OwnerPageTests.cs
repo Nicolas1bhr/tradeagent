@@ -293,6 +293,19 @@ public class OwnerPageTests
         return Task.CompletedTask;
     });
 
+    /// <summary>
+    /// THE OWNER'S PRESS IS A STOP (R30 D19): the page's one way of ending a run is the path that ends its allocation with it, and the press says so
+    /// before it is confirmed. Read from the source because the press's handler is the page's own and takes a live gateway to reach.
+    /// </summary>
+    [Fact]
+    public void The_owners_stop_press_ends_the_allocation_and_says_so()
+    {
+        var owner = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.App", "OwnerView.cs"));
+        Assert.Contains("Gateway.StopPaperDeploymentAsync(id, \"the account owner\")", owner, StringComparison.Ordinal);
+        Assert.DoesNotContain("EndPaperDeploymentAsync", owner, StringComparison.Ordinal);
+        Assert.Contains("take this version off paper", Labels.StopDeploymentArmed, StringComparison.Ordinal);
+    }
+
     static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

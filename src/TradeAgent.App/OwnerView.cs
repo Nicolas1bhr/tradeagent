@@ -579,7 +579,8 @@ sealed class OwnerPage
 
     /// <summary>
     /// THE PRESS THAT ENDS ONE PAPER RUN. ONE press plus a confirm: this only ever removes exposure — the run's working orders are
-    /// cancelled and whatever it has open is closed through the gateway's own close. It ends the RUN and not the grant.
+    /// cancelled and whatever it has open is closed through the gateway's own close. It ends the RUN and its ALLOCATION (R30 D19: no
+    /// replacement) and not the grant.
     /// </summary>
     internal static Button BuildDeploymentStopConfirm(Func<string?> running, Action<string> apply)
     {
@@ -1228,7 +1229,7 @@ sealed class OwnerPage
         string said;
         try
         {
-            var ended = await _host.Gateway.EndPaperDeploymentAsync(id, "stopped by the account owner");
+            var ended = await _host.Gateway.StopPaperDeploymentAsync(id, "the account owner");
             said = ended is null
                 ? "that deployment is no longer on this installation, so nothing was ended."
                 : _host.Gateway.DeploymentReadings().FirstOrDefault(d => d.Id == ended.Id)?.Line
