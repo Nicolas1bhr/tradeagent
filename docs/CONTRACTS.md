@@ -2657,6 +2657,20 @@ in, it is READ-ONLY for the gateway, and it is not in `Ops.Mutating` — that wo
 that writes, edits or deletes one of those rows**, because a record of how a strategy performed is the
 evidence its author is judged on.
 
+**A window that cannot fit one run's cap is refused before it starts, and charges nothing** (`U-backtest-cap`).
+`Backtest.MaxTracedBars` (200,000 declared bars, about 138 days of `1m`) used to be met only when the run reached it: a default
+minute program over the 24 research months faulted there and spent a trial, against a pot of 50, on figures over a period nobody
+chose. `Backtests.Run` now asks `Backtest.WindowRefusal` after the budget look and before any evaluation: refused with
+`INVALID_REQUEST`, no version, no run, no trial, in words naming a `--from` that fits and the first coarser bar that does.
+**It cannot become a free probe**, because its only inputs are the window asked for, the bar the program declares and the dataset's
+first and last bar, both already in `data-list`. It reads neither the file, the bar count nor the gaps, so a dataset full of holes
+gets the same sentence as a whole one, and a tampered file too. A sparse window it refuses would have fitted, and asking for a
+shorter one costs nothing. A window its own dataset's holdout refuses hears that first. **A run that starts is charged as
+before, and cannot reach the cap:** `Backtest.MostBarsIn` is an upper bound on the bars a run can evaluate, the halt needs one
+more than that, and every minute a run reads is inside the window measured. The halt stays as a defence against a ledger row
+disagreeing with its own file, which no position can write. The referee's `MaxJudgedBars` is not this bound: it covers every
+minute of the longest download, and a holdout is the owner's or the app's to set, so no position can lengthen one.
+
 **`run-trades` reads every closed trade back, in pages** (`U-run-trace`). A `backtest` answer lists the first
 `Backtests.TradesShown` (20) beside `trade_count`; `trade run trades --run <id> [--after <ordinal>] [--limit <n>]`
 answers a run's row as recorded and all of its closed trades in ordinal order, at most `StrategyStore.MaxTradeRows`

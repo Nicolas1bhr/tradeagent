@@ -216,7 +216,10 @@ before it is refused rather than answered from a half-filled window.
 period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
 1, the cap's too (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
 second and at most one week. Every count of bars is in the program's declared bars: 500 bars of lookback
-is about eight hours of minutes and about 21 days of hours. Zones a program may name: `UTC`,
+is about eight hours of minutes and about 21 days of hours. **One backtest evaluates at most 200000 bars**
+(`Backtest.MaxTracedBars`): about 138 days of `1m`, about 694 days of `5m`, and from `15m` up every research month
+fits. A window that cannot fit is refused before it starts and charges no trial, decided from the window and the bar
+and never from the data: ask for a later `--from`, or declare a coarser bar. Zones a program may name: `UTC`,
 `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
 an OS lookup, so a program means the same thing on every machine that hashes it.
 

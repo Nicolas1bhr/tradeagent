@@ -419,7 +419,8 @@ public static class Canon
         When a strategy is written in the strategy language, `{{verb backtest --strategy strategies/x.strategy --dataset <id>}}`
         has TradeAgent run it and record the result itself: the metrics come back computed from the app's own trace
         rather than from your arithmetic, which is the difference between evidence and a claim. A run whose window
-        reaches the cutoff is refused before a bar is read, and every run you register is counted against the
+        reaches the cutoff is refused before a bar is read, one run evaluates at most {{run_bar_cap}} bars and a window
+        that cannot fit is refused unrun and uncharged, and every run you register is counted against the
         campaign's own budget of attempts, which a restart does not reset. It still proves nothing about a FILL: a
         backtest is a reason to test something and never a record of a trade.
 
@@ -922,8 +923,11 @@ public static class Canon
           to measure a model of your own instead. Pass `{{args --to}}` before any `holdout_from` on that dataset,
           for the reason above; a run whose window reaches the cutoff is refused before a bar is read, and
           every run you register is counted against the campaign's own budget of attempts, which a restart
-          does not reset. It still proves nothing about a FILL: a backtest is a reason to test something and
-          never a record of a trade;
+          does not reset. One run evaluates at most {{run_bar_cap}} bars, about {{run_bar_days}} days of `1m`, and from
+          `15m` up every research month fits; a window that cannot fit is refused before it starts and charges
+          nothing, decided from the window and the bar and never from the data. Choose the window with
+          `{{args --from}}`, or declare a coarser bar: each window you run is its own trial. It still proves nothing about
+          a FILL: a backtest is a reason to test something and never a record of a trade;
         - when a version of yours has been backtested and you think it is finished,
           `{{verb verdict --version <hash>}}` has TradeAgent judge it over the months you were never shown. It COSTS one of that
           campaign's final judgements — three by default, counted across renewals and never reset — so it is
@@ -1165,6 +1169,10 @@ public static class Canon
           — its published fee and an assumed two basis points — and `friction_source` says which number came from where;
           `{{args --fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000}}` measures a model of your own. Every run is
           counted against the campaign's trial budget, which a restart does not reset, and no backtest is a record of a fill.
+        - **One run evaluates at most {{run_bar_cap}} bars:** about {{run_bar_days}} days of `1m`, and from `15m` up every research month
+          fits. A window that cannot fit is refused before it starts and charges nothing, decided from the window and the bar and
+          never from the data, so the refusal says nothing about the market. Choose first: give `{{args --from}}` for the months that
+          test the idea, or declare a coarser bar. Each window you run is its own trial, so do not cut a year into quarters to see it all.
         - **`{{verb verdict --version <hash>}}`** judges, on the held-back months, a version its caller already backtested on the visible ones. Each one
           costs one of the campaign's judgements — three by default, counted across renewals and never reset; who may spend
           one is in your canon. The answer is a verdict and a reason class in words, never a figure from those months, and
@@ -1324,6 +1332,8 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             // THE FOLDERS THE SCANNER RECORDS AND THE ONES IT DOES NOT (U-runway-fixes item 1), from its own list and the home's: named, never typed.
             "tracked_dirs" => Joined(MaterialScanner.TrackedRoleDirs),
             "untracked_dirs" => Joined(WorkspaceBuilder.SubDirs.Except(MaterialScanner.TrackedRoleDirs)),
+            "run_bar_cap" => Core.Strategy.Backtest.MaxTracedBars.ToString("N0", CultureInfo.InvariantCulture),
+            "run_bar_days" => $"{Core.Strategy.Backtest.MaxTracedBars / 1440}",
             "plan_lines" => $"{WorkspaceRevisions.PlanLines}",
             "journal_lines" => $"{WorkspaceRevisions.JournalLines}",
             "plan_bytes" => $"{WorkspaceRevisions.PlanBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes",
