@@ -1252,7 +1252,9 @@ active it is the app's founding envelopes: one for each pair under evidence (BTC
 USDT) on TradeAgent's own paper venue, each worth at most 5,000 USDT in all across up to three runs, and no end date
 until the first active board sets its life. Each run's orders are bound by its own share of its pair's envelope, not by the
 one-order limit in the list above; that limit still binds every other order, and any figure the board sets for it binds what a run opens
-but never what it closes.
+but never what it closes. The orders-per-minute limit works the same way: paper runs that signal together may send 45 a minute between them, so
+that each entry gets its stop and target, and every other order still sees 6; any figure the board sets binds the runs too. If a stop or target is
+refused anyway, the run asks again by itself, and until one rests its line on your pages says **UNPROTECTED**.
 A version only ever goes into the envelope of the pair it trades. It is the one thing TradeAgent is
 handed without any money. Under it, whenever TradeAgent's own referee finds a version favourable
 on months it was never shown, TradeAgent puts that version into the grant by itself and tells its
