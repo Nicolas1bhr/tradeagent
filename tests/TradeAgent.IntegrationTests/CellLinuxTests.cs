@@ -548,12 +548,17 @@ public partial class CellLinuxTests
     {
         PlatformIsACells();
         var w = new World("procs");
-        var psi = new ProcessStartInfo("/bin/sleep") { UseShellExecute = false };
-        psi.ArgumentList.Add("120");
+        // THE NEIGHBOUR SAYS WHEN IT IS RUNNING, AND THEN WAITS ON ITS OPEN STDIN. Process.Start returns at close-on-exec, inside the kernel's
+        // exec and before the new image's environment is published, so /proc/<pid>/environ read straight after it can be empty (2 of 3
+        // ubuntu runs on 2026-11-06). A line from the neighbour itself ends that race; nothing here waits, retries or times out.
+        var psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("echo up; read _");
         psi.Environment["TA_CELL_OUTSIDE_SECRET"] = "outside-env-secret";
         using var neighbour = Process.Start(psi)!;
         try
         {
+            Assert.Equal("up", neighbour.StandardOutput.ReadLine());
             Require(File.ReadAllText($"/proc/{neighbour.Id}/environ").Contains("outside-env-secret"),
                 "the outside process's environment readable from outside the cell");
             var probe = w.Script("procs.py", """
