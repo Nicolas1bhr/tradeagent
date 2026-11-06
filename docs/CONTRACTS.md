@@ -4638,6 +4638,13 @@ refused, and a position still stops only its own subtree's paper runs. `status.d
 unresolved operation or a close its END still owes, and section 4 of the owner's report prints one line
 per deployment under *running forward on paper*, every line marked PAPER and no live authority.
 
+**The note an author reads** (`TellResearchAboutARun`; R28 P3, G1). Its "net" is the run's P&L: realised after
+its costs, plus what it still holds at the last close against its average; with no close recorded the figure
+leaves the open quantity out and says so. A day's note is said by the runner on a LIVE bar only, the one that
+closes the day, with that day's fills (`Deployments.BookBefore`) and that day's last close, so its publication id
+does not move: the replay from minute one every 5 s, and a later fill, publish no past day again. The fills are
+read through `ix_fill_scope` on `fill(account_id, connector, at)`, rung 56.
+
 ## The runner — `src/TradeAgent.Gateway/ForwardRuns.cs`, `src/TradeAgent.Platforms/ForwardBarSource.cs`
 
 **A closed forward bar drives the frozen program, and what comes out is an ordinary order.** `ForwardRuns`

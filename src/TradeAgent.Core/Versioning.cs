@@ -499,8 +499,15 @@ public static class Versions
     /// after 54): one BEFORE INSERT trigger on <c>board_forecast</c> refusing a row with no attempt (NULL or blank). The board's
     /// forecasts stay the board's own ledger, outside the chart (their author is a board seat, not a position); only the attempt is
     /// required. No backfill: a row before the rung keeps its NULL.</para>
+    ///
+    /// <para><b>56 — a paper run's fills, read by account, platform and time</b> (<c>U-paper-closure</c>, rung <see cref="FillScopeIndexRung"/>,
+    /// after 55; R28 G1): the index <c>ix_fill_scope</c> on <c>fill(account_id, connector, at)</c>, the shape
+    /// <c>FillStore.Scoped</c> reads. An index and nothing else: no row moves.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = BoardForecastLineageRung;
+    public const int DatabaseSchemaVersion = FillScopeIndexRung;
+
+    /// <summary>The fill-scope index's rung, spelled once (<c>U-paper-closure</c>); a unit overtaken renumbers it here.</summary>
+    public const int FillScopeIndexRung = 56;
 
     /// <summary>The board-forecast lineage rung, spelled once (<c>U-cards-2</c>); a unit overtaken renumbers it here.</summary>
     public const int BoardForecastLineageRung = 55;
