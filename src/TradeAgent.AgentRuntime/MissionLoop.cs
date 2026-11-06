@@ -3067,20 +3067,15 @@ public sealed class MissionLoop
 
             // A POSITION STANDING ASIDE IS NOT A CANDIDATE AND IS NOT ASKED (U-turn-bounds, R28 W5): it is not the lane's oldest due, the others are served,
             // and no seam, no seat check and no write is spent on it until its backoff ends.
-            var due = queued.Where(r => !StandingAside(r)).ToList();
-            var servable = due.Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
-
-            // ONE WHOSE ONLY WAKES CANNOT BE CHECKED STANDS ASIDE TOO (R28 W8): its windows could not be read, and reading them again in five seconds costs a sweep.
-            foreach (var role in due.Except(servable))
-                StepAside(role, "what it was woken for cannot be checked yet, because its holdout windows could not be read.");
+            var due = queued.Where(r => !StandingAside(r))
+                .Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
             if (queued.Count == 0)
             {
                 // NOTHING IS DUE, so nobody waits on a backoff, and the next refusal of anyone is a first one.
                 lock (_gate) _stoodAside.Clear();
                 return new Picked([], Idle(events));
             }
-            if (servable.Count == 0) return new Picked([], WaitingForTheAside(events));
-            due = servable;
+            if (due.Count == 0) return new Picked([], queued.Any(StandingAside) ? WaitingForTheAside(events) : Idle(events));
 
             // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of
             // a position that cannot run would be chosen on every pass and the legacy pair would never turn. WHAT BECOMES OF
@@ -3680,8 +3675,7 @@ public sealed class MissionLoop
 
         // A SEAT THAT CANNOT WORK NOW, OR A TURN THAT HUNG (U-turn-bounds, R28 W2, W5, W6), STANDS ASIDE under its failure backoff. Slept here, the same wait
         // would stop every other position on the lane for it.
-        if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable
-             ?? (ended?.GateRefused is { Refusal.Kind: RefusalKind.HostOrLaunch } late ? late.Refusal.Words : null)) is { } trouble)
+        if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable) is { } trouble)
             return StepAside(role, trouble, Backoff(errors));
 
         return failed ? Backoff(errors) : NextWait(events, attemptId, role, wake);
