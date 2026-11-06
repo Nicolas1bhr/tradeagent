@@ -1139,7 +1139,9 @@ public sealed class OnboardingView
                     + "never reads these, on any pair. Twelve months — a year — is what the referee needs before a verdict can be "
                     + "conclusive. Each pair is its own test: a "
                     + $"strategy for it is judged over its months, and {_host.Gateway.Settings.CampaignVerdictBudget} judgements and "
-                    + $"{_host.Gateway.Settings.CampaignTrialBudget} research runs count against each pair's own."),
+                    + $"{_host.Gateway.Settings.CampaignTrialBudget} research runs count against each pair's own, and until a strategy is "
+                    + $"promoted only {Math.Min(_host.Gateway.Settings.CampaignExplorationBudget, _host.Gateway.Settings.CampaignTrialBudget)} "
+                    + "of those runs can be used."),
                 Numbered(3, "Keep the test fresh by itself",
                     "When a pair's are used up, TradeAgent holds back that pair's market data as it arrives and opens its next "
                     + $"test on it — at least {CampaignRenewal.MinimumFreshDays} days of it, which nothing has seen. A month is never "

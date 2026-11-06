@@ -271,7 +271,7 @@ public sealed class TapeHoldout
     internal IReadOnlyList<TapeHoldoutWindow> Reached(DateTimeOffset? from, DateTimeOffset? to, IReadOnlyCollection<string>? subjects = null) =>
         Audience.MayReadHoldout
             ? []
-            : [.. Windows().Where(w => w.ReachedBy(from, to) && (subjects is null || subjects.Any(w.HoldsTapeOf)))];
+            : [.. Windows().Where(w => w.ReachedBy(from, to) && (subjects is not { Count: > 0 } || subjects.Any(w.HoldsTapeOf)))];
 
     /// <summary>
     /// WHY AN AS-OF READ AT <paramref name="asOf"/> MAY NOT SERVE <paramref name="row"/>, or null when it may: refused
@@ -386,7 +386,8 @@ public sealed class TapeHoldout
     static string Repair(IReadOnlyList<TapeHoldoutWindow> reached) => reached is [var one]
         ? one.Until is { } end
             ? $"Ask for a window wholly outside it: 'to' earlier than {one.From:u}, or 'from' at or after {end:u}."
-            : $"Ask for a window that ENDS before it: 'to' earlier than {one.From:u}."
+            : $"Ask for a window that ENDS before it: 'to' earlier than {one.From:u}"
+              + (one.OnlyPair is { } pair ? $", or name as 'subject' a pair other than {pair}." : ".")
         : "Ask for a window wholly outside each of them — ending before its start or starting at or after its end, as "
           + "named above; 'trade data list' names every dataset's 'holdout_from' and last bar.";
 }
