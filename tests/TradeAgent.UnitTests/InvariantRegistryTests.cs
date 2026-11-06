@@ -18,6 +18,7 @@ namespace TradeAgent.Tests.Unit;
 public class InvariantRegistryTests
 {
     static readonly Lazy<HashSet<string>> TreeTests = new(() => TestMethods(Path.Combine(DayOnePrograms.RepoRoot(), "tests")));
+    static readonly Lazy<List<TestSource>> TreeSources = new(() => TestSources(Path.Combine(DayOnePrograms.RepoRoot(), "tests")));
 
     /// <summary>EVERY TEST THE REGISTRY NAMES EXISTS — removing or renaming one fails here, so the registry cannot keep claiming it.</summary>
     [Fact]
@@ -50,6 +51,75 @@ public class InvariantRegistryTests
         {
             Assert.Equal(["Nested.Inner_helper_is_its_own_class", "Outer.AfterNested", "Outer.Last", "Outer.Real", "Outer.Theory_one"],
                 TestMethods(dir).Order(StringComparer.Ordinal).ToArray());
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// A NAMED TEST MUST BE ABLE TO FAIL (R29 F-E1): none is skipped outright unless the record says it runs nowhere, none has an empty
+    /// body, none asserts nothing, and none returns before its first assertion. A passing result cannot show any of these — a test that
+    /// returned early reads Passed in every run — so the source is read. <see cref="InvariantRunsTests"/> holds the other half, what a
+    /// run's results can show. The scan cannot tell a test that asserts something true of nothing: that takes a mutant, and no run does it.
+    /// </summary>
+    [Fact]
+    public void No_named_test_is_skipped_empty_or_returns_before_it_proves_anything()
+    {
+        var named = InvariantRegistry.All.SelectMany(i => i.Tests.Concat(i.Seats.SelectMany(s => s.Tests))).ToHashSet(StringComparer.Ordinal);
+        var bad = TreeSources.Value.Where(t => named.Contains(t.Name))
+            .Select(t => (t.Name, Why: Hollow(t, InvariantRegistry.RunsOn(t.Name)))).Where(t => t.Why is not null).ToList();
+        Assert.True(bad.Count == 0, "the registry leans on tests that cannot fail: " + string.Join("; ", bad.Select(b => $"{b.Name} ({b.Why})")));
+    }
+
+    /// <summary>
+    /// THE CHECK ABOVE IS NOT VACUOUS: each hollow shape is read as hollow, what is not hollow is left alone, and a return inside a
+    /// lambda or a value's return is not an exit from the test.
+    /// </summary>
+    [Fact]
+    public void A_hollow_test_is_read_as_hollow_in_each_of_its_shapes()
+    {
+        string? Read(string source) => Hollow(Parse(source), ProofPlatform.Linux);
+
+        Assert.Contains("skipped", Read("[Fact(Skip = \"why\")] public void T() { Assert.True(true); }"));
+        Assert.Contains("empty", Read("[Fact] public void T() { }"));
+        Assert.Contains("asserts nothing", Read("[Fact] public void T() { var x = 1; }"));
+        Assert.Contains("asserts nothing", Read("[Fact] public Task T() => Task.CompletedTask;"));
+        Assert.Contains("returns before", Read("[Fact] public void T() { return; Assert.True(false); }"));
+        Assert.Contains("returns before", Read("[Fact] public void T() { if (OperatingSystem.IsWindows()) return; Assert.True(false); }"));
+        Assert.Contains("returns before", Read("[Fact] public async Task T() { await Go(); if (Off) { return; } Assert.True(false); }"));
+
+        Assert.Null(Read("[Fact] public void T() { Assert.True(true); }"));
+        Assert.Null(Read("[Fact] public void T() { Assert.True(a); if (b) return; Assert.True(c); }"));
+        Assert.Null(Read("[Theory, InlineData(1)] public void T(int x) { Assert.Equal(1, x); }"));
+        Assert.Null(Read("[Fact] public Task T() => OnThePage((p, h) => { Assert.NotNull(p); return Task.CompletedTask; });"));
+        Assert.Null(Read("[Fact] public void T() { Action a = () => { if (x) return; Go(); }; a(); Assert.True(true); }"));
+        Assert.Null(Hollow(Parse("[Fact(Skip = \"why\")] public void T() { Assert.True(true); }"), ProofPlatform.None));
+    }
+
+    /// <summary>
+    /// WHY <paramref name="t"/> CANNOT BACK A CLAIM, or null. A bare <c>return;</c> at the test's own level ends it; one inside a lambda (a
+    /// nested body, read out of the text first) does not. <paramref name="runsOn"/> is what the record says of it.
+    /// </summary>
+    static string? Hollow(TestSource t, ProofPlatform runsOn)
+    {
+        if (Regex.IsMatch(t.Attributes, @"\bSkip\s*=") && runsOn != ProofPlatform.None) return "skipped, and the record does not say so";
+        if (t.Body.Trim(' ', '\t', '\r', '\n', '{', '}').Length == 0) return "empty";
+        var own = Regex.Replace(t.Body, @"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}", " ");
+        var proof = Regex.Match(t.Body, @"\bAssert\w*\s*[.(<]");
+        if (!proof.Success) return "asserts nothing";
+        var firstInOwn = Regex.Match(own, @"\bAssert\w*\s*[.(<]");
+        var exit = Regex.Match(own, @"\breturn\s*;");
+        return exit.Success && (!firstInOwn.Success || exit.Index < firstInOwn.Index) ? "returns before its first assertion" : null;
+    }
+
+    /// <summary>One test's source, through the same scan the tree goes through.</summary>
+    static TestSource Parse(string test)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "invariant-scan-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "One.cs"), "public class Outer { " + test + " }");
+            return Assert.Single(TestSources(dir));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
@@ -125,6 +195,41 @@ public class InvariantRegistryTests
                 Assert.True(inv.Tests.Count > 0 && s.Tests.Count > 0 && inv.Open is null, $"{inv.Id}/{s.SeatClass}");
     }
 
+    /// <summary>
+    /// A CLAIM HOLDS ONLY WHERE ITS TESTS RUN (R29 F-E1). The cell column's policy tests do not run on Windows, so there — and only
+    /// there — each claim that leans on them reads advisory and says where; the same claim stands on Linux and macOS. Every named test
+    /// must run on the platform, not one of them: a claim's tests each prove a part of it. A computer no check runs on has no proof at all.
+    /// </summary>
+    [Fact]
+    public void A_claim_whose_test_does_not_run_on_a_platform_reads_advisory_there_and_says_where()
+    {
+        var inv = InvariantRegistry.Find("ORDER-001")!;
+        var cell = inv.Seats.Single(s => s.SeatClass == SeatClasses.Cell);
+        Assert.Contains(cell.Tests, t => !InvariantRegistry.RunsOn(t).HasFlag(ProofPlatform.Windows));
+
+        Assert.Equal((EnforcementClass.HardApp, (string?)null), InvariantRegistry.Shown(inv, cell, ProofPlatform.Linux));
+        Assert.Equal((EnforcementClass.HardApp, (string?)null), InvariantRegistry.Shown(inv, cell, ProofPlatform.MacOS));
+        var (c, why) = InvariantRegistry.Shown(inv, cell, ProofPlatform.Windows);
+        Assert.Equal(EnforcementClass.Advisory, c);
+        Assert.Equal("claimed enforced by code, shown advisory: a test behind it does not run on Windows", why);
+
+        var harness = inv.Seats.Single(s => s.SeatClass == SeatClasses.Harness);
+        Assert.Equal((EnforcementClass.HardApp, (string?)null), InvariantRegistry.Shown(inv, harness, ProofPlatform.Windows));
+
+        var both = cell with { Tests = [.. cell.Tests, "CellPolicyTests.A_policy_that_grants_the_seat_home_the_apps_own_folders_or_an_environments_toml_is_refused"] };
+        Assert.Contains("2 tests behind it do not run on Windows", InvariantRegistry.Shown(inv, both, ProofPlatform.Windows).Downgraded);
+
+        var (none, whyNone) = InvariantRegistry.Shown(inv, harness, ProofPlatform.None);
+        Assert.Equal(EnforcementClass.Advisory, none);
+        Assert.Contains("do not run on this kind of computer", whyNone);
+
+        // AND ON THE REAL REGISTRY, ON EVERY PLATFORM: nothing shown above advisory leans on a test that does not run there.
+        foreach (var platform in new[] { ProofPlatform.Linux, ProofPlatform.Windows, ProofPlatform.MacOS })
+            foreach (var i in InvariantRegistry.All)
+                foreach (var s in i.Seats.Where(s => s.Claimed > EnforcementClass.Advisory && InvariantRegistry.Shown(i, s, platform).Class > EnforcementClass.Advisory))
+                    Assert.All(i.Tests.Concat(s.Tests), t => Assert.True(InvariantRegistry.RunsOn(t).HasFlag(platform), $"{i.Id}/{s.SeatClass} on {platform}: {t}"));
+    }
+
     /// <summary>IT RECORDS AND ENFORCES NOTHING: no code but its own file and the owner's Oversight page reads the registry.</summary>
     [Fact]
     public void No_code_path_but_the_owners_oversight_page_reads_the_registry()
@@ -165,6 +270,20 @@ public class InvariantRegistryTests
         Assert.DoesNotContain("enforced by code — it says so", drawn);
         Assert.Contains("Proved by: no named test.", drawn);
         Assert.Empty(section.GetLogicalDescendants().OfType<Button>());
+
+        // WHERE A TEST DOES NOT RUN, THE PAGE SAYS SO: a claim on that test reads advisory there, the same page elsewhere does not, and the
+        // test is not counted among what proves the protection. (Windows here is the page as it reads there, on whatever runs this.)
+        const string notOnWindows = "CellPolicyTests.A_policy_that_grants_the_app_home_or_its_state_is_refused";
+        var leaning = new Invariant("X-002", "a protection one test proves", "nowhere", [], [notOnWindows, "T.Other"],
+            [new SeatClaim(SeatClasses.Cell, EnforcementClass.Mediated, "it holds", ["T.Seat"])]);
+        var onWindows = Texts(ProtectionsSection.Build([leaning], ProofPlatform.Windows));
+        Assert.Contains("advisory — it holds (claimed mediated, shown advisory: a test behind it does not run on Windows)", onWindows);
+        Assert.Contains("Proved by 1 named tests: T.Other.", onWindows);
+        Assert.Contains($"Named, but not run on Windows: {notOnWindows}.", onWindows);
+        Assert.Contains("1 advisory", onWindows);
+        var onLinux = Texts(ProtectionsSection.Build([leaning], ProofPlatform.Linux));
+        Assert.Contains("mediated — it holds", onLinux);
+        Assert.DoesNotContain("Named, but not run", onLinux);
     }
 
     // ---- the tree scan --------------------------------------------------------------------------------------------------------------
@@ -208,9 +327,17 @@ public class InvariantRegistryTests
     /// and strings stripped first), so a nested helper class or a second class in a file is never confused with its neighbour. Any
     /// attribute whose name ends in Fact or Theory counts (<c>[UnixFact]</c>).
     /// </summary>
-    static HashSet<string> TestMethods(string dir)
+    static HashSet<string> TestMethods(string dir) => new(TestSources(dir).Select(t => t.Name), StringComparer.Ordinal);
+
+    /// <summary>One test as the scan reads it, comments and strings stripped: <c>Class.Method</c>, what stands before its name, and its body.</summary>
+    public sealed record TestSource(string Name, string Attributes, string Body);
+
+    /// <summary>
+    /// EVERY [Fact]/[Theory] METHOD UNDER <paramref name="dir"/>, as <see cref="TestMethods"/> names them, with the source a static check reads.
+    /// </summary>
+    static List<TestSource> TestSources(string dir)
     {
-        var found = new HashSet<string>(StringComparer.Ordinal);
+        var found = new List<TestSource>();
         var sep = Path.DirectorySeparatorChar;
         foreach (var file in Directory.GetFiles(dir, "*.cs", SearchOption.AllDirectories))
         {
@@ -254,7 +381,7 @@ public class InvariantRegistryTests
                     case '(':
                         if (bracket == 0 && pendingTest && pendingClass is null && lastWord is not null
                             && scopes.Count > 0 && scopes.Peek() is { } owner)
-                            found.Add($"{owner}.{lastWord}");
+                            found.Add(Source($"{owner}.{lastWord}", code, i));
                         if (bracket == 0) pendingTest = false;
                         break;
                 }
@@ -384,6 +511,37 @@ public class InvariantRegistryTests
         var next = i + 1 < t.Length ? t[i + 1] : '\0';
         var end = t.IndexOf('\'', i + (next == '\\' ? 3 : 2));
         return end > 0 && end - i <= 8 ? end + 1 : i;
+    }
+
+    /// <summary>The test whose parameter list opens at <paramref name="open"/>: the text since the statement before it, and its body.</summary>
+    static TestSource Source(string name, string code, int open)
+    {
+        var before = code.LastIndexOfAny([';', '{', '}'], open);
+        var attributes = code[(before + 1)..open];
+        var i = Matching(code, open, '(', ')');
+        while (i < code.Length && char.IsWhiteSpace(code[i])) i++;
+        if (i >= code.Length) return new(name, attributes, "");
+        if (code[i] == '{') return new(name, attributes, code[i..Matching(code, i, '{', '}')]);
+        var depth = 0;
+        for (var e = i; e < code.Length; e++)
+        {
+            if (code[e] is '(' or '{' or '[') depth++;
+            if (code[e] is ')' or '}' or ']') depth--;
+            if (code[e] == ';' && depth == 0) return new(name, attributes, code[i..e]);
+        }
+        return new(name, attributes, "");
+    }
+
+    /// <summary>One past the <paramref name="close"/> that pairs with the <paramref name="open"/> at <paramref name="i"/>, in stripped code.</summary>
+    static int Matching(string code, int i, char open, char close)
+    {
+        var depth = 0;
+        for (; i < code.Length; i++)
+        {
+            if (code[i] == open) depth++;
+            if (code[i] == close && --depth == 0) return i + 1;
+        }
+        return code.Length;
     }
 
     /// <summary>

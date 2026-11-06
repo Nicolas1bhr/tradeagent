@@ -21,6 +21,10 @@ public sealed record Invariant(
     string Id, string Statement, string WrittenIn, IReadOnlyList<string> EnforcedBy, IReadOnlyList<string> Tests,
     IReadOnlyList<SeatClaim> Seats, string? Open = null);
 
+/// <summary>The kinds of computer the project's automated checks run its tests on: a set, because a test may run on several.</summary>
+[Flags]
+public enum ProofPlatform { None = 0, Linux = 1, Windows = 2, MacOS = 4 }
+
 /// <summary>
 /// THE INVARIANT REGISTRY (<c>U-invariant-registry</c>; VISION § 6.3; PRINCIPLES "The boundary remains enforceable": "Claim only the properties
 /// actually demonstrated"). The protections <c>CLAUDE.md</c> and the code already hold, each with its enforcing component, its tests and its
@@ -31,7 +35,13 @@ public sealed record Invariant(
 ///
 /// <para><b>The honesty rule, in code (<see cref="Shown"/>).</b> A class above advisory is shown only while it is backed — by at least one named
 /// test of the property, with no part of the statement left unproven (<see cref="Invariant.Open"/>), AND by at least one named test of the
-/// seat type's side. A claim missing any of these is SHOWN as advisory and says why, whatever the row claims. A test removed from the tree fails the conformance test, so the registry cannot keep claiming it.</para>
+/// seat type's side, EVERY ONE of those tests running on the kind of computer the page is read on. A claim missing any of these is SHOWN as advisory and says why, whatever the row claims. A test removed from the tree fails the conformance test, so the registry cannot keep claiming it.</para>
+///
+/// <para><b>What "a test backs it" means (R29 F-E1).</b> A test's name proves nothing. Three checks stand behind each one: the source is read, so a
+/// named test that is empty, asserts nothing, is skipped or returns before it proves anything fails the suite; <see cref="NotEverywhere"/>
+/// records where a test does not run; and the build's <c>proof-record</c> job reads every result of its own run on all three platforms and is
+/// red unless that record is exactly what ran and passed. That job is the evidence, so what the page says is true of a build whose run was green.
+/// What none of them can see is a test that runs, asserts and proves too little: only a mutant shows that.</para>
 ///
 /// <para><b>App-owned and read-only.</b> Compiled into the app: no file, setting, pipe op or verb writes it, and the owner's Oversight page only reads it.</para>
 ///
@@ -52,6 +62,22 @@ public static class InvariantRegistry
         (SeatClasses.Cell, "Doing seat, confined cell")
     ];
 
+    /// <summary>The kind of computer this process runs on.</summary>
+    public static ProofPlatform ThisPlatform =>
+        OperatingSystem.IsWindows() ? ProofPlatform.Windows
+        : OperatingSystem.IsLinux() ? ProofPlatform.Linux
+        : OperatingSystem.IsMacOS() ? ProofPlatform.MacOS
+        : ProofPlatform.None;
+
+    /// <summary>A kind of computer as the owner's Oversight page says it.</summary>
+    public static string Word(ProofPlatform p) => p switch
+    {
+        ProofPlatform.Linux => "Linux",
+        ProofPlatform.Windows => "Windows",
+        ProofPlatform.MacOS => "macOS",
+        _ => "this kind of computer"
+    };
+
     /// <summary>A class as the owner's Oversight page says it.</summary>
     public static string Word(EnforcementClass c) => c switch
     {
@@ -65,9 +91,13 @@ public static class InvariantRegistry
     /// <summary>
     /// THE CLASS THE PAGE SHOWS for <paramref name="claim"/> of <paramref name="invariant"/>, and why it is lower than claimed when it is: a
     /// class above advisory with no named test of the property, with a part of the property no named test proves
-    /// (<see cref="Invariant.Open"/>), or with no named test of the seat side, is shown as advisory.
+    /// (<see cref="Invariant.Open"/>), with no named test of the seat side, or leaning on a named test that does not run on the kind of
+    /// computer the claim is read on (<see cref="NotEverywhere"/>), is shown as advisory.
     /// </summary>
-    public static (EnforcementClass Class, string? Downgraded) Shown(Invariant invariant, SeatClaim claim)
+    public static (EnforcementClass Class, string? Downgraded) Shown(Invariant invariant, SeatClaim claim) => Shown(invariant, claim, ThisPlatform);
+
+    /// <summary>The class shown on <paramref name="platform"/>.</summary>
+    public static (EnforcementClass Class, string? Downgraded) Shown(Invariant invariant, SeatClaim claim, ProofPlatform platform)
     {
         if (claim.Claimed <= EnforcementClass.Advisory) return (claim.Claimed, null);
         if (invariant.Tests.Count == 0)
@@ -76,8 +106,30 @@ public static class InvariantRegistry
             return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: part of it no named test proves");
         if (claim.Tests.Count == 0)
             return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: no named test proves this seat's side");
+        var absent = invariant.Tests.Concat(claim.Tests).Distinct(StringComparer.Ordinal).Count(t => (RunsOn(t) & platform) == 0);
+        if (absent > 0)
+            return (EnforcementClass.Advisory, $"claimed {Word(claim.Claimed)}, shown advisory: "
+                + (absent == 1 ? "a test behind it does not run" : $"{absent} tests behind it do not run") + $" on {Word(platform)}");
         return (claim.Claimed, null);
     }
+
+    /// <summary>Every kind of computer the project's automated checks run on.</summary>
+    public const ProofPlatform Everywhere = ProofPlatform.Linux | ProofPlatform.Windows | ProofPlatform.MacOS;
+
+    /// <summary>
+    /// THE RECORD OF WHERE A NAMED TEST DOES NOT RUN: every named test ran and passed on all three kinds of computer except those here,
+    /// each with where it does. The <c>proof-record</c> job of the build reads every result of its run and turns the run red when this
+    /// says anything else, in either direction — so a build whose run is green states what that run measured, and the only way past a
+    /// test that stopped running on a platform is to say so here, which <see cref="Shown(Invariant, SeatClaim, ProofPlatform)"/> then shows.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, ProofPlatform> NotEverywhere = new Dictionary<string, ProofPlatform>(StringComparer.Ordinal)
+    {
+        ["CellPolicyTests.A_policy_that_grants_the_app_home_or_its_state_is_refused"] = ProofPlatform.Linux | ProofPlatform.MacOS,
+        ["CellPolicyTests.A_policy_that_grants_the_seat_home_the_apps_own_folders_or_an_environments_toml_is_refused"] = ProofPlatform.Linux | ProofPlatform.MacOS,
+    };
+
+    /// <summary>Where <paramref name="test"/> runs, by the record.</summary>
+    public static ProofPlatform RunsOn(string test) => NotEverywhere.GetValueOrDefault(test, Everywhere);
 
     // ---- the seat sides ---------------------------------------------------------------------------------------------------------------
 
