@@ -458,6 +458,7 @@ public class MintPerLaunchTests : IDisposable
 
         public Func<string, AiAdmission>? Admit { get; set; }
         public Func<string, bool>? RecordTyped { get; set; }
+        public Func<TimeSpan>? TurnLimit { get; set; }
         public List<string> Sent { get; } = [];
 
         public bool Busy => _chatting;

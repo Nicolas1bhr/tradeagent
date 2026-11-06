@@ -640,6 +640,12 @@ public sealed class AgentSession(
     /// <summary>The vendor's refusal of the model of the turn in flight, in the app's sentence (<see cref="AgentTurnEnded.ModelRefused"/>); null otherwise.</summary>
     ModelRefusal? _modelRefused;
 
+    /// <summary>What the stream of the turn in flight has reported using so far, held outside the read (<see cref="AgentTurnEnded.Usage"/>); null until it reports.</summary>
+    TurnUsage? _usage;
+
+    /// <summary>Whether the last turn was ended at its wall-clock limit, as its <see cref="TurnEnded"/> said.</summary>
+    bool _endedOverLimit;
+
     /// <summary>The sentence the turn in flight was ended in for its wall-clock limit (<see cref="AgentTurnEnded.TimedOut"/>); null otherwise.</summary>
     volatile string? _timedOut;
 
@@ -769,9 +775,17 @@ public sealed class AgentSession(
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
 
         // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: nothing answered them, so their words are kept exactly as a
-        // refused admission keeps them — the System line the turn wrote says why (review of U-thinking-seats-a, item 1).
-        if (await RunAsync(message, ct) is not null) Keep(message);
+        // refused admission keeps them — the System line the turn wrote says why (review of U-thinking-seats-a, item 1). So are the
+        // words of a turn ended at its wall-clock limit (U-turn-bounds-2): nothing says they were answered.
+        //
+        // THE OWNER'S TURN HAS THE LIMIT A MISSION TURN HAS: nothing else ends a stalled vendor here, and his conversation would stay Busy for ever.
+        var limit = TurnClock.Of(TurnLimit, SeatSpec.VendorTurnLimit);
+        var refused = await TurnClock.RunAsync(limit, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(limit)), () => RunAsync(message, ct));
+        if (refused is not null || _endedOverLimit) Keep(message);
     }
+
+    /// <inheritdoc />
+    public Func<TimeSpan>? TurnLimit { get; set; }
 
     /// <summary>
     /// OPENS THE DURABLE RECORD AND COMMITS THE COST OF A TURN THE OWNER TYPED, before it is
@@ -869,9 +883,9 @@ public sealed class AgentSession(
         var startedAt = DateTimeOffset.UtcNow;
         var exitCode = -1;
         var raw = "";
-        TurnUsage? usage = null;
         VendorLimit? limit = null;
         LateRefusal? gateRefused = null;
+        var ran = false;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -895,10 +909,13 @@ public sealed class AgentSession(
         _toolsDead = null;
         _modelRefused = null;
         _timedOut = null;
+        _usage = null;
+        _endedOverLimit = false;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, raw, usage, limit) = await RunTurnAsync(exe, message, _cts.Token);
+            (exitCode, raw, _, limit) = await RunTurnAsync(exe, message, _cts.Token);
+            ran = true;
         }
         catch (OperationCanceledException)
         {
@@ -931,13 +948,20 @@ public sealed class AgentSession(
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
+
+            // A TURN THAT ENDED CLEAN IN THE SAME INSTANT AS ITS LIMIT ENDED CLEAN.
+            var overLimit = exitCode == 0 ? null : _timedOut;
+            _endedOverLimit = overLimit is not null;
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow)
             {
                 // What the RUNTIME said this turn used, or null where it said nothing. Carried out
                 // of the turn rather than re-derived from Raw by whoever prices it, because the
                 // stream is parsed once, here, and a second parser somewhere else would be a second
-                // thing to keep correct as these CLIs change their event shapes.
-                Usage = usage,
+                // thing to keep correct as these CLIs change their event shapes. Held outside the read, so
+                // a turn cancelled after its usage arrived is priced on what it measured (U-turn-bounds-2).
+                Usage = _usage,
+                // AND WHAT A TURN ENDED SHORT DID NOT MEASURE, said on the row: a launch that ran and did not reach its own end.
+                UsageUnreported = _session is not null && (!ran || overLimit is not null) ? AgentTurnEnded.UsageOfACutTurn(_usage) : null,
                 // And the vendor's refusal, for the same reason: one reading of the stream, carried
                 // to the loop that has to wait for it and the meter that has to price it.
                 Limit = limit,
@@ -964,7 +988,7 @@ public sealed class AgentSession(
                 ToolsUnavailable = _toolsDead,
                 // AND A MODEL THE VENDOR REFUSED, AND A TURN ENDED FOR ITS WALL-CLOCK LIMIT (U-turn-bounds).
                 ModelRefused = _modelRefused,
-                TimedOut = _timedOut
+                TimedOut = overLimit
             });
         }
         return gateRefused;
@@ -1024,6 +1048,8 @@ public sealed class AgentSession(
         if (seat.Refused) throw new TradeAgentException(seat.Code ?? ErrorCode.AI_SEAT_REFUSED, seat.Refusal);
         // A LAST CHECK, AND A REFUSAL ABOUT THIS LAUNCH: nothing starts, so it is charged nothing and gives back its wakes (D17), whoever marked the seat
         // between this launch's admission and this line.
+        // BEFORE THE CHECK, so a mark set by any other turn from here on is one this launch's clean end cannot lift (U-turn-bounds-2).
+        var checkedAt = SeatMarks.Admitted();
         if (SeatMarks.Refusal(manifest, seat.Profile, launchModel, this) is { } deadSeat)
             throw new GateRefusedException(new TurnRefusal(RefusalKind.HostOrLaunch, deadSeat), beforeAnyWork: true);
 
@@ -1224,6 +1250,8 @@ public sealed class AgentSession(
         var state = new TurnState();
         void KeepWarnings()
         {
+            // AND WHAT IT MEASURED (U-turn-bounds-2): a turn cancelled after its usage arrived keeps the figures, as it keeps a warning.
+            _usage = state.Usage;
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
             _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
             if (state.ToolsDead is { } vendorSaid) _toolsDead = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ToolsUnavailable, vendorSaid);
@@ -1284,9 +1312,9 @@ public sealed class AgentSession(
             // THE VENDOR'S WARNINGS, AND A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): marked before the turn's last words, so the
             // next launch of the same seat is refused in the same sentence.
             KeepWarnings();
-            // A CLEAN END IS WHAT A PROBE WAS FOR (U-turn-bounds): nothing stands against this seat any more.
+            // A CLEAN END IS WHAT A PROBE WAS FOR (U-turn-bounds): nothing stands against this seat any more, when this turn may say so (SeatMarks.Clear).
             if (process.ExitCode == 0 && state.ToolsDead is null && state.ModelRefused is null)
-                SeatMarks.Clear(manifest, seat.Profile, launchModel);
+                SeatMarks.Clear(manifest, seat.Profile, launchModel, this, checkedAt);
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
             return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
         }

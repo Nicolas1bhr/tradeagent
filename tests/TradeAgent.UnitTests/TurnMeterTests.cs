@@ -48,7 +48,7 @@ internal static class AgentRuntimeProbe
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
         int sleepSeconds = 0, Func<string?>? model = null, string? marker = null,
         string? stderr = null, int exitCode = 0, Func<string, RuntimeManifest>? manifest = null,
-        string? workspace = null, AppFileManifest? appFiles = null, [CallerMemberName] string name = "")
+        string? workspace = null, AppFileManifest? appFiles = null, int hangSeconds = 0, [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
         Directory.CreateDirectory(dir);
@@ -69,7 +69,8 @@ internal static class AgentRuntimeProbe
             var err = stderr is null ? "" : $"type \"{errors}\" 1>&2\r\n";
             var exit = exitCode == 0 ? "" : $"exit /b {exitCode}\r\n";
             script = Path.Combine(dir, "runtime.cmd");
-            File.WriteAllText(script, $"@echo off\r\n{touch}{wait}{err}type \"{payload}\"\r\n{exit}");
+            var hang = hangSeconds > 0 ? $"ping -n {hangSeconds + 1} 127.0.0.1 > nul\r\n" : "";
+            File.WriteAllText(script, $"@echo off\r\n{touch}{wait}{err}type \"{payload}\"\r\n{hang}{exit}");
         }
         else
         {
@@ -78,7 +79,8 @@ internal static class AgentRuntimeProbe
             var err = stderr is null ? "" : $"cat \"{errors}\" 1>&2\n";
             var exit = exitCode == 0 ? "" : $"exit {exitCode}\n";
             script = Path.Combine(dir, "runtime.sh");
-            File.WriteAllText(script, $"#!/bin/sh\n{touch}{wait}{err}cat \"{payload}\"\n{exit}");
+            var hang = hangSeconds > 0 ? $"sleep {hangSeconds}\n" : "";
+            File.WriteAllText(script, $"#!/bin/sh\n{touch}{wait}{err}cat \"{payload}\"\n{hang}{exit}");
             File.SetUnixFileMode(script,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }

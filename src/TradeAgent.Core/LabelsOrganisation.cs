@@ -107,6 +107,14 @@ public static partial class Labels
         $"This turn ran for {(limit.TotalMinutes >= 1 ? $"{limit.TotalMinutes:0} minutes" : $"{limit.TotalSeconds:0} seconds")} without finishing, past the most " +
         "one turn may run, so TradeAgent ended it and every program it had started. What it was woken for stays owed, and it is tried again.";
 
+    /// <summary>The same limit, in the chat, on a turn the owner typed (<c>U-turn-bounds-2</c>): what happened, and that his words were not lost.</summary>
+    public static string ChatTurnPastItsLimit(TimeSpan limit) =>
+        $"The AI worked on this for {(limit.TotalMinutes >= 1 ? $"{limit.TotalMinutes:0} minutes" : $"{limit.TotalSeconds:0} seconds")} without finishing, past the most " +
+        "one turn may run, so TradeAgent stopped it and every program it had started. Your words are kept for its next turn, and you can type again now.";
+
+    /// <summary>Why a position whose last turn failed is resting, on its row (<c>U-turn-bounds-2</c>); <see cref="SeatStandingAside"/> says until when.</summary>
+    public const string LastTurnDidNotFinish = "its last turn did not finish.";
+
     public const string ChiefAppoint = "Appoint a chief";
     public const string ChiefAppointConfirm = "Press again: appoint a chief on the chosen seat, dormant until you activate it";
     public const string ChiefReplace = "Replace the chief";

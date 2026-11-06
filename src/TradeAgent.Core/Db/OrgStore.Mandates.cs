@@ -1077,6 +1077,52 @@ public sealed partial class OrgStore
     });
 
     /// <summary>
+    /// WHETHER THE ORGANISATION'S OWN RECORDS HOLD THE ACT <paramref name="wake"/> ASKED FOR, MADE BY LAUNCH <paramref name="attempt"/> (<c>U-turn-bounds-2</c>).
+    /// A turn that worked and never reached its end gives its wakes back unless this says the work is done, so it asks the append-only rows and
+    /// nothing the turn said: the attempt on each row is the launch's attested grant at the pipe, never an agent's word. A holder's wake: its delivery or
+    /// decline of that mandate. A decider's: its judgment of that mandate. A board seat's: its decision on that act. A reviewer's: its answer to that
+    /// review. Any other kind asks for no act a record could show, so it answers false and the wake is owed again.
+    /// </summary>
+    public bool WakeFinished(MissionEvent wake, string attempt) => wake.Payload is { Length: > 0 } subject && wake.Kind switch
+    {
+        MissionEventKind.Mandate => MandateActed(subject, attempt, [MandateEventKind.Delivered, MandateEventKind.Declined]),
+        MissionEventKind.Delivery or MissionEventKind.Escalation or MissionEventKind.Proposal => MandateActed(subject, attempt, MandateEventKind.Judging),
+        MissionEventKind.Board => BoardSeatDecided(subject, wake.Role, attempt),
+        MissionEventKind.CutReview => ReviewAnswered(subject, attempt),
+        _ => false
+    };
+
+    /// <summary>Whether <paramref name="attempt"/> recorded an event of one of <paramref name="kinds"/> on <paramref name="mandate"/>.</summary>
+    bool MandateActed(string mandate, string attempt, IReadOnlyList<string> kinds) => db.Read(_ =>
+    {
+        var names = kinds.Select((_, i) => $"$k{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        using var c = db.Cmd($"""
+            SELECT EXISTS (SELECT 1 FROM org_mandate_event
+                            WHERE mandate_id = $m AND attempt_id = $a AND kind IN ({string.Join(",", names)}))
+            """, [("$m", (object?)mandate), ("$a", attempt), .. names.Select((n, i) => (n, (object?)kinds[i]))]);
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    });
+
+    /// <summary>Whether <paramref name="attempt"/> recorded <paramref name="seat"/>'s decision on board act <paramref name="act"/>.</summary>
+    bool BoardSeatDecided(string act, string? seat, string attempt) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT EXISTS (SELECT 1 FROM board_act_event
+                            WHERE act_id = $act AND seat = $seat AND attempt_id = $a AND kind IN ('confirmed','refused'))
+            """, ("$act", act), ("$seat", seat), ("$a", attempt));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    });
+
+    /// <summary>Whether <paramref name="attempt"/> answered review event <paramref name="review"/>: the answer's decision names it first in its refs.</summary>
+    bool ReviewAnswered(string review, string attempt) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT EXISTS (SELECT 1 FROM org_decision WHERE kind = $k AND attempt_id = $a AND refs LIKE $first)
+            """, ("$k", OrgDecisionKind.ReviewAnswer), ("$a", attempt), ("$first", $"[{{\"kind\":\"{OrgRefKind.Event}\",\"id\":\"{review}\"}}%"));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
+    });
+
+    /// <summary>
     /// The latest <c>delivery</c> or <c>escalation</c> wake of <paramref name="m"/> to its decider when the launch that took it was
     /// declared LOST, or null — none raised, the latest still untaken, or taken by a launch that runs or ended.
     /// </summary>
