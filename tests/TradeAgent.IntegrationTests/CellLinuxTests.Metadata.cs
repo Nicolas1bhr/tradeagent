@@ -228,6 +228,11 @@ public partial class CellLinuxTests
             git init -q repo && cd repo && git config user.email x@example.invalid && git config user.name x && echo f > f && git add f && git commit -qm one && echo git-rc=$?
             cd .. ; sed -i s/x/z/ a && echo sed-rc=$?
             echo fds=$(ls /proc/self/fd | tr '\n' ' ')
+            # A PROCESS WHOSE PARENT HAS GONE: said by the row, not asserted, because the answer is Yama's and a host's to set.
+            echo o > orphan && (sh -c 'sleep 0.2; chmod 640 orphan; echo orphan-chmod-rc=$? > orphan.said; python3 -I -c "
+            import os
+            fd = os.open(\"orphan\", os.O_RDWR); os.fchmod(fd, 0o600); print(\"orphan-fchmod-rc=0\")" >> orphan.said 2>&1' &)
+            for i in 1 2 3 4 5 6 7 8 9 10; do grep -q fchmod orphan.said 2>/dev/null && break; sleep 0.2; done; cat orphan.said
             python3 -I -c "
             import os, shutil, stat
             shutil.copy2('tool.sh', 'tool.copy')
