@@ -193,8 +193,13 @@ public sealed class CellMediator
                 for (var i = 0; i < NotifSize; i++) Marshal.WriteByte(notif, i, 0);
                 if (ioctl(r.Listener, NotifRecv, notif) != 0)
                 {
-                    if (Marshal.GetLastPInvokeError() is EINTR or ENOENT) continue;   // ENOENT: the caller went before this was read
-                    break;
+                    var errno = Marshal.GetLastPInvokeError();
+                    if (errno == EINTR) continue;
+                    if (errno != ENOENT) break;
+                    // ENOENT: the caller went before this was read, and on some kernels every read once the cell's last process has gone,
+                    // so it is not an answer to spin on. The supervisor ends with the cell.
+                    Thread.Sleep(10);
+                    continue;
                 }
                 var id = Marshal.ReadInt64(notif, 0);
                 var pid = Marshal.ReadInt32(notif, NotifPid);
@@ -208,7 +213,8 @@ public sealed class CellMediator
                 Marshal.WriteInt64(resp, 8, 0);
                 Marshal.WriteInt32(resp, 16, -error);
                 Marshal.WriteInt32(resp, 20, 0);
-                ioctl(r.Listener, NotifSend, resp);   // ENOENT: the caller was killed while it was answered
+                // A SEND CUT SHORT LEAVES THE CALLER WAITING, so it is sent again. ENOENT: the caller was killed while it was answered.
+                while (ioctl(r.Listener, NotifSend, resp) != 0 && Marshal.GetLastPInvokeError() == EINTR) { }
             }
         }
         finally { close(r.Listener); }
@@ -260,7 +266,7 @@ public sealed class CellMediator
         public int Answer()
         {
             if ((call.Flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0) return EINVAL;
-            if (call.ByDescriptor && (call.Flags & AT_SYMLINK_NOFOLLOW) != 0) return EINVAL;
+            if (call.ByDescriptor && call.Flags != 0) return EINVAL;
             if (call.ByDescriptor && call.Dirfd == AT_FDCWD) return call.Shape == Times.None ? EBADF : EFAULT;
             int dir = -1, obj = -1;
             try
