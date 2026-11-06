@@ -2277,7 +2277,8 @@ keeps their words, exactly as a message typed while the AI is working is kept.
 `AiAttemptStore.UnreportedReason`), on the ordinary path as well as after a crash; a reservation of
 zero is not a charge and such a row stays unpriced. `AiSpendToday.UnreportedTurns` counts them, so
 `Spent` is never read as a bill: an unpriced turn means the real figure is HIGHER, one of these means
-that part of it is the most it could have been.
+that part of it is the most it could have been — on a key or an unestablished payer. On the plan (R25 D13) its
+reservation is an estimate from measured turns, so that part is an estimate the real figure may pass.
 
 **Except a turn the vendor refused before any work** (`U-vendor-limit`). The runtime's manifest says how
 its vendor refuses a turn for its own usage limit (`RuntimeManifest.UsageLimit`, data: codex's is the

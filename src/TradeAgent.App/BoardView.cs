@@ -76,7 +76,9 @@ sealed class BoardPage
             Ui.KeyValueLive("Its fingerprint", _hash),
             Ui.Divider(),
             Ui.Muted("These are the limits and allowances TradeAgent enforces. The security board decides them; until a board seat is "
-                     + "active, the app's founding policy does. Nothing on this page changes them, and the AI cannot either.")));
+                     + "active, the app's founding policy does. Nothing on this page changes them, and the AI cannot either."),
+            // ADVISORY WHERE IT IS ADVISORY (R25 D13): the plan's day and shares are this page's own figures, so its words go with them.
+            Ui.Muted(Labels.PlanReservationRule)));
 
         var left = Ui.Col(Theme.S6, _unreadableCard, inForce);
         foreach (var group in Labels.BoardFields.Select(f => f.Group).Distinct())

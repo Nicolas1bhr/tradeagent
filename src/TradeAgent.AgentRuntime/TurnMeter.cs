@@ -1816,15 +1816,20 @@ public sealed class TurnMeter
     {
         var cap = Cap();
         var planCap = PlanCap(cap);
-        // THE NEXT TURN'S RESERVATION FOR THE CLASS THIS READING IS ABOUT (U-turn-reservation), once for both ceilings an unknown one
-        // reads: the reading admits what the gate would, and an unknown class reserves the whole bound in each.
+        // THE NEXT TURN'S RESERVATION FOR THE CLASS THIS READING IS ABOUT (U-turn-reservation): the reading admits what the gate would, and a
+        // POSITION nobody established the payer of reserves the whole bound in each ceiling. THE DAY'S OWN READING names no position and
+        // no payer: it is about both ceilings, not one launch, so its plan half reads what a plan turn sets aside. Held to the bound it
+        // would say no turn fits a plan limit that one does.
         var billed = BillingClasses.Of(billingClass);
         var next = ReservationFor(role, billed).Price.Cost ?? 0m;
         return billed switch
         {
             BillingClasses.Plan => Reading(role, BillingClasses.Plan, cap, planCap, next),
             BillingClasses.Key => Reading(role, BillingClasses.Key, cap, planCap, next),
-            _ => Reading(role, BillingClasses.Key, cap, planCap, next) with { PlanReading = Reading(role, BillingClasses.Plan, cap, planCap, next) }
+            _ => Reading(role, BillingClasses.Key, cap, planCap, next) with
+            {
+                PlanReading = Reading(role, BillingClasses.Plan, cap, planCap, role is null ? ReservationFor(null, BillingClasses.Plan).Price.Cost ?? 0m : next)
+            }
         };
     }
 
