@@ -1317,9 +1317,25 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// what the first one sold. With the book whole, what is still held after a fill is a position with nothing protecting it.</para>
     /// </summary>
     internal IReadOnlyList<MissingProtection> ProtectionMissing(IReadOnlyList<DeploymentOpRow> ops, RunBook book) =>
-        LatestProtection(ops, last =>
-            !ops.Any(o => o.Kind == last.Kind && ProtectionMayBeWorking(o))
-            && (book.Complete || _requests.Get(last.RequestId) is not { FilledQuantity: > 0m }));
+        LatestProtection(ops, closing => !OnItsWay(closing, book), last =>
+            !ops.Any(o => o.Kind == last.Kind && ProtectionMayBeWorking(o)) && !HoldsAFillTheBookHasNot(last, book));
+
+    /// <summary>
+    /// WHETHER AN EXIT OR A FLATTEN IS STILL ENDING THE POSITION, so what it took off the book stays off: refused before the wire it is not, and neither is one the venue
+    /// answered with nothing, rejected or cancelled, which leaves the position and no order that will close it (the Codex review). An order with no answer may be, and
+    /// UNKNOWN reads that way; so does one with a fill the book has not heard of.
+    /// </summary>
+    bool OnItsWay(DeploymentOpRow closing, RunBook book)
+    {
+        var row = _requests.Get(closing.RequestId);
+        if (Deployments.RefusedBeforeTheWire(closing, row)) return false;
+        if (row is null) return !closing.IsSettled;
+        return !OrderStateMachine.IsTerminal(row.State) || HoldsAFillTheBookHasNot(closing, book);
+    }
+
+    /// <summary>An order with a fill on its record while the run's book is incomplete: the fill may be on its way to the ledger, and until it lands the books do not know what it sold.</summary>
+    bool HoldsAFillTheBookHasNot(DeploymentOpRow op, RunBook book) =>
+        !book.Complete && _requests.Get(op.RequestId) is { FilledQuantity: > 0m };
 
     /// <summary>
     /// THE SAME AT THE CLOSE OF A PAST MINUTE, for a note whose words must not move when it is replayed: only what that minute's operations say, and only what never stood,
@@ -1327,19 +1343,22 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// cancelled or rejected since did not read as missing then.
     /// </summary>
     IReadOnlyList<MissingProtection> ProtectionThatNeverStood(IReadOnlyList<DeploymentOpRow> ops, DateTimeOffset close) =>
-        LatestProtection([.. ops.Where(o => o.BarOpenTime <= close)], last =>
-            Deployments.RefusedBeforeTheWire(last, _requests.Get(last.RequestId))
-            || last.Answer?.StartsWith(nameof(ExecutionState.REJECTED), StringComparison.Ordinal) == true);
+        LatestProtection([.. ops.Where(o => o.BarOpenTime <= close)], NeverStood, NeverStood);
+
+    /// <summary>Refused before the wire or rejected at it, read off what the operation itself settled on, which nothing moves afterwards.</summary>
+    bool NeverStood(DeploymentOpRow op) =>
+        Deployments.RefusedBeforeTheWire(op, _requests.Get(op.RequestId))
+        || op.Answer?.StartsWith(nameof(ExecutionState.REJECTED), StringComparison.Ordinal) == true;
 
     /// <summary>
     /// THE LATEST STOP AND THE LATEST TARGET SINCE THE RUN'S LATEST ENTRY THAT <paramref name="gone"/> SAYS OF: a kind with no operation since the entry was never declared. Empty
-    /// while the run's latest word is an exit or a flatten on its way, which takes the protection off first on purpose.
+    /// while the run's latest word is an exit or a flatten that <paramref name="ended"/> does not say is over: one on its way takes the protection off first on purpose.
     /// </summary>
-    IReadOnlyList<MissingProtection> LatestProtection(IReadOnlyList<DeploymentOpRow> ops, Func<DeploymentOpRow, bool> gone)
+    IReadOnlyList<MissingProtection> LatestProtection(IReadOnlyList<DeploymentOpRow> ops, Func<DeploymentOpRow, bool> ended, Func<DeploymentOpRow, bool> gone)
     {
         var latest = ops.LastOrDefault(o => o.Kind is DeploymentOpKind.Entry or DeploymentOpKind.Exit or DeploymentOpKind.Flatten);
         if (latest is null) return [];
-        if (latest.Kind != DeploymentOpKind.Entry && !Deployments.RefusedBeforeTheWire(latest, _requests.Get(latest.RequestId))) return [];
+        if (latest.Kind != DeploymentOpKind.Entry && !ended(latest)) return [];
 
         var entry = -1;
         for (var i = 0; i < ops.Count; i++)
@@ -1795,16 +1814,6 @@ public sealed partial class TradingGateway : IAsyncDisposable
             if (request.State == ExecutionState.CREATED)
             {
                 if (SettleAStrandedDispatch(deployment, op, request, now)) settled++;
-                continue;
-            }
-
-            // A STOP OR A TARGET IS ANSWERED BY THE VENUE'S ACKNOWLEDGEMENT (ForwardRuns.RestAsync), and a process that died between the acknowledgement and that
-            // write left an operation no terminal state answers while the order rests: the cursor held, and the minute's other protection and the maximum hold
-            // behind it. Replaying the entry's protection used to write it by chance; one asked for again is, rightly, not asked for twice (the Codex review).
-            if (op.Kind is DeploymentOpKind.Stop or DeploymentOpKind.Target
-                && request is { ConnectorOrderId.Length: > 0, State: ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED })
-            {
-                if (_deployments.Resolve(op.RequestId, RestingAnswer(request.State), now)) settled++;
                 continue;
             }
 

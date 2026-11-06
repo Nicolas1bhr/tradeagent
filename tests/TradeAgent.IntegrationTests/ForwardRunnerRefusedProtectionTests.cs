@@ -154,6 +154,34 @@ public partial class ForwardRunnerTests
     }
 
     /// <summary>
+    /// AN EXIT THE VENUE ANSWERED WITH NOTHING ENDS NOTHING (the second Codex review): it took the stop and the target off the book first, and a rejection at the wire leaves the same long
+    /// with neither as a refusal before it. They go back on the same minute, and until they do the run says so.
+    /// </summary>
+    [Fact]
+    public async Task An_exit_the_venue_rejected_puts_the_protection_back()
+    {
+        PlacementWitness? witness = null;
+        await using var rig = await ReadyAsync(ProgramText("stop percent 30\ntarget percent 50\n", "entry when close > 99"), through: c => witness = new PlacementWitness(c));
+        rig.Bar(1, 99m, 100m, 98m, 100m);
+        await rig.Runner.AdvanceAsync();
+        await QuietMinuteAsync(rig, 2);
+        await QuietMinuteAsync(rig, 3);
+        await rig.Runner.AdvanceAsync();
+        Assert.Equal(2, (await WorkingProtection(rig)).Count);
+
+        witness!.Rejects = c => c.Type == OrderType.Market ? new ConnectorRejectedException("the venue will not take this order") : null;
+        rig.Bar(4, 100m, 100m, 85m, 85m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        Show(log, rig);
+
+        var exit = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Exit);
+        Assert.Equal(ExecutionState.REJECTED, rig.Gw.Requests.Get(exit.RequestId)!.State);
+        Assert.Equal(1m, await Position(rig));
+        Assert.Equal(2, (await WorkingProtection(rig)).Count);
+    }
+
+    /// <summary>
     /// THE PRICE WENT THROUGH THE STOP WHILE IT WAS REFUSED: PREFLIGHT-2's position that "still held from entry after a 10% fall". Asked for once the gate lifts, it fires on the
     /// next open it can and the position is out, rather than resting above a market it has already left. Nothing about the fall changes what is asked for: the level is the
     /// program's, measured from the price paid.
@@ -244,6 +272,39 @@ public partial class ForwardRunnerTests
         Assert.Equal(DeploymentOpState.Resolved, rig.Gw.Deployments.OpById(stop.RequestId)!.State);
         Assert.Contains("resting at the venue", rig.Gw.Deployments.OpById(stop.RequestId)!.Answer, StringComparison.Ordinal);
         Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Flatten);
+    }
+
+    /// <summary>
+    /// AND THE OTHER HALF OF THAT WINDOW (the second Codex review): dead between the entry's stop being acknowledged and its target being written, the fill's own minute is replayed live
+    /// and writes the target, under the id it would have had. Answering the stop before the replay moved the cursor over that minute, and the target was never written by anything.
+    /// </summary>
+    [Fact]
+    public async Task A_process_that_died_between_the_stop_and_the_target_writes_the_target_on_replay()
+    {
+        await using var rig = await ReadyAsync(Protected);
+        var (stop, target) = await RefusedProtectionAsync(rig, rate: 1);
+        Assert.Equal(DeploymentOpState.Resolved, stop.State);
+
+        // THE LEDGER AFTER THAT CRASH: the stop with no answer, no target written, and the cursor behind the fill's minute.
+        rig.Db.Write(_ =>
+        {
+            using var c = rig.Db.Cmd("UPDATE deployment_op SET state='dispatched', answer=NULL, resolved_at=NULL WHERE request_id=$id", ("$id", stop.RequestId));
+            using var d = rig.Db.Cmd("DELETE FROM deployment_op WHERE request_id=$id", ("$id", target.RequestId));
+            using var e = rig.Db.Cmd("DELETE FROM execution_request WHERE request_id=$id", ("$id", target.RequestId));
+            using var f = rig.Db.Cmd("UPDATE strategy_deployment SET cursor_open_time=$bar WHERE id=$id", ("$bar", Sql.T(rig.Origin.AddMinutes(1))), ("$id", rig.Deployment.Id));
+            return c.ExecuteNonQuery() + d.ExecuteNonQuery() + e.ExecuteNonQuery() + f.ExecuteNonQuery();
+        });
+
+        await rig.Runner.AdvanceAsync();
+        await rig.Runner.AdvanceAsync();
+        Show(log, rig);
+        var written = Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Target);
+        Assert.Equal(target.RequestId, written.RequestId);
+
+        // THE MINUTE BEFORE THE FILL REPLAYS FLAT AND TAKES THE RESTING STOP OFF, AS IT MUST OF ANY MINUTE THAT READS FLAT, AND THE NEXT LIVE MINUTE ASKS FOR IT AGAIN.
+        await QuietMinuteAsync(rig, 4);
+        Show(log, rig);
+        Assert.Equal(2, (await WorkingProtection(rig)).Count);
     }
 
     // ---------------------------------------------------------------- bounded
@@ -343,7 +404,9 @@ public partial class ForwardRunnerTests
 
     /// <summary>
     /// A FILL THE LEDGER HOLDS IS THE OTHER WAY ROUND (the Codex review): a stop that filled part of the position and then left the book, with every fill on the ledger, leaves a
-    /// long the books can size and nothing protecting it. The rest is asked for, at the same level, sized from the books.
+    /// long the books can size and nothing protecting it. The rest is asked for, at the same level, sized from the books. And the fill takes the target asked for again off
+    /// the book first (the second review): the cleanup used to name the pair the entry's fill gave it, the refused ones, so a target stayed on the book at its full size beside
+    /// what the stop left, and on a symbol two runs share it could sell what the other holds.
     /// </summary>
     [Fact]
     public async Task What_a_part_filled_stop_left_behind_is_asked_for_once_the_ledger_holds_the_fill()
@@ -367,10 +430,13 @@ public partial class ForwardRunnerTests
             ConnectorId = rig.Conn.Id
         }));
         await QuietMinuteAsync(rig, 5);
+        await QuietMinuteAsync(rig, 6);
         Show(log, rig);
 
-        var left = Assert.Single(await WorkingProtection(rig), w => w.Op.Kind == DeploymentOpKind.Stop);
+        var after = await WorkingProtection(rig);
+        var left = Assert.Single(after, w => w.Op.Kind == DeploymentOpKind.Stop);
         Assert.Equal((0.6m, (decimal?)95m), (left.Order.Quantity, left.Order.StopPrice));
+        Assert.Equal((0.6m, (decimal?)150m), Assert.Single(after, w => w.Op.Kind == DeploymentOpKind.Target).Order is var t ? (t.Quantity, t.LimitPrice) : default);
     }
 
     /// <summary>
