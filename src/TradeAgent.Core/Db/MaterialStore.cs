@@ -167,7 +167,7 @@ public sealed class MaterialStore(Database db)
     /// <summary>Rows still awaiting a hash, oldest first, so a big drop is worked through in order.</summary>
     public IReadOnlyList<Material> NeedingHash(int limit) => db.Read(_ =>
     {
-        using var c = db.Cmd($"SELECT {Cols} FROM material WHERE sha256 IS NULL AND removed_at IS NULL ORDER BY id LIMIT $n",
+        using var c = db.Cmd($"SELECT {Cols} FROM material WHERE sha256 IS NULL AND removed_at IS NULL ORDER BY size_bytes, id LIMIT $n",
             ("$n", limit));
         return Read(c);
     });

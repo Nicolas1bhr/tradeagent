@@ -138,6 +138,16 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     public IReadOnlyList<string> UnreadableFolders { get; init; } = [];
 
     /// <summary>
+    /// HOW MANY FILES THIS PASS LEFT UNHASHED BECAUSE ITS BYTES OR ITS WALL TIME FOR HASHING WAS SPENT (<c>U-cards-2</c>): each is
+    /// tried again next pass, and each is a row that stays present with no hash — never a file dropped from the ledger. Not
+    /// <see cref="HashBudgetSpent"/>, which is the walk's file budget despite its name.
+    /// </summary>
+    public int HashDeferred { get; init; }
+
+    /// <summary>The deferrals in words — the file, its size, why — at most <see cref="MaterialScanner.DeferralsNamed"/> of them.</summary>
+    public IReadOnlyList<string> HashDeferrals { get; init; } = [];
+
+    /// <summary>
     /// The pass looked everywhere: it did not run out of budget (<see cref="HashBudgetSpent"/>, which is
     /// the file budget's flag despite its name) and read every place it walked. Only a complete pass
     /// moves the window, and only a complete pass can say that a folder it once could not read is
@@ -149,5 +159,6 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     public override string ToString() =>
         $"seen={Seen} added={Added} hashed={Hashed} removed={Removed} skipped={Skipped}" +
         (Unreadable > 0 ? $" unreadable={Unreadable}" : "") +
+        (HashDeferred > 0 ? $" hash-deferred={HashDeferred}" : "") +
         (HashBudgetSpent ? " (hash budget spent — more next pass)" : "");
 }

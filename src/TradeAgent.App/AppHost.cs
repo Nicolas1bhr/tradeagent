@@ -2406,8 +2406,18 @@ public sealed class AppHost : IAsyncDisposable
         // The process-wide one in the product; a composed test host's own, so that its scans and its
         // agents are one register there too.
         var result = new MaterialScanner(_db!, noAgentSince: _presence.NoneSince, reads: _reads).Scan(ct, unsealed);
-        if (result.Added > 0 || result.Removed > 0)
+        if (result.Added > 0 || result.Removed > 0 || result.HashDeferred > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
+
+        // A FILE LEFT UNHASHED BY THE PASS'S BYTE OR TIME BOUND (U-cards-2) is said once while it stands, never on every tick, and
+        // never by name (a name in the workspace is chosen by whoever made it; the engineering line above carries them as data).
+        if (result.HashDeferred > 0 && _hashDeferredSaid is null)
+        {
+            Gateway.Log.Activity(HashDeferredLine, "info");
+            _hashDeferredSaid = HashDeferredLine;
+        }
+        else if (result.HashDeferred == 0 && _hashDeferredSaid is not null)
+            _hashDeferredSaid = null;
 
         // WHAT THIS PASS COULD NOT READ, said where the owner looks — once when it starts, once when
         // what it names changes and once when it clears, never on every tick.
@@ -2432,6 +2442,12 @@ public sealed class AppHost : IAsyncDisposable
     /// folder that still cannot be read is said once more, which is the first the new process knows of it.
     /// </summary>
     string? _unreadableSaid;
+
+    string? _hashDeferredSaid;
+
+    /// <summary>What the activity log says while a pass leaves files unhashed for its byte or time bound.</summary>
+    internal const string HashDeferredLine = "Some files in your inbox or the AI's folders are very large. TradeAgent checks a limited amount each round so "
+        + "they cannot hold up the app, and tries the rest on the next round. A file too large to finish in one round stays unchecked.";
 
     /// <summary>
     /// THE ONE ACTIVITY LINE A PASS OWES ABOUT WHAT IT COULD NOT READ, or none (U-inbox-unreadable).
