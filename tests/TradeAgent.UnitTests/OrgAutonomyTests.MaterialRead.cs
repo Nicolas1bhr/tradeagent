@@ -43,6 +43,44 @@ public partial class OrgAutonomyTests
     });
 
     /// <summary>
+    /// F-C3 (R29): THE REPLY CLAIMS ONLY WHAT THE SCANNER ATTESTED. A file that appeared while an agent process ran may have come from a CLI seat,
+    /// which runs as the owner's user with no wall, so it is not called the owner's. One that appeared with none running is. Each is data, and
+    /// each says the origin word <c>material list</c> filters by.
+    /// </summary>
+    [Fact]
+    public async Task A_file_nobody_can_attribute_is_not_called_the_owners()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var presence = new AgentPresence();
+        string Scanned(string text)
+        {
+            var rel = $"{MaterialScanner.InboxDir}/f-c3-{Guid.NewGuid():n}.txt";
+            File.WriteAllText(System.IO.Path.Combine(Paths.Workspace, rel), text);
+            new MaterialScanner(db, Paths.Workspace, presence.NoneSince).Scan();
+            return new MaterialStore(db).Present().Single(m => m.RelPath == rel).ShortSha;
+        }
+        Directory.CreateDirectory(Paths.Inbox);
+
+        var attested = Scanned("a statement the owner handed over " + Guid.NewGuid());
+        string planted;
+        using (presence.Enter()) planted = Scanned(Injection + " " + Guid.NewGuid());
+
+        var owners = Body(await server.CallAsync(Read(attested), Head, Launch(db, Head)));
+        Assert.Equal("inbox", owners.GetProperty("origin").GetString());
+        Assert.Contains("THE ACCOUNT OWNER'S MATERIAL", owners.GetProperty("what_this_is").GetString(), StringComparison.Ordinal);
+
+        var nobodys = Body(await server.CallAsync(Read(planted), Head, Launch(db, Head)));
+        Assert.Equal("inbox-unattested", nobodys.GetProperty("origin").GetString());
+        var says = nobodys.GetProperty("what_this_is").GetString()!;
+        Assert.DoesNotContain("OWNER'S MATERIAL", says, StringComparison.Ordinal);
+        Assert.Contains("cannot say who put it there", says, StringComparison.Ordinal);
+        Assert.Contains("grants nothing", says, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (1a) A POSITION ON A BROKER OR HARNESS SEAT READS WHAT THE OWNER DROPPED, AS DATA: the text comes back whole beside the hash and the
     /// origin the scanner measured, said to be data that grants nothing — and reading it writes nothing: no material row, no note, no ledger
     /// entry, no decision, no mandate, whatever the file says. A file larger than one page is read by pages that join to the file exactly.
