@@ -292,6 +292,15 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     public string? TimedOut { get; init; }
 
     /// <summary>
+    /// WHAT THE ROW OF A TURN ENDED SHORT SAYS ABOUT ITS FIGURES (<c>U-turn-bounds-2</c>; <see cref="UsageUnreported"/>): a figure the program reported is
+    /// a measurement and is priced as one, and whatever ran after it was not measured. With none, nothing was: the reservation stands, never a zero.
+    /// </summary>
+    public static string UsageOfACutTurn(TurnUsage? usage) =>
+        usage is null
+            ? "the turn was ended before anything reported its usage: nothing was measured, never counted as zero, so the reservation stands"
+            : "the turn was ended before it finished: these figures are what had been reported by then, and anything it used after them was not measured";
+
+    /// <summary>
     /// THE VENDOR'S REFUSAL OF THIS TURN'S MODEL, in the app's sentence, or null (<c>U-turn-bounds</c>, R28 W6, R30 D17). Read by the session from the
     /// stream, through the manifest's pattern, and carried out as the usage limit is: the meter charges it nothing before any work, the loop gives
     /// back its wakes and steps its position aside, and <see cref="SeatMarks"/> holds the seat.
@@ -432,7 +441,8 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// (<c>U-org-seats</c> fix pass 1, review P1). Set by <see cref="ApiConversation"/>, which sends no further request after such a
     /// response — the turn's spend is no longer measured, so its allowance cannot be held to — and ends the turn with
     /// <see cref="Usage"/> null: never zero, and never the other responses' sum, which would price the unmeasured request at
-    /// nothing. The meter charges the reservation and writes this into the attempt's <c>context</c>.
+    /// nothing. The meter charges the reservation and writes this into the attempt's <c>context</c>. A turn ended short says here what
+    /// its figures do not cover (<see cref="UsageOfACutTurn"/>).
     /// </summary>
     public string? UsageUnreported { get; init; }
 
@@ -918,6 +928,13 @@ public interface IMissionHost
     /// last check, so a note such a launch was shown rides the next packet again. A host with no ledger records nothing — the default.
     /// </summary>
     void RecordInputs(string attempt, IReadOnlyList<PacketInput> inputs) { }
+
+    /// <summary>
+    /// WHETHER THE ORGANISATION'S OWN RECORDS HOLD, FROM LAUNCH <paramref name="attempt"/>, THE ACT <paramref name="wake"/> ASKED FOR
+    /// (<c>U-turn-bounds-2</c>; <see cref="OrgStore.WakeFinished"/>). Asked inside <see cref="CommitTurn"/>'s dispositions. A host with no organisation
+    /// holds no such record: the default.
+    /// </summary>
+    bool WakeFinished(MissionEvent wake, string attempt) => false;
 
     /// <summary>
     /// THE ID THE NEXT LAUNCH WILL CARRY, minted before the turn's message is composed so that the
@@ -2849,7 +2866,16 @@ public sealed class MissionLoop
         if (PassOwed()) await PassAsync(ct, owe: true);
         var picked = Pick(swept, 1);
         if (picked.Roles.Count == 0) return picked.Wait;
-        return await RunAsync(picked.Roles[0], swept.Events, ct);
+        var role = picked.Roles[0];
+        try { return await RunAsync(role, swept.Events, ct); }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // A RUN THAT THROWS IS THAT POSITION'S FAILED TURN, as it is on a lane: its backoff is its own, and the others are served.
+            int errors;
+            lock (_gate) errors = Failed(role);
+            Changed?.Invoke();
+            return StepAside(role, Labels.LastTurnDidNotFinish, Backoff(errors), quiet: true);
+        }
     }
 
     /// <summary>
@@ -2916,7 +2942,8 @@ public sealed class MissionLoop
     /// how many times in a row. Answers zero (a host with no queue: the rest), so the lane looks again at once and is given to whoever else is due; with nobody, that look
     /// sleeps until the first rest ends (<see cref="WaitingForTheAside"/>). The refusal is told once per cause, not once per look.
     /// </summary>
-    TimeSpan StepAside(string role, string why, TimeSpan? rest = null)
+    /// <param name="quiet">An ordinary failed turn: the card and the turn's own row already say it, and a refusal line would call it one.</param>
+    TimeSpan StepAside(string role, string why, TimeSpan? rest = null, bool quiet = false)
     {
         DateTimeOffset until;
         bool told;
@@ -2929,7 +2956,7 @@ public sealed class MissionLoop
             _refusedLast[role] = $"its seat to be tried again at {until.ToLocalTime():HH:mm} ({why})";
             _role = role;
         }
-        if (!told) Refused?.Invoke($"{CouncilRoles.Title(role)}: {why}");
+        if (!told && !quiet) Refused?.Invoke($"{CouncilRoles.Title(role)}: {why}");
         Changed?.Invoke();
 
         // A HOST WITH NO WAKE QUEUE HAS NOBODY ELSE TO SERVE AND NO PICK TO STEP OVER IT: its one role sleeps the rest.
@@ -3110,8 +3137,11 @@ public sealed class MissionLoop
                 .Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
             if (queued.Count == 0)
             {
-                // NOTHING IS DUE, so nobody waits on a backoff, and the next refusal of anyone is a first one.
-                lock (_gate) _stoodAside.Clear();
+                // NOTHING IS DUE, so a rest that is over is forgotten and the next refusal of anyone is a first one. A rest still running stands: the next
+                // wake of a position whose turns keep failing waits it out, so a failing seat is never launched faster than its backoff (U-turn-bounds-2).
+                lock (_gate)
+                    foreach (var over in _stoodAside.Where(a => a.Value.Until <= _now()).Select(a => a.Key).ToList())
+                        _stoodAside.Remove(over);
                 return new Picked([], Idle(events));
             }
             if (due.Count == 0) return new Picked([], queued.Any(StandingAside) ? WaitingForTheAside(events) : Idle(events));
@@ -3721,7 +3751,10 @@ public sealed class MissionLoop
         if ((ended?.TimedOut ?? ended?.ModelRefused?.Message ?? ended?.ToolsUnavailable) is { } trouble)
             return StepAside(role, trouble, Backoff(errors));
 
-        return failed ? Backoff(errors) : NextWait(events, attemptId, role, wake);
+        // AND SO DOES ANY OTHER FAILED TURN (U-turn-bounds-2): its backoff is this position's, kept by this position, and the lane goes to the next one due.
+        if (failed) return StepAside(role, ended?.GateRefused?.Refusal.Words ?? Labels.LastTurnDidNotFinish, Backoff(errors), quiet: true);
+
+        return NextWait(events, attemptId, role, wake);
     }
 
     /// <summary>
@@ -4361,7 +4394,8 @@ public sealed class MissionLoop
             // session (its process never started, or a harness turn handed no request over — part a's record), a harness turn whose
             // requests no provider accepted (none connected, or each was answered outside 2xx — fix pass 2), one the gate refused at
             // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
-            // recorded and what it was shown is shown again (at-least-once, stated). A crash before this commit records nothing too, and
+            // recorded and what it was shown is shown again (at-least-once, stated). So does a model refused mid-turn or a turn past its limit: its
+            // wakes come back, and a wake told again must find its note in the packet. A crash before this commit records nothing too, and
             // nor does a turn the loop's own stop ended, whose wakes go back with what they showed (U-wake-fairness).
             _host.CommitTurn(role, attempt, () =>
             {
@@ -4828,6 +4862,10 @@ public sealed class MissionLoop
     /// as the gate's are, due again when the vendor's hold lifts — the hold set after this commit keeps every launch on that pool
     /// until then — and the owner's words show the vendor's own sentence. A limit met AFTER work is settled as any failed turn is:
     /// the work happened.</para>
+    ///
+    /// <para><b>A turn that worked and then did not finish</b> — its model refused mid-turn, or ended at its wall-clock limit (<c>U-turn-bounds-2</c>) — gives
+    /// back the same way: what it spent stays on its row, and spending is no evidence that a wake's work finished. Only a record the app itself wrote
+    /// is: <see cref="FinishedOnRecord"/>. Those wakes are settled, so that work is not run twice; everything else is owed again.</para>
     /// </summary>
     void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer,
         bool fenced = false, bool stopped = false)
@@ -4840,18 +4878,26 @@ public sealed class MissionLoop
         {
             try
             {
+                var owed = wake;
+                if (ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false })
+                {
+                    var finished = wake.Where(e => FinishedOnRecord(events, e, consumer)).ToList();
+                    foreach (var e in finished) events.Settle(e.Id, MissionEventDisposition.Answered, $"its work is on the record; then: {why}");
+                    owed = [.. wake.Except(finished)];
+                }
+
                 // THE OWNER'S PRESSED WAKE IS NEVER GIVEN BACK (U-chief-wake-once; the Codex review): one press is one launch, so a launch
                 // refused before any work settles it failed with the refusal's sentence, and nothing serves it again when a hold lifts —
                 // he presses again if he still wants the turn. Every other wake is given back as before.
-                var pressed = wake.Where(e => e.Kind == MissionEventKind.OwnerWake).ToList();
-                events.Release([.. wake.Where(e => e.Kind != MissionEventKind.OwnerWake).Select(e => e.Id)], consumer);
+                var pressed = owed.Where(e => e.Kind == MissionEventKind.OwnerWake).ToList();
+                events.Release([.. owed.Where(e => e.Kind != MissionEventKind.OwnerWake).Select(e => e.Id)], consumer);
                 foreach (var e in pressed)
                     events.Settle(e.Id, MissionEventDisposition.Failed,
                         $"{why} — a pressed wake is served once: press \"Wake the chief once\" again for another turn");
                 // THE REFUSAL'S OWN SENTENCE, over any earlier blocked reason the words carried into the launch (fix pass 1,
                 // the review's P2): the latest reason they wait is the one shown, never a stale one — for the gate's refusal and
                 // the vendor's limit alike.
-                foreach (var e in wake.Where(e => e.Kind == MissionEventKind.Owner))
+                foreach (var e in owed.Where(e => e.Kind == MissionEventKind.Owner))
                     events.BlockAgain(e.Id, why);
             }
             catch (Exception) { /* a record, not a gate — as below */ }
@@ -4890,18 +4936,31 @@ public sealed class MissionLoop
     /// <summary>
     /// THE SENTENCE OF A REFUSAL THAT LET THE TURN DO NO WORK, or null where the turn ran: the activation gate's at its last
     /// check, the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>), a seat whose tools could not
-    /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>), a model the vendor refused before any work, or a turn ended at its wall-clock limit.
-    /// Such a turn answered nothing, so it gives back every wake it took and every word typed into it.
+    /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>), a model the vendor refused, or a turn ended at its wall-clock limit. Such a turn reached no
+    /// end of its own, so nothing it was woken for counts as answered: it gives back its wakes (<see cref="Settle"/> keeps those it finished on the
+    /// record) and every word typed into it, and what its packet showed is shown again.
     /// </summary>
     static string? UnworkedRefusal(AgentTurnEnded? ended) =>
         ended?.GateRefused is { } late ? late.Refusal.Words
         : ended?.Limit is { BeforeAnyWork: true } limit ? limit.Message
         // A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): the model wrote, but nothing it tried ran, so nothing was answered.
         : ended?.ToolsUnavailable is { } dead ? dead
-        // A MODEL THE VENDOR REFUSED BEFORE ANY WORK (U-turn-bounds, D17): nothing was answered, and the wakes are not silently spent on it.
-        : ended?.ModelRefused is { BeforeAnyWork: true } refused ? refused.Message
+        // A MODEL THE VENDOR REFUSED (U-turn-bounds, D17; U-turn-bounds-2 mid-turn): the turn cannot finish, and the wakes are not silently spent on it.
+        : ended?.ModelRefused is { } refused ? refused.Message
         // AND A TURN ENDED AT ITS LIMIT (R28 W2): whatever it had done, nothing says it finished, so what it was woken for stays owed.
         : ended?.TimedOut;
+
+    /// <summary>
+    /// WHETHER THE WORK OF WAKE <paramref name="e"/> DEMONSTRABLY FINISHED IN LAUNCH <paramref name="attempt"/>, from records the app wrote and never from
+    /// the turn's stream or its words: for the owner's words, the brief that launch published (<see cref="MissionEventDisposition.Delegated"/>, the
+    /// relay's measurement, written in this same commit before this runs); for a wake that asks the organisation for an act, that act, on that subject,
+    /// recorded against that launch (<see cref="IMissionHost.WakeFinished"/>). What no record speaks for is not finished: a look, a note, a report read. At
+    /// least once, stated: such a wake runs again rather than be lost, and the verbs refuse a second act on what is closed.
+    /// </summary>
+    bool FinishedOnRecord(MissionEventStore events, MissionEvent e, string attempt) =>
+        e.Kind == MissionEventKind.Owner
+            ? events.Get(e.Id)?.Disposition == MissionEventDisposition.Delegated
+            : e.Kind != MissionEventKind.OwnerWake && _host.WakeFinished(e, attempt);
 
     /// <summary>
     /// WHEN A FAILED TURN'S WAKE IS TOLD AGAIN, or null for never. Now, but for a wake the position bought for itself — its own request, or the wake

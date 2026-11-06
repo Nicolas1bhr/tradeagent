@@ -66,8 +66,11 @@ public class TurnBoundsTests : IDisposable
         Assert.NotNull(SeatMarks.Refusal(seat, null, model, failing, later));
         Assert.Null(SeatMarks.Refusal(seat, null, model, failing, later + SeatMarks.FirstHold));
 
-        // A CLEAN TURN ENDS THE MATTER: every launch of the seat runs, and the next trouble is a first strike.
-        SeatMarks.Clear(seat, null, model);
+        // A CLEAN PROBE ENDS THE MATTER: every launch of the seat runs, and the next trouble is a first strike.
+        var probe = new object();
+        var admitted = SeatMarks.Admitted();
+        Assert.Null(SeatMarks.Refusal(seat, null, model, probe, later + SeatMarks.FirstHold * 2));
+        SeatMarks.Clear(seat, null, model, probe, admitted);
         Assert.Null(SeatMarks.Refusal(seat, null, model, new object(), over));
         Assert.Null(SeatMarks.Refusal(seat, null, model));
     }
@@ -498,6 +501,435 @@ public class TurnBoundsTests : IDisposable
 
         var sol = SeatMarks.Set(seat, null, BrokerSeat.Fallback, SeatTrouble.ModelRefused, Refused, Noon);
         Assert.DoesNotContain("press", sol, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- U-turn-bounds-2: what the independent review found -----------------------------------------------------------
+
+    /// <summary>What the meter's owner price makes of <paramref name="usage"/>, read the way the row must be.</summary>
+    static decimal Priced(TurnUsage usage) =>
+        CostCatalog.Price(usage, "codex", owner: new OwnerPrice(1m, 4m), requestedModel: "gpt-5.6-sol").Cost!.Value;
+
+    const string MeasuredThenHung = """
+        {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+        {"type":"turn.completed","usage":{"input_tokens":40000,"cached_input_tokens":0,"output_tokens":2000}}
+        {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Working."}}
+        """;
+
+    /// <summary>A hanging session whose last line said <paramref name="said"/>, metered, cancelled at its read once the line has been read.</summary>
+    async Task<(AgentTurnEnded Ended, AiAttempt Row)> CutAtTheRead(string name, string stream, Action<AgentSession> after)
+    {
+        var meter = Meter();
+        var chat = AgentRuntimeProbe.SessionOverStream(stream, manifest: VendorLimitTests.Codex, hangSeconds: 300, name: name);
+        using var metering = meter.Attach(chat, Ops);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
+        using var cut = new CancellationTokenSource();
+        chat.TurnAdded += t => { if (t.Role == ChatRole.Ai) cut.Cancel(); };
+        after(chat);
+
+        // THE TOKEN, NOT THE TEARDOWN: killing the tree first would end the read at end-of-file, which returns what it read. Cancelled, the read throws.
+        await chat.SendAsync("reply ok", cut.Token).WaitAsync(TimeSpan.FromSeconds(60));
+        return (ended!, OnlyRow());
+    }
+
+    /// <summary>
+    /// RED at base (the review's P1, AgentSession): the read threw before the usage it held was returned, so the turn ended with Usage null and the meter
+    /// charged the reservation in place of what the vendor had said. Now the row keeps the tokens, prices them, and says the figures may not be all of it.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_read_keeps_and_prices_the_usage_that_arrived()
+    {
+        var (ended, row) = await CutAtTheRead(nameof(A_cancelled_read_keeps_and_prices_the_usage_that_arrived), MeasuredThenHung, _ => { });
+
+        Assert.NotNull(ended.Usage);
+        Assert.Equal(40000, row.InputTokens);
+        Assert.Equal(2000, row.OutputTokens);
+        Assert.Equal(Priced(new TurnUsage(40000, 0, 0, 2000, 0, null)), row.Cost);
+        Assert.NotEqual(row.ReservedCost, row.Cost);
+        Assert.Contains("was not measured", row.Context);
+    }
+
+    /// <summary>A GUARD: A TURN THAT MEASURED NOTHING INVENTS NOTHING. No tokens on the row, its reservation as its cost, never a zero, and the row says so.</summary>
+    [Fact]
+    public async Task A_cut_turn_that_measured_nothing_says_so_and_keeps_its_reservation()
+    {
+        const string nothing = """
+            {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+            {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Working."}}
+            """;
+        var (ended, row) = await CutAtTheRead(nameof(A_cut_turn_that_measured_nothing_says_so_and_keeps_its_reservation), nothing, _ => { });
+
+        Assert.Null(ended.Usage);
+        Assert.Null(row.InputTokens);
+        Assert.Equal(row.ReservedCost, row.Cost);
+        Assert.True(row.Cost > 0m, "unknown was charged as zero");
+        Assert.Contains("nothing was measured", row.Context);
+    }
+
+    /// <summary>
+    /// A HUNG TURN THAT HAD REPORTED ITS USAGE IS PRICED ON IT, WHOLE LOOP: the row of a puppet ended at its limit carries what it said, either way the read
+    /// ended, and the words stay owed. That the figures are the vendor's own is what the row says beside them.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_past_its_limit_keeps_the_usage_it_reported()
+    {
+        await using var life = await PuppetLife.Begin("turn-limit-usage");
+        life.Host.TurnLimitUnderTest = TimeSpan.FromSeconds(3);
+        life.Script(Ops, ["usage 4000 0 200", "signal hung", "hang"]);
+
+        Assert.True(life.Host.RecordOwnerMessage("Close the book."));
+        await life.RunUntil(() => life.Reached("hung"), "the chair's puppet reported its usage and hung");
+        var hung = Assert.Single(life.AttemptsOf(Ops));
+        await life.RunUntil(() => new AiAttemptStore(life.Host.Db).Get(hung.Id)!.State != AiAttemptState.LAUNCHED, "the hung turn's row closed");
+
+        var row = new AiAttemptStore(life.Host.Db).Get(hung.Id)!;
+        Assert.Equal(4000, row.InputTokens);
+        Assert.Equal(200, row.OutputTokens);
+        Assert.Equal(Labels.TurnPastItsLimit(TimeSpan.FromSeconds(3)), RefusedOn(row));
+        Assert.Contains("was not measured", row.Context);
+        Assert.False(Assert.Single(life.Host.Wakes!.OfKind(MissionEventKind.Owner)).Consumed);
+    }
+
+    /// <summary>
+    /// RED at base (the review's P1, W6): a refusal after one command settled the wakes failed for good, and the review wake never ran. Now they come back,
+    /// the owner's words show why, and the spend the turn incurred stays on its row.
+    /// </summary>
+    [Fact]
+    public async Task A_model_refused_after_work_gives_back_the_wakes_it_did_not_finish_and_keeps_its_spend()
+    {
+        var name = nameof(A_model_refused_after_work_gives_back_the_wakes_it_did_not_finish_and_keeps_its_spend);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = RefusedSession(name, RefusedStream(WorkedFirst));
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.True(events.RecordOwnerMessage("how is the book?", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), Ops);
+        events.Raise(look, MissionEventKind.Review, now, role: Ops);
+
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+
+        var kept = events.Get(look)!;
+        Assert.False(kept.Consumed, $"the wake was spent on a refused model: {kept.Disposition}");
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed);
+        Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
+        Assert.Contains(Refused, words.DispositionDetail);
+        Assert.Contains(Refused, loop.StandingAsideFor(Ops)?.Why);
+    }
+
+    /// <summary>
+    /// WHAT FINISHED IS NOT RUN TWICE. The one thing that tells them apart is a record the app wrote against that launch: the mandate's delivery (asked of the
+    /// host) and the brief the owner's words became (the relay's measurement). The look beside them has no such record and comes back.
+    /// </summary>
+    [Fact]
+    public async Task A_model_refused_after_work_keeps_what_the_records_show_finished()
+    {
+        var name = nameof(A_model_refused_after_work_keeps_what_the_records_show_finished);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = RefusedSession(name, RefusedStream(WorkedFirst));
+        var mandate = MissionEventIds.ForRole("mandate-wake", Ops);
+        Assert.True(events.RecordOwnerMessage("brief Research on the skew", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), Ops);
+        events.Raise(look, MissionEventKind.Review, now, role: Ops);
+        events.Raise(mandate, MissionEventKind.Mandate, now, payload: "man-delivered", role: Ops);
+
+        string? askedFor = null;
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now,
+            Finished = (wake, attempt) => { askedFor = attempt; return wake.Id == mandate; },
+            Relayed = () => events.SettleWithoutTurn(owner, MissionEventDisposition.Delegated, "pub-brief")
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        await loop.TurnAsync();
+
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        var finished = events.Get(mandate)!;
+        Assert.True(finished.Consumed);
+        Assert.Equal(MissionEventDisposition.Answered, finished.Disposition);
+        Assert.Equal(finished.ConsumedBy, askedFor);
+        var brief = events.Get(owner)!;
+        Assert.True(brief.Consumed, "words the turn already turned into a brief were owed again");
+        Assert.Equal(MissionEventDisposition.Delegated, brief.Disposition);
+        Assert.Equal("pub-brief", brief.DispositionDetail);
+    }
+
+    /// <summary>
+    /// A RECORD SPEAKS ONLY FOR ITS OWN LAUNCH AND ITS OWN SUBJECT: a holder's delivery, a decider's judgment, a reviewer's answer. Another launch's act, an
+    /// act of the wrong side, or a kind that asks for no act finishes nothing.
+    /// </summary>
+    [Fact]
+    public void The_records_that_finish_a_wake_name_its_launch_and_its_subject()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var org = new OrgStore(_db);
+        OrgSurfaceSeed.Chart(_db);
+        var m = org.Assign(new MandateIssue(OrgSurfaceSeed.Head, null, OrgSurfaceSeed.Member, MandateKind.Task, "find out", null,
+            MandateShape.Report, false, now.AddDays(7), 5m, MandateLimits.MaxRetryLimit), now);
+        var holderWake = new MissionEvent { Id = "w1", Kind = MissionEventKind.Mandate, Payload = m.Id, Role = OrgSurfaceSeed.Member };
+        var deciderWake = new MissionEvent { Id = "w2", Kind = MissionEventKind.Delivery, Payload = m.Id, Role = OrgSurfaceSeed.Head };
+
+        Assert.False(org.WakeFinished(holderWake, "turn-holder"), "nothing was delivered yet");
+        var delivered = org.Deliver(m.Id, OrgSurfaceSeed.Member, "turn-holder", "the answer", [], [], now).Delivery.Id;
+
+        Assert.True(org.WakeFinished(holderWake, "turn-holder"));
+        Assert.False(org.WakeFinished(holderWake, "turn-another"), "another launch's delivery spoke for this one");
+        Assert.False(org.WakeFinished(deciderWake, "turn-holder"), "a delivery spoke for the judgment of it");
+        Assert.False(org.WakeFinished(new MissionEvent { Id = "w3", Kind = MissionEventKind.Review, Payload = m.Id, Role = OrgSurfaceSeed.Member }, "turn-holder"));
+
+        org.Accept(delivered, OrgSurfaceSeed.Head, "turn-decider", now);
+        Assert.True(org.WakeFinished(deciderWake, "turn-decider"));
+    }
+
+    /// <summary>
+    /// A PROGRAM TWO SESSIONS OF ONE SEAT SHARE: it says it started, waits in its own folder for <c>go</c>, then prints that folder's stream. One program is
+    /// one seat, and what each session does is in the folder it runs in, so one can be held open across the other's whole turn.
+    /// </summary>
+    static string SharedProgram(string dir)
+    {
+        string script;
+        if (OperatingSystem.IsWindows())
+        {
+            script = Path.Combine(dir, "runtime.cmd");
+            File.WriteAllText(script, "@echo off\r\ntype nul > started\r\n:wait\r\nif exist go goto done\r\nping -n 2 127.0.0.1 > nul\r\ngoto wait\r\n:done\r\ntype stream.txt\r\n");
+            return script;
+        }
+        script = Path.Combine(dir, "runtime.sh");
+        File.WriteAllText(script, "#!/bin/sh\n: > started\nwhile [ ! -f go ]; do sleep 0.1; done\ncat stream.txt\n");
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return script;
+    }
+
+    /// <summary>One session of the shared seat, in a folder of its own holding <paramref name="stream"/>.</summary>
+    static (AgentSession Session, string Folder) Beside(RuntimeManifest seat, string program, string dir, string name, string stream)
+    {
+        var folder = Path.Combine(dir, name);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "stream.txt"), stream.Replace("\r\n", "\n") + "\n");
+        return (new AgentSession(seat, () => program, () => folder, () => new Dictionary<string, string>(), presence: new AgentPresence(),
+            grants: new TradeAgent.Security.AgentGrants()) { Admit = _ => AiAdmission.NoLedger }, folder);
+    }
+
+    /// <summary>
+    /// RED at base (the review's P2): any clean end cleared the shared mark, so a turn admitted BEFORE another's refusal lifted the hold without its time or a
+    /// probe. Turn B starts, turn A meets the refusal and marks the seat, B ends clean: the seat stays held, and a third launch is refused.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_admitted_before_the_refusal_does_not_lift_the_hold()
+    {
+        var dir = Path.Combine(TestEnv.Home, "turn-bounds", Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(dir);
+        var program = SharedProgram(dir);
+        var seat = VendorLimitTests.Codex(program);
+        const string clean = """
+            {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+            {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"All good."}}
+            {"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}
+            """;
+        var (b, slow) = Beside(seat, program, dir, "b", clean);
+        var (a, quick) = Beside(seat, program, dir, "a", RefusedStream());
+        var (third, _) = Beside(seat, program, dir, "third", clean);
+
+        var running = b.SendMissionAsync("continue");
+        for (var i = 0; i < 600 && !File.Exists(Path.Combine(slow, "started")); i++) await Task.Delay(50);
+        Assert.True(File.Exists(Path.Combine(slow, "started")), "turn B never started");
+
+        File.WriteAllText(Path.Combine(quick, "go"), "");
+        await a.SendMissionAsync("continue");
+        Assert.True(third.CheckSeat().Refused, "turn A's refusal did not hold the seat");
+
+        File.WriteAllText(Path.Combine(slow, "go"), "");
+        await running;
+        Assert.Equal(ChatRole.Ai, b.History.Last().Role);
+
+        Assert.True(third.CheckSeat().Refused, "a turn admitted before the refusal lifted the hold");
+    }
+
+    /// <summary>THE RULE ITSELF, BOTH WAYS: an older turn lifts nothing; the mark's own probe does, and so does a launch admitted after the mark that outran its probe.</summary>
+    [Fact]
+    public void Only_the_marks_probe_or_a_later_admission_lifts_it()
+    {
+        var seat = Seat(nameof(Only_the_marks_probe_or_a_later_admission_lifts_it));
+        const string model = "who-may-clear";
+        var older = new object();
+        var admittedBefore = SeatMarks.Admitted();
+        SeatMarks.Set(seat, null, model, SeatTrouble.ModelRefused, Refused, Noon);
+
+        SeatMarks.Clear(seat, null, model, older, admittedBefore);
+        Assert.NotNull(SeatMarks.Refusal(seat, null, model, new object(), Noon));
+
+        // THE PROBE, whose window then passes to a second launch: the first still ran after the mark, so its clean end speaks for the seat.
+        var over = Noon + SeatMarks.FirstHold;
+        object slowProbe = new(), nextProbe = new();
+        var admittedAfter = SeatMarks.Admitted();
+        Assert.Null(SeatMarks.Refusal(seat, null, model, slowProbe, over));
+        Assert.Null(SeatMarks.Refusal(seat, null, model, nextProbe, over + SeatMarks.ProbeWindow));
+        SeatMarks.Clear(seat, null, model, slowProbe, admittedAfter);
+        Assert.Null(SeatMarks.Refusal(seat, null, model));
+        Assert.Null(SeatMarks.Refusal(seat, null, model, new object(), Noon));
+    }
+
+    /// <summary>
+    /// RED at base (the review's P1, MissionLoop): only the loop's turns had a clock, so a hung owner's chat with no chief kept its tree, its reservation and a
+    /// Busy conversation for ever. Now it ends at the seat's limit like a mission turn: the tree is gone, the row closed in the words and at the reservation,
+    /// the conversation free, the owner told plainly, and his words kept.
+    /// </summary>
+    [Fact]
+    public async Task A_hung_owner_chat_ends_at_its_limit_with_its_tree_and_his_words_are_kept()
+    {
+        const string words = "What is the book worth?";
+        await using var life = await PuppetLife.Begin("chat-limit");
+        var limit = TimeSpan.FromSeconds(4);
+        life.Host.TurnLimitUnderTest = limit;
+        life.Script(Ops, ["signal hung", "child kid", "hang"]);
+        var chat = life.Host.Conversation!;
+
+        var sent = chat.SendAsync(words);
+        await life.RunUntil(() => life.Reached("kid.pid"), "the chat's puppet started its child and hung");
+        var hung = Assert.Single(life.AttemptsOf(Ops));
+        Assert.Equal(AiAttemptState.LAUNCHED, hung.State);
+        Assert.True(chat.Busy);
+        var puppet = int.Parse(File.ReadAllLines(Path.Combine(life.Scripts, "launches.log")).Last().Split(' ')[1]);
+        var kid = int.Parse(File.ReadAllText(Path.Combine(life.Scripts, "kid.pid")));
+
+        await sent.WaitAsync(PuppetLife.Patience);
+
+        Assert.False(chat.Busy);
+        Assert.False(Alive(puppet), "the hung puppet outlived its limit");
+        Assert.False(Alive(kid), "the hung puppet's child outlived its limit");
+
+        var said = Labels.ChatTurnPastItsLimit(limit);
+        var row = new AiAttemptStore(life.Host.Db).Get(hung.Id)!;
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(said, RefusedOn(row));
+        Assert.Equal(hung.ReservedCost, row.Cost);
+        Assert.Contains(chat.History, t => t.Role == ChatRole.System && t.Text == said);
+        Assert.DoesNotContain("exit", said, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains(life.Host.Wakes!.OfKind(MissionEventKind.Owner), e => !e.Consumed && (e.Payload ?? "").Contains(words, StringComparison.Ordinal));
+    }
+
+    /// <summary>A CHAT TURN THAT ENDS CLEAN IN TIME NEVER HEARS OF THE LIMIT: no words, no keeping, and a later turn is not told an old one's ending.</summary>
+    [Fact]
+    public async Task A_chat_turn_that_finished_is_not_kept_or_told_of_any_limit()
+    {
+        const string clean = """
+            {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+            {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"All good."}}
+            {"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":2}}
+            """;
+        var chat = AgentRuntimeProbe.SessionOverStream(clean, manifest: VendorLimitTests.Codex, name: nameof(A_chat_turn_that_finished_is_not_kept_or_told_of_any_limit));
+        var kept = new List<string>();
+        chat.RecordTyped = text => { kept.Add(text); return true; };
+        chat.TurnLimit = () => TimeSpan.FromMinutes(5);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
+
+        await chat.SendAsync("reply ok");
+
+        Assert.Null(ended!.TimedOut);
+        Assert.Null(ended.UsageUnreported);
+        Assert.Empty(kept);
+    }
+
+    /// <summary>A LIMIT THAT CANNOT BE READ IS THE KIND'S OWN, NEVER NONE: nothing a host answers leaves a turn without a clock.</summary>
+    [Fact]
+    public void A_turn_limit_that_cannot_be_read_is_the_seats_kinds_own()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(2), TurnClock.Of(() => TimeSpan.FromMinutes(2), SeatSpec.VendorTurnLimit));
+        Assert.Equal(SeatSpec.VendorTurnLimit, TurnClock.Of(null, SeatSpec.VendorTurnLimit));
+        Assert.Equal(SeatSpec.VendorTurnLimit, TurnClock.Of(() => TimeSpan.Zero, SeatSpec.VendorTurnLimit));
+        Assert.Equal(SeatSpec.HarnessTurnLimit, TurnClock.Of(() => throw new InvalidOperationException("no seat"), SeatSpec.HarnessTurnLimit));
+    }
+
+    /// <summary>
+    /// RED at base (R30 row 7): an ordinary failed turn's backoff was slept by the whole serial lane, so one failing position stopped every other. Now it is that
+    /// position's: the next look serves the others, its wake waits out the backoff, and the position is seen resting in plain words.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_turn_rests_its_position_and_the_lane_serves_the_others()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        Due(events, Research, now - TimeSpan.FromMinutes(2));
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        host.Conv(Ops).FailWith = 1;
+        var options = new MissionOptions { ReviewEvery = TimeSpan.Zero };
+        var loop = new MissionLoop(host, options, now: () => now);
+
+        Assert.Equal(TimeSpan.Zero, await loop.TurnAsync());
+        Assert.Single(host.Conv(Ops).Sent);
+        Assert.Equal(Labels.LastTurnDidNotFinish, loop.StandingAsideFor(Ops)?.Why);
+
+        await loop.TurnAsync();
+        Assert.Single(host.Conv(Research).Sent);
+
+        // A WAKE OF THE RESTING POSITION WAITS THE REST OUT, and is what the next look after it finds.
+        Due(events, Ops, now);
+        Assert.Equal(options.FirstBackoff, await loop.TurnAsync());
+        Assert.Single(host.Conv(Ops).Sent);
+
+        now += options.FirstBackoff;
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Conv(Ops).Sent.Count);
+        Assert.Equal(options.FirstBackoff * 2, loop.StandingAsideFor(Ops)!.Value.Until - now);
+
+        // AND A TURN THAT GOES CLEAN ENDS THE MATTER.
+        host.Conv(Ops).FailWith = 0;
+        now += options.FirstBackoff * 2;
+        Due(events, Ops, now);
+        await loop.TurnAsync();
+        Assert.Null(loop.StandingAsideFor(Ops));
+        Assert.Equal(0, loop.Status.ConsecutiveErrors);
+    }
+
+    /// <summary>A REST OUTLIVES A QUIET MOMENT: nothing due at the failure, a wake a second later, and the failing position is still not launched before its backoff ends.</summary>
+    [Fact]
+    public async Task A_failing_position_is_not_launched_faster_than_its_backoff_when_nothing_else_is_due()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        host.Conv(Ops).FailWith = 1;
+        var options = new MissionOptions { ReviewEvery = TimeSpan.Zero };
+        var loop = new MissionLoop(host, options, now: () => now);
+
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+
+        now += TimeSpan.FromSeconds(1);
+        Due(events, Ops, now);
+        await loop.TurnAsync();
+        Assert.Single(host.Conv(Ops).Sent);
+    }
+
+    /// <summary>A RUN THAT THROWS IS THE SAME FAILED TURN (the serial half of what a lane already did): its position rests, and the next look serves the others.</summary>
+    [Fact]
+    public async Task A_turn_that_throws_rests_its_position_too()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        Due(events, Research, now - TimeSpan.FromMinutes(2));
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        host.Unreadable = new InvalidOperationException("the situation could not be read");
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        Assert.Equal(TimeSpan.Zero, await loop.TurnAsync());
+        Assert.Equal(Labels.LastTurnDidNotFinish, loop.StandingAsideFor(Ops)?.Why);
+
+        host.Unreadable = null;
+        await loop.TurnAsync();
+        Assert.Single(host.Conv(Research).Sent);
     }
 
     /// <summary>What the vendor's pattern recognises, against its own fixtures, and what it must not: its usage limit and a plain failure are other things.</summary>

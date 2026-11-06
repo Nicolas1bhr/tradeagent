@@ -210,7 +210,12 @@ public sealed class AppHost : IAsyncDisposable
                 // memory. Attached here rather than at construction because this is the one place a
                 // conversation is made, and a second one made later must be wired too — the same
                 // reason the meter is attached on this line.
-                if (_conversation is IAdmittedConversation admitted) admitted.RecordTyped = RecordOwnerMessage;
+                if (_conversation is IAdmittedConversation admitted)
+                {
+                    admitted.RecordTyped = RecordOwnerMessage;
+                    // AND THE LIMIT OF ITS TURNS, the chair's seat's, read at each turn as the loop reads it (U-turn-bounds-2).
+                    admitted.TurnLimit = () => TurnLimit(CouncilRoles.Operations);
+                }
             }
             return _conversation;
         }
@@ -2793,6 +2798,9 @@ public sealed class AppHost : IAsyncDisposable
 
         /// <summary>One turn's wall-clock limit. See <see cref="AppHost.TurnLimit"/>.</summary>
         public TimeSpan TurnLimit(string role) => host.TurnLimit(role);
+
+        /// <summary>Whether a launch recorded the act a wake asked for. See <see cref="OrgStore.WakeFinished"/>.</summary>
+        public bool WakeFinished(MissionEvent wake, string attempt) => host._db is { } db && new OrgStore(db).WakeFinished(wake, attempt);
 
         /// <summary>
         /// Every active position as the chart holds it now — kind, unit depth, level (<see cref="OrgStore.Roster"/>,

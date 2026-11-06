@@ -287,8 +287,14 @@ public sealed class ApiConversation(
         Append(new ChatTurn(ChatRole.You, message, _now()));
 
         // REFUSED BY THE GATE AT ITS LAST CHECK, AFTER ADMISSION: the owner's words are kept — see AgentSession.SendAsync.
-        if (await RunAsync(message, ct) is not null) Keep(message);
+        // So are the words of a turn ended at its wall-clock limit, which the owner's turn has as a mission turn does (U-turn-bounds-2).
+        var limit = TurnClock.Of(TurnLimit, SeatSpec.HarnessTurnLimit);
+        var refused = await TurnClock.RunAsync(limit, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(limit)), () => RunAsync(message, ct));
+        if (refused is not null || _endedOverLimit) Keep(message);
     }
+
+    /// <inheritdoc />
+    public Func<TimeSpan>? TurnLimit { get; set; }
 
     /// <inheritdoc />
     public Task SendMissionAsync(string message, CancellationToken ct = default)
@@ -325,6 +331,12 @@ public sealed class ApiConversation(
 
     /// <summary>The sentence the turn in flight was ended in for its wall-clock limit; null otherwise (<see cref="AgentTurnEnded.TimedOut"/>).</summary>
     volatile string? _timedOut;
+
+    /// <summary>Whether the last turn was ended at its wall-clock limit, as its <see cref="TurnEnded"/> said.</summary>
+    bool _endedOverLimit;
+
+    /// <summary>What the requests of the turn in flight have reported using so far, held outside the loop that sends them (<c>U-turn-bounds-2</c>).</summary>
+    TurnUsage? _soFar;
 
     /// <inheritdoc />
     public Task TimedOutAsync(string words)
@@ -406,6 +418,9 @@ public sealed class ApiConversation(
         _canon = null;
         _sent = false;
         _accepted = false;
+        _timedOut = null;
+        _endedOverLimit = false;
+        _soFar = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
@@ -414,6 +429,9 @@ public sealed class ApiConversation(
         catch (OperationCanceledException)
         {
             (exitCode, outcome) = (NotStarted, EndedCancelled);
+            // WHAT ITS FINISHED REQUESTS MEASURED STAYS MEASURED (U-turn-bounds-2), and the row says the rest was not.
+            usage = _soFar;
+            if (_sent) unreported = AgentTurnEnded.UsageOfACutTurn(usage);
             Append(new ChatTurn(ChatRole.System, _timedOut ?? "Stopped.", _now()));
             transcript.Note("the turn was cancelled");
         }
@@ -444,8 +462,10 @@ public sealed class ApiConversation(
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
-            var timedOut = _timedOut;
+            // A TURN THAT COMPLETED IN THE SAME INSTANT AS ITS LIMIT COMPLETED.
+            var timedOut = outcome == EndedCompleted ? null : _timedOut;
             _timedOut = null;
+            _endedOverLimit = timedOut is not null;
             TurnEnded?.Invoke(new AgentTurnEnded(exitCode, _now() - startedAt, transcript.Text, _now())
             {
                 // NULL WHEN NOTHING REPORTED ANY, never a zero. A turn whose usage never arrived is
@@ -604,7 +624,7 @@ public sealed class ApiConversation(
             transcript.Request(requests, Encoding.UTF8.GetByteCount(body), attempt());
 
             var answer = await PostAsync(endpoint, key, body, ct);
-            if (answer.Usage is { } reported) total = total is null ? reported : total.Plus(reported);
+            if (answer.Usage is { } reported) _soFar = total = total is null ? reported : total.Plus(reported);
             else unmeasured ??= requests;
 
             if (answer.Text is { Length: > 0 } text)
@@ -1014,6 +1034,12 @@ public interface IAdmittedConversation
 
     /// <summary>Writes the owner's words somewhere that survives this process, and says whether it did.</summary>
     Func<string, bool>? RecordTyped { get; set; }
+
+    /// <summary>
+    /// THE WALL-CLOCK LIMIT OF A TURN THE OWNER TYPED (<c>U-turn-bounds-2</c>), the seat's, as the loop reads it for its own turns. Null, or an
+    /// answer that makes no sense, is the limit of this kind of seat: a turn never has none (<see cref="TurnClock.Of"/>).
+    /// </summary>
+    Func<TimeSpan>? TurnLimit { get; set; }
 }
 
 /// <summary>

@@ -76,6 +76,46 @@ public class HarnessBudgetTests : IDisposable
             owner: () => Rate, model: () => "gpt-5.6-luna", share: _ => 1m,
             seat: role => SeatResolver.Of(role, ApiAgentRuntime.RuntimeId, "gpt-5.6-luna", allowance));
 
+    // ---- the owner's turn has the wall-clock limit too (U-turn-bounds-2) ------------------------------
+
+    /// <summary>
+    /// THE OWNER'S CHAT ON THE HARNESS HAS THE LIMIT A LOOP TURN HAS. Its first request answers and reports; the second stalls inside its own timeout. At the
+    /// limit the turn ends in the owner's words, the conversation is free, what the first request measured stays priced on the row and the row says the
+    /// rest was not measured. RED at base: nothing watched this path, and a cancelled turn threw away what its finished requests reported.
+    /// </summary>
+    [Fact]
+    public async Task A_stalled_owner_chat_on_the_harness_ends_at_its_limit_and_keeps_what_it_measured()
+    {
+        using var provider = new FakeProvider();
+        provider.Answer(FakeProvider.ToolCall("read_file", new { path = "in/x.md" }, input: 5_000, output: 50));
+        using var stalled = new ManualResetEventSlim();
+        var requests = 0;
+        provider.Arriving = () => { if (Interlocked.Increment(ref requests) == 2) stalled.Wait(TimeSpan.FromSeconds(9)); };
+
+        var allowance = TurnAllowance.From(3_000_000, 20_000);
+        using var runtime = Runtime(provider, allowance);
+        var meter = Meter(50m, allowance);
+        var conversation = Research(runtime);
+        using var metering = meter.Attach(conversation, CouncilRoles.Research);
+        var limit = TimeSpan.FromSeconds(2);
+        ((IAdmittedConversation)conversation).TurnLimit = () => limit;
+        AgentTurnEnded? ended = null;
+        conversation.TurnEnded += e => ended = e;
+
+        await conversation.SendAsync("how is the book?").WaitAsync(TimeSpan.FromSeconds(8));
+        stalled.Set();
+
+        Assert.False(conversation.Busy);
+        Assert.Equal(Labels.ChatTurnPastItsLimit(limit), ended!.TimedOut);
+        Assert.Equal(5_000, ended.Usage!.InputTokens);
+        Assert.Contains("was not measured", ended.UsageUnreported);
+        Assert.Contains(conversation.History, t => t.Role == ChatRole.System && t.Text == ended.TimedOut);
+        var row = Assert.Single(new AiAttemptStore(_db).Between(_at.AddDays(-1), _at.AddDays(1)));
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(5_000, row.InputTokens);
+        Assert.NotEqual(row.ReservedCost, row.Cost);
+    }
+
     // ---- the bound, before each request -----------------------------------------------------------
 
     /// <summary>

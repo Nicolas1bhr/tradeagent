@@ -22,6 +22,10 @@ public enum SeatTrouble
 /// the mark; one that meets the same sentence marks the seat again for twice as long, up to <see cref="MaxHold"/>. So over 72 hours a seat
 /// that never recovers costs about a dozen probes, against one wasted turn per look.</para>
 ///
+/// <para><b>A success clears only what it can speak for</b> (<c>U-turn-bounds-2</c>). Turns of one seat run side by side, so a turn admitted before
+/// another met the sentence can end cleanly after the mark: its request went before the vendor's refusal, so it says nothing about the seat
+/// now. Only the mark's own probe, or a launch admitted after the mark (<see cref="Admitted"/>, <see cref="Clear"/>), lifts it.</para>
+///
 /// <para><b>No model is ever switched here (D17).</b> A position's model stays the owner's two-press. A refusal holds the seat and says so.</para>
 /// </summary>
 public static class SeatMarks
@@ -42,9 +46,13 @@ public static class SeatMarks
     /// </summary>
     public static readonly TimeSpan ProbeWindow = TimeSpan.FromMinutes(45);
 
-    sealed record Mark(SeatTrouble Trouble, string DisplayName, string? Model, string VendorSaid, DateTimeOffset Until, int Strikes, object? Prober);
+    sealed record Mark(SeatTrouble Trouble, string DisplayName, string? Model, string VendorSaid, DateTimeOffset Until, int Strikes, object? Prober, long Tick);
 
     static readonly object Gate = new();
+
+    /// <summary>The order of marks and admissions: a count, because "before" here must not depend on two clocks agreeing.</summary>
+    static long _ticks;
+
     static readonly Dictionary<(string Runtime, string Profile, string Model), Mark> Marks = [];
 
     /// <summary>
@@ -60,7 +68,7 @@ public static class SeatMarks
             Marks.TryGetValue(key, out var was);
             if (was is { Prober: null } && was.Until > now) return Words(was);
             var strikes = (was?.Strikes ?? 0) + 1;
-            var mark = new Mark(trouble, manifest.DisplayName, model, vendorSaid.Trim(), now + Hold(strikes), strikes, null);
+            var mark = new Mark(trouble, manifest.DisplayName, model, vendorSaid.Trim(), now + Hold(strikes), strikes, null, ++_ticks);
             Marks[key] = mark;
             return Words(mark);
         }
@@ -85,10 +93,26 @@ public static class SeatMarks
         }
     }
 
-    /// <summary>A turn of this seat ended cleanly, so nothing stands against it any more, and the next trouble is a first strike.</summary>
-    public static void Clear(RuntimeManifest manifest, string? profile, string? model)
+    /// <summary>
+    /// WHERE A LAUNCH STANDS AGAINST THE MARKS, read BEFORE its last <see cref="Refusal"/>: a mark set after this number was set after the launch was
+    /// let through, so its clean end cannot speak for it. Read after that check, a mark landing between the two would pass for an older one.
+    /// </summary>
+    public static long Admitted()
     {
-        lock (Gate) Marks.Remove(Key(manifest, profile, model));
+        lock (Gate) return ++_ticks;
+    }
+
+    /// <summary>
+    /// A TURN OF THIS SEAT ENDED CLEANLY. Nothing stands against the seat any more, and the next trouble is a first strike, when that turn may say so:
+    /// it is the mark's own probe (<paramref name="launch"/>), or it was <paramref name="admitted"/> after the mark. A turn admitted before the mark
+    /// lifts nothing, and the hold keeps its time.
+    /// </summary>
+    public static void Clear(RuntimeManifest manifest, string? profile, string? model, object launch, long admitted)
+    {
+        var key = Key(manifest, profile, model);
+        lock (Gate)
+            if (Marks.TryGetValue(key, out var mark) && (ReferenceEquals(mark.Prober, launch) || admitted > mark.Tick))
+                Marks.Remove(key);
     }
 
     /// <summary>

@@ -165,6 +165,14 @@ public class VendorLimitTests : IDisposable
         /// <summary>Every launch the loop opened, in order. The count is the verdict.</summary>
         public List<string> Opened { get; } = [];
 
+        /// <summary>Which wakes the organisation's records hold finished by a launch (<see cref="IMissionHost.WakeFinished"/>).</summary>
+        public Func<MissionEvent, string, bool>? Finished { get; init; }
+        public bool WakeFinished(MissionEvent wake, string attempt) => Finished?.Invoke(wake, attempt) ?? false;
+
+        /// <summary>What the relay does when the turn commits: where a test publishes a turn's brief.</summary>
+        public Action? Relayed { get; init; }
+        public void Relay(string role, string? attempt) => Relayed?.Invoke();
+
         public IAgentConversation? Conversation => conversation;
         public MissionEventStore? Events => events;
         public string AgentHome => home;

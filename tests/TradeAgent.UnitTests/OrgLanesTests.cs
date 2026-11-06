@@ -699,7 +699,10 @@ public class OrgLanesTests : IDisposable
             : CouncilRoles.IsKnown(role) || Extra.Any(p => p.Id == role) ? null
             : new TurnRefusal(RefusalKind.Position, "not on this host's chart");
 
-        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+        /// <summary>Set: what the situation throws instead of answering, a run that fails before it produces an ending.</summary>
+        public Exception? Unreadable { get; set; }
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) => Unreadable is { } unreadable ? throw unreadable :
             Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
 
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role, string? attemptId)
@@ -764,6 +767,9 @@ public class OrgLanesTests : IDisposable
 
         public Action<string>? OnSend { get; init; }
 
+        /// <summary>Set: every turn ends failed with this exit code, an ordinary failure.</summary>
+        public int FailWith { get; set; }
+
         public async Task SendMissionAsync(string message, CancellationToken ct = default)
         {
             lock (Sent) Sent.Add(message);
@@ -773,7 +779,7 @@ public class OrgLanesTests : IDisposable
             try { if (Hold is { } hold) await hold.Task.WaitAsync(ct); }
             finally { grant?.Dispose(); }
             var limit = Limit;
-            TurnEnded?.Invoke(new AgentTurnEnded(limit is null ? 0 : 1, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow)
+            TurnEnded?.Invoke(new AgentTurnEnded(limit is null ? FailWith : 1, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow)
                 { Limit = limit });
         }
 
