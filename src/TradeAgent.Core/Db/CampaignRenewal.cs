@@ -32,8 +32,9 @@ public sealed record ForwardHoldout(long SpentCampaignId, DateTimeOffset Cutoff,
 /// counts verdicts across the whole renewal lineage, so it buys research trials over months already judged and never a fresh
 /// look. When a campaign's judgements are spent, the repo's own way on is "a holdout over OTHER months" (the spent-budget sentence,
 /// <see cref="CampaignStore.ChargeVerdict"/>) — the owner's press on a fresh download, <c>TradingGateway.SetHoldout</c>. This class
-/// is the rule that makes that press for him, and it makes it only on months no verdict and no research read could have seen:
-/// FRESH FORWARD DATA. A renewal stays the owner's; nothing here calls it.</para>
+/// is the rule that makes that press for him, and it makes it only on months no verdict has judged and no data read has returned:
+/// FRESH FORWARD DATA. Those months are withheld from data calls, not unseen: live quotes, orders, executions, positions and P&amp;L over
+/// them are served as ever (R29 F-B1, <c>docs/CONTRACTS.md</c>). A renewal stays the owner's; nothing here calls it.</para>
 ///
 /// <para><b>The rule, in four parts.</b></para>
 /// <list type="number">
@@ -375,9 +376,10 @@ public sealed class CampaignRenewal(Database db)
         var have = newest?.LastBar is { } last && Close(newest.Interval, last) is { } close && close > held.Cutoff
             ? (close - held.Cutoff).TotalDays
             : 0;
-        return $"TradeAgent opens the next campaign by itself, and only on FRESH market data no verdict and no research read could "
-               + $"have seen: every bar of {held.Pair ?? "every pair"} from {held.Cutoff:u} on, which no caller on this channel is served "
-               + "until then. It waits for at "
+        return $"TradeAgent opens the next campaign by itself, and only on FRESH market data no verdict has judged and no data read "
+               + $"has returned: every bar of {held.Pair ?? "every pair"} from {held.Cutoff:u} on. Until then bars and tape rows over those "
+               + "minutes are withheld from every caller on this channel, while live quotes, orders, fills, positions and P&L over them "
+               + "are still served, so those minutes are held back from data calls and not unseen. It waits for at "
                + $"least {MinimumFreshDays} days of those bars in a download — {have.ToString("0.#", CultureInfo.InvariantCulture)} of "
                + $"{MinimumFreshDays} so far — so the earliest it can open is {held.Earliest:u}; Binance publishes a month once the "
                + "month is complete.";
