@@ -493,6 +493,9 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-wake-fairness (R28 W4): OwnWakeDue — when a position's own wake file may wake it. A read, called by the app's
         // loop after a turn; it writes nothing, and no op, door verb or trade verb reaches it.
         mandate = [.. mandate, "OwnWakeDue"];
+        // REVISITED, OUT LOUD, BY U-turn-bounds-2: WakeFinished — whether a launch recorded the act a wake asked for. A read of append-only rows, called by the
+        // app's loop inside a turn's commit; it writes nothing, and no op, door verb or trade verb reaches it.
+        mandate = [.. mandate, "WakeFinished"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

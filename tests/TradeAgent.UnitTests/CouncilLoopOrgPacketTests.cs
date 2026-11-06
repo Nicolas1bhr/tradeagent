@@ -137,6 +137,7 @@ public partial class CouncilLoopTests
         Assert.Equal(ApiConversation.EndedProviderFailed, endings[1].Outcome);
 
         host.Harnessed.Remove(Executor);
+        loop.SeatChanged(Executor);
         host.Conversations[Executor].Session = TurnSession.Resumed;
         SelfWake(host, Executor, "double-after");
         await TurnsUntil(loop, host, Executor, 1);
