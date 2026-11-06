@@ -1234,7 +1234,8 @@ ones yet" and "any of them" are different sentences, and only one of them is a d
 active it is the app's founding envelopes: one for each pair under evidence (BTC, ETH, SOL, BNB and XRP against
 USDT) on TradeAgent's own paper venue, each worth at most 5,000 USDT in all across up to three runs, and no end date
 until the first active board sets its life. Each run's orders are bound by its own share of its pair's envelope, not by the
-one-order limit in the list above; that limit still binds every other order, and any figure the board sets for it binds the runs too.
+one-order limit in the list above; that limit still binds every other order, and any figure the board sets for it binds what a run opens
+but never what it closes.
 A version only ever goes into the envelope of the pair it trades. It is the one thing TradeAgent is
 handed without any money. Under it, whenever TradeAgent's own referee finds a version favourable
 on months it was never shown, TradeAgent puts that version into the grant by itself and tells its

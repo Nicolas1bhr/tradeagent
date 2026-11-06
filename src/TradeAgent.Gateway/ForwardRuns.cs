@@ -320,13 +320,13 @@ public sealed class ForwardRuns
 
             // A UTC DAY THAT CLOSED OVER THIS RUN IS ONE THING TO SAY, ONCE, AND ONLY ON A LIVE BAR (R28 G1). Every pass replays from the first
             // minute, every 5 s, so a note said on every boundary replayed read the run's current totals into each past day: a new publication,
-            // new deliveries and a new file per past day per fill. Said here it is said when the day closes, about that day: the figures are built
-            // through that day and marked at its last close (`TellResearchAboutARun`), so a bar replayed live again says the same words under the
-            // same id, and the event stays keyed by the deployment and the date.
+            // new deliveries and a new file per past day per fill. Said here it is said when the day closes, about that day: the run's book through
+            // that day's last bar, walked over the bars its fills landed on rather than the settlement stamps, which fall after midnight for a fill on
+            // the day's last bar, and marked at that bar's close. A bar replayed live again says the same words under the same id, and the event stays
+            // keyed by the deployment and the date.
             if (live && dayClosed is { } day)
                 _gateway.TellResearchAboutARun(deployment, MissionEventIds.DayOf(day),
-                    $"the UTC day {MissionEventIds.DayOf(day)} closed over it", _now(),
-                    new DateTimeOffset(day.UtcDateTime.Date.AddDays(1), TimeSpan.Zero), closedAt);
+                    $"the UTC day {MissionEventIds.DayOf(day)} closed over it", _now(), books.Book(day), closedAt);
 
             // AND FIRST, ON A LIVE MINUTE WHOSE BOOKS READ FLAT, NO STOP OR TARGET OF THE RUN IS LEFT WORKING
             // (`U-runner-refused-close`). The cancel below is keyed to the minute a closing fill landed on and to the
@@ -1361,6 +1361,23 @@ public sealed class ForwardRuns
         /// <summary>This run's own executions that landed on one bar, in the order they landed.</summary>
         public IReadOnlyList<RunFill> At(DateTimeOffset bar) =>
             [.. fills.Where(f => f.Bar == bar)];
+
+        /// <summary>
+        /// THE RUN'S OWN BOOK AT THE CLOSE OF ONE MINUTE (<see cref="RunBook"/>): the same walk, stopped at that minute. Each fill is on the bar it
+        /// landed on, so a day's figures are that day's whatever the run does later. Whether the orders agree with the ledger is a question about the
+        /// run now (<see cref="Deployments.BookOf"/>) and is not asked of a past minute.
+        /// </summary>
+        public RunBook Book(DateTimeOffset through)
+        {
+            var walk = new RunBookWalk();
+            foreach (var fill in fills)
+            {
+                if (fill.Bar > through) break;
+                walk.Apply(fill.Buy, fill.Quantity, fill.Price, fill.Fee);
+            }
+
+            return walk.Book();
+        }
 
         /// <summary>
         /// THE RUN'S ACCOUNT AT THE CLOSE OF ONE MINUTE, from its own executions up to that minute, with the
