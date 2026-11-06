@@ -607,6 +607,10 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             }
             Stopped("stop-limit", limited, AgentTurnEnded.EndedTimedOut, limitWords);
             Stopped("stop-model", refused, ModelRefusal.Ended, modelWords);
+
+            // A REFUSAL A CLEAN TURN CAME AFTER EXPLAINS NOTHING NOW: the silent position recovered, then fell overdue with no reason recorded.
+            db.Exec($"""INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES('2026-10-31T11:00:00.0000000Z', 'Mission', 'turn_refused', 'info', '{TradeAgent.Core.Json.Write(new { why = $"{silent}: an old refusal" })}');""");
+            Attempt(attempts, "clean-after", silent, "2026-10-31T11:30:00Z", BillingClasses.Plan, "gpt-6-luna", 0.05m, 0.05m, 0);
         }
 
         var d = Json(f);

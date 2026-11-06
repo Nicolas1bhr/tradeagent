@@ -108,6 +108,52 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (b2) NOR DOES A TURN THAT HANGS TO ITS LIMIT, the one failure that gives its wakes back: the backstop's stays consumed, so that turn counts, and the next is a floor after it.
+    ///
+    /// <para>RED with the wake given back: the chief retried on the failure backoff, the Codex review's P1.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_chief_whose_every_turn_hangs_to_its_limit_is_held_to_the_floor()
+    {
+        var start = ChartDay;
+        var now = start;
+        var (host, db, _, chief) = ChiefHome(() => now);
+        using var _ = db;
+        host.Conversations[chief].Exit = -1;
+        host.Conversations[chief].TimedOut = "this turn ran past the most one turn may run";
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        var turns = await Run(loop, host, chief, t => now = t, start, 72);
+
+        Assert.Equal(18, turns.Count);
+        Assert.All(turns.Zip(turns.Skip(1)), p => Assert.True(p.Second - p.First >= ChiefEvery, $"{p.First:u} then {p.Second:u}"));
+    }
+
+    /// <summary>
+    /// (b3) A CHIEF THAT HAS NEVER TURNED IS HELD TO THE FLOOR NOW IN FORCE: the board raises it to eight hours after the four-hour wake was raised, and that wake moves out.
+    /// </summary>
+    [Fact]
+    public async Task A_raised_floor_moves_out_the_wake_of_a_chief_that_never_turned()
+    {
+        var start = ChartDay;
+        var now = start;
+        var (host, db, _, chief) = ChiefHome(() => now);
+        using var _ = db;
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+        await loop.TurnAsync();
+        Assert.Equal(start.AddHours(4), Assert.Single(Ceilings(host, chief), e => !e.Consumed).DueAt);
+
+        now = start.AddHours(1);
+        host.Floors = RewakeFloors.From(new Dictionary<string, int> { [OrgLevel.Department] = 480 }, OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(24)));
+        await loop.TurnAsync();
+        Assert.Equal(now.AddHours(8), Assert.Single(Ceilings(host, chief), e => !e.Consumed).DueAt);
+
+        now = now.AddHours(1);                                                 // and it is no heartbeat: the row stands
+        await loop.TurnAsync();
+        Assert.Equal(start.AddHours(9), Assert.Single(Ceilings(host, chief), e => !e.Consumed).DueAt);
+    }
+
+    /// <summary>
     /// (c) A BOARD THAT LOWERS THE FLOOR TO ZERO DOES NOT MAKE IT A SPIN: the interval is the floor in force and never less than the floor as shipped. One that
     /// raises the floor is obeyed. A policy with no ceiling, or a ceiling no longer than the floor, gets no backstop.
     /// </summary>

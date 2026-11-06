@@ -2541,7 +2541,12 @@ public sealed class MissionLoop
     /// <summary>A clean turn, so this role's run of failures is over. Always zero.</summary>
     int Recovered(string? role)
     {
-        lock (_gate) return _consecutiveErrors[KeyOf(role)] = 0;
+        lock (_gate)
+        {
+            // AND ITS RUN OF REFUSALS (U-chief-moves; the Codex review): the next is told again, in the log the watch reads, and backs off from its start.
+            if (role is not null) _stoodAside.Remove(role);
+            return _consecutiveErrors[KeyOf(role)] = 0;
+        }
     }
 
     /// <summary>True while the loop is taking turns of its own accord.</summary>
@@ -4006,7 +4011,9 @@ public sealed class MissionLoop
                 if (pending.Count == 1 && pending[0].DueAt == due) return;
                 events.MoveCeiling(head.Id, now, due, why);
             }
-            else if (pending.Count == 0 || (backstop is not null && pending[0].DueAt > now + interval))
+            // NEVER TURNED: it has no turn to count from, so the floor is kept where it was raised, and moved only to a time the interval now in force allows.
+            else if (pending.Count == 0
+                     || (backstop is not null && (pending[0].DueAt > now + interval || pending[0].DueAt - pending[0].CreatedAt < interval)))
                 events.MoveCeiling(head.Id, now, now + interval, why);
         }
         catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }
@@ -4859,10 +4866,14 @@ public sealed class MissionLoop
                 // refused before any work settles it failed with the refusal's sentence, and nothing serves it again when a hold lifts —
                 // he presses again if he still wants the turn. Every other wake is given back as before.
                 var pressed = wake.Where(e => e.Kind == MissionEventKind.OwnerWake).ToList();
-                events.Release([.. wake.Where(e => e.Kind != MissionEventKind.OwnerWake).Select(e => e.Id)], consumer);
+                // NOR THE CHIEF'S BACKSTOP (R30 D21; the Codex review): it says nothing that can be lost, and given back it would keep its turn out of the
+                // last woken one, so a seat that hangs would retry on the failure backoff, past the floor. Kept consumed, the next is due a floor after this turn.
+                var floored = wake.Where(e => e.Kind == MissionEventKind.Ceiling && e.Payload == MissionEventStore.ChiefFloorWake).ToList();
+                events.Release([.. wake.Except(pressed).Except(floored).Select(e => e.Id)], consumer);
                 foreach (var e in pressed)
                     events.Settle(e.Id, MissionEventDisposition.Failed,
                         $"{why} — a pressed wake is served once: press \"Wake the chief once\" again for another turn");
+                foreach (var e in floored) events.Settle(e.Id, MissionEventDisposition.Failed, why);
                 // THE REFUSAL'S OWN SENTENCE, over any earlier blocked reason the words carried into the launch (fix pass 1,
                 // the review's P2): the latest reason they wait is the one shown, never a stale one — for the gate's refusal and
                 // the vendor's limit alike.

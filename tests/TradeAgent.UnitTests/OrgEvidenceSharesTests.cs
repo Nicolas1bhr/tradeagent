@@ -581,10 +581,11 @@ public class OrgEvidenceSharesTests
 
     /// <summary>
     /// WHAT THE CANON NOW TELLS A HEAD (<c>U-chief-moves</c>): a division's head may spend verdicts, but a verdict reads its caller's own runs, so one asked on a
-    /// version a position below it authored is refused and charges nothing; the chief is served on the same version. Nothing here widens who may spend.
+    /// version a position below it authored is refused and charges nothing, until the head has backtested that program itself; the chief needs no run of its own.
+    /// Nothing here widens who may spend.
     /// </summary>
     [Fact]
-    public async Task A_divisions_head_is_refused_a_verdict_on_a_version_it_did_not_run_and_the_chief_is_served()
+    public async Task A_divisions_head_is_refused_a_verdict_on_a_version_until_it_has_run_it_itself()
     {
         var (gw, db, set, campaign) = await Campaigning(verdicts: 4);
         await using var _gw = gw;
@@ -599,7 +600,12 @@ public class OrgEvidenceSharesTests
         Assert.False(refused.Ok, "a division's head was charged a judgement on a version it never ran");
         Assert.Contains("has never completed a run", refused.Error?.Message, StringComparison.Ordinal);
         Assert.False(gw.Campaigns.VerdictCharged(campaign.Id, version));
-        Assert.True((await server.CallAsync(VerdictFrame(version, set.Id), Chief, LaunchOf(db, Chief))).Ok);
+
+        var head = LaunchOf(db, CouncilRoles.Research);
+        Assert.Equal(version, Measured(gw, set, CouncilRoles.Research, head));
+        var served = await server.CallAsync(VerdictFrame(version, set.Id), CouncilRoles.Research, head);
+        Assert.True(served.Ok, served.Error?.Message);
+        Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
     }
 
     /// <summary>

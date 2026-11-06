@@ -731,8 +731,9 @@ public static class Canon
           envelope, else it stays dormant and says why. What you cannot resolve inside your
           mandate, escalate; TradeAgent picks the head above.
         - **Verdicts:** a division's head spends them, only on a version it ran itself: a verdict reads its caller's own
-          runs, so yours on an executor's version is refused. A parent's head may delegate a verdict share to a unit below,
-          so the version is judged where it was run; or ask the chief, who may spend one on a version in its subtree.
+          runs, so an executor's version is refused you until you have backtested that program yourself. A parent's head may
+          delegate a verdict share to a unit below, so the version is judged where it was run; or ask the chief, who may
+          spend one on a version in its subtree.
         - **Resources:** your unit's share of its parent's envelope, inside the board's day-total{{if verb:org-show}};
           `{{verb org-show}}` shows it with today's spend{{end}}.
           Every turn, yours and your hires', is paid from it.

@@ -547,7 +547,8 @@ class Digest:
     # -- 9. the next wake per active position
     def why_not_turned(self):
         """WHY EACH POSITION DID NOT TURN, the newest record since T0: the loop's own line for a turn it did not start, or the word on a launch stopped by
-        its limit or by the vendor. Told once per cause, so a line can be older than the wake it explains: it carries its time. Nothing here is inferred."""
+        its limit or by the vendor, and none once a clean turn has come after it. A line is told once per cause, so it can be older than the wake it explains:
+        it carries its time. Nothing here is inferred."""
         titles = {W.TITLE_OPERATIONS: W.ROLE_DEFAULT, W.TITLE_RESEARCH: W.ROLE_RESEARCH}
         why = {}
         for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
@@ -556,13 +557,16 @@ class Digest:
             if isinstance(line, str) and ": " in line:
                 title, words = line.split(": ", 1)
                 why[titles.get(title, title)] = {"at": r["at"], "ended": None, "words": short(words)}
-        for r in self.app.execute("SELECT role, started_at, context FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)):
+        for r in self.app.execute("SELECT role, started_at, state, exit_code, context FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)):
             ctx = turn_context(r["context"])
+            pos = position_of(r["role"])
+            had = why.get(pos)
+            if had is not None and parse_ts(had["at"]) > parse_ts(r["started_at"]):
+                continue
             if ctx.get("ended") in W.TURN_STOPS:
-                pos = position_of(r["role"])
-                had = why.get(pos)
-                if had is None or parse_ts(had["at"]) <= parse_ts(r["started_at"]):
-                    why[pos] = {"at": r["started_at"], "ended": ctx.get("ended"), "words": short(ctx.get("refused") or "")}
+                why[pos] = {"at": r["started_at"], "ended": ctx.get("ended"), "words": short(ctx.get("refused") or "")}
+            elif r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
+                why.pop(pos, None)
         return why
 
     def wakes(self):

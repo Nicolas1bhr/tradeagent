@@ -372,7 +372,7 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (11, CouncilRoles.Research, "3438e66624b16db5751c1f38b08cb6862cc38e69dec6568ee49af546d9d484d3"),
         (11, "org", "6b3afd90d4a4ab3943c82ccae47717b41654b923e98f6447111705bfff5de827"),
         (11, "org:chief", "6336982bc0b195b87996cef1622b10f01f26dc5257db08a6bc9fd94045de6a28"),
-        (11, "org:head", "449c30bc90547307d95e8c3b063e1f310366c0b9be05542c730163a9b04eb1e1"),
+        (11, "org:head", "fba192b93db326ce33111d8c5645c42a5d5eab3eb2b57b2e80ded111277dfa31"),
         (11, "org:staff", "7c5cad98e5b79791980c02ea50c7d7ec1ee8c61d0172f93caa15aa2cb73215f1"),
         (11, "org:executor", "2f0fc5c2e66d74ba43010a75de74421bc311101c700c415614b82125ff56d0a4")
     ];

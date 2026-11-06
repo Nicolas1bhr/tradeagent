@@ -219,7 +219,7 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
 
         Assert.Contains("a division's head spends them on a version it ran itself", canon, StringComparison.Ordinal);
         Assert.DoesNotContain("a division's head spends them;", canon, StringComparison.Ordinal);
-        if (place == OrgPlace.Head) Assert.Contains("yours on an executor's version is refused", canon, StringComparison.Ordinal);
+        if (place == OrgPlace.Head) Assert.Contains("an executor's version is refused you until you have backtested that program yourself", canon, StringComparison.Ordinal);
 
         if (place == OrgPlace.Chief)
         {
