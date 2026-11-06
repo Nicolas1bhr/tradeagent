@@ -34,7 +34,7 @@ public class WitnessSnapshotTests : IDisposable
     }
 
     /// <summary>
-    /// The denial instrument, and the reason every test using it returns early on Windows: a real
+    /// The denial instrument, and the reason every test using it is skipped on Windows: a real
     /// permission bit, not a seam. The Windows-reachable equivalent is an ACL denying
     /// <c>FILE_READ_DATA</c>, which there is no portable way to set from here — the seam-driven tests
     /// beside these cover the same classification on that platform.
@@ -170,10 +170,9 @@ public class WitnessSnapshotTests : IDisposable
     /// compute and nothing is renamed or replaced. The denial is transient — a scanner, a backup
     /// tool, an ACL a later run clears — and the deletion was not.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the denial is a real chmod 000, and Windows has no such mode", "linux", "macos")]
     public void A_rotation_does_not_destroy_a_generation_it_could_not_read()
     {
-        if (OperatingSystem.IsWindows()) return;
         Seed();
         var staging = Sidecar + ".rotating";
         File.WriteAllText(staging, Gap(9));
@@ -194,10 +193,9 @@ public class WitnessSnapshotTests : IDisposable
     }
 
     /// <summary>The same root cause at the rolled generation, which the other delete destroyed.</summary>
-    [Fact]
+    [OnlyOnFact("the denial is a real chmod 000, and Windows has no such mode", "linux", "macos")]
     public void A_rotation_does_not_destroy_a_rolled_generation_it_could_not_read()
     {
-        if (OperatingSystem.IsWindows()) return;
         Seed();
         var rolled = Sidecar + ".1";
         File.WriteAllText(rolled, Gap(9));
@@ -215,10 +213,9 @@ public class WitnessSnapshotTests : IDisposable
     /// path's accident: a READABLE generation holding one gap and an UNREADABLE one holding another
     /// restated only the line it could read and then deleted the one it could not.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the denial is a real chmod 000, and Windows has no such mode", "linux", "macos")]
     public void A_rotation_with_a_carry_does_not_destroy_the_file_it_could_not_read()
     {
-        if (OperatingSystem.IsWindows()) return;
         Seed();
         var staging = Sidecar + ".rotating";
         File.WriteAllText(staging, Gap(9, "TA-UNREADABLE-GAP"));
@@ -279,10 +276,9 @@ public class WitnessSnapshotTests : IDisposable
     /// unresolved marker there, deny it, and a rotation that proceeds over a set it could not read
     /// destroys the last copy of the gap while the file names still look intact.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the denial is a real chmod 000, and Windows has no such mode", "linux", "macos")]
     public void A_rotation_over_an_unreadable_set_does_not_destroy_the_oldest_generation()
     {
-        if (OperatingSystem.IsWindows()) return;
         Seed();
         var oldest = Sidecar + ".2";
         File.WriteAllText(oldest, Gap(30));
@@ -517,10 +513,9 @@ public class WitnessSnapshotTests : IDisposable
     /// bit serves every open by name and refuses <c>readdir</c>, so the committed file still reads
     /// while both globs are denied.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the denial is a real chmod 000, and Windows has no such mode", "linux", "macos")]
     public void A_refused_candidate_enumeration_does_not_read_as_no_stranded_rewrite()
     {
-        if (OperatingSystem.IsWindows()) return;
         Seed();
         DenyEnumerationOnly(_dir);
         try

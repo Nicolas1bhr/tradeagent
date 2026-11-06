@@ -308,13 +308,12 @@ public class MaterialUnreadableTests
     /// <para>Permission bits refuse only on macOS and Linux, so this runs there; Windows has no portable
     /// way to produce the same refusal here, and the seam tests above carry the pass's rule on all three.</para>
     /// </summary>
-    [Theory]
+    [OnlyOnTheory("no portable way to produce it on Windows; the seam covers it", "linux", "macos")]
     [InlineData("a folder of the inbox can be listed but not searched")]
     [InlineData("the workspace cannot be searched, so whether the inbox is there cannot be read")]
     public void A_place_the_disk_refuses_to_describe_is_never_taken_for_gone(string refusal)
     {
-        if (OperatingSystem.IsWindows()) return;   // no portable way to produce it here; the seam covers it
-
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         var (db, root) = Workspace();
         using var _ = db;
         var presence = new AgentPresence();

@@ -158,10 +158,9 @@ public class DataExportTests
     /// A LINK PLANTED AT THE EXPORT'S NAME IS REPLACED, NEVER FOLLOWED: the file lands in the caller's folder and what the link pointed at
     /// is untouched — the gateway writes into a folder an executor's cell can write.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("plants a symbolic link, which a Windows account may not make; no junction test stands in for it yet", "linux", "macos")]
     public async Task A_link_planted_at_the_name_is_never_followed()
     {
-        if (OperatingSystem.IsWindows()) return;
         await using var rig = await Ready();
         var to = Cutoff.AddMinutes(-1);
         var relative = DataExports.FileName(rig.Set, Start, to);

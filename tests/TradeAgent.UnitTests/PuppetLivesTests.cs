@@ -1157,10 +1157,9 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     /// ("the trade command is not at ...", CONTAINMENT_UNAVAILABLE). Deployed over and over while another thread looks for the
     /// file as a launch does, the launcher is there every time and is always whole: the real command, with its mode.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("there is no launcher: a launch is held in a job", "linux", "macos")]
     public async Task A_deployment_never_leaves_the_launcher_absent_or_half_written()
     {
-        if (OperatingSystem.IsWindows()) return;   // there is no launcher: a launch is held in a job
         TestEnv.EnsureLauncher();
         var launcher = Path.Combine(Paths.Bin, ToolDeployer.TradeCliName);
         var found = ProcessWide.Note();

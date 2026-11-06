@@ -208,13 +208,11 @@ public class QuiescenceBarrierTests
     /// INSIDE the teardown, through its seam, so the window is the launch's own and not a guess at its timing.
     ///
     /// <para>Windows only: the assign is refused through <see cref="ProcessContainment.Faults"/>, and no other platform
-    /// has a launch that starts and is then found unheld. Everywhere else this returns at once and proves nothing.</para>
+    /// has a launch that starts and is then found unheld. Everywhere else it is skipped.</para>
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the assign is refused through a fault seam, and no other platform has a launch that starts and is then found unheld", "windows")]
     public async Task A_launch_windows_would_not_hold_is_in_the_presence_register_while_it_ran()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var (db, root) = Workspace();
         using var _ = db;
         var presence = new AgentPresence();
@@ -251,13 +249,11 @@ public class QuiescenceBarrierTests
     /// the drop folder, and every pass while they run records the inbox unattested; once they have exited and the meter's
     /// listing shows none alive, the register closes and a pass after that attests again.
     ///
-    /// <para>Windows only, for the reason above; the processes that keep running are real. Elsewhere it proves nothing.</para>
+    /// <para>Windows only, for the reason above; the processes that keep running are real. Elsewhere it is skipped.</para>
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the assign is refused through a fault seam, and no other platform has a launch that starts and is then found unheld", "windows")]
     public async Task A_survivor_the_teardown_could_not_end_keeps_the_inbox_unattested_until_it_exits()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var (db, root) = Workspace();
         using var _ = db;
         var presence = new AgentPresence();

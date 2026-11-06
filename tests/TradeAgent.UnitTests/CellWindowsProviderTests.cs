@@ -37,10 +37,9 @@ public sealed class CellWindowsProviderTests
     /// ON WINDOWS A GRANT OF THE APP'S STATE IN ANOTHER SPELLING IS REFUSED: capitals, forward slashes — NTFS resolves both to state/.
     /// RED at base on Windows: Linux's rule (ordinal, "/") let <c>…\STATE\x</c> and even <c>…\state\x</c> through.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the rule under test is the one Windows resolves by; Within_on_windows covers it everywhere", "windows")]
     public void On_windows_the_apps_state_in_any_spelling_is_refused()
     {
-        if (!OperatingSystem.IsWindows()) return;   // the rule under test is the one Windows resolves by; Within_on_windows covers it everywhere
         Directory.CreateDirectory(Paths.State);
         foreach (var spelling in new[] { Path.Combine(Paths.State, "x"), Path.Combine(Paths.State.ToUpperInvariant(), "x"), Paths.State.Replace('\\', '/') + "/x" })
         {

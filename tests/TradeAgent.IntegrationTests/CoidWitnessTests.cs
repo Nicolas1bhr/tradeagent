@@ -2139,11 +2139,10 @@ public class CoidWitnessTests : IDisposable
     /// about anything — so on Unix the same case is driven through a real unopenable file, with no
     /// injection at all, and has to reach the same answer.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("no portable way to produce it on Windows; the seam covers it", "linux", "macos")]
     public void A_real_unopenable_candidate_reaches_the_same_answer()
     {
-        if (OperatingSystem.IsWindows()) return;   // no portable way to produce it here; the seam covers it
-
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         var candidate = File_ + ".tmp-unreadable";
         File.WriteAllText(candidate, "{\"version\":1,\"generation\":1,\"records\":[]}");
         File.SetUnixFileMode(candidate, UnixFileMode.None);
@@ -4119,11 +4118,11 @@ public class CoidWitnessTests : IDisposable
     /// on. The set is now read once by the witness and rendered from that value; a set that could
     /// not be read is an entry saying so.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("denies a file with a real chmod 000", "linux", "macos")]
     public void The_support_package_says_so_when_the_witness_failure_log_could_not_be_read()
     {
+        if (OperatingSystem.IsWindows()) return;   // skipped there before it gets here: the analyzer reads only this
         // A hermetic bridge directory, so denying a file here cannot reach any other test.
-        if (OperatingSystem.IsWindows()) return;
         var bridge = Path.Combine(_dir, "bridge-denied");
         Directory.CreateDirectory(bridge);
         var sidecar = Path.Combine(bridge, CoidWitness.ErrorLogName);

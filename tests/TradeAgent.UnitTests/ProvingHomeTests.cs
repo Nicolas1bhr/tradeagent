@@ -362,59 +362,127 @@ public class ProvingHomeTests(ITestOutputHelper log)
         Assert.DoesNotContain(read.Sources, r => r.Id == ProvingSources.Synthetic);
     }
     /// <summary>
-    /// THE EVIDENCE PATH (<c>docs/ORCHESTRATION.md</c> § 8, SIM-001: "the proving ground's store read by no evidence path"):
-    /// the files that judge, record and serve evidence, each by the name the brief gives it.
+    /// THE EVIDENCE PATH (<c>docs/ORCHESTRATION.md</c> § 8, SIM-001: "the proving ground's store read by no evidence path"): ALL OF <c>src/</c>
+    /// BUT THE PROVING GROUND'S OWN FOLDER (R29 F-E4). A hand-picked list of the files that judge and record missed the ones that serve —
+    /// the allocation and deployment stores, the pipe, the app's pages — and every file added after it, so no file is left to be remembered.
+    /// The registry alone is left out: it holds this ground's file and test names as data, and no code path reads it
+    /// (<c>InvariantRegistryTests.No_code_path_but_the_owners_oversight_page_reads_the_registry</c>).
     /// </summary>
-    static readonly string[] EvidencePath =
-    [
-        "src/TradeAgent.Core/Strategy/Referee.cs", "src/TradeAgent.Core/Db/StrategyStore.cs", "src/TradeAgent.Core/Db/CampaignStore.cs",
-        "src/TradeAgent.Core/Db/PromotionStore.cs", "src/TradeAgent.Core/Db/ResearchLedger.cs", "src/TradeAgent.Core/Db/RefereeHoldout.cs",
-        "src/TradeAgent.Core/Db/DatasetStore.cs", "src/TradeAgent.Core/Db/TapeReader.cs", "src/TradeAgent.Core/Features/FeatureSeries.cs",
-        "src/TradeAgent.AgentRuntime/MissionLoop.cs"
-    ];
+    static IEnumerable<string> EvidencePath(string root)
+    {
+        var src = Path.Combine(root, "src");
+        return Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
+            .Where(f => !f.StartsWith("src/TradeAgent.Core/Proving/", StringComparison.Ordinal) && !f.Contains("/bin/", StringComparison.Ordinal) && !f.Contains("/obj/", StringComparison.Ordinal))
+            .Where(f => f != "src/TradeAgent.Core/InvariantRegistry.cs");
+    }
 
     /// <summary>
-    /// What of the proving namespace an evidence-path file may name, by name: the tape reader's kind check (items 2 and 3)
-    /// and nothing else. Exactly this — a name added or one no longer used both turn this red.
+    /// What of the proving namespace the rest of <c>src/</c> may name, by name: the mark that tells a real home from a proving one, the kind
+    /// the process runs as, and the catalogue's proving rows, which a real home refuses. None of them reads what a proving home holds.
+    /// Exactly this — a name added or one no longer used both turn this red.
     /// </summary>
     static readonly string[] Allowed =
     [
+        "src/TradeAgent.Core/Data/TapeSourceCatalog.cs: HomeKind",
+        "src/TradeAgent.Core/Data/TapeSourceCatalog.cs: HomeKind.Proving",
+        "src/TradeAgent.Core/Data/TapeSourceCatalog.cs: ProvingSources.Rows",
+        "src/TradeAgent.Core/Db/Database.cs: HomeKind",
+        "src/TradeAgent.Core/Db/Database.cs: HomeMark.AfterCheck",
+        "src/TradeAgent.Core/Db/Database.cs: HomeMark.Key",
+        "src/TradeAgent.Core/Db/Database.cs: HomeMark.Read",
+        "src/TradeAgent.Core/Db/Database.cs: HomeMark.Refusal",
+        "src/TradeAgent.Core/Db/Database.cs: HomeMark.Word",
+        "src/TradeAgent.Core/Db/Database.cs: ProvingGround.ThisKind",
         "src/TradeAgent.Core/Db/TapeReader.cs: HomeKind",
         "src/TradeAgent.Core/Db/TapeReader.cs: HomeMark.Read",
         "src/TradeAgent.Core/Db/TapeReader.cs: HomeMark.Refusal",
         "src/TradeAgent.Core/Db/TapeReader.cs: ProvingGround.ThisKind",
-        "src/TradeAgent.Core/Db/TapeReader.cs: using TradeAgent.Core.Proving"
+        "src/TradeAgent.Core/Db/TapeReader.cs: using TradeAgent.Core.Proving",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeKind",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeMark.AfterCheck",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeMark.Key",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeMark.Read",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeMark.Refusal",
+        "src/TradeAgent.Core/Db/TapeStore.cs: HomeMark.Word",
+        "src/TradeAgent.Core/Db/TapeStore.cs: ProvingGround.ThisKind",
+        "src/TradeAgent.Core/Features/FeatureSpec.cs: HomeKind",
+        "src/TradeAgent.Core/Features/FeatureSpec.cs: ProvingGround.ThisKind",
+        "src/TradeAgent.Core/OlderHome.cs: HomeKind.Real",
+        "src/TradeAgent.Core/OlderHome.cs: HomeMark.ImmutableUri",
+        "src/TradeAgent.Core/OlderHome.cs: HomeMark.Read",
+        "src/TradeAgent.Core/OlderHome.cs: HomeMark.Refusal",
+        "src/TradeAgent.Core/Paths.cs: ProvingGround.HomeRefusal",
+        "src/TradeAgent.Core/Paths.cs: ProvingGround.ThisProcess",
+        "src/TradeAgent.Core/Strategy/StrategyParser.cs: HomeKind",
+        "src/TradeAgent.Core/Strategy/StrategyParser.cs: ProvingGround.ThisKind"
     ];
 
     /// <summary>
-    /// (g) NO EVIDENCE PATH NAMES THE PROVING NAMESPACE (SIM-001 by type): beyond the reader's allowlisted kind check, no
-    /// file that judges, records or serves evidence names a type of <c>TradeAgent.Core.Proving</c> — every type there, as
-    /// the assembly lists them, so one added later is covered — and so none can read a synthetic market, a truth manifest or
-    /// a proving score. The <c>OrgLedgerTests</c> pattern: the source, scanned.
+    /// What <paramref name="code"/> (comments stripped, strings kept) names of the proving ground: a type of <paramref name="types"/> and its
+    /// member, the namespace, or its store by the words a raw query would use, <c>proving.db</c> and the <c>proving_</c> tables.
+    /// </summary>
+    static IEnumerable<string> ProvingNames(string rel, string code, string[] types)
+    {
+        var named = new Regex(@"(?<![\w.])(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
+        foreach (Match m in named.Matches(code))
+            yield return $"{rel}: {m.Groups[1].Value}{(m.Groups[2].Success && char.IsUpper(m.Groups[2].Value[0]) ? "." + m.Groups[2].Value : "")}";
+        if (Regex.IsMatch(code, @"using\s+(static\s+)?TradeAgent\.Core\.Proving\s*;")) yield return $"{rel}: using TradeAgent.Core.Proving";
+        foreach (Match m in Regex.Matches(code, @"proving(?:\.db|_\w*)", RegexOptions.IgnoreCase)) yield return $"{rel}: the words {m.Value}";
+    }
+
+    static string[] ProvingTypes() =>
+        [.. typeof(ProvingGround).Assembly.GetTypes()
+            .Where(t => t.Namespace == typeof(ProvingGround).Namespace && !t.IsNested && !t.Name.StartsWith('<'))
+            .Select(t => t.Name.Split('`')[0]).Distinct().Order(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// (g) NO EVIDENCE PATH NAMES THE PROVING NAMESPACE (SIM-001 by type, and by the words): beyond <see cref="Allowed"/>, no file in <c>src/</c>
+    /// outside the proving ground's own names a type of <c>TradeAgent.Core.Proving</c> — every type there, as the assembly lists them, so one
+    /// added later is covered — nor <c>proving.db</c> or a <c>proving_</c> table in a query, so none can read a synthetic market, a truth manifest
+    /// or a proving score, by type or by raw SQL. The <c>OrgLedgerTests</c> pattern: the source, scanned.
     /// </summary>
     [Fact]
     public void No_evidence_path_names_the_proving_namespace()
     {
-        var types = typeof(ProvingGround).Assembly.GetTypes()
-            .Where(t => t.Namespace == typeof(ProvingGround).Namespace && !t.IsNested && !t.Name.StartsWith('<'))
-            .Select(t => t.Name.Split('`')[0]).Distinct().Order(StringComparer.Ordinal).ToArray();
+        var types = ProvingTypes();
         Assert.Contains("SyntheticMarket", types);
         Assert.Contains("ProvingSources", types);
+        Assert.Contains("ProvingStore", types);
         log.WriteLine("the proving namespace: " + string.Join(", ", types));
 
-        var named = new Regex(@"(?<![\w.])(?:TradeAgent\.Core\.)?(?:Proving\.)?(" + string.Join("|", types) + @")\b(?:\.(\w+))?");
         var root = RepoRoot();
+        var files = EvidencePath(root).ToList();
+        foreach (var file in new[]
+                 {
+                     "src/TradeAgent.Core/Db/OrgStore.Scorecards.cs", "src/TradeAgent.Core/Db/AllocationStore.cs", "src/TradeAgent.Core/Db/DeploymentStore.cs",
+                     "src/TradeAgent.Gateway/GatewayPipeServer.cs", "src/TradeAgent.App/OversightView.cs", "src/TradeAgent.Core/Strategy/Referee.cs"
+                 })
+            Assert.Contains(file, files);
+        Assert.DoesNotContain("src/TradeAgent.Core/Proving/ProvingStore.cs", files);
+
         var found = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var rel in EvidencePath)
-        {
-            var text = File.ReadAllText(Path.Combine(root, rel));
-            foreach (Match m in named.Matches(text))
-                found.Add($"{rel}: {m.Groups[1].Value}{(m.Groups[2].Success && char.IsUpper(m.Groups[2].Value[0]) ? "." + m.Groups[2].Value : "")}");
-            if (Regex.IsMatch(text, @"using\s+(static\s+)?TradeAgent\.Core\.Proving\s*;")) found.Add($"{rel}: using TradeAgent.Core.Proving");
-        }
+        foreach (var rel in files)
+            found.UnionWith(ProvingNames(rel, InvariantRegistryTests.Strip(File.ReadAllText(Path.Combine(root, rel)), keepStrings: true), types));
 
         foreach (var f in found) log.WriteLine(f);
         Assert.Equal(Allowed.Order(StringComparer.Ordinal).ToArray(), found.ToArray());
+    }
+
+    /// <summary>THE SCAN ABOVE SEES WHAT IT IS THERE TO SEE: a store read by type, a query by the table's words, the file by its name, a namespace import.</summary>
+    [Fact]
+    public void The_scan_reads_a_proving_reader_by_type_or_by_raw_sql()
+    {
+        var types = ProvingTypes();
+        string[] Names(string code) => [.. ProvingNames("x.cs", code, types)];
+
+        Assert.Equal(["x.cs: ProvingStore"], Names("var s = new ProvingStore(path);"));
+        Assert.Equal(["x.cs: ProvingScorer.Score"], Names("return TradeAgent.Core.Proving.ProvingScorer.Score(run);"));
+        Assert.Equal(["x.cs: the words proving_score"], Names("""var rows = Read("SELECT * FROM proving_score");"""));
+        Assert.Equal(["x.cs: the words PROVING_RUN"], Names("""var rows = Read("select id from PROVING_RUN");"""));
+        Assert.Equal(["x.cs: the words proving.db"], Names("""var f = Path.Combine(home, "proving.db");"""));
+        Assert.Equal(["x.cs: using TradeAgent.Core.Proving"], Names("using TradeAgent.Core.Proving;"));
+        Assert.Empty(Names("var proving = false; Referee.Judge(version);"));
     }
 
     static string RepoRoot()

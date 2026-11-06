@@ -631,11 +631,9 @@ public class BudgetReservationTests : IDisposable
     /// computer cannot hold. Windows only: the job is refused through <see cref="ProcessContainment.Faults"/>, scoped to
     /// this test's own flow.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("the job is refused through a fault seam only Windows has", "windows")]
     public async Task A_job_windows_will_not_make_is_refused_before_the_ledger_and_keeps_its_wake()
     {
-        if (!OperatingSystem.IsWindows()) return;
-
         var now = DateTimeOffset.Now;
         var events = new MissionEventStore(_db);
         events.Raise("fill:job", MissionEventKind.Fill, now, role: CouncilRoles.Operations);
