@@ -101,6 +101,46 @@ public class LaunchEvidenceTests
         Assert.Null(LaunchEvidence.VendorSaid(["  "]));
     }
 
+    /// <summary>
+    /// F-C1 (R29): THE COMMON SHAPES A VENDOR ECHOES. A key name in JSON ends in a quote, a name carries a prefix, and a scheme other than
+    /// Bearer stands in an Authorization header. Each value here is fake, and each input is the shape R29 ran; none of the value may survive.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"api_key":"Zq81mP4xLw0"}""", "Zq81mP4xLw0")]
+    [InlineData("""{"password": "two words here"}""", "two words here")]
+    [InlineData("""{\"api_key\":\"Zq81mP4xLw0\"}""", "Zq81mP4xLw0")]
+    [InlineData("access_token=fakeAccess1", "fakeAccess1")]
+    [InlineData("client_secret=fakeClient2", "fakeClient2")]
+    [InlineData("sessionToken=fakeSession3", "fakeSession3")]
+    [InlineData("pwd=fakePwd4", "fakePwd4")]
+    [InlineData("the key sk_live_fake5678 was refused", "sk_live_fake5678")]
+    [InlineData("the key rk_test_fake9012 was refused", "rk_test_fake9012")]
+    [InlineData("Authorization: Basic QUJDREVGR0g", "QUJDREVGR0g")]
+    [InlineData("Authorization: basic abcdefgh", "abcdefgh")]
+    [InlineData("Authorization: Token fakeScheme6", "fakeScheme6")]
+    [InlineData("sent Basic QUJDREVGR0g= and was refused", "QUJDREVGR0g=")]
+    public void A_credential_in_a_common_shape_is_withheld(string line, string value)
+    {
+        var said = LaunchEvidence.VendorSaid([line])!;
+        Assert.DoesNotContain(value, said, StringComparison.Ordinal);
+        Assert.Contains(LaunchEvidence.Withheld, said, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AND THE VENDOR'S DIAGNOSIS STAYS: a row that hid every word near "key" or "basic" would hide why a launch failed. These name a credential
+    /// or a plan and hold no value of one.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"error":{"code":"invalid_api_key","type":"invalid_request_error"}}""")]
+    [InlineData("""{"code":"invalid_api_key"}""")]
+    [InlineData("basic authentication failed")]
+    [InlineData("token expired")]
+    [InlineData("input_tokens=1234 output_tokens=56")]
+    [InlineData("key_id: 42")]
+    [InlineData("API key is invalid")]
+    public void The_vendors_diagnosis_is_kept(string line) =>
+        Assert.Equal(line, LaunchEvidence.VendorSaid([line]));
+
     /// <summary>A seat whose verified surface offered these tools, as the broker seat's dry run captures them.</summary>
     sealed class Offering(IReadOnlyList<string> offered) : IAgentConversation, ISeatLaunch
     {
