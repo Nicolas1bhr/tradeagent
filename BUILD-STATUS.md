@@ -12215,3 +12215,9 @@ Cards: the org seat's GUIDE.md is still the legacy pair's procedures; the shared
 **Found on the way:** (1) U-org-digest landed without CI and its `--since` line failed the workflow's shellcheck, turning package-linux red on main and every branch on it; fixed with an explicit `if`, proved by CI's 0.9.0, since this Mac's 0.11.0 does not flag the old line. (2) CellLinuxTests' prerequisite read a neighbour's environment right after Process.Start, which returns before the new image publishes it: red on 2 of 3 ubuntu runs today, nothing to do with the cell. The neighbour now says when it runs, with no wait, retry or timeout; what the test proves is unchanged.
 **CI:** 42261141596 on all three platforms. **Reviews:** no Codex review; the contract requires none for this unit.
 **NOT VERIFIED:** the handshake on this Mac (a Linux-only test); CI is the proof.
+
+### U-probe-race-fix — landed 2026-11-06 (tip aa482a0f + this entry)
+**What now holds:** the surface-probe row no longer fails on macOS when the probe's teardown cuts off its own POST (macOS main run 41326182053, 6 of 25 under load; race named, no retry added). Test-only.
+**Test changed openly:** `A_fallback_warning_printed_before_a_request_sent_just_before_the_deadline_still_r…` no longer asserts the POST's status: the seam ends the deadline before the mock answers, so that status was the race itself. The row's evidence stays the probe's own verdict (the control run returns the request's tools), and a request that never lands now fails on the readiness deadline instead of hanging.
+**CI:** 41351524029 success at 14bc5399; rebased over docs and tools only, Release 0/0, the class, OrganisationLoopTests and the UI tests green locally on 66bb411e.
+**NOT VERIFIED:** the repeat-under-load count after the rebase. **Cards:** none.
