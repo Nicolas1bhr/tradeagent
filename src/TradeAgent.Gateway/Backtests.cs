@@ -231,6 +231,15 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             if (_campaigns.TrialRefusal(charge.Campaign.Id, program.StrategyId, kind, charge.Through) is { } spent)
                 throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
 
+        // A WINDOW THAT CANNOT FIT THE RUN'S CAP IS REFUSED HERE, BEFORE ANY EVALUATION STARTS, AND CHARGES NOTHING (U-backtest-cap): it used to
+        // run to the cap, fault, and spend a trial on figures over a period nobody chose. Decided from the request's own window and the
+        // bounds `data-list` names, never from the bars, so a refusal teaches nothing a caller did not already hold (`Backtest.WindowRefusal`).
+        // After the budget, so a caller whose budget is gone hears that and not how to reshape a run it cannot have. A window its own
+        // dataset's holdout refuses is left to that refusal, in `Backtest.Over`: the repair there is the first thing such a request needs.
+        if (set is not null && Holdout.Refusal(set, BarAudience.Pipe(role), ask.From, ask.To) is null
+            && Backtest.WindowRefusal(program, set, ask.From, ask.To) is { } tooLong)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, tooLong);
+
         if (!_running.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"a backtest for {CouncilRoles.Title(role)} is already running. One at a time per role: "

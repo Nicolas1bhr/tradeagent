@@ -367,10 +367,13 @@ public static class Backtest
     /// <para>Every evaluated bar puts a line in the trace, and the trace is what every figure is computed
     /// from, so a run holds one event per evaluated bar in memory while it goes. 200,000 one-minute bars
     /// is about 139 days and tens of megabytes of trace, which is a bound a low-spec laptop can carry; a
-    /// full twelve months of a minute program is four windows of a quarter each, and the halt's reason
-    /// says so. A program on hourly bars evaluates 8,760 of them in a year, so a year is one run: the
-    /// minutes between its closes are stepped for fills and protection and put no line in the trace
-    /// unless something filled on them.</para>
+    /// full twelve months of a minute program is four windows of a quarter each. A program on hourly bars
+    /// evaluates 8,760 of them in a year, so a year is one run: the minutes between its closes are stepped
+    /// for fills and protection and put no line in the trace unless something filled on them.</para>
+    ///
+    /// <para><b>A window that cannot fit is refused before it starts</b> (<see cref="WindowRefusal"/>,
+    /// <c>U-backtest-cap</c>), with nothing run and no trial charged, so the halt below is a backstop no
+    /// `backtest` request reaches: see <see cref="MostBarsIn"/>.</para>
     ///
     /// <para>It HALTS rather than truncating, exactly as `DatasetReader`'s own cap REFUSES rather than
     /// truncating: a result quietly computed over the first part of a window is a result about a period
@@ -1030,9 +1033,71 @@ public static class Backtest
         ArgumentNullException.ThrowIfNull(set);
 
         var grid = BarGrid.For(program);
-        var firstMinute = from is { } f && (set.FirstBar is not { } fb || f >= fb) ? f : set.FirstBar ?? from;
-        var lastMinute = to is { } t && (set.LastBar is not { } lb || t <= lb) ? t : set.LastBar ?? to;
+        var (firstMinute, lastMinute) = MinutesOf(set, from, to);
         return new RunCloses(grid, firstMinute, lastMinute is { } m ? grid.EndOf(grid.StartOf(m)) : null);
+    }
+
+    /// <summary>The first and last minutes the window can hold of the dataset: the window, inside the bounds <c>data-list</c> names.</summary>
+    static (DateTimeOffset? First, DateTimeOffset? Last) MinutesOf(Db.DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to) => (
+        from is { } f && (set.FirstBar is not { } fb || f >= fb) ? f : set.FirstBar ?? from,
+        to is { } t && (set.LastBar is not { } lb || t <= lb) ? t : set.LastBar ?? to);
+
+    /// <summary>
+    /// THE MOST DECLARED BARS A RUN CAN EVALUATE BETWEEN TWO MINUTES, BOTH INCLUSIVE: every bar of <paramref name="grid"/> either touches,
+    /// partial ones included. It is the count on whole data and an upper bound on any other, because a run evaluates at most one bar per
+    /// bar of the grid and a gap only removes bars. On a daily bar cut in a zone it rounds a daylight change up, so it stays a bound.
+    ///
+    /// <para><b>So a run that <see cref="WindowRefusal"/> let start cannot reach the cap.</b> The cap halts when a new bar opens with
+    /// <see cref="MaxTracedBars"/> already decided, which is more bars than this count allows, and every minute a run reads is inside
+    /// the window this count was taken over, because <see cref="Data.BarFeed"/> streams inside the window and the file is the one the
+    /// ledger's first and last bar describe. What remains of the halt is a defence against a ledger row that disagrees with its own file,
+    /// and no position can write one: nothing in a request reaches it, so it cannot be reached on purpose.</para>
+    /// </summary>
+    internal static long MostBarsIn(BarGrid grid, DateTimeOffset firstMinute, DateTimeOffset lastMinute)
+    {
+        ArgumentNullException.ThrowIfNull(grid);
+        if (lastMinute < firstMinute) return 0;
+
+        var span = grid.EndOf(grid.StartOf(lastMinute)) - grid.StartOf(firstMinute);
+        return (span.Ticks + grid.Length.Ticks - 1) / grid.Length.Ticks;
+    }
+
+    /// <summary>
+    /// WHY A RESEARCH RUN OVER THIS WINDOW CANNOT FIT <see cref="MaxTracedBars"/>, in words that say what to do, or null because it can.
+    /// <c>Backtests.Run</c> asks it after the budget and before the run, and it refuses with nothing run and no trial charged: nothing was
+    /// computed, so nothing was learned, so there is nothing for a trial to count (<c>U-backtest-cap</c>).
+    ///
+    /// <para><b>It is not a free probe, because nothing in it comes from the bars.</b> Its only inputs are the window asked for, the bar
+    /// the program declares and the dataset's first and last bar, the two bounds <c>data-list</c> already names to every caller. It reads
+    /// neither the file nor the bar count nor the gaps, so a dataset with holes in it answers exactly as a whole one does, and the same
+    /// request gets the same sentence whatever the data holds. A sparse window it refuses would have fitted: that is the price, and the
+    /// caller pays it by asking for a shorter window, which costs nothing.</para>
+    ///
+    /// <para><b>A dataset that holds no bars has no window to measure</b>, and a run of one is <see cref="Over"/>'s to answer.</para>
+    /// </summary>
+    public static string? WindowRefusal(StrategyProgram program, Db.DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(set);
+
+        if (set.FirstBar is null || set.LastBar is null) return null;
+        if (MinutesOf(set, from, to) is not ({ } first, { } last)) return null;
+
+        var grid = BarGrid.For(program);
+        var bars = MostBarsIn(grid, first, last);
+        if (bars <= MaxTracedBars) return null;
+
+        // A START AT WHICH THIS END FITS, on a whole UTC day so it can be typed as one, and the first coarser bar at which the whole window does.
+        var earliest = (grid.EndOf(grid.StartOf(last)) - grid.Length * MaxTracedBars).UtcDateTime.Date.AddDays(1);
+        var coarser = StrategyBars.Allowed
+            .Where(bar => bar > grid.Length && MostBarsIn(BarGrid.Uniform(bar), first, last) <= MaxTracedBars)
+            .Select(bar => (TimeSpan?)bar).FirstOrDefault();
+
+        return $"this window can hold {bars} bars of {grid.Spelled}, from {first:u} to {last:u}, and one run evaluates at most "
+            + $"{MaxTracedBars} (about {(grid.Length * MaxTracedBars).Days} days of {grid.Spelled} bars). That is counted from the window "
+            + $"and the bar alone, whatever the data holds inside it. Ask for a later start: with this end, '--from {earliest:yyyy-MM-dd}' or later"
+            + (coarser is { } bar ? $", or declare 'bars {StrategyBars.Spelled(bar)}', a new version, on which this whole window fits. " : ". ")
+            + "Each window you do run is its own run and its own trial, so choose the one you mean. Nothing was run and no trial was charged.";
     }
 
     /// <summary>
