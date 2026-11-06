@@ -224,6 +224,9 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
   open mandate and its own requested wakes, never an app timer or heartbeat. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
   never a heartbeat.
+  **The one exception (R30 D21):** the active chief, while no work is moving and nothing is chartered or it asked for no wake, has that one wake at its level's floor in force
+  (never under the 4 h shipped) instead of its ceiling, counted from its last turn, so a chief that does nothing costs at most 6 turns a day; the first open mandate someone else
+  owes puts the ceiling back.
 - **Code triages before a paid turn.** A delivery's checks run first, on its sealed manifest. One that fails them and names no deviation goes back
   to a fresh executor attempt under the head's own retry policy, remembered on the mandate (§ 2.2), without waking the head — code applies the head's
   policy; it does not judge. One that names a deviation or an off-path finding always reaches the head. The head wakes on a pass, an escalation, a
