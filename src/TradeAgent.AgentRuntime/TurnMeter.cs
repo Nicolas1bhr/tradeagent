@@ -1365,7 +1365,9 @@ public sealed class TurnMeter
     /// </summary>
     public TurnReservation ReservationFor(string? role, string billingClass)
     {
-        try { return ReservationOf(_seat(role), billingClass, role is null ? null : Declared(role)); }
+        // A LAUNCH NOBODY NAMED IS THE CHAIR'S: its history is the chair's seat class, read through its Operations role. With no class at
+        // all it would read no measured turn and say what no launch is held to.
+        try { return ReservationOf(_seat(role), billingClass, Declared(role ?? CouncilRoles.Operations)); }
         catch (Exception) { return TurnReservation.Unpriced("the reservation could not be priced"); }
     }
 

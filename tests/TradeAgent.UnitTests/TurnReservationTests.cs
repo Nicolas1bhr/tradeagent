@@ -159,6 +159,23 @@ public class TurnReservationTests : IDisposable
         Assert.Equal(Bound, meter.TodayFor(CouncilRoles.Research).NextTurnReservation);
     }
 
+    /// <summary>
+    /// THE DAY'S PLAN READING READS THE CHAIR'S OWN MEASURED TURNS, what a plan launch of the chair is held to: five cheap turns bring both to one
+    /// typical turn. RED before: with no seat class it read no history and said 0.432 while the launch reserved 0.216, so a plan limit of
+    /// 0.30 said no turn could start when one could.
+    /// </summary>
+    [Fact]
+    public void The_days_plan_reading_and_the_chairs_plan_launch_read_the_same_history()
+    {
+        var db = NewDb();
+        for (var i = 0; i < 5; i++) Measured(db, 10_000, 100);
+        var meter = Meter(db, plan: 0.30m);
+        Assert.Equal((Typical, false), (meter.Today.PlanReading!.NextTurnReservation, meter.Today.PlanReading.CapCannotFundATurn));
+        var admission = Launch(meter, CouncilRoles.Operations, BillingClasses.Plan);
+        Assert.True(admission.Admitted, admission.Refusal);
+        Assert.Equal(Typical, new AiAttemptStore(db).Get(admission.Id!)!.ReservedCost);
+    }
+
     // ---- guard 2: a paid API key's turn keeps the whole reservation, the day-total gate first ------------------------------------
 
     /// <summary>
