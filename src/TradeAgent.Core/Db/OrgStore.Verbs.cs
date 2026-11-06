@@ -255,16 +255,22 @@ public sealed partial class OrgStore
     const string ContentMark = "content=";
 
     /// <summary>
-    /// WHAT MAKES TWO CHARTERS ONE ACT: the unit asked for — its kind, its shares — and the reason given. Options, citations, forecasts and
-    /// a collapse date are left out: a model repeating a call it is unsure of may date them afresh, and a second unit with the same reason
-    /// is said by giving a different one. A hash, because the detail is the app's composed line and the rationale is the author's words.
+    /// WHAT MAKES TWO CHARTERS ONE ACT: everything the act says but its dates — the kind, the shares, the reason, the options, the work cited,
+    /// each forecast's terms, and whether it is a bounded experiment. A forecast's date and a collapse date are left out, because a model
+    /// repeating a call it is unsure of computes them afresh from now. A fraction counts by value, so 0.20 is 0.2. A hash, because the
+    /// detail is the app's composed line and the rationale is the author's words.
     /// </summary>
     static string CharterContent(CharterRequest r) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Write(new
         {
-            r.Kind, Share = Sql.D(r.AiShare), Trials = r.TrialShare is { } t ? Sql.D(t) : null, Verdicts = r.VerdictShare is { } v ? Sql.D(v) : null,
-            r.Rationale
+            r.Kind, Share = ByValue(r.AiShare), Trials = ByValue(r.TrialShare), Verdicts = ByValue(r.VerdictShare), r.Rationale, r.Options, r.Refs,
+            Experiment = r.CollapseBy is not null,
+            Forecasts = r.Forecasts.Select(f => new { f.Predicate, f.Subject, f.Target, Probability = ByValue(f.Probability) }).ToList()
         }))))[..16].ToLowerInvariant();
+
+    /// <summary>A fraction as one spelling of its value, whatever scale the caller typed it with.</summary>
+    static string? ByValue(decimal? value) =>
+        value?.ToString("0.############################", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// THE CHARTER <paramref name="r"/> REPEATS, as what it wrote, or null: the caller's own under the same parent, of the same content

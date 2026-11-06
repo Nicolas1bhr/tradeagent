@@ -4872,8 +4872,9 @@ public sealed class MissionLoop
                         ? raw[..Math.Min(raw.Length, 500)]
                         : "the turn ended without a reply");
                 // WHAT A FAILED TURN WAS TOLD IS TOLD AGAIN ONCE, as a lost turn's is (U-wake-fairness, R28 R1): nothing else brings back
-                // a hire's first wake, or a note to a position with no clock.
-                else if (MissionEventStore.ToldKinds.Contains(e.Kind) && !e.Id.EndsWith(AfterLost, StringComparison.Ordinal))
+                // a hire's first wake, a note to a position with no clock, or a delivery waiting on its decider.
+                else if ((MissionEventStore.ToldKinds.Contains(e.Kind) || MissionEventStore.JudgmentKinds.Contains(e.Kind))
+                         && !e.Id.EndsWith(AfterLost, StringComparison.Ordinal))
                     events.Raise(e.Id + AfterLost, e.Kind, _now(), e.Payload, e.Role);
             }
         }

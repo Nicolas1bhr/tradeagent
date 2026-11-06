@@ -109,7 +109,7 @@ public partial class OrgStructureTests
     // ---- item 3: org-charter ----------------------------------------------------------------------------------------
 
     /// <summary>
-    /// (R3) THE SAME CHARTER AGAIN IS THE SAME ACT (<c>U-wake-fairness</c>, R28 R3). Repeated by a model unsure it went in, under a fresh launch and with its
+    /// (R3) THE SAME CHARTER AGAIN IS THE SAME ACT (<c>U-wake-fairness</c>, R28 R3). Repeated by a model unsure it went in, under a fresh launch, its share typed 0.20 and its
     /// forecast dated afresh, it answers the unit it made and writes nothing, so a week's two structural changes are not spent by one: a different
     /// rationale, and then a different share, are new acts, and past the throttle a repeat is still answered, not refused. A unit closed since is
     /// over, and chartering it again is a new act.
@@ -127,7 +127,7 @@ public partial class OrgStructureTests
         Assert.False(first.Repeated);
 
         var before = Written(db);
-        var again = org.Charter(Ask(refs: [run], forecasts: [Admissible(Now.AddDays(46))]) with { Attempt = "turn-test-2" }, Metered, Now.AddMinutes(5));
+        var again = org.Charter(Ask(share: 0.20m, refs: [run], forecasts: [Admissible(Now.AddDays(46))]) with { Attempt = "turn-test-2" }, Metered, Now.AddMinutes(5));
         Assert.True(again.Repeated);
         Assert.Equal((first.Unit.Id, first.Decision.Id, first.EventId), (again.Unit.Id, again.Decision.Id, again.EventId));
         Assert.Equal(first.Forecasts.Select(f => f.Id), again.Forecasts.Select(f => f.Id));
@@ -148,6 +148,24 @@ public partial class OrgStructureTests
         Assert.False(anew.Repeated);
         Exec(db, "UPDATE org_unit SET status='closed' WHERE id=$u", ("$u", anew.Unit.Id));
         Assert.False(org.Charter(Ask(refs: [run]), Metered, week.AddMinutes(1)).Repeated);
+    }
+
+    /// <summary>
+    /// (R3b) ONLY DATES ARE LEFT OUT OF THE SAME ACT (the Codex review): a charter with other forecast terms is its own act, never one quietly dropped as a
+    /// repeat of the first.
+    /// </summary>
+    [Fact]
+    public void A_charter_with_other_forecast_terms_is_a_new_act()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var run = CurrentRun(db);
+
+        var first = org.Charter(Ask(refs: [run]), Metered, Now);
+        var other = org.Charter(Ask(refs: [run], forecasts: [Admissible() with { Probability = Admissible().Probability + 0.1m }]), Metered, Now.AddMinutes(1));
+
+        Assert.False(other.Repeated);
+        Assert.NotEqual(first.Unit.Id, other.Unit.Id);
     }
 
     /// <summary>
