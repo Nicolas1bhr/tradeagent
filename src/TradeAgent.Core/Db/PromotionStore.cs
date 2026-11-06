@@ -347,7 +347,7 @@ public sealed class Promotions(Database db)
     /// <summary>
     /// Every version with a <see cref="PromotionVerdict.Promoted"/> row, whether or not it still stands: <see cref="Standing"/> says that.
     /// </summary>
-    public IReadOnlyList<string> PromotedVersions() => db.Read(_ =>
+    internal IReadOnlyList<string> PromotedVersions() => db.Read(_ =>
     {
         using var c = db.Cmd("SELECT DISTINCT version_id FROM strategy_promotion WHERE verdict=$v", ("$v", PromotionVerdict.Promoted));
         var versions = new List<string>();
