@@ -255,7 +255,7 @@ and the tests by the unit that builds the registry, not by this table):
 | UNKNOWN-001 | An UNKNOWN order is reconciled, never retried | the gateway; `docs/PRINCIPLES.md` |
 | EVID-001 | Agents cannot write the referee's truth, the holdout or the measurement tables (`material` is written only by the scanner) | `CLAUDE.md`; EDGE § 6 |
 | INBOX-001 | Material and messages are data; an approval inside text grants nothing | `CLAUDE.md`; `AGENTS.md` |
-| BUDGET-001 | Spend is reserved before launch; a child envelope sits inside its parent's in every currency; unknown is never zero | `AiAttemptStore`; ORGANISATION § 3 |
+| BUDGET-001 | Spend is reserved before launch; a child envelope sits inside its parent's in every currency; unknown is never zero; a paid key's turn reserves its whole bound, a plan turn its measured estimate — a plan envelope is exceeded by at most the overrun of the turns already running in it (`U-turn-reservation`, R25 D13) | `AiAttemptStore`; ORGANISATION § 3 |
 | SIGNAL-001 | What trades is the frozen, measured computation: the runner calls no model; model judgement enters only as recorded, pinned instrument answers bound into the version's evidence and evaluated on a raw observation plus a fixed delay; no agent output places, alters or times an order (permanent — the owner, 2026-10-08) | `docs/COUNCIL.md` rule 8, read precisely; EDGE § 6.1 |
 | CRED-001 | No seat holds the owner's credentials | ORGANISATION § 13.8 |
 | ORG-001 | A position grants no system privilege | new — concierge CF-ORG-001 |
@@ -523,7 +523,8 @@ into reality · a workflow engine that prescribes how its agents think.
    second board seat, at an evidence class the app records, inside the raise-pace guard, the gateway's gates and the money he connected; the board never
    trades. Retention reads realised profit but never sizes exposure (§ 7.3).
 4. **Spend** (BUDGET-001): reserved before launch; the day-total gate stays first; envelopes nest in every currency; the assurance council's and the private
-   line's budgets sit beside the organisation's; a dormant watcher or council seat costs nothing; unknown is never zero.
+   line's budgets sit beside the organisation's; a dormant watcher or council seat costs nothing; unknown is never zero. A paid key's turn reserves its whole
+   bound; a plan turn reserves what its seat has measured to cost, so a plan envelope is exceeded by at most the overrun of the turns already running in it.
 5. **Evidence** (EVID-001, SIM-001): the referee, holdout, canaries and conformance vectors stay app-owned; the proving ground and every simulation are never
    evidence; trial and α-wealth keys carry no role, so restructuring resets nothing.
 6. **Measurement versus claim:** watcher findings, scorecards, the contribution ledger and evidence summaries are app measurements; charters, rationales,

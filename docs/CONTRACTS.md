@@ -2247,6 +2247,22 @@ cache-write rate, so for them it is that one input rate. The allowance is
 `AiTurnAllowanceInputTokens` / `…OutputTokens`, two boxes on the Safety page, one press, zero reading
 as the shipped default (1,200,000 / 20,000).
 
+**That bound is what a key turn reserves; a plan turn reserves its measured estimate** (`U-turn-reservation`;
+R25 D13, decided by the orchestrator on the owner's behalf; `TurnMeter.ReservationOf`). The class is the one the
+admitted seat's verdict names, the row's own. `key` — real money — and `unknown` reserve the bound above, unchanged.
+`plan` reserves `min(bound, max(typical, 2 × p99))`: `p99` the nearest-rank 99th percentile of the seat class +
+runtime + model's last 20 measured turns (`AiAttemptStore.MeasuredTurns`: ENDED with token figures; LOST and
+no-usage rows are charges, not measurements), each re-priced from its tokens at today's rate — with 20 turns the
+dearest; `typical` = `CostCatalog.Reserve` over 200,000 in / 4,000 out (the first measured gpt-6-luna chief turn,
+133,513 / 1,290, rounded up); fewer than five measured turns reserve `2 × typical`. At gpt-6-luna list price a plan
+turn reserves 0.054 with no history and never less than 0.027, against a 0.160 bound; at the owner's 2/8, 0.864 /
+0.432 against 2.56. The turn is then charged what it measured; one that cost more is charged in full, and a unit past
+its envelope is refused in its own words (`Labels.UnitEnvelopeOverrun`) until midnight or a widened envelope — so
+**a plan envelope, and the plan's day-total, are exceeded by at most the overrun of the turns already running when
+they filled, one per position**. Every reading (the loop's look, the activation seam, a charter's seat check) prices
+the next turn by the same rule for the class the role's seat bills now (`TurnMeter.ClassOf`); the Costs page shows
+each position's reservation and its basis.
+
 **Admission is inside the transaction that writes the reservation.** `AiAttemptStore.Begin(attempt,
 consuming, admit)` reads the day's totals and the role's, compares
 `AiSpendToday.AdmitsAnotherTurn` — `spent + reserved + this turn ≤ cap`, globally AND for the role's

@@ -182,6 +182,14 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   words, never run unrecorded (`U-admission-fail-closed`). Inside it: the day-total gate first and unchanged; then, for the attempt's funding chain,
   every ancestor's subtree spent + unresolved reservations + this reservation ≤ that unit's envelope, read inside the transaction so two siblings
   cannot both take a parent's last room; then the mandate's own allocation. Unknown is never zero; a LOST attempt keeps its reservation.
+- **What a reservation is, per billing class** (`U-turn-reservation`; R25 D13, decided by the orchestrator on the owner's behalf): a turn
+  billed to a **paid API key** (real money) — and one whose payer nobody established — reserves the whole turn bound (`CostCatalog.Reserve`
+  over the seat's allowance), unchanged. A turn billed to the owner's **plan** (notional list-price dollars, no money moves) reserves what it
+  can plausibly cost: 2 × the 99th percentile of its seat class + runtime + model's last 20 measured turns, their tokens priced at today's
+  rate, never below one typical turn (200,000 in / 4,000 out), never above the bound; two typical turns before five are measured. A turn
+  that costs more is charged in full and its units refuse every launch until they are back inside their envelopes — **a plan envelope, and
+  the plan's day-total, are exceeded by at most the overrun of the turns already running when they filled (one per position)**; an
+  unmeasured plan turn (LOST, no usage) is charged its reservation, an estimate from measured turns, never zero.
 - **Currencies:** AI spend in two billing classes (plan capacity — a list-price equivalent the owner sets — apart from the real-money cap,
   `U-billing-classes`), trials, verdicts, paper slots, data, owner attention. V1 carries AI spend, trials and verdicts.
 - **Four quantities per currency:** an **allocation** (a mandate's earmark from its unit), a **reservation** (an attempt's or a broker call's hold),
@@ -191,7 +199,7 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   history and never re-parents a past charge.
 - **Two enforcement classes, never merged:** admission is hard (refused before launch); incurred cost is bounded only where a total-turn bound —
   helpers and the vendor's own subagents included — is demonstrated for that runtime; elsewhere the reservation is the bound, and an overrun is
-  recorded and charged, never hidden.
+  recorded and charged, never hidden — for a plan turn the reservation is an estimate, so its envelope is advisory by that overrun (above).
 - **Periods and units:** AI spend is counted per local day (the owner's daily cap) and per quota-pool window; trials and verdicts per campaign; a
   mandate's allocation over its life; `envelope_share` is a fraction of the parent's envelope in the same currency and period, never an amount.
 - When a currency binds, the app shows its shadow price: a manager weighs a price, never an argument (VISION § 7.2).
@@ -468,7 +476,7 @@ organisation figure names its seats' classes until every seat is hard (ORGANISAT
 | UNKNOWN-001 | the gateway's reconciliation, untouched; restart reconciliation keeps every uncertain external effect |
 | Capital | live authority, allocations and two presses unchanged; no verb, mandate or currency carries capital (the factory plan's Law 5) |
 | Pause, stop, flatten | unchanged and in-process; the organisation's circuit breaker is separate from the trading pause |
-| Spend (BUDGET-001) | one admission transaction, fail-closed; the day-total gate first; every ancestor of the funding chain inside it; LOST keeps its reservation; the perception budget, the audit line's and the watcher's caps beside the organisation's |
+| Spend (BUDGET-001) | one admission transaction, fail-closed; the day-total gate first; every ancestor of the funding chain inside it; LOST keeps its reservation; a key turn reserves the whole bound, a plan turn its measured estimate, so a plan envelope is exceeded by at most the overrun of the turns already running in it (`U-turn-reservation`); the perception budget, the audit line's and the watcher's caps beside the organisation's |
 | Evidence (EVID-001, SIM-001) | referee, holdout and ledgers app-owned; trial and verdict keys carry no role; forecasts never resolve on held figures; the proving ground's store read by no evidence path |
 | Inbox attestation (COUNCIL rule 7) | quiescence kept for unconfined writers; outputs sealed before a pass |
 | Measurement versus claim | objectives, rationales, reports and forecasts are claims; checks, resolutions, scores and costs are app records; a claim references a record, never copies it (R22) |
