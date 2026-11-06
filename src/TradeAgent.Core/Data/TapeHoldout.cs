@@ -34,13 +34,33 @@ public sealed record TapeHoldoutWindow(
         (until is not { } hi || hi > From) && (from is not { } lo || Until is not { } end || lo < end);
 
     /// <summary>The window in the words a refusal uses: the dataset, its cutoff and the tape's window.</summary>
-    public string Words => WordsOf("the tape is");
+    public string Words => WordsOf(OnlyPair is { } pair ? $"{pair}'s rows on the tape, and every row about no one pair, are" : "the tape is");
 
     /// <summary>
     /// The same window in the words a refusal of BARS uses (<c>U-bar-holdout</c>): the dataset, its cutoff, and every
-    /// pair's bars held back over the same market time.
+    /// pair's bars held back over the same market time — or, for a fresh holdout (<see cref="OnlyPair"/>), its one pair's.
     /// </summary>
-    public string BarWords => WordsOf("every pair's bars, from every dataset and the forward bars, are");
+    public string BarWords => WordsOf($"{(OnlyPair is { } pair ? $"{pair}'s" : "every pair's")} bars, from every dataset and the forward bars, are");
+
+    /// <summary>
+    /// THE ONE PAIR THIS WINDOW HOLDS (R30 D16), or null because it holds every pair. A dataset's window holds every pair over its market
+    /// time, and so does a fresh holdout whose pair cannot be read; a fresh holdout of a known pair holds that pair alone, because
+    /// campaigns and renewal are per pair. Correlated pairs still leak a little across it, and <c>docs/CONTRACTS.md</c> says so.
+    /// </summary>
+    public string? OnlyPair { get; init; }
+
+    /// <summary>Whether this window holds the bars of <paramref name="pair"/>: every pair's, unless it is a fresh holdout of another.</summary>
+    public bool HoldsBarsOf(string? pair) => OnlyPair is null || CampaignStore.SamePair(OnlyPair, pair);
+
+    /// <summary>
+    /// WHETHER THIS WINDOW HOLDS TAPE ROWS OF <paramref name="subject"/>. Refused by default, as the tape's rule is: a fresh holdout lets go
+    /// only of a subject that IS another pair, one of the symbols every row is recorded for (<see cref="TapeSourceCatalog.Universe"/>).
+    /// A read naming no subject reads its pair's rows too, and a subject that is no pair — a news item, a macro series, a vendor's own
+    /// coin name — says what that pair's months did as much as any other's, so both stay held.
+    /// </summary>
+    public bool HoldsTapeOf(string? subject) =>
+        OnlyPair is not { } pair || subject is null || string.Equals(subject, pair, StringComparison.Ordinal)
+        || !TapeSourceCatalog.Universe.Contains(subject, StringComparer.Ordinal);
 
     /// <summary>
     /// THE SPENT CAMPAIGN WHOSE FRESH HOLDOUT THIS IS (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>), or null for a
@@ -49,11 +69,15 @@ public sealed record TapeHoldoutWindow(
     /// </summary>
     public long? ForwardOf { get; init; }
 
-    /// <summary>The open-ended window a fresh holdout holds from its cutoff until its campaign opens.</summary>
+    /// <summary>The open-ended window a fresh holdout holds, on its own pair, from its cutoff until its campaign opens.</summary>
     public static TapeHoldoutWindow Forward(ForwardHoldout held)
     {
         ArgumentNullException.ThrowIfNull(held);
-        return new TapeHoldoutWindow(0, "every pair", "", "", held.Cutoff, null) { ForwardOf = held.SpentCampaignId };
+        return new TapeHoldoutWindow(0, held.Pair ?? "every pair", "", "", held.Cutoff, null)
+        {
+            ForwardOf = held.SpentCampaignId,
+            OnlyPair = held.Pair
+        };
     }
 
     string WordsOf(string held) => ForwardOf is { } spent
@@ -70,6 +94,9 @@ public sealed record TapeHoldoutWindow(
 /// WHO IS READING THE TAPE OR THE BARS, AND THE HOLDOUT WINDOWS THEY MAY NOT READ — one argument, required by every reader
 /// of tape rows that serves a payload (<c>U-tape-holdout</c>; the orchestrator's ruling of 2026-10-07) and by every reader
 /// of bars that may serve one on the agent-facing pipe (<c>U-bar-holdout</c>; seat A's decision of 2026-10-08).
+///
+/// <para><b>A fresh holdout is the one exception, and it holds one pair</b> (<see cref="TapeHoldoutWindow.OnlyPair"/>; R30 D16): what follows
+/// is a dataset's window. <see cref="CampaignRenewal"/> says why.</para>
 ///
 /// <para><b>The bars hold the same windows, over every subject.</b> A cutoff on one dataset withholds its own months, and
 /// <see cref="Holdout"/> still decides those, unchanged; but the same months reach a caller through another version of the
@@ -157,8 +184,9 @@ public sealed class TapeHoldout
     /// <summary>The windows this reader may not read, as the ledger holds them NOW — none for the referee's.</summary>
     /// <remarks>
     /// <b>And every fresh holdout still being collected</b> (<c>U-evidence-campaign</c>; <see cref="CampaignRenewal"/>), open-ended
-    /// from its cutoff — for every audience but the paper runner, which trades the present those minutes are. A paper run's figures
-    /// were never held back (<c>docs/CONTRACTS.md</c>, The holdout); holding its reads would end every paper run for a month.
+    /// from its cutoff and over its own pair (<see cref="TapeHoldoutWindow.OnlyPair"/>) — for every audience but the paper runner, which
+    /// trades the present those minutes are. A paper run's figures were never held back (<c>docs/CONTRACTS.md</c>, The holdout); holding
+    /// its reads would end every paper run for a month.
     /// </remarks>
     public IReadOnlyList<TapeHoldoutWindow> Windows() =>
         Audience.MayReadHoldout || _ledger is null
@@ -210,9 +238,15 @@ public sealed class TapeHoldout
     /// no bound) IS NOT SERVED, in the words the caller reads, or null when it is. Null only for the referee's reader, a
     /// ledger holding no window, or a window that reaches none.
     /// </summary>
-    public string? Refusal(DateTimeOffset? from, DateTimeOffset? to)
+    public string? Refusal(DateTimeOffset? from, DateTimeOffset? to) => Refusal(from, to, null);
+
+    /// <summary>
+    /// <see cref="Refusal(DateTimeOffset?, DateTimeOffset?)"/> for a read of only <paramref name="subjects"/>, or of every subject when
+    /// null: a fresh holdout of one pair does not reach a read of other pairs (R30 D16, <see cref="TapeHoldoutWindow.HoldsTapeOf"/>).
+    /// </summary>
+    public string? Refusal(DateTimeOffset? from, DateTimeOffset? to, IReadOnlyCollection<string>? subjects)
     {
-        var reached = Reached(from, to);
+        var reached = Reached(from, to, subjects);
         if (reached.Count == 0) return null;
 
         var asked = (from, to) switch
@@ -231,10 +265,13 @@ public sealed class TapeHoldout
     /// THE WINDOWS A READ OF SOURCE TIMES FROM <paramref name="from"/> TO <paramref name="to"/> (both inclusive, either null
     /// for no bound) REACHES, as the ledger holds them now — none for the referee's. The one rule
     /// <see cref="Refusal(DateTimeOffset?, DateTimeOffset?)"/> refuses by, and the windows a paper run is ended in the words
-    /// of (<c>Strategy.FeatureFeed.ForPaper</c>), so the two cannot disagree about what a read reaches.
+    /// of (<c>Strategy.FeatureFeed.ForPaper</c>), so the two cannot disagree about what a read reaches. <paramref name="subjects"/> names
+    /// what the read reads; null is every subject.
     /// </summary>
-    internal IReadOnlyList<TapeHoldoutWindow> Reached(DateTimeOffset? from, DateTimeOffset? to) =>
-        Audience.MayReadHoldout ? [] : [.. Windows().Where(w => w.ReachedBy(from, to))];
+    internal IReadOnlyList<TapeHoldoutWindow> Reached(DateTimeOffset? from, DateTimeOffset? to, IReadOnlyCollection<string>? subjects = null) =>
+        Audience.MayReadHoldout
+            ? []
+            : [.. Windows().Where(w => w.ReachedBy(from, to) && (subjects is null || subjects.Any(w.HoldsTapeOf)))];
 
     /// <summary>
     /// WHY AN AS-OF READ AT <paramref name="asOf"/> MAY NOT SERVE <paramref name="row"/>, or null when it may: refused
@@ -245,7 +282,7 @@ public sealed class TapeHoldout
         ArgumentNullException.ThrowIfNull(row);
         if (Audience.MayReadHoldout) return null;
 
-        var inside = Windows().Where(w => w.Holds(row.SourceTime)).ToList();
+        var inside = Windows().Where(w => w.Holds(row.SourceTime) && w.HoldsTapeOf(row.Subject)).ToList();
         if (inside.Count == 0) return null;
 
         return string.Join("; ", inside.Select(w => w.Words))
@@ -260,26 +297,26 @@ public sealed class TapeHoldout
     ///
     /// <para>The set's OWN cutoff is not asked here: <see cref="Holdout.Refusal"/> decides it, first and unchanged. Every
     /// OTHER dataset's window, of any pair, is asked over the read's market span — from <paramref name="from"/> to the close
-    /// of the bar opening at <paramref name="to"/>, one bar of the set's interval later. An absent bound reaches every
-    /// window on its side, and a set whose bar length this build cannot read spans with no end. Null only for the
-    /// referee's reader, a ledger holding no other window, or a span that reaches none.</para>
+    /// of the bar opening at <paramref name="to"/>, one bar of the set's interval later — and every fresh holdout of the set's own
+    /// pair (R30 D16). An absent bound reaches every window on its side, and a set whose bar length this build cannot read spans
+    /// with no end. Null only for the referee's reader, a ledger holding no other window, or a span that reaches none.</para>
     /// </summary>
     public string? Refusal(DatasetRecord set, DateTimeOffset? from, DateTimeOffset? to)
     {
         ArgumentNullException.ThrowIfNull(set);
-        return BarRefusal($"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version})", set.Id, set.HoldoutFrom, BarLength(set.Interval),
-            from, to);
+        return BarRefusal($"dataset {set.Id} ({set.Pair} {set.Interval} {set.Version})", set.Pair, set.Id, set.HoldoutFrom,
+            BarLength(set.Interval), from, to);
     }
 
     /// <summary>
     /// THE SAME RULE FOR THE FORWARD BARS OF <paramref name="symbol"/> — the minutes TradeAgent collected itself, which
-    /// belong to no dataset, so EVERY window is asked. A Download taken after the collector ran holds months the collector
-    /// already has: a forward bar does not post-date every freeze.
+    /// belong to no dataset, so every dataset's window is asked, and every fresh holdout of <paramref name="symbol"/>. A Download taken
+    /// after the collector ran holds months the collector already has: a forward bar does not post-date every freeze.
     /// </summary>
     public string? ForwardRefusal(string symbol, DateTimeOffset? from, DateTimeOffset? to) =>
-        BarRefusal($"the forward bars of {symbol}", null, null, ForwardBars.BarLength, from, to);
+        BarRefusal($"the forward bars of {symbol}", symbol, null, null, ForwardBars.BarLength, from, to);
 
-    string? BarRefusal(string read, long? own, DateTimeOffset? ownCutoff, TimeSpan? length, DateTimeOffset? from, DateTimeOffset? to)
+    string? BarRefusal(string read, string? pair, long? own, DateTimeOffset? ownCutoff, TimeSpan? length, DateTimeOffset? from, DateTimeOffset? to)
     {
         if (Audience.MayReadHoldout) return null;
 
@@ -291,7 +328,7 @@ public sealed class TapeHoldout
         // review's P1): a row read before a cutoff was set — a fresh holdout's campaign opening over it between the caller's read and
         // this one — asked its own cutoff as none, so its window is asked here like any other's.
         var reached = Windows().Where(w => !(w.DatasetId == own && ownCutoff is { } cut && cut.ToUniversalTime() == w.From)
-                                           && w.Overlaps(from, until)).ToList();
+                                           && w.HoldsBarsOf(pair) && w.Overlaps(from, until)).ToList();
         if (reached.Count == 0) return null;
 
         var asked = (from, to) switch
@@ -304,12 +341,15 @@ public sealed class TapeHoldout
         };
 
         return string.Join("; ", reached.Select(w => w.BarWords)) + $" — and {asked}, which reaches "
-            + (reached.Count == 1 ? "it. " : "them. ") + BarsWhy() + BarRepair(reached, length);
+            + (reached.Count == 1 ? "it. " : "them. ") + BarsWhy(reached) + BarRepair(reached, length);
     }
 
-    string BarsWhy() =>
+    string BarsWhy(IReadOnlyList<TapeHoldoutWindow> reached) =>
         "Bars over a holdout's months are the private evaluation evidence the research process never sees, whichever "
-        + "dataset, pair or source serves them: another version of the same months, a correlated pair and the minutes "
+        // A FRESH HOLDOUT OF ONE PAIR DOES NOT HOLD A CORRELATED PAIR (R30 D16), so a refusal by those alone does not say it does.
+        + (reached.All(w => w.OnlyPair is not null)
+            ? "dataset or source serves them: another version of the same months and the minutes "
+            : "dataset, pair or source serves them: another version of the same months, a correlated pair and the minutes ")
         + "TradeAgent collected itself all say what those months did. TradeAgent serves them to no caller on this channel — "
         + $"not to {Who}, not to either director, not to a connection that proved no role at all. This is REFUSED rather "
         + "than quietly cut short at the window, because an answer silently clipped is a different window from the one you "

@@ -287,7 +287,8 @@ public sealed class TapeReader
 
         // THE HOLDOUT, BEFORE THE FILE IS OPENED: the asked window of SOURCE time against every dataset's window, read
         // from the ledger now. Refused whole, never cut short at the window.
-        if (holdout.Refusal(query.From, query.To) is { } withheld) return new TapeWindow([], false, null, withheld);
+        if (holdout.Refusal(query.From, query.To, query.Subject is { } asked ? [asked] : null) is { } withheld)
+            return new TapeWindow([], false, null, withheld);
 
         using var c = Open();
         // DEFERRED: a plain BEGIN, which takes no write lock — the default is BEGIN IMMEDIATE, and a read-only

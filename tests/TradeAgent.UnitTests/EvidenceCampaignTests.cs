@@ -465,8 +465,9 @@ public class EvidenceCampaignTests
     /// EACH PAIR'S SPENT CAMPAIGN ARMS ITS OWN FRESH HOLDOUT, ONE WINDOW AT A TIME PER PAIR (<c>U-evidence-breadth</c>): a spent
     /// campaign of a second pair arms in the same pass as the first pair's — never waiting a month for the first pair's successor —
     /// at a cutoff after the first's, while a second campaign of the FIRST pair, spent by the judgement its pair already took, waits
-    /// for its pair's window. Every armed window still holds every pair's bars. RED on the base, where one window held them all
-    /// and the second pair's spent campaign was not armed.
+    /// for its pair's window. Each armed window holds its own pair's bars and no other pair's (changed openly by R30 D16: it read "every
+    /// armed window still holds every pair's bars"). RED on the base, where one window held them all and the second pair's spent
+    /// campaign was not armed.
     /// </summary>
     [Fact]
     public async Task Each_pairs_spent_campaign_arms_its_own_fresh_holdout_one_window_at_a_time_per_pair()
@@ -494,10 +495,11 @@ public class EvidenceCampaignTests
         Assert.Null(gw.Renewals.Of(k2.Id));
         Assert.Empty(gw.Renewals.Arm(Now.AddDays(1)));
 
-        // EVERY WINDOW STILL HOLDS EVERY PAIR: the first pair's fresh months are refused on the second pair's bars, and back.
+        // EACH WINDOW HOLDS ITS OWN PAIR (R30 D16): a pair's bars are refused from its own cutoff on, and served up to it.
         var pipe = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets);
-        Assert.NotNull(pipe.ForwardRefusal(second, armed[0].Cutoff.AddHours(1), armed[0].Cutoff.AddHours(2)));
-        Assert.NotNull(pipe.ForwardRefusal(pair, armed[1].Cutoff.AddHours(1), armed[1].Cutoff.AddHours(2)));
+        Assert.NotNull(pipe.ForwardRefusal(pair, armed[0].Cutoff.AddHours(1), armed[0].Cutoff.AddHours(2)));
+        Assert.NotNull(pipe.ForwardRefusal(second, armed[1].Cutoff.AddHours(1), armed[1].Cutoff.AddHours(2)));
+        Assert.Null(pipe.ForwardRefusal(second, armed[0].Cutoff.AddHours(1), armed[0].Cutoff.AddHours(2)));
     }
 
     /// <summary>
@@ -653,7 +655,7 @@ public class EvidenceCampaignTests
 
         var refused = gw.Campaigns.ChargeVerdict(k1.Id, Version(db, "version-late"), Now);
         Assert.False(refused.Ok);
-        Assert.Contains($"every bar from {armed.Cutoff:u} on", refused.Why, StringComparison.Ordinal);
+        Assert.Contains($"every bar of {pair} from {armed.Cutoff:u} on", refused.Why, StringComparison.Ordinal);
         Assert.Contains("at least 30 days", refused.Why, StringComparison.Ordinal);
     }
 

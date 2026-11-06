@@ -1141,7 +1141,7 @@ public sealed class OnboardingView
                     + $"strategy for it is judged over its months, and {_host.Gateway.Settings.CampaignVerdictBudget} judgements and "
                     + $"{_host.Gateway.Settings.CampaignTrialBudget} research runs count against each pair's own."),
                 Numbered(3, "Keep the test fresh by itself",
-                    "When a pair's are used up, TradeAgent holds back the market data that arrives next and opens that pair's next "
+                    "When a pair's are used up, TradeAgent holds back that pair's market data as it arrives and opens its next "
                     + $"test on it — at least {CampaignRenewal.MinimumFreshDays} days of it, which nothing has seen. A month is never "
                     + "judged twice on one pair. A test shorter than a year can give no conclusive verdict: a strategy it refuses for a "
                     + "loss can still be watched on paper, through the one path for verdicts that could not tell."))),

@@ -3308,8 +3308,11 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// (<c>U-evidence-breadth</c>), so every one is named.
     /// </summary>
     string FreshHoldoutNote() => string.Concat(gateway.Renewals.Holding().Select(held =>
-        $" A FRESH HOLDOUT IS BEING COLLECTED: campaign {held.SpentCampaignId} has spent its {held.Spent}, so every bar of every "
-        + $"pair, every forward bar and every tape row from {held.Cutoff:u} on is held back with no end — 'data-bars', 'backtest' "
+        $" A FRESH HOLDOUT IS BEING COLLECTED: campaign {held.SpentCampaignId} has spent its {held.Spent}, so "
+        + (held.Pair is { } pair
+            ? $"every bar and forward bar of {pair}, its tape rows and every tape row about no one pair"
+            : "every bar of every pair, every forward bar and every tape row")
+        + $" from {held.Cutoff:u} on is held back with no end — 'data-bars', 'backtest' "
         + "and 'data-tape' refuse any read reaching it — until the campaign after it opens over those months. "
         + CampaignRenewal.Waiting(held, null)));
 

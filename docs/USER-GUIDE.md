@@ -473,7 +473,13 @@ whichever download or pair it reads — a newer download of the same pair or ano
 budget is spent, the AI is told so in words naming the months. **A fresh download held back over months you already
 hold back shares their judgements:** the new holdout starts with the judgements already taken over those months
 counted as spent, and the card says which holdout took them — a second copy of the same months is not a second
-look at them. To give the AI fresh judgements, hold back OTHER months. **The kind of bars is fixed with the
+look at them. To give the AI fresh judgements, hold back OTHER months. **When a pair's test is used up,
+TradeAgent keeps it fresh by itself.** That happens when its judgements or research runs are gone, or when the
+fifty runs it keeps for trying new ideas are gone and nothing can be promoted to build on. From the next midnight
+it holds back that pair's market data as it arrives, and the market context that is about no one pair, and once
+at least thirty days of it are in a download it opens that pair's next test on it. The other pairs stay readable
+meanwhile. That has a small price: pairs that move together still say a little about the months being held. Paper
+runs carry on throughout, on every pair. **The kind of bars is fixed with the
 date:** once *Hold these bars back* or *These are fixture bars* has been pressed for a download, the other button
 at the same date is refused and changes nothing — real history called fixture bars would make every run over it
 free, and fixture bars called real would turn a judgement on them into evidence. To use the other kind, download a

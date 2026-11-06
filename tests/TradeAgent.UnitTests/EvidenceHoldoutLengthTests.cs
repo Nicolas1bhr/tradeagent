@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -339,5 +340,127 @@ public class EvidenceHoldoutLengthTests
         Assert.Contains($"{pair}: campaign {campaign.Id} has spent its exploration trials: it takes no further run of a version without a "
             + $"promoted parent, and nothing can be promoted under it, though 3 of its final judgements can still be asked for. The next {pair} "
             + $"campaign opens no earlier than {armed.Earliest:yyyy-MM-dd}.", prompt, StringComparison.Ordinal);
+    }
+
+    // ---- D16: a forward hold withholds only its own campaign's pair ----------------------------------------------------------------
+
+    /// <summary>The thirty-six months of history a dataset row of these tests covers, its last twelve held back.</summary>
+    static readonly DateTimeOffset First = new(2023, 10, 1, 0, 0, 0, TimeSpan.Zero), Last = new(2026, 9, 30, 23, 59, 0, TimeSpan.Zero),
+        HeldFrom = new(2025, 10, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>A dataset row the ledger recorded, over the bars named; no file is read here.</summary>
+    static DatasetRecord Recorded(Database db, string pair, DateTimeOffset first, DateTimeOffset last, string version = "v1")
+    {
+        var store = new DatasetStore(db);
+        var id = store.Record(new DatasetRecord(0, BinanceArchive.Source, pair, BinanceArchive.Interval, version, 36, 36, [],
+            Path.Combine(Paths.Data, $"not-read-here-{Guid.NewGuid():n}.csv"), "aa11", 1000, first, last, 0, [], false, 0, 0, 0, Now,
+            DatasetState.ACCEPTED, null, []));
+        return store.ById(id)!;
+    }
+
+    /// <summary>BTCUSDT's campaign spent on its exploration pot and its forward hold armed, on a gateway whose tape holds what the test appended.</summary>
+    static async Task<(TradingGateway Gw, Database Db, TapeStore Tape, ForwardHoldout Armed)> Held(string pair)
+    {
+        var (gw, _, db) = await TestEnv.Ready(Small);
+        var (done, campaign) = gw.SetHoldout(Recorded(db, pair, First, Last).Id, HeldFrom, EvaluationClass.Research);
+        Assert.True(done.Ok, done.Why);
+        FillThePot(db, campaign!, pair);
+        var armed = Assert.Single(gw.Renewals.Arm(Now));
+        var tape = new TapeStore(Path.Combine(TestEnv.Home, $"tape-{Guid.NewGuid():n}.db"));
+        gw.Tape = new TapeReader(tape.File);
+        return (gw, db, tape, armed);
+    }
+
+    static TapeFetch Fetch(string source, string series, DateTimeOffset at) => new()
+    {
+        Source = source,
+        Series = series,
+        Url = $"http://127.0.0.1:9/{source}/{series}",
+        RequestedAt = at.AddMilliseconds(-300),
+        ReceivedAt = at,
+        HttpStatus = 200
+    };
+
+    /// <summary>
+    /// D16: A FORWARD HOLD WITHHOLDS ONLY ITS OWN CAMPAIGN'S PAIR (R30 D16; R28 E4), by every door a pipe caller has. After BTCUSDT's campaign
+    /// is spent, BTCUSDT's forward bars, a fresher BTCUSDT download and its tape rows are refused from the cutoff on; ETHUSDT's are served,
+    /// by subject on the tape, and a tape wake about ETHUSDT still buys a turn. A read naming no subject, and a subject that is no pair,
+    /// stay refused, because they carry BTCUSDT's months too. The paper runner stays exempt.
+    /// </summary>
+    [Fact]
+    public async Task A_forward_hold_withholds_only_its_own_campaigns_pair()
+    {
+        const string held = "BTCUSDT", other = "ETHUSDT";
+        var (gw, db, tape, armed) = await Held(held);
+        using var owned = db;
+        await using var gateway = gw;
+        using var closing = tape;
+        Assert.Equal(held, armed.Pair);
+        var (from, to) = (armed.Cutoff.AddHours(1), armed.Cutoff.AddHours(2));
+        var pipe = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets);
+
+        // THE BARS: the minutes TradeAgent collected, and a fresher download of each pair with no cutoff of its own.
+        var refused = pipe.ForwardRefusal(held, from, to);
+        Assert.Contains($"{held}'s bars, from every dataset and the forward bars, are held back", refused, StringComparison.Ordinal);
+        Assert.DoesNotContain("every pair", refused, StringComparison.Ordinal);
+        Assert.DoesNotContain("a correlated pair", refused, StringComparison.Ordinal);
+        Assert.Null(pipe.ForwardRefusal(other, from, to));
+        Assert.NotNull(pipe.Refusal(Recorded(db, held, First, armed.Cutoff.AddDays(3), "v2"), from, to));
+        Assert.Null(pipe.Refusal(Recorded(db, other, First, armed.Cutoff.AddDays(3)), from, to));
+
+        // THE TAPE, BY THE SUBJECT THE READ NAMES.
+        const string premium = TapeSourceCatalog.Premium, series = "premium-index";
+        tape.Append(Fetch(premium, series, from), [
+            new TapeItem(held, from, """{"symbol":"BTCUSDT","markPrice":"85495.8"}"""),
+            new TapeItem(other, from, """{"symbol":"ETHUSDT","markPrice":"3100.5"}""")]);
+        tape.Append(Fetch(GdeltGkg.Source, GdeltGkg.ItemsSeries, from), [new TapeItem("item-1", from, """{"title":"the market that month"}""")]);
+        var reader = gw.Tape!;
+        TapeWindow Read(string source, string kind, string? subject) =>
+            reader.Window(pipe, new TapeQuery { Source = source, Series = kind, Subject = subject, From = from.AddMinutes(-1), To = to });
+
+        Assert.Empty(Read(premium, series, held).Rows);
+        Assert.Contains($"{held}'s rows on the tape", Read(premium, series, held).Refusal, StringComparison.Ordinal);
+        Assert.Equal(other, Assert.Single(Read(premium, series, other).Rows).Subject);
+        Assert.Null(Read(premium, series, other).Refusal);
+        Assert.NotNull(Read(premium, series, null).Refusal);
+        Assert.NotNull(Read(GdeltGkg.Source, GdeltGkg.ItemsSeries, null).Refusal);
+        Assert.NotNull(Read(GdeltGkg.Source, GdeltGkg.ItemsSeries, "item-1").Refusal);
+        Assert.NotNull(pipe.Refusal(from, to, [other, held]));
+        Assert.Null(pipe.Refusal(from, to, [other, "SOLUSDT"]));
+
+        Assert.NotNull(tape.AsOf(pipe, premium, series, held, to).Refusal);
+        Assert.Equal(other, tape.AsOf(pipe, premium, series, other, to).Row!.Subject);
+
+        // A TAPE WAKE ABOUT THE OTHER PAIR STILL BUYS A TURN; ONE ABOUT THE HELD PAIR DOES NOT.
+        bool Woke(string subject) => TapeWakes.Raise(db, new TapeArrival(premium, series, TapeSourceCatalog.AnnouncementParser, 1,
+            [new TapeArrived(subject, from)]), to);
+        Assert.False(Woke(held));
+        Assert.True(Woke(other));
+
+        // THE PAPER RUNNER TRADES THE PRESENT, ON ANY PAIR.
+        var paper = TapeHoldout.Of(BarAudience.PaperRunner, gw.Datasets);
+        Assert.DoesNotContain(paper.Windows(), w => w.ForwardOf is not null);
+        Assert.Null(paper.ForwardRefusal(held, from, to));
+    }
+
+    /// <summary>
+    /// D16: A FORWARD HOLD WHOSE PAIR CANNOT BE READ HOLDS EVERY PAIR. Its campaign's dataset row gone, the window cannot be shown to be another
+    /// pair's, so it holds what it held before D16: an unknown pair is never another pair (<see cref="CampaignStore"/>).
+    /// </summary>
+    [Fact]
+    public async Task A_forward_hold_whose_pair_cannot_be_read_holds_every_pair()
+    {
+        var (gw, db, tape, armed) = await Held("SOLUSDT");
+        using var owned = db;
+        await using var gateway = gw;
+        using var closing = tape;
+        db.Exec("PRAGMA foreign_keys=OFF");
+        db.Exec($"DELETE FROM dataset WHERE id={gw.Campaigns.ById(armed.SpentCampaignId)!.HoldoutDatasetId.ToString(CultureInfo.InvariantCulture)}");
+
+        var window = Assert.Single(gw.Datasets.ForwardWindows());
+        Assert.Null(window.OnlyPair);
+        var pipe = TapeHoldout.Pipe(CouncilRoles.Research, gw.Datasets);
+        Assert.Contains("every pair's bars", pipe.ForwardRefusal("ETHUSDT", armed.Cutoff, armed.Cutoff.AddHours(1)), StringComparison.Ordinal);
+        Assert.NotNull(pipe.Refusal(armed.Cutoff, armed.Cutoff.AddHours(1), ["ETHUSDT"]));
     }
 }
