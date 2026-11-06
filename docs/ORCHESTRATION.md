@@ -308,7 +308,9 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   **assurance profile** naming which properties were PROVEN on which build and platform, each with its enforcement class (the factory plan's Law 9;
   VISION § 6.3). A confined seat keeps its working freedom: shell, code, packages, permitted network, the runtime's own helpers (R20).
 - **Providers:** none (today, ADVISORY, labelled "unconfined"); **Linux first** (the owner's answer): the app's own launcher — no_new_privs, then seccomp
-  (`socket()` only for TCP over IPv4 or IPv6, `io_uring` denied, `socketpair()` kept), then Landlock (ABI 6 or newer, refused below), on one
+  (`socket()` only for TCP over IPv4 or IPv6, `io_uring` denied, `socketpair()` kept; owners, extended attributes and inode flags refused; a mode or a
+  time stopped and answered by the launch's supervisor for the granted workspace alone, because Landlock has no right for them and seccomp cannot
+  read a path, `U-cell-metadata`), then Landlock (ABI 6 or newer, refused below), on one
   thread, then `execve` — and a per-attempt cgroup in a subtree the app's systemd service delegates; no namespaces (Ubuntu refuses unprivileged
   user namespaces) — proved on CI's ubuntu runners, then on the Linux host (`docs/queue/U-cell-linux-a.md`; parts a–e in ORGANISATION § 15); Windows (`R-containment`'s AppContainer route, on the
   box); macOS only for development, if cheap.
