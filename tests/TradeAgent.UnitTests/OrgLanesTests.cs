@@ -724,8 +724,11 @@ public class OrgLanesTests : IDisposable
         /// <summary>Why the last claimed launch holds no order permission, or null when it held what its role has.</summary>
         public string? Withheld { get; private set; }
 
+        /// <summary>Set: this position's launch is barred, as an unrebuildable home bars it.</summary>
+        public LaunchBar? Bar { get; set; }
+
         public LaunchBar? Barred() =>
-            grants()?.HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null;
+            Bar ?? (grants()?.HeldBy(role) is { } held ? new LaunchBar(held, Lasting: false) : null);
 
         public LaunchBar? Claim(out string? ordersWithheld)
         {
