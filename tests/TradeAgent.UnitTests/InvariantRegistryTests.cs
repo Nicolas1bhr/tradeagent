@@ -59,7 +59,8 @@ public class InvariantRegistryTests
     /// A NAMED TEST MUST BE ABLE TO FAIL (R29 F-E1): none is skipped outright unless the record says it runs nowhere, none has an empty
     /// body, none asserts nothing, and none returns before its first assertion. A passing result cannot show any of these — a test that
     /// returned early reads Passed in every run — so the source is read. <see cref="InvariantRunsTests"/> holds the other half, what a
-    /// run's results can show. The scan cannot tell a test that asserts something true of nothing: that takes a mutant, and no run does it.
+    /// run's results can show. The scan cannot tell a test that asserts something true of nothing, nor an assertion inside a delegate nobody
+    /// calls: those take a mutant, and no run does it.
     /// </summary>
     [Fact]
     public void No_named_test_is_skipped_empty_or_returns_before_it_proves_anything()
@@ -87,36 +88,42 @@ public class InvariantRegistryTests
         Assert.Contains("returns before", Read("[Fact] public void T() { return; Assert.True(false); }"));
         Assert.Contains("returns before", Read("[Fact] public void T() { if (OperatingSystem.IsWindows()) return; Assert.True(false); }"));
         Assert.Contains("returns before", Read("[Fact] public async Task T() { await Go(); if (Off) { return; } Assert.True(false); }"));
+        Assert.Contains("returns before", Read("[Fact] public Task T() { if (OperatingSystem.IsWindows()) return Task.CompletedTask; Assert.True(false); return Task.CompletedTask; }"));
 
         Assert.Null(Read("[Fact] public void T() { Assert.True(true); }"));
         Assert.Null(Read("[Fact] public void T() { Assert.True(a); if (b) return; Assert.True(c); }"));
         Assert.Null(Read("[Theory, InlineData(1)] public void T(int x) { Assert.Equal(1, x); }"));
         Assert.Null(Read("[Fact] public Task T() => OnThePage((p, h) => { Assert.NotNull(p); return Task.CompletedTask; });"));
         Assert.Null(Read("[Fact] public void T() { Action a = () => { if (x) return; Go(); }; a(); Assert.True(true); }"));
+        Assert.Null(Read("[Fact] public Task T() { return OnThePage((p, h) => { Assert.NotNull(p); }); }"));
         Assert.Null(Hollow(Parse("[Fact(Skip = \"why\")] public void T() { Assert.True(true); }"), ProofPlatform.None));
     }
 
     /// <summary>
-    /// WHY <paramref name="t"/> CANNOT BACK A CLAIM, or null. A bare <c>return;</c> at the test's own level ends it; one inside a lambda (a
-    /// nested body, read out of the text first) does not. <paramref name="runsOn"/> is what the record says of it.
+    /// WHY <paramref name="t"/> CANNOT BACK A CLAIM, or null. A <c>return</c> at the test's own level ends it, a value's as much as a bare one (a
+    /// Task-returning test); one inside a lambda (a nested body, read out of the text first) does not. <paramref name="runsOn"/> is what the record says of it.
     /// </summary>
     static string? Hollow(TestSource t, ProofPlatform runsOn)
     {
         if (Regex.IsMatch(t.Attributes, @"\bSkip\s*=") && runsOn != ProofPlatform.None) return "skipped, and the record does not say so";
         if (t.Body.Trim(' ', '\t', '\r', '\n', '{', '}').Length == 0) return "empty";
         if (!Assertion.IsMatch(t.Body)) return "asserts nothing";
-        return ExitsBeforeProof(t, @"\breturn\s*;") ? "returns before its first assertion" : null;
+        return ExitsBeforeProof(t, @"\breturn\b[^;]*;") ? "returns before its first assertion" : null;
     }
 
     static readonly Regex Assertion = new(@"\bAssert\w*\s*[.(<]");
 
-    /// <summary>Whether <paramref name="exit"/> stands in <paramref name="t"/>'s own body, lambdas read out, before its first assertion there.</summary>
+    /// <summary>
+    /// Whether <paramref name="exit"/> stands in <paramref name="t"/>'s own body, lambdas read out, before its first assertion there and with
+    /// code still after it: a Task's closing <c>return Run(...)</c> is its body, not a way out of it.
+    /// </summary>
     static bool ExitsBeforeProof(TestSource t, string exit)
     {
         var own = Regex.Replace(t.Body, @"=>\s*\{(?:[^{}]|(?<o>\{)|(?<-o>\}))*(?(o)(?!))\}", " ");
         var first = Assertion.Match(own);
         var leaves = Regex.Match(own, exit);
-        return leaves.Success && (!first.Success || leaves.Index < first.Index);
+        if (!leaves.Success || (first.Success && first.Index < leaves.Index)) return false;
+        return own[(leaves.Index + leaves.Length)..].Trim(' ', '\t', '\r', '\n', '{', '}', ';').Length > 0;
     }
 
     /// <summary>
@@ -139,6 +146,7 @@ public class InvariantRegistryTests
         Assert.True(PassesSilently(Parse("[Fact] public void T() { if (!OperatingSystem.IsLinux()) { return; } Assert.True(true); }")));
         Assert.True(PassesSilently(Parse("[Fact] public async Task T() { await Go(); if (OperatingSystem.IsMacOS() || off) return; Assert.True(true); }")));
         Assert.True(PassesSilently(Parse("[Theory, InlineData(1)] public void T(int x) { if (OperatingSystem.IsWindows()) return; Assert.True(true); }")));
+        Assert.True(PassesSilently(Parse("[Fact] public Task T() { if (OperatingSystem.IsWindows()) return Task.CompletedTask; Assert.True(true); return Done; }")));
 
         Assert.False(PassesSilently(Parse("[OnlyOnFact(\"why\", \"linux\")] public void T() { if (!OperatingSystem.IsLinux()) return; Assert.True(true); }")));
         Assert.False(PassesSilently(Parse("[Fact] public void T() { Assert.True(a); if (OperatingSystem.IsWindows()) return; Assert.True(b); }")));
@@ -148,7 +156,7 @@ public class InvariantRegistryTests
 
     static bool PassesSilently(TestSource t) =>
         Regex.IsMatch(t.Attributes, @"[\[,]\s*(?:Fact|Theory)\b")
-        && ExitsBeforeProof(t, @"\bif\s*\([^;{}]*OperatingSystem\.Is\w+\(\)[^;{}]*\)\s*\{?\s*return\s*;");
+        && ExitsBeforeProof(t, @"\bif\s*\([^;{}]*OperatingSystem\.Is\w+\(\)[^;{}]*\)\s*\{?\s*return\b[^;]*;");
 
     /// <summary>One test's source, through the same scan the tree goes through.</summary>
     static TestSource Parse(string test)
