@@ -938,6 +938,47 @@ public class TurnBoundsTests : IDisposable
         Assert.Equal(0, loop.Status.ConsecutiveErrors);
     }
 
+    /// <summary>
+    /// RED at base, the pre-flight's proof (R28 W5 left open on the launch's own bar): a position whose home cannot be rebuilt stayed the lane's oldest due and was
+    /// picked on every look, so with one lane nobody else turned, however long the run: "research turns 0". It stands aside now like any refused seat, keeps
+    /// its wakes, and says why on its row; the next look serves the other position.
+    /// </summary>
+    [Fact]
+    public async Task A_position_barred_for_good_stands_aside_and_the_lane_serves_the_others()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        Due(events, Research, now - TimeSpan.FromMinutes(2));
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        const string why = "this position's home could not be rebuilt";
+        host.Conv(Ops).Bar = new LaunchBar(why, Lasting: true);
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        for (var look = 0; look < 8 && host.Conv(Research).Sent.Count == 0; look++) now += await loop.TurnAsync();
+
+        Assert.True(host.Conv(Research).Sent.Count == 1, $"research turns {host.Conv(Research).Sent.Count} after {now:HH:mm:ss}");
+        Assert.Empty(host.Conv(Ops).Sent);
+        Assert.Equal(why, loop.StandingAsideFor(Ops)?.Why);
+        Assert.False(Assert.Single(events.OfKind(MissionEventKind.Review), e => e.Role == Ops || e.Role is null).Consumed);
+    }
+
+    /// <summary>A PASSING BAR IS NO REFUSAL: another turn holds the launch for a moment, the position stays a candidate, and nothing stands it aside.</summary>
+    [Fact]
+    public async Task A_position_barred_for_a_moment_does_not_stand_aside()
+    {
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        Due(events, Ops, now - TimeSpan.FromMinutes(3));
+        var host = new OrgLanesTests.LaneHost { Events = events };
+        host.Conv(Ops).Bar = new LaunchBar("the Operations Director's order-capable turn is running", Lasting: false);
+        var options = new MissionOptions { ReviewEvery = TimeSpan.Zero };
+        var loop = new MissionLoop(host, options, now: () => now);
+
+        Assert.Equal(options.BusyRetry, await loop.TurnAsync());
+        Assert.Null(loop.StandingAsideFor(Ops));
+    }
+
     /// <summary>A REST OUTLIVES A QUIET MOMENT: nothing due at the failure, a wake a second later, and the failing position is still not launched before its backoff ends.</summary>
     [Fact]
     public async Task A_failing_position_is_not_launched_faster_than_its_backoff_when_nothing_else_is_due()

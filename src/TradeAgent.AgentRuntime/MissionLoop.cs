@@ -5262,8 +5262,8 @@ public sealed class MissionLoop
 
     /// <summary>
     /// A LAUNCH THAT MAY NOT START (<c>U-grant-tree</c>), refused before anything was written. Told to the host once per
-    /// distinct cause. Lasting (RULING 2: this computer cannot hold it): counted as a failed turn and backed off from as a
-    /// ledger refusal is, the card saying what it waits for and the owner's due messages marked with the reason — they stay
+    /// distinct cause. Lasting (RULING 2: this computer cannot hold it): counted as a failed turn, backed off from by that position alone
+    /// (<see cref="StepAside"/>), the card saying what it waits for and the owner's due messages marked with the reason — they stay
     /// owed. Passing (ORDER-001: the chair's order-capable turn runs): looked at again after <see cref="MissionOptions.BusyRetry"/>.
     /// </summary>
     TimeSpan Barred(string role, LaunchBar bar, MissionEventStore? events)
@@ -5292,7 +5292,13 @@ public sealed class MissionLoop
         if (bar.Lasting && events is not null) BlockOwnerMessages(events, bar.Why);
 
         Changed?.Invoke();
-        return bar.Lasting ? Backoff(errors) : _options.BusyRetry;
+        if (!bar.Lasting) return _options.BusyRetry;
+
+        // A LASTING BAR STANDS ASIDE like any refused seat (R28 W5, the pre-flight's proof): left due, the same position is the lane's oldest on every look and
+        // one unrebuildable home holds every other position. The card keeps what it waits for; StepAside's sentence is about a seat.
+        var wait = StepAside(role, bar.Why, Backoff(errors), quiet: true);
+        lock (_gate) _refusedLast[role] = $"TradeAgent to be able to hold the AI's programs again ({bar.Why})";
+        return wait;
     }
 
     /// <summary>
