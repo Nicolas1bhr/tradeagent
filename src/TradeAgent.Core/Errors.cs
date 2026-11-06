@@ -275,7 +275,7 @@ public static partial class Labels
     /// THE OWNER'S PLAN-CAPACITY CEILING AND ITS PRESS (<c>U-billing-classes</c>): how much of his ChatGPT plan the AI may use in a day,
     /// counted at list price — never money. Raising it asks twice, naming the figure, as the money cap's raise does.
     /// </summary>
-    public const string PlanDailyCapacity = "The most of your ChatGPT plan the AI may use in a day, at list price";
+    public const string PlanDailyCapacity = "How much of your ChatGPT plan the AI may use in a day, at list price (advisory: a turn can pass it)";
 
     public const string SavePlanCapacity = "Save the plan limit";
 

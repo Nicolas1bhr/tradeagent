@@ -142,6 +142,23 @@ public class TurnReservationTests : IDisposable
         Assert.Equal(Bound, PlanReservationAfter((1_000_000, 30_000), (10_000, 100), (10_000, 100), (10_000, 100), (10_000, 100)));
     }
 
+    /// <summary>
+    /// THE DAY'S OWN READING SAYS WHAT A PLAN TURN SETS ASIDE, A NAMED POSITION OF UNKNOWN PAYER THE WHOLE BOUND: at a plan limit of 1.00 a plan
+    /// turn (0.432) fits and the bound (1.28) does not. The dashboard's day reading must not say no turn can start; a position whose payer
+    /// nobody established still reads what its launch would be held to. RED before: the day's plan reading carried the bound, and said the
+    /// AI could not start a turn at all.
+    /// </summary>
+    [Fact]
+    public void The_days_reading_of_the_plan_says_what_a_plan_turn_sets_aside_and_an_unknown_position_keeps_the_bound()
+    {
+        var meter = Meter(NewDb(), plan: 1m);
+        var day = meter.Today;
+        Assert.NotNull(day.PlanReading);
+        Assert.Equal((2 * Typical, false), (day.PlanReading!.NextTurnReservation, day.PlanReading.CapCannotFundATurn));
+        Assert.Equal(Bound, day.NextTurnReservation);
+        Assert.Equal(Bound, meter.TodayFor(CouncilRoles.Research).NextTurnReservation);
+    }
+
     // ---- guard 2: a paid API key's turn keeps the whole reservation, the day-total gate first ------------------------------------
 
     /// <summary>

@@ -596,14 +596,16 @@ Director, the research for the Research Director. A quiet day with nothing open 
 costs only the Research Director's looks. 0 turns the look off altogether.
 
 **The limit is applied before a turn runs, not after it.** Before a turn starts, TradeAgent writes
-down that it is about to spend and sets aside the most that turn could cost; the turn only runs if
+down that it is about to spend and sets an amount aside — on an API key the most that turn could cost,
+on your AI plan an estimate from its measured turns (below); the turn only runs if
 what has been spent, plus what is already set aside, plus that amount, still fits inside the limit.
 This is what makes it a limit rather than a report — checked afterwards, the turn that carries the
 day past your number has already run and already been billed, which is how a day capped at 5 came to
 cost 5.07. It has two visible consequences. **A turn that is killed part way stays charged**: the
 work was asked for and your supplier billed for it, so closing TradeAgent mid-turn does not hand the
-money back, and neither does midnight. And **the last part of your limit is held in reserve**, so the
-AI stops a little before the number rather than a little after it.
+money back, and neither does midnight. And **the last part of your limit is held in reserve**, so on
+real money the AI stops a little before the number rather than a little after it. Your AI plan's limit is
+advisory instead, by exactly what the next paragraph says.
 
 **On your AI plan, a turn sets aside what it has been measured to cost.** A turn billed to your ChatGPT
 plan is counted at list price against the plan's limit, and no money moves; reserving the most such a turn

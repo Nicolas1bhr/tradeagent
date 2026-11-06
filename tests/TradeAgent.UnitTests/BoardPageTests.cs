@@ -126,6 +126,19 @@ public class BoardPageTests
     }
 
     /// <summary>
+    /// THE PAGE THAT SHOWS THE PLAN'S LIMITS SAYS THEY ARE ADVISORY (R25 D13; PRINCIPLES: advisory limits described as advisory): a plan turn sets
+    /// aside an estimate, so "the limits TradeAgent enforces" alone would overstate them. RED before: the sentence sat on a hint no page shows.
+    /// </summary>
+    [Fact]
+    public void The_board_page_says_a_plan_limit_can_be_passed_and_by_how_much()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        Assert.Contains(Labels.PlanReservationRule, AllText(page));
+        Assert.Contains("advisory", Labels.PlanDailyCapacity);
+    }
+
+    /// <summary>
     /// THE BOARD PAGE IS BUILT ONCE AND UPDATED IN PLACE (CLAUDE.md): the five-second pass writes text into the controls built at
     /// construction and adds or removes none — the rows, the seats and an opened history are the same objects after three passes.
     /// </summary>
