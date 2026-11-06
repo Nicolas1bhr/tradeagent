@@ -330,17 +330,23 @@ public static class OlderHome
 
         var state = Path.Combine(home, "state");
         var to = Path.Combine(state, "tape.db");
+        var placedWal = false;
         try
         {
             Directory.CreateDirectory(state);
             // THE -WAL FIRST, THEN THE TAPE: a tape that takes its name stands with every row it committed.
-            if (File.Exists(file + "-wal")) File.Move(file + "-wal", to + "-wal");
+            if (File.Exists(file + "-wal"))
+            {
+                File.Move(file + "-wal", to + "-wal");
+                placedWal = true;
+            }
             File.Move(file, to);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // A -WAL LEFT WITH NO TAPE BESIDE IT WOULD BE REPLAYED INTO THE NEXT ONE.
-            RemoveFile(to + "-wal");
+            // A -WAL LEFT WITH NO TAPE BESIDE IT WOULD BE REPLAYED INTO THE NEXT ONE. Only the one this press placed: a move that failed
+            // because a -wal was already there leaves it alone, since it belongs to whatever is running in the new home.
+            if (placedWal) RemoveFile(to + "-wal");
             RemoveFolder(staged.Folder);
             return $"The market-context tape was not carried into the new folder: it could not be put in place ({ex.Message}). It is kept, whole, in {aside}.";
         }
