@@ -11,7 +11,7 @@ namespace TradeAgent.Core.Db;
 /// is a press that moved (the Codex review).
 /// </summary>
 public sealed record ChiefWakeFacts(bool AgentStarted, bool WorksOnItsOwn, bool ProvenCell, TimeSpan Ceiling,
-    string Billing = BillingClasses.Unknown);
+    string Billing = BillingClasses.Unknown, TimeSpan? Backstop = null);
 
 /// <summary>
 /// WHAT THE FIRST PRESS OF "Wake the chief once" SHOWED: the chief, its seat, and the sentence the second press carries out — or why it
@@ -85,7 +85,7 @@ public sealed partial class OrgStore
     ChiefWakePreview ChiefWakeNow(ChiefWakeFacts facts)
     {
         ArgumentNullException.ThrowIfNull(facts);
-        var after = ChiefWakeAfter(facts.Ceiling);
+        var after = ChiefWakeAfter(facts.Ceiling, facts.Backstop);
         ChiefWakePreview Refuse(string? who, string? on, string why) => new(who, on, why, why) { After = after };
         if (Chief() is not { } chief || Position(chief) is not { } row)
             return Refuse(null, null, "No chief is appointed, so there is none to wake. Appoint a chief and activate it first.");
@@ -121,9 +121,13 @@ public sealed partial class OrgStore
         _ => "billed to your AI plan or your API key — TradeAgent cannot tell which, so it counts against both your ceilings"
     };
 
-    public static string ChiefWakeAfter(TimeSpan ceiling) =>
+    public static string ChiefWakeAfter(TimeSpan ceiling, TimeSpan? backstop = null) =>
         "Nothing else is started by this press. After the turn the chief wakes again only when it asks to (its next.json, or its own "
-        + "`trade org wake` request), when work is addressed to it, or "
+        + "`trade org wake` request), when work is addressed to it, "
+        + (backstop is { } every
+            ? $"every {every.TotalHours.ToString("0.##", CultureInfo.InvariantCulture)} h while no work is moving and it has not asked, "
+            : "")
+        + "or "
         + (ceiling > TimeSpan.Zero
             ? $"at its ceiling, {ceiling.TotalHours.ToString("0.##", CultureInfo.InvariantCulture)} h after its last turn"
             : "never by the clock: the security board's policy holds no ceiling")

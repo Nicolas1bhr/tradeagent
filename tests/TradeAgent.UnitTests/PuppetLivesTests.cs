@@ -190,6 +190,43 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
     }
 
     /// <summary>
+    /// (d2b) ON THE REAL HOST, A CHIEF THAT DOES NOTHING HAS ITS NEXT WAKE AT THE FOUNDING POLICY'S FLOOR, not its ceiling (R30 D21, <c>U-chief-moves</c>). The active chief's real
+    /// puppet takes one turn and does nothing: no charter, no wake file. The one ceiling it is left with is due four hours after that turn began, and says why, through the
+    /// app's own host composition and the board's policy in force. <c>CouncilLoopTests</c> runs the 72 hours on a clock of its own.
+    ///
+    /// <para>RED at base: the ceiling read 24 hours after the turn.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_chief_that_does_nothing_on_the_real_host_is_next_woken_at_its_floor()
+    {
+        const string chief = "pos-5e55cc000002";
+        await using var life = await PuppetLife.Begin("chief-floor", seed: db => db.Write(_ =>
+        {
+            foreach (var sql in new[]
+                     {
+                         $"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{chief}', '{OrgIds.Root}', 'org/{chief}', 'active', '2026-11-06T12:00:00.0000000Z')",
+                         $"UPDATE org_unit SET head_position_id='{chief}' WHERE id='{OrgIds.Root}'"
+                     })
+            {
+                using var c = db.Cmd(sql);
+                c.ExecuteNonQuery();
+            }
+            return 0;
+        }));
+        life.Script(chief, ["usage 40 0 4", "final I read and did nothing."]);
+        var wakes = life.Host.Wakes!;
+        Assert.True(wakes.Raise(MissionEventIds.ForRole($"{MissionEventKind.Note}:{Guid.NewGuid():n}", chief), MissionEventKind.Note, DateTimeOffset.UtcNow.AddSeconds(-1), role: chief));
+
+        await life.RunUntil(() => life.AttemptsOf(chief).Any(a => a.State == AiAttemptState.ENDED)
+                                  && wakes.Pending(MissionEventKind.Ceiling, chief).Any(e => e.Payload == MissionEventStore.ChiefFloorWake),
+            "the chief's turn ended and its next wake came to the floor");
+
+        var turned = Assert.Single(life.AttemptsOf(chief));
+        var next = Assert.Single(wakes.Pending(MissionEventKind.Ceiling, chief));
+        Assert.Equal(turned.StartedAt + TimeSpan.FromMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]), next.DueAt);
+    }
+
+    /// <summary>
     /// (d3) THE RUN'S DELIBERATE RESTART LOSES NOTHING (<c>U-wake-fairness</c>; R28 R1, R2, W4). The active chief's real puppet hangs in a turn holding the
     /// owner's words, a note, a hire's first wake and a fill; the service is told to stop, as systemd tells it: the attempt closes ENDED, not LOST, and every
     /// wake is unconsumed again, with no outcome and no copy. The new process serves them all in one turn of the chief, which quotes the owner's words once

@@ -295,6 +295,10 @@ public partial class CouncilLoopTests
             if (Floors is { } floors) new OrgStore(_db).Sweep(now, floors);
         }
 
+        /// <summary>The chief's backstop under <see cref="Floors"/>, as the app's host reads it; with none, the ceiling stands.</summary>
+        public TimeSpan? ChiefFloor(string position, DateTimeOffset now) =>
+            Floors is { } floors ? new OrgStore(_db).ChiefFloor(position, floors, now) : null;
+
         /// <summary>A position's own wake file under <see cref="Floors"/>, as the app's host reads it; with none, the time asked.</summary>
         public DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now) =>
             Floors is { } floors ? new OrgStore(_db).OwnWakeDue(role, asked, floors, now) : now + asked;

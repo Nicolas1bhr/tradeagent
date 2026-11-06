@@ -2999,7 +2999,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                + $"above it, below its division — holds a verdict share its parent's head delegated with 'org-tilt' (ORGANISATION § 2). "
                + $"{OrgEnvelopes.NameOf(unit.Id)} holds no verdict share, and neither does any unit between it and its division. Every "
                + "judgement leaks something about the held-back months, so the count is spent where a division decides it is. Ask your "
-               + "division's head for a verdict share, or for the verdict. Nothing was charged and nothing was computed.";
+               + "division's head for a verdict share, or the chief for the verdict: a head's own verdict reads the head's own runs. "
+               + "Nothing was charged and nothing was computed.";
     }
 
     /// <summary>Whether <paramref name="position"/> heads the organisation itself — the chief.</summary>

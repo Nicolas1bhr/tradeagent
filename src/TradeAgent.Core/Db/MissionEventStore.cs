@@ -1132,7 +1132,7 @@ public sealed class MissionEventStore(Database db)
     /// <c>again</c> id, so the old row keeps what became of it and the head keeps a floor. A floor that cannot be written under
     /// either id throws, and the transaction closes nothing: the head is never left with no floor by this call.</para>
     /// </summary>
-    public bool MoveCeiling(string position, DateTimeOffset at, DateTimeOffset dueAt) => db.Write(_ =>
+    public bool MoveCeiling(string position, DateTimeOffset at, DateTimeOffset dueAt, string? payload = null) => db.Write(_ =>
     {
         string? id;
         using (var f = db.Cmd("""
@@ -1147,14 +1147,14 @@ public sealed class MissionEventStore(Database db)
             id = MissionEventIds.Ceiling(position, dueAt);
             raised = Raise(new MissionEvent
             {
-                Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
+                Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position, Payload = payload
             });
             if (!raised)
             {
                 id = MissionEventIds.Ceiling(position, dueAt, again: at);
                 raised = Raise(new MissionEvent
                 {
-                    Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position
+                    Id = id, Kind = MissionEventKind.Ceiling, CreatedAt = at, DueAt = dueAt, Role = position, Payload = payload
                 });
                 if (!raised)
                     throw new InvalidOperationException(
@@ -1169,6 +1169,12 @@ public sealed class MissionEventStore(Database db)
             ("$ceiling", MissionEventKind.Ceiling), ("$position", position));
         return c.ExecuteNonQuery() > 0 || raised;
     });
+
+    /// <summary>
+    /// THE PAYLOAD OF A CEILING MOVED SHORT (R30 D21, <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>): not a kind of its own, because it ranks,
+    /// is metered and is superseded as the ceiling it is. Written by the loop alone; it names why the wake came sooner, to the chief and the watch.
+    /// </summary>
+    public const string ChiefFloorWake = "chief-floor";
 
     /// <summary>
     /// CLOSES <paramref name="position"/>'S PENDING CEILING, consumed by no launch and <see cref="MissionEventDisposition.Withdrawn"/>

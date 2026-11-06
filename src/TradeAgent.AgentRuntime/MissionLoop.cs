@@ -727,6 +727,13 @@ public interface IMissionHost
     DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now) => now + asked;
 
     /// <summary>
+    /// THE INTERVAL AT WHICH <paramref name="position"/> IS WOKEN INSTEAD OF ITS CEILING, or null where the ceiling stands (R30 D21,
+    /// <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>). The default is a host with no chart: the ceiling stands. A seam that throws leaves
+    /// it standing too, the saving direction.
+    /// </summary>
+    TimeSpan? ChiefFloor(string position, DateTimeOffset now) => null;
+
+    /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
     /// (<c>U-board-b2</c> item 4): composed by the app from the board's records alone, or null for a host that composes none — whose
     /// board seats then launch nothing.
@@ -3986,15 +3993,21 @@ public sealed class MissionLoop
         }
         try
         {
+            // A CHIEF WITH NOTHING MOVING IS WOKEN SOONER (R30 D21): the same one wake, measured from the same turn, so the floor a turn resets still
+            // cannot be a heartbeat, and a turn that does nothing buys only the next interval. It stops by itself, at the pass after work moves.
+            var backstop = _host.ChiefFloor(head.Id, now) is { } shorter && shorter > TimeSpan.Zero && shorter < every ? shorter : (TimeSpan?)null;
+            var interval = backstop ?? every;
+            var why = backstop is null ? null : MissionEventStore.ChiefFloorWake;
             var last = _host.LastWokenAt(head.Id);
             var pending = events.Pending(MissionEventKind.Ceiling, head.Id);
             if (last is { } turned)
             {
-                var due = turned + every;
+                var due = turned + interval;
                 if (pending.Count == 1 && pending[0].DueAt == due) return;
-                events.MoveCeiling(head.Id, now, due);
+                events.MoveCeiling(head.Id, now, due, why);
             }
-            else if (pending.Count == 0) events.MoveCeiling(head.Id, now, now + every);
+            else if (pending.Count == 0 || (backstop is not null && pending[0].DueAt > now + interval))
+                events.MoveCeiling(head.Id, now, now + interval, why);
         }
         catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }
     }
@@ -4744,6 +4757,8 @@ public sealed class MissionLoop
         // reaches it, computed from its home (AgentReach.InboxFrom), never a fixed `../inbox`.
         e.Kind == MissionEventKind.Inbox
             ? $"new material arrived in `{AgentReach.InboxFrom(e.Role ?? CouncilRoles.Default)}`"
+        : e.Kind == MissionEventKind.Ceiling && e.Payload == MissionEventStore.ChiefFloorWake
+            ? "no work is moving in the organisation, and no one will tell you to begin: TradeAgent woke you at your level's floor"
         : e.Kind != PublicationKind.Note ? Reason(e.Kind, spell)
         : e.Id.StartsWith(PaperRunNote, StringComparison.Ordinal)
             ? "TradeAgent's forward-run note arrived in `in/`"
@@ -4793,7 +4808,7 @@ public sealed class MissionLoop
         // so a line spelled for a seat names neither; the command line's words stay for a host that declares no spelling.
         MissionEventKind.OwnerWake => "your owner pressed \"Wake the chief once\" — one turn, now; after it you wake when you ask to "
                                       + (spell is null ? "(next.json or `trade org wake`), " : "")
-                                      + "when work reaches you, or at your ceiling",
+                                      + "when work reaches you, at your level's floor while no work is moving, or at your ceiling",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
