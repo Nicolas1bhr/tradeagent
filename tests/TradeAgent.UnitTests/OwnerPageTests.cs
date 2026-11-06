@@ -93,7 +93,7 @@ public class OwnerPageTests
         var settings = new SettingsPage(host);
         var left = settings.Root.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string).ToList();
         foreach (var label in owners) Assert.DoesNotContain(label, left);
-        Assert.Contains("Download 12 months", left);
+        Assert.Contains("Download 36 months", left);
         return Task.CompletedTask;
     });
 
