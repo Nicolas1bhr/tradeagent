@@ -328,8 +328,10 @@ settings, and no passwords.
 
 On the **Settings** page there is a card called **Market data**, and it does three separate things.
 
-**Download 12 months** fetches the twelve most recent complete months of that pair's 1-minute bars from
-Binance's public archive and checks every file against the checksum Binance published beside it. One
+**Download 36 months** fetches the thirty-six most recent complete months of that pair's 1-minute bars from
+Binance's public archive and checks every file against the checksum Binance published beside it. That is
+about 70 MB a pair, and about 200 MB on disk once unpacked. If it stops part way, press again: the months
+already checked are kept and only the rest are fetched. One
 press: this only ever changes what TradeAgent can READ. It is not a trading connection, it decides
 nothing about what the AI may trade — that is the instrument allowlist, the security board's, shown on the
 Board page — and it moves no money.
@@ -451,7 +453,12 @@ trading your own account with them; until then, research and practice carry on a
 *Historical market data: Binance Vision (data.binance.vision), under the Binance Vision Dataset Terms v1.0,
 CC BY-NC-SA 4.0.*
 
-**Holding months back.** The card below, *Private evaluation evidence*, is where you draw a line across
+**Holding months back.** Setup does this for you on each pair it downloads: it holds back the last twelve
+of the thirty-six months, because a year is what the referee needs before a verdict can be conclusive, and it
+holds nothing back until every month has arrived. The card below, *Private evaluation evidence*, is where you
+draw a line yourself, and it tells you if the date you typed gives a holdout too short for a conclusive verdict:
+a strategy refused for a loss over a holdout that short can still be watched on paper, through the one path
+for verdicts that could not tell. The line goes across
 the history: every bar from that date on becomes evidence the AI never sees, and TradeAgent alone uses it
 to judge a finished strategy. Those months are held back on **every** pair's bars, not only the one you
 pressed it on — a newer download of the same pair, another pair and the minutes TradeAgent collected itself
