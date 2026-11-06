@@ -1470,7 +1470,12 @@ public sealed class AppHost : IAsyncDisposable
         _lock = null;
         try
         {
-            var aside = Core.OlderHome.SetAside(Paths.Home, DateTimeOffset.UtcNow, out var tape);
+            // OFF THE WINDOW'S THREAD: a tape of hundreds of megabytes is copied and checked inside this press.
+            var (aside, tape) = await Task.Run(() =>
+            {
+                var moved = Core.OlderHome.SetAside(Paths.Home, DateTimeOffset.UtcNow, out var carried);
+                return (moved, carried);
+            });
             OlderHome = null;
             StartFreshProblem = null;
             StartupProblem = null;
