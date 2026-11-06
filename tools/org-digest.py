@@ -13,6 +13,7 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
             ceilings reset on).
   --json    the whole digest as one JSON object; otherwise a human digest of at most 60 lines, one line per fact.
   --now     (tests) the instant "now" is, ISO with a zone.   --no-systemd   (tests) do not ask systemd about the unit.
+  --vocabulary   (tests) print every word this file compares a column to, as JSON, and stop.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
 
 Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, strategy_*, fill, cell_proof,
@@ -43,16 +44,68 @@ from decimal import Decimal, InvalidOperation
 
 DEFAULT_HOME = "/var/lib/tradeagent"
 STATE_UNDER_HOME = ".local/share/TradeAgent/state"
-DEFAULT_POSITION = "operations"          # CouncilRoles.Default: a launch row with no role belongs to the legacy chair
-BOARD_PREFIX = "board-"                  # BoardSeats.Prefix: a board seat's launches are rows whose role starts with it
-PIPE_REFUSALS = ("grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused", "op_refused")
 MAX_LINES = 60
-PAPER_RUN_WAKE = "note:paper-run:"       # MissionEventIds.PaperRun: the wake that carries a forward run's figures back to its author
-LOST_WAKE_SUFFIX = ":after-lost"         # MissionLoop.AfterLost: a told-something wake raised again after a lost turn
-INCONCLUSIVE_POLICY = "allocation-policy-inconclusive-v1"   # AllocationPolicy.InconclusiveV1: a slot that costs its campaign a trial
+
+
+class W:
+    """EVERY WORD THIS FILE COMPARES A COLUMN TO, EXACTLY AS THE APP WRITES IT, AND NOWHERE ELSE IN THIS FILE.
+
+    SQLite's = is case-sensitive, so a word spelled by memory reads 0 on a real home and looks like a loop that never got there.
+    OrgDigestTests.Every_word_the_digest_compares_is_the_one_the_app_writes holds each name here to the app's own constant or writer
+    (`--vocabulary` prints them), and a scan of this file fails on a word typed anywhere else."""
+    # strategy_allocation.mode, strategy_deployment.mode, the board policy's mode: TradingMode's names
+    MODE_OBSERVE, MODE_PAPER = "OBSERVE", "PAPER"
+    # strategy_deployment.state, deployment_op.state, org_position.status
+    DEPLOYMENT_ENDED = "ended"
+    DEPLOYMENT_OP_REFUSED = "refused"
+    POSITION_ACTIVE = "active"
+    # ai_attempt.state: spelled only in AiAttemptStore's SQL
+    ATTEMPT_LAUNCHED, ATTEMPT_ENDED, ATTEMPT_LOST = "LAUNCHED", "ENDED", "LOST"
+    # strategy_promotion.verdict and .reason, referee_holdout.addis_status
+    VERDICT_PROMOTED, VERDICT_PAPER_ELIGIBLE = "promoted", "paper-eligible"
+    REASON_NO_TRADE = "no-trade-on-the-holdout"
+    ADDIS_INCONCLUSIVE = "inconclusive"
+    # org_event.kind and .decider
+    ORG_CHARTERED, ORG_HIRED, ORG_ACTIVATED = "chartered", "hired", "activated"
+    DECIDER_OWNER, DECIDER_APP, DECIDER_BOARD = "owner", "app", "board"
+    # org_mandate_event.kind
+    MANDATE_ISSUED, MANDATE_DELIVERED, MANDATE_ACCEPTED, MANDATE_REJECTED = "issued", "delivered", "accepted", "rejected"
+    # mission_event.disposition, and the id shapes that carry a meaning
+    DISPOSITION_BLOCKED, DISPOSITION_FAILED = "blocked", "failed"
+    WAKE_PAPER_RUN = "note:paper-run:"       # MissionEventIds.PaperRun: carries a forward run's figures back to its author
+    WAKE_AFTER_LOST = ":after-lost"          # MissionLoop.AfterLost: a told-something wake raised again after a lost turn
+    # publication.role and .kind: what the app tells a run's author
+    PUBLICATION_ALLOCATOR, PUBLICATION_NOTE = "allocator", "note"
+    # ledger_entry.kind, org_decision.kind (the two decision words are reserved for a verb main does not have yet: see `iterate`)
+    LEDGER_KILL = "kill"
+    DECISION_FAMILY_KILL, DECISION_FAMILY_BRANCH = "family-kill", "family-branch"
+    # org_forecast_resolution.outcome, cell_proof_row.kind, board_event.kind
+    OUTCOME_VOID = "void"
+    PROOF_GAP = "GAP"
+    BOARD_FOUNDED, BOARD_BUDGET_SHARE = "founded", "budget-share"
+    # engineering_log.component and .event
+    LOG_IPC, LOG_OP_REFUSED = "Ipc", "op_refused"
+    PIPE_REFUSALS = ("grant_rejected", "auth_rejected", "protocol_rejected", "operator_session_refused", "op_refused")
+    # strategy_allocation.policy_version
+    POLICY_INCONCLUSIVE = "allocation-policy-inconclusive-v1"   # a slot that costs its campaign a trial
+    POLICY_STOP = "allocation-policy-stop-v1"                   # D19's stop, a row with an empty window: U-paper-closure's, not an allocation
+    # tool_call.tool: a door verb is its op with _ for -; `trade`, `data` and `report` carry the op in the argument ("trade backtest")
+    OP_ORG_CHARTER, OP_ORG_HIRE = "org-charter", "org-hire"
+    OP_MANDATE_ASSIGN, OP_MANDATE_DELIVER, OP_MANDATE_ACCEPT, OP_MANDATE_REJECT = "mandate-assign", "mandate-deliver", "mandate-accept", "mandate-reject"
+    OP_BACKTEST, OP_VERDICT = "backtest", "verdict"
+    TOOLS_CARRYING_AN_OP = ("trade", "data", "report")
+    # the rest of what is matched: the legacy chair a launch with no role belongs to, a board seat's prefix, an order's, a fill's side
+    ROLE_DEFAULT = "operations"
+    BOARD_PREFIX = "board-"
+    CLIENT_ORDER_PREFIX = "TA-"
+    SIDE_SELL = "Sell"
+    BILLING_PLAN, BILLING_KEY, BILLING_UNKNOWN = "plan", "key", "unknown"
+    # keys: meta, kv, and the one setting read
+    META_SCHEMA_VERSION, KV_SETTINGS, SETTING_WORKS_ON_ITS_OWN = "schema_version", "settings", "ai_works_on_its_own"
+
+
+ADMISSIBLE = (W.VERDICT_PROMOTED, W.VERDICT_PAPER_ELIGIBLE)    # the two classes a version can be carried forward on
 REPEATED_REFUSAL = 5                     # the 72-hour brief's "act on": the same words refused five times
-MISSION_FAILED = "failed"                 # MissionEventDisposition.Failed
-ADMISSIBLE = ("promoted", "paper-eligible")                 # PromotionVerdict: the two classes a version can be carried forward on
 FORECASTS_TO_SCORE = 50                  # R26 § 4: the resolved forecasts a manager needs before its calibration can be read
 # The tables whose rows name the launch that wrote them: a turn that left a row in one of these did something.
 ACT_TABLES = ("org_mandate_event", "org_delivery", "org_decision", "org_forecast", "org_escalation", "org_lateral", "ledger_entry",
@@ -61,6 +114,10 @@ VENDOR_LIMIT_WORDS = re.compile(r"\b429\b|rate.?limit|usage.?limit|quota|too man
 
 
 # ---- time ------------------------------------------------------------------------------------------------------------------
+def iso_offset(zone):
+    return "+00:00" if zone == "Z" else zone
+
+
 def parse_ts(text):
     """A stored instant (the app writes UTC, 'O' format: 2026-10-30T12:00:00.0000000Z) as an aware datetime, or None."""
     if not text:
@@ -70,7 +127,7 @@ def parse_ts(text):
         return None
     frac = (m.group(3) or "")[:6].ljust(6, "0")
     zone = m.group(4) or "Z"
-    d = dt.datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{'+00:00' if zone == 'Z' else zone}")
+    d = dt.datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}.{frac}{iso_offset(zone)}")
     return d.astimezone(dt.timezone.utc)
 
 
@@ -101,7 +158,7 @@ def parse_since(text, now):
         raise ValueError(f"'{text}' is not a T0: use an ISO date or date-time (2026-10-30, 2026-10-30T18:00Z) or a span like 72h")
     clock = (m.group(2) or "00:00") + ":" + (m.group(3) or "00")
     if m.group(4):
-        return dt.datetime.fromisoformat(f"{m.group(1)}T{clock}{'+00:00' if m.group(4) == 'Z' else m.group(4)}").astimezone(dt.timezone.utc)
+        return dt.datetime.fromisoformat(f"{m.group(1)}T{clock}{iso_offset(m.group(4))}").astimezone(dt.timezone.utc)
     return dt.datetime.fromisoformat(f"{m.group(1)}T{clock}").astimezone().astimezone(dt.timezone.utc)
 
 
@@ -170,13 +227,13 @@ def short(text, n=110):
 
 def charge(row):
     """What a launch counts for: its reservation while open, its cost once closed (its reservation where it ended unpriced)."""
-    if row["state"] == "LAUNCHED":
+    if row["state"] == W.ATTEMPT_LAUNCHED:
         return dec(row["reserved_cost"]) or Decimal(0)
     return dec(row["cost"]) if row["cost"] is not None else (dec(row["reserved_cost"]) or Decimal(0))
 
 
 def position_of(row_role):
-    return row_role or DEFAULT_POSITION
+    return row_role or W.ROLE_DEFAULT
 
 
 class Digest:
@@ -201,15 +258,14 @@ class Digest:
 
     # -- 0. which home this is, and whether the AI is working
     def app_state(self):
-        schema = self.app.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        schema = self.app.execute("SELECT value FROM meta WHERE key = ?", (W.META_SCHEMA_VERSION,)).fetchone()
         working = None
-        row = self.app.execute("SELECT value FROM kv WHERE key = 'settings'").fetchone() if self.has("kv", "key", "value") else None
+        row = self.app.execute("SELECT value FROM kv WHERE key = ?", (W.KV_SETTINGS,)).fetchone() if self.has("kv", "key", "value") else None
         if row:
             try:
                 settings = json.loads(row[0])     # one word is taken from it and the rest is never kept or shown
-                for name in ("ai_works_on_its_own", "AiWorksOnItsOwn", "aiWorksOnItsOwn"):
-                    if isinstance(settings, dict) and name in settings:
-                        working = bool(settings[name])
+                if isinstance(settings, dict) and W.SETTING_WORKS_ON_ITS_OWN in settings:
+                    working = bool(settings[W.SETTING_WORKS_ON_ITS_OWN])
             except ValueError:
                 pass
         return {"schema": schema[0] if schema else None, "ai_works_on_its_own": working}
@@ -239,7 +295,7 @@ class Digest:
             (floor, self.now_s + "~")).fetchall()
         per = {}
         for r in rows:
-            p = per.setdefault(position_of(r["role"]), {"position": position_of(r["role"]), "board_seat": position_of(r["role"]).startswith(BOARD_PREFIX),
+            p = per.setdefault(position_of(r["role"]), {"position": position_of(r["role"]), "board_seat": position_of(r["role"]).startswith(W.BOARD_PREFIX),
                                                         "turns_today": 0, "cost_today": Decimal(0), "turns_since": 0, "cost_since": Decimal(0)})
             c = charge(r)
             if r["started_at"] >= self.day_from_s:
@@ -284,11 +340,11 @@ class Digest:
             (self.since_s,))]
         inconclusive = None
         try:
-            inconclusive = one("SELECT COUNT(*) FROM referee_holdout WHERE addis_status = 'inconclusive' AND at >= ?", self.since_s)
+            inconclusive = one("SELECT COUNT(*) FROM referee_holdout WHERE addis_status = ? AND at >= ?", W.ADDIS_INCONCLUSIVE, self.since_s)
         except sqlite3.Error:
             pass
         return {"asked_since": asked, "waiting_now": waiting, "given_since": given, "given_total": sum(g["count"] for g in given),
-                "no_trade_refusals_since": sum(g["count"] for g in given if g["reason"] == "no-trade-on-the-holdout"),
+                "no_trade_refusals_since": sum(g["count"] for g in given if g["reason"] == W.REASON_NO_TRADE),
                 "referee_inconclusive_since": inconclusive,
                 "words": "asked = strategy_verdict rows requested since T0; given = promotion rows written since T0; waiting = asked, not yet given (ever)"}
 
@@ -296,9 +352,9 @@ class Digest:
     def deployments(self):
         allocs = self.app.execute(
             "SELECT COUNT(*) AS n, SUM(CASE WHEN effective_to IS NULL THEN 1 ELSE 0 END) AS open, "
-            "SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END) AS new FROM strategy_allocation WHERE policy_version NOT LIKE '%-stop-%'",
-            (self.since_s,)).fetchone()
-        stops = self.app.execute("SELECT COUNT(*) FROM strategy_allocation WHERE policy_version LIKE '%-stop-%' AND at >= ?", (self.since_s,)).fetchone()[0]
+            "SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END) AS new FROM strategy_allocation WHERE policy_version <> ?",
+            (self.since_s, W.POLICY_STOP)).fetchone()
+        stops = self.app.execute("SELECT COUNT(*) FROM strategy_allocation WHERE policy_version = ? AND at >= ?", (W.POLICY_STOP, self.since_s)).fetchone()[0]
         rows = self.app.execute(
             "SELECT id, version_id, connector_id, account_id, symbol, mode, state, started_at, ended_at, end_reason, suspended_reason "
             "FROM strategy_deployment ORDER BY started_at DESC, id").fetchall()
@@ -307,7 +363,7 @@ class Digest:
             by[(r["mode"], r["state"])] = by.get((r["mode"], r["state"]), 0) + 1
         listed = []
         for r in rows:
-            if r["state"] == "ended" and (parse_ts(r["ended_at"]) or self.now) < self.since:
+            if r["state"] == W.DEPLOYMENT_ENDED and (parse_ts(r["ended_at"]) or self.now) < self.since:
                 continue
             fills = self.app.execute(
                 "SELECT f.at, f.side, f.quantity, f.price, f.fee FROM fill f WHERE f.account_id = ? AND f.symbol = ? AND "
@@ -328,22 +384,22 @@ class Digest:
             return None
         rows = self.app.execute(
             "SELECT e.symbol, e.max_deployments, e.max_quantity, e.max_notional, e.currency, e.expires_at, "
-            "(SELECT COUNT(*) FROM strategy_deployment d WHERE d.envelope_id = e.id AND d.state <> 'ended') AS open "
-            "FROM paper_envelope e WHERE e.withdrawn_at IS NULL AND e.expires_at > ? ORDER BY e.symbol, e.granted_at", (self.now_s,)).fetchall()
+            "(SELECT COUNT(*) FROM strategy_deployment d WHERE d.envelope_id = e.id AND d.state <> ?) AS open "
+            "FROM paper_envelope e WHERE e.withdrawn_at IS NULL AND e.expires_at > ? ORDER BY e.symbol, e.granted_at", (W.DEPLOYMENT_ENDED, self.now_s)).fetchall()
         return [dict(r) for r in rows]
 
     def paper_notes(self):
         """What the app told a run's author: the notes it published, and the last one's words (a simulation's figures, never money)."""
         rows = self.app.execute(
-            "SELECT content, created_at FROM publication WHERE role = 'allocator' AND kind = 'note' AND created_at >= ? ORDER BY created_at DESC, id",
-            (self.since_s,)).fetchall()
+            "SELECT content, created_at FROM publication WHERE role = ? AND kind = ? AND created_at >= ? ORDER BY created_at DESC, id",
+            (W.PUBLICATION_ALLOCATOR, W.PUBLICATION_NOTE, self.since_s)).fetchall()
         return {"since": len(rows), "last_at": rows[0]["created_at"] if rows else None, "last": short(rows[0]["content"], 150) if rows else None}
 
     def pnl(self, fills, account, symbol):
         qty, avg, realised, fees, unknown_fees = Decimal(0), Decimal(0), Decimal(0), Decimal(0), 0
         for f in fills:
             q, p = dec(f["quantity"]) or Decimal(0), dec(f["price"]) or Decimal(0)
-            signed = -q if str(f["side"]).lower() == "sell" else q
+            signed = -q if str(f["side"]).casefold() == W.SIDE_SELL.casefold() else q     # the app compares a side ignoring case
             if f["fee"] is None:
                 unknown_fees += 1
             else:
@@ -385,9 +441,9 @@ class Digest:
             "SELECT tool, refusal, COUNT(*) AS n, MAX(at) AS last FROM tool_call WHERE served = 0 AND at >= ? "
             "GROUP BY tool, refusal ORDER BY n DESC, tool", (self.since_s,))]
         pipe = {}
-        marks = ",".join("?" * len(PIPE_REFUSALS))
-        for r in self.app.execute(f"SELECT event, metadata, at FROM engineering_log WHERE component = 'Ipc' AND event IN ({marks}) AND at >= ?",
-                                  (*PIPE_REFUSALS, self.since_s)):
+        marks = ",".join("?" * len(W.PIPE_REFUSALS))
+        for r in self.app.execute(f"SELECT event, metadata, at FROM engineering_log WHERE component = ? AND event IN ({marks}) AND at >= ?",
+                                  (W.LOG_IPC, *W.PIPE_REFUSALS, self.since_s)):
             meta = {}
             try:
                 meta = json.loads(r["metadata"]) if r["metadata"] else {}
@@ -399,8 +455,8 @@ class Digest:
             e["count"] += 1
             e["last_at"] = max(e["last_at"] or "", r["at"] or "")
         ops = [{"source": "deployment-op", "what": r["kind"], "words": short(r["answer"]), "count": r["n"], "last_at": r["last"]} for r in self.app.execute(
-            "SELECT kind, answer, COUNT(*) AS n, MAX(created_at) AS last FROM deployment_op WHERE state = 'refused' AND created_at >= ? "
-            "GROUP BY kind, answer ORDER BY n DESC, kind", (self.since_s,))]
+            "SELECT kind, answer, COUNT(*) AS n, MAX(created_at) AS last FROM deployment_op WHERE state = ? AND created_at >= ? "
+            "GROUP BY kind, answer ORDER BY n DESC, kind", (W.DEPLOYMENT_OP_REFUSED, self.since_s))]
         groups = sorted(tools + list(pipe.values()) + ops, key=lambda g: (-g["count"], g["source"], g["what"]))
         return {"total": sum(g["count"] for g in groups), "groups": groups}
 
@@ -412,7 +468,7 @@ class Digest:
         groups, exits = {}, {}
         bad = 0
         for r in rows:
-            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or r["state"] not in ("ENDED", "LAUNCHED")
+            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or r["state"] not in (W.ATTEMPT_ENDED, W.ATTEMPT_LAUNCHED)
             if r["exit_code"] is not None:
                 exits[str(r["exit_code"])] = exits.get(str(r["exit_code"]), 0) + 1
             if not failed:
@@ -434,13 +490,13 @@ class Digest:
 
     # -- 8. the AI day-total used vs the board's
     def day_total(self):
-        used = {"plan": Decimal(0), "key": Decimal(0), "unknown": Decimal(0)}
+        used = {W.BILLING_PLAN: Decimal(0), W.BILLING_KEY: Decimal(0), W.BILLING_UNKNOWN: Decimal(0)}
         board = Decimal(0)
         for r in self.app.execute("SELECT role, state, reserved_cost, cost, billing_class FROM ai_attempt WHERE started_at >= ? AND started_at < ?",
                                   (self.day_from_s, self.day_to_s)):
             c = charge(r)
-            used[r["billing_class"] if r["billing_class"] in used else "unknown"] += c
-            if (r["role"] or "").startswith(BOARD_PREFIX):
+            used[r["billing_class"] if r["billing_class"] in used else W.BILLING_UNKNOWN] += c
+            if (r["role"] or "").startswith(W.BOARD_PREFIX):
                 board += c
         policy = self.app.execute("SELECT version, mode, body FROM board_policy ORDER BY version DESC LIMIT 1").fetchone()
         plan_total, mode, version = None, None, None
@@ -453,11 +509,11 @@ class Digest:
                 pass
         share = None
         try:
-            row = self.app.execute("SELECT budget_share FROM board_event WHERE kind IN ('founded', 'budget-share') ORDER BY id DESC LIMIT 1").fetchone()
+            row = self.app.execute("SELECT budget_share FROM board_event WHERE kind IN (?, ?) ORDER BY id DESC LIMIT 1", (W.BOARD_FOUNDED, W.BOARD_BUDGET_SHARE)).fetchone()
             share = dec(row[0]) if row else None
         except sqlite3.Error:
             pass
-        plan_counted = used["plan"] + used["unknown"]
+        plan_counted = used[W.BILLING_PLAN] + used[W.BILLING_UNKNOWN]
         return {
             "day": {"from": stored(self.day_from), "to": stored(self.day_to)},
             "used": {k: money(v) for k, v in used.items()}, "plan_counted": money(plan_counted),
@@ -476,7 +532,7 @@ class Digest:
             p["pending"] += 1
         last = {position_of(r["role"]): r["last"] for r in self.app.execute(
             "SELECT role, MAX(consumed_at) AS last FROM mission_event WHERE consumed_at IS NOT NULL GROUP BY role")}
-        active = [r["id"] for r in self.app.execute("SELECT id FROM org_position WHERE status = 'active' ORDER BY id")]
+        active = [r["id"] for r in self.app.execute("SELECT id FROM org_position WHERE status = ? ORDER BY id", (W.POSITION_ACTIVE,))]
         out = []
         for pid in active:
             p = pending.get(pid)
@@ -492,16 +548,16 @@ class Digest:
                 "WHERE e.consumed_at >= ? GROUP BY e.disposition, a.state", (self.since_s,)):
             word = r["disposition"] or "none"
             dispositions[word] = dispositions.get(word, 0) + r["n"]
-            if r["state"] == "LOST":
+            if r["state"] == W.ATTEMPT_LOST:
                 lost += r["n"]
-            elif word == MISSION_FAILED:
+            elif word == W.DISPOSITION_FAILED:
                 failed += r["n"]
         after_lost = self.app.execute("SELECT COUNT(*) FROM mission_event WHERE id LIKE ? AND created_at >= ?",
-                                      ("%" + LOST_WAKE_SUFFIX, self.since_s)).fetchone()[0]
+                                      ("%" + W.WAKE_AFTER_LOST, self.since_s)).fetchone()[0]
         blocked = [{"words": short(r["disposition_detail"]), "count": r["n"], "roles": r["roles"].split(",")[:4] if r["roles"] else [], "oldest_due": r["oldest"]}
                    for r in self.app.execute(
                        "SELECT disposition_detail, COUNT(*) AS n, GROUP_CONCAT(DISTINCT COALESCE(role, ?)) AS roles, MIN(due_at) AS oldest FROM mission_event "
-                       "WHERE consumed_at IS NULL AND disposition = 'blocked' GROUP BY disposition_detail ORDER BY n DESC", (DEFAULT_POSITION,))]
+                       "WHERE consumed_at IS NULL AND disposition = ? GROUP BY disposition_detail ORDER BY n DESC", (W.ROLE_DEFAULT, W.DISPOSITION_BLOCKED))]
         return {"active_positions": out, "consumed_since_by_disposition": dispositions, "failed_turn_wakes_since": failed, "lost_turn_wakes_since": lost,
                 "raised_again_after_lost_since": after_lost, "blocked_now": blocked,
                 "overdue": [o["position"] for o in out if o["in_seconds"] is not None and o["in_seconds"] < 0]}
@@ -509,47 +565,59 @@ class Digest:
     # -- 10. R26 § 4 (1): where the loop breaks: each arrow, first reached and how often, and its first refusal in words
     def arrow_specs(self):
         t0 = self.since_s
-        events = lambda kind: ("org_event", f"SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = '{kind}' AND at >= ?", (t0,))
-        mandate = lambda kind: ("org_mandate_event", f"SELECT MIN(at), COUNT(*) FROM org_mandate_event WHERE kind = '{kind}' AND at >= ?", (t0,))
+        events = lambda kind: ("org_event", "SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = ? AND at >= ?", (kind, t0))
+        mandate = lambda kind: ("org_mandate_event", "SELECT MIN(at), COUNT(*) FROM org_mandate_event WHERE kind = ? AND at >= ?", (kind, t0))
+        decided = (("UNION ALL SELECT at FROM org_decision WHERE kind = ? AND at >= ?", lambda kind: (kind, t0)) if self.has("org_decision", "kind", "at")
+                   else ("", lambda kind: ()))
         return (
-            ("charter", events("chartered"), ("org-charter",)),
-            ("hire", events("hired"), ("org-hire",)),
+            ("charter", events(W.ORG_CHARTERED), (W.OP_ORG_CHARTER,)),
+            ("hire", events(W.ORG_HIRED), (W.OP_ORG_HIRE,)),
             # A hire that activated itself is decided by the hiring head; the owner's own activation is not this arrow.
-            ("self-activation", ("org_event", "SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = 'activated' "
-                                              "AND decider NOT IN ('owner', 'app', 'board') AND at >= ?", (t0,)), ()),
-            ("mandate", mandate("issued"), ("mandate-assign",)),
-            ("delivery", mandate("delivered"), ("mandate-deliver",)),
-            ("accepted", mandate("accepted"), ("mandate-accept",)),
-            ("rejected", mandate("rejected"), ("mandate-reject",)),
+            ("self-activation", ("org_event", "SELECT MIN(at), COUNT(*) FROM org_event WHERE kind = ? AND decider NOT IN (?, ?, ?) AND at >= ?",
+                                 (W.ORG_ACTIVATED, W.DECIDER_OWNER, W.DECIDER_APP, W.DECIDER_BOARD, t0)), ()),
+            ("mandate", mandate(W.MANDATE_ISSUED), (W.OP_MANDATE_ASSIGN,)),
+            ("delivery", mandate(W.MANDATE_DELIVERED), (W.OP_MANDATE_DELIVER,)),
+            ("accepted", mandate(W.MANDATE_ACCEPTED), (W.OP_MANDATE_ACCEPT,)),
+            ("rejected", mandate(W.MANDATE_REJECTED), (W.OP_MANDATE_REJECT,)),
             ("backtest", ("strategy_run", "SELECT MIN(created_at), COUNT(*) FROM strategy_run WHERE created_at >= ? AND id NOT IN "
-                                          "(SELECT holdout_run_id FROM strategy_promotion WHERE holdout_run_id IS NOT NULL)", (t0,)), ("backtest",)),
-            ("verdict asked", ("strategy_verdict", "SELECT MIN(requested_at), COUNT(*) FROM strategy_verdict WHERE requested_at >= ?", (t0,)), ("verdict",)),
+                                          "(SELECT holdout_run_id FROM strategy_promotion WHERE holdout_run_id IS NOT NULL)", (t0,)), (W.OP_BACKTEST,)),
+            ("verdict asked", ("strategy_verdict", "SELECT MIN(requested_at), COUNT(*) FROM strategy_verdict WHERE requested_at >= ?", (t0,)), (W.OP_VERDICT,)),
             ("verdict given", ("strategy_promotion", "SELECT MIN(at), COUNT(*) FROM strategy_promotion WHERE at >= ?", (t0,)), ()),
             # An owner's or organisation's stop is written as an allocation row too (D19): it is not an allocation.
-            ("paper allocation", ("strategy_allocation", "SELECT MIN(at), COUNT(*) FROM strategy_allocation WHERE mode = 'paper' "
-                                                         "AND policy_version NOT LIKE '%-stop-%' AND at >= ?", (t0,)), ()),
-            ("paper run", ("strategy_deployment", "SELECT MIN(started_at), COUNT(*) FROM strategy_deployment WHERE mode = 'paper' AND started_at >= ?", (t0,)), ()),
+            ("paper allocation", ("strategy_allocation", "SELECT MIN(at), COUNT(*) FROM strategy_allocation WHERE mode = ? AND policy_version <> ? AND at >= ?",
+                                  (W.MODE_PAPER, W.POLICY_STOP, t0)), ()),
+            ("paper run", ("strategy_deployment", "SELECT MIN(started_at), COUNT(*) FROM strategy_deployment WHERE mode = ? AND started_at >= ?", (W.MODE_PAPER, t0)), ()),
             ("paper fill", ("deployment_op", "SELECT MIN(f.at), COUNT(*) FROM fill f JOIN deployment_op o ON (f.request_id = o.request_id OR "
-                                             "f.client_order_id = 'TA-' || o.request_id) JOIN strategy_deployment d ON d.id = o.deployment_id "
-                                             "WHERE d.mode = 'paper' AND f.at >= ?", (t0,)), ()),
+                                             "f.client_order_id = ? || o.request_id) JOIN strategy_deployment d ON d.id = o.deployment_id "
+                                             "WHERE d.mode = ? AND f.at >= ?", (W.CLIENT_ORDER_PREFIX, W.MODE_PAPER, t0)), ()),
             ("note raised", ("mission_event", "SELECT MIN(created_at), COUNT(*) FROM mission_event WHERE id LIKE ? AND created_at >= ?",
-                             (PAPER_RUN_WAKE + "%", t0)), ()),
+                             (W.WAKE_PAPER_RUN + "%", t0)), ()),
             ("note taken", ("mission_event", "SELECT MIN(consumed_at), COUNT(*) FROM mission_event WHERE id LIKE ? AND consumed_at >= ? "
-                                             "AND consumed_by IN (SELECT id FROM ai_attempt)", (PAPER_RUN_WAKE + "%", t0)), ()),
-            ("kill", ("org_decision", "SELECT MIN(at), COUNT(*) FROM (SELECT at FROM org_decision WHERE kind = 'family-kill' AND at >= ? "
-                                      "UNION ALL SELECT created_at FROM ledger_entry WHERE kind = 'kill' AND created_at >= ?)", (t0, t0)), ()),
-            ("iterate", ("org_decision", "SELECT MIN(at), COUNT(*) FROM org_decision WHERE kind = 'family-branch' AND at >= ?", (t0,)), ()),
+                                             "AND consumed_by IN (SELECT id FROM ai_attempt)", (W.WAKE_PAPER_RUN + "%", t0)), ()),
+            # NO VERB WRITES family-kill OR family-branch ON MAIN (OrgDecisionKind.Mandatory names them; Decide refuses them): a kill is the
+            # author's ledger entry, and an iteration is a new version from a position that had taken a run's note. The decision words
+            # stay so a verb that lands is counted at once.
+            ("kill", ("ledger_entry", "SELECT MIN(at), COUNT(*) FROM (SELECT created_at AS at FROM ledger_entry WHERE kind = ? AND created_at >= ? " + decided[0] + ")",
+                      (W.LEDGER_KILL, t0, *(decided[1](W.DECISION_FAMILY_KILL)))), ()),
+            ("iterate", ("strategy_version", "SELECT MIN(at), COUNT(*) FROM (SELECT v.created_at AS at FROM strategy_version v WHERE v.created_at >= ? AND EXISTS "
+                                             "(SELECT 1 FROM mission_event e WHERE e.id LIKE ? AND e.role = v.role AND e.consumed_at < v.created_at "
+                                             "AND e.consumed_by IN (SELECT id FROM ai_attempt)) " + decided[0] + ")",
+                         (t0, W.WAKE_PAPER_RUN + "%", *(decided[1](W.DECISION_FAMILY_BRANCH)))), ()),
         )
 
     def arrows(self):
         refused = {}
         first_any = None
-        for r in self.app.execute("SELECT at, tool, refusal FROM tool_call WHERE served = 0 AND at >= ? ORDER BY at, id", (self.since_s,)):
-            item = {"at": r["at"], "what": r["tool"], "words": short(r["refusal"])}
+        for r in self.app.execute("SELECT at, tool, argument, refusal FROM tool_call WHERE served = 0 AND at >= ? ORDER BY at, id", (self.since_s,)):
+            op = r["tool"]
+            if op in W.TOOLS_CARRYING_AN_OP:         # GrantedWorkerTools.Summary: "trade backtest", the op the tool was asked for
+                parts = (r["argument"] or "").split()
+                op = parts[1] if len(parts) > 1 and parts[0] == op else op
+            item = {"at": r["at"], "what": op, "words": short(r["refusal"])}
             first_any = first_any or item
-            refused.setdefault(r["tool"].replace("_", "-"), []).append(item)
-        for r in self.app.execute("SELECT metadata, at FROM engineering_log WHERE component = 'Ipc' AND event = 'op_refused' AND at >= ? ORDER BY at, id",
-                                  (self.since_s,)):
+            refused.setdefault(op.replace("_", "-"), []).append(item)
+        for r in self.app.execute("SELECT metadata, at FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY at, id",
+                                  (W.LOG_IPC, W.LOG_OP_REFUSED, self.since_s)):
             try:
                 meta = json.loads(r["metadata"]) if r["metadata"] else {}
             except ValueError:
@@ -573,7 +641,7 @@ class Digest:
             rows.append(row)
         return {"arrows": rows, "reached": sum(1 for r in rows if r["count"]), "of": len(rows),
                 "not_reached": [r["arrow"] for r in rows if not r["count"]], "first_refusal": first_any,
-                "cannot_be_read": "a keep has no record of its own: only a kill or a branch is written down"}
+                "cannot_be_read": "a keep has no record of its own: a kill is the author's ledger entry, an iterate a new version after a run's note"}
 
     # -- 11. R26 § 4 (2): what a turn costs and how fast turns come
     def acted(self):
@@ -595,7 +663,7 @@ class Digest:
         acted, unread = self.acted()
         # A head's chart act names no launch, only its decider: it counts for the turn of that position it fell inside.
         chart = [(r["decider"], r["at"]) for r in self.app.execute(
-            "SELECT decider, at FROM org_event WHERE at >= ? AND decider NOT IN ('owner', 'app', 'board')", (self.since_s,))]
+            "SELECT decider, at FROM org_event WHERE at >= ? AND decider NOT IN (?, ?, ?)", (self.since_s, W.DECIDER_OWNER, W.DECIDER_APP, W.DECIDER_BOARD))]
         per, limit_hits, first_limit = {}, 0, None
         for r in rows:
             pos = position_of(r["role"])
@@ -604,7 +672,7 @@ class Digest:
             p["cost"] += charge(r)
             if r["model"]:
                 p["models"].add(r["model"])
-            if r["state"] == "ENDED" and r["exit_code"] == 0:
+            if r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
                 p["clean"] += 1
                 inside = any(who == pos and r["started_at"] <= at <= (r["ended_at"] or self.now_s) for who, at in chart)
                 if r["id"] not in acted and not inside:
@@ -647,7 +715,7 @@ class Digest:
         for r in self.app.execute("SELECT forecaster, COUNT(*) AS n, SUM(scored) AS s FROM org_forecast WHERE at >= ? GROUP BY forecaster", (self.since_s,)):
             per[r["forecaster"]] = {**blank(r["forecaster"]), "written_since": r["n"], "scored_since": r["s"] or 0}
         for r in self.app.execute("SELECT f.forecaster, r.at FROM org_forecast_resolution r JOIN org_forecast f ON f.id = r.forecast_id "
-                                  "WHERE f.scored = 1 AND r.outcome <> 'void'"):
+                                  "WHERE f.scored = 1 AND r.outcome <> ?", (W.OUTCOME_VOID,)):
             p = per.setdefault(r["forecaster"], blank(r["forecaster"]))
             p["resolved_total"] += 1
             if r["at"] >= self.since_s:
@@ -668,7 +736,7 @@ class Digest:
         parent = {c["id"]: c["renewed_from"] for c in every}
         by_lineage = {}
         for r in self.app.execute("SELECT DISTINCT p.campaign_id, a.version_id FROM strategy_allocation a JOIN strategy_promotion p ON p.id = a.promotion_id "
-                                  "WHERE a.policy_version = ?", (INCONCLUSIVE_POLICY,)):
+                                  "WHERE a.policy_version = ?", (W.POLICY_INCONCLUSIVE,)):
             by_lineage.setdefault(r[0], set()).add(r[1])
         spans = self.judgement_spans()
         out = []
@@ -724,7 +792,7 @@ class Digest:
             "WHERE id NOT IN (SELECT proof_id FROM cell_proof_revocation) ORDER BY proven_at DESC, id DESC").fetchall()
         revoked = self.app.execute("SELECT COUNT(*) FROM cell_proof_revocation").fetchone()[0]
         newest = proofs[0] if proofs else None
-        gaps = self.app.execute("SELECT COUNT(*) FROM cell_proof_row WHERE proof_id = ? AND kind = 'GAP'", (newest["id"],)).fetchone()[0] if newest else None
+        gaps = self.app.execute("SELECT COUNT(*) FROM cell_proof_row WHERE proof_id = ? AND kind = ?", (newest["id"], W.PROOF_GAP)).fetchone()[0] if newest else None
         out = {"unrevoked_proofs": len(proofs), "revoked": revoked, "newest_proven_at": newest["proven_at"] if newest else None,
                "newest_provider": newest["provider"] if newest else None, "newest_gap_rows": gaps, "current": None, "differs": None}
         if identity is None:
@@ -862,7 +930,7 @@ def attention(d):
             flags.append(f"refused {g['count']}x: {g['what']}: {short(g['words'], 90)}")
     dep = d.get("deployments", {})
     for g in dep.get("by_mode_state", []):
-        if g["mode"] != "paper" and g["state"] != "ended":
+        if g["mode"] != W.MODE_PAPER and g["state"] != W.DEPLOYMENT_ENDED:
             flags.append(f"{g['count']} deployment(s) in mode '{g['mode']}' ({g['state']}): NOT paper")
     cp = d.get("cell_proof", {})
     if cp.get("current") is False:
@@ -870,7 +938,7 @@ def attention(d):
     elif cp.get("current") is None and "unreadable" not in cp:
         flags.append("cell proof currency unknown: " + str(cp.get("why", "")))
     er = d.get("errors", {})
-    lost = sum(g["count"] for g in er.get("groups", []) if g["state"] == "LOST")
+    lost = sum(g["count"] for g in er.get("groups", []) if g["state"] == W.ATTEMPT_LOST)
     wk = d.get("wakes", {})
     if wk.get("failed_turn_wakes_since") or wk.get("lost_turn_wakes_since"):
         flags.append(f"wakes: {wk.get('failed_turn_wakes_since', 0)} on failed turns, {wk.get('lost_turn_wakes_since', 0)} on lost turns, "
@@ -893,7 +961,7 @@ def attention(d):
     if svc and svc.get("restarts") not in (None, "0"):
         flags.append(f"systemd restarted tradeagent.service {svc['restarts']} time(s) since it was last started by hand")
     bp = d.get("day_total", {}).get("board_policy", {})
-    if bp.get("mode") not in (None, "OBSERVE", "PAPER"):
+    if bp.get("mode") not in (None, W.MODE_OBSERVE, W.MODE_PAPER):
         flags.append(f"board policy mode is {bp['mode']}")
     for key, v in d.items():
         if isinstance(v, dict) and "unreadable" in v and key != "tape_health":
@@ -1089,7 +1157,11 @@ def main(argv):
     ap.add_argument("--machine-id-file", default="/etc/machine-id")
     ap.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
     ap.add_argument("--osrelease-file", default="/proc/sys/kernel/osrelease")
+    ap.add_argument("--vocabulary", action="store_true")
     a = ap.parse_args(argv)
+    if a.vocabulary:
+        print(json.dumps({k: v for k, v in vars(W).items() if k.isupper()}, sort_keys=True))
+        return 0
     try:
         now = parse_ts(a.now) if a.now else dt.datetime.now(dt.timezone.utc)
         if now is None:

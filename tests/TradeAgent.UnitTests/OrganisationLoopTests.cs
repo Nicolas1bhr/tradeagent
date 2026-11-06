@@ -418,6 +418,17 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var funded = new AiAttemptStore(db).FundingOf(executorTurn.Id);
         Assert.Equal(new[] { team.Id, division.Id, OrgIds.Root }.Order(StringComparer.Ordinal), funded.Order(StringComparer.Ordinal));
 
+        // ---- 10. THE RUN'S EYES SEE WHAT THE LOOP DID: the monitor's digest over this very home, whose every row a writer of the app wrote.
+        if (!OperatingSystem.IsWindows())
+        {
+            var digest = OrgDigestTests.OnALiveHome(db);
+            output.WriteLine(digest.GetProperty("arrows").GetRawText());
+            var seen = digest.GetProperty("arrows").GetProperty("arrows").EnumerateArray().ToDictionary(a => a.GetProperty("arrow").GetString()!, a => a.GetProperty("count").GetInt32());
+            foreach (var arrow in new[] { "charter", "hire", "self-activation", "mandate", "delivery", "accepted", "backtest", "verdict asked", "verdict given", "paper allocation", "paper run", "note raised", "note taken" })
+                Assert.True(seen[arrow] > 0, $"the loop reached '{arrow}' and the digest reads it 0");
+            Assert.DoesNotContain(digest.GetProperty("attention").EnumerateArray(), a => a.GetString()!.Contains("NOT paper", StringComparison.Ordinal));
+        }
+
         output.WriteLine($"loop: {life.Counts()} in {(DateTimeOffset.UtcNow - started).TotalSeconds:F0} s");
     }
 
