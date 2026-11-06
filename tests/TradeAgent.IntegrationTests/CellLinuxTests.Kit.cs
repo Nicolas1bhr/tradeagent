@@ -69,9 +69,9 @@ public partial class CellLinuxTests
         Says(ran, "kit-read", KitFixture.ToolSays,
             "write-denied kit-new-file", "write-denied skills-new-file", "write-denied tools-new-file", "write-denied skill-rewrite",
             "write-denied tool-rewrite", "write-denied tool-remove", "write-denied tool-rename", "write-denied kit-mkdir");
-        // chmod is not a right Landlock handles (it governs no attribute change), and the files are the owner's own: said, not asserted.
-        _output.WriteLine("tool-chmod in the cell: " + (ran.Out.Contains("write-open tool-chmod", StringComparison.Ordinal)
-            ? "allowed — Landlock does not handle a mode change; the bytes stay unwritable, and a changed run bit changes the hash" : "denied"));
+        // A MODE CHANGE IS NOT A RIGHT LANDLOCK HANDLES; THE FILTER AND THE SUPERVISOR REFUSE IT (U-cell-metadata, R29 F-D1): a changed run bit
+        // changes the hash, so one cell's flip would withdraw the kit from every other cell.
+        Says(ran, "write-denied tool-chmod");
         Assert.Equal(kit.Hash, Kit.HashOf(kit.Dir));
 
         // THE CONTROL, OUTSIDE ANY CELL: the same writes succeed as the test's own user, so the denials above are the cell's.
