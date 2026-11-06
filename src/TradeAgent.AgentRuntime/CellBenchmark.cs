@@ -194,6 +194,10 @@ public static class CellBenchmark
         catch (System.Net.NetworkInformation.NetworkInformationException) { return null; }
     }
 
+    /// <summary>A file's mode and write time, as the app reads them from outside the cell.</summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    static string Attributes(string file) => $"{File.GetUnixFileMode(file)}|{File.GetLastWriteTimeUtc(file).Ticks}";
+
     /// <summary>THE PROFILE a proof of <paramref name="provider"/> is measured under on this platform with codex <paramref name="codexPin"/>.</summary>
     public static string Profile(string provider, CellPlatform platform, string codexPin) => platform.Windows
         ? WindowsProfile(provider, platform, codexPin)
@@ -469,17 +473,18 @@ public static class CellBenchmark
             string? attributesSaid = null;
             await Row("attributes-denied", async () =>
             {
+                if (!OperatingSystem.IsLinux()) return (false, "not Linux");
                 foreach (var f in new[] { attributesOutside, attributesInput, attributesOwn }) File.WriteAllText(f, "attributes");
                 File.SetUnixFileMode(attributesOwn, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                static string Of(string f) => $"{File.GetUnixFileMode(f)}|{File.GetLastWriteTimeUtc(f).Ticks}";
-                var (before, input) = (Of(attributesOutside), Of(attributesInput));
+                var (before, input) = (Attributes(attributesOutside), Attributes(attributesInput));
                 var (_, o) = await Py(policy, "attributes", AttributesProbe, attributesOutside, attributesInput, attributesOwn);
                 attributesSaid = o;
                 var denied = new[] { "chmod", "utime", "chown", "xattr", "fchmod", "futimens" }.All(n => o.Contains(n + "-denied", StringComparison.Ordinal));
-                return (denied && Of(attributesOutside) == before && Of(attributesInput) == input, o.Trim().Replace('\n', ' '));
+                return (denied && Attributes(attributesOutside) == before && Attributes(attributesInput) == input, o.Trim().Replace('\n', ' '));
             });
             await Row("attributes-workspace", () =>
             {
+                if (!OperatingSystem.IsLinux()) return Task.FromResult((false, "not Linux"));
                 var held = attributesSaid is { } o && o.Contains("own-chmod-open", StringComparison.Ordinal) && o.Contains("own-utime-open", StringComparison.Ordinal)
                     && File.GetUnixFileMode(attributesOwn).HasFlag(UnixFileMode.UserExecute)
                     && File.GetLastWriteTimeUtc(attributesOwn) == DateTimeOffset.FromUnixTimeSeconds(1000000000).UtcDateTime;
