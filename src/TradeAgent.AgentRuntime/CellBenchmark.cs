@@ -50,9 +50,35 @@ public static class CellBenchmark
     [
         "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
         "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
-        "ipc-denied", "signals-environ-denied", "io-uring-denied", "cgroup-escape-denied", "descendants-cancelled",
+        "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled",
         "tmp-unchanged", "route-a-exec-server"
     ];
+
+    /// <summary>
+    /// A FILE'S ATTRIBUTES FROM INSIDE A CELL (<c>U-cell-metadata</c>; R29 F-D1): a mode, a time, an owner and an extended attribute of a file
+    /// no grant names, a mode and a time through the read-only descriptor a grant of read gives; then a mode and a time of the
+    /// workspace's own file, which stay the cell's.
+    /// </summary>
+    const string AttributesProbe = """
+        import os, sys
+        outside, granted, own = sys.argv[1:4]
+        def attempt(name, act):
+            try:
+                act(); print(name + "-open")
+            except PermissionError:
+                print(name + "-denied")
+            except OSError as e:
+                print(name + "-failed errno=" + str(e.errno))
+        attempt("chmod", lambda: os.chmod(outside, 0o777))
+        attempt("utime", lambda: os.utime(outside, (1000000000, 1000000000)))
+        attempt("chown", lambda: os.chown(outside, -1, os.getegid()))
+        attempt("xattr", lambda: os.setxattr(outside, "user.cell", b"x"))
+        fd = os.open(granted, os.O_RDONLY)
+        attempt("fchmod", lambda: os.fchmod(fd, 0o777))
+        attempt("futimens", lambda: os.utime(fd, (1000000000, 1000000000)))
+        attempt("own-chmod", lambda: os.chmod(own, 0o750))
+        attempt("own-utime", lambda: os.utime(own, (1000000000, 1000000000)))
+        """;
 
     /// <summary>AF_UNIX from inside a cell: a socket made at all, then a connect to a pathname socket and to an abstract one.</summary>
     const string IpcProbe = """
@@ -436,6 +462,28 @@ public static class CellBenchmark
             {
                 var (_, o) = await Py(policy, "uring", UringProbe);
                 return (o.Contains("io_uring-denied", StringComparison.Ordinal), o.Trim());
+            });
+            // THE TRUTH IS READ FROM OUTSIDE THE CELL: what a cell's call answered is its account, what the file holds afterwards is the measure.
+            string attributesOutside = Path.Combine(root, "attributes-outside"), attributesInput = Path.Combine(home, "attributes-input"),
+                attributesOwn = Path.Combine(ws, "attributes-own");
+            string? attributesSaid = null;
+            await Row("attributes-denied", async () =>
+            {
+                foreach (var f in new[] { attributesOutside, attributesInput, attributesOwn }) File.WriteAllText(f, "attributes");
+                File.SetUnixFileMode(attributesOwn, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                static string Of(string f) => $"{File.GetUnixFileMode(f)}|{File.GetLastWriteTimeUtc(f).Ticks}";
+                var (before, input) = (Of(attributesOutside), Of(attributesInput));
+                var (_, o) = await Py(policy, "attributes", AttributesProbe, attributesOutside, attributesInput, attributesOwn);
+                attributesSaid = o;
+                var denied = new[] { "chmod", "utime", "chown", "xattr", "fchmod", "futimens" }.All(n => o.Contains(n + "-denied", StringComparison.Ordinal));
+                return (denied && Of(attributesOutside) == before && Of(attributesInput) == input, o.Trim().Replace('\n', ' '));
+            });
+            await Row("attributes-workspace", () =>
+            {
+                var held = attributesSaid is { } o && o.Contains("own-chmod-open", StringComparison.Ordinal) && o.Contains("own-utime-open", StringComparison.Ordinal)
+                    && File.GetUnixFileMode(attributesOwn).HasFlag(UnixFileMode.UserExecute)
+                    && File.GetLastWriteTimeUtc(attributesOwn) == DateTimeOffset.FromUnixTimeSeconds(1000000000).UtcDateTime;
+                return Task.FromResult((held, $"the workspace's own file: {File.GetUnixFileMode(attributesOwn)}, {File.GetLastWriteTimeUtc(attributesOwn):O}"));
             });
             await Row("cgroup-escape-denied", async () =>
             {
