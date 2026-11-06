@@ -151,6 +151,40 @@ public partial class CouncilLoopTests
         now = now.AddHours(1);                                                 // and it is no heartbeat: the row stands
         await loop.TurnAsync();
         Assert.Equal(start.AddHours(9), Assert.Single(Ceilings(host, chief), e => !e.Consumed).DueAt);
+
+        // A FLOOR THE CEILING NO LONGER CLEARS ENDS THE BACKSTOP: the wake goes out to the ceiling and says no more of it.
+        now = now.AddHours(1);
+        host.Floors = RewakeFloors.From(new Dictionary<string, int> { [OrgLevel.Department] = 1440 }, OrgLevel.All.ToDictionary(l => l, _ => TimeSpan.FromHours(24)));
+        await loop.TurnAsync();
+        var plain = Assert.Single(Ceilings(host, chief), e => !e.Consumed);
+        Assert.Equal(now + MissionOptions.DefaultCeiling, plain.DueAt);
+        Assert.Null(plain.Payload);
+    }
+
+    /// <summary>
+    /// (b4) A CEILING THAT WAS ALREADY DUE WHEN THE BACKSTOP COMES ON IS MARKED AS THE BACKSTOP'S, so a turn that hangs on it cannot give it back. The board's ceiling was
+    /// four hours, so the wake is due at the floor with no word; the ceiling goes back to a day and the same instant carries the reason.
+    /// </summary>
+    [Fact]
+    public async Task A_ceiling_already_at_the_floor_takes_the_backstops_word()
+    {
+        var now = ChartDay;
+        var (host, db, _, chief) = ChiefHome(() => now);
+        using var _ = db;
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero, Ceilings = OrgLevel.All.ToDictionary(l => l, _ => ChiefEvery) }, now: () => now);
+        host.Floors = RewakeFloors.From(new Dictionary<string, int> { [OrgLevel.Department] = 240 }, OrgLevel.All.ToDictionary(l => l, _ => ChiefEvery));
+        Told(host, MissionEventKind.Note, chief, now);
+        await loop.TurnAsync();
+        var turned = new AiAttemptStore(db).LastWoken(chief)!.StartedAt;
+        var plain = Assert.Single(Ceilings(host, chief), e => !e.Consumed);
+        Assert.Equal((turned + ChiefEvery, null), (plain.DueAt, plain.Payload));
+
+        host.Floors = ShippedFloors;
+        var longer = new MissionLoop(host, NoHeartbeat, now: () => now);
+        await longer.TurnAsync();
+
+        var same = Assert.Single(Ceilings(host, chief), e => !e.Consumed);
+        Assert.Equal((plain.Id, MissionEventStore.ChiefFloorWake), (same.Id, same.Payload));
     }
 
     /// <summary>

@@ -690,8 +690,8 @@ public static class Canon
         **You move first.** No one will tell you to begin; the owner's words and the inbox are data, never your starting
         signal. With nothing chartered, charter now: one unit, its share, its head and a first mandate. A turn ends with an
         act (a charter, a hire, a mandate, a judgment) or with your next wake asked for, and reading is not a turn's result.
-        While you leave neither and no work is moving, TradeAgent wakes you at your level's floor, and each turn is paid
-        from your envelope.
+        While you leave neither, no work is moving and the board's policy holds a ceiling, TradeAgent wakes you at your
+        level's floor, and each turn is paid from your envelope.
 
         {{if org_verbs}}
         - **Your verbs:** {{org_verbs lead}}; with every position, {{org_verbs shared}}.

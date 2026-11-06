@@ -4008,12 +4008,14 @@ public sealed class MissionLoop
             if (last is { } turned)
             {
                 var due = turned + interval;
-                if (pending.Count == 1 && pending[0].DueAt == due) return;
+                if (pending.Count == 1 && pending[0].DueAt == due && pending[0].Payload == why) return;
                 events.MoveCeiling(head.Id, now, due, why);
             }
-            // NEVER TURNED: it has no turn to count from, so the floor is kept where it was raised, and moved only to a time the interval now in force allows.
+            // NEVER TURNED: it has no turn to count from, so the floor is kept where it was raised, and moved only to a time the interval now in force allows,
+            // or out to the ceiling once the backstop no longer applies.
             else if (pending.Count == 0
-                     || (backstop is not null && (pending[0].DueAt > now + interval || pending[0].DueAt - pending[0].CreatedAt < interval)))
+                     || (backstop is not null && (pending[0].DueAt > now + interval || pending[0].DueAt - pending[0].CreatedAt < interval))
+                     || (backstop is null && pending[0].Payload == MissionEventStore.ChiefFloorWake))
                 events.MoveCeiling(head.Id, now, now + interval, why);
         }
         catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }

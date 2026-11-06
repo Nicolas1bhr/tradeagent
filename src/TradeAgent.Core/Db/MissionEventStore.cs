@@ -1142,7 +1142,13 @@ public sealed class MissionEventStore(Database db)
             """, ("$ceiling", MissionEventKind.Ceiling), ("$position", position), ("$due", Sql.T(dueAt))))
             id = f.ExecuteScalar() as string;
         var raised = false;
-        if (id is null)
+        if (id is not null)
+        {
+            // THE SAME INSTANT FOR ANOTHER REASON: the row keeps its id and says the reason in force.
+            using var why = db.Cmd("UPDATE mission_event SET payload=$payload WHERE id=$id AND payload IS NOT $payload", ("$payload", payload), ("$id", id));
+            raised = why.ExecuteNonQuery() > 0;
+        }
+        else
         {
             id = MissionEventIds.Ceiling(position, dueAt);
             raised = Raise(new MissionEvent
