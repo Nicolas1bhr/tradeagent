@@ -217,13 +217,14 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
         var wakes = life.Host.Wakes!;
         Assert.True(wakes.Raise(MissionEventIds.ForRole($"{MissionEventKind.Note}:{Guid.NewGuid():n}", chief), MissionEventKind.Note, DateTimeOffset.UtcNow.AddSeconds(-1), role: chief));
 
-        await life.RunUntil(() => life.AttemptsOf(chief).Any(a => a.State == AiAttemptState.ENDED)
-                                  && wakes.Pending(MissionEventKind.Ceiling, chief).Any(e => e.Payload == MissionEventStore.ChiefFloorWake),
-            "the chief's turn ended and its next wake came to the floor");
+        // THE WAIT NAMES THE WAKE COUNTED FROM THE TURN: a chief that never turned was given one before it, floored from the pass that first saw it, and that row reads the
+        // same word until the pass after the turn moves it (macOS and Windows CI saw the turn end between the two).
+        var floor = TimeSpan.FromMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]);
+        await life.RunUntil(() => life.AttemptsOf(chief).SingleOrDefault(a => a.State == AiAttemptState.ENDED) is { } ended
+                                  && wakes.Pending(MissionEventKind.Ceiling, chief).Any(e => e.Payload == MissionEventStore.ChiefFloorWake && e.DueAt == ended.StartedAt + floor),
+            "the chief's turn ended and its next wake was a floor after that turn");
 
-        var turned = Assert.Single(life.AttemptsOf(chief));
-        var next = Assert.Single(wakes.Pending(MissionEventKind.Ceiling, chief));
-        Assert.Equal(turned.StartedAt + TimeSpan.FromMinutes(RewakeFloors.DefaultMinutes[OrgLevel.Department]), next.DueAt);
+        Assert.Single(wakes.Pending(MissionEventKind.Ceiling, chief));
     }
 
     /// <summary>
