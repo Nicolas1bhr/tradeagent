@@ -106,6 +106,7 @@ public static class WindowsCellStage
 
         using var slot = Slot.Claim();
         if (slot is null) return Refuse($"all {Slots} cell slots are in use");
+        var lastProcessesGone = true;
         try
         {
             var sid = AppContainerCell.Profile(slot.Profile, "A TradeAgent cell: an AI's programs, confined");
@@ -124,13 +125,16 @@ public static class WindowsCellStage
             error.Flush();
             using var cell = AppContainerCell.Start(exe, arguments, policy.Workspace, env, sid, caps, new AppContainerStdio(input, output, err));
             cell.WaitForExit(-1);
-            return cell.ExitCode;
+            var code = cell.ExitCode;
+            // THE WHOLE TREE GONE BEFORE THE SWEEP, BY THE JOB'S OWN COUNT (Codex): the sweep's reading of tokens cannot see a process that set its own DACL against readers.
+            lastProcessesGone = cell.EndAll(LastProcessesGrace);
+            return code;
         }
         catch (TradeAgentException ex) { return Refuse(ex.Message); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { return Refuse(ex.Message); }
         finally
         {
-            try { Sweep(slot, AppContainerCell.SidOf(slot.Profile)); }
+            try { Sweep(slot, AppContainerCell.SidOf(slot.Profile), andStorage: lastProcessesGone); }
             catch (Exception ex) when (ex is TradeAgentException or IOException or UnauthorizedAccessException) { error.WriteLine($"trade: the cell's slot was not swept: {ex.Message}"); }
             CellStage.Discard(policyFile);
         }
@@ -157,9 +161,10 @@ public static class WindowsCellStage
 
     /// <summary>
     /// TAKES BACK what slot <paramref name="slot"/>'s last cell was given and left: every path on its record revoked, the record removed,
-    /// and the container's own storage emptied — the files beneath its <c>AC</c> folder and its registry storage.
+    /// and the container's own storage emptied — the files beneath its <c>AC</c> folder and its registry storage. <paramref name="andStorage"/> false: the grants alone, the job having
+    /// said something of the cell still runs, so its storage waits for the next sweep.
     /// </summary>
-    static void Sweep(Slot slot, string sid)
+    static void Sweep(Slot slot, string sid, bool andStorage = true)
     {
         if (File.Exists(slot.Record))
         {
@@ -179,6 +184,7 @@ public static class WindowsCellStage
             }
             File.Delete(slot.Record);
         }
+        if (!andStorage) return;
         // NOTHING OF THE CONTAINER STILL RUNS (R29 F-D3): the walk below decides "not a link" from what it enumerated, then goes in as the
         // owner. A process of this container, alive, could swap a folder for a junction between the two, and the owner would delete
         // what it points at. Only such a process can write here, so with none left what was enumerated stays true. A job's kill is
