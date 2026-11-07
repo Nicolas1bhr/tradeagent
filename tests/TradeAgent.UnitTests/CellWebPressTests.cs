@@ -113,6 +113,9 @@ public class CellWebPressTests
         Assert.Equal(CellWebPhase.Failed, press.Phase);
         Assert.True(press.CanPress);
         Assert.Contains("did not show it holding", press.Words, StringComparison.Ordinal);
+        // AND THE WORDS ARE TRUE OF THE LAUNCHES: the older proof still gives them web, so the page never says "no internet" here.
+        Assert.Contains("on an earlier check", press.Words, StringComparison.Ordinal);
+        Assert.DoesNotContain("no internet", press.Words, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -73,7 +73,8 @@ public sealed class CellWebPress(Func<Task<(EgressAsk Outcome, string Why)>> ask
                 CellWebPhase.Measuring => Labels.CellWebMeasuring,
                 CellWebPhase.Proved => Labels.CellWebProved,
                 CellWebPhase.Declined => Labels.CellWebDeclined,
-                CellWebPhase.Failed => Labels.CellWebFailed(why),
+                // AN OLDER PROOF STILL ANSWERS FOR THE LAUNCHES (Codex): the words say so, never "no internet".
+                CellWebPhase.Failed => webProved() == true ? Labels.CellWebOnEarlierCheck(why) : Labels.CellWebFailed(why),
                 _ => ""
             };
         }
