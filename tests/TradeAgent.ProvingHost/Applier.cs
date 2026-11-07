@@ -156,14 +156,27 @@ static class Applier
         // meter admits no further turn for, with wakes due that nothing consumed (BUDGET-001: a richer chart spends from the same envelope).
         foreach (var position in applied.Positions.Values)
         {
-            var spend = host.Meter!.TodayFor(position);
-            if (spend.AdmitsAnotherTurn) continue;
             var owed = DueUnconsumed(host, position);
             if (owed.Count == 0) continue;
-            var b = spend.Binding;
-            refusals.Add(new EnvelopeRefusal(position, owed, b.Spent + b.Reserved, b.Cap));
-            log.Add(string.Create(CultureInfo.InvariantCulture,
-                $"{position}: refused by the envelope — {owed.Count} wake(s) due and unconsumed ({string.Join(", ", owed)}); spent {b.Spent}, reserved {b.Reserved}, next turn {b.NextTurnReservation}, cap {b.Cap}"));
+            var spend = host.Meter!.TodayFor(position);
+            if (!spend.AdmitsAnotherTurn)
+            {
+                var b = spend.Binding;
+                refusals.Add(new EnvelopeRefusal(position, owed, b.Spent + b.Reserved, b.Cap));
+                log.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"{position}: refused by the envelope — {owed.Count} wake(s) due and unconsumed ({string.Join(", ", owed)}); spent {b.Spent}, reserved {b.Reserved}, next turn {b.NextTurnReservation}, cap {b.Cap}"));
+                continue;
+            }
+            // A CHARTERED UNIT'S OWN ENVELOPE (U-proving-ground-d): the day's root and role caps may admit a turn its funding chain does not —
+            // a team that spent its share — and admission refuses it on that chain; so is it read here, unit by unit, one turn of its seat
+            // against each envelope's committed spend.
+            var oneTurn = host.Gateway.AiReservation?.Invoke(position) ?? spend.NextTurnReservation;
+            if (host.Meter.EnvelopesFor(position)?.FirstOrDefault(d => d.Envelope is { } e && d.Spent + d.Reserved + d.UnmeasuredCharge + oneTurn > e) is { } full)
+            {
+                refusals.Add(new EnvelopeRefusal(position, owed, full.Spent + full.Reserved + full.UnmeasuredCharge, full.Envelope!.Value));
+                log.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"{position}: refused by {full.UnitId}'s envelope — {owed.Count} wake(s) due and unconsumed ({string.Join(", ", owed)}); committed {full.Spent + full.Reserved + full.UnmeasuredCharge}, next turn {oneTurn}, envelope {full.Envelope} ({full.Ceiling})"));
+            }
         }
         foreach (var a in Attempts(host)) log.Add($"attempt {a.Id} {a.Role} {a.State} in={a.InputTokens} out={a.OutputTokens} cost={a.Cost}");
         return (false, applied);

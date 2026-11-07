@@ -21,6 +21,10 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutputHelper log) : IClassFixture<ProvingHostTests.Ladder>
 {
+    /// <summary>The class's one ladder and its output, for the other part of this class (primary-constructor parameters are this part's).</summary>
+    Ladder TheLadder => ladder;
+    ITestOutputHelper Log => log;
+
     internal static readonly DateTimeOffset Start = new(2026, 8, 3, 0, 0, 0, TimeSpan.Zero);
     const int Days = 14, HoldoutDay = 7;
 
@@ -180,7 +184,8 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     }
 
     /// <summary>
-    /// THE LADDER'S ONE RUN, shared by the class: the floor and the scripted agent, at equal budgets, on the three markets.
+    /// THE LADDER'S ONE RUN, shared by the class: the floor, the scripted agent, the agent with a critic and the headed team, at equal
+    /// budgets, on the four markets.
     /// </summary>
     public sealed class Ladder : IDisposable
     {
@@ -277,6 +282,22 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
         Assert.False(touched, "the writer changed a setting in a real home");
         Assert.False(Directory.Exists(scripts), "the writer wrote a script for a real home");
 
+        // A TEMPLATE THAT CHARTERS (U-proving-ground-d, SIM-001): refused the same way, BEFORE the kernel's writers are asked — no team
+        // chartered, no position hired, no funding read, no activation pressed in a real home.
+        var (headed, headedWhy) = ProvingConfiguration.Parse(HeadedConfiguration().ToJsonString());
+        Assert.True(headed is not null, headedWhy);
+        var org = new OrgStore(db);
+        var (units, positions) = (org.Units().Count, org.Positions().Count);
+        var asked = new List<string>();
+        var charted = Assert.Throws<InvalidOperationException>(() => ProvingConfigurationWriter.Apply(db, headed, scripts, role => role, _ => touched = true,
+            new ProvingChartHost(caller => { asked.Add("funding " + caller); return null; }, id => { asked.Add("activate " + id); return ""; })));
+        log.WriteLine(charted.Message);
+        Assert.Contains("is applied only to a home marked 'proving'", charted.Message, StringComparison.Ordinal);
+        Assert.Empty(asked);
+        Assert.Equal((units, positions), (org.Units().Count, org.Positions().Count));
+        Assert.False(touched, "the writer changed a setting in a real home");
+        Assert.False(Directory.Exists(scripts), "the writer wrote a script for a real home");
+
         // A PROVING HOME TAKES IT: the envelope set, the research position's script written under its key.
         var home = ProvingHome.Create(Path.Combine(scratch.Dir, "home"));
         using var proving = new Database(home.DatabaseFile, HomeKind.Proving);
@@ -292,17 +313,35 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     [Fact]
     public void A_configuration_of_another_version_or_beyond_the_founding_chart_is_refused_never_guessed()
     {
-        var v2 = Configuration("x", "floor");
-        v2["version"] = 2;
-        var (none, why) = ProvingConfiguration.Parse(v2.ToJsonString());
+        // PART C'S VERSION 1 — a founding chart only — is another version now, refused for that and nothing else.
+        var v1 = Configuration("x", "floor");
+        v1["version"] = 1;
+        var (none, why) = ProvingConfiguration.Parse(v1.ToJsonString());
         Assert.Null(none);
-        Assert.Contains("format version 2, and this build reads version 1 only", why, StringComparison.Ordinal);
+        Assert.Contains("format version 1, and this build reads version 2 only", why, StringComparison.Ordinal);
 
+        // A POSITION BEYOND THE FOUNDING CHART IS HIRED INTO A UNIT THE TEMPLATE CHARTERS, never named into a founding one.
         var critic = Configuration("critic", "seats", script: AgentScript());
         critic["chart"]!["positions"]![0]!["id"] = "pos-critic";
         (none, why) = ProvingConfiguration.Parse(critic.ToJsonString());
         Assert.Null(none);
-        Assert.Contains("founding chart's positions only", why, StringComparison.Ordinal);
+        Assert.Contains("sits in a unit the template charters", why, StringComparison.Ordinal);
+
+        // A CHARTER UNDER OPERATIONS, A SHARE PAST A BOUNDED EXPERIMENT'S, OR A TOKEN NAMING NOTHING: refused in words.
+        foreach (var (mutate, words) in new (Action<JsonObject>, string)[]
+                 {
+                     (c => c["chart"]!["charters"]![0]!["parent"] = OrgIds.Operations, "never under operations"),
+                     (c => c["chart"]!["charters"]![0]!["ai_share"] = 0.5m, "at most 0.25 of its parent's envelope"),
+                     (c => c["chart"]!["positions"]![0]!["script"]![1]![0] = "trade mandate assign {position:nobody} \"x\"", "declares no such position"),
+                     (c => ((JsonArray)c["chart"]!["positions"]!).RemoveAt(1), "seats nobody in it")
+                 })
+        {
+            var headed = CriticConfiguration();
+            mutate(headed);
+            (none, why) = ProvingConfiguration.Parse(headed.ToJsonString());
+            Assert.Null(none);
+            Assert.Contains(words, why, StringComparison.Ordinal);
+        }
 
         // A CHART OF SEATS THAT LEAVES A FOUNDING POSITION OFF (review P2): the kernel would still wake it, so it is refused.
         var alone = Configuration("alone", "seats", script: AgentScript());
@@ -324,7 +363,7 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     {
         using var scratch = TestEnv.NewScratch("proving-store");
         Directory.CreateDirectory(scratch.Dir);
-        foreach (var stamp in new[] { "-1", "0", "2", "one" })
+        foreach (var stamp in new[] { "-1", "0", "1", "3", "one" })
         {
             var file = Path.Combine(scratch.Dir, $"stamp-{stamp}.db");
             using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False"))
@@ -352,11 +391,15 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
         Assert.Equal((1, 1), (floor.PlantedFound, floor.PlantedExpressible));
         Assert.Equal(0, floor.FalseDiscoveries);
         Assert.Equal(0, floor.TrapsFallenFor);
-        Assert.InRange(floor.TrialsSpent, 3, 3 * floor.TrialBudget);
-        Assert.InRange(floor.VerdictsSpent, 1, 3 * floor.VerdictBudget);
+        Assert.InRange(floor.TrialsSpent, 4, 4 * floor.TrialBudget);
+        Assert.InRange(floor.VerdictsSpent, 1, 4 * floor.VerdictBudget);
         Assert.Equal(0m, floor.AiDollarsMetered);
         Assert.Equal(0, floor.EnvelopeRefusals);
         Assert.NotNull(floor.FirstPassSeconds);
+        // ITS SEARCH READS EVERY OPEN CAMPAIGN, the off-path market's too, and it tells nobody: found 1, reported 0; it forecasts nothing.
+        Assert.Equal((1, 1, 0), (floor.OffPathMarkets, floor.OffPathFound, floor.OffPathReported));
+        Assert.Equal(0, floor.Calibration.Scored);
+        Assert.Null(floor.Calibration.Brier);
     }
 
     /// <summary>
@@ -368,7 +411,7 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     [Fact]
     public void The_scripted_agents_score_equals_what_its_script_did()
     {
-        var agent = ladder.Scores().Single(s => s.Kind == "seats");
+        var agent = ladder.Scores().Single(s => s.Configuration == "one-agent");
         log.WriteLine(agent.Sentence);
         Assert.Equal((1, 1, 0, 0, 1), (agent.PlantedFound, agent.PlantedExpressible, agent.FalseDiscoveries, agent.TrapsFallenFor, agent.TrapVerdicts));
         Assert.Equal((2, 2), (agent.TrialsSpent, agent.VerdictsSpent));
@@ -379,6 +422,12 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
         Assert.Equal(0.36m + 0.028m + ChairTurn, agent.AiDollarsMetered);
         Assert.Equal(0, agent.EnvelopeRefusals);
         Assert.NotNull(agent.FirstPassSeconds);
+        // ITS TWO FORECASTS, AS THE APP RESOLVED AND SCORED THEM: 0.7 on the PASS (yes) and 0.4 on the trap (no) — Brier (0.09 + 0.16) / 2 —
+        // against the base rate's one half, nothing judged before them; it never looked off its path.
+        Assert.Equal((2, 1), (agent.Calibration.Scored, agent.Calibration.Hits));
+        Assert.Equal(0.125, agent.Calibration.Brier!.Value, 9);
+        Assert.Equal(0.25, agent.Calibration.BaseBrier!.Value, 9);
+        Assert.Equal((1, 0, 0), (agent.OffPathMarkets, agent.OffPathFound, agent.OffPathReported));
     }
 
     /// <summary>
@@ -389,10 +438,10 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     public void Two_configurations_start_from_byte_identical_homes_at_equal_budgets()
     {
         var scores = ladder.Scores();
-        Assert.Equal(2, scores.Count);
-        Assert.Equal(scores[0].HomeSha256, scores[1].HomeSha256);
-        Assert.Equal((scores[0].TrialBudget, scores[0].VerdictBudget, scores[0].AiEnvelope, scores[0].DeadlineSeconds),
-            (scores[1].TrialBudget, scores[1].VerdictBudget, scores[1].AiEnvelope, scores[1].DeadlineSeconds));
+        Assert.Equal(4, scores.Count);
+        Assert.All(scores, s => Assert.Equal(scores[0].HomeSha256, s.HomeSha256));
+        Assert.All(scores, s => Assert.Equal((scores[0].TrialBudget, scores[0].VerdictBudget, scores[0].AiEnvelope, scores[0].DeadlineSeconds),
+            (s.TrialBudget, s.VerdictBudget, s.AiEnvelope, s.DeadlineSeconds)));
 
         using var scratch = TestEnv.NewScratch("proving-e");
         var (home, run) = Prepare(scratch.Dir, Configuration("floor", "floor"), Configuration("one-agent", "seats", trials: 11, script: AgentScript()));
@@ -437,7 +486,8 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     public void The_score_store_is_read_by_no_evidence_path()
     {
         var types = typeof(ProvingGround).Assembly.GetTypes().Where(t => t.Namespace == typeof(ProvingGround).Namespace).Select(t => t.Name).ToHashSet();
-        foreach (var t in new[] { nameof(ProvingStore), nameof(ProvingScorer), nameof(MarketTruth), nameof(ProvingScore), nameof(ProvingConfigurationWriter) })
+        foreach (var t in new[] { nameof(ProvingStore), nameof(ProvingScorer), nameof(MarketTruth), nameof(ProvingScore), nameof(ProvingConfigurationWriter),
+                     nameof(ProvingCalibration), nameof(ProvingChartHost), nameof(ProvingCharter) })
             Assert.Contains(t, types);
 
         var root = RepoRoot();
@@ -482,7 +532,8 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     }
 
     /// <summary>
-    /// ITEM 5: ONE LIFE OF THE LADDER — the floor and one agent at equal budgets on the same three markets — printed, both rows, for
+    /// ITEM 5: ONE LIFE OF THE LADDER — the floor, one agent, an agent with a critic and a headed team at equal budgets on the same four
+    /// markets (U-proving-ground-d) — printed, every row, for
     /// this platform's report.
     /// </summary>
     [Fact]
@@ -490,7 +541,7 @@ public partial class ProvingHostTests(ProvingHostTests.Ladder ladder, ITestOutpu
     {
         log.WriteLine(ladder.Ran.Out);
         var scores = ladder.Scores();
-        Assert.Equal(["floor", "seats"], scores.Select(s => s.Kind));
+        Assert.Equal(["floor", "one-agent", "critic", "headed"], scores.Select(s => s.Configuration));
         foreach (var s in scores)
         {
             Assert.StartsWith(ProvingScore.Label, s.Sentence, StringComparison.Ordinal);
