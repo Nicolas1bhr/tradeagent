@@ -134,11 +134,17 @@ public static class WindowsCellBenchmark
                 File.WriteAllText(ledger, "ledger");
                 try
                 {
-                    return await DeniedThen([new("READ", "type {path} > {sink}", ledger, control), new("LIST", "dir {path} > {sink}", Paths.State, ws)], () =>
+                    var (read, readSeen) = await DeniedThen([new("READ", "type {path} > {sink}", ledger, control)], () =>
                     {
                         var leaked = Directory.EnumerateFiles(ws, "*.out").Any(f => File.ReadAllText(f).Contains("ledger", StringComparison.Ordinal));
                         return (!leaked, leaked ? "the ledger's bytes reached the cell" : "");
                     });
+                    // THE LISTING IS NOT cmd's: its dir says "Access is denied" of ANY absolute path in a cell, the workspace's own too (measured, CI run 42333529305), so a
+                    // dir of the state folder would have held on every computer with no boundary at all.
+                    var (_, inCell) = await Run(none, powershell, CellDenial.PowerShell(CellDenial.ListScript(ws, Paths.State)));
+                    var free = await OutsidePowerShell(powershell, CellDenial.ListScript(ws, Paths.State), outside, ct);
+                    var (list, listSeen) = CellDenial.Judge(["LIST"], inCell, free);
+                    return (read && list, $"{readSeen}; {listSeen}");
                 }
                 finally { File.Delete(ledger); }
             });
@@ -285,18 +291,11 @@ public static class WindowsCellBenchmark
                 using var server = new System.IO.Pipes.NamedPipeServerStream(name, System.IO.Pipes.PipeDirection.InOut, 1,
                     System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
                 var connected = server.WaitForConnectionAsync(ct);
-                // THE OUTSIDE LINE OPENS A TWIN PIPE, served and closed so its reader ends: the row's own pipe must see no client at all.
-                var twin = name + "-twin";
-                using var twinServer = new System.IO.Pipes.NamedPipeServerStream(twin, System.IO.Pipes.PipeDirection.InOut, 1,
-                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
-                _ = Task.Run(async () =>
-                {
-                    await twinServer.WaitForConnectionAsync(ct);
-                    await twinServer.WriteAsync(new byte[] { (byte)'x' }, ct);
-                    twinServer.Flush();
-                    twinServer.Disconnect();
-                }, ct);
-                return await Denied([new("PIPE", "type {path} > {sink}", $@"\\.\pipe\{name}", control, $@"\\.\pipe\{twin}")], async () =>
+                // A PIPE THE CELL MAY OPEN, its control: the line reaches a pipe from a cell and reads it, so what the row's own pipe refuses is the pipe's ACL. And a twin
+                // of the row's pipe for the line outside any cell: the row's own must see no client at all.
+                using var open = new ServedPipe(name + "-open", forCells: true);
+                using var twin = new ServedPipe(name + "-twin", forCells: false);
+                return await Denied([new("PIPE", "type {path} > {sink}", $@"\\.\pipe\{name}", open.Path, twin.Path)], async () =>
                 {
                     await Task.WhenAny(connected, Task.Delay(500, ct));
                     var reached = connected.IsCompletedSuccessfully;
@@ -453,6 +452,50 @@ public static class WindowsCellBenchmark
         var free = await Outside(["/d", "/c", .. CellDenial.CmdTokens(body, [.. outsidePaths])], outsideFolder, ct, verbatim: true);
         var (judged, seen) = CellDenial.Judge([.. probes.Select(p => p.Word)], cell, free);
         return (judged && afterOk, afterSeen.Length == 0 ? seen : $"{seen}; {afterSeen}");
+    }
+
+    /// <summary>
+    /// A NAMED PIPE THAT ANSWERS WHOEVER OPENS IT with one byte, then closes: cmd's <c>type</c> opens a pipe more than once, so several instances wait. <paramref name="forCells"/>:
+    /// its ACL names every AppContainer too, so a cell may open it, as no pipe of the app's may be.
+    /// </summary>
+    sealed class ServedPipe : IDisposable
+    {
+        readonly List<System.IO.Pipes.NamedPipeServerStream> _instances = [];
+
+        public ServedPipe(string name, bool forCells)
+        {
+            Path = $@"\\.\pipe\{name}";
+            var security = new System.IO.Pipes.PipeSecurity();
+            security.AddAccessRule(new System.IO.Pipes.PipeAccessRule(WindowsIdentity.GetCurrent().User!, System.IO.Pipes.PipeAccessRights.FullControl, AccessControlType.Allow));
+            if (forCells)
+                security.AddAccessRule(new System.IO.Pipes.PipeAccessRule(new SecurityIdentifier("S-1-15-2-1"), System.IO.Pipes.PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            for (var i = 0; i < 6; i++)
+            {
+                var instance = System.IO.Pipes.NamedPipeServerStreamAcl.Create(name, System.IO.Pipes.PipeDirection.InOut, 6,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous, 0, 0, security);
+                _instances.Add(instance);
+                _ = Answer(instance);
+            }
+        }
+
+        public string Path { get; }
+
+        static async Task Answer(System.IO.Pipes.NamedPipeServerStream instance)
+        {
+            try
+            {
+                await instance.WaitForConnectionAsync();
+                await instance.WriteAsync(new byte[] { (byte)'x' });
+                instance.Flush();
+                instance.Disconnect();
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException or InvalidOperationException) { /* its client left, or the row ended */ }
+        }
+
+        public void Dispose()
+        {
+            foreach (var i in _instances) i.Dispose();
+        }
     }
 
     /// <summary>The kill probe outside any cell: PowerShell, the same script, no shell around it. Ended after 30 s.</summary>

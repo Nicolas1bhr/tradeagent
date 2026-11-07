@@ -52,7 +52,7 @@ public static class CellDenial
         }
         static string Flat(string s) => s.Trim().Replace("\r", "", StringComparison.Ordinal).Replace('\n', ' ');
         return problems.Count == 0
-            ? (true, $"{string.Join(", ", words)}: denied in the cell; the line opens on the workspace inside it, and on the same target outside it")
+            ? (true, $"{string.Join(", ", words)}: denied in the cell; the same line opens its control inside it, and this target outside it")
             : (false, $"{string.Join("; ", problems)} (in the cell: {Flat(cell)}; outside: {Flat(outside)})");
     }
 
@@ -72,6 +72,16 @@ public static class CellDenial
         "$i=[Diagnostics.ProcessStartInfo]::new($env:ComSpec,'/d /c findstr x');$i.UseShellExecute=$false;$i.RedirectStandardInput=$true;$c=[Diagnostics.Process]::Start($i);" +
         "Hit $c.Id 'CTL-KILL';" +
         $"Hit {target.ToString(System.Globalization.CultureInfo.InvariantCulture)} 'KILL'";
+
+    /// <summary>
+    /// THE LISTING PROBE, ONE SCRIPT FOR A CELL AND FOR OUTSIDE ONE: .NET's own directory call on <paramref name="control"/> (<c>CTL-LIST-…</c>) and on <paramref name="denied"/> (<c>LIST-…</c>).
+    /// </summary>
+    public static string ListScript(string control, string denied)
+    {
+        static string Quoted(string path) => "'" + path.Replace("'", "''", StringComparison.Ordinal) + "'";
+        return "function Hit($p,$w){try{[void][IO.Directory]::GetFileSystemEntries($p);$w+'-OPEN'}catch{$w+'-DENIED'}};" +
+               $"Hit {Quoted(control)} 'CTL-LIST';Hit {Quoted(denied)} 'LIST'";
+    }
 
     /// <summary>The arguments that run <paramref name="script"/> in PowerShell with nothing of the machine's own profile.</summary>
     public static string[] PowerShell(string script) => ["-NoProfile", "-NonInteractive", "-Command", script];

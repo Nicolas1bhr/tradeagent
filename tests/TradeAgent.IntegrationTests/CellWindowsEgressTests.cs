@@ -319,8 +319,26 @@ public sealed class CellWindowsEgressTests : IDisposable
     }
 
     /// <summary>
-    /// R29 F-D3: THE SWEEP DECIDES "NOT A LINK" FROM WHAT IT ENUMERATED, THEN GOES IN AS THE OWNER. With a process of the slot's container alive, the sweep refuses and the storage is
-    /// untouched; with it gone, the same sweep empties it.
+    /// R29 F-D3, MEASURED: the sweep could only be turned on the owner's files by a junction a cell made to point at them. A cell makes a junction at a folder it may write and is
+    /// refused one at a folder it may not, though the same line makes it outside any cell: Windows' rule for sandboxed processes. So what such a swap could reach is what the cell
+    /// could already delete.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_cell_cannot_point_a_junction_at_a_folder_it_cannot_write()
+    {
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "junction-ws")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_root, "junction-outside")).FullName;
+        var mine = Directory.CreateDirectory(Path.Combine(ws, "mine")).FullName;
+        var victim = Directory.CreateDirectory(Path.Combine(_root, "victim")).FullName;
+        var (held, seen) = await WindowsCellBenchmark.DenialRowAsync(Policy(ws, CellEgress.None), [new DenialProbe("JUNCTION", "mklink /J {sink} {path}", victim, mine)],
+            outside, Launcher(), CellPlatform.Read());
+        _out.WriteLine(seen);
+        Assert.True(held, seen);
+    }
+
+    /// <summary>
+    /// R29 F-D3: THE SWEEP DECIDES WHAT IT WALKS FROM WHAT IT ENUMERATED, AS THE OWNER, AND A LIVE PROCESS OF THE CONTAINER COULD STILL WRITE AFTER IT. With one alive, the sweep refuses
+    /// and the storage is untouched; with it gone, the same sweep empties it, so nothing a cell's last process writes reaches the next cell.
     /// </summary>
     [WindowsFact]
     public async Task A_slots_storage_is_left_alone_while_a_process_of_its_container_runs()
