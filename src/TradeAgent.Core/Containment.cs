@@ -542,14 +542,16 @@ public static class Posix
     /// can lower its hard limit and never raise it, and no_new_privs keeps a cell unprivileged. A write past the bound ends the writer with SIGXFSZ.
     /// Core dumps go with it, because that signal's default is to dump one, of a process that may hold as much as its memory ceiling. The core limit is 1, not 0: a
     /// kernel handing cores to a pipe (Ubuntu's apport) ignores 0, measured on CI as "core dumped", and aborts the dump on exactly 1, which no core file fits either.
-    /// An existing lower limit stands. Windows has no such limit and never comes here.
+    /// So the core limit's soft side is RAISED to it from an inherited 0, as a service usually starts, which is allowed and costs nothing: at 0 a runaway writer's whole
+    /// memory image goes down the pipe. A hard core limit of 0 cannot be raised and stands, and a lower file limit stands. Windows has no such limit and never comes here.
     /// </summary>
     public static string? BoundFiles()
     {
         foreach (var (resource, bound) in new[] { (RlimitFsize, (ulong)FileBound), (RlimitCore, 1UL) })
         {
             if (getrlimit(resource, out var now) != 0) return $"getrlimit({resource}) failed (errno {Marshal.GetLastPInvokeError()})";
-            var lowered = new RLimit { Soft = Math.Min(now.Soft, bound), Hard = Math.Min(now.Hard, bound) };
+            var hard = Math.Min(now.Hard, bound);
+            var lowered = new RLimit { Soft = resource == RlimitCore ? hard : Math.Min(now.Soft, bound), Hard = hard };
             if (setrlimit(resource, in lowered) != 0) return $"setrlimit({resource}) failed (errno {Marshal.GetLastPInvokeError()})";
         }
         return null;

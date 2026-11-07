@@ -318,15 +318,19 @@ public sealed partial class GatewayPipeServer
             string Text(string key) => fields.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String
                 ? v.GetString()!
                 : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"a forecast's '{key}' is text, and it is required. {Shape()}");
+            // LEFT OUT, NULL AND "" ARE ONE THING: no subject named, which each verb reads as it always read a missing key. Anything else that is not text is refused.
+            string? Subject() => !fields.TryGetValue("subject", out var v) || v.ValueKind == JsonValueKind.Null ? null
+                : v.ValueKind == JsonValueKind.String ? v.GetString() is { Length: > 0 } named ? named : null
+                : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"a forecast's 'subject' is text, or left out. {Shape()}");
             if (!fields.TryGetValue("probability", out var probability))
                 throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"a forecast states its 'probability'. {Shape()}");
-            claims.Add(new ForecastClaim(Text("predicate"), fields.ContainsKey("subject") ? Text("subject") : null, Text("target"),
+            claims.Add(new ForecastClaim(Text("predicate"), Subject(), Text("target"),
                 When(Text("by"), "by"), Probability(probability)));
         }
         return claims;
 
         string Shape() => $"'{arg}' is a JSON list of forecasts, each {{\"predicate\": {string.Join(" | ", ForecastVocabulary.Predicates)}, "
-                          + "\"subject\", \"target\", \"by\": an ISO-8601 time, \"probability\": 0 to 1}. Nothing was written.";
+                          + "\"subject\" (left out, null and \"\" all name none), \"target\", \"by\": an ISO-8601 time, \"probability\": 0 to 1}. Nothing was written.";
     }
 
     /// <summary>A probability as a frame states it — a JSON number or its text — read exactly, never rounded; the range is the store's.</summary>

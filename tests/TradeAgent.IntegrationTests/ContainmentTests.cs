@@ -111,6 +111,53 @@ public class ContainmentTests
     }
 
     /// <summary>
+    /// A SERVICE MAY INHERIT SOFT CORE 0, AND THE CORE LIMIT STILL ENDS AT 1 (<c>U-t0-polish</c>, PREFLIGHT-3): a piping kernel aborts a dump only at exactly 1 and ignores
+    /// 0, so a launch left at 0 hands a runaway writer's memory image to the helper, and the benchmark's <c>file-bound</c> row then refuses "core dumped" and writes no
+    /// proof. The real launcher, under each limit a parent can hand it, read from inside by getrlimit: `ulimit -c` shows blocks, where one byte reads as 0. Only the core
+    /// limit is raised. RLIMIT_FSIZE's lower soft limit stands, and a hard core limit of 0 stands too, because nothing can raise it, and the launch still starts.
+    /// </summary>
+    [OnlyOnFact("RLIMIT_CORE is POSIX; a Windows launch has no core limit", "linux", "macos")]
+    public async Task A_launch_ends_on_a_core_limit_of_one_from_any_soft_limit_it_inherits()
+    {
+        DeployLauncher();
+        const string read = "import resource as r; print(*r.getrlimit(r.RLIMIT_CORE), *r.getrlimit(r.RLIMIT_FSIZE))";
+
+        // Two lines: the limits as the parent shell holds them just before it becomes the launcher, then the limits inside the launch.
+        async Task<(long[] Handed, long[] Inside)> Launch(string inherit)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"{inherit} || exit 9; python3 -I -c \"$1\" || exit 8; exec \"$0\" {ContainedLaunch.Flag} python3 -I -c \"$1\"");
+            psi.ArgumentList.Add(Path.Combine(Paths.Bin, ToolDeployer.TradeCliName));
+            psi.ArgumentList.Add(read);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            p.StandardInput.Close();
+            var err = p.StandardError.ReadToEndAsync();
+            var output = await p.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(60));
+            await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.True(p.ExitCode == 0 && lines.Length == 2, $"'{inherit}': exit {p.ExitCode}: {output} {await err}");
+            return (lines[0].Split(' ').Select(long.Parse).ToArray(), lines[1].Split(' ').Select(long.Parse).ToArray());
+        }
+
+        var (handed, inside) = await Launch("ulimit -S -c 0");
+        Assert.True(handed[0] == 0 && handed[1] != 0, $"this test needs a parent with soft core 0 and a hard limit above it, and was handed ({handed[0]}, {handed[1]})");
+        Assert.Equal((1L, 1L), (inside[0], inside[1]));
+
+        (_, inside) = await Launch("ulimit -S -c \"$(ulimit -H -c)\"");
+        Assert.Equal((1L, 1L), (inside[0], inside[1]));
+
+        (handed, inside) = await Launch("ulimit -c 0");
+        Assert.Equal((0L, 0L), (handed[0], handed[1]));
+        Assert.Equal((0L, 0L), (inside[0], inside[1]));
+
+        (handed, inside) = await Launch("ulimit -S -f 102400");
+        Assert.InRange(handed[2], 1, Posix.FileBound - 1);
+        Assert.Equal((handed[2], Posix.FileBound), (inside[2], inside[3]));
+    }
+
+    /// <summary>
     /// The refusal at the LAUNCH, not in the pure function: a turn in the armed live configuration
     /// must start no process at all, and the owner must be told why in the window they armed it in.
     /// </summary>

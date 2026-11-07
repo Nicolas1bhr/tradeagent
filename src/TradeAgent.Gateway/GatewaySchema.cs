@@ -17,7 +17,7 @@ public static class GatewaySchema
 
     /// <summary>What a 'forecasts' argument is (<c>U-org-decisions</c>).</summary>
     const string ForecastsArg = "A JSON list of forecasts TradeAgent resolves from its own records, each {\"predicate\": verdict-class | "
-                                + "mandate-state | unit-admissible, \"subject\": the version, mandate or unit id, \"target\", \"by\": an ISO-8601 time, "
+                                + "mandate-state | unit-admissible, \"subject\": the version, mandate or unit id (left out, null and \"\" all name none), \"target\", \"by\": an ISO-8601 time, "
                                 + "\"probability\": 0 to 1}; see 'forecast-add'.";
 
     public static object Describe(GatewayStatus? status = null) => new

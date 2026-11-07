@@ -4,6 +4,7 @@
 #   tools/linux-host.sh recon                          read-only: what the machine is, before anything is installed
 #   tools/linux-host.sh health                         the tape as the kit reads it (kit/tape-health), systemd's restarts
 #   tools/linux-host.sh org-digest [--since <T0>] [--json]   the AI organisation as the app's databases record it (read-only; tools/org-digest.py)
+#   tools/linux-host.sh limits                         read-only: Yama's ptrace_scope, core_pattern, the service's Max core file size line
 #   tools/linux-host.sh install <tarball> "<word>"     stop -> back up the home's databases -> the kit -> health
 #   tools/linux-host.sh stop "<word>"                  systemctl stop tradeagent.service; the data stays
 #
@@ -30,7 +31,7 @@ kit="$here/../packaging/linux"
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # word_ok "<word>" "<zone>": today's date in that zone, then at least three characters of the owner's own words.
 word_ok() {
@@ -58,7 +59,7 @@ need_word() {
 
 od_since="" od_json=no
 case "$verb" in
-    recon | health) [ $# -eq 0 ] || usage ;;
+    recon | health | limits) [ $# -eq 0 ] || usage ;;
     org-digest)
         while [ $# -gt 0 ]; do
             case "$1" in
@@ -130,6 +131,20 @@ org_digest() {
     [ -z "$od_since" ] || args+=(--since "$od_since")
     [ "$od_json" = no ] || args+=(--json)
     lx_ssh "sudo -n -u tradeagent python3 -I - $(printf '%q ' "${args[@]}")" < "$here/org-digest.py"
+}
+
+# limits: three lines the cells' proof depends on, read as the plain account: no sudo, nothing written, started or stopped. /proc/<pid>/limits is world-readable.
+limits() {
+    lx_ssh 'bash -s' << 'REMOTE'
+set -u
+printf 'ptrace_scope: %s\n' "$(cat /proc/sys/kernel/yama/ptrace_scope 2> /dev/null || echo 'no Yama on this kernel')"
+printf 'core_pattern: %s\n' "$(cat /proc/sys/kernel/core_pattern)"
+pid="$(systemctl show -p MainPID --value tradeagent.service 2> /dev/null || true)"
+case "$pid" in
+    '' | 0) echo 'Max core file size: tradeagent.service has no main process' >&2; exit 1 ;;
+esac
+grep '^Max core file size' "/proc/$pid/limits"
+REMOTE
 }
 
 install_kit() {
@@ -213,6 +228,7 @@ case "$verb" in
     recon) recon ;;
     health) health ;;
     org-digest) org_digest ;;
+    limits) limits ;;
     install) install_kit "$1" "$2" ;;
     stop)
         lx_root "$1" << 'REMOTE'

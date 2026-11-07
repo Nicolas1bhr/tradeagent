@@ -226,6 +226,7 @@ export TA_LINUX_ZONE=Europe/Brussels            # the owner's IANA zone         
 tools/linux-host.sh recon                        # read-only: kernel, os, LSMs, systemd, cgroup fs, NTP, memory, disk, ports, the account
 tools/linux-host.sh health                       # kit/tape-health: per-source counts, newest delivery's age, NRestarts, ai_attempt, AI processes
 tools/linux-host.sh org-digest [--since <T0>] [--json]   # read-only: the AI organisation as the app's own records have it, one line per fact (tools/org-digest.py over ssh, as the app's account; R26 § 4's measures)
+tools/linux-host.sh limits                       # read-only: Yama's ptrace_scope, core_pattern, the Max core file size line of the running tradeagent.service
 tools/linux-host.sh install <tarball> "<word>"   # stop -> back up state/tape.db* and tradeagent.db* -> the kit -> health
 tools/linux-host.sh stop "<word>"                # systemctl stop; the data stays
 ```

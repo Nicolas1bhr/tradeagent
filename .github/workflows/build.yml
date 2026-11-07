@@ -626,6 +626,13 @@ jobs:
           tools/linux-host.sh health | tee "$ev/tool-health-after.txt"
           grep -q '^service|tradeagent.service|active=active|' "$ev/tool-health-after.txt" || { echo "health reads the service as not active"; exit 1; }
 
+          # THE THREE VALUES THE CELLS' PROOF DEPENDS ON, read-only, from the running service: exactly these lines, each with a value.
+          tools/linux-host.sh limits | tee "$ev/tool-limits.txt"
+          [ "$(wc -l < "$ev/tool-limits.txt")" -eq 3 ] || { echo "limits printed anything but three lines"; exit 1; }
+          grep -Eq '^ptrace_scope: [0-9]$' "$ev/tool-limits.txt" || { echo "limits read no ptrace_scope"; exit 1; }
+          grep -Eq '^core_pattern: .' "$ev/tool-limits.txt" || { echo "limits read no core_pattern"; exit 1; }
+          grep -Eq '^Max core file size +[0-9a-z]+ +[0-9a-z]+ +bytes' "$ev/tool-limits.txt" || { echo "limits read no Max core file size line"; exit 1; }
+
           # the word is dated AFTER the sleep: a midnight inside it must not refuse the stop
           clocks "before-stop"
           tools/linux-host.sh stop "$(dayof 0) CI throwaway host" | tee "$ev/tool-stop.txt"

@@ -465,6 +465,46 @@ public class OrgEvidenceSharesTests
     }
 
     /// <summary>
+    /// A SUBJECT LEFT OUT, NULL OR EMPTY IS ONE THING (<c>U-t0-polish</c>, PREFLIGHT-3): the first charter met three answers to one question. "" was refused as left empty,
+    /// null as required, and on a hire "" as no unit on the chart; only leaving the key out worked. All three are now the unit the verb is about, through the real door
+    /// on both verbs. What is really wrong stays refused, in words that no longer call the subject required, and nothing is written.
+    /// </summary>
+    [Theory]
+    [InlineData("\"\"")]
+    [InlineData("null")]
+    public async Task A_forecast_subject_null_or_empty_reads_as_left_out_and_a_wrong_one_is_still_refused(string subject)
+    {
+        var (gw, db, server) = await ZeroPlan(chiefOnKey: true);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var before = Divisions(db);
+        var known = new OrgStore(db).Units().Select(u => u.Id).ToHashSet();
+        string Forecasts(string literal) => UnitAdmissible().Replace("{", "{\"subject\":" + literal + ",", StringComparison.Ordinal);
+        IpcRequest Charter(string literal) => Frame(Ops.OrgCharter, ("kind", OrgUnitKind.Division), ("ai_share", 0.1m), ("rationale", "a bounded experiment division"),
+            ("forecasts", Forecasts(literal)), ("collapse_by", DateTimeOffset.UtcNow.AddDays(60).ToString("O")));
+
+        var number = await server.CallAsync(Charter("5"), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.False(number.Ok);
+        Assert.Contains("'subject' is text", number.Error!.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("required", number.Error.Message, StringComparison.Ordinal);
+        var other = await server.CallAsync(Charter("\"div-research\""), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.False(other.Ok);
+        Assert.Contains("forecast on the unit it charters", other.Error!.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Divisions(db));
+
+        var made = await server.CallAsync(Charter(subject), Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.True(made.Ok, made.Error?.Message);
+        Assert.Equal(before + 1, Divisions(db));
+
+        var unit = new OrgStore(db).Units().Single(u => !known.Contains(u.Id)).Id;
+        var hired = await server.CallAsync(Frame(Ops.OrgHire, ("unit", unit), ("rationale", "a head"), ("head", true), ("forecasts", Forecasts(subject))),
+            Chief, LaunchOn(db, Chief, SeatClasses.Harness));
+        Assert.True(hired.Ok, hired.Error?.Message);
+        Assert.Equal(2, new OrgStore(db).OpenForecasts().Rows.Count(f => f.Subject == unit));
+    }
+
+    /// <summary>
     /// ITS FAIL-CLOSED TWIN: a charter that draws on the PLAN — the chief's seat billed there too — where the zero cap sizes no legacy
     /// division, is refused in words naming the Safety page's split, nothing written.
     /// </summary>
