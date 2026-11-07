@@ -165,6 +165,10 @@ public static partial class Labels
     public static string CellWebFailed(string why) =>
         $"The AI's helpers keep working with no internet on this computer: {(why.Length > 0 ? why : "the rule could not be set")}. You can press again.";
 
+    /// <summary>Today's check failed and an earlier one still stands: the AI's helpers keep the web on that earlier check.</summary>
+    public static string CellWebOnEarlierCheck(string why) =>
+        $"The AI's helpers still reach secure websites on an earlier check, and today's check did not confirm it: {why}. You can press again.";
+
     /// <summary>The rule was placed, and the check did not show it holding on every cell — the benchmark's own sentence.</summary>
     public static string CellWebNotMeasured(string said) => $"the rule was set, but TradeAgent's check did not show it holding on every cell ({said})";
 
