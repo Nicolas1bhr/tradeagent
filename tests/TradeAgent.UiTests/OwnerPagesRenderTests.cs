@@ -504,6 +504,79 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// THE START-UP SCREENS' TWO-PRESS SAYS ITS SECOND SENTENCE WHOLE (<c>U-owner-words</c>): the older home's "Start fresh" and the no-ATAS
+    /// home's press stood in a row, where nothing bounds a button's width, so the armed sentence — the words that say in full what the second
+    /// press does — ran past the setup column and was cut at its edge. Each screen is built as the window builds it, in the window's own setup
+    /// surface at 1280x800, and its press armed. RED with the press back in its row: "Button “Yes — keep the old folder aside…” ends at x=…".
+    /// </summary>
+    [Fact]
+    public void The_start_up_screens_keep_their_armed_sentence_inside_the_setup_column()
+    {
+        static Task Nothing() => Task.CompletedTask;
+        var screens = new (string Name, Func<Control> Build)[]
+        {
+            ("older home", () => MainWindow.OlderHomeScreen("This TradeAgent does not open the folder an older version wrote.", null,
+                OlderHome.ConfirmStartFresh, Nothing)),
+            ("older home, a press refused", () => MainWindow.OlderHomeScreen("This TradeAgent does not open the folder an older version wrote.",
+                "Another TradeAgent is still running on this folder, so the older home was not moved and nothing was copied. Close it and press Start fresh again.",
+                OlderHome.ConfirmStartFreshCarryingTape, Nothing)),
+            ("no ATAS, setup finished", () => MainWindow.AtasNotInThisBuildScreen("This TradeAgent was built without ATAS.", true, Nothing)),
+            ("no ATAS, setup not finished", () => MainWindow.AtasNotInThisBuildScreen("This TradeAgent was built without ATAS.", false, Nothing)),
+        };
+        var bad = new List<string>();
+        foreach (var (name, build) in screens)
+            HeadlessUi.Run(() =>
+            {
+                var screen = build();
+                var slot = MainWindow.SetupSlot();
+                slot.Content = screen;
+                var win = new Window { Width = 1280, Height = 800, Background = Theme.Bg, Content = MainWindow.SetupSurface(slot) };
+                win.Show();
+                win.UpdateLayout();
+                var presses = screen.GetVisualDescendants().OfType<Button>().Where(b => b.Tag?.GetType().Name == "ConfirmState").ToList();
+                Assert.Single(presses);
+                presses[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                win.UpdateLayout();
+                Assert.True(Ui.IsArmed(presses[0]), $"{name}: the first press did not arm");
+                var edge = Pixels(slot, win).Right;
+                bad.AddRange(OverflowIn(screen, win, edge).Select(o => $"{name}: {o}"));
+                Save(win, $"start-up-{name.Replace(' ', '-').Replace(",", "")}-armed-1280x800.png");
+                win.Close();
+            });
+        foreach (var b in bad) output.WriteLine(b);
+        Assert.True(bad.Count == 0, string.Join(" | ", bad));
+    }
+
+    /// <summary>
+    /// SETUP'S WELCOME NAMES NO PLATFORM HE IS NOT ON (<c>U-owner-words</c>): a fresh install starts on the simulator, and its first words read
+    /// "your ATAS trading platform" — to an owner with no ATAS, in a build that may not carry it. RED at the base: the lead named ATAS.
+    /// </summary>
+    [Fact]
+    public async Task Setup_welcome_names_no_atas_on_a_platform_that_is_not_atas()
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"welcome-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            Assert.Equal(OnboardingStep.WELCOME, new OnboardingStore(db).Current());
+            List<string> texts = [];
+            HeadlessUi.Run(() =>
+            {
+                var screen = new OnboardingView(host, () => { }).Build();
+                var win = new Window { Width = 1280, Height = 800, Content = screen };
+                win.Show();
+                win.UpdateLayout();
+                texts = [.. screen.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)];
+                win.Close();
+            });
+            output.WriteLine(string.Join(" | ", texts));
+            Assert.Contains(OnboardingView.WelcomeLead, texts);
+            Assert.DoesNotContain(texts, t => t.Contains("ATAS", StringComparison.Ordinal));
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE SAME ON THE PAGES (<c>U-paper-t0</c> item 4): Settings says what the simulator is and puts the pill on paper, and the Owner page, whose envelopes stand on paper, says on
     /// the simulator that nothing they allow runs here. Every render here is on the simulator, the platform a fresh install starts on.
     /// </summary>
