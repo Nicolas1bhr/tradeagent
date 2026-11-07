@@ -985,9 +985,9 @@ public class TurnBoundsTests : IDisposable
 
     /// <summary>
     /// THE OWNER'S REPAIR LIFTS THE REST IT WAS ABOUT (the Codex review), whole host: a refused home stands its position aside, the press rebuilds the folder, and
-    /// the next look serves the position without sitting out a backoff that may be half an hour by then. Windows repairs no folder, so there the rest stands.
+    /// the next look serves the position without sitting out a backoff that may be half an hour by then.
     /// </summary>
-    [Fact]
+    [OnlyOnFact("a repair moves a folder by renaming it, which this build does on Linux and macOS only; left refused, the home would bar every later life", "linux", "macos")]
     public async Task Repairing_a_refused_home_lifts_its_positions_rest()
     {
         await using var life = await PuppetLife.Begin("repair-lifts");
@@ -1004,11 +1004,6 @@ public class TurnBoundsTests : IDisposable
 
         var said = life.Host.RepairHome(Research);
 
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.NotNull(life.Host.Mission.StandingAsideFor(Research));
-            return;
-        }
         Assert.Null(WorkspaceBuilder.RefusalFor(home));
         Assert.True(life.Host.Mission.StandingAsideFor(Research) is null, $"the repaired position still rests ({said})");
         await life.RunUntil(() => life.Turns(Research) == 1, "the repaired position turned");
