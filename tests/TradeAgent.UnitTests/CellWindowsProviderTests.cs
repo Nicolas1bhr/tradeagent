@@ -140,4 +140,39 @@ public sealed class CellWindowsProviderTests
         Assert.Contains("measured only none", linuxRefusal, StringComparison.Ordinal);
         Assert.Equal(CellEgress.Web.Name, linuxEgress.Name);
     }
+
+    /// <summary>
+    /// THE RULE IS READ AT EVERY LAUNCH (R29 F-D2): a proof naming web says what was measured at the start. Rule still standing: web. Rule gone since — or a firewall
+    /// that cannot be read — the launch runs under none, admitted, and the same proof stands. A launch that asks none never reads the firewall; off Windows there is none to read.
+    /// </summary>
+    [Fact]
+    public void A_web_launch_reads_the_firewall_and_runs_under_none_when_the_rule_is_gone_since_the_proof()
+    {
+        using var db = TestEnv.NewDb();
+        var route = new CellRoute(db);
+        new CellProofStore(db).Record(RouteA.WindowsProvider, CellBenchmark.Profile(RouteA.WindowsProvider, Windows11, "pin"), [CellEgress.None.Name, CellEgress.Web.Name]);
+
+        var reads = 0;
+        var standing = RouteA.AdmissionOn(route, "pin", Windows11, CellEgress.Web, () => { reads++; return true; });
+        Assert.Null(standing.Refusal);
+        Assert.Equal(CellEgress.Web.Name, standing.Egress.Name);
+        Assert.Equal(1, reads);
+
+        var gone = RouteA.AdmissionOn(route, "pin", Windows11, CellEgress.Web, () => { reads++; return false; });
+        Assert.Null(gone.Refusal);
+        Assert.NotNull(gone.Proof);
+        Assert.Equal(CellEgress.None.Name, gone.Egress.Name);
+        Assert.Equal(2, reads);
+
+        var asksNone = RouteA.AdmissionOn(route, "pin", Windows11, CellEgress.None, () => { reads++; return false; });
+        Assert.Equal(CellEgress.None.Name, asksNone.Egress.Name);
+        Assert.Equal(2, reads);
+    }
+
+    /// <summary>The real reader's verdict with no firewall: not held, so a stand-in Windows launch off Windows is never given web on an unread rule.</summary>
+    [OnlyOnFact("off Windows there is no firewall to read; on Windows CellWindowsEgressTests reads the real one", "linux", "macos")]
+    public void With_no_firewall_to_read_the_rule_does_not_hold()
+    {
+        Assert.False(WindowsCellEgress.Holds("/tmp/any-home"));
+    }
 }

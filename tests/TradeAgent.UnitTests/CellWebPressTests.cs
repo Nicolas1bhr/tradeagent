@@ -38,10 +38,9 @@ public class CellWebPressTests
         Assert.False(WindowsCellEgress.Named(["--minimised"]));
     }
 
-    [Fact]
+    [OnlyOnFact("on Windows the exact argument needs elevation: CellWindowsEgressTests, CI's elevated runner", "linux", "macos")]
     public void Off_windows_even_the_exact_argument_is_refused()
     {
-        if (OperatingSystem.IsWindows()) return;   // there it needs elevation: CellWindowsEgressTests, CI's elevated runner
         Assert.Equal(WindowsCellEgress.Refused, WindowsCellEgress.RunHelper([WindowsCellEgress.Verb]));
     }
 

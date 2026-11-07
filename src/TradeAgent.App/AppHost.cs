@@ -975,14 +975,35 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     internal CellWebPress? CellWeb { get; private set; }
 
-    /// <summary>Whether the newest Windows proof names web: null when there is no Windows proof here at all.</summary>
+    /// <summary>
+    /// Whether the cells reach the web now: the newest Windows proof names web AND the rule still stood at the firewall's last read — a launch runs under
+    /// none without it (<see cref="RouteA.AdmissionOn"/>), so the page says so and offers the press again. Null: no Windows proof here at all.
+    /// </summary>
     bool? WindowsWebProved() =>
-        _db is { } d && new CellProofStore(d).ProofOf(RouteA.WindowsProvider) is { } proof ? proof.Egress.Contains(CellEgress.Web.Name) : null;
+        _db is { } d && new CellProofStore(d).ProofOf(RouteA.WindowsProvider) is { } proof ? proof.Egress.Contains(CellEgress.Web.Name) && WebRuleStands() : null;
+
+    /// <summary>The firewall's last word on the cells' rule, read in the background at most every 30 s: the page redraws far oftener than the firewall changes.</summary>
+    volatile bool _webRuleStands = true;
+    long _webRuleRead;
+
+    bool WebRuleStands()
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _webRuleRead);
+        if ((last == 0 || now - last > 30_000) && Interlocked.CompareExchange(ref _webRuleRead, now, last) == last)
+            _ = Task.Run(() => _webRuleStands = WindowsCellEgress.Holds(Paths.Home));
+        return _webRuleStands;
+    }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     CellWebPress NewCellWebPress() => new(
         () => Task.Run(() => WindowsCellEgress.Request(Environment.ProcessPath)),
-        () => ProveWindowsCellsAsync(_loop?.Token ?? CancellationToken.None),
+        async () =>
+        {
+            var said = await ProveWindowsCellsAsync(_loop?.Token ?? CancellationToken.None);
+            _webRuleStands = await Task.Run(() => WindowsCellEgress.Holds(Paths.Home));   // read now, or the press would be judged on the read before it
+            return said;
+        },
         WindowsWebProved);
 
     /// <summary>One Windows benchmark at a time: the start's and the press's would otherwise hold each other's slots.</summary>
