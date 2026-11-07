@@ -140,6 +140,16 @@ public static class ContainedLaunch
             return true;
         }
 
+        // THE PER-FILE BOUND, on this process, so everything it starts inherits it: a cell's stage and the cell, route (a)'s harness, a CLI seat and all
+        // they start. Every launch of an AI comes through here. A launch that cannot have it does not start.
+        if (Posix.BoundFiles() is { } unbound)
+        {
+            error.WriteLine($"trade: the per-file bound could not be set, so nothing was started: {unbound}");
+            if (cellPolicy is not null) CellStage.Discard(cellPolicy);
+            exitCode = 126;
+            return true;
+        }
+
         // INTO THE ATTEMPT'S CGROUP FIRST: before the session and before the program, so nothing of the attempt is ever born
         // outside it. A cgroup this process cannot join is the end of the launch — nothing runs, and the app is told why.
         if (cgroup is not null && JoinAttempt(cgroup) is { } refused)
@@ -503,6 +513,46 @@ public static class Posix
 
     [DllImport("libc", SetLastError = true)]
     internal static extern int kill(int pid, int signal);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int getrlimit(int resource, out RLimit limit);
+
+    [DllImport("libc", SetLastError = true)]
+    static extern int setrlimit(int resource, in RLimit limit);
+
+    /// <summary><c>struct rlimit</c>: two 64-bit values on every platform this runs on.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    struct RLimit
+    {
+        public ulong Soft, Hard;
+    }
+
+    /// <summary><c>RLIMIT_FSIZE</c> and <c>RLIMIT_CORE</c>: the same numbers on macOS and Linux.</summary>
+    const int RlimitFsize = 1, RlimitCore = 4;
+
+    /// <summary>
+    /// THE LARGEST FILE AN AI'S PROCESS MAY WRITE: 1 GiB (<c>U-disk-guard</c>). A cell was measured writing about 2.5 GB/s, so one runaway file reaches this in
+    /// under half a second, well inside the free-space guard's read. Everything legitimate is far under it: a data export is at most 12 MB, an API seat's
+    /// <c>write_file</c> 256 KB, 36 months of a pair's one-minute bars about 100 MB, and the vendor CLI's own session files and logs are megabytes.
+    /// </summary>
+    public const long FileBound = 1L << 30;
+
+    /// <summary>
+    /// TAKES THE PER-FILE BOUND ON THIS PROCESS, for it and all it starts, and null when it holds; otherwise why not. Soft and hard both: an unprivileged process
+    /// can lower its hard limit and never raise it, and no_new_privs keeps a cell unprivileged. A write past the bound ends the writer with SIGXFSZ.
+    /// Core files go to nothing with it, because that signal's default is to dump one, of a process that may hold as much as its memory ceiling.
+    /// An existing lower limit stands. Windows has no such limit and never comes here.
+    /// </summary>
+    public static string? BoundFiles()
+    {
+        foreach (var (resource, bound) in new[] { (RlimitFsize, (ulong)FileBound), (RlimitCore, 0UL) })
+        {
+            if (getrlimit(resource, out var now) != 0) return $"getrlimit({resource}) failed (errno {Marshal.GetLastPInvokeError()})";
+            var lowered = new RLimit { Soft = Math.Min(now.Soft, bound), Hard = Math.Min(now.Hard, bound) };
+            if (setrlimit(resource, in lowered) != 0) return $"setrlimit({resource}) failed (errno {Marshal.GetLastPInvokeError()})";
+        }
+        return null;
+    }
 
     const int SIGKILL = 9;
 

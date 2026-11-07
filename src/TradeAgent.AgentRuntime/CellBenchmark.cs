@@ -51,7 +51,7 @@ public static class CellBenchmark
         "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
         "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
         "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled",
-        "tmp-unchanged", "route-a-exec-server"
+        "tmp-unchanged", "file-bound", "route-a-exec-server"
     ];
 
     /// <summary>
@@ -550,6 +550,17 @@ public static class CellBenchmark
                     .Where(n => n!.StartsWith("dotnet-diagnostic-" + cellPid + "-", StringComparison.Ordinal)
                                 || n.StartsWith("clr-debug-pipe-" + cellPid + "-", StringComparison.Ordinal)).ToList();
                 return Task.FromResult((left.Count == 0, left.Count == 0 ? $"nothing of pid {cellPid}" : string.Join(", ", left)));
+            });
+            // THE PER-FILE BOUND (U-disk-guard): one byte at the last offset allowed goes in, one byte past it does not, and the cell cannot raise the limit. Sparse
+            // files, so the row costs nothing on the disk it is about.
+            await Row("file-bound", async () =>
+            {
+                var (_, o) = await Sh($"dd if=/dev/zero of=under bs=1 count=1 seek={Posix.FileBound - 1} 2>/dev/null; echo under=$?; " +
+                                      $"(dd if=/dev/zero of=over bs=1 count=1 seek={Posix.FileBound}) 2>/dev/null; echo over=$?; " +
+                                      "(ulimit -f unlimited) 2>/dev/null; echo raised=$?; rm -f under over");
+                return (o.Contains("under=0", StringComparison.Ordinal) && o.Contains("over=", StringComparison.Ordinal) &&
+                        !o.Contains("over=0", StringComparison.Ordinal) && o.Contains("raised=", StringComparison.Ordinal) &&
+                        !o.Contains("raised=0", StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
             });
             await Row("route-a-exec-server", async () =>
             {

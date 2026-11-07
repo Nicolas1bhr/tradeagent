@@ -77,6 +77,40 @@ public class ContainmentTests
     }
 
     /// <summary>
+    /// ONE RUNAWAY WRITE CANNOT TAKE THE DISK BETWEEN TWO OF THE GUARD'S READS (<c>U-disk-guard</c>). A process the product's own launch starts, and what it starts,
+    /// writes up to the bound and not a byte past it, and cannot raise the limit. Sparse files: the test costs nothing on the disk it is about.
+    /// </summary>
+    [OnlyOnFact("RLIMIT_FSIZE is POSIX; a Windows launch has no per-file bound, and the guard is what stands there", "linux", "macos")]
+    public async Task A_process_the_launch_starts_writes_no_file_past_the_bound_and_cannot_raise_it()
+    {
+        DeployLauncher();
+        var dir = Path.Combine(TestEnv.Home, "bound-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = dir,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"dd if=/dev/zero of=under bs=1 count=1 seek={Posix.FileBound - 1} 2>/dev/null; echo under=$?; " +
+                                 $"(dd if=/dev/zero of=over bs=1 count=1 seek={Posix.FileBound}) 2>/dev/null; echo over=$?; " +
+                                 "(ulimit -f unlimited) 2>/dev/null; echo raised=$?; (ulimit -c 1) 2>/dev/null; echo core=$?");
+            using var held = ProcessContainment.Start(psi);
+            held.Process.StandardInput.Close();
+            var output = await held.Process.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(60));
+            await held.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+
+            var seen = output.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToDictionary(l => l.Split('=')[0], l => l.Split('=')[1]);
+            Assert.Equal("0", seen["under"]);
+            Assert.Equal(Posix.FileBound, new FileInfo(Path.Combine(dir, "under")).Length);
+            Assert.True(seen["over"] != "0", $"a byte past the bound was written: {output}");
+            Assert.True(!File.Exists(Path.Combine(dir, "over")) || new FileInfo(Path.Combine(dir, "over")).Length <= Posix.FileBound, output);
+            Assert.True(seen["raised"] != "0", $"the process raised its own limit: {output}");
+            Assert.True(seen["core"] != "0", $"the process raised its core limit: {output}");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
     /// The refusal at the LAUNCH, not in the pure function: a turn in the armed live configuration
     /// must start no process at all, and the owner must be told why in the window they armed it in.
     /// </summary>
