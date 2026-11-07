@@ -218,6 +218,33 @@ public class DiskGuardTests
         Assert.Equal(0, life.Turns(Chair));
     }
 
+    /// <summary>A press that lands while a trip's turns are still ending starts nothing, room or no room: the trip is the later word, and the press has to come after it.</summary>
+    [Fact]
+    public async Task A_press_beside_a_trip_under_way_does_not_undo_it()
+    {
+        await using var life = await PuppetLife.Begin("disk-press", settings: s => s.AiWorksOnItsOwn = true);
+        var host = life.Host;
+        host.Mission.Start();
+        host.ReadDisk = () => Low;
+        string? refused = null;
+        host.DuringDiskTripUnderTest = () =>
+        {
+            host.ReadDisk = () => Plenty;
+            refused = host.LetTheAiWorkOnItsOwn();
+        };
+
+        await host.DiskGuardPassAsync();
+
+        Assert.NotNull(refused);
+        Assert.False(host.Mission.Running);
+        Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+        Assert.NotNull(host.Gateway.Settings.DiskPause);
+
+        // AND THE NEXT PRESS, WITH THE TRIP OVER, IS THE OWNER'S WORD.
+        Assert.Null(host.LetTheAiWorkOnItsOwn());
+        Assert.True(host.Mission.Running);
+    }
+
     /// <summary>A turn typed on the Chat page with the loop paused is an AI process on the same disk: the owner's flag is off, and the guard ends it all the same.</summary>
     [Fact]
     public async Task A_chat_turn_with_the_loop_paused_is_on_as_far_as_the_guard_is_concerned()

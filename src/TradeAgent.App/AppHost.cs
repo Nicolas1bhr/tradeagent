@@ -2705,11 +2705,13 @@ public sealed class AppHost : IAsyncDisposable
     /// <returns>Null when it went to work; the owner's words when the free-space guard refused the press, which starts nothing.</returns>
     public string? LetTheAiWorkOnItsOwn()
     {
-        if (DiskRefusesThePress() is { } refused) return refused;
-
-        Gateway.Update(s => { s.AiWorksOnItsOwn = true; s.DiskPause = null; });
+        lock (_diskPress)
+        {
+            if (DiskRefusesThePress() is { } refused) return refused;
+            Gateway.Update(s => { s.AiWorksOnItsOwn = true; s.DiskPause = null; });
+            Mission.Start();
+        }
         Gateway.Log.Activity("The AI was set to work on its own");
-        Mission.Start();
 
         // THE PRESS IS ITSELF A REASON TO LOOK. Without this the owner presses the button and
         // nothing happens until the next scheduled review — half an hour of a card reading
@@ -2735,9 +2737,9 @@ public sealed class AppHost : IAsyncDisposable
         if (reading is not null) _disk = reading;
 
         var standing = Gateway.Settings.DiskPause;
-        if (DiskWatch.MayResume(standing, reading)) return null;
+        if (!_diskTripping && DiskWatch.MayResume(standing, reading)) return null;
 
-        var pause = standing ?? DiskWatch.PauseFor(reading!, DateTimeOffset.UtcNow);
+        var pause = standing ?? (reading is { } low ? DiskWatch.PauseFor(low, DateTimeOffset.UtcNow) : new DiskPause { At = DateTimeOffset.UtcNow, Unreadable = true });
         try { Gateway.Update(s => s.DiskPause = pause); }
         catch (Exception) { _diskPauseUnsaved = true; }
         var words = DiskWords.Refused(pause, reading);
@@ -2782,8 +2784,20 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>The last good read, for the pages' "free now". Null until one has been made.</summary>
     volatile DiskSpace? _disk;
 
-    /// <summary>A pause the disk would not let be written: it stands in memory, and every later pass writes it again.</summary>
+    /// <summary>A pause the disk would not let be written: it stands in memory, and every later pass writes it again, and the quit once more.</summary>
     volatile bool _diskPauseUnsaved;
+
+    /// <summary>
+    /// HELD ACROSS THE OWNER'S PRESS, from its read of the disk to the loop starting, and to mark a trip begun: so a trip never lands inside a press that read the disk
+    /// before it, and a press never starts the loop under a trip still unwinding. Whichever comes first, the AI ends paused or the press was the later word, with room.
+    /// </summary>
+    readonly Lock _diskPress = new();
+
+    /// <summary>A trip is under way, its turns still ending. Under <see cref="_diskPress"/>.</summary>
+    bool _diskTripping;
+
+    /// <summary>A test's step while a trip is under way: where a press beside it lands (<c>DiskGuardTests</c>).</summary>
+    internal Action? DuringDiskTripUnderTest { get; set; }
 
     /// <summary>
     /// THE FREE-SPACE GUARD'S STANDING PAUSE IN THE OWNER'S WORDS: why, and what to do. Null when it has not paused the AI. The card, the at-a-glance
@@ -2837,16 +2851,19 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>The owner's own pause with the guard's reason beside it. A disk too full to take the record still pauses the AI: the record is written when it can be.</summary>
     async Task PauseForTheDiskAsync(DiskPause pause)
     {
+        lock (_diskPress) _diskTripping = true;
         _diskPauseUnsaved = true;
         try
         {
             await PauseTheAiAsync(DiskWords.Tripped(pause), pause);
             _diskPauseUnsaved = false;
+            DuringDiskTripUnderTest?.Invoke();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Gateway.Log.TryEngineering("DiskGuard", "pause_record_failed", "warn", ex: ex);
         }
+        finally { lock (_diskPress) _diskTripping = false; }
         Changed?.Invoke();
     }
 
@@ -3616,6 +3633,7 @@ public sealed class AppHost : IAsyncDisposable
                 try { await _diskGuard.WaitAsync(TimeSpan.FromSeconds(5)); }
                 catch (Exception) { /* the same */ }
             }
+            if (_diskPauseUnsaved) SaveTheDiskPause();
             _loop.Dispose();
         }
         if (_oversight is not null) { await _oversight.DisposeAsync(); _oversight = null; }
