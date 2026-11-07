@@ -64,8 +64,11 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
         public required ForwardBarSource Source { get; init; }
         public Dictionary<string, decimal> Prices { get; } = Pairs.ToDictionary(p => p.Pair, p => p.Price, StringComparer.Ordinal);
 
-        /// <summary>One closed minute on every pair at its price, the health pass the 5-s tick makes, and the runner's pass three seconds after the close.</summary>
-        public async Task Minute(int minute)
+        /// <summary>
+        /// One closed minute on every pair at its price, the health pass the 5-s tick makes, and the runner's pass three seconds after the close;
+        /// <paramref name="beforeTheRunner"/> is whatever else happens at that instant, before the runner's pass.
+        /// </summary>
+        public async Task Minute(int minute, Func<Task>? beforeTheRunner = null)
         {
             var open = Start.AddMinutes(minute);
             var close = open + ForwardBars.BarLength;
@@ -83,6 +86,7 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
             Clock.At = close.AddSeconds(3);
             foreach (var (pair, _) in Pairs) Source.Announce(pair, open);
             await Gw.RefreshHealthAsync();
+            if (beforeTheRunner is not null) await beforeTheRunner();
             await Runner.AdvanceAsync();
         }
 
@@ -194,6 +198,7 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
         var inForce = new BoardReader(db).InForce();
         var risk = inForce.Policy.Risk;
         risk.MaxOrdersPerMinute = rate;
+        risk.InstrumentAllowlist = [.. Pairs.Select(p => p.Pair)];
         var body = BoardPolicyBody.Canonical(inForce.Policy with { Risk = risk });
         var act = $"bact-seed{inForce.Version + 1}";
         var at = Sql.T(Start);
@@ -246,23 +251,78 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A RUN'S ORDERS COUNT IN THE ONE MINUTE EVERY CALLER IS MEASURED AGAINST: while they stand, the owner's press and an agent's order still see the six, and past
-    /// them are refused in the same words. What moved is how far a run's own order may go and nothing else.
+    /// The owner's own buy of 0.001 BTC, the caller that is not a run which this account takes (an agent's unattributed order is refused here by the envelope's
+    /// reservation, whatever the minute holds), and what it was answered: null when it was taken.
+    /// </summary>
+    static async Task<string?> NotARun(Rig rig, int n)
+    {
+        try
+        {
+            await rig.Gw.PlaceAsync(AgentContext.Operator, $"not-a-run-{n}", TestEnv.Buy("BTCUSDT", 0.001m));
+            return null;
+        }
+        catch (GatewayDeniedException e)
+        {
+            return $"{e.Code}: {e.Message}";
+        }
+    }
+
+    /// <summary>
+    /// A BURST OF RUNS DOES NOT TAKE ANOTHER CALLER'S SIX (U-rate-limits; D20's "every other caller stays at 6"). Under the founding rate a run's own order and every
+    /// other caller's are two counts in the one sliding minute: five runs' entries and protections inside it, and the next caller still has its six, and is refused
+    /// at the seventh in the same words. RED at the base, one count for both: the first order refused, <c>RISK_LIMIT_EXCEEDED: 6 orders per minute is the limit</c>,
+    /// for up to a minute after the runs signalled.
+    ///
+    /// <para><b>Changed in the open.</b> This was <c>A_caller_that_is_not_a_run_is_still_refused_at_six_with_the_runs_orders_in_the_minute</c>, which held the one
+    /// shared count: that count is the defect U-paper-t0 carded, and it is gone.</para>
     /// </summary>
     [Fact]
-    public async Task A_caller_that_is_not_a_run_is_still_refused_at_six_with_the_runs_orders_in_the_minute()
+    public async Task A_caller_that_is_not_a_run_keeps_its_six_with_the_runs_orders_in_the_minute()
     {
         await using var rig = await Founded();
-        for (var m = 1; m <= 2; m++) await rig.Minute(m);
-        await rig.Minute(3);
+        for (var m = 1; m <= 3; m++) await rig.Minute(m);
         Assert.Equal(5, rig.Gw.Deployments.All().Sum(d => rig.Gw.Deployments.OpsOf(d.Id).Count(o => o.Kind == DeploymentOpKind.Entry)));
         EveryRunIsProtected(rig, 5);
 
-        var said = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
-            rig.Gw.PlaceAsync(new AgentContext("a"), "not-a-run", TestEnv.Buy("BTCUSDT", 0.001m)));
-        log.WriteLine($"{said.Code}: {said.Message}");
-        Assert.Equal(ErrorCode.RISK_LIMIT_EXCEEDED, said.Code);
-        Assert.Equal("6 orders per minute is the limit", said.Message);
+        var said = new List<string?>();
+        for (var n = 1; n <= 7; n++) said.Add(await NotARun(rig, n));
+        for (var n = 0; n < said.Count; n++) log.WriteLine($"order {n + 1}: {said[n] ?? "taken"}");
+
+        Assert.All(said.Take(6), s => Assert.Null(s));
+        Assert.Equal("RISK_LIMIT_EXCEEDED: 6 orders per minute is the limit", said[6]);
+    }
+
+    /// <summary>
+    /// AND THE OTHER WAY ROUND: another caller's six do not come out of the runs' forty-five. Six orders of a caller that is not a run, then fifteen runs signalling
+    /// together inside the same sliding minute, and every run keeps its stop and target. RED at the base, one count for both: six of the thirty protections refused.
+    /// </summary>
+    [Fact]
+    public async Task Another_callers_six_do_not_come_out_of_the_runs_minute()
+    {
+        await using var rig = await Founded(runsPerPair: 3);
+        await rig.Minute(1, beforeTheRunner: async () =>
+        {
+            for (var n = 1; n <= 6; n++) Assert.Null(await NotARun(rig, n));
+        });
+        for (var m = 2; m <= 4; m++) await rig.Minute(m);
+        Show(rig, "after four minutes");
+        EveryRunIsProtected(rig, 15);
+    }
+
+    /// <summary>
+    /// A FIGURE THE BOARD DECIDES IS ONE COUNT FOR EVERY CALLER, AS IT ALWAYS WAS: the two counts are the founding rate's and nothing else's. Under a decided ten, the
+    /// runs' orders in the minute are the other callers' too, and the next one is refused at ten.
+    /// </summary>
+    [Fact]
+    public async Task Under_a_figure_the_board_decided_the_minute_is_one_count_for_every_caller()
+    {
+        await using var rig = await Founded(board: db => BoardDecides(db, 10));
+        for (var m = 1; m <= 3; m++) await rig.Minute(m);
+        Show(rig, "after three minutes");
+
+        var said = await NotARun(rig, 1);
+        log.WriteLine($"the next caller: {said}");
+        Assert.Equal("RISK_LIMIT_EXCEEDED: 10 orders per minute is the limit", said);
     }
 
     /// <summary>
