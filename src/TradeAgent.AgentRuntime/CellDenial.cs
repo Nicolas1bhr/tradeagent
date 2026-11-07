@@ -57,6 +57,26 @@ public static class CellDenial
     }
 
     /// <summary>
+    /// THE KILL PROBE, ONE SCRIPT FOR A CELL AND FOR OUTSIDE ONE: it starts a process of its own and asks Windows itself, <c>OpenProcess</c> for termination then
+    /// <c>TerminateProcess</c>, for that one (<c>CTL-KILL-…</c>: the call works from where it runs) and for <paramref name="target"/> (<c>KILL-…</c>). The calls are bound
+    /// by reflection because a cell's PowerShell has no module path, so no cmdlet, and because a cell cannot even list a process outside it: going by the list
+    /// would report a process it never tried to open.
+    /// </summary>
+    public static string KillScript(int target) =>
+        "$n=[Reflection.AssemblyName]::new('k');" +
+        "$t=[AppDomain]::CurrentDomain.DefineDynamicAssembly($n,'Run').DefineDynamicModule('k').DefineType('K','Public,Class');" +
+        "$t.DefinePInvokeMethod('OpenProcess','kernel32.dll','Public,Static,PinvokeImpl','Standard',[IntPtr],[Type[]]@([UInt32],[Boolean],[UInt32]),'Winapi','Auto').SetImplementationFlags('PreserveSig');" +
+        "$t.DefinePInvokeMethod('TerminateProcess','kernel32.dll','Public,Static,PinvokeImpl','Standard',[Boolean],[Type[]]@([IntPtr],[UInt32]),'Winapi','Auto').SetImplementationFlags('PreserveSig');" +
+        "$k=$t.CreateType();" +
+        "function Hit($id,$w){$h=$k::OpenProcess(1,$false,$id);if(($h -ne [IntPtr]::Zero) -and $k::TerminateProcess($h,1)){$w+'-OPEN'}else{$w+'-DENIED'}};" +
+        "$i=[Diagnostics.ProcessStartInfo]::new($env:ComSpec,'/d /c findstr x');$i.UseShellExecute=$false;$i.RedirectStandardInput=$true;$c=[Diagnostics.Process]::Start($i);" +
+        "Hit $c.Id 'CTL-KILL';" +
+        $"Hit {target.ToString(System.Globalization.CultureInfo.InvariantCulture)} 'KILL'";
+
+    /// <summary>The arguments that run <paramref name="script"/> in PowerShell with nothing of the machine's own profile.</summary>
+    public static string[] PowerShell(string script) => ["-NoProfile", "-NonInteractive", "-Command", script];
+
+    /// <summary>
     /// A cmd line as ARGUMENTS: <paramref name="body"/> split on spaces ('\n' the statement separator, as " &amp; "), each token <c>{i}</c> replaced by
     /// <paramref name="paths"/>[i] whole. The quoting of a cell's command line (<c>AppContainerCell.CommandLine</c>) puts an argument holding a space in plain
     /// quotes, as cmd reads them, and no quote is ever inside one, so nothing reaches cmd as the C runtime's <c>\"</c>. A path that has no space is not quoted, so what cmd

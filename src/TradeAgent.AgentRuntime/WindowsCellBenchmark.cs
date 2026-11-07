@@ -52,6 +52,7 @@ public static class WindowsCellBenchmark
         var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
         var cmd = Path.Combine(system32, "cmd.exe");
         var curl = Path.Combine(system32, "curl.exe");
+        var powershell = Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
         var root = Path.Combine(Paths.Home, "cell-bench", Guid.NewGuid().ToString("n")[..12]);
         var ws = Path.Combine(root, "ws");
         var codexHome = Path.Combine(root, "codex");
@@ -305,21 +306,22 @@ public static class WindowsCellBenchmark
             Process Pinger() => Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
             await Row("processes-denied", async () =>
             {
-                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it: the cell's `taskkill /F` (PROCESS_TERMINATE,
-                // unambiguous — not a graceful WM_CLOSE) on a helper is refused and the helper still runs. Three lines of the same shape: taskkill in
-                // the cell ends a process OF THE CELL (it runs and can end what the cell owns), the same taskkill outside ends a twin of the
-                // helper, and the one in the cell at the helper is refused. Never the app's own pid: a row must never risk ending the app.
+                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it. One script, three targets (CellDenial.KillScript): in the cell a process of its
+                // own (it ends), in the cell the helper (refused, and the helper still runs), and outside any cell the helper's twin (it ends). Never the app's own pid: a row
+                // must never risk ending the app.
+                // NOT TASKKILL: in a cell it stops at a sign-in error even on the cell's own process (measured, CI run 42331636963), so it never tried the helper.
                 using var helper = Pinger();
                 using var twin = Pinger();
                 try
                 {
-                    var (ok, seen) = await KillRowAsync(none, cmd, helper.Id, launcher, platform, ct);
+                    var (inCellCode, inCell) = await Run(none, powershell, CellDenial.PowerShell(CellDenial.KillScript(helper.Id)));
                     await Task.Delay(200, ct);
                     var alive = !helper.HasExited;
-                    var free = await Outside(["taskkill", "/F", "/pid", twin.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)], outside, ct);
+                    var free = await OutsidePowerShell(powershell, CellDenial.KillScript(twin.Id), outside, ct);
                     await Task.Delay(200, ct);
-                    var killed = twin.HasExited;
-                    return (ok && alive && killed, $"{seen}; the helper is {(alive ? "still running" : "GONE")}; the same taskkill outside a cell {(killed ? "ended its twin" : $"did NOT end its twin, so the cell's failure proves nothing: {Trim(free)}")}");
+                    var ended = twin.HasExited;
+                    var (held, seen) = CellDenial.Judge(["KILL"], inCell, free);
+                    return (held && alive && ended, $"{seen}; exit {inCellCode}; the helper is {(alive ? "still running" : "GONE")}, and its twin {(ended ? "was ended from outside" : "was NOT ended from outside")}");
                 }
                 finally
                 {
@@ -453,34 +455,18 @@ public static class WindowsCellBenchmark
         return (judged && afterOk, afterSeen.Length == 0 ? seen : $"{seen}; {afterSeen}");
     }
 
-    /// <summary>
-    /// THE CELL'S TASKKILL, BOTH WAYS: <c>start</c> makes a process of the cell's own; its id, read off the cell's job, comes in on stdin; the same line ends it
-    /// (<c>CTL-KILL-OPEN</c>: taskkill runs in a cell and can end what the cell owns) and is refused on <paramref name="helper"/>, a process outside (<c>KILL-DENIED</c>).
-    /// </summary>
-    static async Task<(bool Ok, string Seen)> KillRowAsync(CellPolicy under, string cmd, int helper, IReadOnlyList<string>? launcher, CellPlatform platform, CancellationToken ct)
+    /// <summary>The kill probe outside any cell: PowerShell, the same script, no shell around it. Ended after 30 s.</summary>
+    static async Task<string> OutsidePowerShell(string powershell, string script, string folder, CancellationToken ct)
     {
-        var body = "start /b ping -n 30 127.0.0.1 > own.out\necho READY\nset /p victim=\n" +
-                   "taskkill /F /pid !victim! > ctl.out 2>&1 && (echo CTL-KILL-OPEN) || (echo CTL-KILL-DENIED)\n" +
-                   $"taskkill /F /pid {helper} > try.out 2>&1 && (echo KILL-OPEN) || (echo KILL-DENIED)";
-        var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in (string[])["/d", "/v:on", "/c", .. CellDenial.CmdTokens(body)]) psi.ArgumentList.Add(a);
-        using var held = ProcessContainment.Start(psi, under, launcher, platform);
-        var se = held.Process.StandardError.ReadToEndAsync(ct);
-        var ready = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct);
-        CellMember? own = null;
-        for (var i = 0; i < 100 && own is null && ready?.Trim() == "READY"; i++)
-        {
-            own = (CellMembers(held) ?? []).FirstOrDefault(m => m.Name.Equals("ping", StringComparison.OrdinalIgnoreCase));
-            if (own is null) await Task.Delay(50, ct);
-        }
-        if (own is null) return (false, $"the cell's own process never appeared in its job, so the row proves nothing: {ready}");
-        await held.Process.StandardInput.WriteLineAsync(own.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        held.Process.StandardInput.Close();
-        var rest = held.Process.StandardOutput.ReadToEndAsync(ct);
-        await held.Process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(60), ct);
-        var o = (await rest) + (await se);
-        var (inCell, _) = CellDenial.Judge(["KILL"], o, "KILL-OPEN");   // the outside half is the caller's: it ends a twin, by pid
-        return (inCell, Trim(o));
+        var psi = new ProcessStartInfo(powershell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, WorkingDirectory = folder };
+        foreach (var a in CellDenial.PowerShell(script)) psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        p.StandardInput.Close();
+        var so = p.StandardOutput.ReadToEndAsync(ct);
+        var se = p.StandardError.ReadToEndAsync(ct);
+        try { await p.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(30), ct); }
+        finally { try { p.Kill(); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* it ended */ } }
+        return (await so) + (await se);
     }
 
     /// <summary>
@@ -577,8 +563,10 @@ public static class WindowsCellBenchmark
         {
             // THE TOOLS BY NAME, FROM THE POLICY'S PATH: a cell's cmd says "Access is denied" of any program named by its full path, even a dir of it
             // (measured, CI run 42331636963 on 26100), which ended every earlier run of these rows at slot 1 on all three commands.
+            // NO REVOCATION CHECK ON THE 443 PROBE: Schannel fetches a certificate's revocation list over port 80, which the rule closes, so a clean slot fails its TLS
+            // with CRYPT_E_REVOCATION_OFFLINE (measured, CI run 42332664334) and this row is about reach, not about that.
             var body = "echo READY & set /p go= & " +
-                       $"echo ==443== & curl -sS -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
+                       $"echo ==443== & curl -sS --ssl-no-revoke -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
                        $"echo ==80== & curl -sS -o web{slot}-80.out -D - --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
                        $"echo ==other== & curl -sS -o web{slot}-other.out -w C=%{{time_connect}} --connect-timeout 6 --max-time 8 http://{other}/ 2>&1 & " +
                        $"echo ==dns== & nslookup -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
