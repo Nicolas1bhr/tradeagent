@@ -105,6 +105,7 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>The background loop's task, so the quit can let the pass in flight finish (see <see cref="DisposeAsync"/>).</summary>
     Task? _background;
+    Task? _diskGuard;
 
     /// <summary>
     /// The register the AI's processes report to. The process-wide one, always, in the product; only
@@ -1440,6 +1441,7 @@ public sealed class AppHost : IAsyncDisposable
             catch (Exception ex) { Gateway.Log.Engineering("Council", "relay_start_failed", "warn", ex: ex); }
 
             await ResumeOnStartAsync();
+            _diskGuard = Task.Run(() => DiskGuardLoopAsync(_loop.Token));
             return true;
         }
         catch (OlderHomeException older)
@@ -1593,7 +1595,7 @@ public sealed class AppHost : IAsyncDisposable
             // THE PROTECTED CONFIGURATION. Read at every launch rather than captured: the mode and real money are the security
             // board's policy in force (U-board-a1), which a later board act changes while the AI is working.
             launchRefusal: () => Containment.RefusalToLaunch(
-                Gateway.Policy.ModeIsLive, Gateway.Policy.LiveActivated),
+                Gateway.Policy.ModeIsLive, Gateway.Policy.LiveActivated) ?? (DiskPauseWords is { } disk ? $"The AI is {disk}." : null),
             presence: _presence,
             seats: _seats,
             // THE APP'S DOOR, read at every launch: a broker-only seat's one tool server (U-thinking-seats-c).
@@ -1727,6 +1729,7 @@ public sealed class AppHost : IAsyncDisposable
         host.Onboarding = new OnboardingStore(db);
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
+        host.ReadDisk = static () => new DiskSpace(1L << 42, 1L << 43);
         host.ComposeTheAi(db);
         return host;
     }
@@ -2269,13 +2272,17 @@ public sealed class AppHost : IAsyncDisposable
         await ForwardRunner.AdvanceAsync(ct);
     }
 
-    async Task BackgroundAsync(CancellationToken ct)
+    /// <summary>A test's write at the head of a background pass: what any pass does on a full disk (<c>DiskGuardTests</c>).</summary>
+    internal Action? BeforeBackgroundPassUnderTest { get; set; }
+
+    internal async Task BackgroundAsync(CancellationToken ct)
     {
         var tick = 0;
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                BeforeBackgroundPassUnderTest?.Invoke();
                 await TradingPassAsync(ct);
                 Gateway.Log.Rotate();
 
@@ -2315,7 +2322,9 @@ public sealed class AppHost : IAsyncDisposable
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) { return; }
-            catch (Exception ex) { Gateway.Log.Engineering("App", "background_error", "warn", ex: ex); }
+            // NOT THE WRITE THAT THROWS (U-disk-guard): this loop is what manages positions while the AI is paused, and on a full disk the line
+            // saying why a pass failed fails the same way. Thrown from here it ended the loop for good, with nothing said, room or no room.
+            catch (Exception ex) { Gateway.Log.TryEngineering("App", "background_error", "warn", ex: ex); }
 
             try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
             catch (OperationCanceledException) { return; }
@@ -2693,9 +2702,12 @@ public sealed class AppHost : IAsyncDisposable
     /// LETS THE AI WORK ON ITS OWN, and remembers that the owner said so. Two presses on the card;
     /// this is what the second one reaches.
     /// </summary>
-    public void LetTheAiWorkOnItsOwn()
+    /// <returns>Null when it went to work; the owner's words when the free-space guard refused the press, which starts nothing.</returns>
+    public string? LetTheAiWorkOnItsOwn()
     {
-        Gateway.Update(s => s.AiWorksOnItsOwn = true);
+        if (DiskRefusesThePress() is { } refused) return refused;
+
+        Gateway.Update(s => { s.AiWorksOnItsOwn = true; s.DiskPause = null; });
         Gateway.Log.Activity("The AI was set to work on its own");
         Mission.Start();
 
@@ -2708,18 +2720,144 @@ public sealed class AppHost : IAsyncDisposable
         RaiseWake(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review,
             Json.Write(new { because = "the owner set the AI to work on its own" }), CouncilRoles.Operations);
         Changed?.Invoke();
+        return null;
+    }
+
+    /// <summary>
+    /// THE OWNER'S PRESS AGAINST THE DISK, read at the press (<see cref="DiskWatch.MayResume"/>). A press the disk refuses leaves a pause standing, a new one
+    /// when none did, so the card says why the button did nothing. This is the one place a pause is cleared, and only the owner's press comes here.
+    /// </summary>
+    string? DiskRefusesThePress()
+    {
+        DiskSpace? reading;
+        try { reading = ReadDisk(); }
+        catch (Exception) { reading = null; }
+        if (reading is not null) _disk = reading;
+
+        var standing = Gateway.Settings.DiskPause;
+        if (DiskWatch.MayResume(standing, reading)) return null;
+
+        var pause = standing ?? DiskWatch.PauseFor(reading!, DateTimeOffset.UtcNow);
+        try { Gateway.Update(s => s.DiskPause = pause); }
+        catch (Exception) { _diskPauseUnsaved = true; }
+        var words = DiskWords.Refused(pause, reading);
+        Gateway.Log.TryActivity(words, "warn");
+        Changed?.Invoke();
+        return words;
     }
 
     /// <summary>
     /// Stops the loop and remembers that too, so a restart does not quietly put it back to work. One
     /// press: this only ever takes work away.
     /// </summary>
-    public async Task PauseTheAiAsync()
+    public Task PauseTheAiAsync() => PauseTheAiAsync("The AI was paused", null);
+
+    /// <summary>
+    /// THE ONE PAUSE, the owner's and the free-space guard's. The loop stops whether or not the record could be written: on a disk with no room the write is
+    /// what throws, and a pause that came second to it did not happen. The exception still reaches the caller, once the AI is paused.
+    /// </summary>
+    async Task PauseTheAiAsync(string line, DiskPause? because)
     {
-        Gateway.Update(s => s.AiWorksOnItsOwn = false);
-        await Mission.PauseAsync();
-        Gateway.Log.Activity("The AI was paused");
+        try
+        {
+            Gateway.Update(s =>
+            {
+                s.AiWorksOnItsOwn = false;
+                if (because is not null) s.DiskPause = because;
+            });
+        }
+        finally { await Mission.PauseAsync(); }
+        Gateway.Log.Activity(line);
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// THE FILESYSTEM HOLDING THE HOME, read now. A function so a test can stand a disk in: <see cref="Composed"/> hands every test's host a
+    /// roomy one, because a runner's own disk says nothing about the test beside it. In-process only: nothing outside this object sets it.
+    /// </summary>
+    internal Func<DiskSpace?> ReadDisk { get; set; } = static () => DiskSpace.Read(Paths.Home);
+
+    readonly DiskWatch _diskWatch = new();
+
+    /// <summary>The last good read, for the pages' "free now". Null until one has been made.</summary>
+    volatile DiskSpace? _disk;
+
+    /// <summary>A pause the disk would not let be written: it stands in memory, and every later pass writes it again.</summary>
+    volatile bool _diskPauseUnsaved;
+
+    /// <summary>
+    /// THE FREE-SPACE GUARD'S STANDING PAUSE IN THE OWNER'S WORDS: why, and what to do. Null when it has not paused the AI. The card, the at-a-glance
+    /// line and the refusal of a launch all read this one sentence.
+    /// </summary>
+    internal string? DiskPauseWords => Gateway?.Settings.DiskPause is { } pause ? DiskWords.Paused(pause, _disk) : null;
+
+    /// <summary>
+    /// THE FREE-SPACE GUARD'S CLOCK (<c>U-disk-guard</c>): a task of its own beside <see cref="BackgroundAsync"/>, never a step of it, because a full
+    /// disk is exactly what makes that pass throw before it reached a step behind it. Started with the app and stopped with it, and a pass that fails
+    /// does not end it. In-process only, like every other way the AI is paused: no pipe op and no verb reaches it, and it can only take work away.
+    /// </summary>
+    internal async Task DiskGuardLoopAsync(CancellationToken ct, TimeSpan? every = null)
+    {
+        using var timer = new PeriodicTimer(every ?? DiskWatch.Every);
+        try
+        {
+            do
+            {
+                try { await DiskGuardPassAsync(); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { Gateway.Log.TryEngineering("DiskGuard", "pass_failed", "warn", ex: ex); }
+            }
+            while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { /* the app is closing */ }
+    }
+
+    /// <summary>
+    /// ONE LOOK. The AI is on when the owner's flag says so or the loop is running, so a restart that has not resumed yet counts (<see cref="ResumeOnStartAsync"/>).
+    /// Under the floor it pauses the AI through the owner's own path. It never resumes anything, and the health row says what it saw.
+    /// </summary>
+    internal async Task DiskGuardPassAsync()
+    {
+        DiskSpace? reading;
+        try { reading = ReadDisk(); }
+        catch (Exception) { reading = null; }
+        if (reading is not null) _disk = reading;
+
+        var settings = Gateway.Settings;
+        var look = _diskWatch.Look(reading, DateTimeOffset.UtcNow, settings.AiWorksOnItsOwn || Mission.Running);
+        if (look.Trip is { } pause) await PauseForTheDiskAsync(pause);
+        else if (_diskPauseUnsaved) SaveTheDiskPause();
+
+        var (state, detail) = Gateway.Settings.DiskPause is not null ? (HealthState.PAUSED, DiskPauseWords ?? "")
+            : look.Verdict == DiskVerdict.Fine ? (HealthState.READY, DiskWords.Row(reading))
+            : look.Verdict == DiskVerdict.Low ? (HealthState.DEGRADED, DiskWords.LowRow(reading))
+            : (HealthState.DEGRADED, DiskWords.Unread);
+        Health.Set(Components.DiskSpace, state, detail);
+    }
+
+    /// <summary>The owner's own pause with the guard's reason beside it. A disk too full to take the record still pauses the AI: the record is written when it can be.</summary>
+    async Task PauseForTheDiskAsync(DiskPause pause)
+    {
+        _diskPauseUnsaved = true;
+        try
+        {
+            await PauseTheAiAsync(DiskWords.Tripped(pause), pause);
+            _diskPauseUnsaved = false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Gateway.Log.TryEngineering("DiskGuard", "pause_record_failed", "warn", ex: ex);
+        }
+        Changed?.Invoke();
+    }
+
+    void SaveTheDiskPause()
+    {
+        try
+        {
+            Gateway.Update(_ => { });
+            _diskPauseUnsaved = false;
+        }
+        catch (Exception) { /* the disk is still refusing it: the next pass writes it */ }
     }
 
     /// <summary>
@@ -2782,6 +2920,9 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     internal async Task ResumeOnStartAsync()
     {
+        // THE GUARD LOOKS FIRST: a restart does not walk a working AI back onto a disk that has no room for it.
+        await DiskGuardPassAsync();
+
         switch (DecideOnStart(Gateway.Settings))
         {
             case MissionOnStart.Resume:
@@ -3469,6 +3610,11 @@ public sealed class AppHost : IAsyncDisposable
             {
                 try { await _background.WaitAsync(TimeSpan.FromSeconds(5)); }
                 catch (Exception) { /* over the bound or faulted: the quit goes on */ }
+            }
+            if (_diskGuard is not null)
+            {
+                try { await _diskGuard.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* the same */ }
             }
             _loop.Dispose();
         }

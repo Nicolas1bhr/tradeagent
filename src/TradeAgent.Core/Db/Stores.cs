@@ -537,6 +537,13 @@ public sealed class LogStore(Database db)
         return c.ExecuteNonQuery();
     });
 
+    /// <summary><see cref="Activity"/> for a line that must not stop what it reports, on a disk that may refuse it. Returns whether the row was written.</summary>
+    public bool TryActivity(string text, string level = "info")
+    {
+        try { Activity(text, level); return true; }
+        catch (Exception) { return false; }
+    }
+
     /// <summary>
     /// <see cref="Engineering"/> for a caller that is already handling a failure and must not be
     /// stopped by a second one. Returns whether the row was written, so nothing has to guess.

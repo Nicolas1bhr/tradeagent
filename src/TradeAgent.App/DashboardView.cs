@@ -119,7 +119,11 @@ sealed class DashboardPage
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
 
     readonly Button _workButton;
-    readonly TextBlock _missionState = Ui.With(Ui.Body("—"), t => t.FontWeight = FontWeight.SemiBold);
+    readonly TextBlock _missionState = Ui.With(Ui.Body("—"), t =>
+    {
+        t.FontWeight = FontWeight.SemiBold;
+        t.TextWrapping = TextWrapping.Wrap;
+    });
     readonly TextBlock _missionCounts = Ui.Micro("");
     readonly TextBlock _missionCost = Ui.Micro("");
     readonly TextBlock _missionLast = Ui.Muted("");
@@ -381,9 +385,11 @@ sealed class DashboardPage
             : !spend.CanPrice ? Theme.Caution
             : Theme.TextFaint;
 
-        _missionState.Text = MissionSentence(status, _host.AiNotStarted);
+        var disk = _host.DiskPauseWords;
+        _missionState.Text = MissionSentence(status, _host.AiNotStarted, disk);
         _missionState.Foreground = status.State switch
         {
+            _ when disk is not null => Theme.Caution,
             MissionState.Working => Theme.Positive,
             MissionState.Waiting => Theme.TextMuted,
             MissionState.Paused => Theme.Caution,
@@ -411,11 +417,15 @@ sealed class DashboardPage
     /// AND A STOPPED AI SAYS WHY, when a start was refused (<see cref="AppHost.AiNotStarted"/>). A
     /// restart that could not start the AI pressed nothing, so there is no strip under the header to
     /// show the refusal in — this line and the activity log are the only places the owner reads it.
+    ///
+    /// AND THE FREE-SPACE GUARD'S PAUSE OUTRANKS BOTH (<see cref="AppHost.DiskPauseWords"/>): it is the reason the AI is not working, whichever of the two
+    /// the loop reads as, and the only place that says what to do about it. While a turn unwinds the line still says working, because that is still true.
     /// </summary>
-    internal static string MissionSentence(MissionStatus status, string? notStarted = null) =>
+    internal static string MissionSentence(MissionStatus status, string? notStarted = null, string? diskPause = null) =>
         Whose(status) + status.State switch
         {
             MissionState.Working => "working",
+            _ when diskPause is { Length: > 0 } => diskPause,
             // THE VENDOR'S LIMIT OUTRANKS THE NEXT LOOK. The look is only when the loop checks the hold
             // again; the hold is when the AI can work, and it is a fact about the owner's plan rather
             // than about this app — so the card names whose limit it is.

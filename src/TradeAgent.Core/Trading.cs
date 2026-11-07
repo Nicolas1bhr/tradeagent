@@ -376,6 +376,12 @@ public sealed class TradeAgentSettings
     public bool ResumeAiOnStart { get; set; } = true;
 
     /// <summary>
+    /// WHY THE FREE-SPACE GUARD PAUSED THE AI, or null when it has not. Written in the same write as <see cref="AiWorksOnItsOwn"/> going false, so
+    /// a restart stays paused and still says why; cleared only by the owner's press, because the guard never resumes anything. It grants nothing.
+    /// </summary>
+    public DiskPause? DiskPause { get; set; }
+
+    /// <summary>
     /// THE OWNER'S STANDING INSTRUCTIONS TO THE AI, included in every turn's Situation.
     ///
     /// Words, not authority. Nothing typed here can widen a limit, change a mode or lift the kill

@@ -21,11 +21,12 @@ public static class Components
     public const string Account = "Account";
     public const string MarketData = "Market data";
     public const string ExecutionCapability = "Execution capability";
+    public const string DiskSpace = "Disk space";
 
     public static readonly string[] All =
     [
         App, AgentRuntime, AgentProcess, Workspace, Gateway, TradeCli,
-        AtasProcess, AtasBridge, TradingConnection, Account, MarketData, ExecutionCapability
+        AtasProcess, AtasBridge, TradingConnection, Account, MarketData, ExecutionCapability, DiskSpace
     ];
 }
 
