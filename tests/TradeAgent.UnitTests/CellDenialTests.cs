@@ -96,4 +96,13 @@ public class CellDenialTests
         Assert.DoesNotContain("GetProcessById", script, StringComparison.Ordinal);
         Assert.DoesNotContain("New-Object", script, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void The_listing_probe_tries_its_control_first_and_carries_a_quote_in_a_path()
+    {
+        var script = CellDenial.ListScript(@"C:\Users\O'Neil\ws", @"C:\state");
+        Assert.DoesNotContain("\"", script, StringComparison.Ordinal);
+        Assert.Contains(@"Hit 'C:\Users\O''Neil\ws' 'CTL-LIST'", script, StringComparison.Ordinal);
+        Assert.Contains(@"Hit 'C:\state' 'LIST'", script, StringComparison.Ordinal);
+    }
 }
