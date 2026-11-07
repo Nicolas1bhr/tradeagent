@@ -560,7 +560,7 @@ public static class CellBenchmark
                                       "(ulimit -f unlimited) 2>/dev/null; echo raised=$?; rm -f under over");
                 return (o.Contains("under=0", StringComparison.Ordinal) && o.Contains("over=", StringComparison.Ordinal) &&
                         !o.Contains("over=0", StringComparison.Ordinal) && o.Contains("raised=", StringComparison.Ordinal) &&
-                        !o.Contains("raised=0", StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
+                        !o.Contains("raised=0", StringComparison.Ordinal) && !o.Contains("core dumped", StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
             });
             await Row("route-a-exec-server", async () =>
             {

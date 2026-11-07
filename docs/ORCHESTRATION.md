@@ -315,7 +315,7 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   user namespaces) — proved on CI's ubuntu runners, then on the Linux host (`docs/queue/U-cell-linux-a.md`; parts a–e in ORGANISATION § 15); Windows (`R-containment`'s AppContainer route, on the
   box); macOS only for development, if cheap.
 - **The disk** (`U-disk-guard`): nothing bounds what a seat writes into its own home but two limits, both in the product, and no quota on the host. A
-  per-file bound, `RLIMIT_FSIZE` of 1 GiB hard and soft (core files 0), taken by the launcher so every process of every launch on Linux and macOS inherits it, cells,
+  per-file bound, `RLIMIT_FSIZE` of 1 GiB hard and soft (and no core dumps), taken by the launcher so every process of every launch on Linux and macOS inherits it, cells,
   route (a)'s harness and CLI seats alike; the proof's `file-bound` row shows it from inside a real cell. And the app's free-space guard, which pauses the AI
   (`CONTRACTS.md`, "The free-space guard"). **Windows has no per-file limit:** there the guard stands alone. Neither stops a process writing many files for the
   seconds between a read and the end of its turn.

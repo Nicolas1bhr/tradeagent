@@ -540,12 +540,13 @@ public static class Posix
     /// <summary>
     /// TAKES THE PER-FILE BOUND ON THIS PROCESS, for it and all it starts, and null when it holds; otherwise why not. Soft and hard both: an unprivileged process
     /// can lower its hard limit and never raise it, and no_new_privs keeps a cell unprivileged. A write past the bound ends the writer with SIGXFSZ.
-    /// Core files go to nothing with it, because that signal's default is to dump one, of a process that may hold as much as its memory ceiling.
+    /// Core dumps go with it, because that signal's default is to dump one, of a process that may hold as much as its memory ceiling. The core limit is 1, not 0: a
+    /// kernel handing cores to a pipe (Ubuntu's apport) ignores 0, measured on CI as "core dumped", and aborts the dump on exactly 1, which no core file fits either.
     /// An existing lower limit stands. Windows has no such limit and never comes here.
     /// </summary>
     public static string? BoundFiles()
     {
-        foreach (var (resource, bound) in new[] { (RlimitFsize, (ulong)FileBound), (RlimitCore, 0UL) })
+        foreach (var (resource, bound) in new[] { (RlimitFsize, (ulong)FileBound), (RlimitCore, 1UL) })
         {
             if (getrlimit(resource, out var now) != 0) return $"getrlimit({resource}) failed (errno {Marshal.GetLastPInvokeError()})";
             var lowered = new RLimit { Soft = Math.Min(now.Soft, bound), Hard = Math.Min(now.Hard, bound) };
