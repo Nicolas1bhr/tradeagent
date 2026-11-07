@@ -15,7 +15,8 @@
 #
 # IDEMPOTENT. A second run with the same arguments changes nothing and restarts nothing. A run with a new
 # tarball installs it beside the old one, moves the `current` link and restarts the app, which quits the
-# way the app always quits. The VNC password file is needed on the first run only; a later run without
+# way the app always quits. The release that was running stays installed (two are kept, no more), so going back
+# to it needs no tarball: point /opt/tradeagent/current at its folder and `systemctl restart tradeagent.service`. The VNC password file is needed on the first run only; a later run without
 # it keeps the one already set.
 #
 # WHAT IT TOUCHES, AND NOTHING ELSE:
@@ -198,25 +199,42 @@ if [ ! -x "$root_dir/$release/TradeAgent" ]; then
     trap - EXIT
 fi
 
-if [ "$(readlink "$root_dir/current" 2> /dev/null || true)" != "$release" ]; then
+was_running="$(readlink "$root_dir/current" 2> /dev/null || true)"
+if [ "$was_running" != "$release" ]; then
     echo "== $root_dir/current -> $release =="
     ln -sfn "$release" "$root_dir/current.new"
     mv -Tf "$root_dir/current.new" "$root_dir/current"
     changed_app=yes
 fi
 
-# The version running and the one installed before it stay; anything older is removed. Each is ~300 MB.
-previous="" previous_at=0
-for d in "$root_dir"/*/; do
-    b="$(basename "$d")"
-    case "$b" in kit|"$release") continue ;; esac
-    at="$(stat -c %Y "$d")"
-    if [ "$at" -gt "$previous_at" ]; then previous="$b"; previous_at="$at"; fi
-done
-for d in "$root_dir"/*/; do
-    b="$(basename "$d")"
-    case "$b" in kit|"$release"|"$previous") ;; *) echo "== removing the old $b =="; rm -rf "${root_dir:?}/$b" ;; esac
-done
+# THE RELEASE THAT WAS RUNNING STAYS, beside the one installed, so going back to it is a move of the `current` link and a
+# restart, with no tarball to fetch; anything older is removed (each is ~300 MB). The one that was running is read from
+# the link BEFORE it moved. On a run that moved nothing it is the newest release folder but the one installed. A release
+# is a real folder holding an executable TradeAgent: `current` (and a `current.new` an interrupted run left) is a link
+# to one, and "$root"/*/ matches a link to a folder too. Read as a release, with its target's fresh time, `current` was
+# "the one before", and the release that had been running was removed (seen twice on 2026-11-07). Nothing else is
+# ever removed here: not kit/, not a link, not a folder without TradeAgent in it.
+# remove_old_releases <root> <release installed> <the link's target before it moved, or empty>
+remove_old_releases() {
+    local root="$1" release="$2" before="${3%/}" d b
+    before="${before##*/}"
+    if [ -z "$before" ] || [ "$before" = "$release" ] || [ -L "$root/$before" ] || [ ! -x "$root/$before/TradeAgent" ]; then
+        before=""
+        for d in "$root"/*/; do
+            d="${d%/}"; b="${d##*/}"
+            if [ -L "$d" ] || [ "$b" = kit ] || [ "$b" = "$release" ] || [ ! -x "$d/TradeAgent" ]; then continue; fi
+            if [ -z "$before" ] || [ "$d" -nt "$root/$before" ]; then before="$b"; fi
+        done
+    fi
+    for d in "$root"/*/; do
+        d="${d%/}"; b="${d##*/}"
+        if [ -L "$d" ] || [ "$b" = kit ] || [ "$b" = "$release" ] || [ "$b" = "$before" ] || [ ! -x "$d/TradeAgent" ]; then continue; fi
+        echo "== removing the old $b =="
+        rm -rf "${root:?}/$b"
+    done
+    if [ -n "$before" ]; then echo "== kept $before, the release before $release: going back to it needs no tarball =="; fi
+}
+remove_old_releases "$root_dir" "$release" "$was_running"
 
 install -m 0755 -o root -g root "$kit/display-prepare" "$root_dir/kit/display-prepare.new"
 if cmp -s "$root_dir/kit/display-prepare.new" "$root_dir/kit/display-prepare"; then rm -f "$root_dir/kit/display-prepare.new"
