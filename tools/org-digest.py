@@ -15,6 +15,7 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
   --now     (tests) the instant "now" is, ISO with a zone.   --no-systemd   (tests) do not ask systemd about the unit.
   --vocabulary   (tests) print every word this file compares a column to, as JSON, and stop.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
+  --disk-file   (tests) a JSON [free, total] read instead of asking the filesystem.
 
 Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, strategy_*, fill, cell_proof,
 tape_fetch). A deployment's profit and loss is a SIMULATION (paper): a book of fills at modelled prices, never money. A cost is the
@@ -45,6 +46,8 @@ from decimal import Decimal, InvalidOperation
 DEFAULT_HOME = "/var/lib/tradeagent"
 STATE_UNDER_HOME = ".local/share/TradeAgent/state"
 MAX_LINES = 60
+GIB = 1 << 30
+DISK_FLOOR_SHARE, DISK_FLOOR_MOST, DISK_FLOOR_LEAST = 10, 10 * GIB, 2 * GIB    # DiskFloor.For: a tenth of the disk, at most 10 GiB, never under 2 (held to it by OrgDigestTests)
 
 
 class W:
@@ -110,6 +113,8 @@ class W:
     BILLING_PLAN, BILLING_KEY, BILLING_UNKNOWN = "plan", "key", "unknown"
     # keys: meta, kv, and the one setting read
     META_SCHEMA_VERSION, KV_SETTINGS, SETTING_WORKS_ON_ITS_OWN = "schema_version", "settings", "ai_works_on_its_own"
+    # the free-space guard's pause in the settings: DiskPause's serialised names
+    SETTING_DISK_PAUSE, PAUSE_AT, PAUSE_FREE, PAUSE_TOTAL, PAUSE_FLOOR, PAUSE_UNREADABLE = "disk_pause", "at", "free", "total", "floor", "unreadable"
 
 
 ADMISSIBLE = (W.VERDICT_PROMOTED, W.VERDICT_PAPER_ELIGIBLE)    # the two classes a version can be carried forward on
@@ -277,15 +282,20 @@ class Digest:
     def app_state(self):
         schema = self.app.execute("SELECT value FROM meta WHERE key = ?", (W.META_SCHEMA_VERSION,)).fetchone()
         working = None
+        pause = None
         row = self.app.execute("SELECT value FROM kv WHERE key = ?", (W.KV_SETTINGS,)).fetchone() if self.has("kv", "key", "value") else None
         if row:
             try:
-                settings = json.loads(row[0])     # one word is taken from it and the rest is never kept or shown
+                settings = json.loads(row[0])     # two facts are taken from it and the rest is never kept or shown
                 if isinstance(settings, dict) and W.SETTING_WORKS_ON_ITS_OWN in settings:
                     working = bool(settings[W.SETTING_WORKS_ON_ITS_OWN])
+                if isinstance(settings, dict) and isinstance(settings.get(W.SETTING_DISK_PAUSE), dict):
+                    p = settings[W.SETTING_DISK_PAUSE]
+                    pause = {"at": p.get(W.PAUSE_AT), "free": p.get(W.PAUSE_FREE), "total": p.get(W.PAUSE_TOTAL), "floor": p.get(W.PAUSE_FLOOR),
+                             "unreadable": bool(p.get(W.PAUSE_UNREADABLE))}
             except ValueError:
                 pass
-        return {"schema": schema[0] if schema else None, "ai_works_on_its_own": working}
+        return {"schema": schema[0] if schema else None, "ai_works_on_its_own": working, "disk_pause": pause}
 
     # -- 1. positions by status and model
     def positions(self):
@@ -958,6 +968,7 @@ def build(app_path, tape_path, state, now, since, opts):
             result[key] = getattr(digest, method)()
         except sqlite3.Error as ex:
             result[key] = {"unreadable": short(f"{type(ex).__name__}: {ex}", 160)}
+    result["disk"] = read_disk(state, opts.get("disk_file"))
     result["attention"] = attention(result)
     for c in (app, tape):
         if c is not None:
@@ -965,8 +976,37 @@ def build(app_path, tape_path, state, now, since, opts):
     return result
 
 
+def read_disk(state, disk_file):
+    """FREE SPACE ON THE FILESYSTEM HOLDING THE STATE FOLDER, on every run, as this host answers now: a statvfs, which writes nothing. It is what the app's
+    free-space guard reads, and this file's floor is the guard's: free is what the app's own account can use. A read that fails says so; it is never a zero."""
+    try:
+        if disk_file:
+            with open(disk_file, encoding="utf-8") as f:
+                free, total = json.load(f)
+        else:
+            v = os.statvfs(state)
+            free, total = v.f_bavail * v.f_frsize, v.f_blocks * v.f_frsize
+    except (OSError, ValueError, TypeError) as ex:
+        return {"unreadable": str(ex)}
+    floor = max(DISK_FLOOR_LEAST, min(total // DISK_FLOOR_SHARE, DISK_FLOOR_MOST))
+    return {"free": free, "total": total, "floor": floor, "below_floor": free < floor}
+
+
+def gib(n):
+    return "?" if n is None else f"{n / GIB:.1f} GiB"
+
+
 def attention(d):
     flags = []
+    pause = d.get("app", {}).get("disk_pause")
+    if pause and pause["unreadable"]:
+        flags.append(f"DISK GUARD TRIPPED {stamp(pause['at'])}: it could not read the free space, so the AI is paused until the owner resumes it")
+    elif pause:
+        flags.append(f"DISK GUARD TRIPPED {stamp(pause['at'])}: {gib(pause['free'])} free of {gib(pause['total'])}, floor {gib(pause['floor'])}; "
+                     "the AI is paused until the owner resumes it")
+    disk = d.get("disk", {})
+    if disk.get("below_floor") and not pause:
+        flags.append(f"free space {gib(disk['free'])} is UNDER the guard's floor {gib(disk['floor'])} and no pause is recorded")
     if d.get("app", {}).get("ai_works_on_its_own") is False:
         flags.append("the AI is NOT set to work on its own: nothing turns")
     dt_ = d.get("day_total", {})
@@ -1062,6 +1102,10 @@ def render(d, cap):
     if d["attention"]:
         L.append("ATTENTION")
         add_list(d["attention"], cap["attention"], lambda a: "  ! " + a)
+
+    s = d["disk"]
+    if not unread("disk", s):
+        L.append(f"disk: {gib(s['free'])} free of {gib(s['total'])}  guard floor {gib(s['floor'])}")
 
     s = d["positions"]
     if not unread("positions", s):
@@ -1217,6 +1261,7 @@ def main(argv):
     ap.add_argument("--machine-id-file", default="/etc/machine-id")
     ap.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
     ap.add_argument("--osrelease-file", default="/proc/sys/kernel/osrelease")
+    ap.add_argument("--disk-file")
     ap.add_argument("--vocabulary", action="store_true")
     a = ap.parse_args(argv)
     if a.vocabulary:
@@ -1231,7 +1276,8 @@ def main(argv):
         print(f"org-digest: {ex}", file=sys.stderr)
         return 2
     state = a.state or os.path.join(a.home, STATE_UNDER_HOME)
-    opts = {"no_systemd": a.no_systemd, "machine_id_file": a.machine_id_file, "boot_id_file": a.boot_id_file, "osrelease_file": a.osrelease_file}
+    opts = {"no_systemd": a.no_systemd, "machine_id_file": a.machine_id_file, "boot_id_file": a.boot_id_file, "osrelease_file": a.osrelease_file,
+            "disk_file": a.disk_file}
     result = build(os.path.join(state, "tradeagent.db"), os.path.join(state, "tape.db"), state, now, since, opts)
     if a.json:
         print(json.dumps(result, indent=2, sort_keys=True, default=str))

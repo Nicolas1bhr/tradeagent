@@ -716,6 +716,67 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("on failed turns", attention, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// THE DISK ON EVERY RUN, AND ATTENTION WHEN THE GUARD HAS TRIPPED (<c>U-disk-guard</c>): free space, its total and the guard's own floor, the trip's figures in
+    /// an ATTENTION line from the app's own record, the two kinds of trip apart, and a disk under the floor with no pause recorded called out too.
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void The_digest_shows_free_space_on_every_run_and_says_when_the_guard_tripped()
+    {
+        const long gib = 1L << 30;
+        var f = Build();
+        var disk = Path.Combine(f.Root, "disk.json");
+        JsonElement Digest(long free, long total, DiskPause? pause)
+        {
+            File.WriteAllText(disk, $"[{free}, {total}]");
+            using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+                db.SetKv("settings", TradeAgent.Core.Json.Write(new TradeAgentSettings { AiWorksOnItsOwn = pause is null, DiskPause = pause }));
+            var (exit, o, e) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"),
+                ["--state", f.State, "--since", "2026-10-30T12:00:00Z", "--now", "2026-10-31T14:00:00Z", "--no-systemd", "--disk-file", disk, "--json", .. f.Identity()]);
+            Assert.True(exit == 0, e);
+            return JsonDocument.Parse(o).RootElement;
+        }
+        static string Attention(JsonElement d) => string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+
+        // EVERY RUN, THE GUARD'S OWN FLOOR on each size of disk it is stated for.
+        foreach (var total in new[] { 16 * gib, 64 * gib, 256 * gib, 2000 * gib })
+        {
+            var d = Digest(total, total, null);
+            Assert.Equal(DiskFloor.For(total), d.GetProperty("disk").GetProperty("floor").GetInt64());
+            Assert.Equal(total, d.GetProperty("disk").GetProperty("free").GetInt64());
+            Assert.DoesNotContain("DISK GUARD", Attention(d), StringComparison.Ordinal);
+            Assert.DoesNotContain("guard's floor", Attention(d), StringComparison.Ordinal);
+        }
+
+        // UNDER THE FLOOR AND NOTHING RECORDED: a guard that has not done its work is said too.
+        Assert.Contains("UNDER the guard's floor 10.0 GiB", Attention(Digest(9 * gib, 100 * gib, null)), StringComparison.Ordinal);
+
+        // TRIPPED: the figures it tripped on, read from the app's record, and the human digest's first lines say so.
+        var at = At("2026-10-31T13:30:00Z");
+        var tripped = Attention(Digest(40 * gib, 100 * gib, new DiskPause { At = at, Free = 9 * gib, Total = 100 * gib, Floor = 10 * gib }));
+        Assert.Contains("DISK GUARD TRIPPED 10-31 13:30: 9.0 GiB free of 100.0 GiB, floor 10.0 GiB", tripped, StringComparison.Ordinal);
+        Assert.Contains("until the owner resumes it", tripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("guard's floor", tripped, StringComparison.Ordinal);
+        var human = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"),
+            ["--state", f.State, "--since", "2026-10-30T12:00:00Z", "--now", "2026-10-31T14:00:00Z", "--no-systemd", "--disk-file", disk, .. f.Identity()]).Out;
+        var lines = human.Split('\n');
+        Assert.Contains(lines, l => l.StartsWith("disk: 40.0 GiB free of 100.0 GiB  guard floor 10.0 GiB", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.StartsWith("  ! DISK GUARD TRIPPED", StringComparison.Ordinal));
+        Assert.True(lines.Length <= 60);
+
+        // THE GUARD THAT LOST ITS SIGHT says that, and no figure it never read.
+        var blind = Attention(Digest(40 * gib, 100 * gib, new DiskPause { At = at, Unreadable = true }));
+        Assert.Contains("could not read the free space", blind, StringComparison.Ordinal);
+
+        // AND A READ THAT FAILS IS SAID, never a zero.
+        File.WriteAllText(disk, "not a reading");
+        var (_, o2, _) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"),
+            ["--state", f.State, "--since", "2026-10-30T12:00:00Z", "--now", "2026-10-31T14:00:00Z", "--no-systemd", "--disk-file", disk, "--json", .. f.Identity()]);
+        Assert.True(JsonDocument.Parse(o2).RootElement.GetProperty("disk").TryGetProperty("unreadable", out _));
+    }
+
+    static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE"];
+
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
     /// <summary>
     /// EVERY NAME IN THE DIGEST'S <c>class W</c>, TO WHAT THE APP WRITES. A constant here is the app's own, so a word renamed in the app and not in
@@ -792,9 +853,12 @@ public partial class OrgDigestTests(ITestOutputHelper log)
 
         // The setting's key, as the app serialises it, read from the app's own writer.
         Assert.Contains($"\"{Word("SETTING_WORKS_ON_ITS_OWN")}\":", TradeAgent.Core.Json.Write(new TradeAgentSettings()), StringComparison.Ordinal);
+        var paused = TradeAgent.Core.Json.Write(new TradeAgentSettings { DiskPause = new DiskPause { At = Now, Free = 1, Total = 2, Floor = 3, Unreadable = true } });
+        Assert.Contains($"\"{Word("SETTING_DISK_PAUSE")}\":{{", paused, StringComparison.Ordinal);
+        foreach (var name in PauseWords) Assert.Contains($"\"{Word(name)}\":", paused, StringComparison.Ordinal);
 
         // AND NOTHING IS LEFT UNTRACED: every word in the digest is in one of the tables above.
-        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "SETTING_WORKS_ON_ITS_OWN"]);
+        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "SETTING_WORKS_ON_ITS_OWN", "SETTING_DISK_PAUSE"]).Concat(PauseWords);
         Assert.Empty(digest.Keys.Except(traced));
     }
 
