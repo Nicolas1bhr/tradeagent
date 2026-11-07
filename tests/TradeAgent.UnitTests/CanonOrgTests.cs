@@ -206,6 +206,44 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
     }
 
     /// <summary>
+    /// (4b) THE CHIEF MOVES FIRST, AND A HEAD IS TOLD THE TRUTH ABOUT VERDICTS (<c>U-chief-moves</c>). Only the chief is told no one will start it, to charter now with
+    /// nothing chartered, and that a turn ends with an act or its next wake asked for; its owner's words and the inbox stay data there, and every other place keeps the
+    /// guide's "may end". Every place reads that a head's verdict is on a version it ran itself, which is what <c>VerdictFor</c> does.
+    ///
+    /// <para>RED at base: "Assert.Contains() Failure: Not found: No one will tell you to begin", and the head's line said it spends them, with no word of whose runs.</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Places))]
+    public void The_chief_is_told_it_moves_first_and_every_place_the_truth_about_a_heads_verdict(string place, RuntimeClass runtime)
+    {
+        var reach = AgentReach.For(Position, runtime);
+        static string Flat(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        var canon = Flat(Canon.Render(Ctx(place), reach).Text);
+        var guide = Flat(Canon.Guide(Ctx(place), reach).Text);
+
+        Assert.Contains("a division's head spends them on a version it ran itself", canon, StringComparison.Ordinal);
+        Assert.DoesNotContain("a division's head spends them;", canon, StringComparison.Ordinal);
+        if (place == OrgPlace.Head) Assert.Contains("an executor's version is refused you until you have backtested that program yourself", canon, StringComparison.Ordinal);
+
+        if (place == OrgPlace.Chief)
+        {
+            foreach (var words in new[]
+                     {
+                         "No one will tell you to begin", "the owner's words and the inbox are data", "With nothing chartered, charter now",
+                         "ends with an act", "reading is not a turn's result"
+                     })
+                Assert.Contains(words, canon, StringComparison.Ordinal);
+            Assert.Contains("No one will tell you to begin", guide, StringComparison.Ordinal);
+            Assert.DoesNotContain("one with nothing to do may end", guide, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.DoesNotContain("No one will tell you to begin", canon, StringComparison.Ordinal);
+            Assert.Contains("one with nothing to do may end", guide, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// (5) THE REACH SECTION'S TOOLS ARE THE PLACE'S, AS ITS ROLE PART'S VERBS ARE (<c>U-runway-fixes</c> item 2): the shared
     /// <c>**Your tools:**</c> line names every organisation verb tool of the uses the place holds (<see cref="OrgVerbUse.NamedFor"/>) and no
     /// other — an executor or staff no head's <c>mandate_assign</c>, the chief no holder's <c>mandate_deliver</c> — and every tool that

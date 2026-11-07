@@ -1976,7 +1976,8 @@ public sealed class AppHost : IAsyncDisposable
             WorksOnItsOwn: Gateway.Settings.AiWorksOnItsOwn && Mission is { Running: true } && state is MissionState.Waiting or MissionState.Working,
             ProvenCell: CellProofHeld,
             Ceiling: TimeSpan.FromHours(Math.Max(0, Gateway.Policy.HeadCeilingHours)),
-            Billing: billing);
+            Billing: billing,
+            Backstop: OrgStore.ChiefFloorEvery(RewakeFloorsOf(Gateway.Policy)));
     }
 
     /// <summary>"Wake the chief once", press one: what it would do now, or why it cannot. Reads only.</summary>
@@ -2869,6 +2870,14 @@ public sealed class AppHost : IAsyncDisposable
             if (host._db is not { } db) return now + asked;
             var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Policy) : RewakeFloors.From(null, null);
             return new OrgStore(db).OwnWakeDue(role, asked, floors, now);
+        }
+
+        /// <summary>The chief's backstop, from the security board's policy IN FORCE (R30 D21, <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>).</summary>
+        public TimeSpan? ChiefFloor(string position, DateTimeOffset now)
+        {
+            if (host._db is not { } db) return null;
+            var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Policy) : RewakeFloors.From(null, null);
+            return new OrgStore(db).ChiefFloor(position, floors, now);
         }
 
         /// <summary>The organisation's sweep over the mandates (<c>U-org-assignments-a</c>): it writes org records and wakes, never a turn.</summary>

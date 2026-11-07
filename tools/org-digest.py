@@ -94,8 +94,16 @@ class W:
     OP_MANDATE_ASSIGN, OP_MANDATE_DELIVER, OP_MANDATE_ACCEPT, OP_MANDATE_REJECT = "mandate-assign", "mandate-deliver", "mandate-accept", "mandate-reject"
     OP_BACKTEST, OP_VERDICT = "backtest", "verdict"
     TOOLS_CARRYING_AN_OP = ("trade", "data", "report")
+    # ai_attempt.context's `ended`: a turn stopped by its wall-clock limit, the vendor's refusal of the model, or the vendor's usage limit
+    ENDED_TURN_LIMIT, ENDED_MODEL_REFUSED, ENDED_USAGE_LIMIT = "TURN_TIME_LIMIT", "VENDOR_MODEL_REFUSED", "VENDOR_USAGE_LIMIT"
+    TURN_STOPS = (ENDED_TURN_LIMIT, ENDED_MODEL_REFUSED, ENDED_USAGE_LIMIT)
+    # engineering_log: a turn that was not started, in words, each line opening with the position's title
+    LOG_MISSION, LOG_TURN_REFUSED = "Mission", "turn_refused"
+    TITLE_OPERATIONS, TITLE_RESEARCH = "Operations Director", "Research Director"
+    # mission_event.payload of a chief's ceiling moved short: nothing is moving, so it wakes at its floor (R30 D21)
+    WAKE_CHIEF_FLOOR = "chief-floor"
     # the rest of what is matched: the legacy chair a launch with no role belongs to, a board seat's prefix, an order's, a fill's side
-    ROLE_DEFAULT = "operations"
+    ROLE_DEFAULT, ROLE_RESEARCH = "operations", "research"
     BOARD_PREFIX = "board-"
     CLIENT_ORDER_PREFIX = "TA-"
     SIDE_SELL = "Sell"
@@ -234,6 +242,15 @@ def charge(row):
 
 def position_of(row_role):
     return row_role or W.ROLE_DEFAULT
+
+
+def turn_context(text):
+    """What a launch's ai_attempt.context says, or nothing where it holds nothing readable."""
+    try:
+        read = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return read if isinstance(read, dict) else {}
 
 
 class Digest:
@@ -463,21 +480,24 @@ class Digest:
     # -- 7. ai_attempt errors
     def errors(self):
         rows = self.app.execute(
-            "SELECT id, role, state, exit_code, vendor_said, offered_tools, started_at, COALESCE(effective_model, requested_model) AS model "
+            "SELECT id, role, state, exit_code, vendor_said, offered_tools, started_at, context, COALESCE(effective_model, requested_model) AS model "
             "FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)).fetchall()
         groups, exits = {}, {}
         bad = 0
         for r in rows:
-            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or r["state"] not in (W.ATTEMPT_ENDED, W.ATTEMPT_LAUNCHED)
+            ctx = turn_context(r["context"])
+            stopped = ctx.get("ended") if ctx.get("ended") in W.TURN_STOPS else None
+            failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or stopped or r["state"] not in (W.ATTEMPT_ENDED, W.ATTEMPT_LAUNCHED)
             if r["exit_code"] is not None:
                 exits[str(r["exit_code"])] = exits.get(str(r["exit_code"]), 0) + 1
             if not failed:
                 continue
             bad += 1
             said = short(r["vendor_said"], 120) if r["vendor_said"] else ""
-            key = (r["state"], r["exit_code"], said)
-            g = groups.setdefault(key, {"state": key[0], "exit_code": r["exit_code"], "vendor_said": said or None, "count": 0, "last_at": None,
-                                        "positions": set(), "model": r["model"], "offered_tools": None})
+            words = short(ctx.get("refused"), 120) if stopped and ctx.get("refused") else None
+            key = (r["state"], r["exit_code"], said, stopped, words)
+            g = groups.setdefault(key, {"state": key[0], "exit_code": r["exit_code"], "vendor_said": said or None, "ended": stopped, "words": words, "count": 0,
+                                        "last_at": None, "positions": set(), "model": r["model"], "offered_tools": None})
             g["count"] += 1
             g["last_at"] = r["started_at"]
             g["positions"].add(position_of(r["role"]))
@@ -525,10 +545,34 @@ class Digest:
         }
 
     # -- 9. the next wake per active position
+    def why_not_turned(self):
+        """WHY EACH POSITION DID NOT TURN, the newest record since T0: the loop's own line for a turn it did not start, or the word on a launch stopped by
+        its limit or by the vendor, and none once a clean turn has come after it. A line is told once per cause, so it can be older than the wake it explains:
+        it carries its time. Nothing here is inferred."""
+        titles = {W.TITLE_OPERATIONS: W.ROLE_DEFAULT, W.TITLE_RESEARCH: W.ROLE_RESEARCH}
+        why = {}
+        for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
+                                  (W.LOG_MISSION, W.LOG_TURN_REFUSED, self.since_s)):
+            line = turn_context(r["metadata"]).get("why")
+            if isinstance(line, str) and ": " in line:
+                title, words = line.split(": ", 1)
+                why[titles.get(title, title)] = {"at": r["at"], "ended": None, "words": short(words)}
+        for r in self.app.execute("SELECT role, started_at, state, exit_code, context FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)):
+            ctx = turn_context(r["context"])
+            pos = position_of(r["role"])
+            had = why.get(pos)
+            if had is not None and parse_ts(had["at"]) > parse_ts(r["started_at"]):
+                continue
+            if ctx.get("ended") in W.TURN_STOPS:
+                why[pos] = {"at": r["started_at"], "ended": ctx.get("ended"), "words": short(ctx.get("refused") or "")}
+            elif r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
+                why.pop(pos, None)
+        return why
+
     def wakes(self):
         pending = {}
-        for r in self.app.execute("SELECT role, kind, due_at FROM mission_event WHERE consumed_at IS NULL ORDER BY due_at, id"):
-            p = pending.setdefault(position_of(r["role"]), {"next_due": r["due_at"], "kind": r["kind"], "pending": 0})
+        for r in self.app.execute("SELECT role, kind, due_at, payload FROM mission_event WHERE consumed_at IS NULL ORDER BY due_at, id"):
+            p = pending.setdefault(position_of(r["role"]), {"next_due": r["due_at"], "kind": r["kind"], "pending": 0, "chief_floor": r["payload"] == W.WAKE_CHIEF_FLOOR})
             p["pending"] += 1
         last = {position_of(r["role"]): r["last"] for r in self.app.execute(
             "SELECT role, MAX(consumed_at) AS last FROM mission_event WHERE consumed_at IS NOT NULL GROUP BY role")}
@@ -539,7 +583,10 @@ class Digest:
             due = parse_ts(p["next_due"]) if p else None
             out.append({"position": pid, "next_due": p["next_due"] if p else None, "kind": p["kind"] if p else None,
                         "in_seconds": int((due - self.now).total_seconds()) if due else None, "pending": p["pending"] if p else 0,
-                        "last_consumed_at": last.get(pid)})
+                        "chief_floor": p["chief_floor"] if p else False, "last_consumed_at": last.get(pid)})
+        why = self.why_not_turned()
+        for o in out:
+            o["why"] = why.get(o["position"]) if o["in_seconds"] is not None and o["in_seconds"] < 0 else None
         dispositions, lost, failed = {}, 0, 0
         # A LOST TURN IS NOT A FAILED ONE: a restart took it, and its wakes read `failed` only where the loop has settled them. The
         # launch's own state tells them apart; a disposition this file has not heard of stands as its own word.
@@ -658,7 +705,7 @@ class Digest:
 
     def pace(self):
         rows = self.app.execute(
-            "SELECT id, role, state, exit_code, reserved_cost, cost, vendor_said, started_at, ended_at, "
+            "SELECT id, role, state, exit_code, reserved_cost, cost, vendor_said, started_at, ended_at, context, "
             "COALESCE(effective_model, requested_model) AS model FROM ai_attempt WHERE started_at >= ? ORDER BY started_at", (self.since_s,)).fetchall()
         acted, unread = self.acted()
         # A head's chart act names no launch, only its decider: it counts for the turn of that position it fell inside.
@@ -677,9 +724,10 @@ class Digest:
                 inside = any(who == pos and r["started_at"] <= at <= (r["ended_at"] or self.now_s) for who, at in chart)
                 if r["id"] not in acted and not inside:
                     p["idle"] += 1
-            if r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"]):
+            ctx = turn_context(r["context"])
+            if ctx.get("ended") == W.ENDED_USAGE_LIMIT or (r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"])):
                 limit_hits += 1
-                first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"])}
+                first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"] or ctx.get("refused") or "")}
         waits = []
         for r in self.app.execute("SELECT role, created_at, due_at, consumed_at FROM mission_event WHERE consumed_at >= ? AND consumed_by IN (SELECT id FROM ai_attempt)",
                                   (self.since_s,)):
@@ -949,7 +997,8 @@ def attention(d):
         flags.append(f"{er['failed_since']} of {er['attempts_since']} AI launches failed or reported a vendor error since T0")
     od = d.get("wakes", {}).get("overdue") or []
     if od:
-        flags.append("overdue wake(s): " + ", ".join(od[:4]))
+        reasons = [w for w in d["wakes"]["active_positions"] if w["position"] in od]
+        flags.append("overdue wake(s): " + ", ".join(od[:4]) + "; " + ("; ".join(why_line(w) for w in reasons[:2])))
     t = d.get("tape_health", {})
     if t.get("stalest") and t["stalest"]["age_s"] is not None and t["stalest"]["age_s"] > 7200:
         flags.append(f"tape: {t['stalest']['source']} last delivered {t['stalest']['age_s'] // 3600}h ago")
@@ -970,6 +1019,14 @@ def attention(d):
 
 
 # ---- rendering -------------------------------------------------------------------------------------------------------------
+def why_line(wake):
+    """Why this overdue position has not turned, as the app recorded it, or that it recorded nothing."""
+    why = wake.get("why")
+    if not why:
+        return f"{wake['position']}: no reason on record"
+    return f"{wake['position']} at {stamp(why['at'])}: " + (f"{why['ended']} " if why["ended"] else "") + short(why["words"], 90)
+
+
 def age(seconds):
     if seconds is None:
         return "?"
@@ -1069,7 +1126,8 @@ def render(d, cap):
         L.append(f"AI launches since T0: {s['attempts_since']}, failed/vendor-error {s['failed_since']}; exit codes " +
                  (", ".join(f"{k}x{v}" for k, v in sorted(s["exit_codes"].items())) or "none"))
         add_list(s["groups"], cap["errors"], lambda g: f"  {g['count']:>3}x {g['state']} exit {g['exit_code']} {','.join(g['positions'])}: "
-                 f"{g['vendor_said'] or '(no vendor words)'}" + (f" [offered {g['offered_tools']} tools]" if g["offered_tools"] is not None else ""))
+                 + (f"{g['ended']}: " if g["ended"] else "") + f"{g['vendor_said'] or g['words'] or '(no vendor words)'}"
+                 + (f" [offered {g['offered_tools']} tools]" if g["offered_tools"] is not None else ""))
 
     s = d["pace"]
     if not unread("pace", s):
@@ -1109,8 +1167,10 @@ def render(d, cap):
     s = d["wakes"]
     if not unread("wakes", s):
         L.append("next wake per active position:" + ("" if s["active_positions"] else " (no active position)"))
-        add_list(s["active_positions"], cap["wakes"], lambda w: f"  {w['position']:<14} " + (
-            f"{w['kind']} in {age(w['in_seconds'])} ({w['pending']} pending)" if w["next_due"] else "no wake queued") + f"  last woken {w['last_consumed_at'][:19] if w['last_consumed_at'] else '-'}")
+        overdue_first = sorted(s["active_positions"], key=lambda w: w["position"] not in s["overdue"])
+        add_list(overdue_first, cap["wakes"], lambda w: f"  {w['position']:<14} " + (
+            f"{w['kind']}{' (the chief at its floor: nothing moving)' if w['chief_floor'] else ''} in {age(w['in_seconds'])} ({w['pending']} pending)" if w["next_due"] else "no wake queued")
+            + f"  last woken {w['last_consumed_at'][:19] if w['last_consumed_at'] else '-'}" + (f"  {why_line(w)}" if w["in_seconds"] is not None and w["in_seconds"] < 0 else ""))
         taken = ", ".join(f"{k} {v}" for k, v in sorted(s["consumed_since_by_disposition"].items())) or "none"
         L.append(f"  wakes taken since T0: {taken}; on failed turns {s['failed_turn_wakes_since']}, on lost turns {s['lost_turn_wakes_since']}, raised again {s['raised_again_after_lost_since']}")
         add_list(s["blocked_now"], cap["blocked"], lambda b: f"  blocked x{b['count']} ({','.join(b['roles'])}): {b['words']}")

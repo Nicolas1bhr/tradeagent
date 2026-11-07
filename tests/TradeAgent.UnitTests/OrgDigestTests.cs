@@ -574,6 +574,69 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains(errors.GetProperty("groups").EnumerateArray(), g => g.GetProperty("state").GetString() == "TIMED-OUT");
     }
 
+    /// <summary>
+    /// THE DIGEST SAYS WHY (<c>U-chief-moves</c>; PREFLIGHT-2 ship-mid-run 6). A position overdue with a turn the loop did not start reads the loop's own line; one whose turn hit its limit or
+    /// whose model the vendor refused reads that word, from <c>ai_attempt.context</c> as the app writes it, in the errors and the wake; one with neither says there is no reason on record,
+    /// never a guess. And the chief's ceiling moved short is named as such.
+    ///
+    /// <para>RED at base: <c>why</c> did not exist, and a turn stopped at exit 0 was no error at all.</para>
+    /// </summary>
+    [UnixFact]
+    public void The_digest_says_why_a_position_stands_aside_and_shows_a_turn_stopped_by_its_limit_or_a_refused_model()
+    {
+        var f = Build();
+        const string aside = "pos-5a0001", limited = "pos-5a0002", refused = "pos-5a0003", silent = "pos-5a0004", chief = "pos-5a0005";
+        const string seatWords = "the seat is not ready for this model", limitWords = "ended at its 45 minute limit", modelWords = "the vendor does not serve this model";
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            foreach (var p in new[] { aside, limited, refused, silent, chief })
+                db.Exec($"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{p}', '{OrgIds.Research}', 'org/{p}', 'active', '2026-10-31T01:00:00.0000000Z');");
+            var wakes = new MissionEventStore(db);
+            foreach (var p in new[] { aside, limited, refused, silent })
+                Assert.True(wakes.RaiseDue($"late-{p}", MissionEventKind.Ceiling, At("2026-10-31T12:00:00Z"), At("2026-10-31T13:00:00Z"), role: p));
+            wakes.MoveCeiling(chief, At("2026-10-31T12:00:00Z"), At("2026-10-31T18:00:00Z"), MissionEventStore.ChiefFloorWake);
+
+            // AS THE APP WRITES THEM: the host's line for a refused turn, and the meter's context for a stopped one, through the same serialiser and field names.
+            new LogStore(db).Engineering("Mission", "turn_refused", "info", metadataJson: TradeAgent.Core.Json.Write(new { why = $"{CouncilRoles.Title(aside)}: {seatWords}" }));
+            var attempts = new AiAttemptStore(db);
+            void Stopped(string id, string role, string ended, string words)
+            {
+                attempts.Begin(new AiAttempt { Id = id, StartedAt = At("2026-10-31T13:10:00Z"), Runtime = "codex", RequestedModel = "gpt-6-luna", ReservedCost = 0.05m, Role = role, BillingClass = BillingClasses.Plan });
+                attempts.End(id, 0, At("2026-10-31T13:15:00Z"), 100, 0, 0, 50, 0, "gpt-6-luna", 0.05m, null,
+                    TradeAgent.Core.Json.Write(TurnContext.Read("", null, null, ended) with { Refused = words }));
+            }
+            Stopped("stop-limit", limited, AgentTurnEnded.EndedTimedOut, limitWords);
+            Stopped("stop-model", refused, ModelRefusal.Ended, modelWords);
+
+            // A REFUSAL A CLEAN TURN CAME AFTER EXPLAINS NOTHING NOW: the silent position recovered, then fell overdue with no reason recorded.
+            db.Exec($"""INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES('2026-10-31T11:00:00.0000000Z', 'Mission', 'turn_refused', 'info', '{TradeAgent.Core.Json.Write(new { why = $"{silent}: an old refusal" })}');""");
+            Attempt(attempts, "clean-after", silent, "2026-10-31T11:30:00Z", BillingClasses.Plan, "gpt-6-luna", 0.05m, 0.05m, 0);
+        }
+
+        var d = Json(f);
+        var errors = d.GetProperty("errors").GetProperty("groups").EnumerateArray().ToList();
+        Assert.Contains(errors, g => g.GetProperty("ended").GetString() == AgentTurnEnded.EndedTimedOut && g.GetProperty("words").GetString() == limitWords);
+        Assert.Contains(errors, g => g.GetProperty("ended").GetString() == ModelRefusal.Ended && g.GetProperty("words").GetString() == modelWords);
+
+        var byWake = d.GetProperty("wakes").GetProperty("active_positions").EnumerateArray().ToDictionary(w => w.GetProperty("position").GetString()!);
+        Assert.Equal(seatWords, byWake[aside].GetProperty("why").GetProperty("words").GetString());
+        Assert.Equal(AgentTurnEnded.EndedTimedOut, byWake[limited].GetProperty("why").GetProperty("ended").GetString());
+        Assert.Equal(modelWords, byWake[refused].GetProperty("why").GetProperty("words").GetString());
+        Assert.Equal(JsonValueKind.Null, byWake[silent].GetProperty("why").ValueKind);
+        Assert.True(byWake[chief].GetProperty("chief_floor").GetBoolean());
+        Assert.False(byWake[aside].GetProperty("chief_floor").GetBoolean());
+
+        var (exit, human, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
+        Assert.True(exit == 0, err);
+        Assert.Contains(seatWords, human, StringComparison.Ordinal);                       // an overdue position comes first, however few lines the digest may print
+
+        var attention = string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+        Assert.Contains(seatWords, attention, StringComparison.Ordinal);
+        Assert.Contains(AgentTurnEnded.EndedTimedOut, attention, StringComparison.Ordinal);
+        var bare = string.Join("\n", Json(Build()).GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+        Assert.Contains("pos-aaaaaa: no reason on record", bare, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void Evidence_per_pair_and_the_paper_notes_are_read()
     {
@@ -679,6 +742,10 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ["ROLE_DEFAULT"] = CouncilRoles.Default, ["BOARD_PREFIX"] = BoardSeats.Prefix, ["CLIENT_ORDER_PREFIX"] = TradingGateway.ClientOrderIdFor(""),
         ["SIDE_SELL"] = TradeAgent.ConnectorSdk.OrderSide.Sell.ToString(),
         ["BILLING_PLAN"] = BillingClasses.Plan, ["BILLING_KEY"] = BillingClasses.Key, ["BILLING_UNKNOWN"] = BillingClasses.Unknown,
+        ["ENDED_TURN_LIMIT"] = AgentTurnEnded.EndedTimedOut, ["ENDED_MODEL_REFUSED"] = ModelRefusal.Ended, ["ENDED_USAGE_LIMIT"] = VendorLimit.Ended,
+        ["TURN_STOPS"] = new[] { AgentTurnEnded.EndedTimedOut, ModelRefusal.Ended, VendorLimit.Ended },
+        ["TITLE_OPERATIONS"] = CouncilRoles.Title(CouncilRoles.Operations), ["TITLE_RESEARCH"] = CouncilRoles.Title(CouncilRoles.Research),
+        ["ROLE_RESEARCH"] = CouncilRoles.Research, ["WAKE_CHIEF_FLOOR"] = MissionEventStore.ChiefFloorWake,
     };
 
     /// <summary>
@@ -694,6 +761,8 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("BOARD_FOUNDED", "src/TradeAgent.Core/Board/BoardStore.cs", "VALUES($at, '{0}', 1, $schema, $share, $detail)"),
         ("BOARD_BUDGET_SHARE", "src/TradeAgent.Core/Board/BoardStore.cs", "VALUES($at, '{0}', NULL, NULL, $share, NULL, $detail)"),
         ("LOG_IPC", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"{0}\", \"protocol_rejected\""),
+        ("LOG_MISSION", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"{0}\", \"turn_refused\", \"info\""),
+        ("LOG_TURN_REFUSED", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"{0}\", \"info\""),
         ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
         ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
     ];

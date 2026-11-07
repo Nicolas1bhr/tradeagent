@@ -737,6 +737,13 @@ public interface IMissionHost
     DateTimeOffset? OwnWakeDue(string role, TimeSpan asked, DateTimeOffset now) => now + asked;
 
     /// <summary>
+    /// THE INTERVAL AT WHICH <paramref name="position"/> IS WOKEN INSTEAD OF ITS CEILING, or null where the ceiling stands (R30 D21,
+    /// <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>). The default is a host with no chart: the ceiling stands. A seam that throws leaves
+    /// it standing too, the saving direction.
+    /// </summary>
+    TimeSpan? ChiefFloor(string position, DateTimeOffset now) => null;
+
+    /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
     /// (<c>U-board-b2</c> item 4): composed by the app from the board's records alone, or null for a host that composes none — whose
     /// board seats then launch nothing.
@@ -2551,7 +2558,12 @@ public sealed class MissionLoop
     /// <summary>A clean turn, so this role's run of failures is over. Always zero.</summary>
     int Recovered(string? role)
     {
-        lock (_gate) return _consecutiveErrors[KeyOf(role)] = 0;
+        lock (_gate)
+        {
+            // AND ITS RUN OF REFUSALS (U-chief-moves; the Codex review): the next is told again, in the log the watch reads, and backs off from its start.
+            if (role is not null) _stoodAside.Remove(role);
+            return _consecutiveErrors[KeyOf(role)] = 0;
+        }
     }
 
     /// <summary>True while the loop is taking turns of its own accord.</summary>
@@ -4020,15 +4032,25 @@ public sealed class MissionLoop
         }
         try
         {
+            // A CHIEF WITH NOTHING MOVING IS WOKEN SOONER (R30 D21): the same one wake, measured from the same turn, so the floor a turn resets still
+            // cannot be a heartbeat, and a turn that does nothing buys only the next interval. It stops by itself, at the pass after work moves.
+            var backstop = _host.ChiefFloor(head.Id, now) is { } shorter && shorter > TimeSpan.Zero && shorter < every ? shorter : (TimeSpan?)null;
+            var interval = backstop ?? every;
+            var why = backstop is null ? null : MissionEventStore.ChiefFloorWake;
             var last = _host.LastWokenAt(head.Id);
             var pending = events.Pending(MissionEventKind.Ceiling, head.Id);
             if (last is { } turned)
             {
-                var due = turned + every;
-                if (pending.Count == 1 && pending[0].DueAt == due) return;
-                events.MoveCeiling(head.Id, now, due);
+                var due = turned + interval;
+                if (pending.Count == 1 && pending[0].DueAt == due && pending[0].Payload == why) return;
+                events.MoveCeiling(head.Id, now, due, why);
             }
-            else if (pending.Count == 0) events.MoveCeiling(head.Id, now, now + every);
+            // NEVER TURNED: it has no turn to count from, so the floor is kept where it was raised, and moved only to a time the interval now in force allows,
+            // or out to the ceiling once the backstop no longer applies.
+            else if (pending.Count == 0
+                     || (backstop is not null && (pending[0].DueAt > now + interval || pending[0].DueAt - pending[0].CreatedAt < interval))
+                     || (backstop is null && pending[0].Payload == MissionEventStore.ChiefFloorWake))
+                events.MoveCeiling(head.Id, now, now + interval, why);
         }
         catch (Exception) { /* the floor stays where it was; every real event still wakes the head */ }
     }
@@ -4779,6 +4801,8 @@ public sealed class MissionLoop
         // reaches it, computed from its home (AgentReach.InboxFrom), never a fixed `../inbox`.
         e.Kind == MissionEventKind.Inbox
             ? $"new material arrived in `{AgentReach.InboxFrom(e.Role ?? CouncilRoles.Default)}`"
+        : e.Kind == MissionEventKind.Ceiling && e.Payload == MissionEventStore.ChiefFloorWake
+            ? "no work is moving in the organisation, and no one will tell you to begin: TradeAgent woke you at your level's floor"
         : e.Kind != PublicationKind.Note ? Reason(e.Kind, spell)
         : e.Id.StartsWith(PaperRunNote, StringComparison.Ordinal)
             ? "TradeAgent's forward-run note arrived in `in/`"
@@ -4828,7 +4852,7 @@ public sealed class MissionLoop
         // so a line spelled for a seat names neither; the command line's words stay for a host that declares no spelling.
         MissionEventKind.OwnerWake => "your owner pressed \"Wake the chief once\" — one turn, now; after it you wake when you ask to "
                                       + (spell is null ? "(next.json or `trade org wake`), " : "")
-                                      + "when work reaches you, or at your ceiling",
+                                      + "when work reaches you, at your level's floor while no work is moving, or at your ceiling",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
         _ => kind
     };
@@ -4891,10 +4915,14 @@ public sealed class MissionLoop
                 // refused before any work settles it failed with the refusal's sentence, and nothing serves it again when a hold lifts —
                 // he presses again if he still wants the turn. Every other wake is given back as before.
                 var pressed = owed.Where(e => e.Kind == MissionEventKind.OwnerWake).ToList();
-                events.Release([.. owed.Where(e => e.Kind != MissionEventKind.OwnerWake).Select(e => e.Id)], consumer);
+                // NOR THE CHIEF'S BACKSTOP (R30 D21; the Codex review): it says nothing that can be lost, and given back it would keep its turn out of the
+                // last woken one, so a seat that hangs would retry on the failure backoff, past the floor. Kept consumed, the next is due a floor after this turn.
+                var floored = owed.Where(e => e.Kind == MissionEventKind.Ceiling && e.Payload == MissionEventStore.ChiefFloorWake).ToList();
+                events.Release([.. owed.Except(pressed).Except(floored).Select(e => e.Id)], consumer);
                 foreach (var e in pressed)
                     events.Settle(e.Id, MissionEventDisposition.Failed,
                         $"{why} — a pressed wake is served once: press \"Wake the chief once\" again for another turn");
+                foreach (var e in floored) events.Settle(e.Id, MissionEventDisposition.Failed, why);
                 // THE REFUSAL'S OWN SENTENCE, over any earlier blocked reason the words carried into the launch (fix pass 1,
                 // the review's P2): the latest reason they wait is the one shown, never a stale one — for the gate's refusal and
                 // the vendor's limit alike.

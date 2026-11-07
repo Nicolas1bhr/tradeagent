@@ -496,6 +496,9 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-turn-bounds-2: WakeFinished — whether a launch recorded the act a wake asked for. A read of append-only rows, called by the
         // app's loop inside a turn's commit; it writes nothing, and no op, door verb or trade verb reaches it.
         mandate = [.. mandate, "WakeFinished"];
+        // REVISITED, OUT LOUD, BY U-chief-moves (R30 D21): ChiefFloor and ChiefFloorEvery — the interval the loop wakes the chief at while nothing moves. Reads,
+        // called by the app's host alone, the one write being the loop's own ceiling; no op, verb or board act reaches them.
+        mandate = [.. mandate, "ChiefFloor", "ChiefFloorEvery"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

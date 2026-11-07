@@ -373,7 +373,17 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (11, "org:chief", "b1b372dd47bbf96e8035ffcc576a179467230743581779e2e99ef8421fb66ab8"),
         (11, "org:head", "238e277c0e9f2853bb36416ddb851ed22c449258bdb21daa28404f9425cc1f07"),
         (11, "org:staff", "dfd38a2b918361bbbcd3a90333a19d24e8984be4f6b06e21027820f6cae8af8c"),
-        (11, "org:executor", "614c1257e2c84dc4097b4b5dc101a1436b08cc89ebb6ecd3572276ba1a779108")
+        (11, "org:executor", "614c1257e2c84dc4097b4b5dc101a1436b08cc89ebb6ecd3572276ba1a779108"),
+        // v12 (U-chief-moves): the chief moves first — no one tells it to begin, with nothing chartered it charters now, and a turn ends with an act or
+        // its next wake asked for; the shared evidence words and the head's say a head's verdict reads its own runs, so an executor's version takes the
+        // chief or a unit's share. The pair's words are v10's.
+        (12, CouncilRoles.Operations, "ffdf8a622320bf34f5af6fb33fc61a9fa7a239eda2609c95eee01a14dce9b587"),
+        (12, CouncilRoles.Research, "3438e66624b16db5751c1f38b08cb6862cc38e69dec6568ee49af546d9d484d3"),
+        (12, "org", "9db9a2128d43570149601297d1715637d63edb40532d41dc9ea2cd157f596204"),
+        (12, "org:chief", "faa2b3ad100386c5608435a4410b441655a77e2f84c49bc49e64a14206534d0f"),
+        (12, "org:head", "2ce9df502ff9bc0b8ee2a8a0dc4c1a554745b52e1bb4fe896fe15584b5585df9"),
+        (12, "org:staff", "ce196eaf3bc7b03be2fad51213c2b8977d6b8558d52d76dd6a163651269e5059"),
+        (12, "org:executor", "5be3305fad697f69bfeb7bc7bbf91b29e4b7f3b87d1216608e96686dd689d72b")
     ];
 
     /// <summary>

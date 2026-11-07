@@ -580,6 +580,35 @@ public class OrgEvidenceSharesTests
     }
 
     /// <summary>
+    /// WHAT THE CANON NOW TELLS A HEAD (<c>U-chief-moves</c>): a division's head may spend verdicts, but a verdict reads its caller's own runs, so one asked on a
+    /// version a position below it authored is refused and charges nothing, until the head has backtested that program itself; the chief needs no run of its own.
+    /// Nothing here widens who may spend.
+    /// </summary>
+    [Fact]
+    public async Task A_divisions_head_is_refused_a_verdict_on_a_version_until_it_has_run_it_itself()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 4);
+        await using var _gw = gw;
+        using var _db = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());
+        HeadTheTeam(db);
+        SeatTheChief(db);
+        var version = Measured(gw, set, TeamHead, LaunchOf(db, TeamHead));
+
+        var refused = await server.CallAsync(VerdictFrame(version, set.Id), CouncilRoles.Research, LaunchOf(db, CouncilRoles.Research));
+
+        Assert.False(refused.Ok, "a division's head was charged a judgement on a version it never ran");
+        Assert.Contains("has never completed a run", refused.Error?.Message, StringComparison.Ordinal);
+        Assert.False(gw.Campaigns.VerdictCharged(campaign.Id, version));
+
+        var head = LaunchOf(db, CouncilRoles.Research);
+        Assert.Equal(version, Measured(gw, set, CouncilRoles.Research, head));
+        var served = await server.CallAsync(VerdictFrame(version, set.Id), CouncilRoles.Research, head);
+        Assert.True(served.Ok, served.Error?.Message);
+        Assert.True(gw.Campaigns.VerdictCharged(campaign.Id, version));
+    }
+
+    /// <summary>
     /// THE CAMPAIGN'S BUDGET BINDS THE CHIEF AS IT BINDS EVERYONE: with the campaign's one judgement spent on another version, the chief's
     /// ask on its subtree's version is refused before anything is computed, nothing more charged. And a version this installation does not
     /// hold is refused in words. RED at base: the chief was refused on its own (absent) runs, never reaching the budget.
