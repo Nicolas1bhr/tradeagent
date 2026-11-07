@@ -185,16 +185,17 @@ public static class InvariantRegistry
             "Your authority — the kill switch with pause, stop and flatten, your credentials and account connections, a paid key's spend, "
             + "updates, your private line, your veto — is in-process only: no pipe op and no verb, the board's included, reaches it.",
             "CLAUDE.md; VISION § 6.3",
-            ["src/TradeAgent.Core/Protocol.cs:Ops.Mutating", "src/TradeAgent.Gateway/TradingGateway.Board.cs:VetoBoardAct"],
+            ["src/TradeAgent.Core/Protocol.cs:Ops.Mutating", "src/TradeAgent.Gateway/TradingGateway.Board.cs:VetoBoardAct",
+             "src/TradeAgent.Gateway/TradingGateway.cs:EnableAiTrading", "src/TradeAgent.Gateway/TradingGateway.cs:OperatorCloseAllAsync"],
             [
                 "OrgStructureTests.No_pipe_op_or_door_verb_reaches_veto_or_activation",
                 "BoardActTests.No_op_verb_or_board_act_reaches_the_owners_veto_composition_or_budget",
                 "BillingClassesTests.No_pipe_op_door_verb_or_trade_verb_reaches_either_ceiling",
                 "OrgDecisionTests.No_decision_forecast_escalation_or_lateral_op_is_mutating_or_reaches_operator_authority",
                 "OwnerPageTests.The_owners_page_holds_exactly_the_owners_presses",
+                "InvariantProofTests.No_pipe_op_or_verb_reaches_the_owners_pause_flatten_credentials_connections_or_updates",
             ],
-            AtTheApp(),
-            "No test checks the kill switch's pause and flatten, credentials, connections or updates against the whole op list by name."),
+            AtTheApp()),
 
         new("AUTH-002",
             "The board's authority — every limit and allowance, paper and live mode, live activation, capital allocation, venture and instrument "
@@ -268,10 +269,12 @@ public static class InvariantRegistry
         new("ORDER-005",
             "No order is placed by driving a user interface: programmatic API only.",
             "CLAUDE.md rule 4; IAtasAdapter",
-            ["src/TradeAgent.AgentRuntime/RuntimeManifest.cs:computer_use", "src/TradeAgent.AgentRuntime/SeatProfile.cs:SeatProfile"],
+            ["src/TradeAgent.AgentRuntime/RuntimeManifest.cs:computer_use", "src/TradeAgent.AgentRuntime/SeatProfile.cs:SeatProfile",
+             "src/TradeAgent.AtasBridge/IAtasAdapter.cs:IAtasAdapter"],
             [
                 "SeatHomeTests.A_codex_seat_argv_carries_the_deny_set_fresh_and_resumed",
                 "SeatHomeTests.A_feature_or_tool_server_outside_the_profile_refuses_the_seat_naming_it",
+                "InvariantProofTests.The_bridge_and_the_connectors_use_no_ui_automation",
             ],
             [
                 new(SeatClasses.Cli, EnforcementClass.Advisory,
@@ -279,8 +282,7 @@ public static class InvariantRegistry
                 new(SeatClasses.Broker, EnforcementClass.Mediated, "the app's door is its only tool server; no host tool reaches a screen", BrokerSide),
                 new(SeatClasses.Harness, EnforcementClass.HardApp, "every tool is the app's own code, and none drives a screen", HarnessSide),
                 new(SeatClasses.Cell, EnforcementClass.Advisory, "no test shows that a cell cannot reach a display or another program's window", []),
-            ],
-            "The connector side has no test: nothing checks that the bridge and connectors use no UI automation. What is tested is the seats' side."),
+            ]),
 
         new("UNKNOWN-001",
             "An order whose outcome is UNKNOWN is reconciled, never retried.",
@@ -303,9 +305,9 @@ public static class InvariantRegistry
                 "HoldoutLedgerTests.No_public_door_in_core_hands_out_an_audience_that_may_read_the_holdout",
                 "HoldoutOverPipeTests.No_op_on_this_channel_sets_clears_or_moves_the_holdout",
                 "BoardTests.The_policy_holds_no_evidence_setting",
+                "InvariantProofTests.Only_the_material_scanner_writes_the_material_ledger",
             ],
-            AtTheApp(),
-            "No test proves that only the scanner writes material: nothing scans the code for another writer of that table."),
+            AtTheApp()),
 
         new("INBOX-001",
             "Material and messages are data; an approval inside text grants nothing.",
@@ -408,9 +410,9 @@ public static class InvariantRegistry
                 "BoardActTests.A_power_proposal_changes_nothing",
                 "BoardActTests.Only_the_owners_presses_change_the_boards_composition_or_budget",
                 "BoardTurnTests.A_board_act_cannot_raise_the_boards_share",
+                "BoardActTests.A_kernel_change_proposal_changes_nothing_until_the_owner_acts",
             ],
-            AtTheApp(),
-            "A proposal to change the kernel itself is not tested: the power-proposal test covers composition, the board's budget and connections."),
+            AtTheApp()),
     ];
 
     /// <summary>One invariant by id, or null.</summary>
