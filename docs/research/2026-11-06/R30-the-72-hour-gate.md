@@ -63,4 +63,6 @@ Anything unfinished at the call may ship as a new kit mid-run, because an instal
 - **D20 (PREFLIGHT-2 blocker 2):** the founding orders-per-minute limit is 45 in PAPER only (15 runs × entry + 2 protections), so a burst cannot strip a position of its stop and target. Every other mode and caller stays at 6. A refused protection is asked again.
 - **D21:** a chief with nothing chartered, or whose last turn asked for no wake, gets its next wake on a short floor instead of the 24-hour ceiling, inside the same floors and envelopes, until the organisation has work moving. The one real chief turn so far read, wrote a lesson and asked for nothing; prose alone is not relied on.
 
+- **D22:** real agents cannot fill the disk of the machine they share. A free-space guard pauses the AI through the owner's own pause, and only the owner resumes it; a kernel limit bounds any one file. No volume or quota is set on the owner's machine, because the protection belongs in the product, Windows included, where the guard stands alone. The deterministic runner and the tape keep running through a pause.
+
 *Sets order and records decisions only. It marks nothing fixed.*
