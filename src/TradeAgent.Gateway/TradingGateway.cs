@@ -39,7 +39,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
-    readonly List<DateTimeOffset> _recentDispatches = [];
+    /// <summary>The minute's dispatches, each marked with whether it was a paper run's own under the founding rate (<see cref="CountedWithTheRuns"/>).</summary>
+    readonly List<(DateTimeOffset At, bool WithTheRuns)> _recentDispatches = [];
 
     /// <summary>Composites a caller in THIS process is running right now. See <see cref="ClaimCompositeOwner"/>.</summary>
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource> _compositeOwners = new(StringComparer.Ordinal);
@@ -4502,26 +4503,35 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <see cref="BoardFounding.PaperRunOrdersPerMinute"/>. Six a minute refused the stops and targets of runs that signalled together, and a position without
     /// them is the one thing a founding figure must not make.
     ///
-    /// <para><b>One minute, counted once.</b> Every caller is measured against the same dispatches: a run's order counts toward what the flat figure allows the
-    /// next caller, so the owner's press, an agent's order and every other caller still see at most six a minute go out. What differs is only how far a run's
-    /// own order may go.</para>
+    /// <para><b>Two counts under the founding rate, one under any other (U-rate-limits).</b> While <see cref="FoundingRateStands"/>, a run's orders and every
+    /// other caller's are counted apart in the one sliding minute (<see cref="CountedWithTheRuns"/>): the runs' forty-five do not take the owner's press or an
+    /// agent's order off its six, and those six do not come out of the runs' minute. Under a figure the board decided, or off the app's paper venues, or in
+    /// another mode, every dispatch counts toward the one figure, as it always did.</para>
     ///
     /// <para><b>It reaches nothing else, and nothing reaches it.</b> PAPER only, on a paper row, for the deployment identity, which nothing on the pipe can build
     /// and which is refused outright in a live mode. "Founding" is who set the field, not what it says (<see cref="SetByTheFounding"/>): a figure the board
     /// decides binds a run like every other caller, including a narrowing to 6 from something else, and a refused protection is asked again on a later minute
     /// (<c>ForwardRuns</c>). The number is a constant of this build, so no act, verb or seat can widen it.</para>
     /// </summary>
-    internal int MaxOrdersPerMinuteFor(string? run)
-    {
-        var flat = Policy.Risk.MaxOrdersPerMinute;
-        if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER || !OnAnAppPaperVenue) return flat;
-        if (flat != BoardFounding.V1.Risk.MaxOrdersPerMinute || !SetByTheFounding(RateField)) return flat;
+    internal int MaxOrdersPerMinuteFor(string? run) =>
+        CountedWithTheRuns(run) ? BoardFounding.PaperRunOrdersPerMinute : Policy.Risk.MaxOrdersPerMinute;
 
-        return _deployments.ById(run) is { } deployment
-               && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false }
-            ? BoardFounding.PaperRunOrdersPerMinute
-            : flat;
-    }
+    /// <summary>
+    /// WHETHER THE FOUNDING ORDER RATE GOVERNS THIS GATEWAY'S MINUTE: PAPER, one of the app's own paper venues, and the policy's rate still the founding record's
+    /// by who set it as well as by its value. Only then is there a runs' count beside everyone else's (<see cref="CountedWithTheRuns"/>).
+    /// </summary>
+    bool FoundingRateStands =>
+        Policy.Mode == TradingMode.PAPER && OnAnAppPaperVenue
+        && Policy.Risk.MaxOrdersPerMinute == BoardFounding.V1.Risk.MaxOrdersPerMinute && SetByTheFounding(RateField);
+
+    /// <summary>
+    /// WHETHER THIS CALLER'S ORDER IS A PAPER RUN'S OWN UNDER THE FOUNDING RATE: counted in the runs' minute and bound by
+    /// <see cref="BoardFounding.PaperRunOrdersPerMinute"/>. A run on a stopped or a live row, an id that is no run's, and nobody at all are every other caller.
+    /// </summary>
+    bool CountedWithTheRuns(string? run) =>
+        run is { Length: > 0 } && FoundingRateStands
+        && _deployments.ById(run) is { } deployment
+        && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false };
 
     /// <summary>The policy's rate limit, as its body and its acts name it.</summary>
     const string RateField = "risk.max_orders_per_minute";
@@ -4569,7 +4579,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // THE OPEN-POSITION CAP IS NOT HERE ANY MORE, and that is the same lesson one step further:
         // see OpenPositionCapOrThrow, which owns both the position read and the decision, inside the
         // dispatch gate.
-        RateLimitOrThrow(MaxOrdersPerMinuteFor(run));
+        RateLimitOrThrow(run);
 
         // A price we trust is required for EVERY order, whether or not a value cap is set: an agent
         // sizing a market order from a stale quote is the failure this prevents. Its age is measured
@@ -7211,15 +7221,26 @@ public sealed partial class TradingGateway : IAsyncDisposable
         catch (Exception) { return false; }
     }
 
-    void RateLimitOrThrow(int limit)
+    void RateLimitOrThrow(string? run)
     {
+        var limit = MaxOrdersPerMinuteFor(run);
+        var apart = FoundingRateStands;
+        var withTheRuns = CountedWithTheRuns(run);
         lock (_recentDispatches)
         {
-            _recentDispatches.RemoveAll(d => d < Now - TimeSpan.FromMinutes(1));
-            if (_recentDispatches.Count >= limit)
+            var at = Now;
+            _recentDispatches.RemoveAll(d => d.At < at - TimeSpan.FromMinutes(1));
+            if (InTheMinute(apart, withTheRuns) >= limit)
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{limit} orders per minute is the limit");
         }
     }
+
+    /// <summary>
+    /// THE DISPATCHES IN THE MINUTE THIS CALLER IS MEASURED AGAINST, under the lock: every one, or, where the founding rate keeps <paramref name="apart"/>
+    /// two counts, the runs' own or everyone else's (<see cref="MaxOrdersPerMinuteFor"/>).
+    /// </summary>
+    int InTheMinute(bool apart, bool withTheRuns) =>
+        apart ? _recentDispatches.Count(d => d.WithTheRuns == withTheRuns) : _recentDispatches.Count;
 
     /// <summary>
     /// A PLACE IN THE MINUTE'S BUDGET, TAKEN AT THE WIRE AND GIVEN BACK IF NOTHING IS SENT.
@@ -7237,19 +7258,22 @@ public sealed partial class TradingGateway : IAsyncDisposable
     DispatchSlot ReserveDispatchOrThrow(string? run = null)
     {
         var limit = MaxOrdersPerMinuteFor(run);
+        var apart = FoundingRateStands;
+        var withTheRuns = CountedWithTheRuns(run);
         lock (_recentDispatches)
         {
             var at = Now;
-            _recentDispatches.RemoveAll(d => d < at - TimeSpan.FromMinutes(1));
-            if (_recentDispatches.Count >= limit)
+            _recentDispatches.RemoveAll(d => d.At < at - TimeSpan.FromMinutes(1));
+            if (InTheMinute(apart, withTheRuns) >= limit)
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{limit} orders per minute is the limit");
-            _recentDispatches.Add(at);
-            return new DispatchSlot(this, at);
+            var place = (at, withTheRuns);
+            _recentDispatches.Add(place);
+            return new DispatchSlot(this, place);
         }
     }
 
     /// <summary>One taken place in the minute's budget. Disposing it without <see cref="Commit"/> returns it.</summary>
-    sealed class DispatchSlot(TradingGateway gw, DateTimeOffset at) : IDisposable
+    sealed class DispatchSlot(TradingGateway gw, (DateTimeOffset At, bool WithTheRuns) place) : IDisposable
     {
         bool _spent;
 
@@ -7259,7 +7283,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         public void Dispose()
         {
             if (_spent) return;
-            lock (gw._recentDispatches) gw._recentDispatches.Remove(at);
+            lock (gw._recentDispatches) gw._recentDispatches.Remove(place);
         }
     }
 

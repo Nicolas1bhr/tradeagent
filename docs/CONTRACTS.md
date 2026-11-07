@@ -4697,8 +4697,11 @@ policy, the row every mode shares, and it binds every caller but one: a paper ru
 the app's own paper venues, while that field is still the founding record's, goes out under
 `BoardFounding.PaperRunOrdersPerMinute`, 45 (`TradingGateway.MaxOrdersPerMinuteFor`): the fifteen runs the founding
 envelopes allow by an entry and its two protections, which runs that signal together put in one sliding minute. Six
-stripped ETH and XRP of both their stop and their target. There is one minute's count: a run's orders count toward what
-the flat figure allows the next caller, so every other caller still sees at most six go out. "Founding" is who set the
+stripped ETH and XRP of both their stop and their target. Under the founding rate the minute keeps two counts
+(`U-rate-limits`): a paper run's own orders against the 45, and every other caller's against the 6, so a burst of runs
+never refuses the owner's press or an agent's order for up to a minute, and those six never come out of the runs' 45. At
+most 51 go out in a sliding minute, on paper only. Under any figure the board decides, any other mode or venue, the minute
+is one count for every caller, as it was. "Founding" is who set the
 field, as for D18, and a figure the board decides binds a run like every other caller. 45 is a constant of this
 build and no policy field, so no act, verb or seat can widen it, and a home that keeps its founding row has it. A
 cancel takes no place in the count, as it never has.
