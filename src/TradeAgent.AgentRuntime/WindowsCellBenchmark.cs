@@ -530,8 +530,9 @@ public static class WindowsCellBenchmark
     /// the slot it landed in is named by its own token's container SID, the hold is let go, and the cell then tries
     /// <list type="bullet">
     /// <item>github.com on 443 — reached (<c>web-443-granted</c>);</item>
-    /// <item>github.com on 80 and a direct DNS query to a public resolver over UDP — both refused while each is reachable from outside a cell
-    /// (the positive controls), so an upstream block is never taken for the rule's work (<c>web-nothing-else</c>).</item>
+    /// <item>github.com on 80, a third TCP port and a direct DNS query to a public resolver over UDP — all refused while each is reachable from outside a
+    /// cell (the positive controls), so an upstream block is never taken for the rule's work (<c>web-nothing-else</c>). A rule closing 80 alone would pass a probe
+    /// of 80 alone (R29 F-D2), so the third port is measured too, and every slot's rules are read back exactly.</item>
     /// </list>
     /// Each row holds only when all <see cref="WindowsCellSlots.Count"/> slots were measured and each held. The first slot that does not hold
     /// ends the sweep: the slots after it are NOT RUN, said in the row.
@@ -540,9 +541,12 @@ public static class WindowsCellBenchmark
         CancellationToken ct = default)
     {
         var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        string cmd = Path.Combine(system32, "cmd.exe"), curl = Path.Combine(system32, "curl.exe"), nslookup = Path.Combine(system32, "nslookup.exe");
+        string cmd = Path.Combine(system32, "cmd.exe"), nslookup = Path.Combine(system32, "nslookup.exe");
         var sids = WindowsCellStage.SlotSids();
         var port80 = await OutsideReaches($"http://{Remote}:80/");
+        string? other = null;
+        foreach (var candidate in OtherPorts)
+            if (Connected(await OutsideConnects($"http://{candidate}/"))) { other = candidate; break; }
         string? resolver = null;
         foreach (var candidate in Resolvers)
             if (await OutsideResolves(nslookup, candidate)) { resolver = candidate; break; }
@@ -553,6 +557,7 @@ public static class WindowsCellBenchmark
         var allReached = true;
         var allRefused = true;
         string? stop = !port80 ? $"port 80 of {Remote} is not reachable even from outside a cell, so a cell's failure to reach it proves nothing"
+            : other is null ? $"no third TCP port ({string.Join(", ", OtherPorts)}) answers even from outside a cell, so a cell's failure to reach one proves nothing"
             : resolver is null ? $"no public resolver ({string.Join(", ", Resolvers)}) answers even from outside a cell, so a cell's unanswered query proves nothing"
             : null;
         // THE RULES AS WINDOWS' FIREWALL HOLDS THEM (Codex): the probes reach port 80 and UDP 53 only, and rules blocking just those would pass
@@ -570,10 +575,13 @@ public static class WindowsCellBenchmark
 
         for (var slot = 1; slot <= WindowsCellSlots.Count && stop is null; slot++)
         {
+            // THE TOOLS BY NAME, FROM THE POLICY'S PATH: a cell's cmd says "Access is denied" of any program named by its full path, even a dir of it
+            // (measured, CI run 42331636963 on 26100), which ended every earlier run of these rows at slot 1 on all three commands.
             var body = "echo READY & set /p go= & " +
-                       $"echo ==443== & {{0}} -sS -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
-                       $"echo ==80== & {{0}} -sS -o web{slot}-80.out -D - --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
-                       $"echo ==dns== & {{1}} -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
+                       $"echo ==443== & curl -sS -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
+                       $"echo ==80== & curl -sS -o web{slot}-80.out -D - --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
+                       $"echo ==other== & curl -sS -o web{slot}-other.out -w C=%{{time_connect}} --connect-timeout 6 --max-time 8 http://{other}/ 2>&1 & " +
+                       $"echo ==dns== & nslookup -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
             string output;
             string? landed;
             var hold = WindowsCellStage.HoldAllBut(slot);
@@ -581,7 +589,7 @@ public static class WindowsCellBenchmark
             {
                 var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                     RedirectStandardOutput = true, RedirectStandardError = true };
-                foreach (var a in (string[])["/d", "/c", .. CellDenial.CmdTokens(body, curl, nslookup)]) psi.ArgumentList.Add(a);
+                foreach (var a in (string[])["/d", "/c", .. CellDenial.CmdTokens(body)]) psi.ArgumentList.Add(a);
                 using var held = ProcessContainment.Start(psi, web, launcher, platform);
                 var err = held.Process.StandardError.ReadToEndAsync(ct);
                 var ready = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct);
@@ -607,15 +615,18 @@ public static class WindowsCellBenchmark
                 break;
             }
             measured++;
-            var (s443, s80, sdns) = (Section(output, "443"), Section(output, "80"), Section(output, "dns"));
+            var (s443, s80, sOther, sdns) = (Section(output, "443"), Section(output, "80"), Section(output, "other"), Section(output, "dns"));
             var got443 = s443.Contains("HTTP/", StringComparison.Ordinal);
+            // CURL'S OWN FAILURE, NEVER ANOTHER: a tool that did not run prints no "curl: (n)", and fails these as it fails the 443 above.
             var refused80 = !s80.Contains("HTTP/", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(s80, @"curl: \((6|7|28|35)\)");
+            var refusedOther = !Connected(sOther) && System.Text.RegularExpressions.Regex.IsMatch(sOther, @"curl: \((6|7|28)\)");
+            // THE SAME QUERY WAS ANSWERED OUTSIDE A CELL A MOMENT AGO, so what nslookup prints here without an answer is its query not arriving, not the resolver's refusal.
             var unanswered = sdns.Contains(resolver!, StringComparison.Ordinal) && !Answered(sdns, resolver!);
             reached.Add($"slot {slot} {(got443 ? "reached" : "NOT reached: " + Trim(s443))}");
-            refused.Add($"slot {slot} 80 {(refused80 ? "refused" : "NOT refused: " + Trim(s80))}, dns {(unanswered ? "unanswered" : "NOT unanswered: " + Trim(sdns))}");
+            refused.Add($"slot {slot} 80 {(refused80 ? "refused" : "NOT refused: " + Trim(s80))}, {other} {(refusedOther ? "refused" : "NOT refused: " + Trim(sOther))}, dns {(unanswered ? "unanswered" : "NOT unanswered: " + Trim(sdns))}");
             allReached &= got443;
-            allRefused &= refused80 && unanswered;
-            if (!got443 || !refused80 || !unanswered)
+            allRefused &= refused80 && refusedOther && unanswered;
+            if (!got443 || !refused80 || !refusedOther || !unanswered)
                 stop = $"slot {slot} does not hold web to 443";
         }
 
@@ -627,7 +638,7 @@ public static class WindowsCellBenchmark
             new BenchRow("web-443-granted", all && allReached,
                 $"{Remote}:443 from a web cell in each slot: {(reached.Count == 0 ? "none measured" : string.Join("; ", reached))}{tail}"),
             new BenchRow("web-nothing-else", all && allRefused,
-                $"{Remote}:80 (reachable from outside: {(port80 ? "yes" : "no")}) and direct DNS to {resolver ?? "no answering resolver"} from a web cell in each slot: " +
+                $"{Remote}:80 (reachable from outside: {(port80 ? "yes" : "no")}), {other ?? "no third port that answers"} and direct DNS to {resolver ?? "no answering resolver"} from a web cell in each slot: " +
                 $"{(refused.Count == 0 ? "none measured" : string.Join("; ", refused))}{tail}")
         ];
     }
@@ -635,9 +646,12 @@ public static class WindowsCellBenchmark
     /// <summary>The public resolvers a direct query is tried against, the first that answers from outside a cell the one used.</summary>
     static readonly string[] Resolvers = ["8.8.8.8", "1.1.1.1"];
 
-    static readonly string[] Markers = ["==443==", "==80==", "==dns=="];
+    /// <summary>TCP ports that are neither 443 nor 80 and answer on the open internet: the first that connects from outside a cell is the third port the web rows try.</summary>
+    static readonly string[] OtherPorts = [$"{Remote}:22", "8.8.8.8:53", "1.1.1.1:53"];
 
-    /// <summary>The text after the marker <c>==name==</c> and before the next of the three markers.</summary>
+    static readonly string[] Markers = ["==443==", "==80==", "==other==", "==dns=="];
+
+    /// <summary>The text after the marker <c>==name==</c> and before the next of the markers.</summary>
     static string Section(string output, string name)
     {
         var at = output.IndexOf($"=={name}==", StringComparison.Ordinal);
@@ -645,6 +659,27 @@ public static class WindowsCellBenchmark
         var from = at + name.Length + 4;
         var next = Markers.Select(m => output.IndexOf(m, from, StringComparison.Ordinal)).Where(i => i >= 0).DefaultIfEmpty(output.Length).Min();
         return output[from..next];
+    }
+
+    /// <summary>What curl's <c>C=%{time_connect}</c> printed says: a connection was made. It reads zero when none was, whatever curl then got from the far end.</summary>
+    static bool Connected(string curlOut) =>
+        System.Text.RegularExpressions.Regex.Match(curlOut, @"C=([0-9.]+)") is { Success: true } m
+        && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0;
+
+    /// <summary>What curl from OUTSIDE any cell prints of <paramref name="url"/>'s connection: the positive control for the third port.</summary>
+    static async Task<string> OutsideConnects(string url)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "curl.exe"))
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in new[] { "-sS", "-o", "NUL", "-w", "C=%{time_connect}", "--connect-timeout", "6", "--max-time", "8", url }) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi)!;
+            var o = await p.StandardOutput.ReadToEndAsync();
+            p.WaitForExit(20_000);
+            return o;
+        }
+        catch (Exception) { return ""; }
     }
 
     /// <summary>Whether a direct query to <paramref name="resolver"/> from OUTSIDE any cell is answered: the positive control for the DNS denial.</summary>

@@ -330,9 +330,8 @@ public sealed class CellWindowsEgressTests : IDisposable
         var temp = Directory.CreateDirectory(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", profile, "AC", "Temp")).FullName;
         var left = Path.Combine(temp, "left-behind.txt");
         File.WriteAllText(left, "left");
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        using var cell = AppContainerCell.Start(Cmd, ["/d", "/c", "findstr x"], temp,
-            [new("SystemRoot", windows), new("PATH", Path.GetDirectoryName(Cmd)!)], sid, []);
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "alive-ws")).FullName;
+        using var cell = AppContainerCell.Start(Cmd, ["/d", "/c", "findstr x"], temp, Policy(ws, CellEgress.None).Environment, sid, []);
         Assert.Contains(cell.Id, await Until(() => WindowsCellStage.ProcessesOf(sid), p => p.Count > 0));
 
         var refused = Assert.Throws<TradeAgentException>(() => WindowsCellStage.SweepSlot(WindowsCellSlots.Count));
