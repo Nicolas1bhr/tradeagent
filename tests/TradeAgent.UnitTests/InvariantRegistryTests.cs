@@ -269,7 +269,7 @@ public class InvariantRegistryTests
     /// verbatim, interpolated and raw (<c>"""</c>) strings, an interpolation hole read as code with its own strings skipped in turn
     /// (<see cref="StringEnd"/>), so no text inside a string is ever read as a declaration.
     /// </summary>
-    static string Strip(string text, bool keepStrings)
+    internal static string Strip(string text, bool keepStrings)
     {
         var o = new StringBuilder(text.Length);
         var i = 0;

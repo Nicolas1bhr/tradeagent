@@ -713,7 +713,8 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // ReconciliationProvable true behind it. That is rule 2 exactly inverted: a partial
             // history makes "this order does not exist" look provable when it is not. A cache is now
             // worth a true only when the platform says how far back it reaches.
-            SupportsOrderHistory = cache.Cache is not null && cache.Retention > TimeSpan.Zero,
+            // The rule is HistoryRetention.Claims (ORDER-003), compiled and tested everywhere; this file is compiled only beside ATAS.
+            SupportsOrderHistory = HistoryRetention.Claims(cache.Cache is not null, cache.Retention),
             // What was actually bound, and what was found there. Free text, diagnostic only, and the
             // one field that can say "I looked at the wrong object" — which is exactly the failure
             // that cost the first live run and which no capability boolean can express.
@@ -1010,21 +1011,12 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // THE WATERMARK IS NOT CONDITIONAL ON THE PLATFORM BEING HELPFUL (review 2026-09-05b
         // UNVERIFIED 1 / Codex F8). It used to run only `if (ClearCachePeriod > TimeSpan.Zero)`, so
         // the one platform state in which coverage is LEAST provable — it will not say what it keeps
-        // — was the state in which every window was answered as covered. Both branches below refuse,
+        // — was the state in which every window was answered as covered. Both cases refuse (unstated, and past a stated retention),
         // because rule 2 is about what can be shown, not about what is convenient.
-        if (cache is not null && since is not null)
-        {
-            if (probe.Retention <= TimeSpan.Zero)
-                throw new InvalidOperationException(
-                    $"ATAS does not say how long it keeps order history on this platform, so a history " +
-                    $"back to {since.Value:O} cannot be shown to be complete and must not be treated as " +
-                    "proof; reconcile against the platform itself");
-            if (since.Value < DateTimeOffset.UtcNow - probe.Retention)
-                // Ordinary exception: the gateway must see "I cannot answer that", never a short list.
-                throw new InvalidOperationException(
-                    $"ATAS keeps order history for {probe.Retention}; {since.Value:O} is further back " +
-                    "than that, so this history would be incomplete and must not be treated as proof");
-        }
+        // The words and the comparison are HistoryRetention.Refusal's (ORDER-003), compiled and tested everywhere. Ordinary exception:
+        // the gateway must see "I cannot answer that", never a short list.
+        if (cache is not null && since is not null && HistoryRetention.Refusal(since.Value, probe.Retention, DateTimeOffset.UtcNow) is { } refusal)
+            throw new InvalidOperationException(refusal);
 
         var byKey = new Dictionary<string, OrderInfo>(StringComparer.Ordinal);
         // An order nothing identifies has no key to be deduplicated by — see OrderKey — and
