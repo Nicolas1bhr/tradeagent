@@ -276,6 +276,18 @@ public static class AppContainerCell
         return sb.ToString();
     }
 
+    /// <summary>The arguments alone, quoted exactly as <see cref="CommandLine"/> quotes them: what a program started outside a cell is given to read what a cell reads.</summary>
+    public static string ArgumentLine(IReadOnlyList<string> arguments)
+    {
+        var sb = new StringBuilder();
+        foreach (var a in arguments)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            Quote(sb, a);
+        }
+        return sb.ToString();
+    }
+
     static void Quote(StringBuilder sb, string arg)
     {
         if (arg.Contains('\0'))
@@ -334,6 +346,22 @@ public static class AppContainerCell
         finally { if (!ok) CloseHandle(job); }
     }
 
+    /// <summary>The limit flags of the job this process is IMMEDIATELY in (a nested job's, not its parent's), or null when it is in none or Windows would not say.</summary>
+    public static uint? OwnJobLimits()
+    {
+        var size = Marshal.SizeOf<ExtendedLimitInformation>();
+        var p = Marshal.AllocHGlobal(size);
+        try
+        {
+            return QueryInformationJobObject(IntPtr.Zero, JobObjectExtendedLimitInformation, p, size, IntPtr.Zero)
+                ? Marshal.PtrToStructure<ExtendedLimitInformation>(p).Basic.LimitFlags : null;
+        }
+        finally { Marshal.FreeHGlobal(p); }
+    }
+
+    /// <summary>Whether a job of these limit flags is the kind TradeAgent makes: closing its last handle kills everything in it, and nothing in it may leave.</summary>
+    public static bool EndsWithItsHolder(uint limits) => (limits & JobKillOnClose) != 0 && (limits & (JobBreakawayOk | JobSilentBreakawayOk)) == 0;
+
     static void Set<T>(IntPtr job, int infoClass, T info, string what) where T : struct
     {
         var size = Marshal.SizeOf<T>();
@@ -385,7 +413,7 @@ public static class AppContainerCell
     internal const int JobObjectBasicAccountingInformation = 1;
     const int JobObjectBasicUiRestrictions = 4;
     const int JobObjectExtendedLimitInformation = 9;
-    const uint JobKillOnClose = 0x2000, JobDieOnUnhandledException = 0x400;
+    const uint JobKillOnClose = 0x2000, JobDieOnUnhandledException = 0x400, JobBreakawayOk = 0x800, JobSilentBreakawayOk = 0x1000;
     const int ErrorAlreadyExists = 183, ErrorFileNotFound = 2, ErrorNotFound = 1168;
     const uint SeGroupEnabled = 0x4, StartfUseStdHandles = 0x100, HandleFlagInherit = 0x1, DuplicateSameAccess = 0x2;
     const uint ExtendedStartupInfoPresent = 0x80000, CreateUnicodeEnvironment = 0x400, CreateNoWindow = 0x8000000, CreateSuspended = 0x4;
@@ -496,6 +524,10 @@ public static class AppContainerCell
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out BasicAccounting info, int length, IntPtr returned);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length, IntPtr returned);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

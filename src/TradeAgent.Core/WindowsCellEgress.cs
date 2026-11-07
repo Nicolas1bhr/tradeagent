@@ -136,6 +136,19 @@ public static class WindowsCellEgress
         return [.. rules.Where(r => Read(set, r.Name) is not { } present || !Matches(present, r)).Select(r => r.Name)];
     }
 
+    /// <summary>
+    /// WHETHER THE FIREWALL HOLDS THE RULE SET OF THE HOME <paramref name="home"/> RIGHT NOW, exactly (R29 F-D2): a proof says what was measured at the
+    /// start, and a rule removed since would leave a <c>web</c> cell every port. Asked at each launch that would run under <c>web</c>. A firewall that
+    /// cannot be read does not hold it.
+    /// </summary>
+    public static bool Holds(string home)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try { return Missing(RulesFor(home)).Count == 0; }
+        catch (Exception ex) when (ex is COMException or IOException or InvalidCastException or ArgumentException or UnauthorizedAccessException or TradeAgentException
+                                       or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return false; }
+    }
+
     /// <summary>Removes every rule named in <paramref name="rules"/> (elevated) — a test's cleanup on CI's disposable runner; the product never removes.</summary>
     [SupportedOSPlatform("windows")]
     internal static void RemoveForTests(IReadOnlyList<EgressRule> rules)

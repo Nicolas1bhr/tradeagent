@@ -261,12 +261,18 @@ public static class RouteA
     /// overrule): a launch asking <c>web</c> on a host whose proof measured only <c>none</c> — the firewall rule declined or failed, so
     /// <c>web</c> could not be shown to hold to 443 — runs under <c>none</c>, the proof's own class, and the refusal is not one. Linux is
     /// unchanged: there a proof without <c>web</c> refuses a <c>web</c> launch.
+    /// <para><b>THE RULE IS READ AT EVERY LAUNCH (R29 F-D2):</b> a proof says what was measured at the start. <c>internetClient</c> opens every port and
+    /// only the firewall rule takes them back, so a rule removed since would leave a <c>web</c> cell every port until the next start: a launch
+    /// asking <c>web</c> runs under <c>none</c> unless <paramref name="webRuleHolds"/> (by default the firewall itself, read now) says the rule still
+    /// stands exactly, on every slot.</para>
     /// </summary>
-    public static (CellProof? Proof, CellEgress Egress, string? Refusal) AdmissionOn(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress)
+    public static (CellProof? Proof, CellEgress Egress, string? Refusal) AdmissionOn(CellRoute? route, string codexPin, CellPlatform platform, CellEgress egress,
+        Func<bool>? webRuleHolds = null)
     {
         if (platform.Windows && egress.Name == CellEgress.Web.Name && route?.Proofs.ProofOf(ProviderOn(platform)) is { } hostProof
-            && !hostProof.Egress.Contains(CellEgress.Web.Name, StringComparer.Ordinal)
-            && hostProof.Egress.Contains(CellEgress.None.Name, StringComparer.Ordinal))
+            && hostProof.Egress.Contains(CellEgress.None.Name, StringComparer.Ordinal)
+            && (!hostProof.Egress.Contains(CellEgress.Web.Name, StringComparer.Ordinal)
+                || !(webRuleHolds ?? (() => WindowsCellEgress.Holds(Paths.Home)))()))
             egress = CellEgress.None;
         var (proof, refusal) = Admit(route, codexPin, platform, egress);
         return (proof, egress, refusal);

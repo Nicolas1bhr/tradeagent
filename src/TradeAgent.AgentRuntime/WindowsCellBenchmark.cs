@@ -18,9 +18,14 @@ namespace TradeAgent.AgentRuntime;
 ///
 /// <para><b>What is written.</b> Every CORE row held (<see cref="CellBenchmark.WindowsCoreRows"/>) ⇒ ONE proof under
 /// <see cref="RouteA.WindowsProvider"/>, bound to machine, build and boot, naming egress <c>none</c> — and <c>web</c> too only when both
-/// web rows held ON EVERY SLOT (443 reached, port 80 and a direct DNS query refused: the firewall rule's work; <see cref="WebRowsAsync"/>). Any core row failed ⇒ nothing is written. A row's
-/// script is a file in the workspace, so a path holding a space is quoted as cmd reads it; nothing is sent to NUL (Windows Server
-/// refuses it to an AppContainer).</para>
+/// web rows held ON EVERY SLOT (<see cref="WebRowsAsync"/>). Any core row failed ⇒ nothing is written. Nothing is sent to NUL (Windows Server refuses it to an
+/// AppContainer).</para>
+///
+/// <para><b>A DENIAL IS ONLY A DENIAL WHEN NOTHING ELSE COULD HAVE FAILED IT</b> (<c>U-cell-windows-egress</c> item 3). Until it, every file, pipe and process
+/// row printed DENIED on any failure at all, and on every box they ran the failure was cmd's "The filename, directory name, or volume label syntax is
+/// incorrect": <c>state-unreadable</c>, <c>state-unwritable</c>, <c>login-unreadable</c>, <c>inbox-uncreatable</c>, <c>pipe-denied</c> and
+/// <c>processes-denied</c> held without their command ever running. Windows words its errors in the system's language, so a row reads no words: each
+/// forbidden line now runs three times (<see cref="DenialRowAsync"/>; the verdict, <see cref="CellDenial.Judge"/>). A failure that is not the guard fails outside a cell too, and fails the proof.</para>
 ///
 /// <para><b>Not rows, said:</b> breakaway from the job (a cell has no program that could try it; the job's limits are set, not
 /// observed); the owner's window station (the cell's own is configured; whether the owner's is open to an AppContainer is the host's —
@@ -52,7 +57,8 @@ public static class WindowsCellBenchmark
         var codexHome = Path.Combine(root, "codex");
         var home = Path.Combine(root, "home");
         var kitHome = Path.Combine(root, "kit-home");
-        foreach (var d in new[] { ws, codexHome, home }) Directory.CreateDirectory(d);
+        var outside = Path.Combine(root, "outside");   // where a row's line runs OUTSIDE a cell: its sinks land here, never in the workspace
+        foreach (var d in new[] { ws, codexHome, home, outside }) Directory.CreateDirectory(d);
 
         try
         {
@@ -87,11 +93,15 @@ public static class WindowsCellBenchmark
             // workspace, the cell's working folder; and every file row runs a CONTROL — the same command shape on a workspace path — that
             // must succeed, so a command that never ran is never a denial.
             Task<(int Code, string Out)> Script(CellPolicy under, string name, string body, params string[] paths) =>
-                Run(under, cmd, ["/d", "/c", .. CmdTokens(body, paths)]);
+                Run(under, cmd, ["/d", "/c", .. CellDenial.CmdTokens(body, paths)]);
 
-            string Sink(string name) => name + ".out";
             var control = Path.Combine(ws, "control.txt");
             File.WriteAllText(control, "control");
+
+            // A DENIAL IS ONLY A DENIAL WHEN NOTHING ELSE COULD HAVE FAILED IT (U-cell-windows-egress item 3; DenialRowAsync).
+            Task<(bool, string)> Denied(IReadOnlyList<DenialProbe> probes, Func<Task<(bool Ok, string Seen)>> after) =>
+                DenialRowAsync(none, probes, outside, launcher, platform, after, ct);
+            Task<(bool, string)> DeniedThen(IReadOnlyList<DenialProbe> probes, Func<(bool Ok, string Seen)> after) => Denied(probes, () => Task.FromResult(after()));
 
             async Task Row(string name, Func<Task<(bool, string)>> body)
             {
@@ -123,13 +133,11 @@ public static class WindowsCellBenchmark
                 File.WriteAllText(ledger, "ledger");
                 try
                 {
-                    var (_, o) = await Script(none, "state-r",
-                        $"type {{0}} > {Sink("ctl")} && (echo CONTROL-OPEN) || (echo CONTROL-DENIED)\n" +
-                        $"type {{1}} > {Sink("a")} && (echo READ-OPEN) || (echo READ-DENIED)\n" +
-                        $"dir {{2}} > {Sink("b")} && (echo LIST-OPEN) || (echo LIST-DENIED)", control, ledger, Paths.State);
-                    var leaked = File.Exists(Path.Combine(ws, "a.out")) && File.ReadAllText(Path.Combine(ws, "a.out")).Contains("ledger", StringComparison.Ordinal);
-                    return (o.Contains("CONTROL-OPEN", StringComparison.Ordinal) && o.Contains("READ-DENIED", StringComparison.Ordinal)
-                            && o.Contains("LIST-DENIED", StringComparison.Ordinal) && !leaked, Trim(o));
+                    return await DeniedThen([new("READ", "type {path} > {sink}", ledger, control), new("LIST", "dir {path} > {sink}", Paths.State, ws)], () =>
+                    {
+                        var leaked = Directory.EnumerateFiles(ws, "*.out").Any(f => File.ReadAllText(f).Contains("ledger", StringComparison.Ordinal));
+                        return (!leaked, leaked ? "the ledger's bytes reached the cell" : "");
+                    });
                 }
                 finally { File.Delete(ledger); }
             });
@@ -141,13 +149,11 @@ public static class WindowsCellBenchmark
                 File.WriteAllText(sentinel, "sentinel");
                 try
                 {
-                    var (_, o) = await Script(none, "state-w",
-                        "echo x>> {0} && (echo CONTROL-OPEN) || (echo CONTROL-DENIED)\n" +
-                        "echo x>> {1} && (echo APPEND-OPEN) || (echo APPEND-DENIED)\necho x> {2} && (echo CREATE-OPEN) || (echo CREATE-DENIED)", control, sentinel, made);
-                    var same = File.ReadAllText(sentinel) == "sentinel";
-                    return (o.Contains("CONTROL-OPEN", StringComparison.Ordinal) && o.Contains("APPEND-DENIED", StringComparison.Ordinal)
-                            && o.Contains("CREATE-DENIED", StringComparison.Ordinal) && same && !File.Exists(made),
-                        $"{Trim(o)}; the file {(same ? "unchanged" : "CHANGED")}, {(File.Exists(made) ? "a new file WAS made" : "nothing made")}");
+                    return await DeniedThen([new("APPEND", "echo x>> {path}", sentinel, control), new("CREATE", "echo x> {path}", made, Path.Combine(ws, "create-control.txt"))], () =>
+                        {
+                            var same = File.ReadAllText(sentinel) == "sentinel";
+                            return (same && !File.Exists(made), $"the file {(same ? "unchanged" : "CHANGED")}, {(File.Exists(made) ? "a new file WAS made" : "nothing made")}");
+                        });
                 }
                 finally { File.Delete(sentinel); File.Delete(made); }
             });
@@ -158,11 +164,11 @@ public static class WindowsCellBenchmark
                 File.WriteAllText(login, "dummy-login");
                 try
                 {
-                    var (_, o) = await Script(none, "login",
-                        $"type {{0}} > {Sink("ctl")} && (echo CONTROL-OPEN) || (echo CONTROL-DENIED)\n" +
-                        $"type {{1}} > {Sink("c")} && (echo LOGIN-OPEN) || (echo LOGIN-DENIED)", control, login);
-                    return (o.Contains("CONTROL-OPEN", StringComparison.Ordinal) && o.Contains("LOGIN-DENIED", StringComparison.Ordinal)
-                            && !o.Contains("LOGIN-OPEN", StringComparison.Ordinal), Trim(o));
+                    return await DeniedThen([new("LOGIN", "type {path} > {sink}", login, control)], () =>
+                    {
+                        var leaked = Directory.EnumerateFiles(ws, "*.out").Any(f => File.ReadAllText(f).Contains("dummy-login", StringComparison.Ordinal));
+                        return (!leaked, leaked ? "the login's bytes reached the cell" : "");
+                    });
                 }
                 finally { File.Delete(login); }
             });
@@ -170,13 +176,12 @@ public static class WindowsCellBenchmark
             {
                 Directory.CreateDirectory(Paths.Inbox);
                 var probe = Path.Combine(Paths.Inbox, ".cell-bench-" + Guid.NewGuid().ToString("n")[..8]);
+                var twin = Path.Combine(Directory.CreateDirectory(Path.Combine(outside, "inbox-twin")).FullName, Path.GetFileName(probe));
                 try
                 {
-                    var made = Path.Combine(ws, "inbox-control.txt");
-                    var (_, o) = await Script(none, "inbox",
-                        "echo x> {0} && (echo CONTROL-OPEN) || (echo CONTROL-DENIED)\necho x> {1} && (echo INBOX-OPEN) || (echo INBOX-DENIED)", made, probe);
-                    return (o.Contains("CONTROL-OPEN", StringComparison.Ordinal) && o.Contains("INBOX-DENIED", StringComparison.Ordinal)
-                            && !o.Contains("INBOX-OPEN", StringComparison.Ordinal) && !File.Exists(probe), Trim(o));
+                    // THE OUTSIDE LINE WRITES A TWIN: run on the inbox itself it would put a file before the real scanner, the very thing this row keeps out.
+                    return await DeniedThen([new("INBOX", "echo x> {path}", probe, Path.Combine(ws, "inbox-control.txt"), twin)],
+                        () => (!File.Exists(probe), File.Exists(probe) ? "a file WAS made in the inbox" : "nothing made in the inbox"));
                 }
                 finally { File.Delete(probe); }   // a timeout or a broken boundary never leaves the planted file for the real scanner (Codex, landing 3)
             });
@@ -218,9 +223,16 @@ public static class WindowsCellBenchmark
                 var opened = denied.Select(d => d.Replace("-DENIED", "-OPEN", StringComparison.Ordinal)).Where(x => o.Contains(x, StringComparison.Ordinal)).ToList();
                 // FROM OUTSIDE: nothing planted, the victim still there, the kit hashing as installed.
                 var whole = Kit.HashOf(kit.Dir) == kit.Hash;
+                // THE SAME TOOL, OUTSIDE ANY CELL, ON A COPY OF THE KIT: every write it tries opens there, so a DENIED below is the cell's and never a line that cannot run.
+                var twin = Directory.CreateDirectory(Path.Combine(outside, "kit-twin", Kit.ToolsDir)).Parent!.FullName;
+                File.Copy(Path.Combine(kit.Dir, Kit.IndexFile), Path.Combine(twin, Kit.IndexFile));
+                foreach (var f in Directory.EnumerateFiles(Path.Combine(kit.Dir, Kit.ToolsDir))) File.Copy(f, Path.Combine(twin, Kit.ToolsDir, Path.GetFileName(f)));
+                var free = await Outside([Path.Combine(twin, Kit.ToolsDir, "kit-probe.cmd")], outside, ct);
+                var runsOutside = denied.Select(d => d.Replace("-DENIED", "-OPEN", StringComparison.Ordinal)).Where(x => !free.Contains(x, StringComparison.Ordinal)).ToList();
                 var held = o.Contains("kit-probe-ran", StringComparison.Ordinal) && o.Contains("cell benchmark probe", StringComparison.Ordinal)
-                           && denied.All(d => o.Contains(d, StringComparison.Ordinal)) && opened.Count == 0 && whole;
-                return (held, $"{Trim(o)}; the kit {(whole ? "hashes as installed" : "CHANGED")}");
+                           && denied.All(d => o.Contains(d, StringComparison.Ordinal)) && opened.Count == 0 && whole && runsOutside.Count == 0;
+                return (held, $"{Trim(o)}; the kit {(whole ? "hashes as installed" : "CHANGED")}" +
+                              (runsOutside.Count == 0 ? "; the same tool outside a cell opens all of it" : $"; outside a cell it did not open {string.Join(", ", runsOutside)}, so the cell's failures prove nothing: {Trim(free)}"));
             });
 
             // EGRESS NONE REACHES NOTHING (Codex, landing 3): the internet on 443 by name — and the failure is curl's own resolve/connect
@@ -228,7 +240,10 @@ public static class WindowsCellBenchmark
             await Row("no-egress", async () =>
             {
                 var (code, o) = await Run(none, curl, "-sS", "-o", Path.Combine(ws, "n.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", $"https://{Remote}/");
-                return (CurlFailedToReach(code) && !Reached(o), $"{Remote}:443 with no capability: {Trim(o)}");
+                // REACHABLE FROM OUTSIDE A CELL, OR THE ROW PROVES NOTHING: on a computer with no network every cell fails to reach the internet.
+                var outsideReaches = await OutsideReaches($"https://{Remote}/");
+                return (outsideReaches && CurlFailedToReach(code) && !Reached(o),
+                    $"{Remote}:443 with no capability: {Trim(o)}; reachable from outside a cell: {(outsideReaches ? "yes" : "NO, so this proves nothing")}");
             });
 
             // LOOPBACK AND THIS HOST'S OWN LAN ADDRESS, ON 443 AND ON ANOTHER PORT (Codex, landing 3), from a web cell: the listener sees nothing.
@@ -244,10 +259,15 @@ public static class WindowsCellBenchmark
                     try
                     {
                         var p = ((IPEndPoint)l.LocalEndpoint).Port;
-                        var (_, o) = await Run(web, curl, "-sS", "-o", Path.Combine(ws, "h.out"), "--connect-timeout", "4", "--max-time", "6", $"http://{host}:{p}/");
+                        var url = $"http://{host}:{p}/";
+                        var (code, _) = await Run(web, curl, "-sS", "-o", Path.Combine(ws, "h.out"), "--connect-timeout", "4", "--max-time", "6", url);
                         var arrived = l.Pending();
-                        ok &= !arrived;
-                        seen.Add($"{p} {(arrived ? "REACHED" : "not reached")}");
+                        // THE CELL'S CURL RAN AND FAILED TO CONNECT (its own exit, never the launcher's), AND THE SAME URL REACHES THE SAME LISTENER FROM
+                        // OUTSIDE: a cell that never started, or a listener nothing can reach, proves nothing.
+                        await OutsideReaches(url);
+                        var control = l.Pending();
+                        ok &= !arrived && CurlFailedToReach(code) && control;
+                        seen.Add($"{p} {(arrived ? "REACHED" : $"not reached (curl {code})")}{(control ? "" : ", and NOT reached from outside a cell either, so this proves nothing")}");
                     }
                     finally { l.Stop(); }
                 }
@@ -264,36 +284,47 @@ public static class WindowsCellBenchmark
                 using var server = new System.IO.Pipes.NamedPipeServerStream(name, System.IO.Pipes.PipeDirection.InOut, 1,
                     System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
                 var connected = server.WaitForConnectionAsync(ct);
-                var (_, o) = await Script(none, "pipe", $"type {{0}} > {Sink("p")} && (echo PIPE-OPEN) || (echo PIPE-DENIED)", $@"\\.\pipe\{name}");
-                await Task.WhenAny(connected, Task.Delay(500, ct));
-                return (o.Contains("PIPE-DENIED", StringComparison.Ordinal) && !connected.IsCompletedSuccessfully, $"{Trim(o)}; the server {(connected.IsCompletedSuccessfully ? "WAS connected to" : "saw no client")}");
+                // THE OUTSIDE LINE OPENS A TWIN PIPE, served and closed so its reader ends: the row's own pipe must see no client at all.
+                var twin = name + "-twin";
+                using var twinServer = new System.IO.Pipes.NamedPipeServerStream(twin, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+                _ = Task.Run(async () =>
+                {
+                    await twinServer.WaitForConnectionAsync(ct);
+                    await twinServer.WriteAsync(new byte[] { (byte)'x' }, ct);
+                    twinServer.Flush();
+                    twinServer.Disconnect();
+                }, ct);
+                return await Denied([new("PIPE", "type {path} > {sink}", $@"\\.\pipe\{name}", control, $@"\\.\pipe\{twin}")], async () =>
+                {
+                    await Task.WhenAny(connected, Task.Delay(500, ct));
+                    var reached = connected.IsCompletedSuccessfully;
+                    return (!reached, $"the server {(reached ? "WAS connected to" : "saw no client")}");
+                });
             });
+            Process Pinger() => Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
             await Row("processes-denied", async () =>
             {
                 // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it: the cell's `taskkill /F` (PROCESS_TERMINATE,
-                // unambiguous — not a graceful WM_CLOSE) on a helper is refused and the helper still runs. A POSITIVE CONTROL first: the app,
-                // outside any cell, `taskkill /F`s a second helper and it dies — so the cell's denial is the cell's, not an unkillable helper.
-                // Never the app's own pid: a row must never risk ending the app.
-                var killable = Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
-                using var control = Process.Start(new ProcessStartInfo(Path.Combine(system32, "taskkill.exe"), $"/F /pid {killable.Id}") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true })!;
-                control.WaitForExit(10_000);
-                await Task.Delay(200, ct);
-                if (!killable.HasExited) { try { killable.Kill(); } catch (Exception) { } killable.Dispose(); return (false, "the control could not kill the helper from outside a cell, so the row proves nothing"); }
-                killable.Dispose();
-                using var helper = Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1")
-                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+                // unambiguous — not a graceful WM_CLOSE) on a helper is refused and the helper still runs. Three lines of the same shape: taskkill in
+                // the cell ends a process OF THE CELL (it runs and can end what the cell owns), the same taskkill outside ends a twin of the
+                // helper, and the one in the cell at the helper is refused. Never the app's own pid: a row must never risk ending the app.
+                using var helper = Pinger();
+                using var twin = Pinger();
                 try
                 {
-                    var (_, o) = await Script(none, "proc", $"taskkill /F /pid {helper.Id} > {Sink("k")} 2>&1 && (echo KILL-OPEN) || (echo KILL-DENIED)");
-                    // The sink is a bare name now (cmd read the quoted one as a path it could not open, and taskkill never ran): the row ran
-                    // its command only if taskkill said something.
-                    if (!File.Exists(Path.Combine(ws, "k.out")) || new FileInfo(Path.Combine(ws, "k.out")).Length == 0)
-                        return (false, $"taskkill wrote nothing, so it never ran: {Trim(o)}");
+                    var (ok, seen) = await KillRowAsync(none, cmd, helper.Id, launcher, platform, ct);
+                    await Task.Delay(200, ct);
                     var alive = !helper.HasExited;
-                    return (o.Contains("KILL-DENIED", StringComparison.Ordinal) && !o.Contains("KILL-OPEN", StringComparison.Ordinal) && alive,
-                        $"{Trim(o)}; the helper is {(alive ? "still running" : "GONE")} (a control killed its twin from outside)");
+                    var free = await Outside(["taskkill", "/F", "/pid", twin.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)], outside, ct);
+                    await Task.Delay(200, ct);
+                    var killed = twin.HasExited;
+                    return (ok && alive && killed, $"{seen}; the helper is {(alive ? "still running" : "GONE")}; the same taskkill outside a cell {(killed ? "ended its twin" : $"did NOT end its twin, so the cell's failure proves nothing: {Trim(free)}")}");
                 }
-                finally { try { helper.Kill(); } catch (Exception) { /* gone */ } }
+                finally
+                {
+                    foreach (var p in new[] { helper, twin }) try { p.Kill(); } catch (Exception) { /* gone */ }
+                }
             });
             await Row("descendants-cancelled", async () =>
             {
@@ -344,7 +375,9 @@ public static class WindowsCellBenchmark
             // bench folders and no grant record is left.
             await Row("slot-leaves-nothing", async () =>
             {
-                await Script(none, "slot", "echo done");
+                var (ranCode, ranOut) = await Script(none, "slot", "echo done");
+                if (ranCode != 0 || !ranOut.Contains("done", StringComparison.Ordinal))
+                    return (false, $"the last cell did not run ({ranCode}: {Trim(ranOut)}), so nothing can be said of what it left");
                 WindowsCellStage.SweepFree();
                 var sids = WindowsCellStage.SlotSids().Select(s => new SecurityIdentifier(s)).ToHashSet();
                 var left = new[] { ws, codexHome, home, Kit.Dir(kitHome) }.Where(Directory.Exists).Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
@@ -385,6 +418,86 @@ public static class WindowsCellBenchmark
               (webHeld ? "; web held to 443" : $"; egress web NOT proved, so the AI's executors run with no network here: {string.Join("; ", CellBenchmark.WindowsWebRows.Where(n => !byName[n].Held).Select(n => $"{n} ({byName[n].Seen})"))}")
             : "no cell proof: " + string.Join("; ", rows.Where(r => !r.Held && CellBenchmark.WindowsCoreRows.Contains(r.Name)).Select(r => $"{r.Name} did not hold ({r.Seen})"));
         return new BenchResult(rows, profile, proof, sentence);
+    }
+
+    /// <summary>
+    /// THE ONE WAY A ROW SAYS DENIED: every probe's line run three times, the same line each time —
+    /// <list type="number">
+    /// <item>in the cell, on the workspace target: it must OPEN, so the line runs in a cell at all;</item>
+    /// <item>in the cell, on the forbidden target: it must be DENIED;</item>
+    /// <item>outside any cell, the same command line byte for byte, on the forbidden target: it must OPEN, so the line can run, and only the cell differs.</item>
+    /// </list>
+    /// A syntax error, a missing program or a target that is not there fails (2) and (3) alike, and the row fails. <paramref name="after"/> says what
+    /// the row sees from outside, read between the cell's run and the outside one.
+    /// </summary>
+    public static async Task<(bool Held, string Seen)> DenialRowAsync(CellPolicy under, IReadOnlyList<DenialProbe> probes, string outsideFolder, IReadOnlyList<string>? launcher,
+        CellPlatform platform, Func<Task<(bool Ok, string Seen)>>? after = null, CancellationToken ct = default)
+    {
+        var (body, cellPaths, outsidePaths) = CellDenial.Lines(probes);
+        var cellLine = CellDenial.CmdTokens(body, [.. cellPaths]);
+        var psi = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"))
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in (string[])["/d", "/c", .. cellLine]) psi.ArgumentList.Add(a);
+        string cell;
+        using (var held = ProcessContainment.Start(psi, under, launcher, platform))
+        {
+            held.Process.StandardInput.Close();
+            var so = held.Process.StandardOutput.ReadToEndAsync(ct);
+            var se = held.Process.StandardError.ReadToEndAsync(ct);
+            await held.Process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(60), ct);
+            cell = (await so) + (await se);
+        }
+        var (afterOk, afterSeen) = after is null ? (true, "") : await after();
+        var free = await Outside(["/d", "/c", .. CellDenial.CmdTokens(body, [.. outsidePaths])], outsideFolder, ct, verbatim: true);
+        var (judged, seen) = CellDenial.Judge([.. probes.Select(p => p.Word)], cell, free);
+        return (judged && afterOk, afterSeen.Length == 0 ? seen : $"{seen}; {afterSeen}");
+    }
+
+    /// <summary>
+    /// THE CELL'S TASKKILL, BOTH WAYS: <c>start</c> makes a process of the cell's own; its id, read off the cell's job, comes in on stdin; the same line ends it
+    /// (<c>CTL-KILL-OPEN</c>: taskkill runs in a cell and can end what the cell owns) and is refused on <paramref name="helper"/>, a process outside (<c>KILL-DENIED</c>).
+    /// </summary>
+    static async Task<(bool Ok, string Seen)> KillRowAsync(CellPolicy under, string cmd, int helper, IReadOnlyList<string>? launcher, CellPlatform platform, CancellationToken ct)
+    {
+        var body = "start /b ping -n 30 127.0.0.1 > own.out\necho READY\nset /p victim=\n" +
+                   "taskkill /F /pid !victim! > ctl.out 2>&1 && (echo CTL-KILL-OPEN) || (echo CTL-KILL-DENIED)\n" +
+                   $"taskkill /F /pid {helper} > try.out 2>&1 && (echo KILL-OPEN) || (echo KILL-DENIED)";
+        var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in (string[])["/d", "/v:on", "/c", .. CellDenial.CmdTokens(body)]) psi.ArgumentList.Add(a);
+        using var held = ProcessContainment.Start(psi, under, launcher, platform);
+        var se = held.Process.StandardError.ReadToEndAsync(ct);
+        var ready = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct);
+        CellMember? own = null;
+        for (var i = 0; i < 100 && own is null && ready?.Trim() == "READY"; i++)
+        {
+            own = (CellMembers(held) ?? []).FirstOrDefault(m => m.Name.Equals("ping", StringComparison.OrdinalIgnoreCase));
+            if (own is null) await Task.Delay(50, ct);
+        }
+        if (own is null) return (false, $"the cell's own process never appeared in its job, so the row proves nothing: {ready}");
+        await held.Process.StandardInput.WriteLineAsync(own.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        held.Process.StandardInput.Close();
+        var rest = held.Process.StandardOutput.ReadToEndAsync(ct);
+        await held.Process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(60), ct);
+        var o = (await rest) + (await se);
+        var (inCell, _) = CellDenial.Judge(["KILL"], o, "KILL-OPEN");   // the outside half is the caller's: it ends a twin, by pid
+        return (inCell, Trim(o));
+    }
+
+    /// <summary>
+    /// The row's line OUTSIDE any cell, in <paramref name="folder"/>. <paramref name="verbatim"/>: the command line is built by the same quoting a cell's is, so
+    /// what cmd reads here is what it read in the cell, byte for byte. Otherwise the tool is started by cmd by name. Returns what it printed; ended after 30 s.
+    /// </summary>
+    static async Task<string> Outside(IReadOnlyList<string> arguments, string folder, CancellationToken ct, bool verbatim = false)
+    {
+        var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = folder };
+        psi.Arguments = AppContainerCell.ArgumentLine(verbatim ? arguments : ["/d", "/c", .. arguments]);
+        using var p = Process.Start(psi)!;
+        var so = p.StandardOutput.ReadToEndAsync(ct);
+        var se = p.StandardError.ReadToEndAsync(ct);
+        try { await p.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(30), ct); }
+        finally { try { p.Kill(); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* it ended */ } }
+        return (await so) + (await se);
     }
 
     /// <summary>One process of a cell's job: its pid, its creation (so a pid handed on is never it) and its image name, for the words only.</summary>
@@ -468,7 +581,7 @@ public static class WindowsCellBenchmark
             {
                 var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                     RedirectStandardOutput = true, RedirectStandardError = true };
-                foreach (var a in (string[])["/d", "/c", .. CmdTokens(body, curl, nslookup)]) psi.ArgumentList.Add(a);
+                foreach (var a in (string[])["/d", "/c", .. CellDenial.CmdTokens(body, curl, nslookup)]) psi.ArgumentList.Add(a);
                 using var held = ProcessContainment.Start(psi, web, launcher, platform);
                 var err = held.Process.StandardError.ReadToEndAsync(ct);
                 var ready = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct);
@@ -521,20 +634,6 @@ public static class WindowsCellBenchmark
 
     /// <summary>The public resolvers a direct query is tried against, the first that answers from outside a cell the one used.</summary>
     static readonly string[] Resolvers = ["8.8.8.8", "1.1.1.1"];
-
-    /// <summary>
-    /// A cmd line as ARGUMENTS: <paramref name="body"/> split on spaces ('\n' the statement separator, as " &amp; "), each token <c>{i}</c> replaced
-    /// by <paramref name="paths"/>[i] whole. The stage quotes an argument holding a space as cmd reads it — no quote is ever inside one, so
-    /// nothing reaches cmd as the C runtime's <c>\"</c>. A path may not end in a backslash or hold a quote.
-    /// </summary>
-    public static IReadOnlyList<string> CmdTokens(string body, params string[] paths)
-    {
-        foreach (var path in paths)
-            if (path.Contains('"') || path.EndsWith('\\'))
-                throw new ArgumentException($"a cell row's path cannot be passed to cmd as one argument: {path}");
-        return [.. body.Replace("\n", " & ").Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(t =>
-            t.Length >= 3 && t[0] == '{' && t[^1] == '}' && int.TryParse(t[1..^1], out var i) && i < paths.Length ? paths[i] : t)];
-    }
 
     static readonly string[] Markers = ["==443==", "==80==", "==dns=="];
 

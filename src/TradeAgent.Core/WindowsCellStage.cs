@@ -26,7 +26,7 @@ public static class WindowsCellSlots
 /// once, <c>LanePolicy.MaxLanes</c>), by a lock file only it holds; the SIDs are fixed by name, so the one firewall rule set that
 /// holds egress <c>web</c> to TCP 443 names all of them, made once. A slot is SWEPT before it is used and after: every grant its last
 /// cell was given taken back (from the slot's own record, written before any grant), and the container's own storage — its
-/// <c>AC</c> folder and registry — emptied, so nothing one cell leaves reaches the next.</para>
+/// <c>AC</c> folder and registry — emptied, only once no process of the container runs, so nothing one cell leaves reaches the next.</para>
 ///
 /// <para><b>Egress.</b> A policy of class <c>none</c> starts with no capability: no network at all. Class <c>web</c> adds
 /// <c>internetClient</c> — which opens EVERY outbound port; port 443 alone is the firewall rule's, and a launch is admitted under
@@ -81,10 +81,14 @@ public static class WindowsCellStage
         }
 
         if (CellPlatform.Read().Refusal() is { } refusal) return Refuse(refusal);
-        // THE STAGE RUNS ONLY INSIDE A JOB (Codex, landing 2): the app's, or the harness's the app made. A stage outside one — a harness
-        // that started it before Windows put the harness in its job — would outlive a cancel, and its cell and grants with it.
+        // THE STAGE RUNS ONLY INSIDE A JOB THAT ENDS IT (Codex, landing 2): the app's, or the harness's the app made. A stage outside one — a
+        // harness that started it before Windows put the harness in its job — would outlive a cancel, and its cell and grants with it.
+        // ANY JOB IS NOT ENOUGH (R29 F-D4): IsProcessInJob with no job names any job at all, and a machine has others (a terminal's, a service
+        // host's). What a job of TradeAgent's is, and what the stage relies on, is read off the job this process is immediately in.
         if (!IsProcessInJob(GetCurrentProcess(), IntPtr.Zero, out var inJob) || !inJob)
             return Refuse("this stage is in no job of TradeAgent's, so nothing it started could be ended with the attempt");
+        if (AppContainerCell.OwnJobLimits() is not { } limits || !AppContainerCell.EndsWithItsHolder(limits))
+            return Refuse("this stage's job is not one of TradeAgent's: closing it would not end the stage, so nothing it started could be ended with the attempt");
         CellPolicy policy;
         try
         {
@@ -175,6 +179,11 @@ public static class WindowsCellStage
             }
             File.Delete(slot.Record);
         }
+        // NOTHING OF THE CONTAINER STILL RUNS (R29 F-D3): the walk below decides "not a link" from what it enumerated, then goes in as the
+        // owner. A process of this container, alive, could swap a folder for a junction between the two, and the owner would delete
+        // what it points at. Only such a process can write here, so with none left what was enumerated stays true. A job's kill is
+        // asynchronous, and a stage that died never waited for it: this is read off Windows' own process list, whoever started them.
+        AwaitNoProcessOf(slot, sid);
         // THE CONTAINER'S OWN STORAGE, EMPTIED WITHOUT FOLLOWING A LINK (Codex, landing 2): a junction a cell left there is removed as a
         // link, never walked — a recursive walk would have deleted, as the owner, whatever it pointed at.
         var ac = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", slot.Profile, "AC");
@@ -188,6 +197,34 @@ public static class WindowsCellStage
             foreach (var sub in storage.GetSubKeyNames()) storage.DeleteSubKeyTree(sub, throwOnMissingSubKey: false);
             foreach (var value in storage.GetValueNames()) storage.DeleteValue(value, throwOnMissingValue: false);
         }
+    }
+
+    /// <summary>How long a slot's last processes are given to end before its storage is left for the next sweep.</summary>
+    static readonly TimeSpan LastProcessesGrace = TimeSpan.FromSeconds(10);
+
+    /// <summary>Waits, bounded, until no process runs in the container <paramref name="sid"/>; else refuses: the slot's storage is not touched, and no cell runs in it.</summary>
+    static void AwaitNoProcessOf(Slot slot, string sid)
+    {
+        var until = DateTime.UtcNow + LastProcessesGrace;
+        while (true)
+        {
+            var left = ProcessesOf(sid);
+            if (left.Count == 0) return;
+            if (DateTime.UtcNow >= until)
+                throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE,
+                    $"slot {slot.Number}'s last cell still has {left.Count} process(es) running ({string.Join(", ", left)}); its storage is left alone and no cell runs in it until they end");
+            Thread.Sleep(20);
+        }
+    }
+
+    /// <summary>The ids of the processes now running in the container <paramref name="sid"/>, by each process's own token: Windows' list, never a job's or a name's.</summary>
+    public static IReadOnlyList<int> ProcessesOf(string sid)
+    {
+        var found = new List<int>();
+        foreach (var p in System.Diagnostics.Process.GetProcesses())
+            using (p)
+                if (WindowsToken.AppContainerSidOf(p.Id) is { Length: > 0 } of && of.Equals(sid, StringComparison.OrdinalIgnoreCase)) found.Add(p.Id);
+        return found;
     }
 
     /// <summary>Removes <paramref name="e"/>: a link as a link, a file, or a folder after everything in it — never through a link.</summary>
@@ -235,6 +272,15 @@ public static class WindowsCellStage
             foreach (var s in slots) s.Dispose();
             slots.Clear();
         }
+    }
+
+    /// <summary>Sweeps slot <paramref name="number"/> if no stage holds it — a test's, which runs what a stage runs at a claim. False when a stage holds it.</summary>
+    internal static bool SweepSlot(int number)
+    {
+        using var slot = Slot.Take(number);
+        if (slot is null) return false;
+        Sweep(slot, AppContainerCell.SidOf(slot.Profile));
+        return true;
     }
 
     /// <summary>
