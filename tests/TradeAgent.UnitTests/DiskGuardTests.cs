@@ -218,6 +218,49 @@ public class DiskGuardTests
         Assert.Equal(0, life.Turns(Chair));
     }
 
+    /// <summary>
+    /// A SAVE BESIDE THE PAUSE CANNOT WRITE IT AWAY. Any other save serialised the settings before it took the database's lock, so one caught before the pause could commit
+    /// after it: the row then read "working, no pause", the guard took it as saved, and a restart resumed the AI with nobody pressing anything.
+    /// </summary>
+    [Fact]
+    public async Task A_settings_save_beside_the_pause_cannot_write_it_away()
+    {
+        await using var life = await PuppetLife.Begin("disk-save");
+        var host = life.Host;
+        Task saver = Task.CompletedTask;
+
+        // THE ORDER, MADE: the other save starts while the database's lock is held here, so it gets as far as it can before the lock. The pause commits first, then it goes on.
+        await host.Db.Write(_ =>
+        {
+            saver = Task.Run(() => host.Gateway.Update(_ => { }));
+            Thread.Sleep(300);
+            host.Gateway.Update(s => s.DiskPause = new DiskPause { At = Now, Free = Low.Free });
+            return Task.CompletedTask;
+        });
+        await saver;
+
+        Assert.Contains("disk_pause", host.Db.GetKv("settings"), StringComparison.Ordinal);
+    }
+
+    /// <summary>The press measured the disk, so the count of failed reads starts again: a blind trip cannot leave one bad read a step from pausing the resumed run.</summary>
+    [Fact]
+    public async Task After_a_blind_trip_and_a_press_with_room_one_bad_read_pauses_nothing()
+    {
+        await using var life = await PuppetLife.Begin("disk-sighted", settings: s => s.AiWorksOnItsOwn = true);
+        var host = life.Host;
+        host.Mission.Start();
+        host.ReadDisk = () => null;
+        for (var i = 0; i < DiskWatch.BlindReads; i++) await host.DiskGuardPassAsync();
+        Assert.True(host.Gateway.Settings.DiskPause?.Unreadable);
+
+        host.ReadDisk = () => Plenty;
+        Assert.Null(host.LetTheAiWorkOnItsOwn());
+        host.ReadDisk = () => null;
+        await host.DiskGuardPassAsync();
+        Assert.True(host.Mission.Running);
+        Assert.Null(host.Gateway.Settings.DiskPause);
+    }
+
     /// <summary>A press that lands while a trip's turns are still ending starts nothing, room or no room: the trip is the later word, and the press has to come after it.</summary>
     [Fact]
     public async Task A_press_beside_a_trip_under_way_does_not_undo_it()

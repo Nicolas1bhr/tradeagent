@@ -3876,7 +3876,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
             StateChanged?.Invoke();
             return;
         }
-        _db.SetKv("settings", Json.Write(Settings));
+        // SERIALISED UNDER THE DATABASE'S LOCK (U-disk-guard's review): taken before it, a save caught behind another's commit wrote its older picture over it, and a
+        // pause the row no longer held read as saved; the restart then resumed the AI with nobody pressing anything.
+        _db.Write(_ =>
+        {
+            _db.SetKv("settings", Json.Write(Settings));
+            return 0;
+        });
         // THIS IS THE RECOVERY. The row on disk is now one this build wrote, so it is readable by
         // definition, and the banner and the health row that were saying otherwise have to stop on
         // this pass rather than after a restart. The kept `settings_unreadable` row is left alone:

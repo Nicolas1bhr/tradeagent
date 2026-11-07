@@ -2708,6 +2708,7 @@ public sealed class AppHost : IAsyncDisposable
         lock (_diskPress)
         {
             if (DiskRefusesThePress() is { } refused) return refused;
+            _diskWatch.Sighted();
             Gateway.Update(s => { s.AiWorksOnItsOwn = true; s.DiskPause = null; });
             Mission.Start();
         }

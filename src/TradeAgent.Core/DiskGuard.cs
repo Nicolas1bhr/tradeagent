@@ -121,6 +121,9 @@ public sealed class DiskWatch
         return Below(reading) ? new(DiskVerdict.Low, aiOn ? PauseFor(reading, now) : null) : new(DiskVerdict.Fine, null);
     }
 
+    /// <summary>The owner's press read the disk and went through: that is a good read, and the count of failed ones starts again from it.</summary>
+    public void Sighted() => _missed = 0;
+
     static bool Below(DiskSpace reading) => reading.Free < DiskFloor.For(reading.Total);
 
     /// <summary>The record of a pause over <paramref name="reading"/>.</summary>
