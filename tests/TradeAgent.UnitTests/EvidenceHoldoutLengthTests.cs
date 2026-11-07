@@ -17,6 +17,9 @@ namespace TradeAgent.Tests.Unit;
 /// U-EVIDENCE-HOLDOUT-LENGTH: THE VERDICTS OF THE FIRST REAL RUN MEAN SOMETHING (R30 § 3 row 4; D12, D15, D16). Each proof walks the real
 /// path — setup's press, the download, the dataset ledger, the campaign, the referee — rather than reading a constant.
 /// </summary>
+// THE LAUNCHER AND THE FORKS (U-launcher-race; U-main-red-3): one test here is a puppet life, which deploys the real trade command over the launcher every held
+// launch starts through. Beside it, a launch of another class met the command without its files: "Failed to locate managed application", exit 146.
+[Collection(VendorOverrideFiles.Name)]
 public class EvidenceHoldoutLengthTests
 {
     /// <summary>When these tests' setup press runs: its 36 complete months are October 2023 to September 2026.</summary>
