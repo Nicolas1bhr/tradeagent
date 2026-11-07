@@ -115,6 +115,14 @@ class W:
     META_SCHEMA_VERSION, KV_SETTINGS, SETTING_WORKS_ON_ITS_OWN = "schema_version", "settings", "ai_works_on_its_own"
     # the free-space guard's pause in the settings: DiskPause's serialised names
     SETTING_DISK_PAUSE, PAUSE_AT, PAUSE_FREE, PAUSE_TOTAL, PAUSE_FLOOR, PAUSE_UNREADABLE = "disk_pause", "at", "free", "total", "floor", "unreadable"
+    # THE KEYS READ OUT OF JSON THE APP WROTE: a key respelled in the app reads None here, which looks like a turn with no reason, so each is
+    # held to its serialiser or writer like the words above. ai_attempt.context (TurnContext): how the turn ended and the words that stopped it
+    CTX_ENDED, CTX_REFUSED = "ended", "refused"
+    # engineering_log metadata: the loop's line for a turn it did not start (AppHost), and the pipe's refusal of an op (RecordRefusal)
+    LOG_WHY = "why"
+    REFUSAL_OP, REFUSAL_CODE = "op", "code"
+    # board_policy.body: BoardPolicyBody's canonical names
+    BODY_PLAN_DAY_TOTAL, BODY_MODE = "plan_day_total", "mode"
 
 
 ADMISSIBLE = (W.VERDICT_PROMOTED, W.VERDICT_PAPER_ELIGIBLE)    # the two classes a version can be carried forward on
@@ -476,7 +484,7 @@ class Digest:
                 meta = json.loads(r["metadata"]) if r["metadata"] else {}
             except ValueError:
                 pass
-            op, code = meta.get("op") if isinstance(meta, dict) else None, meta.get("code") if isinstance(meta, dict) else None
+            op, code = meta.get(W.REFUSAL_OP) if isinstance(meta, dict) else None, meta.get(W.REFUSAL_CODE) if isinstance(meta, dict) else None
             key = (r["event"], op or "-", code or "-")
             e = pipe.setdefault(key, {"source": "pipe", "what": r["event"], "words": f"op {op or '-'} / {code or '-'}", "count": 0, "last_at": None})
             e["count"] += 1
@@ -496,7 +504,7 @@ class Digest:
         bad = 0
         for r in rows:
             ctx = turn_context(r["context"])
-            stopped = ctx.get("ended") if ctx.get("ended") in W.TURN_STOPS else None
+            stopped = ctx.get(W.CTX_ENDED) if ctx.get(W.CTX_ENDED) in W.TURN_STOPS else None
             failed = (r["exit_code"] not in (None, 0)) or r["vendor_said"] or stopped or r["state"] not in (W.ATTEMPT_ENDED, W.ATTEMPT_LAUNCHED)
             if r["exit_code"] is not None:
                 exits[str(r["exit_code"])] = exits.get(str(r["exit_code"]), 0) + 1
@@ -504,7 +512,7 @@ class Digest:
                 continue
             bad += 1
             said = short(r["vendor_said"], 120) if r["vendor_said"] else ""
-            words = short(ctx.get("refused"), 120) if stopped and ctx.get("refused") else None
+            words = short(ctx.get(W.CTX_REFUSED), 120) if stopped and ctx.get(W.CTX_REFUSED) else None
             key = (r["state"], r["exit_code"], said, stopped, words)
             g = groups.setdefault(key, {"state": key[0], "exit_code": r["exit_code"], "vendor_said": said or None, "ended": stopped, "words": words, "count": 0,
                                         "last_at": None, "positions": set(), "model": r["model"], "offered_tools": None})
@@ -534,7 +542,7 @@ class Digest:
             version = policy["version"]
             try:
                 body = json.loads(policy["body"])
-                plan_total, mode = dec(body.get("plan_day_total")), body.get("mode") or policy["mode"]
+                plan_total, mode = dec(body.get(W.BODY_PLAN_DAY_TOTAL)), body.get(W.BODY_MODE) or policy["mode"]
             except ValueError:
                 pass
         share = None
@@ -563,7 +571,7 @@ class Digest:
         why = {}
         for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
                                   (W.LOG_MISSION, W.LOG_TURN_REFUSED, self.since_s)):
-            line = turn_context(r["metadata"]).get("why")
+            line = turn_context(r["metadata"]).get(W.LOG_WHY)
             if isinstance(line, str) and ": " in line:
                 title, words = line.split(": ", 1)
                 why[titles.get(title, title)] = {"at": r["at"], "ended": None, "words": short(words)}
@@ -573,8 +581,8 @@ class Digest:
             had = why.get(pos)
             if had is not None and parse_ts(had["at"]) > parse_ts(r["started_at"]):
                 continue
-            if ctx.get("ended") in W.TURN_STOPS:
-                why[pos] = {"at": r["started_at"], "ended": ctx.get("ended"), "words": short(ctx.get("refused") or "")}
+            if ctx.get(W.CTX_ENDED) in W.TURN_STOPS:
+                why[pos] = {"at": r["started_at"], "ended": ctx.get(W.CTX_ENDED), "words": short(ctx.get(W.CTX_REFUSED) or "")}
             elif r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
                 why.pop(pos, None)
         return why
@@ -679,9 +687,9 @@ class Digest:
                 meta = json.loads(r["metadata"]) if r["metadata"] else {}
             except ValueError:
                 meta = {}
-            op = meta.get("op") if isinstance(meta, dict) else None
+            op = meta.get(W.REFUSAL_OP) if isinstance(meta, dict) else None
             if op:
-                item = {"at": r["at"], "what": op, "words": f"refused at the pipe: {meta.get('code') or '-'}"}
+                item = {"at": r["at"], "what": op, "words": f"refused at the pipe: {meta.get(W.REFUSAL_CODE) or '-'}"}
                 first_any = first_any if first_any and first_any["at"] <= item["at"] else item
                 refused.setdefault(op.replace("_", "-"), []).append(item)
         rows = []
@@ -735,9 +743,9 @@ class Digest:
                 if r["id"] not in acted and not inside:
                     p["idle"] += 1
             ctx = turn_context(r["context"])
-            if ctx.get("ended") == W.ENDED_USAGE_LIMIT or (r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"])):
+            if ctx.get(W.CTX_ENDED) == W.ENDED_USAGE_LIMIT or (r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"])):
                 limit_hits += 1
-                first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"] or ctx.get("refused") or "")}
+                first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"] or ctx.get(W.CTX_REFUSED) or "")}
         waits = []
         for r in self.app.execute("SELECT role, created_at, due_at, consumed_at FROM mission_event WHERE consumed_at >= ? AND consumed_by IN (SELECT id FROM ai_attempt)",
                                   (self.since_s,)):

@@ -826,7 +826,14 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("LOG_TURN_REFUSED", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"{0}\", \"info\""),
         ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
         ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
+        // JSON KEYS the app spells by a member's name in its writer: the loop's line for a turn it did not start, and the pipe's refusal of an op
+        ("LOG_WHY", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"turn_refused\", \"info\", metadataJson: Json.Write(new {{ {0} }}))"),
+        ("REFUSAL_OP", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "JsonSerializer.Serialize(new {{ {0} = RefusalMark.OpName(op), code = "),
+        ("REFUSAL_CODE", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "RefusalMark.OpName(op), {0} = code.ToString(), role = "),
     ];
+
+    /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>
+    static readonly string[] SerialisedKeys = ["CTX_ENDED", "CTX_REFUSED", "BODY_PLAN_DAY_TOTAL", "BODY_MODE"];
 
     [OnlyOnFact("the script runs on the Linux host; the table it is held to compiles here regardless", "linux", "macos")]
     public void Every_word_the_digest_compares_is_the_one_the_app_writes()
@@ -857,8 +864,18 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains($"\"{Word("SETTING_DISK_PAUSE")}\":{{", paused, StringComparison.Ordinal);
         foreach (var name in PauseWords) Assert.Contains($"\"{Word(name)}\":", paused, StringComparison.Ordinal);
 
+        // THE KEYS OF THE JSON THE APP WRITES, through its own serialisers: a member renamed in the app moves its key, and the digest would read
+        // None, which is a turn with no reason on record, not a red. A launch's context, as TurnMeter writes it, and the board policy's body.
+        var context = TradeAgent.Core.Json.Write(new TurnContext { Ended = "an-end", Refused = "the words" });
+        Assert.Contains($"\"{Word("CTX_ENDED")}\":\"an-end\"", context, StringComparison.Ordinal);
+        Assert.Contains($"\"{Word("CTX_REFUSED")}\":\"the words\"", context, StringComparison.Ordinal);
+        var body = JsonDocument.Parse(BoardPolicyBody.Canonical(BoardFounding.V1)).RootElement;
+        Assert.Equal(BoardFounding.V1.PlanDayTotal, body.GetProperty(Word("BODY_PLAN_DAY_TOTAL")).GetDecimal());
+        Assert.Equal(BoardFounding.V1.Mode.ToString(), body.GetProperty(Word("BODY_MODE")).GetString());
+
         // AND NOTHING IS LEFT UNTRACED: every word in the digest is in one of the tables above.
-        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "SETTING_WORKS_ON_ITS_OWN", "SETTING_DISK_PAUSE"]).Concat(PauseWords);
+        var traced = theApp.Keys.Concat(WordsInAWriter.Select(w => w.Word)).Concat(["DECISION_FAMILY_KILL", "DECISION_FAMILY_BRANCH", "SETTING_WORKS_ON_ITS_OWN", "SETTING_DISK_PAUSE"]).Concat(PauseWords)
+            .Concat(SerialisedKeys);
         Assert.Empty(digest.Keys.Except(traced));
     }
 
@@ -876,7 +893,23 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             .Where(x => !x.Line.TrimStart().StartsWith('#') && !x.Line.Contains("[\"app_db\"]", StringComparison.Ordinal))    // the digest's own field, not a column
             .Where(x => TypedInPlace().IsMatch(x.Line)).Select(x => $"line {x.At + 1}: {x.Line.Trim()}").ToList();
         Assert.True(typed.Count == 0, "a word typed into a comparison, not taken from class W:\n" + string.Join("\n", typed));
+
+        // AND NO KEY IS TYPED INTO A READ OF THE APP'S JSON (U-digest-polish): every name a parse of what the app wrote is bound to
+        // (`meta = json.loads(`, `ctx = turn_context(`), and a read straight off turn_context(...), takes its key from class W. The digest's own
+        // dictionaries (a wake's "why", a group's "refused") are its output, not the app's, and are not bound by a parse, so they stay out of this.
+        var bound = lines.Select(l => ParsedJson().Match(l)).Where(m => m.Success).Select(m => m.Groups[1].Value).Distinct().ToList();
+        Assert.True(bound.Contains("ctx") && bound.Contains("meta") && bound.Contains("body"), "the parses of the app's JSON are not where this test looks: " + string.Join(", ", bound));
+        var names = string.Join("|", bound);
+        var keyTyped = new System.Text.RegularExpressions.Regex(
+            $"""(?:\b(?:{names})|turn_context\([^)]*\))(?:\.get\(\s*|\[\s*)["']|["'][^"']*["']\s+(?:not\s+)?in\s+(?:{names})\b""");
+        var keys = lines.Select((l, i) => (Line: l, At: i)).Where(x => x.At < from || x.At > to)
+            .Where(x => !x.Line.TrimStart().StartsWith('#') && keyTyped.IsMatch(x.Line)).Select(x => $"line {x.At + 1}: {x.Line.Trim()}").ToList();
+        Assert.True(keys.Count == 0, "a key typed into a read of the app's JSON, not taken from class W:\n" + string.Join("\n", keys));
     }
+
+    /// <summary>A name bound to a parse of JSON the app wrote: <c>x = json.loads(</c> or <c>x = turn_context(</c>.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*(\w+)\s*=\s*(?:json\.loads|turn_context)\(")]
+    private static partial System.Text.RegularExpressions.Regex ParsedJson();
 
     // ---- THE REAL LOOP -------------------------------------------------------------------------------------------------------
     /// <summary>
