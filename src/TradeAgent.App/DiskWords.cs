@@ -36,8 +36,8 @@ static class DiskWords
     public static string LowRow(DiskSpace? read) =>
         read is { } r ? $"only {Size(r.Free)} free; the AI will not start under {Size(DiskFloor.For(r.Total))}" : Unread;
 
-    /// <summary>The health row over a read that failed. One failed read changes nothing: half a minute of them pauses the AI.</summary>
-    public const string Unread = "the free space could not be read just now; the AI carries on, and it is paused if this goes on for half a minute";
+    /// <summary>The health row over a read that failed. One failed read changes nothing: half a minute of them pauses a working AI.</summary>
+    public const string Unread = "the free space could not be read just now; a working AI carries on, and is paused if this lasts half a minute";
 
     const long Gib = 1L << 30;
 

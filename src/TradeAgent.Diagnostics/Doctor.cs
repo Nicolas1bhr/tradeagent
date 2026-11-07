@@ -97,16 +97,16 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             ? CheckResult.Ok("Processor", RuntimeInformation.OSArchitecture.ToString())
             : CheckResult.Bad("Processor", RuntimeInformation.OSArchitecture.ToString(), "A 64-bit computer is required."));
 
-        try
+        // THE GUARD'S OWN READ (DiskWatch), so the two never name different disks: the filesystem holding the home, not the root of the path.
+        if (DiskSpace.Read(Paths.Home) is { } disk)
         {
-            var drive = new DriveInfo(Path.GetPathRoot(Paths.Home)!);
-            var freeGb = drive.AvailableFreeSpace / 1024d / 1024d / 1024d;
+            var freeGb = disk.Free / 1024d / 1024d / 1024d;
             r.Add(freeGb >= 2
                 ? CheckResult.Ok("Free disk space", $"{freeGb:N1} GB")
                 : CheckResult.Bad("Free disk space", $"{freeGb:N1} GB",
                     "Free up at least 2 GB. TradeAgent needs room for the AI tools and its records."));
         }
-        catch (Exception ex) { r.Add(CheckResult.Warn("Free disk space", ex.Message, "Could not read the disk.")); }
+        else r.Add(CheckResult.Warn("Free disk space", "not read", "Could not read the disk."));
 
         r.Add(CanWrite(Paths.Home, out var writeErr)
             ? CheckResult.Ok("Folder permissions", Paths.Home)

@@ -778,6 +778,25 @@ deliberate: reading the market, testing strategies, and writing up what went wro
 job, and they are worth doing precisely when nothing may be traded. If you want it to stop
 altogether, press **Pause the AI** as well.
 
+### If the AI stops because the disk is running out
+
+While the AI works on its own, TradeAgent watches the free space on the disk it lives on, every two
+seconds. **Below a floor it pauses the AI, exactly as if you had pressed Pause the AI**: anything
+running ends, its cost is closed, and the work it was doing waits. The floor is a tenth of the disk,
+at most 10 GB and never under 2 GB. So a large server keeps its other programs' room, and a small
+laptop does not stop long before it has to. The Dashboard says what it saw and what to do.
+
+Your positions are still managed and the market recording goes on: neither of them is the AI.
+TradeAgent does not start the AI again by itself, however much room comes back. **Free some space,
+then press Let the AI work on its own.** The press needs half as much again as the floor (15 GB, on
+most computers), so that the AI does not stop again a moment later; below that it starts nothing and
+says why. While the guard stands, the Chat page is refused too. If TradeAgent cannot read the free
+space for half a minute it pauses the AI the same way, and says that instead: one failed read
+changes nothing.
+
+No single file an AI's program writes can pass 1 GB, on macOS and Linux. Windows has no such limit
+on a file, so there the free-space check is what stands.
+
 ### The AI is two roles, one at a time
 
 What you talk to on the **Chat** page is the **Operations Director**. It chairs: your words reach it

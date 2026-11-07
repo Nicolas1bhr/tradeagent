@@ -21,7 +21,7 @@ card, the refusal sentence).
 | x64 | `ArchitecturesAllowed=x64compatible` (`packaging/TradeAgent.iss:58`) | walked (U3) |
 | ATAS installed and signed in to a broker | TradeAgent never sees the broker credentials and never asks | walked (U4) |
 | At least one account visible in ATAS | simulated is fine and is the right place to start — U4 used `CRYPTO5EB41`, a Binance crypto-sim account | walked (U4) |
-| ~2 GB free | the doctor's "Free disk space" check fails below it (`src/TradeAgent.Diagnostics/Doctor.cs:58`) | walked (U4, as part of the journey) |
+| ~2 GB free | the doctor's "Free disk space" check fails below it (`src/TradeAgent.Diagnostics/Doctor.cs:58`); a working AI needs more, or the free-space guard pauses it (a tenth of the disk, 2 to 10 GB) | walked (U4, as part of the journey) |
 
 Nothing else. No .NET, no Node, no developer tools: the app and the `trade` CLI are published
 self-contained (`packaging/build.ps1:110,117`).

@@ -5449,3 +5449,33 @@ instant a sweep's last wave is issued, less than E has elapsed — and a store r
 wave start the store's time later than the drain allows, which is the handler the drain exists not to
 walk away from. The owner's presses are not pipe handlers: the Dashboard's buttons and
 `tradeagent-gateway.exe cancel-all|close-all` call them in process, and the drain does not count them.
+
+## The free-space guard — `src/TradeAgent.Core/DiskGuard.cs`, `src/TradeAgent.App/AppHost.cs`
+
+**Code in a cell and a CLI seat write directly, as fast as the disk takes it, on a machine that hosts the owner's other services.** Two limits in the product hold
+that, and no quota on his machine. The per-file bound is in `ORCHESTRATION.md` § 2.8.
+
+**The read.** Every 2 s, on a task of its own, the app reads the bytes this account may still write on the filesystem holding its home. Its own task, because a full
+disk makes the app's background pass throw before it would reach a step behind it. The figure was ~30 s until it was measured: a process wrote 2.5 GB/s on the
+project's Mac and a statfs took about a microsecond, so half a minute let 75 GB past a 10 GB floor, and 2 s lets about 5 GB past, and a little more while the turns end.
+
+**The floor** is 10 % of the filesystem, at most 10 GiB, never under 2 GiB (`DiskFloor`). A press after a trip needs half as much again.
+
+**The trip is the owner's own pause** and nothing else: `PauseTheAiAsync`'s body, so running turns end with their trees, the launch closes and its reservation with it, and
+the wake is not spent. It adds no pipe op and no verb, and it can only take work away. `DiskPause` goes into the same settings write as `AiWorksOnItsOwn = false`, so a
+restart stays paused and says why. **A restart looks before it resumes.** Only the owner's press clears it, `LetTheAiWorkOnItsOwn`, and only with the room; a press the disk
+refuses starts nothing and leaves a pause standing, a new one when none stood, so the card says why. While it stands every launch is refused, the Chat page's included.
+
+**On a disk that will not take the record** the loop stops first and the write is tried again on every later read. That holds for the owner's press too: the write used to
+come first, so the failed write meant no pause.
+
+**A failed read.** One changes nothing but the health row. Fifteen in a row, half a minute, pause the AI with `Unreadable` set: a guard that cannot see does not leave
+unattended work running. A press is refused while a standing pause cannot be measured.
+
+**If the disk fills anyway.** The ledgers refuse the write and stay whole: each commit completes or throws. The gateway's own rule then holds: nothing is sent whose row could not
+be written, and an outcome that could not be stored pauses execution in memory ("The pause does not depend on the database"). The app's background pass fails and is tried
+again every 5 s, so the paper runs stop advancing and catch up from their rows when room returns. That loop does not end: its failure line goes through `TryEngineering`, since
+a line that threw ended the whole loop. The tape's looks fail, back off to at most five minutes, and carry on, leaving a gap the tape's own health shows. The owner's other
+services meet a full disk too, which is what the floor is for.
+
+**The digest** shows free space and the floor on every run, read by statvfs, and an ATTENTION line when the guard has tripped, from the app's record.

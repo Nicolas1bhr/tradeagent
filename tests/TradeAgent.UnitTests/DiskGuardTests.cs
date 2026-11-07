@@ -122,6 +122,9 @@ public class DiskGuardTests
         Assert.Null(host.Wakes.Get(wake)!.Disposition);
         Assert.False(spentBefore.Disposition is not null);
 
+        // THE APP'S OWN CLOCK GOES ON: reconciling and the frozen paper runs are its pass, not a turn.
+        await host.TradingPassAsync();
+
         // IT NEVER RESUMES ITSELF, on any number of good reads.
         host.ReadDisk = () => Plenty;
         for (var i = 0; i < 3; i++) await host.DiskGuardPassAsync();

@@ -314,6 +314,11 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   thread, then `execve` — and a per-attempt cgroup in a subtree the app's systemd service delegates; no namespaces (Ubuntu refuses unprivileged
   user namespaces) — proved on CI's ubuntu runners, then on the Linux host (`docs/queue/U-cell-linux-a.md`; parts a–e in ORGANISATION § 15); Windows (`R-containment`'s AppContainer route, on the
   box); macOS only for development, if cheap.
+- **The disk** (`U-disk-guard`): nothing bounds what a seat writes into its own home but two limits, both in the product, and no quota on the host. A
+  per-file bound, `RLIMIT_FSIZE` of 1 GiB hard and soft (core files 0), taken by the launcher so every process of every launch on Linux and macOS inherits it, cells,
+  route (a)'s harness and CLI seats alike; the proof's `file-bound` row shows it from inside a real cell. And the app's free-space guard, which pauses the AI
+  (`CONTRACTS.md`, "The free-space guard"). **Windows has no per-file limit:** there the guard stands alone. Neither stops a process writing many files for the
+  seconds between a read and the end of its turn.
 - **The split** (Law 2): the harness that holds the login stays outside the cell; model-directed shell, file, package and network actions run
   inside. Candidate routes: (a) codex 0.160.1's experimental `exec-server` inside the cell, the harness outside — shown viable on the dev Mac
   against a mock model (`R-exec-server`): every host-reaching model-directed action ran in the exec-server and the login never crossed its
