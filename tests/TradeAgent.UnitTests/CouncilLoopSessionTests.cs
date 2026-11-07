@@ -221,7 +221,9 @@ public partial class CouncilLoopTests
         await session.SendAsync("first");
         await session.SendAsync("second");
 
-        Assert.Equal([0, 0], ended.Select(e => e.ExitCode));
+        // THE WORDS WITH THE NUMBERS (U-main-red-3): this line read "[-1, 0]" on main run 42340766269, and the sentence that named the cause had been dropped.
+        Assert.True(ended.Select(e => e.ExitCode).SequenceEqual([0, 0]),
+            $"exit codes [{string.Join(", ", ended.Select(e => e.ExitCode))}]; {AgentRuntimeProbe.Said(session, ended.LastOrDefault())}");
         Assert.Equal([("fresh", SessionWhy.First), ("fresh", SessionWhy.NoResume)], ended.Select(e => (e.Session?.State, e.Session?.Why)));
     }
 

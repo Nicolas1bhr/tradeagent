@@ -198,7 +198,7 @@ public sealed class ContainedProcess : IDisposable
             if (held && job != IntPtr.Zero) Container = new JobContainer(this);
             return;
         }
-        _leaderStart = ProcessTable.Read(_leader)?.Start ?? 0;
+        _leaderStart = (ProcessContainment.ReadLeader.Value is { } read ? read(process) : ProcessTable.Read(_leader))?.Start ?? 0;
         _session = ownSession ? _leader : 0;
         // THE SESSION, AND ON LINUX UNDER A DELEGATED ROOT THE ATTEMPT'S CGROUP TOO — ANDed, never one for the other (U-cell-linux-b,
         // RULING 1): a process that left the session is refused by the first, one that moved itself to another cgroup by the second.
@@ -206,6 +206,14 @@ public sealed class ContainedProcess : IDisposable
             Container = cgroup is null
                 ? new SessionContainer(this)
                 : new AllOf(new SessionContainer(this), new CgroupContainer(grantCgroup ?? cgroup.Dir, () => _over));
+        // A LEADER THAT HAD ALREADY FINISHED WHEN IT WAS FIRST READ WAS STARTED, AND IS NOT A LAUNCH THAT COULD NOT BE HELD (U-main-red-3). The read is the first
+        // thing after Process.Start, and that call can come back long after the child ran: a blocking gen2 collection held the launching thread in it for
+        // 110 ms of a 116 ms start, measured on this Mac, and a short program had ended and been reaped by then, so the table had nothing to say. The turn
+        // ended as it ended, and its streams and exit code are there to read. Nothing of it is left for a grant to serve: this container admits nobody. The
+        // order is the proof: the app reaps its children, and the reap is recorded under the lock HasExited takes, so a process missing from a table that
+        // shows zombies has exited here. A leader still running that cannot be read stays what it was, a launch not held, and is refused.
+        else if (ownSession && process.HasExited)
+            Container = new FinishedContainer();
     }
 
     /// <summary>
@@ -435,6 +443,18 @@ public sealed class ContainedProcess : IDisposable
         }
     }
 
+    /// <summary>
+    /// THE CONTAINER OF A LAUNCH WHOSE LEADER HAD FINISHED BEFORE IT COULD BE READ: its session was over before the app could prove it, so a peer is never
+    /// inside. A process the launcher left behind asks and is refused, in the words <see cref="SessionContainer"/> uses for a leader that has exited.
+    /// </summary>
+    sealed class FinishedContainer : AttemptContainer
+    {
+        public override string Name => "the session TradeAgent made for this attempt";
+
+        public override MembershipVerdict Contains(PeerFacts peer) =>
+            MembershipVerdict.Unknown("the attempt's launcher has already exited, so its session is over");
+    }
+
     public void Dispose()
     {
         // THE TEARDOWN, NOT A TIDY-UP, and whether or not the leader is still running: a turn that ended
@@ -575,6 +595,12 @@ public static class ProcessContainment
     /// it — and it only ever makes a launch fail, never turns a check off. Null in the product.
     /// </summary>
     internal static readonly AsyncLocal<WindowsFaults?> Faults = new();
+
+    /// <summary>
+    /// A TEST'S SEAM AND NOTHING ELSE (<c>U-main-red-3</c>): the first read of a leader on macOS and Linux, so a test can have it finish before that read, the
+    /// order a stop-the-world collection gives a short program. Scoped to the test's own async flow; null in the product.
+    /// </summary>
+    internal static readonly AsyncLocal<Func<Process, ProcessEntry?>?> ReadLeader = new();
     const int JobObjectExtendedLimitInformation = 9;
 
     /// <summary>

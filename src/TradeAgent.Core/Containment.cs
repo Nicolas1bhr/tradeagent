@@ -672,6 +672,13 @@ public static class ProcessTable
 
     const int PROC_PIDTBSDINFO = 3;
 
+    /// <summary>
+    /// The call's argument that has it find a zombie too (<c>U-main-red-3</c>). With 0 the kernel answers ESRCH for a process that has exited and not been
+    /// reaped, measured on this Mac: <c>n=0 errno=3</c> with 0, <c>n=136 status=5</c> with 1. So the table said "no such process" where <c>/proc</c> says
+    /// Z, the zombie test below could never be true, and the read of a leader a stalled start came back to found nothing.
+    /// </summary>
+    const ulong FindZombies = 1;
+
     /// <summary><c>sizeof(struct proc_bsdinfo)</c>: twelve words, two names, six words, then the start as two 64-bit fields.</summary>
     const int BsdInfoSize = 136;
 
@@ -715,7 +722,7 @@ public static class ProcessTable
     static ProcessEntry? ReadMac(int pid)
     {
         var info = new byte[BsdInfoSize];
-        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, info, info.Length) != BsdInfoSize) return null;
+        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, FindZombies, info, info.Length) != BsdInfoSize) return null;
         var status = BitConverter.ToUInt32(info, 4);
         if ((int)BitConverter.ToUInt32(info, 12) != pid) return null;
         var parent = (int)BitConverter.ToUInt32(info, 16);
