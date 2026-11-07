@@ -45,6 +45,9 @@ public class DiskGuardTests
         Assert.InRange(here.Free, 0, here.Total);
         Assert.Null(DiskSpace.Read(OperatingSystem.IsWindows() ? "?:\\nothing" : "/nothing/here/" + Guid.NewGuid().ToString("n")));
         Assert.Null(DiskSpace.Read(""));
+
+        // AND THE PRODUCT'S HOST READS THE REAL ONE: only a test's composed host stands a disk in.
+        Assert.Equal(here.Total, new AppHost().ReadDisk()?.Total);
     }
 
     // ---- the watch ---------------------------------------------------------------------------------------------------------
@@ -213,6 +216,26 @@ public class DiskGuardTests
         await life.RunUntil(() => host.Conversation.History.Any(t => t.Text.Contains("disk", StringComparison.Ordinal)), "the Chat page says why");
         await host.Mission.PauseAsync();
         Assert.Equal(0, life.Turns(Chair));
+    }
+
+    /// <summary>A turn typed on the Chat page with the loop paused is an AI process on the same disk: the owner's flag is off, and the guard ends it all the same.</summary>
+    [Fact]
+    public async Task A_chat_turn_with_the_loop_paused_is_on_as_far_as_the_guard_is_concerned()
+    {
+        await using var life = await PuppetLife.Begin("disk-chat-turn");
+        life.Script(Chair, ["signal turning", "await never", "usage 10 0 5", "final Never reached."]);
+        var host = life.Host;
+        Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+        var typed = host.Conversation!.SendAsync("hello");
+        await Until(() => life.Reached("turning") && life.Presence.Live > 0, "the typed turn is under way");
+        Assert.False(host.Mission.Running);
+
+        host.ReadDisk = () => Low;
+        await host.DiskGuardPassAsync();
+        Assert.NotNull(host.Gateway.Settings.DiskPause);
+
+        await typed.WaitAsync(PuppetLife.Patience);
+        await Until(() => life.Presence.Live == 0, "the typed turn's process left the register");
     }
 
     /// <summary>

@@ -531,9 +531,9 @@ public static class Posix
     const int RlimitFsize = 1, RlimitCore = 4;
 
     /// <summary>
-    /// THE LARGEST FILE AN AI'S PROCESS MAY WRITE: 1 GiB (<c>U-disk-guard</c>). A cell was measured writing about 2.5 GB/s, so one runaway file reaches this in
-    /// under half a second, well inside the free-space guard's read. Everything legitimate is far under it: a data export is at most 12 MB, an API seat's
-    /// <c>write_file</c> 256 KB, 36 months of a pair's one-minute bars about 100 MB, and the vendor CLI's own session files and logs are megabytes.
+    /// THE LARGEST FILE AN AI'S PROCESS MAY WRITE: 1 GiB (<c>U-disk-guard</c>). A plain process was measured writing about 2.5 GB/s, so one runaway file reaches this
+    /// in under half a second, well inside the free-space guard's read. What an AI legitimately writes is far under it: a data export is at most 12 MB, 36 months of a
+    /// pair's one-minute bars about 100 MB, and a vendor CLI's session files and logs megabytes to hundreds (read from what they are, not measured on a seat's home).
     /// </summary>
     public const long FileBound = 1L << 30;
 

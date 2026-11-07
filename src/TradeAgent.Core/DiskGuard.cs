@@ -29,8 +29,9 @@ public sealed record DiskSpace(long Free, long Total)
 /// other services their room and on a 128 GB laptop stops well before the machine does. <see cref="Least"/> is the 2 GB the Doctor has always
 /// asked for, under which the app's own ledgers are at risk whatever the disk's size.</para>
 ///
-/// <para><b>Why 10 GB is enough.</b> A cell was measured writing about 2.5 GB/s on this project's Mac's SSD, the fastest disk the app runs on,
-/// and the guard reads every <see cref="DiskWatch.Every"/>: about 5 GB gets through between two reads, and little more while the turns end.</para>
+/// <para><b>Why 10 GB holds.</b> A plain process was measured writing 2.1 to 3.1 GB/s on this project's Mac's SSD, and the guard reads every
+/// <see cref="DiskWatch.Every"/>: about 5 GB gets through between two reads, and a little more while the turns end. A faster disk gets more through;
+/// the owner's server's own rate was not measured.</para>
 /// </summary>
 public static class DiskFloor
 {
@@ -93,7 +94,7 @@ public sealed record DiskLook(DiskVerdict Verdict, DiskPause? Trip);
 public sealed class DiskWatch
 {
     /// <summary>
-    /// HOW OFTEN THE DISK IS READ. A statfs takes about a microsecond (measured), and at the 2.5 GB/s a cell was measured writing, half a minute
+    /// HOW OFTEN THE DISK IS READ. A statfs takes about a microsecond (measured), and at the 2.5 GB/s a plain process was measured writing, half a minute
     /// would let 75 GB past a 10 GB floor. So the read is frequent enough for the floor to mean something.
     /// </summary>
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(2);

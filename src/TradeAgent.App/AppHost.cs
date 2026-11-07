@@ -2767,7 +2767,7 @@ public sealed class AppHost : IAsyncDisposable
             });
         }
         finally { await Mission.PauseAsync(); }
-        Gateway.Log.Activity(line);
+        Gateway.Log.Activity(line, because is null ? "info" : "warn");
         Changed?.Invoke();
     }
 
@@ -2812,8 +2812,9 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// ONE LOOK. The AI is on when the owner's flag says so or the loop is running, so a restart that has not resumed yet counts (<see cref="ResumeOnStartAsync"/>).
-    /// Under the floor it pauses the AI through the owner's own path. It never resumes anything, and the health row says what it saw.
+    /// ONE LOOK. The AI is on when the owner's flag says so, so a restart that has not resumed yet counts (<see cref="ResumeOnStartAsync"/>), when the loop is running,
+    /// or when any AI process is alive, so a turn typed on the Chat page with the loop paused counts too. Under the floor it pauses the AI through the owner's own
+    /// path. It never resumes anything, and the health row says what it saw.
     /// </summary>
     internal async Task DiskGuardPassAsync()
     {
@@ -2822,8 +2823,7 @@ public sealed class AppHost : IAsyncDisposable
         catch (Exception) { reading = null; }
         if (reading is not null) _disk = reading;
 
-        var settings = Gateway.Settings;
-        var look = _diskWatch.Look(reading, DateTimeOffset.UtcNow, settings.AiWorksOnItsOwn || Mission.Running);
+        var look = _diskWatch.Look(reading, DateTimeOffset.UtcNow, Gateway.Settings.AiWorksOnItsOwn || Mission.Running || _presence.Live > 0);
         if (look.Trip is { } pause) await PauseForTheDiskAsync(pause);
         else if (_diskPauseUnsaved) SaveTheDiskPause();
 
