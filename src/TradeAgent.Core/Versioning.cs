@@ -489,8 +489,19 @@ public static class Versions
     /// INSERT trigger per artifact table in <c>ArtifactLineage.Kinds</c> — version, run, delivery, ledger entry, decision, forecast —
     /// refusing a row with no author position, or no attempt while a position wrote it. No backfill: a row before the rung reads
     /// "not recorded".</para>
+    ///
+    /// <para><b>54 — the admission ladder</b> (<c>U-admission-ladder</c>, rung <see cref="ToolLadderRung"/>, after <c>U-lineage-check</c>'s 53):
+    /// <c>tool_admission</c> (a registered tool: name, hash of its published copy, author position and attempt under the lineage trigger,
+    /// whether it feeds evidence, its author's description — never updated or deleted), <c>tool_conformance</c> (the app's measurement of
+    /// it on its declared vectors in a cell — never updated or deleted), <c>tool_ladder_event</c> (its steps: registered,
+    /// conformance-tested, offered by a decision to a scope, demoted, superseded — append-only; an offer of a tool that feeds evidence
+    /// refused by trigger without a passing latest measurement of its registered copy) and <c>tool_reuse</c> (one row per launch that used
+    /// an offered tool not its author's). New tables only.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ArtifactLineageRung;
+    public const int DatabaseSchemaVersion = ToolLadderRung;
+
+    /// <summary>The admission ladder's rung, spelled once (<c>U-admission-ladder</c>); a unit overtaken renumbers it here.</summary>
+    public const int ToolLadderRung = 54;
 
     /// <summary>The artifact-lineage rung, spelled once (<c>U-lineage-check</c>); a unit overtaken renumbers it here.</summary>
     public const int ArtifactLineageRung = 53;

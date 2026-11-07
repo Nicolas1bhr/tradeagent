@@ -5,14 +5,18 @@ namespace TradeAgent.Core.Db;
 /// authored it and the column naming the attempt that made it. <paramref name="AppAuthors"/> are the app's own principals
 /// that may author this kind with no attempt — the referee's holdout run is the app's measurement, not anybody's turn.
 /// </summary>
+/// <paramref name="Rung"/> is the schema rung that puts its trigger on its table: a table a later rung makes takes its trigger there.
 public sealed record ArtifactKindSpec(string Kind, string Table, string IdColumn, string AuthorColumn, string AttemptColumn,
-    IReadOnlyList<string> AppAuthors);
+    IReadOnlyList<string> AppAuthors, int Rung = Versions.ArtifactLineageRung);
 
 /// <summary>The kinds of artifact the contribution ledger will flow along (R26 stage 2 unit 1), by their one spelling.</summary>
 public static class ArtifactKind
 {
     public const string Version = "version", Run = "run", Delivery = "delivery", LedgerEntry = "ledger-entry",
         Decision = "decision", Forecast = "forecast";
+
+    /// <summary>A registered tool (<c>U-admission-ladder</c>, rung <see cref="Versions.ToolLadderRung"/>): its author and the attempt that registered it.</summary>
+    public const string Tool = "tool";
 }
 
 /// <summary>What a lineage read found on one artifact row.</summary>
@@ -86,6 +90,7 @@ public static class ArtifactLineage
         new(ArtifactKind.LedgerEntry, "ledger_entry", "id", "author", "attempt", []),
         new(ArtifactKind.Decision, "org_decision", "id", "position", "attempt_id", []),
         new(ArtifactKind.Forecast, "org_forecast", "id", "forecaster", "attempt_id", []),
+        new(ArtifactKind.Tool, "tool_admission", "id", "author", "attempt", [], Versions.ToolLadderRung),
     ];
 
     /// <summary>
@@ -111,6 +116,7 @@ public static class ArtifactLineage
         ["cell_assurance"] = "the assurance a cell launch ran under: the app's measurement",
         ["cell_assurance_row"] = "one row of a cell launch's assurance: the app's measurement",
         ["board_power_proposal"] = "a board seat's proposal of a power change: the board's own ledger",
+        ["tool_reuse"] = "one launch's use of an offered tool as its runtime reported it: the app's count, not work product",
     };
 
     /// <summary>The spec of <paramref name="kind"/>; an unknown kind is a programming error.</summary>

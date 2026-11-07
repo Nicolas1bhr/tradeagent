@@ -3297,10 +3297,108 @@ public sealed class Database : IDisposable
             // backfilled. The column added only where missing and the triggers IF NOT EXISTS, the stamp last: a crash between any
             // statement and the stamp runs this again over what it made.
             AddColumnIfMissing("org_delivery", "author", "TEXT REFERENCES org_position(id)");
-            foreach (var kind in ArtifactLineage.Kinds) Exec(ArtifactLineage.TriggerSql(kind));
+            foreach (var kind in ArtifactLineage.Kinds.Where(k => k.Rung == artifactLineageRung)) Exec(ArtifactLineage.TriggerSql(kind));
             Exec(ArtifactLineage.RevisionTriggerSql());
 
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{artifactLineageRung}') ON CONFLICT(key) DO UPDATE SET value='{artifactLineageRung}';");
+        }
+
+        // THE RUNG'S NUMBER, SPELLED ONCE (U-admission-ladder): a unit overtaken renumbers it in Versions, nothing else.
+        const int toolLadderRung = Versions.ToolLadderRung;
+        if (have < toolLadderRung)
+        {
+            // THE ADMISSION LADDER — `U-admission-ladder` (VISION § 6.6: "a tool or method offered to other seats — the admission ladder:
+            // registered, conformance-tested where it feeds evidence — and scoped publication"). An agent's own scratch has no row here
+            // and never will: a tool is first named when its author registers it (ToolLadder).
+            //
+            // `tool_admission` — a registered tool, its id the app's (from the hash of its published copy), its author position and the
+            // attempt that registered it under the lineage trigger (ArtifactLineage.Kinds), never updated or deleted: a new version is a
+            // new registration. A name belongs to the position that registered it first, refused by trigger for any other.
+            // `tool_conformance` — the APP's measurement of a tool on its declared vectors, run in a cell on its registered copy (the hash
+            // it ran on beside it); no verb writes it, and it is never updated or deleted (measurement and claim in separate tables).
+            // `tool_ladder_event` — the steps: registered, conformance-tested, offered (with the deciding head's decision and the scope
+            // unit, both required exactly there), demoted, superseded; append-only. An `offered` step of a tool that feeds evidence is
+            // refused unless the tool's latest measurement passed on its registered hash — whichever writer tried.
+            // `tool_reuse` — one row per launch of a position other than the author's whose runtime reported running an offered tool.
+            //
+            // Tables and triggers IF NOT EXISTS, the stamp last: a crash between any statement and the stamp runs this again over what
+            // it made. New tables only — nothing older is touched.
+            Exec("""
+                CREATE TABLE IF NOT EXISTS tool_admission(
+                  id             TEXT PRIMARY KEY CHECK (id GLOB 'tool-*'),
+                  name           TEXT NOT NULL,
+                  hash           TEXT NOT NULL UNIQUE,
+                  author         TEXT REFERENCES org_position(id),
+                  attempt        TEXT,
+                  feeds_evidence INTEGER NOT NULL CHECK (feeds_evidence IN (0, 1)),
+                  description    TEXT NOT NULL,
+                  at             TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_tool_admission_name ON tool_admission(name);
+                CREATE INDEX IF NOT EXISTS ix_tool_admission_author ON tool_admission(author);
+                CREATE TRIGGER IF NOT EXISTS tool_admission_fixed BEFORE UPDATE ON tool_admission
+                BEGIN SELECT RAISE(ABORT, 'a registered tool is refused an update: a new version is a new registration.'); END;
+                CREATE TRIGGER IF NOT EXISTS tool_admission_kept BEFORE DELETE ON tool_admission
+                BEGIN SELECT RAISE(ABORT, 'a registered tool is never deleted: its record stays.'); END;
+                CREATE TRIGGER IF NOT EXISTS tool_admission_one_author BEFORE INSERT ON tool_admission
+                WHEN EXISTS (SELECT 1 FROM tool_admission WHERE name = NEW.name AND author IS NOT NEW.author)
+                BEGIN SELECT RAISE(ABORT, 'admission: a tool name belongs to the position that registered it first.'); END;
+
+                CREATE TABLE IF NOT EXISTS tool_conformance(
+                  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                  tool    TEXT NOT NULL REFERENCES tool_admission(id),
+                  hash    TEXT NOT NULL,
+                  passed  INTEGER NOT NULL CHECK (passed IN (0, 1)),
+                  vectors INTEGER NOT NULL,
+                  runs    INTEGER NOT NULL,
+                  detail  TEXT NOT NULL,
+                  policy  TEXT,
+                  at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_tool_conformance_tool ON tool_conformance(tool, id);
+                CREATE TRIGGER IF NOT EXISTS tool_conformance_fixed BEFORE UPDATE ON tool_conformance
+                BEGIN SELECT RAISE(ABORT, 'a conformance measurement is refused an update: it is what the app measured.'); END;
+                CREATE TRIGGER IF NOT EXISTS tool_conformance_kept BEFORE DELETE ON tool_conformance
+                BEGIN SELECT RAISE(ABORT, 'a conformance measurement is never deleted.'); END;
+
+                CREATE TABLE IF NOT EXISTS tool_ladder_event(
+                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                  tool        TEXT NOT NULL REFERENCES tool_admission(id),
+                  kind        TEXT NOT NULL CHECK (kind IN ('registered', 'conformance-tested', 'offered', 'demoted', 'superseded')),
+                  actor       TEXT NOT NULL,
+                  decision    TEXT REFERENCES org_decision(id),
+                  scope       TEXT REFERENCES org_unit(id),
+                  conformance INTEGER REFERENCES tool_conformance(id),
+                  detail      TEXT NOT NULL,
+                  at          TEXT NOT NULL,
+                  CHECK ((kind = 'offered') = (decision IS NOT NULL AND scope IS NOT NULL))
+                );
+                CREATE INDEX IF NOT EXISTS ix_tool_ladder_event_tool ON tool_ladder_event(tool, id);
+                CREATE TRIGGER IF NOT EXISTS tool_ladder_event_fixed BEFORE UPDATE ON tool_ladder_event
+                BEGIN SELECT RAISE(ABORT, 'a ladder step is refused an update: the record is append-only.'); END;
+                CREATE TRIGGER IF NOT EXISTS tool_ladder_event_kept BEFORE DELETE ON tool_ladder_event
+                BEGIN SELECT RAISE(ABORT, 'a ladder step is never deleted: the record is append-only.'); END;
+                CREATE TRIGGER IF NOT EXISTS tool_offer_needs_conformance BEFORE INSERT ON tool_ladder_event
+                WHEN NEW.kind = 'offered'
+                 AND (SELECT feeds_evidence FROM tool_admission WHERE id = NEW.tool) = 1
+                 AND NOT EXISTS (SELECT 1 FROM tool_conformance c
+                                  WHERE c.id = (SELECT MAX(id) FROM tool_conformance WHERE tool = NEW.tool)
+                                    AND c.passed = 1
+                                    AND c.hash = (SELECT hash FROM tool_admission WHERE id = NEW.tool))
+                BEGIN SELECT RAISE(ABORT, 'admission: a tool that feeds evidence is offered only after its latest conformance measurement passed on its registered copy'); END;
+
+                CREATE TABLE IF NOT EXISTS tool_reuse(
+                  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                  tool     TEXT NOT NULL REFERENCES tool_admission(id),
+                  position TEXT NOT NULL,
+                  attempt  TEXT NOT NULL,
+                  at       TEXT NOT NULL,
+                  UNIQUE(tool, attempt)
+                );
+                """);
+            foreach (var kind in ArtifactLineage.Kinds.Where(k => k.Rung == toolLadderRung)) Exec(ArtifactLineage.TriggerSql(kind));
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{toolLadderRung}') ON CONFLICT(key) DO UPDATE SET value='{toolLadderRung}';");
         }
 
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;

@@ -69,7 +69,10 @@ public static class OrgDecisionKind
 
     public static readonly string[] Mandatory =
         [Charter, Merge, Close, "dormancy", EnvelopeTilt, "family-kill", "family-branch", "verdict-request",
-         "paper-nomination", "worker-replacement", "owner-proposal", Hire, Retire, ReviewAnswer];
+         "paper-nomination", "worker-replacement", "owner-proposal", Hire, Retire, ReviewAnswer, ToolOffer];
+
+    /// <summary>A registered tool offered to a head's subtree (<see cref="ToolLadder.Offer"/>; <c>U-admission-ladder</c>).</summary>
+    public const string ToolOffer = "tool-offer";
 
     /// <summary>A unit chartered (<see cref="OrgStore.Charter"/>); a position hired (<see cref="OrgStore.Hire"/>; <c>U-org-verbs-c</c>).</summary>
     public const string Charter = "charter", Hire = "hire";
