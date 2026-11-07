@@ -81,4 +81,19 @@ public class CellDenialTests
         Assert.Throws<ArgumentException>(() => CellDenial.CmdTokens("type {0}", "C:\\a\"b"));
         Assert.Throws<ArgumentException>(() => CellDenial.CmdTokens("type {0}", "C:\\a\\"));
     }
+
+    /// <summary>
+    /// THE KILL PROBE IS ONE SCRIPT WITH ITS CONTROL INSIDE: the cell's own process first, then the target, by Windows' own calls and never a cmdlet (a cell's PowerShell has no
+    /// module path) or the process list (a cell cannot see outside itself). No double quote: the script crosses a C-runtime command line unchanged.
+    /// </summary>
+    [Fact]
+    public void The_kill_probe_tries_its_own_process_first_and_asks_windows_directly()
+    {
+        var script = CellDenial.KillScript(4242);
+        Assert.DoesNotContain("\"", script, StringComparison.Ordinal);
+        Assert.True(script.IndexOf("'CTL-KILL'", StringComparison.Ordinal) < script.IndexOf("Hit 4242 'KILL'", StringComparison.Ordinal), script);
+        Assert.Contains("OpenProcess", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetProcessById", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("New-Object", script, StringComparison.Ordinal);
+    }
 }
