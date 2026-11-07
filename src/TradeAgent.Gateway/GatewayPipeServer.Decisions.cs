@@ -46,7 +46,7 @@ public sealed partial class GatewayPipeServer
     {
         OnlyDeclared(req, OrgRecordArgsWhy);
         var position = OrgVerbCaller(ctx, Capability.DecisionVerbs);
-        var claim = new ForecastClaim(Require(req, "predicate"), req.Str("subject"), Require(req, "target"),
+        var claim = new ForecastClaim(Require(req, "predicate"), req.Str("subject") is { Length: > 0 } subject ? subject : null, Require(req, "target"),
             When(Require(req, "by"), "by"),
             Probability(req.Args?.TryGetValue("probability", out var p) == true ? p
                 : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "'probability' is required: how likely you hold it, from 0 to 1. Nothing was written.")));

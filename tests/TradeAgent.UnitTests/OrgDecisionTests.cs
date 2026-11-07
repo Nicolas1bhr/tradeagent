@@ -333,6 +333,35 @@ public partial class OrgDecisionTests
             ("by", (by ?? Due).ToString("O")), ("probability", probability));
 
     /// <summary>
+    /// FORECAST-ADD READS A SUBJECT AS THE FORECAST LIST DOES (<c>U-t0-polish</c>, the Codex review): on a mandate, left out, null and "" are that mandate. On a decision
+    /// nothing supplies a subject, so null and "" are refused as a subject not named. Before, both reached the store as "" and were refused as no mandate.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task Forecast_add_reads_a_subject_null_or_empty_as_left_out(string? subject)
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        var assign = Frame(Ops.MandateAssign, ("holder", Member), ("goal", "find out whether the skew predicts the hour"), ("kind", "exploration"),
+            ("due", Due.ToString("O")), ("allocation", 5m));
+        var mandate = Body(await server.CallAsync(assign, Head, Launch(db, Head))).GetProperty("mandate").GetString()!;
+        IpcRequest On(string on) => Frame(Ops.ForecastAdd, ("on", on), ("predicate", ForecastVocabulary.MandateState), ("subject", subject!),
+            ("target", MandateEventKind.Expired), ("by", Due.ToString("O")), ("probability", 0.1m));
+
+        var added = await server.CallAsync(On(mandate), Head, Launch(db, Head));
+        Assert.True(added.Ok, Json.Write(added.Error));
+        Assert.Equal(mandate, Assert.Single(gw.Org.ForecastsOn(mandate)).Subject);
+
+        Assert.True((await server.CallAsync(RecordFrame(), Head, Launch(db, Head))).Ok);
+        var unnamed = await server.CallAsync(On(gw.Org.DecisionsOf(Head).Last().Id), Head, Launch(db, Head));
+        Assert.False(unnamed.Ok);
+        Assert.Contains("a forecast names its subject", unnamed.Error!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (c) A FORECAST ON AN OUTCOME ALREADY MEASURED IS REFUSED (precommitment, ORGANISATION § 5): a verdict-class forecast on a
     /// version that already has a verdict, and a mandate-state forecast on a closed mandate or on a state it has already reached —
     /// in words, nothing written. RED at base: no op existed.
