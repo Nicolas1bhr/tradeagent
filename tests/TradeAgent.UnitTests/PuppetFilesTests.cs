@@ -14,7 +14,11 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class PuppetFilesTests(ITestOutputHelper output)
 {
-    const int Rewrites = 20_000;
+    /// <summary>
+    /// Windows gets five times the rewrites. Its gap was met 1 or 2 times in 20 000 on CI (runs 42309831845, 42340766269), which a green run of that length
+    /// says little about; at this length a rename that lets a reader be refused goes red on every run.
+    /// </summary>
+    static readonly int Rewrites = OperatingSystem.IsWindows() ? 100_000 : 20_000;
     const int LogLines = 1_500;
 
     static string Folder()
@@ -25,8 +29,9 @@ public class PuppetFilesTests(ITestOutputHelper output)
     }
 
     /// <summary>A writer thread rewrites until done; a reader thread reads in a loop meanwhile. Returns the reads that threw.</summary>
-    static List<string> Race(Action<int> write, Func<int> read, ITestOutputHelper output, int rewrites = Rewrites)
+    static List<string> Race(Action<int> write, Func<int> read, ITestOutputHelper output, int? count = null)
     {
+        var rewrites = count ?? Rewrites;
         var failures = new List<string>();
         var done = false;
         var reads = 0;
