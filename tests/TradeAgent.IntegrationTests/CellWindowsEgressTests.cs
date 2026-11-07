@@ -362,10 +362,11 @@ public sealed class CellWindowsEgressTests : IDisposable
 
     /// <summary>
     /// THE TREE ENDS BY THE JOB'S OWN COUNT (Codex): a process can set its DACL against the sweep's token reader, never its place in the job. A shell and a detached child, ended; the
-    /// count reads none the moment the call returns.
+    /// count reads none the moment the call returns. On 26100 the count already reads none when Windows' terminate returns, so this does not show the bounded wait for a slower
+    /// one: a mutant without that wait passed here.
     /// </summary>
     [WindowsFact]
-    public async Task Ending_a_cell_waits_until_the_jobs_own_count_reads_none()
+    public async Task Ending_a_cell_ends_its_whole_tree_by_the_jobs_own_count()
     {
         var ws = Directory.CreateDirectory(Path.Combine(_root, "end-ws")).FullName;
         var profile = WindowsCellStage.ProfileName(WindowsCellSlots.Count - 1);
