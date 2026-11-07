@@ -246,10 +246,11 @@ public static class WindowsCellBenchmark
             // (exit 6/7/28), not the launcher's, so a missing or unstartable curl fails the row instead of passing it.
             await Row("no-egress", async () =>
             {
-                var (code, o) = await Run(none, curl, "-sS", "-o", Path.Combine(ws, "n.out"), "-w", "HTTP=%{http_code}", "--connect-timeout", "8", "--max-time", "12", $"https://{Remote}/");
+                var (code, o) = await Run(none, curl, "-sS", "-o", Path.Combine(ws, "n.out"), "-w", "HTTP=%{http_code} C=%{time_connect}", "--connect-timeout", "8", "--max-time", "12", $"https://{Remote}/");
                 // REACHABLE FROM OUTSIDE A CELL, OR THE ROW PROVES NOTHING: on a computer with no network every cell fails to reach the internet.
                 var outsideReaches = await OutsideReaches($"https://{Remote}/");
-                return (outsideReaches && CurlFailedToReach(code) && !Reached(o),
+                // NO CONNECTION WAS MADE: curl's 28 and 35 can also come after one (Codex).
+                return (outsideReaches && CurlFailedToReach(code) && !Reached(o) && !Connected(o),
                     $"{Remote}:443 with no capability: {Trim(o)}; reachable from outside a cell: {(outsideReaches ? "yes" : "NO, so this proves nothing")}");
             });
 
@@ -610,7 +611,7 @@ public static class WindowsCellBenchmark
             // with CRYPT_E_REVOCATION_OFFLINE (measured, CI run 42332664334) and this row is about reach, not about that.
             var body = "echo READY & set /p go= & " +
                        $"echo ==443== & curl -sS --ssl-no-revoke -o web{slot}-443.out -D - --connect-timeout 10 --max-time 15 https://{Remote}/ 2>&1 & " +
-                       $"echo ==80== & curl -sS -o web{slot}-80.out -D - --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
+                       $"echo ==80== & curl -sS -o web{slot}-80.out -D - -w C=%{{time_connect}} --connect-timeout 8 --max-time 12 http://{Remote}:80/ 2>&1 & " +
                        $"echo ==other== & curl -sS -o web{slot}-other.out -w C=%{{time_connect}} --connect-timeout 6 --max-time 8 http://{other}/ 2>&1 & " +
                        $"echo ==dns== & nslookup -timeout=3 -retry=1 {Remote} {resolver} 2>&1";
             string output;
@@ -649,7 +650,7 @@ public static class WindowsCellBenchmark
             var (s443, s80, sOther, sdns) = (Section(output, "443"), Section(output, "80"), Section(output, "other"), Section(output, "dns"));
             var got443 = s443.Contains("HTTP/", StringComparison.Ordinal);
             // CURL'S OWN FAILURE, NEVER ANOTHER: a tool that did not run prints no "curl: (n)", and fails these as it fails the 443 above.
-            var refused80 = !s80.Contains("HTTP/", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(s80, @"curl: \((6|7|28|35)\)");
+            var refused80 = !Connected(s80) && !s80.Contains("HTTP/", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(s80, @"curl: \((6|7|28)\)");
             var refusedOther = !Connected(sOther) && System.Text.RegularExpressions.Regex.IsMatch(sOther, @"curl: \((6|7|28)\)");
             // THE SAME QUERY WAS ANSWERED OUTSIDE A CELL A MOMENT AGO, so what nslookup prints here without an answer is its query not arriving, not the resolver's refusal.
             var unanswered = sdns.Contains(resolver!, StringComparison.Ordinal) && !Answered(sdns, resolver!);

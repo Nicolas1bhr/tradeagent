@@ -28,12 +28,12 @@ public enum CellWebPhase
 /// <summary>
 /// THE OWNER'S ONE PRESS FOR WEB ON WINDOWS (<c>U-cell-windows-egress</c> item 1; R25 D2): one press, then Windows' own permission prompt and his
 /// "Yes" — the only burden the product rule lets him bear. Platform-free so its words are tested anywhere: <paramref name="ask"/> starts the one
-/// fixed elevated helper (<see cref="WindowsCellEgress.Request"/>), <paramref name="measure"/> re-runs the benchmark and returns its sentence,
+/// fixed elevated helper (<see cref="WindowsCellEgress.Request"/>), <paramref name="measure"/> re-runs the benchmark and returns its sentence and whether THAT run proved web,
 /// and <paramref name="webProved"/> reads the newest Windows proof (null: no proof at all; false: egress none; true: web). Whether web holds
-/// is the proof's word only — a placed rule the benchmark did not measure on every slot is a failure, said, and the cells stay at none.
+/// is the measurement's word only — a placed rule the benchmark did not measure on every slot is a failure, said, even where an older proof names web.
 /// One press at a time: a press while one is running does nothing.
 /// </summary>
-public sealed class CellWebPress(Func<Task<(EgressAsk Outcome, string Why)>> ask, Func<Task<string>> measure, Func<bool?> webProved)
+public sealed class CellWebPress(Func<Task<(EgressAsk Outcome, string Why)>> ask, Func<Task<(string Said, bool Proved)>> measure, Func<bool?> webProved)
 {
     readonly Lock _gate = new();
     CellWebPhase _running = CellWebPhase.Hidden;
@@ -48,7 +48,7 @@ public sealed class CellWebPress(Func<Task<(EgressAsk Outcome, string Why)>> ask
                 if (_running != CellWebPhase.Hidden) return _running;
             return webProved() switch
             {
-                true => CellWebPhase.Proved,
+                true => _last is { Phase: CellWebPhase.Failed } ? CellWebPhase.Failed : CellWebPhase.Proved,
                 null => CellWebPhase.Hidden,
                 false => _last is { Phase: not CellWebPhase.Proved } last ? last.Phase : CellWebPhase.Offered
             };
@@ -93,9 +93,9 @@ public sealed class CellWebPress(Func<Task<(EgressAsk Outcome, string Why)>> ask
             if (outcome == EgressAsk.Declined) { Settle(CellWebPhase.Declined, ""); return; }
             if (outcome != EgressAsk.Placed) { Settle(CellWebPhase.Failed, why); return; }
             lock (_gate) _running = CellWebPhase.Measuring;
-            var said = await measure();
-            Settle(webProved() == true ? CellWebPhase.Proved : CellWebPhase.Failed,
-                webProved() == true ? "" : Labels.CellWebNotMeasured(said));
+            var (said, proved) = await measure();
+            proved = proved && webProved() == true;
+            Settle(proved ? CellWebPhase.Proved : CellWebPhase.Failed, proved ? "" : Labels.CellWebNotMeasured(said));
         }
         catch (Exception ex) { Settle(CellWebPhase.Failed, ex.Message); }
     }

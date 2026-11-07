@@ -624,6 +624,23 @@ public sealed class AppContainerProcess : IDisposable
         _job != IntPtr.Zero && AppContainerCell.QueryInformationJobObject(_job, AppContainerCell.JobObjectBasicAccountingInformation, out var info,
             Marshal.SizeOf<AppContainerCell.BasicAccounting>(), IntPtr.Zero) ? (int)info.ActiveProcesses : -1;
 
+    /// <summary>
+    /// ENDS EVERY PROCESS IN THE JOB AND WAITS, bounded, until the job's own count reads none. False when something still ran when <paramref name="patience"/> ran out, or Windows
+    /// would not say. A kernel count: a process can hide its token from a reader, never its place in the job.
+    /// </summary>
+    public bool EndAll(TimeSpan patience)
+    {
+        if (_job == IntPtr.Zero) return true;
+        AppContainerCell.TerminateJobObject(_job, 1);
+        var until = DateTime.UtcNow + patience;
+        while (ActiveProcesses is var left && left != 0)
+        {
+            if (left < 0 || DateTime.UtcNow >= until) return false;
+            Thread.Sleep(10);
+        }
+        return true;
+    }
+
     /// <summary>Whether process <paramref name="pid"/> is in this cell's job (false when it cannot be opened, or is gone).</summary>
     public bool Holds(int pid)
     {

@@ -137,16 +137,30 @@ public static class WindowsCellEgress
     }
 
     /// <summary>
-    /// WHETHER THE FIREWALL HOLDS THE RULE SET OF THE HOME <paramref name="home"/> RIGHT NOW, exactly (R29 F-D2): a proof says what was measured at the
-    /// start, and a rule removed since would leave a <c>web</c> cell every port. Asked at each launch that would run under <c>web</c>. A firewall that
-    /// cannot be read does not hold it.
+    /// WHETHER THE FIREWALL HOLDS THE RULE SET OF THE HOME <paramref name="home"/> RIGHT NOW, exactly and in force (R29 F-D2): a proof says what was measured at the
+    /// start, and a rule removed since, or a firewall turned off under it, would leave a <c>web</c> cell every port. Asked at each launch that would run under
+    /// <c>web</c>. A firewall that cannot be read does not hold it.
     /// </summary>
     public static bool Holds(string home)
     {
         if (!OperatingSystem.IsWindows()) return false;
-        try { return Missing(RulesFor(home)).Count == 0; }
+        try { return InForce() && Missing(RulesFor(home)).Count == 0; }
         catch (Exception ex) when (ex is COMException or IOException or InvalidCastException or ArgumentException or UnauthorizedAccessException or TradeAgentException
                                        or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return false; }
+    }
+
+    /// <summary>
+    /// WHETHER WINDOWS APPLIES ITS RULES NOW (Codex): a rule read back exactly does nothing on a profile whose firewall is off, on an interface excluded from it, or where group
+    /// policy sets the local rules aside. Each network profile in use now is asked, so a laptop that changes network is read again at its next launch.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    static bool InForce()
+    {
+        var policy = Policy();
+        var current = (int)policy.CurrentProfileTypes;
+        foreach (var profile in new[] { 1, 2, 4 })
+            if ((current & profile) != 0 && (!(bool)policy.FirewallEnabled[profile] || !NoInterfaces(policy.ExcludedInterfaces[profile]))) return false;
+        return (int)policy.LocalPolicyModifyState != GroupPolicyOverride;
     }
 
     /// <summary>Removes every rule named in <paramref name="rules"/> (elevated) — a test's cleanup on CI's disposable runner; the product never removes.</summary>
@@ -183,7 +197,7 @@ public static class WindowsCellEgress
         catch (Win32Exception ex) { return (EgressAsk.Failed, ex.Message); }
     }
 
-    const int ErrorCancelled = 1223, DirectionOut = 2, ActionBlock = 0, AllProfiles = 0x7FFFFFFF;
+    const int ErrorCancelled = 1223, DirectionOut = 2, ActionBlock = 0, AllProfiles = 0x7FFFFFFF, GroupPolicyOverride = 1;
 
     [SupportedOSPlatform("windows")]
     static dynamic Policy() => Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2", throwOnError: true)!)!;
@@ -202,8 +216,8 @@ public static class WindowsCellEgress
 
     /// <summary>
     /// Whether a present rule is exactly the one placed — and narrows nothing: outbound block, the protocol, the remote ports, the container,
-    /// every profile, every interface type and no named interface, enabled, and no address, local port, program or service condition that would
-    /// make it block less.
+    /// every profile, every interface type and no named interface, enabled, and no address, local port, program, service or account condition that
+    /// would make it block less.
     /// </summary>
     static bool Matches(dynamic present, EgressRule rule)
     {
@@ -215,6 +229,7 @@ public static class WindowsCellEgress
             && S(present.RemoteAddresses) == "*" && S(present.LocalAddresses) == "*" && S(present.LocalPorts) == "*"
             && string.Equals(S(present.InterfaceTypes), "All", StringComparison.OrdinalIgnoreCase)
             && S(present.ApplicationName).Length == 0 && S(present.ServiceName).Length == 0
+            && S(present.LocalUserOwner).Length == 0 && S(present.LocalUserAuthorizedList).Length == 0   // Codex: a rule kept to one account blocks nothing for this one
             && NoInterfaces(present.Interfaces);   // Codex: a rule bound to named interfaces (Ethernet only) blocks nothing on Wi-Fi
     }
 

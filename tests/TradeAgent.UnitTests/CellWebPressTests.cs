@@ -62,7 +62,7 @@ public class CellWebPressTests
             {
                 Measured++;
                 if (MeasureProves) Web = true;
-                return Task.FromResult("cell proof 7 written, egress none: web-nothing-else (slot 8 80 NOT refused)");
+                return Task.FromResult(("cell proof 7 written, egress none: web-nothing-else (slot 8 80 NOT refused)", MeasureProves));
             },
             () => Web);
     }
@@ -93,6 +93,26 @@ public class CellWebPressTests
         Assert.Contains("the helper ended with 4", press.Words, StringComparison.Ordinal);
         Assert.Contains("no internet", press.Words, StringComparison.Ordinal);
         Assert.Equal(0, f.Measured);
+    }
+
+    /// <summary>
+    /// THE MEASUREMENT'S WORD, NEVER AN OLDER PROOF'S (Codex): the rule was gone, the press put it back, and the benchmark then proved nothing, so no new proof was written. The older
+    /// proof naming web reads true again, and the press still says it failed.
+    /// </summary>
+    [Fact]
+    public async Task An_older_proof_never_answers_for_a_measurement_that_failed()
+    {
+        var f = new Fake();
+        f.Gate = new TaskCompletionSource();
+        var press = f.Press();
+        var pressing = press.Press();
+        f.Web = true;   // the helper put the rule back: the older proof's web reads true again
+        f.Gate.SetResult();
+        await pressing;
+        Assert.Equal(1, f.Measured);
+        Assert.Equal(CellWebPhase.Failed, press.Phase);
+        Assert.True(press.CanPress);
+        Assert.Contains("did not show it holding", press.Words, StringComparison.Ordinal);
     }
 
     [Fact]

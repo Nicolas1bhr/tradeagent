@@ -999,9 +999,9 @@ public sealed class AppHost : IAsyncDisposable
         () => Task.Run(() => WindowsCellEgress.Request(Environment.ProcessPath)),
         async () =>
         {
-            var said = await ProveWindowsCellsAsync(_loop?.Token ?? CancellationToken.None);
+            var (said, proved) = await ProveWindowsCellsAsync(_loop?.Token ?? CancellationToken.None);
             _webRuleStands = await Task.Run(() => WindowsCellEgress.Holds(Paths.Home));   // read now, or the press would be judged on the read before it
-            return said;
+            return (said, proved);
         },
         WindowsWebProved);
 
@@ -1009,7 +1009,7 @@ public sealed class AppHost : IAsyncDisposable
     readonly SemaphoreSlim _windowsBench = new(1, 1);
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    async Task<string> ProveWindowsCellsAsync(CancellationToken ct)
+    async Task<(string Said, bool Proved)> ProveWindowsCellsAsync(CancellationToken ct)
     {
         await _windowsBench.WaitAsync(ct);
         try
@@ -1021,12 +1021,12 @@ public sealed class AppHost : IAsyncDisposable
             using (_presence.Enter())
                 result = await WindowsCellBenchmark.RunAsync(_db!, exe, manifest?.Install.ExecutableSha256 ?? "", ct: ct);
             Gateway.Log.Activity("Cell benchmark: " + result.Sentence, result.ProofId is null ? "warn" : "info");
-            return result.Sentence;
+            return (result.Sentence, result.ProofId is not null && CellBenchmark.WindowsWebRows.All(n => result.Rows.Any(r => r.Name == n && r.Held)));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
-            return $"the check could not run: {ex.Message}";
+            return ($"the check could not run: {ex.Message}", false);
         }
         finally { _windowsBench.Release(); }
     }

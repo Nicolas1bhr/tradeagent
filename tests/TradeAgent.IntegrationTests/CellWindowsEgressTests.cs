@@ -319,6 +319,64 @@ public sealed class CellWindowsEgressTests : IDisposable
     }
 
     /// <summary>
+    /// THE RULE READ BACK IS NOT THE RULE IN FORCE (Codex): every rule exact and the current profile's firewall turned off, the launch's read says no; and a rule kept to one account no
+    /// longer matches what the helper placed, so the helper repairs it. CI's disposable runner only: this turns the firewall off for a moment.
+    /// </summary>
+    [WindowsAdminFact]
+    public void A_rule_that_is_not_in_force_or_is_kept_to_one_account_does_not_hold()
+    {
+        RequireElevated();
+        var rules = WindowsCellEgress.RulesFor(Paths.Home);
+        static void Netsh(string state)
+        {
+            using var p = Process.Start(new ProcessStartInfo("netsh", $"advfirewall set currentprofile state {state}") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+            p.StandardOutput.ReadToEnd();
+            p.WaitForExit(20_000);
+            Assert.Equal(0, p.ExitCode);
+        }
+        try
+        {
+            WindowsCellEgress.RemoveForTests(rules);
+            WindowsCellEgress.Place(rules);
+            Assert.True(WindowsCellEgress.Holds(Paths.Home));
+
+            Netsh("off");
+            Assert.False(WindowsCellEgress.Holds(Paths.Home), "the rule holds with the firewall off");
+            Assert.Empty(WindowsCellEgress.Missing(rules));
+            Netsh("on");
+            Assert.True(WindowsCellEgress.Holds(Paths.Home));
+
+            dynamic policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2", throwOnError: true)!)!;
+            dynamic rule = policy.Rules.Item(rules[0].Name);
+            rule.LocalUserOwner = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+            Assert.Equal([rules[0].Name], WindowsCellEgress.Missing(rules));
+            WindowsCellEgress.Place(rules);
+            Assert.Empty(WindowsCellEgress.Missing(rules));
+        }
+        finally
+        {
+            Netsh("on");
+            WindowsCellEgress.RemoveForTests(rules);
+        }
+    }
+
+    /// <summary>
+    /// THE TREE ENDS BY THE JOB'S OWN COUNT (Codex): a process can set its DACL against the sweep's token reader, never its place in the job. A shell and a detached child, ended; the
+    /// count reads none the moment the call returns.
+    /// </summary>
+    [WindowsFact]
+    public async Task Ending_a_cell_waits_until_the_jobs_own_count_reads_none()
+    {
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "end-ws")).FullName;
+        var profile = WindowsCellStage.ProfileName(WindowsCellSlots.Count - 1);
+        var sid = AppContainerCell.Profile(profile, "A TradeAgent cell: an AI's programs, confined");
+        using var cell = AppContainerCell.Start(Cmd, ["/d", "/c", "start /b findstr x & findstr y"], ws, Policy(ws, CellEgress.None).Environment, sid, []);
+        Assert.True(await Until(() => cell.ActiveProcesses, n => n >= 2) >= 2, "the cell's two readers never started");
+        Assert.True(cell.EndAll(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, cell.ActiveProcesses);
+    }
+
+    /// <summary>
     /// R29 F-D3, MEASURED: the sweep could only be turned on the owner's files by a junction a cell made to point at them. A cell makes a junction at a folder it may write and is
     /// refused one at a folder it may not, though the same line makes it outside any cell: Windows' rule for sandboxed processes. So what such a swap could reach is what the cell
     /// could already delete.
