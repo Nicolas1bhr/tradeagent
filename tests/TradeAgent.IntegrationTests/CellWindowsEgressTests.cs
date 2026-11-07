@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Security;
 using Xunit;
 using Xunit.Abstractions;
@@ -245,6 +247,156 @@ public sealed class CellWindowsEgressTests : IDisposable
             try { outside?.Kill(); } catch (Exception) { /* gone */ }
             outside?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// THE LINE MAIN'S ROW RAN (u-kit-socket-2's box run printed "La syntaxe du nom de fichier…" and counted it held): a quoted path on a cell's cmd line reaches cmd as the C
+    /// runtime's <c>\"</c>, which it cannot parse, so the command never ran and the row printed DENIED. Through a real cell and the same line outside one, this is no denial.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_row_whose_line_cannot_run_fails_the_proof_though_it_printed_denied()
+    {
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "broken-ws")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_root, "broken-outside")).FullName;
+        var target = Path.Combine(_root, "target.txt");
+        File.WriteAllText(target, "target");
+        var (held, seen) = await WindowsCellBenchmark.DenialRowAsync(Policy(ws, CellEgress.None), [new DenialProbe("READ", $"type \"{target}\" > {{sink}}", target, target)],
+            outside, Launcher(), CellPlatform.Read());
+        _out.WriteLine(seen);
+        Assert.False(held, "a line cmd cannot parse passed for a denial: " + seen);
+        Assert.Contains("the same line fails outside a cell too", seen, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A FORBIDDEN LINE, MEASURED ALL THREE WAYS: the workspace target opens in the cell, the forbidden one is denied there, and the same line opens it outside. A path holding a
+    /// space goes through as one argument. The control run of the row above: the same engine, a line that runs.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_row_whose_line_runs_is_held_only_by_the_cell()
+    {
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "ok-ws")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_root, "ok-outside")).FullName;
+        var control = Path.Combine(ws, "control.txt");
+        File.WriteAllText(control, "control");
+        var folder = Directory.CreateDirectory(Path.Combine(_root, "a folder")).FullName;
+        var target = Path.Combine(folder, "target.txt");
+        File.WriteAllText(target, "target");
+        var (held, seen) = await WindowsCellBenchmark.DenialRowAsync(Policy(ws, CellEgress.None), [new DenialProbe("READ", "type {path} > {sink}", target, control)],
+            outside, Launcher(), CellPlatform.Read());
+        _out.WriteLine(seen);
+        Assert.True(held, seen);
+    }
+
+    /// <summary>
+    /// R29 F-D2, THE RULE AT EVERY LAUNCH: a proof names web and the rule stands: web. The rule removed since, the proof untouched: the firewall is read and the launch runs under none.
+    /// Read for real here, every slot's two rules; the decision itself is <c>CellWindowsProviderTests</c>' on every platform.
+    /// </summary>
+    [WindowsAdminFact]
+    public void A_rule_removed_since_the_proof_sends_the_next_launch_to_none()
+    {
+        RequireElevated();
+        var rules = WindowsCellEgress.RulesFor(Paths.Home);
+        using var db = TestEnv.NewDb();
+        Directory.CreateDirectory(Paths.State);
+        File.WriteAllText(Path.Combine(Paths.State, "trade.sha256"), new string('a', 64));
+        var platform = CellPlatform.Read();
+        new CellProofStore(db).Record(RouteA.WindowsProvider, CellBenchmark.Profile(RouteA.WindowsProvider, platform, "pin"), [CellEgress.None.Name, CellEgress.Web.Name]);
+        try
+        {
+            WindowsCellEgress.RemoveForTests(rules);
+            WindowsCellEgress.Place(rules);
+            Assert.True(WindowsCellEgress.Holds(Paths.Home));
+            Assert.Equal(CellEgress.Web.Name, RouteA.AdmissionOn(new CellRoute(db), "pin", platform, CellEgress.Web).Egress.Name);
+
+            WindowsCellEgress.RemoveForTests([rules[^1]]);
+            Assert.False(WindowsCellEgress.Holds(Paths.Home));
+            var (proof, egress, refusal) = RouteA.AdmissionOn(new CellRoute(db), "pin", platform, CellEgress.Web);
+            Assert.Null(refusal);
+            Assert.NotNull(proof);
+            Assert.Equal(CellEgress.None.Name, egress.Name);
+        }
+        finally { WindowsCellEgress.RemoveForTests(rules); }
+    }
+
+    /// <summary>
+    /// R29 F-D3: THE SWEEP DECIDES "NOT A LINK" FROM WHAT IT ENUMERATED, THEN GOES IN AS THE OWNER. With a process of the slot's container alive, the sweep refuses and the storage is
+    /// untouched; with it gone, the same sweep empties it.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_slots_storage_is_left_alone_while_a_process_of_its_container_runs()
+    {
+        var profile = WindowsCellStage.ProfileName(WindowsCellSlots.Count);
+        var sid = AppContainerCell.Profile(profile, "A TradeAgent cell: an AI's programs, confined");
+        var temp = Directory.CreateDirectory(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", profile, "AC", "Temp")).FullName;
+        var left = Path.Combine(temp, "left-behind.txt");
+        File.WriteAllText(left, "left");
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        using var cell = AppContainerCell.Start(Cmd, ["/d", "/c", "findstr x"], temp,
+            [new("SystemRoot", windows), new("PATH", Path.GetDirectoryName(Cmd)!)], sid, []);
+        Assert.Contains(cell.Id, await Until(() => WindowsCellStage.ProcessesOf(sid), p => p.Count > 0));
+
+        var refused = Assert.Throws<TradeAgentException>(() => WindowsCellStage.SweepSlot(WindowsCellSlots.Count));
+        _out.WriteLine(refused.Message);
+        Assert.Contains("still has", refused.Message, StringComparison.Ordinal);
+        Assert.True(File.Exists(left), "the sweep walked the storage of a container with a process alive");
+
+        cell.Kill();
+        await Until(() => WindowsCellStage.ProcessesOf(sid), p => p.Count == 0);
+        Assert.True(WindowsCellStage.SweepSlot(WindowsCellSlots.Count));
+        Assert.False(File.Exists(left), "the sweep did not empty the storage once nothing ran in it");
+    }
+
+    /// <summary>
+    /// R29 F-D4: A STAGE IN A JOB THAT WOULD NOT END IT IS NO STAGE OF TRADEAGENT'S. <c>IsProcessInJob</c> with no job answers true for any job at all. In a job that is not kill-on-close
+    /// the stage refuses and starts nothing; the attempt's own job admits it, which every other cell row here measures.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_stage_in_a_job_that_would_not_end_it_starts_nothing()
+    {
+        var ws = Directory.CreateDirectory(Path.Combine(_root, "job-ws")).FullName;
+        var launcher = Launcher();
+        var psi = new ProcessStartInfo(launcher[0]) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in (string[])[.. launcher.Skip(1), ContainedLaunch.Flag, ContainedLaunch.CellFlag, Policy(ws, CellEgress.None).Write(), Cmd, "/d", "/c", "echo", "ENTERED"])
+            psi.ArgumentList.Add(a);
+        psi.Environment["TRADEAGENT_HOME"] = Paths.Home;
+        var job = CreateJobObject(IntPtr.Zero, null);
+        Assert.NotEqual(IntPtr.Zero, job);
+        try
+        {
+            using var stage = Process.Start(psi)!;
+            Assert.True(AssignProcessToJobObject(job, stage.Handle), "the test could not put the stage in its job");
+            var so = stage.StandardOutput.ReadToEndAsync();
+            var se = stage.StandardError.ReadToEndAsync();
+            await stage.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+            var (printed, said) = (await so, await se);
+            _out.WriteLine($"exit {stage.ExitCode}: {printed} | {said}");
+            Assert.Equal(WindowsCellStage.Failed, stage.ExitCode);
+            Assert.DoesNotContain("ENTERED", printed, StringComparison.Ordinal);
+            Assert.Contains("job", said, StringComparison.Ordinal);
+        }
+        finally { CloseHandle(job); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "CreateJobObjectW")]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string? name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseHandle(IntPtr handle);
+
+    static async Task<T> Until<T>(Func<T> read, Func<T, bool> done)
+    {
+        var seen = read();
+        for (var i = 0; i < 300 && !done(seen); i++)
+        {
+            await Task.Delay(50);
+            seen = read();
+        }
+        return seen;
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------------------------------
