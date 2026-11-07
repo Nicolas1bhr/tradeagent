@@ -1108,4 +1108,83 @@ public class TurnBoundsTests : IDisposable
         var shown = page.CardOf(OrgSurfaceSeed.Team)!.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text).ToList();
         Assert.Single(shown, t => t == words);
     }
+
+    // ---- U-turn-cards: what U-turn-bounds-2 carded ---------------------------------------------------------------------
+
+    const string WorkingThenHung = """
+        {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+        {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Working."}}
+        """;
+
+    /// <summary>
+    /// U-TURN-CARDS ITEM 2, RED FIRST: A TURN THE LOOP'S OWN STOP ENDED KEEPS WHAT THE RECORDS SHOW FINISHED. The stop gives back what nothing speaks for
+    /// (U-wake-fairness), but the brief the owner's words became was published in the same commit, so giving them back cleared that link and ran them
+    /// again: one message, two briefs. The relay's measurement and the decider's judgment against this launch settle their wakes; the look comes back.
+    /// RED on the base: the words were owed again, Blocked with the stop's sentence, and the judged delivery was given back.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_loops_stop_ended_keeps_what_the_records_show_finished()
+    {
+        var name = nameof(A_turn_the_loops_stop_ended_keeps_what_the_records_show_finished);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = AgentRuntimeProbe.SessionOverStream(WorkingThenHung, manifest: VendorLimitTests.Codex, hangSeconds: 300, name: name);
+        var working = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chat.TurnAdded += t => { if (t.Role == ChatRole.Ai) working.TrySetResult(); };
+
+        Assert.True(events.RecordOwnerMessage("brief Research on the skew", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), Ops);
+        events.Raise(look, MissionEventKind.Review, now, role: Ops);
+        var judged = MissionEventIds.ForRole("delivery-wake", Ops);
+        events.Raise(judged, MissionEventKind.Delivery, now, payload: "man-judged", role: Ops);
+
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now,
+            Finished = (wake, _) => wake.Id == judged,
+            Relayed = () => events.SettleWithoutTurn(owner, MissionEventDisposition.Delegated, "pub-brief")
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        loop.Start();
+        await working.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await loop.PauseAsync();
+
+        Assert.Single(host.Opened);
+        var again = events.Get(look)!;
+        Assert.False(again.Consumed, $"a look nothing speaks for was spent: {again.Disposition}");
+        Assert.Null(again.Disposition);
+        var finished = events.Get(judged)!;
+        Assert.True(finished.Consumed, "a judgment on the record was given back to run again");
+        Assert.Equal(MissionEventDisposition.Answered, finished.Disposition);
+        var brief = events.Get(owner)!;
+        Assert.True(brief.Consumed, $"words the turn already turned into a brief were owed again: {brief.Disposition} {brief.DispositionDetail}");
+        Assert.Equal(MissionEventDisposition.Delegated, brief.Disposition);
+        Assert.Equal("pub-brief", brief.DispositionDetail);
+    }
+
+    const string LimitThenHung = """
+        {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+        {"type":"turn.started"}
+        {"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"PLAN.md\n","exit_code":0,"status":"completed"}}
+        {"type":"error","message":"You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 10:30 PM."}
+        {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Working."}}
+        """;
+
+    /// <summary>
+    /// U-TURN-CARDS ITEM 3, RED FIRST: A VENDOR LIMIT READ BEFORE A CANCEL IS CARRIED OUT OF THE TURN. The read threw before it returned what the stream had
+    /// said, so the turn ended with no limit: no hold was set, and the next launch on the same plan was refused and charged again. Now the ending carries the
+    /// vendor's sentence, with whether work came before it, as a turn that ran to its end does. RED on the base: the ending's limit was null.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_read_keeps_the_vendors_limit_it_had_read()
+    {
+        var (ended, _) = await CutAtTheRead(nameof(A_cancelled_read_keeps_the_vendors_limit_it_had_read), LimitThenHung);
+
+        Assert.NotNull(ended.Limit);
+        Assert.Equal(VendorLimitTests.VendorSaid, ended.Limit!.Message);
+        Assert.False(ended.Limit.BeforeAnyWork);
+        Assert.NotNull(ended.Limit.RetryAt);
+    }
 }

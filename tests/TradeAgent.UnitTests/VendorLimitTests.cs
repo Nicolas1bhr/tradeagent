@@ -446,13 +446,17 @@ public class VendorLimitTests : IDisposable
     }
 
     /// <summary>
-    /// A GUARD: A LIMIT MET AFTER WORK KEEPS TODAY'S SETTLEMENT. The turn ran a command, so the work happened and may have
-    /// been billed; its wakes are settled <c>failed</c> and the owner's words retried once, as any failed turn's.
+    /// U-TURN-CARDS ITEM 1, RED FIRST: A LIMIT MET AFTER WORK GIVES BACK WHAT NO RECORD SHOWS FINISHED, as a model refused mid-turn does
+    /// (<c>U-turn-bounds-2</c>'s rule). The turn ran a command, so the work happened and its spend stays on its row, but spending is no evidence that a
+    /// wake's work finished: the brief and the owner's words come back, due again when the vendor's hold lifts, and the words show the vendor's own
+    /// sentence. CHANGED IN THE OPEN: this was <c>A_turn_the_limit_cut_after_it_had_worked_settles_its_wakes_as_failed</c>, a guard that held the
+    /// old settlement (every wake <c>failed</c>, the owner's words retried once, so a brief and a look were lost on a limit). The orchestrator's card
+    /// from <c>U-turn-bounds-2</c> moved the limit after work onto the finished-on-record rule. RED on the base: the brief read <c>failed</c>.
     /// </summary>
     [Fact]
-    public async Task A_turn_the_limit_cut_after_it_had_worked_settles_its_wakes_as_failed()
+    public async Task A_turn_the_limit_cut_after_it_had_worked_gives_back_what_no_record_shows_finished()
     {
-        var name = nameof(A_turn_the_limit_cut_after_it_had_worked_settles_its_wakes_as_failed);
+        var name = nameof(A_turn_the_limit_cut_after_it_had_worked_gives_back_what_no_record_shows_finished);
         var events = new MissionEventStore(_db);
         var now = Today(12, 0);
         var host = new Host(_db, events, Refusing(name, CutAfterWork), Home(name)) { Clock = () => now };
@@ -463,11 +467,68 @@ public class VendorLimitTests : IDisposable
         var brief = Wake(events, MissionEventKind.Brief, now);
 
         await loop.TurnAsync();
-
         Assert.Single(host.Opened);
-        Assert.Equal(MissionEventDisposition.Failed, events.Get(brief)!.Disposition);
-        Assert.Equal(MissionEventDisposition.Failed, events.Get(owner)!.Disposition);
-        Assert.Equal(1, OwnerWakesWaiting(events, now));    // the one retry
+
+        var kept = events.Get(brief)!;
+        Assert.False(kept.Consumed, $"the brief was spent on a turn the limit cut: {kept.Disposition}");
+        Assert.Null(kept.Disposition);
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed);
+        Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
+        Assert.Equal(VendorSaid, words.DispositionDetail);
+        Assert.Equal(1, OwnerWakesWaiting(events, now));    // owed once, never re-raised as a failed turn's retry
+
+        // THE HOLD STILL STANDS, and the next launch after it is handed both.
+        now = Retry.AddMinutes(-1);
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+        now = Retry;
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Opened.Count);
+        Assert.Contains("how is the book?", host.Opened[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS ITEM 1: WHAT FINISHED BEFORE THE LIMIT IS NOT RUN TWICE. The decider's judgment the host's records hold against this launch, and the
+    /// brief the owner's words became (the relay's measurement), are settled; the look beside them has no such record and comes back. RED on the base:
+    /// all three read <c>failed</c>, so the look was lost.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_limit_cut_after_it_had_worked_keeps_what_the_records_show_finished()
+    {
+        var name = nameof(A_turn_the_limit_cut_after_it_had_worked_keeps_what_the_records_show_finished);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var ops = CouncilRoles.Operations;
+        Assert.True(events.RecordOwnerMessage("brief Research on the skew", now));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), ops);
+        events.Raise(look, MissionEventKind.Review, now, role: ops);
+        var judged = MissionEventIds.ForRole("delivery-wake", ops);
+        events.Raise(judged, MissionEventKind.Delivery, now, payload: "man-judged", role: ops);
+
+        string? askedFor = null;
+        var host = new Host(_db, events, Refusing(name, CutAfterWork), Home(name))
+        {
+            Clock = () => now,
+            Finished = (wake, attempt) => { askedFor = attempt; return wake.Id == judged; },
+            Relayed = () => events.SettleWithoutTurn(owner, MissionEventDisposition.Delegated, "pub-brief")
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+
+        var again = events.Get(look)!;
+        Assert.False(again.Consumed, $"a look nothing speaks for was spent: {again.Disposition}");
+        var finished = events.Get(judged)!;
+        Assert.True(finished.Consumed);
+        Assert.Equal(MissionEventDisposition.Answered, finished.Disposition);
+        Assert.Equal(finished.ConsumedBy, askedFor);
+        var brief = events.Get(owner)!;
+        Assert.True(brief.Consumed, "words the turn already turned into a brief were owed again");
+        Assert.Equal(MissionEventDisposition.Delegated, brief.Disposition);
+        Assert.Equal(0, OwnerWakesWaiting(events, now));
     }
 
     /// <summary>
