@@ -639,6 +639,64 @@ jobs:
           grep -q '^state: inactive' "$ev/tool-stop.txt" || { echo "stop left the service running"; exit 1; }
           rm -f ~/.tradeagent/linux.env
 
+      # GOING BACK NEEDS NO TARBALL (U-install-rollback): the release that was running stays installed beside the new one,
+      # so a rollback is the move of the `current` link and a restart that install.sh's header gives. Two more builds of
+      # the same version (the artifact repacked with one file added, so each has its own sha and folder) go through the
+      # real kit; each install keeps the one that was running and removes the one before it; then the rollback, done
+      # exactly as the header says, starts the app from the kept release. Before this, the kit removed it.
+      - name: Two more releases, then a rollback
+        run: |
+          set -o pipefail
+          ev="$GITHUB_WORKSPACE/linux-host-evidence"
+          set -- linux-artifact/TradeAgent-*-linux-x64.tar.gz; tgz="$1"
+          top="$(tar -tzf "$tgz" | sed -n '1s:/.*::p')"
+          sha12() { sha256sum "$1" | cut -c1-12; }
+          version="${top#TradeAgent-}"; version="${version%-linux-x64}"
+          first="$version-$(sha12 "$tgz")"
+          for n in second third; do
+            mkdir -p "$RUNNER_TEMP/$n/unpacked"
+            tar -xzf "$tgz" -C "$RUNNER_TEMP/$n/unpacked"
+            echo "the $n build of $top in CI" > "$RUNNER_TEMP/$n/unpacked/$top/ci-$n-build.txt"
+            tar -czf "$RUNNER_TEMP/$n/$(basename "$tgz")" -C "$RUNNER_TEMP/$n/unpacked" "$top"
+            rm -rf "$RUNNER_TEMP/$n/unpacked"
+            (cd "$RUNNER_TEMP/$n" && sha256sum "$(basename "$tgz")" > SHA256SUMS)
+          done
+          second="$version-$(sha12 "$RUNNER_TEMP/second/$(basename "$tgz")")"
+          third="$version-$(sha12 "$RUNNER_TEMP/third/$(basename "$tgz")")"
+          releases() { find /opt/tradeagent -mindepth 1 -maxdepth 1 -printf '%f\n' | grep -v '^\.' | sort | tr '\n' ' '; }
+          expect() { local want; want="$(printf '%s\n' "$@" | sort | tr '\n' ' ')"; [ "$(releases)" = "$want" ] || { echo "after $step: /opt/tradeagent holds '$(releases)', expected '$want'"; exit 1; }; }
+          step="the start"; expect "$first" current kit
+          [ "$(readlink /opt/tradeagent/current)" = "$first" ] || { echo "current is not the first build"; exit 1; }
+
+          step="the second build"
+          sudo packaging/linux/install.sh --tarball "$RUNNER_TEMP/second/$(basename "$tgz")" --address "$ADDRESS" --zone Europe/Brussels \
+            | tee "$ev/rollback-install-second.txt"
+          expect "$first" "$second" current kit
+
+          step="the third build"
+          sudo packaging/linux/install.sh --tarball "$RUNNER_TEMP/third/$(basename "$tgz")" --address "$ADDRESS" --zone Europe/Brussels \
+            | tee "$ev/rollback-install-third.txt"
+          expect "$second" "$third" current kit
+          grep -q "^== kept $second, the release before $third" "$ev/rollback-install-third.txt" || { echo "the third install did not say it kept $second"; exit 1; }
+          [ -x "/opt/tradeagent/$second/TradeAgent" ] || { echo "the kept release lost its TradeAgent"; exit 1; }
+          systemctl is-active --quiet tradeagent.service || { echo "the app is not running on the third build"; exit 1; }
+
+          # THE ROLLBACK, as install.sh's header gives it: no tarball, no kit.
+          step="the rollback"
+          sudo ln -sfn "$second" /opt/tradeagent/current.new
+          sudo mv -Tf /opt/tradeagent/current.new /opt/tradeagent/current
+          sudo systemctl restart tradeagent.service
+          expect "$second" "$third" current kit
+          sleep 30
+          systemctl is-active --quiet tradeagent.service || { echo "the app is not running after the rollback"; sudo journalctl -u tradeagent.service -n 40 --no-pager; exit 1; }
+          pid="$(systemctl show -p MainPID --value tradeagent.service)"
+          exe="$(sudo readlink "/proc/$pid/exe")"
+          echo "after the rollback the app runs $exe (pid $pid)" | tee "$ev/rollback.txt"
+          [ "$exe" = "/opt/tradeagent/$second/TradeAgent" ] || { echo "the app runs $exe, not the kept release $second"; exit 1; }
+          sleep 30
+          [ "$(systemctl show -p MainPID --value tradeagent.service)" = "$pid" ] || { echo "the app restarted after the rollback"; sudo journalctl -u tradeagent.service -n 40 --no-pager; exit 1; }
+          sudo systemctl stop tradeagent.service
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
