@@ -623,6 +623,8 @@ public sealed class BoardStore(Database db)
         var next = TapeJson.Canonical(root.ToJsonString());
         var (policy, why) = BoardPolicyBody.Read(next, BoardPolicyBody.Sha256(next));
         if (policy is null) throw Refused($"the policy this act would write is not one this build writes: {why}.");
+        // A SECOND GUARD: the strict read above already refuses a live body (U-live-witness), so this line does not run today. It stays so
+        // an act's refusal keeps its own words if the reader's line is ever changed for the board's live act (U-board-live).
         if (policy.ModeIsLive || policy.LiveActivated) throw Refused("no act of this build selects a real-money mode or switches real money on.");
         return next;
     }
