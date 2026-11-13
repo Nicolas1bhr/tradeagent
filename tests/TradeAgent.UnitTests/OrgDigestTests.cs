@@ -553,6 +553,203 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("found a finding again", s.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
     }
 
+    // ---- THE EVIDENCE'S EYES (U-digest-evidence-eyes; R31 D1 § 5): did a campaign spend, did a forward hold arm, what did the windows refuse --------
+
+    /// <summary>A gateway that answers every call with one refusal, built by the app's own <see cref="IpcResponse.Fail(string, ErrorCode, string?)"/>.</summary>
+    sealed class Refusing(ErrorCode code, string words) : IGatewayCalls
+    {
+        public Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId, CancellationToken ct = default) =>
+            Task.FromResult(IpcResponse.Fail(req.RequestId ?? "", code, words));
+    }
+
+    /// <summary>One call of the AI's `data` tool refused by <paramref name="code"/> in <paramref name="words"/>, recorded by the tool surface itself.</summary>
+    static void Withheld(ToolCallStore tools, string at, ErrorCode code, string words, string op)
+    {
+        var worker = new GrantedWorkerTools("pos-aaaaaa", () => TestEnv.Home, () => "a2", gateway: () => new Refusing(code, words), ledger: tools, now: () => At(at));
+        Assert.False(worker.InvokeAsync(new ToolRequest("t-" + at, GrantedWorkerTools.Data, $"{{\"op\":\"{op}\"}}")).GetAwaiter().GetResult().Served);
+    }
+
+    static Dictionary<long, JsonElement> Holds(JsonElement d) =>
+        d.GetProperty("signal").GetProperty("forward_holds").GetProperty("holds").EnumerateArray().ToDictionary(h => h.GetProperty("campaign").GetInt64());
+
+    static string Attention(JsonElement d) => string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+
+    /// <summary>
+    /// EVERY ARMED FRESH HOLDOUT, AS THE APP READS IT (R31 D1 § 5 measure 1): the kv row the rule writes once when a campaign is spent, read the way
+    /// <see cref="CampaignRenewal.All"/> reads it — its campaign, its one pair, its cutoff, when it armed, what was spent, and whether a campaign
+    /// has opened over it — and a row this build cannot read listed as unreadable (the app holds it from the beginning of time), never skipped.
+    ///
+    /// <para>RED at base: no forward_holds in the signal (KeyNotFoundException). Mutant: the key prefix misspelt in the digest (no hold listed,
+    /// and the vocabulary test, which holds the prefix to <see cref="CampaignRenewal"/>'s own key).</para>
+    /// </summary>
+    [UnixFact]
+    public void The_digest_lists_every_armed_fresh_holdout_with_its_pair_and_cutoff()
+    {
+        var f = Build();
+        IReadOnlyList<ForwardHoldout> app;
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var renewal = new CampaignRenewal(db);
+            // #1 (BTCUSDT) has spent its final judgements and arms; #3, the same pair, waits behind it; #2 (ETHUSDT) has room. Cutoff: the first
+            // UTC midnight after now and every bar on record (the datasets end 2026-06-01): 2026-11-01.
+            var armed = Assert.Single(renewal.Arm(At("2026-10-31T10:00:00Z")));
+            Assert.Equal(1, armed.SpentCampaignId);
+            Assert.Equal(At("2026-11-01T00:00:00Z"), armed.Cutoff);
+            db.SetKv(CampaignRenewal.ArmedKey + "2", "a row a later build wrote");
+            app = renewal.All();
+        }
+        Assert.Equal(2, app.Count);
+
+        var holds = Holds(Json(f));
+        Assert.Equal(app.Select(h => h.SpentCampaignId).Order(), holds.Keys.Order());
+        var one = holds[1];
+        var want = app.Single(h => h.SpentCampaignId == 1);
+        Assert.Equal(want.Pair, one.GetProperty("pair").GetString());
+        Assert.Equal("BTCUSDT", one.GetProperty("pair").GetString());
+        Assert.Equal(want.Cutoff, one.GetProperty("cutoff").GetDateTimeOffset());
+        Assert.Equal(want.ArmedAt, one.GetProperty("armed_at").GetDateTimeOffset());
+        Assert.Equal(want.Spent, one.GetProperty("spent").GetString());
+        Assert.Equal(want.Holding, one.GetProperty("holding").GetBoolean());
+        Assert.True(one.GetProperty("armed_since_t0").GetBoolean());
+        Assert.False(one.GetProperty("unreadable").GetBoolean());
+
+        // The row this build cannot read: the app holds every pair from the beginning of time; the digest says it cannot read it.
+        var bad = holds[2];
+        Assert.True(bad.GetProperty("unreadable").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, bad.GetProperty("pair").ValueKind);
+        Assert.Equal(DateTimeOffset.MinValue, app.Single(h => h.SpentCampaignId == 2).Cutoff);
+        Assert.Equal(JsonValueKind.Null, bad.GetProperty("cutoff").ValueKind);
+        Assert.Equal("a row a later build wrote", bad.GetProperty("value").GetString());
+        Assert.True(bad.GetProperty("holding").GetBoolean());
+        Assert.Contains("forward hold of campaign 2 UNREADABLE ('a row a later build wrote')", Attention(Json(f)), StringComparison.Ordinal);
+
+        // A campaign opened over the window: it no longer holds, and the digest names the campaign as the app reads it.
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            db.SetKv(CampaignRenewal.SuccessorKey + "1", "5");
+            app = new CampaignRenewal(db).All();
+        }
+        one = Holds(Json(f))[1];
+        Assert.False(app.Single(h => h.SpentCampaignId == 1).Holding);
+        Assert.False(one.GetProperty("holding").GetBoolean());
+        Assert.Equal(app.Single(h => h.SpentCampaignId == 1).Successor, one.GetProperty("successor").GetInt64());
+    }
+
+    /// <summary>
+    /// WHAT EACH CAMPAIGN HAS SPENT, IN <see cref="CampaignRenewal.SpentOn"/>'S WORDS, from the counts the digest already makes; a full exploration pot
+    /// is said as full, never as spent, since only the app can read whether a parent can still be promoted under it.
+    ///
+    /// <para>RED at base: no spent_on (KeyNotFoundException). Mutant: the verdict test by ">" for ">=" (#1 at 5 of 3 still reads, #3's
+    /// "final judgements" at exactly its budget would not).</para>
+    /// </summary>
+    [UnixFact]
+    public void The_digest_says_what_each_campaign_has_spent_in_the_apps_own_words()
+    {
+        var f = Build();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            // #2 (ETHUSDT) given two more verdicts: three of three, spent at exactly its budget.
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            db.Exec("INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from) VALUES (2, 'v10', '2026-10-31T05:00:00.0000000Z', '2026-01-01'), (2, 'v11', '2026-10-31T06:00:00.0000000Z', '2026-01-01');");
+            db.Exec("PRAGMA foreign_keys=ON;");
+        }
+        var cs = Json(f).GetProperty("signal").GetProperty("campaigns").GetProperty("campaigns").EnumerateArray().ToDictionary(c => c.GetProperty("id").GetInt64());
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var renewal = new CampaignRenewal(db);
+            var store = new CampaignStore(db);
+            Assert.Equal(3, store.JudgementsSpent(2));
+            foreach (var id in new long[] { 1, 2, 3 })
+            {
+                var spent = cs[id].GetProperty("spent_on");
+                Assert.Equal(renewal.SpentOn(store.ById(id)!), spent.ValueKind == JsonValueKind.Null ? null : spent.GetString());
+                Assert.False(cs[id].GetProperty("exploration_pot_full").GetBoolean());
+            }
+            Assert.Equal("final judgements", renewal.SpentOn(store.ById(2)!));
+        }
+    }
+
+    /// <summary>
+    /// A FORWARD HOLD THAT ARMED SINCE T0 IS RAISED (R31 D1 § 5): from that instant every read of its pair over the fresh months is refused, and the
+    /// watch must know when the run's loop met it. One armed before T0 is listed and not raised.
+    ///
+    /// <para>RED at base: no flag ("Not found: forward hold ARMED"). Mutant: the flag computed and not appended.</para>
+    /// </summary>
+    [UnixFact]
+    public void A_hold_armed_since_T0_raises_attention()
+    {
+        var before = Build();
+        using (var db = new Database(Path.Combine(before.State, "tradeagent.db")))
+            Assert.Single(new CampaignRenewal(db).Arm(T0.AddHours(-1)));
+        var d = Json(before);
+        Assert.False(Holds(d)[1].GetProperty("armed_since_t0").GetBoolean());
+        Assert.DoesNotContain("forward hold ARMED", Attention(d), StringComparison.Ordinal);
+
+        var since = Build();
+        using (var db = new Database(Path.Combine(since.State, "tradeagent.db")))
+            Assert.Single(new CampaignRenewal(db).Arm(At("2026-10-31T10:00:00Z")));
+        var flagged = Attention(Json(since));
+        Assert.Contains("forward hold ARMED 10-31 10:00: campaign 1 (BTCUSDT) spent its final judgements; held back from 2026-11-01 00:00Z", flagged, StringComparison.Ordinal);
+
+        var (exit, text, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(since));
+        Assert.True(exit == 0, err);
+        Assert.Contains("! forward hold ARMED", text, StringComparison.Ordinal);
+        Assert.Contains("forward holds: 1 armed, 1 holding", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE REFUSALS A HOLDOUT WINDOW MADE SINCE T0, BY WINDOW AND BY WHAT WAS ASKED (R31 D1 § 5 measures 1-2): each a paid turn that learned only the
+    /// refusal. Read from the AI's tool results as the tool surface records them (the code, then the app's words), told fresh from dataset by the
+    /// window's own words (<see cref="TapeHoldout"/>), and the pipe's read-loop frames counted beside them by their code. A refusal by another code,
+    /// and one before T0, are not counted.
+    ///
+    /// <para>RED at base: no withheld in the signal (KeyNotFoundException). Mutant: the fresh window's words misspelt (both fresh refusals read
+    /// as "unread").</para>
+    /// </summary>
+    [UnixFact]
+    public void The_holdout_refusals_since_T0_are_counted_by_window_and_by_what_was_asked()
+    {
+        var f = Build();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            Assert.Single(new CampaignRenewal(db).Arm(At("2026-10-31T10:00:00Z")));
+            db.Exec("UPDATE dataset SET holdout_from = '2026-03-01T00:00:00.0000000Z' WHERE id = 2;");      // ETHUSDT's dataset holds out its last months
+            var datasets = new DatasetStore(db);
+            var holdout = TapeHoldout.Pipe("pos-aaaaaa", datasets);
+            var fresh = holdout.ForwardRefusal("BTCUSDT", At("2026-11-01T01:00:00Z"), At("2026-11-01T05:00:00Z"));
+            var dataset = holdout.ForwardRefusal("ETHUSDT", At("2026-04-01T00:00:00Z"), At("2026-04-02T00:00:00Z"));   // reaches dataset 2's window alone
+            Assert.NotNull(fresh);
+            Assert.NotNull(dataset);
+
+            var tools = new ToolCallStore(db);
+            Withheld(tools, "2026-10-31T11:00:00Z", ErrorCode.HOLDOUT_WITHHELD, fresh!, Ops.DataBars);
+            Withheld(tools, "2026-10-31T11:05:00Z", ErrorCode.HOLDOUT_WITHHELD, fresh!, Ops.DataBars);
+            Withheld(tools, "2026-10-31T09:00:00Z", ErrorCode.HOLDOUT_WITHHELD, dataset!, Ops.DataBars);
+            Withheld(tools, "2026-10-30T11:00:00Z", ErrorCode.HOLDOUT_WITHHELD, dataset!, Ops.DataBars);    // before T0
+            Withheld(tools, "2026-10-31T11:10:00Z", ErrorCode.INVALID_REQUEST, "a 'to' before its 'from'", Ops.DataBars);   // another code
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            db.Exec($$"""
+                INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES
+                  ('2026-10-31T12:00:00.0000000Z', 'Ipc', '{{RefusalMark.Event}}', 'info', '{"op":"{{Ops.DataTape}}","code":"{{ErrorCode.HOLDOUT_WITHHELD}}","role":"pos-aaaaaa"}');
+                """);
+            db.Exec("PRAGMA foreign_keys=ON;");
+        }
+        var w = Json(f).GetProperty("signal").GetProperty("withheld");
+        Assert.Equal(4, w.GetProperty("total").GetInt32());                 // three tool results since T0 and one pipe frame
+        Assert.Equal(2, w.GetProperty("fresh").GetInt32());
+        Assert.Equal(1, w.GetProperty("dataset").GetInt32());
+        Assert.Equal(0, w.GetProperty("unread").GetInt32());
+        Assert.Equal(1, w.GetProperty("pipe_frames").GetInt32());
+        Assert.Equal(3, w.GetProperty("since_first_armed").GetInt32());    // both fresh ones and the pipe's, all after 10:00; the dataset one at 09:00 was before
+        var asked = w.GetProperty("by_asked").EnumerateArray().ToDictionary(a => a.GetProperty("asked").GetString()!, a => a.GetProperty("count").GetInt32());
+        Assert.Equal(3, asked[$"{GrantedWorkerTools.Data} {Ops.DataBars}"]);
+        Assert.Equal(1, asked[Ops.DataTape]);
+
+        var (exit, text, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
+        Assert.True(exit == 0, err);
+        Assert.Contains("holdout refusals since T0: 4 (fresh window 2, dataset window 1, words not read 0, pipe frames 1); 3 since the first hold armed", text, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void A_failed_turns_wakes_and_a_lost_turns_are_told_apart_and_a_new_word_stands_as_it_is()
     {
@@ -1134,6 +1331,9 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ["DEP_OP_STOP"] = DeploymentOpKind.Stop, ["DEP_OP_TARGET"] = DeploymentOpKind.Target, ["DEPLOYMENT_OP_RESOLVED"] = DeploymentOpState.Resolved,
         ["ORDER_TERMINAL"] = Enum.GetValues<ExecutionState>().Where(OrderStateMachine.IsTerminal).Select(e => e.ToString()).ToArray(),
         ["ORDER_AWAITING_APPROVAL"] = ExecutionState.AWAITING_APPROVAL.ToString(), ["SIDE_BUY"] = TradeAgent.ConnectorSdk.OrderSide.Buy.ToString(),
+        // THE EVIDENCE'S EYES (U-digest-evidence-eyes): the forward hold's kv keys, what a campaign spent, and the code of a holdout's refusal
+        ["KV_FORWARD_HOLDOUT"] = CampaignRenewal.ArmedKey, ["KV_FORWARD_SUCCESSOR"] = CampaignRenewal.SuccessorKey,
+        ["SPENT_EXPLORATION"] = CampaignRenewal.ExplorationTrials, ["CODE_HOLDOUT_WITHHELD"] = ErrorCode.HOLDOUT_WITHHELD.ToString(),
     };
 
     /// <summary>
@@ -1170,6 +1370,14 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("UNPROTECTED_RESTING", "src/TradeAgent.Gateway/TradingGateway.cs", "{{what}}{0}{{missing[0].Latest.Answer ?? "),
         ("UNPROTECTED_NONE_YET", "src/TradeAgent.Gateway/TradingGateway.cs", "missing[0].Latest.Answer ?? \"{0}\""),
         ("UNPROTECTED_AT_CLOSE", "src/TradeAgent.Gateway/TradingGateway.cs", "$\"{0}: it held "),
+        // WHAT A CAMPAIGN HAS SPENT, as CampaignRenewal.SpentOn words it (U-digest-evidence-eyes), and how a refused tool call is recorded: the
+        // code, this separator, the app's words (both tool surfaces). A holdout window's words: the fresh one's and a dataset's.
+        ("SPENT_JUDGEMENTS", "src/TradeAgent.Core/Db/CampaignRenewal.cs", "JudgementsSpent(campaign.Id) >= campaign.VerdictBudget) return \"{0}\";"),
+        ("SPENT_TRIALS", "src/TradeAgent.Core/Db/CampaignRenewal.cs", "TrialsCharged(campaign.Id) >= campaign.TrialBudget) return \"{0}\";"),
+        ("REFUSAL_CODE_SEPARATOR", "src/TradeAgent.AgentRuntime/BrokerDoor.cs", "ToolAnswer.Refused($\"{{error?.Code}}{0}{{error?.UserMessage}} ({{error?.Message}})\", name);"),
+        ("REFUSAL_CODE_SEPARATOR", "src/TradeAgent.AgentRuntime/GrantedWorkerTools.cs", "$\"{{error?.Code}}{0}{{error?.UserMessage}} ({{error?.Message}})\", Summary(tool, op));"),
+        ("WITHHELD_FRESH", "src/TradeAgent.Core/Data/TapeHoldout.cs", "$\"campaign {{spent}}{0}{{From:u}} on, \""),
+        ("WITHHELD_DATASET", "src/TradeAgent.Core/Data/TapeHoldout.cs", "$\"dataset {{DatasetId}} ({{Pair}} {{Interval}} {{Version}}{0}{{From:u}} onwards, so {{held}} held \""),
     ];
 
     /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>
