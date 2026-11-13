@@ -84,6 +84,7 @@ public class PaperHistoryElsewhereTests : IDisposable
             gw.AnswerFromTheCardAsync(row.RequestId, ExecutionState.CANCELLED, "checked: it is gone (test)"));
         Assert.Contains("the order history of paper, where it was sent, holds it as WORKING", live.Message, StringComparison.Ordinal);
         Assert.Contains("Nothing was recorded", live.Message, StringComparison.Ordinal);
+        Assert.Contains("switch back to paper", live.Message, StringComparison.Ordinal);
         Assert.Equal(ExecutionState.WORKING, store.Get(row.RequestId)!.State);
 
         BookHolds(row, ExecutionState.FILLED);
@@ -131,8 +132,9 @@ public class PaperHistoryElsewhereTests : IDisposable
     }
 
     /// <summary>
-    /// PAPER'S BOOK READ WITHOUT CONNECTING IT CHANGES NOTHING IN IT: no file is made where there is none (no book: no order), and a
-    /// book's working order stays working — nothing is settled by the read.
+    /// PAPER'S BOOK READ WITHOUT CONNECTING IT CHANGES NOTHING IN IT: no book is made where there is none — and a missing book is one that
+    /// cannot be read, never one that lists nothing (rule 2; opus review), so the owner's answer is refused rather than written as "asked" —
+    /// and a book's working order stays working: nothing is settled by the read.
     /// </summary>
     [Fact]
     public async Task Paper_s_book_is_read_without_making_or_settling_anything()
@@ -141,11 +143,23 @@ public class PaperHistoryElsewhereTests : IDisposable
         Assert.True(reader.Reads(Platform.Paper));
         Assert.False(reader.Reads(Platform.Atas));
         Assert.False(reader.Reads(Platform.Simulator));
-        Assert.Empty(await reader.GetOrdersAsync(Platform.Paper, PaperConnector.TheAccount, DateTimeOffset.UtcNow.AddDays(-1)));
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            reader.GetOrdersAsync(Platform.Paper, PaperConnector.TheAccount, DateTimeOffset.UtcNow.AddDays(-1)));
         Assert.False(File.Exists(_book));
 
         using var db = TestEnv.NewDb();
-        var row = PaperPressClose(new ExecutionRequestStore(db), "pp4", DateTimeOffset.UtcNow);
+        var store = new ExecutionRequestStore(db);
+        var unread = PaperPressClose(store, "pp5", DateTimeOffset.UtcNow);
+        await using (var gw = await OnTheSimulator(db, new FakeBroker()))
+        {
+            var refused = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                gw.AnswerFromTheCardAsync(unread.RequestId, ExecutionState.CANCELLED, "checked: it is gone (test)"));
+            Assert.Contains("the order history of paper, where it was sent, could not be read", refused.Message, StringComparison.Ordinal);
+            Assert.Equal(ExecutionState.WORKING, store.Get(unread.RequestId)!.State);
+        }
+        Assert.False(File.Exists(_book));
+
+        var row = PaperPressClose(store, "pp4", DateTimeOffset.UtcNow);
         BookHolds(row, ExecutionState.WORKING);
         var listed = Assert.Single(await reader.GetOrdersAsync(Platform.Paper, "any-account", row.CreatedAt.AddMinutes(-5)));
         Assert.Equal(row.ClientOrderId, listed.ClientOrderId);

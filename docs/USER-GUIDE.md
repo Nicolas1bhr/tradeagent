@@ -24,11 +24,11 @@ board's policy (the app's founding values until the board decides), never from t
 
 ## Installing it
 
-One file. Download `TradeAgent-Setup-x64-no-atas.exe` from
-[the 0.2.0 release](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.2.0) and double-click it. That is the
-installer every published release carries: it runs paper on TradeAgent's own venue, and it has no ATAS in it (see
-"About ATAS"). An installer that does carry ATAS is named `TradeAgent-Setup-x64.exe`; you would only have one if it was
-handed to you.
+One file. From 0.2.0 on, download `TradeAgent-Setup-x64-no-atas.exe` from the page of the release you were told
+about — for 0.2.0, [its release page](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.2.0), once it is
+published — and double-click it. That installer runs paper on TradeAgent's own venue and has no ATAS in it (see "About
+ATAS"). An installer that does carry ATAS is named `TradeAgent-Setup-x64.exe`; the 0.1 releases carried only that one,
+and from 0.2.0 on you would only have one if it was handed to you.
 
 It installs for you alone, into your own account, so **Windows does not ask for an administrator
 password** and nothing outside your account is touched. There is no all-users-or-just-me question to

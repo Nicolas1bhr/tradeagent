@@ -139,7 +139,14 @@ public class HeldFoldersTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(skills, "x")));
         Assert.Equal("something else came first", File.ReadAllText(second));
 
+        // MORE IN IT THAN THE SENTENCE SAID (opus review): the second press moves nothing.
         File.Delete(second);
+        Directory.CreateDirectory(Path.Combine(skills, "y"));
+        var grown = HeldFolders.Carry(plan, Find);
+        Assert.Empty(grown.Moved);
+        Assert.Contains("changed after you pressed", grown.Words, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Path.Combine(skills, "y")));
+
         Directory.Delete(skills, recursive: true);
         var changed = HeldFolders.Carry(plan, Find);
         Assert.Empty(changed.Moved);

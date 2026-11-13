@@ -528,6 +528,15 @@ public class SeatHomeTests
             Directory.CreateDirectory(folder);
             Assert.False(session.CheckSeat().Refused);                       // a plain, empty folder holds nothing to read
 
+            // AN EMPTY FOLDER ANOTHER ACCOUNT OWNS IS HELD TOO (opus review): it can put a settings file in it the moment after this look.
+            SeatProfile.MachineOwnerUnderTest.Value = at => at == openAi ? "S-1-5-21-1-2-3-1001" : "S-1-5-18";
+            var foreign = session.CheckSeat();
+            Assert.True(foreign.Refused, "an OpenAI folder another account owns did not refuse the admission");
+            Assert.Contains($"{openAi} belongs to another account of this computer (S-1-5-21-1-2-3-1001)", foreign.Refusal, StringComparison.Ordinal);
+            SeatProfile.MachineOwnerUnderTest.Value = _ => "S-1-5-32-544";  // the Administrators group: an elevated installer's
+            Assert.False(session.CheckSeat().Refused);
+            SeatProfile.MachineOwnerUnderTest.Value = null;
+
             File.WriteAllText(Path.Combine(folder, "config.toml"), "[mcp_servers.planted]\ncommand = \"planted-server\"\n");
 
             var verdict = session.CheckSeat();
@@ -564,7 +573,7 @@ public class SeatHomeTests
             Directory.Delete(openAi);
             Assert.False(session.CheckSeat().Refused);
         }
-        finally { SeatProfile.MachineFolderUnderTest.Value = null; }
+        finally { SeatProfile.MachineFolderUnderTest.Value = null; SeatProfile.MachineOwnerUnderTest.Value = null; }
     }
 
     /// <summary>
