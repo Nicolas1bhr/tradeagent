@@ -47,10 +47,12 @@ public class MaterialHashStallTests
             Assert.Equal((2, 0), (first.Added, first.Hashed));
             Assert.Equal(2, first.HashDeferred);
             Assert.Contains(first.HashDeferrals, d => d.Contains("did not come back from the disk", StringComparison.Ordinal));
+            Assert.True(first.HashStalled, "the owner is told the disk did not answer, not that the files are large");
 
             var second = await Bounded(() => scanner.Scan());
             Assert.Equal((0, 2), (second.Hashed, second.HashDeferred));
             Assert.Equal(1, Volatile.Read(ref reads));   // no second read beside the one still waiting
+            Assert.True(second.HashStalled);
         }
         finally { disk.Set(); }
 
@@ -63,6 +65,35 @@ public class MaterialHashStallTests
             again = await Bounded(() => scanner.Scan());
         } while (again.Hashed == 0 && DateTimeOffset.UtcNow < deadline);
         Assert.Equal((2, 0), (again.Hashed, again.HashDeferred));
+        Assert.False(again.HashStalled);
         Assert.All(new MaterialStore(db).Present(), m => Assert.NotNull(m.Sha256));
+    }
+
+    /// <summary>
+    /// A QUIT IS NOT HELD BY THE WAIT EITHER (the opus review): with a read the disk holds and the whole hash budget still ahead, the pass's
+    /// own cancellation ends the wait at once and goes on up — the app's quit waits five seconds for the pass, and the wait was the budget
+    /// plus two.
+    /// </summary>
+    [Fact]
+    public async Task A_quit_ends_the_wait_for_a_held_read_at_once()
+    {
+        var root = Path.Combine(TestEnv.Home, $"hash-stall-quit-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(Path.Combine(root, MaterialScanner.InboxDir));
+        File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, "a.txt"), "a");
+        using var db = TestEnv.NewDb();
+        using var disk = new ManualResetEventSlim();
+        using var reading = new ManualResetEventSlim();
+        string Held(Stream s, CancellationToken ct) { reading.Set(); disk.Wait(); return Sha256Hex.Of(s, CancellationToken.None); }
+        var scanner = new MaterialScanner(db, root, _ => true) { HashTimePerPass = TimeSpan.FromSeconds(30), Hasher = Held };
+        using var quit = new CancellationTokenSource();
+        try
+        {
+            var pass = Task.Run(() => scanner.Scan(quit.Token));
+            Assert.True(reading.Wait(TimeSpan.FromSeconds(30)), "the pass reached the read");
+            await quit.CancelAsync();
+            Assert.True(await Task.WhenAny(pass, Task.Delay(TimeSpan.FromSeconds(5))) == pass, "the quit waited on the held read");
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pass);
+        }
+        finally { disk.Set(); }
     }
 }

@@ -40,6 +40,9 @@ public sealed class DatasetLineCheck(Func<DatasetRecord, DatasetRecord> check, F
     /// </summary>
     public Answer Read(DatasetRecord newest, Action changed)
     {
+        // A DATASET THE LEDGER ALREADY SAYS IS REJECTED is said so at once: no check can change that, and a cached "accepted" from
+        // before a reader rejected it must not outlive the row (the opus review).
+        if (newest.State == DatasetState.REJECTED) return new Answer(newest, false);
         var at = now();
         if (!_running && (newest.Id != _id || at - _at >= Every))
         {

@@ -2551,10 +2551,12 @@ public sealed class AppHost : IAsyncDisposable
 
         // A FILE LEFT UNHASHED BY THE PASS'S BYTE OR TIME BOUND (U-cards-2) is said once while it stands, never on every tick, and
         // never by name (a name in the workspace is chosen by whoever made it; the engineering line above carries them as data).
-        if (result.HashDeferred > 0 && _hashDeferredSaid is null)
+        // A DISK THAT STOPPED ANSWERING IS SAID AS THAT (U-perf-scan), not as files too large: the owner's one line names the real cause.
+        var deferredLine = result.HashStalled ? HashStalledLine : HashDeferredLine;
+        if (result.HashDeferred > 0 && _hashDeferredSaid != deferredLine)
         {
-            Gateway.Log.Activity(HashDeferredLine, "info");
-            _hashDeferredSaid = HashDeferredLine;
+            Gateway.Log.Activity(deferredLine, result.HashStalled ? "warn" : "info");
+            _hashDeferredSaid = deferredLine;
         }
         else if (result.HashDeferred == 0 && _hashDeferredSaid is not null)
             _hashDeferredSaid = null;
@@ -2586,6 +2588,9 @@ public sealed class AppHost : IAsyncDisposable
     string? _hashDeferredSaid;
 
     /// <summary>What the activity log says while a pass leaves files unhashed for its byte or time bound.</summary>
+    internal const string HashStalledLine = "A file in your inbox or the AI's folders could not be read: the disk did not answer. TradeAgent "
+        + "leaves it and checks again on the next round; until then those files are listed but not checked.";
+
     internal const string HashDeferredLine = "Some files in your inbox or the AI's folders are very large. TradeAgent checks a limited amount each round so "
         + "they cannot hold up the app, and tries the rest on the next round. A file too large to finish in one round stays unchecked.";
 
@@ -3703,7 +3708,7 @@ public sealed class AppHost : IAsyncDisposable
                 try { await _diskGuard.WaitAsync(TimeSpan.FromSeconds(5)); }
                 catch (Exception) { /* the same */ }
             }
-            // AND THE MATERIAL PASS, off the loop since U-perf-scan: cancelled at its next file, bounded like the others.
+            // AND THE MATERIAL PASS, off the loop since U-perf-scan: cancelled at its next file or its hash wait, bounded like the others.
             if (_materialPass is not null)
             {
                 try { await _materialPass.WaitAsync(TimeSpan.FromSeconds(5)); }

@@ -42,6 +42,10 @@ public class MaterialPassOffLoopTests
             await Until(() => Volatile.Read(ref listings) >= 1, "the first tick's material pass reached the disk");
             await Until(() => Volatile.Read(ref passes) >= 2, "the loop made its next pass while the walk was held");
             Assert.Equal(1, Volatile.Read(ref listings));
+            // A DUE TICK WHILE THE WALK IS HELD STARTS NOTHING BESIDE IT: it is handed the pass in flight.
+            var inFlight = host.MaterialPass(1, stop.Token);
+            Assert.False(inFlight.IsCompleted);
+            Assert.Same(inFlight, host.MaterialPass(6, stop.Token));
         }
         finally
         {
