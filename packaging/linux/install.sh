@@ -186,14 +186,20 @@ install -d -m 0700 -o "$account" -g "$account" "$home" "$home/tmp" "$home/.vnc"
 
 changed_display=no
 changed_app=no
+changed_password=no
 
+# A NEW PASSWORD RESTARTS NOTHING (U-window-door): Xvnc reads its -PasswordFile at each login, so the file replaced whole (a
+# rename over the old one) is the next connection's password, and anyone connected stays connected. CI's linux-host job logs in
+# for real to show it (the old password refused, the new one accepted, both units' MainPID unchanged). Before, a password-only
+# change restarted the display and, through Requires=, the app: a gap in the tape and a turn cut for a change of key.
 if [ "$have_pass" = yes ]; then
     new="$home/.vnc/vncauth.new"
     (umask 077 && printf '%s\n' "$vnc_pass" | "$vncpasswd" -f > "$new")
     vnc_pass=""
     chown "$account:$account" "$new"
+    chmod 0600 "$new"
     if cmp -s "$new" "$home/.vnc/vncauth"; then rm -f "$new"
-    else mv -f "$new" "$home/.vnc/vncauth"; changed_display=yes
+    else mv -f "$new" "$home/.vnc/vncauth"; changed_password=yes
     fi
 fi
 
@@ -315,6 +321,9 @@ elif [ "$changed_app" = yes ] && systemctl is-active --quiet tradeagent.service;
     systemctl restart tradeagent.service
 fi
 systemctl start tradeagent-display.service tradeagent.service
+if [ "$changed_password" = yes ]; then
+    echo "== the window's password changed: the next connection uses it; nothing was restarted for it =="
+fi
 
 systemctl is-active --quiet tradeagent-display.service || refuse "tradeagent-display is not running: journalctl -u tradeagent-display"
 systemctl is-active --quiet tradeagent.service || refuse "tradeagent is not running: journalctl -u tradeagent"
