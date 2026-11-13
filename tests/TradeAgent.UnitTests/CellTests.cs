@@ -425,7 +425,7 @@ public class CellGrantTests
 /// </summary>
 public class CellSeccompTests
 {
-    const uint Allow = 0x7fff0000, Eacces = 0x00050000 | 13, Eperm = 0x00050000 | 1, Notify = 0x7fc00000, Kill = 0x80000000;
+    const uint Allow = 0x7fff0000, Eacces = 0x00050000 | 13, Eperm = 0x00050000 | 1, Eopnotsupp = 0x00050000 | 95, Notify = 0x7fc00000, Kill = 0x80000000;
     const uint X64 = 0xC000003E, Arm64 = 0xC00000B7, I386 = 0x40000003;
 
     static uint Run(System.Runtime.InteropServices.Architecture arch, uint auditArch, uint nr, params ulong[] args) =>
@@ -451,6 +451,34 @@ public class CellSeccompTests
         foreach (var request in new ulong[] { 0x5401 /* TCGETS */, 0x541B /* FIONREAD */, 0x80086601 /* FS_IOC_GETFLAGS */, 0x801C581F /* FS_IOC_FSGETXATTR */ })
             Assert.Equal(Allow, Run(arch, audit, ioctl, 3, request));
     }
+
+    /// <summary>
+    /// SPACE TAKEN WITHOUT WRITING IT (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c> is EOPNOTSUPP on both architectures, whatever its mode, so
+    /// glibc's <c>posix_fallocate</c> falls back to real writes, which the free-space guard can see. Not EPERM: that is no fallback, and it would
+    /// read as a permission. The calls numbered beside it are untouched.
+    /// </summary>
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 285u, new uint[] { 284, 286 })]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 47u, new uint[] { 46, 48 })]
+    public void Space_allocated_without_a_write_is_unsupported_in_a_cell(System.Runtime.InteropServices.Architecture arch, uint audit, uint fallocate, uint[] beside)
+    {
+        foreach (var mode in new ulong[] { 0, 1 /* KEEP_SIZE */, 0x10 /* ZERO_RANGE */, 0x40 /* UNSHARE_RANGE */ })
+            Assert.Equal(Eopnotsupp, Run(arch, audit, fallocate, 3, mode, 0, 1UL << 30));
+        foreach (var nr in beside) Assert.Equal(Allow, Run(arch, audit, nr, 3, 0, 0));
+    }
+
+    /// <summary>
+    /// THE BENCHMARK'S <c>space-unallocated</c> ROW holds only on all four: both modes unsupported, no block left by them, and the fallback written. A
+    /// cell whose filter lets <c>fallocate</c> through (what a build before <c>U-disk-guard-2</c> printed) or one that refuses with EPERM does not hold it.
+    /// </summary>
+    [Theory]
+    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nblocks=0\nposix-written size=1048576\n", true)]
+    [InlineData("allocate-open\nkeep-size-open\nblocks=524288\nposix-written size=268435456\n", false)]
+    [InlineData("allocate-refused errno=1\nkeep-size-refused errno=1\nblocks=0\nposix-failed errno=1\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-open\nblocks=524288\nposix-written size=1048576\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nblocks=0\nposix-failed errno=27\n", false)]
+    public void The_space_row_holds_only_on_an_unsupported_call_and_a_written_fallback(string output, bool held) =>
+        Assert.Equal(held, TradeAgent.AgentRuntime.CellBenchmark.SpaceUnallocated(output));
 
     /// <summary>
     /// WHAT THE SUPERVISOR TAKES OUT OF EACH MEDIATED CALL: the object's directory, path or descriptor, the mode or the times with the shape they
