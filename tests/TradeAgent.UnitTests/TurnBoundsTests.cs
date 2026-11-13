@@ -1212,4 +1212,122 @@ public class TurnBoundsTests : IDisposable
         Assert.True(row.Cost > 0m, "unknown was charged as zero");
         Assert.Equal(row.ReservedCost, row.Cost);
     }
+
+    // ---- U-turn-cards-2: the owner's typed words on every path that worked and did not finish --------------------------
+
+    const string TypedWords = "and brief Research on the skew";
+
+    /// <summary>A look due now for the chair: typed words ride a turn something woke, and nothing speaks for a look, so it always comes back.</summary>
+    static string Look(MissionEventStore events, DateTimeOffset at)
+    {
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(at), Ops);
+        Assert.True(events.Raise(look, MissionEventKind.Review, at, role: Ops));
+        return look;
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, RED FIRST, THE MODEL REFUSED MID-TURN: words the owner typed into it are not handed again once its brief is on record (the
+    /// same rule as the limit after work, one predicate for every caller). RED on the base: the loop still owed the typed words.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_whose_model_was_refused_after_work_are_not_handed_again_once_its_brief_is_on_record()
+    {
+        var name = nameof(Words_typed_into_a_turn_whose_model_was_refused_after_work_are_not_handed_again_once_its_brief_is_on_record);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = RefusedSession(name, RefusedStream(WorkedFirst));
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now, RelayedFor = attempt => VendorLimitTests.PublishBrief(_db, attempt, now)
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(TypedWords);
+        var look = Look(events, now);
+        await loop.TurnAsync();
+
+        Assert.Contains(TypedWords, Assert.Single(host.Opened), StringComparison.Ordinal);
+        Assert.Contains(Refused, loop.StandingAsideFor(Ops)?.Why);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.True(loop.TypedOwedTo(Ops).Count == 0, $"words the turn already turned into a brief were owed again: {string.Join(" | ", loop.TypedOwedTo(Ops))}");
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, THE GUARD ON THE SAME PATH: a model refused mid-turn that left no brief owes the typed words again, as it did.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_whose_model_was_refused_after_work_with_no_brief_are_owed_again()
+    {
+        var name = nameof(Words_typed_into_a_turn_whose_model_was_refused_after_work_with_no_brief_are_owed_again);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = RefusedSession(name, RefusedStream(WorkedFirst));
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(TypedWords);
+        var look = Look(events, now);
+        await loop.TurnAsync();
+
+        Assert.Single(host.Opened);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.Equal([TypedWords], loop.TypedOwedTo(Ops));
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, RED FIRST, THE TURN ENDED AT ITS WALL-CLOCK LIMIT: it wrote, published its brief, and hung; the words typed into it are not
+    /// handed again. RED on the base: the loop still owed the typed words.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_ended_at_its_limit_are_not_handed_again_once_its_brief_is_on_record()
+    {
+        var name = nameof(Words_typed_into_a_turn_ended_at_its_limit_are_not_handed_again_once_its_brief_is_on_record);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = AgentRuntimeProbe.SessionOverStream(WorkingThenHung, manifest: VendorLimitTests.Codex, hangSeconds: 300, name: name);
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now, TurnLimitUnderTest = TimeSpan.FromSeconds(2), RelayedFor = attempt => VendorLimitTests.PublishBrief(_db, attempt, now)
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(TypedWords);
+        var look = Look(events, now);
+        await loop.TurnAsync();
+
+        Assert.Contains(TypedWords, Assert.Single(host.Opened), StringComparison.Ordinal);
+        Assert.Equal(Labels.TurnPastItsLimit(TimeSpan.FromSeconds(2)), loop.StandingAsideFor(Ops)?.Why);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.True(loop.TypedOwedTo(Ops).Count == 0, $"words the turn already turned into a brief were owed again: {string.Join(" | ", loop.TypedOwedTo(Ops))}");
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, RED FIRST, AND THE LOOP'S OWN STOP, the fourth caller of the same rule: its wakes already keep what the records show finished
+    /// (U-turn-cards item 2), and the words typed into it are decided the same way. RED on the base: the loop still owed the typed words.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_the_loops_stop_ended_are_not_handed_again_once_its_brief_is_on_record()
+    {
+        var name = nameof(Words_typed_into_a_turn_the_loops_stop_ended_are_not_handed_again_once_its_brief_is_on_record);
+        var events = new MissionEventStore(_db);
+        var now = DateTimeOffset.UtcNow;
+        var chat = AgentRuntimeProbe.SessionOverStream(WorkingThenHung, manifest: VendorLimitTests.Codex, hangSeconds: 300, name: name);
+        var working = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        chat.TurnAdded += t => { if (t.Role == ChatRole.Ai) working.TrySetResult(); };
+        var host = new VendorLimitTests.Host(_db, events, chat, Path.Combine(_records, name))
+        {
+            Clock = () => now, RelayedFor = attempt => VendorLimitTests.PublishBrief(_db, attempt, now)
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(TypedWords);
+        var look = Look(events, now);
+        loop.Start();
+        await working.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await loop.PauseAsync();
+
+        Assert.Contains(TypedWords, Assert.Single(host.Opened), StringComparison.Ordinal);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.True(loop.TypedOwedTo(Ops).Count == 0, $"words the turn already turned into a brief were owed again: {string.Join(" | ", loop.TypedOwedTo(Ops))}");
+    }
 }

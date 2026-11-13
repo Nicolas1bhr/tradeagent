@@ -2175,6 +2175,12 @@ public sealed class MissionLoop
         else owed.AddRange(typed);
     }
 
+    /// <summary>A TEST'S SEAM (<c>U-turn-cards-2</c>): the owner's typed words this loop holds for <paramref name="role"/>'s next turn. Nothing in the product reads it.</summary>
+    internal IReadOnlyList<string> TypedOwedTo(string role)
+    {
+        lock (_gate) return _typedForARefusedTurn.TryGetValue(role, out var owed) ? [.. owed] : [];
+    }
+
     /// <summary>
     /// THE BOUND THAT CUT EACH ROLE'S LAST TURN, until that role's next turn has been told about it.
     ///
