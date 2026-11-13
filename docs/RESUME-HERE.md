@@ -1,5 +1,14 @@
 # Resume here
 
+> **2026-11-13 — THE FIRST 72-HOUR RUN STARTED (MVP-L, M-org1 sitting #2; R30's gate).** R30 § 3's gate rows landed before T0, and main was green
+> at `aa126ada` (run 43417513086). The owner's Linux server runs the run's kit (branch `run/m-org1-2` = `5ca22a31`) plus HOTFIX-1 (the free-file-entries
+> guard of U-disk-guard-2 and the chief-floor fix, installed 2026-11-13T11:25:52Z through a deliberate restart). T0 2026-11-13T01:18:30Z (the second
+> "Wake the chief once"); it is due to end 2026-11-16T01:18:30Z; paper only, on TradeAgent paper, five pairs (BTC, ETH, SOL, BNB, XRP against USDT).
+> - Landing on `main` does not reach the server: a hot fix for the run is built from `run/m-org1-2`, and only when the orchestrator names it.
+> - Resume from the fleet's `FAST-STATE.md` top block; it holds the run's live state and the legs in flight.
+> - NOT VERIFIED until the run's record says so: verdict → paper → fills on a real seat; 72 hours unattended; a real model on a head or executor seat;
+>   anything on Windows 11 beyond the cell proof rows. The post-run record revises this block.
+
 > **2026-11-04 — TradeAgent is two repositories (the owner, 2026-11-03).** The owner's head-start kit and edge research now live in the
 > private `Nicolas1bhr/tradeagent-moat` (`~/Projects/tradeagent-moat`), which reaches the app only through the kit socket.
 > - Edge-revealing material goes there, never here.
@@ -7,17 +16,16 @@
 > - Every push from this clone, the owner's working copy on his Mac with all its worktrees, runs its tripwire through the
 >   `pre-push` hook.
 >
-> The rules are in `CLAUDE.md`, under "TradeAgent is two repositories". Nothing else moved. The WRAPPED UP block below still holds, and
-> main is still red for the two tests it names. These commits change docs and two code comments only: the `kit/` comment in
+> The rules are in `CLAUDE.md`, under "TradeAgent is two repositories". Nothing else moved then. (History, 2026-11-04: the WRAPPED UP block below,
+> and the red main it names, were superseded on 2026-11-06 and 2026-11-13; the top block says the state.) These commits change docs and two code comments only: the `kit/` comment in
 > `TradeAgent.App.csproj` and `Kit.cs`, which used to invite the owner's kit into this repository's `kit/`.
 
 > **2026-11-02 ~03:0x CET — THE FAST LANE WRAPPED UP on the owner's word** ("Start wrapping up and not starting new things. Well asses what was done and
-> continue later."). Nothing runs; no wake is armed. **Resume from the fleet's `FAST-STATE.md` top block ("WRAPPED UP").** Since 997365c4: 29 units
+> continue later."). (History, 2026-11-02 wrap-up; superseded by the 2026-11-13 block above.) Nothing ran then; no wake was armed. Since 997365c4: 29 units
 > landed plus R25 (decisions D1–D14), R26 (the roadmap) and R27 (the α split); the organisation's first real model turn ran on 2026-10-30 (the chief,
-> gpt-6-luna, exit 0). **Main is RED at 2a4a7edc** (OrganisationLoopTests and OversightPageTests on three platforms — an integration break between the
-> last landings): fixing it is the first step. Then land the in-flight units (two of them block the 72-hour run: U-turn-reservation, U-founding-carry),
-> then the 72-hour run on the Linux host, then the Windows release and sitting. NOT VERIFIED: verdict → paper → fills on any real seat; any 72-hour run;
-> anything on Windows beyond the cell proof rows.
+> gpt-6-luna, exit 0). Main was red at 2a4a7edc then; it was fixed on 2026-11-06, and the two units named as blocking the run (U-turn-reservation,
+> U-founding-carry) landed the same day. NOT VERIFIED: verdict → paper → fills on any real seat; a completed 72-hour run (one started at T0
+> 2026-11-13T01:18:30Z); anything on Windows 11 beyond the cell proof rows.
 
 
 **Read this first, then `BUILD-STATUS.md`.** This file says where the work stopped, what to do next,
@@ -30,9 +38,9 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Since 2026-10-30 the build runs on the fast lane: start with the newest block right below, then the fleet's `FAST-LANE.md` and `FAST-STATE.md`. Everything after that block, down to the end of this file, is history of the ceremony-era build (seats, trains, queue files, the heartbeat, `docs/ORGANISATION.md` § 15 as the only order), kept as the record and no longer the way to resume.**
+**Since 2026-10-30 the build runs on the fast lane: start with the top block of this file, then the fleet's `FAST-LANE.md` and `FAST-STATE.md`. Everything after that block, down to the end of this file, is history of the ceremony-era build (seats, trains, queue files, the heartbeat, `docs/ORGANISATION.md` § 15 as the only order), kept as the record and no longer the way to resume.**
 
-**2026-10-30/31 — THE FAST LANE (the newest block; opened on the owner's word 2026-10-30 ~18:1x CET, in progress) — resume from the fleet's `FAST-STATE.md`
+**2026-10-30/31 — THE FAST LANE (opened on the owner's word 2026-10-30 ~18:1x CET; the build still runs on it) — resume from the fleet's `FAST-STATE.md`
 (the live state) after `FAST-LANE.md` (the rules); the direction is `docs/research/2026-10-30/R25-fast-lane-mvp.md`.** Every block below this one is history;
 where one of them names a seat, a train, a queue file, a BOARD line or a heartbeat of the old ceremony, it describes how the build WAS run. The fleet's files live in
 `~/Projects/ai-trading-software-for-mihael-worktrees/fleet/` (outside the repo, like the rest of the fleet's state).
@@ -54,34 +62,33 @@ you later."
   cells, verdicts are asked, an eligible version is allocated to paper and runs forward, fills and P&L come back to its author, and the organisation keeps, kills or
   iterates — **72 hours unattended** inside its AI budget, surviving a service restart, every step and cost on the app's pages, the owner able to talk to his chief.
   MVP-W, the product: the same on a Windows 11 laptop from a published release, AppContainer cells, no terminal; Mihael is told only once MVP-W holds. Real money
-  stays closed in both. **Status: neither holds.** R25 itself marks no feature implemented and no test passed.
+  stays closed in both, in code (the board's acts refuse a live mode and its policy reader refuses a live body). **Status: neither holds yet; MVP-L's
+  first 72-hour run started at T0 2026-11-13T01:18:30Z.** R25 itself marks no feature implemented and no test passed.
 - **The decisions taken on his behalf (R25 § 4, each his to overrule):** D1 the fast lane replaces the seat/train/record ceremony, protections stay · D2 Windows egress
   by one fixed elevated helper and a firewall rule on the cell's SID, declined → egress `none`, said in words · D3 hires below the chief activate themselves inside the
   gate and wake hire and hirer; his narrowing veto (deactivate, two presses) stays · D4 his words reach the active chief as data (INBOX-001) · D5 the chief and heads
   request their next wake, bounded · D6 the chief may spend a verdict on a version from its subtree · D7 campaigns renew only on data no earlier verdict or research
   could read, dataset and holdout set up in onboarding · D8 gpt-6-luna the default for every org seat, gpt-6.1-sol the fallback, a model a choice among catalog entries that
   pass the classic-tools check · D9 positions list and stop their own subtree's paper deployments, paper only · D10 a read-only kit folder is the socket for his
-  head-start kit, which stays his to build.
-- **Landed on main since `997365c4`** (from `git log 997365c4..origin/main`; the CI runs are the fleet's records in `FAST-STATE.md` and `BUILD-STATUS.md`, not
-  re-verified here): R25 `8131ae25` (docs only) · U-ci-fast-fixes `8a6acc49` (the surface-probe timing row; the device code's full glyph height; the UI test project
-  `tests/TradeAgent.UiTests`) · U-cell-windows PROBE `6e5cd301` (the AppContainer + kill-on-close job primitive and the Windows cell probe rows — **a probe, not the
-  provider and not the proof**; Windows Server refuses the pinned codex its read-only home where Windows 11 grants it) · U-chief-wake-once `4b128c7f` (rung 52:
-  `ai_attempt.vendor_said` and `offered_tools`; the owner wakes an active chief once from its card, two presses) · U-evidence-campaign `9836e38b` (one setup press for the
-  data and its holdout; a spent campaign followed only over fresh months; `data-export`) · U-org-autonomy increment 1 `3cb9abd9` (D5, D3, D6) and increment 2
-  `d55784e4` (D4, D9) · U-org-canon `5ddadc92` (canon v8: every place on the chart is told its job, verbs derived from its seat). Schema 52.
-- **Running at the last record (the fleet's `FAST-STATE.md` is the live copy; this list lags it):** U-cell-windows (provider, then proof) · U-runway-fixes (canon cards,
-  homefile caps) · U-seat-models (D8) · U-ui-pages · U-loop-e2e (the whole loop under puppet seats) · the M-org1 sitting #1 leg. Next to dispatch: U-kit-socket (D10), then the
-  72-hour run kit. After that: the Windows release (a CI-built installer with the app's own paper venue first; the ATAS-enabled build when that box answers).
+  head-start kit, which stays his to build. Then R25 § 4b: D11 the founding paper envelope per pair (5,000 USDT, three deployments) ·
+  D12 36 months per pair, the last 12 held back · D13 a plan turn reserves what it can plausibly cost · D14 15 open positions in paper. R30 §§ 4/4b: D15 a full
+  exploration pot is spent · D16 a forward hold withholds only its own pair · D17 no automatic model switch · D18 `MaxOrderQuantity` per pair = envelope ÷ 3 ·
+  D19 a stop ends the allocation · D20 45 orders a minute in PAPER only · D21 the chief's short wake floor · D22 the free-space guard pauses the AI through the
+  owner's pause, and only he resumes it. Later rulings are in the fleet's `FAST-STATE.md` until the post-run record names them.
+- **Landed on main since `997365c4`:** the landing entries at the END of `BUILD-STATUS.md` (from U-broker-seat-fixes, 2026-10-31, to the newest) are the
+  list, each with its CI run. App schema 57 at `aa126ada` (`Versioning.cs`); the tape's layout 4 (`TapeStore.Schema`).
+- **What runs now** is in the fleet's `FAST-STATE.md` only; this file keeps no list of legs.
 - **2026-10-30 22:51Z — THE FIRST REAL MODEL TURN ON AN ORG SEAT** (M-org1 sitting #1, the fleet driving the server app under the standing go): the chief, on its confined broker seat, took one gpt-6-luna turn — ENDED, exit 0, mediated, on the owner's plan, 10 broker-door calls served and none refused, no vendor refusal, cost ≈ 0.005 list-price dollars; it read the app's state, recorded one ledger claim and wrote its turn report; the AI was then paused. Option C is accepted by the vendor (the effective model is not stated by the vendor). Record: the fleet's `records/M-org1-luna-turn.md`. Verdict → paper → fills is still NOT VERIFIED on any seat.
 - **The standing go (the owner, 2026-10-30 ~23:4x CET, recorded in `FAST-STATE.md`):** "Yes, standing go". The fleet reads it as permission to drive the owner's server
   app for the sittings — installs, appoint and activate the chief, Start the AI, the organisation's autonomy, the wake-once press, paper envelopes — and **never** live
   trading, money, credentials or his sign-in. The install word it files is dated. It is a standing permission, not a record that any of it was done.
-- **NOT VERIFIED (what this block cannot honestly say):** that any real model has taken a turn on a chief, head or executor seat — M-org1 sitting #1 was dispatched, and
-  until the fleet's records or `BUILD-STATUS.md` quote its result, none is confirmed; that a verdict → paper → fills path has run on any seat (it never had, R25 § 1); that
-  the organisation has run unattended for any length of time; anything on Windows beyond the probe rows; the release a user can install (the last published is v0.1.2, 2026-09-06).
-- **How to resume:** read, in order, `docs/PRINCIPLES.md`, `docs/VISION.md` §§ 0–3 and 11, R25, then the fleet's `FAST-LANE.md` and `FAST-STATE.md` (legs in flight, their
+- **NOT VERIFIED (what this block cannot honestly say):** a real model on a head or executor seat (the chief has taken real turns: 2026-10-30, and in
+  the 72-hour run from T0); that a verdict → paper → fills path has run on any seat; the organisation unattended for 72 hours (the run is due to end
+  2026-11-16T01:18:30Z); anything on Windows 11 beyond the cell proof rows; a release a user can install beyond v0.1.2 (2026-09-06, still the latest published).
+- **How to resume:** read, in order, `docs/PRINCIPLES.md`, `docs/VISION.md` §§ 0–3 and 11, R25, R30 (`docs/research/2026-11-06/R30-the-72-hour-gate.md`), then the fleet's
+  `FAST-LANE.md` and `FAST-STATE.md` (legs in flight, their
   agent ids, the sittings, the log). A dead leg resumes by `SendMessage` to its id from its branch tip and its scratch notes. Then `BUILD-STATUS.md` for what is proven.
-  The order of work is R25 § 5 and the fleet's roadmap brief, no longer `docs/ORGANISATION.md` § 15 alone.
+  The order of work is R30 § 5 (after R25 § 5) and `FAST-STATE.md`'s NEXT, no longer `docs/ORGANISATION.md` § 15.
 
 *(History, to 2026-10-30 — the ceremony-era instruction:)* **A new orchestrator session starts with `docs/FLEET.md` § "The orchestrator" (*Starting a session*: in a build session the owner has opened, arm the
 heartbeat first; in a meeting, arm nothing), then the newest checkpoint right below (2026-10-23 09:5x, RESUMED on the owner's word: the security board, R24), the four doctrine blocks after the dated checkpoints (2026-10-11 afternoon — the in-app orchestration first — then R22, R21, R20)
