@@ -1041,6 +1041,62 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.True(JsonDocument.Parse(o2).RootElement.GetProperty("disk").TryGetProperty("unreadable", out _));
     }
 
+    /// <summary>
+    /// FREE INODES BESIDE FREE BYTES, AND ATTENTION WHEN THEY RUN OUT (R31 A4, U-digest-polish-2). The app's guard reads bytes only: millions of empty
+    /// files can use up the filesystem's inodes while it reads plenty free, and ext4 keeps none back for root, so the host's other services stop too.
+    /// The watch raises free inodes under the larger of a tenth and 500,000, naming the figures and the bytes free; plenty of both raises nothing.
+    ///
+    /// <para>RED at base: a four-figure reading was unreadable ("disk: UNREADABLE"), so no inode figure and no flag reached the watch.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void The_digest_shows_free_inodes_and_raises_them_running_out_while_the_bytes_are_plenty()
+    {
+        const long gib = 1L << 30;
+        var f = Build();
+        var disk = Path.Combine(f.Root, "disk.json");
+        (JsonElement Json, string Human) Digest(string reading)
+        {
+            File.WriteAllText(disk, reading);
+            string[] args = ["--state", f.State, "--since", "2026-10-30T12:00:00Z", "--now", "2026-10-31T14:00:00Z", "--no-systemd", "--disk-file", disk, .. f.Identity()];
+            var (exit, o, e) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), [.. args, "--json"]);
+            Assert.True(exit == 0, e);
+            return (JsonDocument.Parse(o).RootElement.Clone(), Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), args).Out);
+        }
+        static string Attention(JsonElement d) => string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+
+        // PLENTY OF BYTES, FEW INODES: raised, with the figures, the floor and the bytes free.
+        var (few, fewHuman) = Digest($"[{40 * gib}, {100 * gib}, 300000, 6553600]");
+        Assert.Contains("free inodes 300,000 of 6,553,600 (4.6%) are UNDER 655,360 (the larger of 10% and 500,000), with 40.0 GiB free", Attention(few), StringComparison.Ordinal);
+        Assert.Contains("\n  ! free inodes 300,000 of 6,553,600", fewHuman, StringComparison.Ordinal);
+        Assert.DoesNotContain("guard's floor", Attention(few), StringComparison.Ordinal);
+        // A small filesystem: 45 % free, but under 500,000.
+        Assert.Contains("free inodes 450,000 of 1,000,000 (45.0%) are UNDER 500,000", Attention(Digest($"[{40 * gib}, {100 * gib}, 450000, 1000000]").Json), StringComparison.Ordinal);
+
+        // PLENTY OF BOTH: shown, never raised. At the floor exactly is not under it.
+        var (plenty, plentyHuman) = Digest($"[{40 * gib}, {100 * gib}, 5000000, 6553600]");
+        Assert.DoesNotContain("inodes", Attention(plenty), StringComparison.Ordinal);
+        Assert.Contains("disk: 40.0 GiB free of 100.0 GiB  guard floor 10.0 GiB; inodes 5,000,000 free of 6,553,600 (76.3%), floor 655,360", plentyHuman, StringComparison.Ordinal);
+        Assert.False(plenty.GetProperty("disk").GetProperty("inodes_below_floor").GetBoolean());
+        Assert.DoesNotContain("inodes", Attention(Digest($"[{40 * gib}, {100 * gib}, 655360, 6553600]").Json), StringComparison.Ordinal);
+
+        // A FILESYSTEM THAT COUNTS NONE says so and raises nothing; a reading of bytes alone reads as before.
+        var (none, noneHuman) = Digest($"[{40 * gib}, {100 * gib}, 0, 0]");
+        Assert.DoesNotContain("inodes", Attention(none), StringComparison.Ordinal);
+        Assert.Contains("inodes: this filesystem counts none", noneHuman, StringComparison.Ordinal);
+        var bytesOnly = Digest($"[{40 * gib}, {100 * gib}]").Json.GetProperty("disk");
+        Assert.Equal(40 * gib, bytesOnly.GetProperty("free").GetInt64());
+        Assert.Equal(JsonValueKind.Null, bytesOnly.GetProperty("inodes_total").ValueKind);
+
+        // AND THE HOST'S OWN statvfs is what fills them when no reading is handed in.
+        var (exit, o, e) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"),
+            ["--state", f.State, "--since", "2026-10-30T12:00:00Z", "--now", "2026-10-31T14:00:00Z", "--no-systemd", "--json", .. f.Identity()]);
+        Assert.True(exit == 0, e);
+        var real = JsonDocument.Parse(o).RootElement.GetProperty("disk");
+        Assert.Equal(JsonValueKind.Number, real.GetProperty("inodes_total").ValueKind);                                // a filesystem that counts none reads 0, never null
+        if (real.GetProperty("inodes_total").GetInt64() > 0)
+            Assert.InRange(real.GetProperty("inodes_free").GetInt64(), 0, real.GetProperty("inodes_total").GetInt64());
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
