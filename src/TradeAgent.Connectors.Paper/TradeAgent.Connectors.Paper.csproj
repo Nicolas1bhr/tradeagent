@@ -8,6 +8,11 @@
     <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- For one test seam only: PaperConnectorOptions.OneCancelsOtherOffUnderTest (U-paper-oco). -->
+    <InternalsVisibleTo Include="TradeAgent.IntegrationTests" />
+    <InternalsVisibleTo Include="TradeAgent.FaultTests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- The book is a SQLite file of this connector's own, beside the app's but never inside it.
          Declared here rather than taken transitively from Core, because this project opens a
          connection itself. Same versions Core pins, for the reason Core pins them. -->
