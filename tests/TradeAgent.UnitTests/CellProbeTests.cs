@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using TradeAgent.AgentRuntime;
 using TradeAgent.CellProbe;
 using Xunit;
@@ -58,35 +56,29 @@ public class CellProbeTests : IDisposable
     }
 
     /// <summary>
-    /// A FOLDER THIS ACCOUNT MAY NOT LIST IS A DENIAL, Windows' own refusal and nothing else: on Windows a folder whose access list grants nobody anything (its owner
-    /// keeps the right to put it back); elsewhere mode 000.
+    /// A FOLDER THIS ACCOUNT MAY NOT LIST IS A DENIAL, the system's own refusal and nothing else: mode 000 here. NOT ON WINDOWS, said: on CI's elevated runner a
+    /// folder of its own with an empty access list still listed (run 43399213968, "LIST-OPEN"), so a folder's access list cannot be relied on to refuse that
+    /// account. Windows' own error 5 is what the benchmark's <c>state-unreadable</c> row reads in a real cell, where its LIST must say DENIED.
     /// </summary>
-    [NotAsRootFact("root lists a folder of mode 000")]
+    [UnixNotAsRootFact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
     public void A_folder_this_account_may_not_list_is_a_denial()
     {
         var shut = Directory.CreateDirectory(Path.Combine(_root, "shut")).FullName;
         File.WriteAllText(Path.Combine(shut, "inside.txt"), "x");
-        Shut(shut, true);
+        File.SetUnixFileMode(shut, UnixFileMode.None);
         try { Assert.Equal(["CTL-LIST-OPEN", "LIST-DENIED"], Lines("list", _root, shut)); }
-        finally { Shut(shut, false); }
+        finally { File.SetUnixFileMode(shut, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
     }
 
-    static void Shut(string folder, bool shut)
+    /// <summary>Linux and macOS, not as root (root lists a folder of mode 000): skipped elsewhere, with the reason.</summary>
+    sealed class UnixNotAsRootFactAttribute : FactAttribute
     {
-        if (OperatingSystem.IsWindows())
+        public UnixNotAsRootFactAttribute()
         {
-            var info = new DirectoryInfo(folder);
-            var acl = info.GetAccessControl();
-            if (shut)
-            {
-                acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-                foreach (FileSystemAccessRule r in acl.GetAccessRules(true, false, typeof(SecurityIdentifier))) acl.RemoveAccessRuleSpecific(r);
-            }
-            else acl.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl,
-                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-            info.SetAccessControl(acl);
+            if (OperatingSystem.IsWindows()) Skip = "not on Windows: an elevated runner lists a folder whose access list is empty; the cell's state-unreadable row reads error 5 there";
+            else if (Environment.IsPrivilegedProcess) Skip = "not as root: root lists a folder of mode 000";
         }
-        else File.SetUnixFileMode(folder, shut ? UnixFileMode.None : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
     /// <summary>
