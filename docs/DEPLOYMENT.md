@@ -19,8 +19,8 @@ card, the refusal sentence).
 |---|---|---|
 | Windows 11 | `MinVersion=10.0.22000` in the installer refuses anything older (`packaging/TradeAgent.iss:62`) | walked (U3) |
 | x64 | `ArchitecturesAllowed=x64compatible` (`packaging/TradeAgent.iss:58`) | walked (U3) |
-| ATAS installed and signed in to a broker | TradeAgent never sees the broker credentials and never asks | walked (U4) |
-| At least one account visible in ATAS | simulated is fine and is the right place to start — U4 used `CRYPTO5EB41`, a Binance crypto-sim account | walked (U4) |
+| ATAS installed and signed in to a broker — **an ATAS build only** | TradeAgent never sees the broker credentials and never asks. The no-ATAS build every CI release carries (`TradeAgent-Setup-x64-no-atas.exe`, §1) needs no ATAS at all: paper runs on TradeAgent's own venue | walked (U4) |
+| At least one account visible in ATAS — **an ATAS build only** | simulated is fine and is the right place to start — U4 used `CRYPTO5EB41`, a Binance crypto-sim account | walked (U4) |
 | ~2 GB free | the doctor's "Free disk space" check fails below it (`src/TradeAgent.Diagnostics/Doctor.cs:58`); a working AI needs more, or the free-space guard pauses it (a tenth of the disk, 2 to 10 GB) | walked (U4, as part of the journey) |
 
 Nothing else. No .NET, no Node, no developer tools: the app and the `trade` CLI are published
@@ -49,7 +49,11 @@ CI cuts it; you press two buttons; nothing is published without the second one.
    commit concluded success. With `dry_run` ticked (the default) it builds and checks everything, uploads the four files as the
    run's artifact `release-assets`, and makes no draft.
 3. **Publish.** Open the draft on the repository's Releases page, read it, press **Publish release**. That press creates the tag
-   and makes it `latest`; from then on every installed TradeAgent's check offers it. A draft is invisible to the updater
+   and makes it `latest`; from then on every installed TradeAgent's check offers it. **For a proof walk, tick "Set as a
+   pre-release" before that press**: a pre-release is public and downloadable from its tag's page, but `/releases/latest` skips
+   it and v0.1.x's updater refuses it, so no installed v0.1.x laptop is offered it before its owner is told (a v0.1.x ATAS build
+   would otherwise be offered the no-ATAS installer, and a 0.2.0 that does not open its older folder). Untick it — "Set as the
+   latest release" on the release's edit page — only when the walk holds and those owners have been told. A draft is invisible to the updater
    (`/releases/latest` never returns one, and `ReleaseFeed.Parse` refuses one besides). *Not yet walked: no release has been cut
    this way.*
 

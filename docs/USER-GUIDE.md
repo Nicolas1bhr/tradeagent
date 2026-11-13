@@ -24,8 +24,11 @@ board's policy (the app's founding values until the board decides), never from t
 
 ## Installing it
 
-One file. Download `TradeAgent-Setup-x64.exe` from the
-[releases page](https://github.com/Nicolas1bhr/tradeagent/releases/latest) and double-click it.
+One file. Download `TradeAgent-Setup-x64-no-atas.exe` from
+[the 0.2.0 release](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.2.0) and double-click it. That is the
+installer every published release carries: it runs paper on TradeAgent's own venue, and it has no ATAS in it (see
+"About ATAS"). An installer that does carry ATAS is named `TradeAgent-Setup-x64.exe`; you would only have one if it was
+handed to you.
 
 It installs for you alone, into your own account, so **Windows does not ask for an administrator
 password** and nothing outside your account is touched. There is no all-users-or-just-me question to
@@ -33,6 +36,11 @@ answer.
 
 Two things you will see, and neither is a fault:
 
+- **Your browser's own warning, first.** A browser can stop a download it has not seen often before
+  — Edge says the file "isn't commonly downloaded" — before Windows says anything. In Edge: open the
+  downloads list, choose **Keep**, then **Keep anyway**. Other browsers have their own words for the
+  same choice. *Not walked yet: nobody has downloaded this release in a browser and recorded what it
+  says.*
 - **"Windows protected your PC."** TradeAgent is not signed with a publisher certificate — that was
   a deliberate decision to leave for later — so Windows may show a blue warning the first time
   anyone runs the installer it has just downloaded. The **Run anyway** button is hidden until you
@@ -796,6 +804,28 @@ changes nothing.
 
 No single file an AI's program writes can pass 1 GB, on macOS and Linux. Windows has no such limit
 on a file, so there the free-space check is what stands.
+
+### If TradeAgent will not start the AI because of your own folders (Windows)
+
+The AI tool TradeAgent runs reads two folders on a Windows computer **whatever TradeAgent tells it**:
+your account's own skills folder (`.agents\skills` in your user folder) and a folder of settings and
+skills for every account on the computer (`OpenAI\Codex` inside `C:\ProgramData`). Anything in
+either would reach the AI as its own instructions, settings or tools, so **while either holds
+anything, TradeAgent starts no AI at all** and says which folder it is. It never opens what is in it.
+
+If you keep skills of your own there for another AI tool, the Dashboard shows a card naming the
+folder and how many items it holds. Press **Move these aside**; the button then says exactly what the
+second press will do — "Yes — move 3 items to … (moved aside by TradeAgent); nothing is deleted".
+Press it again and TradeAgent renames the folder, whole, to a folder beside it that the AI tool never
+reads. Nothing is deleted, copied or opened. The card then says what moved and where, and how to put
+it back: rename that folder to its old name again, in File Explorer. The AI will not start while it
+is back.
+
+If Windows does not let TradeAgent rename the computer-wide folder — another account or an installer
+put it there — the card says so, and an administrator of the computer can move it.
+
+*Not walked on a Windows 11 laptop yet: the rule and the card are proven on the Windows Server that
+TradeAgent's checks run on, which has no such folders of its own.*
 
 ### The AI is two roles, one at a time
 
