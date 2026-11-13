@@ -519,6 +519,48 @@ public partial class ForwardRunnerTests
         Assert.DoesNotContain("no stop and no target", line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A STOP AND A TARGET THAT SIZE TO NOTHING ARE REFUSED ONES TOO, NOT SENT AT THE UNROUNDED SIZE (<c>U-test-meaning</c>, A8 on <c>U-paper-oco</c>'s A3-3).
+    /// Its landing called this the no-price row's code path; it is not: the rounds-to-nothing reason is its own line of <c>Sized</c>, and with it gone the
+    /// protection went out at the fill's own size off the venue's step, CI green. Here the venue's increment grows to 10 between the entry and its fill,
+    /// so the filled 1 rounds down to nothing: both operations are refused in those words with nothing sent, and the position reads UNPROTECTED.
+    ///
+    /// <para><b>RED on the mutant</b>: <c>why = null;</c> in place of the rounds-to-nothing reason in <c>ForwardRuns.Sized</c>.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_stop_and_target_that_size_to_nothing_read_unprotected_and_are_never_sent_unrounded()
+    {
+        await using var rig = await ReadyAsync(Protected);
+        rig.Bar(1, 99m, 100m, 98m, 100m);
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(2, 100m, 100.5m, 99.5m, 100m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+
+        new VenueStore(rig.Db).Sync(Catalogue(increment: 10m));    // the entry rests at 1; its protection is sized after the fill
+        rig.Bar(3, 100m, 100.6m, 99.6m, 100.2m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        await rig.Runner.AdvanceAsync();
+
+        Assert.Equal(1m, await Position(rig));
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        foreach (var o in ops) log.WriteLine($"{o.Kind} {o.State} {o.Answer} {o.IntentJson}");
+        foreach (var kind in new[] { DeploymentOpKind.Stop, DeploymentOpKind.Target })
+        {
+            var op = Assert.Single(ops, o => o.Kind == kind);
+            Assert.Equal(DeploymentOpState.Refused, op.State);
+            Assert.Contains("rounds down to nothing at the venue's quantity increment of 10", op.Answer, StringComparison.Ordinal);
+            Assert.Null(rig.Gw.Requests.Get(op.RequestId));
+        }
+        Assert.Empty(await WorkingProtection(rig));
+
+        var line = LineOf(rig);
+        log.WriteLine(line);
+        Assert.Contains("UNPROTECTED", line, StringComparison.Ordinal);
+        Assert.Contains("no stop and no target", line, StringComparison.Ordinal);
+    }
+
     /// <summary>A POSITION THAT DECLARED NO PROTECTION IS NOT AN UNPROTECTED ONE: nothing was refused, so nothing is said.</summary>
     [Fact]
     public async Task A_program_that_declared_no_protection_does_not_read_unprotected()

@@ -43,7 +43,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     }
 
     /// <summary>The owner's venues.json, standing in one line: BTCUSDT on Binance spot, VERIFIED.</summary>
-    static VenueCatalogRead Catalogue() => new(
+    static VenueCatalogRead Catalogue(decimal increment = 0.001m) => new(
     [
         new VenueEntry
         {
@@ -56,7 +56,7 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
             [
                 new VenueInstrumentEntry
                 {
-                    Symbol = "BTCUSDT", TickSize = 0.01m, QuantityIncrement = 0.001m,
+                    Symbol = "BTCUSDT", TickSize = 0.01m, QuantityIncrement = increment,
                     Source = "declared by this test", Verified = true
                 }
             ]
