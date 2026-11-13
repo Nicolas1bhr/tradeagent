@@ -30,12 +30,22 @@ public static class AtasHealth
     /// "ATAS is not running" in front of somebody on the practice simulator who has never installed
     /// it and has nothing to fix.
     /// </summary>
-    public const string NotInUse = "not in use — you are on the practice simulator";
+    /// <remarks>
+    /// THE PLATFORM HE IS ON, BY ITS NAME (<c>U-owner-words-2</c>; the real run of 2026-11-13, shot 64): the rows said "you are on the practice
+    /// simulator" to an owner on TradeAgent paper, because the one sentence was written when the simulator was the only other platform.
+    /// The ids are the connectors' own (<c>Platforms.Connectors</c>, which this assembly does not reference; a test holds them equal).
+    /// </remarks>
+    public static string NotInUse(string? platform) => platform switch
+    {
+        "paper" => "not in use — you are on TradeAgent paper",
+        "fake" => "not in use — you are on the practice simulator",
+        _ => "not in use — ATAS is not the platform you chose"
+    };
 
     /// <summary>Is the ATAS platform itself up? Pure, so the table above is testable off Windows.</summary>
-    public static (HealthState State, string Detail) ProcessRow(bool atasSelected, AtasDetection d)
+    public static (HealthState State, string Detail) ProcessRow(bool atasSelected, AtasDetection d, string? platform = null)
     {
-        if (!atasSelected) return (HealthState.UNKNOWN, NotInUse);
+        if (!atasSelected) return (HealthState.UNKNOWN, NotInUse(platform));
         // BEFORE ANY VERDICT ABOUT THE MACHINE. With atas.json unreadable nothing was searched for,
         // so "ATAS is not installed on this computer" would be a claim about a computer nobody
         // looked at — and it names a repair (install ATAS) that is not the one this owner needs.
@@ -62,9 +72,9 @@ public static class AtasHealth
     /// somebody to reinstall an add-on inside a program that is closed.
     /// </summary>
     public static (HealthState State, string Detail) BridgeRow(
-        bool atasSelected, AtasDetection d, HealthState connection, BridgeHello? hello, string? refusal)
+        bool atasSelected, AtasDetection d, HealthState connection, BridgeHello? hello, string? refusal, string? platform = null)
     {
-        if (!atasSelected) return (HealthState.UNKNOWN, NotInUse);
+        if (!atasSelected) return (HealthState.UNKNOWN, NotInUse(platform));
 
         // Ahead of the refusal too, and for the same reason the machine facts are: every sentence
         // below sends the owner to a folder — install it there, start it from there, press
@@ -275,7 +285,7 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
         // health tick has no business enumerating processes every five seconds.
         var d = selected ? Detect() : Nothing;
 
-        var (ps, pd) = AtasHealth.ProcessRow(selected, d);
+        var (ps, pd) = AtasHealth.ProcessRow(selected, d, connector.Id);
         health.Set(Components.AtasProcess, ps, pd);
 
         // ONE READING OF THE CONNECTOR PER PASS. Since a heartbeat that cannot attest clears the
@@ -285,7 +295,7 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
         var hello = atas?.Bridge;
         var detail = atas?.StatusDetail;
 
-        var (bs, bd) = AtasHealth.BridgeRow(selected, d, connection, hello, detail);
+        var (bs, bd) = AtasHealth.BridgeRow(selected, d, connection, hello, detail, connector.Id);
         health.Set(Components.AtasBridge, bs, bd);
 
         RepairOffered = AtasHealth.RepairOffered(selected, d, connection, detail);

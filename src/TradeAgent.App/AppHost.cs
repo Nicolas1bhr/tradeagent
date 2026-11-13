@@ -2445,7 +2445,7 @@ public sealed class AppHost : IAsyncDisposable
     /// the trading connection rather than asking the connector again: two readings of one pipe taken
     /// a moment apart is how a dashboard ends up contradicting itself in the same frame.
     /// </summary>
-    void ReportAtasHealth()
+    internal void ReportAtasHealth()
     {
         _atasHealth.Report(Health, Connector, Health.Get(Components.TradingConnection).State);
         // The other vendor-command file, on the same tick and for the same reason. It is here rather

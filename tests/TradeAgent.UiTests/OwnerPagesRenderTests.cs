@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
 using TradeAgent.App;
+using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -156,9 +157,10 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// Renders each page in the window's frame at <paramref name="width"/>x<paramref name="height"/>: the rail and header as blank bands, the
     /// page beside and below them. Returns each page's overflow; saves the frames when <c>TA_UI_SHOTS</c> is set.
     /// </summary>
-    List<Frame> RenderAll(Database db, string home, int width, int height, Action<AppHost>? prepare = null, bool armed = false)
+    List<Frame> RenderAll(Database db, string home, int width, int height, Action<AppHost>? prepare = null, bool armed = false,
+        ITradingConnector? connector = null)
     {
-        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        var host = AppHost.Composed(db, connector ?? new FakeConnector(new FakeBroker()), new AgentPresence());
         try
         {
             prepare?.Invoke(host);
@@ -198,6 +200,9 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                             two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
                         win.UpdateLayout();
                         overflow.AddRange(OverflowIn(page, win, width - Theme.S6).Select(o => "armed: " + o));
+                        // The armed sentences are words the owner reads too (U-owner-words-2): kept with the page's texts.
+                        texts.AddRange(page.GetSelfAndVisualDescendants().OfType<Control>().Where(c => c.IsEffectivelyVisible).OfType<TextBlock>()
+                            .Select(t => t.Text ?? "").Where(t => t.Length > 0 && !texts.Contains(t)));
                         Save(win, $"{home}-{maker.Name}-{width}x{height}-armed.png");
                     }
 
@@ -659,5 +664,32 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
             Assert.Equal($"Setup: {step.Title()} — done", OnboardingView.StepDoneLine(step, usingAtas: true));
         }
         Assert.Equal("Setup: Choose your trading platform — done", OnboardingView.StepDoneLine(OnboardingStep.TRADING_PLATFORM_SELECTED, usingAtas: false));
+    }
+
+    /// <summary>
+    /// SYSTEM HEALTH NAMES THE PLATFORM HE IS ON (<c>U-owner-words-2</c>; the real run of 2026-11-13, shot 64): on TradeAgent paper the two
+    /// ATAS rows said "not in use — you are on the practice simulator". Rendered on each platform this build can be switched to, the Dashboard
+    /// says the true sentence for it: paper's name on paper, the simulator's on the simulator, and on ATAS the rows are ATAS's own checks.
+    /// RED at the base: "you are on the practice simulator" on TradeAgent paper.
+    /// </summary>
+    [Theory]
+    [InlineData("paper", "not in use — you are on TradeAgent paper")]
+    [InlineData("fake", "not in use — you are on the practice simulator")]
+    [InlineData("atas", null)]
+    public void System_health_says_the_platform_in_force_on_each_platform(string platform, string? words)
+    {
+        Assert.Contains(platform, TradeAgent.Platforms.Connectors.All);
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"health-{platform}-{Guid.NewGuid():n}.db"));
+        ITradingConnector connector = platform switch
+        {
+            "fake" => new FakeConnector(new FakeBroker()),
+            "atas" => new TradeAgent.Connectors.Atas.AtasConnector(),
+            _ => TradeAgent.Platforms.Connectors.Create(platform),
+        };
+        var dashboard = RenderAll(db, $"health-{platform}", 1280, 800, host => host.ReportAtasHealth(), connector: connector).Single(f => f.Page == "dashboard");
+        var said = dashboard.Texts.Where(t => t.Contains("not in use", StringComparison.Ordinal)).ToList();
+        output.WriteLine(string.Join(" | ", said));
+        if (words is null) Assert.Empty(said);
+        else Assert.Equal(["unknown — " + words, "unknown — " + words], said);
     }
 }
