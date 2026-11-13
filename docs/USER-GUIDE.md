@@ -171,14 +171,14 @@ you close it.
 
 ## Setting it up
 
-The app walks you through it. **There are sixteen screens, and the counter at the top of each one says so —
-STEP 4 OF 16.** Most of them you will never see. A screen that can check its own work does not ask
+The app walks you through it. **There are seventeen screens, and the counter at the top of each one says so —
+STEP 4 OF 17.** Most of them you will never see. A screen that can check its own work does not ask
 you to confirm you did it; it checks every two seconds and moves on the moment the answer is yes, so
-it goes past in a blink. On the one full walk done so far, on Windows with ATAS, **eight of the
-sixteen were shown and eight went past by themselves.** Which eight depends on your machine — a
-screen appears only if it is waiting for something.
+it goes past in a blink. On the one full walk done so far, on Windows with ATAS and the sixteen screens
+setup had then, **eight were shown and eight went past by themselves.** Which ones depends on your
+machine — a screen appears only if it is waiting for something.
 
-These are all sixteen, by the name each one shows at the top.
+These are all seventeen, by the name each one shows at the top.
 
 1. **Welcome** — what is about to happen.
 2. **Checking your computer** — the machine can run everything. Passes by itself.
@@ -187,7 +187,10 @@ These are all sixteen, by the name each one shows at the top.
    do, and nothing is added to the rest of your computer. Passes by itself once it is there.
 5. **Sign in to your AI account** — press **Sign in** and your web browser opens on the right page.
    TradeAgent notices when you are done. If the browser does not open, the screen gives you the link
-   to copy. Passes by itself once you are signed in.
+   to copy. Passes by itself once you are signed in. On a Linux machine TradeAgent opens nothing:
+   it shows a web address and a one-time code instead. Switch on *device code login* in ChatGPT's
+   security settings first, then open the address on your phone or another computer, sign in there
+   and type the code. If the code runs out before you finish, **Start sign-in again** gives a new one.
 6. **Choose your trading platform** — **TradeAgent paper** (recommended, and the place to start: real
    prices, simulated fills, no money, and the one place the AI team's strategies run), the built-in
    **practice simulator** (a fake account with made-up prices, for looking around; no strategy runs on
@@ -207,13 +210,18 @@ These are all sixteen, by the name each one shows at the top.
 12. **Checking live prices** — passes by itself.
 13. **Checking trading access** — passes by itself.
 14. **Creating the AI's workspace** — the folder the AI works in.
-15. **Starting the AI**.
-16. **Setup complete** — and you are on the Chat page.
+15. **Setting up the test the AI is judged on** — TradeAgent downloads the last 36 complete months of
+    1-minute history for each pair ticked on the screen, from Binance's public archive, and holds the
+    last 12 back, so a strategy is judged on months the AI never saw (see *Holding months back*). Untick
+    any pair you do not want, then press **Download and hold back**; **Later, in Settings** leaves it to
+    the Settings page, and nothing is judged until it is done. Passes by itself if it is already set up.
+16. **Starting the AI**.
+17. **Setup complete** — and you are on the Chat page.
 
 **It resumes.** Progress is written down as each screen is finished, so closing TradeAgent, restarting
 Windows, or a failure halfway leaves you exactly where you stopped — nothing already done is walked
-again. That was tried: closed at step 9 of 16, reopened, and it came back on step 9 with nothing
-repeated.
+again. That was tried, when setup had sixteen screens: closed at step 9, reopened, and it came back
+on step 9 with nothing repeated.
 
 **Back does not go back one screen; it goes back to your last real choice.** There are four of those
 — **Welcome**, **Choose your AI assistant**, **Choose your trading platform** and **Starting the AI**
