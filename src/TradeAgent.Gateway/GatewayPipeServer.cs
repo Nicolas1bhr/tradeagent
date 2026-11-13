@@ -398,7 +398,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> quote -> instruments -> positions -> in PAPER the routed account again -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> quote -> instruments -> positions -> in PAPER the routed account again -> place"),
-        new(Core.Ops.Modify, ModifyHandlerPath, "the account, one orders read that both resolves the target and takes it as it stands, a cold placement's own reads, in PAPER the routed account again, and the modify"),
+        new(Core.Ops.Modify, ModifyHandlerPath, "the account, one orders read that both resolves the target and takes it as it stands, the risk check's instruments and quote reads, in PAPER the routed account again, and the modify"),
 
         new(Core.Ops.Cancel, RiskReducingReadPath, "resolve the target, then cancel — both inside the one budget"),
         new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
@@ -439,9 +439,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     TimeSpan PnlHandlerPath => 3 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
-    /// `modify`: ONE orders read — which both resolves the target reference and takes the target as
-    /// it stands — and then every call a cold placement makes, the account, positions, the quote and
-    /// the instruments, before the modification itself. Six in series.
+    /// `modify`: the account, ONE orders read — which both resolves the target reference and takes the
+    /// target as it stands — and then the risk check's reads a cold placement also makes, the
+    /// instruments and the quote (and the instruments again for a contract size when a value cap is
+    /// set; a modification reads no positions), before the modification itself. Six in series.
     ///
     /// It was four, from the days when a modification went to the wire on an authorization and
     /// nothing else. `TradingGateway.ModifyAsync` now risk-checks the order as it WILL STAND, which
@@ -531,9 +532,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// the next (Codex round-8 CHECK d; the sixth since U-live-witness-2):
     ///
     ///   1. the account — `AccountAsync`, which is `GetAccountAsync` or `GetAccountsAsync`;
-    ///   2. the open positions — the `MaxOpenPositions` check;
-    ///   3. a quote — required for EVERY order, so a stale price cannot size one;
-    ///   4. the instrument list — read once and cached, so only a cold process pays it;
+    ///   2. a quote — required for EVERY order, so a stale price cannot size one;
+    ///   3. the instrument list — read once and cached, so only a cold process pays it;
+    ///   4. the open positions — the `MaxOpenPositions` check, inside the dispatch gate;
     ///   5. in PAPER, the routed account again — `GetAccountAsync`, the last read before the
     ///      re-check at the wire, so a practice witness that changed in flight is seen;
     ///   6. the order itself.
@@ -541,10 +542,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// "Cold" is not a contrived state: it is every placement made before anything else has warmed
     /// the caches, which at shutdown is exactly the placement most likely to still be in flight.
     ///
-    /// WHY NOT EIGHT, which is what a cold `close` issues (a `RequireAccountId` and a positions read,
-    /// and then all six of `PlaceAsync`): `close` is RISK-REDUCING, so all eight share one
-    /// <see cref="RiskReducingHandlerPath"/> budget between them on a connector that reads
-    /// <see cref="PlaceOrderCommand.Intent"/>, and seven of the eight on one that does not. Counting
+    /// WHY NOT THE LONGER CHAIN a cold `close` issues (a `RequireAccountId` and a positions read,
+    /// then `PlaceAsync`'s six and its stale-close positions read): `close` is RISK-REDUCING, so all
+    /// of them share one <see cref="RiskReducingHandlerPath"/> budget between them on a connector that
+    /// reads <see cref="PlaceOrderCommand.Intent"/>, and all but the placement on one that does not. Counting
     /// its calls at the ordinary rate would over-cover it by minutes. The sweeps are excluded for the
     /// same reason and one more: their legs are issued concurrently, so their call COUNT is not their
     /// serial depth at all.

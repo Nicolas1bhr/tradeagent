@@ -716,7 +716,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `connectors` `material-list` `material-note` `data-list` `data-bars` `data-tape` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `pnl` | **3W** | the account, the positions, then the instruments. The fills cost nothing: they come out of the ledger. Both reads may FAIL without failing the handler — the report names what it could not include |
 | `buy` `sell` | **6W** | a cold placement: account → quote → instruments → positions → in PAPER the routed account again, the last read before the wire → place |
-| `modify` | **7W** | the account, one orders read that both resolves the target and takes it as it stands, everything else a cold placement reads — quote, instruments, positions — then in PAPER the routed account again, and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
+| `modify` | **7W** | the account, one orders read that both resolves the target and takes it as it stands, the risk check's reads a cold placement also makes — instruments, quote, and instruments again for a contract size under a value cap (a modification reads no positions) — then in PAPER the routed account again, and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
 | `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
 | `close` | **E + W** | all of it inside the budget on a connector that reads the close intent, plus ONE ordinary placement for one that does not |
