@@ -31,7 +31,9 @@ public class MaterialPassOffLoopTests
                 if (Path.GetFullPath(path) == inbox) { Interlocked.Increment(ref listings); disk.Wait(); }
                 return ([], []);
             },
-            _ => null);
+            // HELD FOR THE WHOLE TEST (U-material-pass-2): a walk read is now left behind at its bound, and this test is about the hold
+            // itself — the trading pass beside it and no second walk — so its bound is longer than the test.
+            _ => null) { StallAfter = TimeSpan.FromMinutes(10) };
 
         var connector = new FakeConnector(new FakeBroker());
         await connector.ConnectAsync();

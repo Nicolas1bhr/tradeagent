@@ -195,11 +195,159 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     static readonly TimeSpan StallGrace = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// EACH WORKSPACE'S HASH READ THAT DID NOT COME BACK (<c>U-perf-scan</c>), by workspace root, process-wide because the disk is: the
-    /// read left to finish on its own, closed when it does. While it waits no pass hashes another file of that workspace. The walk's
-    /// listings, the stat of each file and the app-origin measure still touch the disk, unbounded: a stall there still holds the pass.
+    /// THE BYTES OF A FILE THE APP NAMES, read at most to a bound: <see cref="Sha256Hex.OfAtMost"/> in the product. A test passes one the
+    /// operating system holds (<c>U-material-pass-2</c>), as it does for <see cref="Hasher"/>.
+    /// </summary>
+    internal Func<Stream, long, CancellationToken, string?> Measurer { get; init; } = Sha256Hex.OfAtMost;
+
+    /// <summary>
+    /// EACH WORKSPACE'S READ THAT DID NOT COME BACK, by workspace root, process-wide because the disk is: the read left to finish on its
+    /// own (and its file closed when it does). A hash read since <c>U-perf-scan</c>; a listing, the stat of a file and the app-origin measure
+    /// since <c>U-material-pass-2</c> (<see cref="Bounded{T}"/>). While one waits, no pass reads anything more of that workspace: it walks
+    /// nothing, hashes nothing, says why, and lets go of its exclusion — a stalled disk costs one waiting read, never one more per pass.
     /// </summary>
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> Stalled = new(StringComparer.Ordinal);
+
+    /// <summary>Whether a read of this workspace an earlier pass left behind is still waiting on the disk; a finished one is forgotten.</summary>
+    bool StillHeld()
+    {
+        if (!Stalled.TryGetValue(_root, out var waiting)) return false;
+        if (!waiting.IsCompleted) return true;
+        Stalled.TryRemove(new KeyValuePair<string, Task>(_root, waiting));
+        return false;
+    }
+
+    /// <summary>
+    /// THE PROGRESS OF ONE BOUNDED READ OF THE WALK (<c>U-material-pass-2</c>): bumped after every read of the disk, and told when the pass
+    /// has left it, so a worker the pass gave up on stops at its next read and hands nothing back.
+    /// </summary>
+    sealed class ReadWatch
+    {
+        long _reads;
+        volatile bool _left;
+        public long Reads => Interlocked.Read(ref _reads);
+        public void Read() => Interlocked.Increment(ref _reads);
+        public bool Left => _left;
+        public void Leave() => _left = true;
+    }
+
+    /// <summary>
+    /// THE WALK'S READS OF THE DISK, BOUNDED AS THE HASH READ IS (<c>U-material-pass-2</c>; U-perf-scan's card 1). A listing, the stat of a
+    /// file and the app-origin measure are reads the operating system can hold, and no cancellation reaches one it holds: they ran on the
+    /// pass's own thread, so a disk that stopped answering held the pass — and with it the loop's one exclusion, so no lane was leased —
+    /// for as long as the disk did.
+    ///
+    /// <para>Now they run on a thread of their own (not the pool's: a read queued behind a busy pool would be taken for a held one, CI run
+    /// 43350995349), and the pass waits only while they make progress: one read that has not come back within
+    /// <see cref="WorkspaceReads.StallAfter"/> of the one before is left to finish on its own, the workspace is held
+    /// (<see cref="Stalled"/>), and the answer is null — a place this pass did not look, so it marks nothing missing and moves no window.</para>
+    ///
+    /// <para><b>The worker only reads.</b> Every row is written by the pass's own thread, under its exclusion, from what the worker
+    /// handed back: a worker left behind never writes, so nothing is recorded once the pass has let a lane launch.</para>
+    /// </summary>
+    T? Bounded<T>(Func<ReadWatch, T> read, CancellationToken ct) where T : class
+    {
+        var watch = new ReadWatch();
+        var worker = Task.Factory.StartNew(() => read(watch), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        long before = 0;
+        try
+        {
+            while (!worker.Wait(_reads.StallAfter, ct))
+            {
+                var now = watch.Reads;
+                if (now == before)
+                {
+                    watch.Leave();
+                    Stalled[_root] = worker;
+                    return null;
+                }
+                before = now;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // A QUIT IS NOT HELD EITHER: the wait ends at the pass's own cancellation, a worker still reading is left as a stalled one is.
+            if (!worker.IsCompleted) { watch.Leave(); Stalled[_root] = worker; }
+            throw;
+        }
+        catch (AggregateException e) when (e.InnerExceptions.Count == 1)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerExceptions[0]).Throw();
+            throw;
+        }
+        return worker.Result;
+    }
+
+    /// <summary>One listed file, as the walk described it: what a sighting is made of, read off the pass's thread.</summary>
+    sealed record Described(string Full, string Rel, long Size, DateTime ModifiedUtc);
+
+    /// <summary>
+    /// WHAT ONE GROUP'S WALK READ OF THE DISK (<c>U-material-pass-2</c>), handed back by the worker: the files it described, in the walk's
+    /// order, and what the old inline walk set as it went — so the pass decides from it exactly as it did.
+    /// </summary>
+    sealed class GroupRead
+    {
+        public List<Described> Files { get; } = [];
+        public List<string> Unreadable { get; } = [];
+        public int Seen;
+        public int Skipped;
+        public bool Complete = true;
+        public bool Truncated;
+        public bool Read = true;
+        public string? CutIn;
+    }
+
+    /// <summary>
+    /// ONE GROUP'S READS: each place's look, its walk, and the stat of each file it listed, up to the pass's file budget — on the worker,
+    /// writing nothing. <paramref name="seen"/> is the pass's count before this group, as the budget spans the groups.
+    /// </summary>
+    GroupRead ReadGroup((string Home, string Dir)[] paths, bool isInbox, IReadOnlySet<string> unsealedHomes, int seen, ReadWatch watch,
+        CancellationToken ct)
+    {
+        var g = new GroupRead { Seen = seen };
+        foreach (var (home, dir) in paths)
+        {
+            if (watch.Left) return g;
+            if (!isInbox && unsealedHomes.Contains(home)) { g.Read = false; continue; }
+            var full = Path.Combine(_root, home, dir);
+            var look = LookAtFolder(full);
+            watch.Read();
+            switch (look)
+            {
+                case Look.NotThere: continue;
+                case Look.CouldNotRead: g.Read = false; g.Unreadable.Add(Relative(full)); continue;
+            }
+
+            var (files, refused, stopped) = Walk(full, ref g.Skipped, ct, watch);
+            foreach (var folder in refused) { g.Read = false; g.Unreadable.Add(Relative(folder)); }
+
+            // A WALK THAT STOPPED COLLECTING AT THE BUDGET WITH FOLDERS LEFT UNVISITED did not look everywhere, however many files it
+            // brought back (U-perf-scan): one that stopped on exactly the budget used to read as complete — the loop below never met
+            // a file past it — and stamped every file in the folders it never listed removed, and shortened the inbox's window.
+            if (stopped) { g.Complete = false; g.Truncated = true; g.CutIn ??= Relative(full); }
+
+            foreach (var file in files)
+            {
+                if (g.Seen >= FileLimit) { g.Complete = false; g.Truncated = true; g.CutIn ??= Relative(full); break; }
+                ct.ThrowIfCancellationRequested();
+                if (watch.Left) return g;
+
+                // A FILE THE LISTING NAMED AND THE DISK WILL NOT DESCRIBE is a place this pass could
+                // not read, not a file that has gone: its row is not in `present`, so counting it gone
+                // would stamp it removed. One that really has gone since the listing is skipped.
+                var (fileLook, size, modifiedUtc) = LookAtFile(file);
+                watch.Read();
+                if (fileLook == Look.NotThere) continue;
+                if (fileLook == Look.CouldNotRead) { g.Read = false; g.Unreadable.Add(Relative(Path.GetDirectoryName(file)!)); continue; }
+
+                g.Files.Add(new Described(file, Relative(file), size, modifiedUtc));
+                g.Seen++;
+            }
+
+            if (!g.Complete) break;
+        }
+        return g;
+    }
 
     public ScanResult Scan(CancellationToken ct = default, IReadOnlySet<string>? unsealed = null)
     {
@@ -207,6 +355,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         int seen = 0, added = 0, removed = 0, skipped = 0;
         var addedBy = new Dictionary<MaterialOrigin, int>();
         var truncated = false;
+
+        // THE TRACKED FOLDER THE FILE BUDGET RAN OUT IN, relative to the workspace (U-material-pass-2): the owner is told where a pass
+        // stopped looking (ScanResult.CutIn). And whether a read of the disk did not come back, this pass's or one an earlier pass
+        // left waiting: then this pass looks nowhere more, marks nothing missing and moves no window (Bounded).
+        string? cutIn = null;
+        var walkStalled = StillHeld();
 
         // EVERY FOLDER THIS PASS COULD NOT READ IN FULL, relative to the workspace: a tracked folder the
         // disk would not say is there, a folder it would not list, or the folder of a listed file it would
@@ -245,7 +399,6 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                  })
         {
             var present = new List<long>();
-            var complete = true;
             var isInbox = origins[0] == MaterialOrigin.Inbox;
 
             // THE GROUP'S SIGHTINGS, RECORDED A CHUNK AT A TIME (U-perf-scan, R28 G2): one commit per chunk, never one per file. Each
@@ -267,79 +420,80 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 pending.Clear();
             }
 
+            // THE GROUP'S READS OF THE DISK, ON A WORKER AND BOUNDED (U-material-pass-2): every place's look, its walk and the stat of
+            // each listed file. A read the disk holds past the bound ends the walk here — this group and every one after it are places
+            // this pass did not look, and the workspace is held until that read comes back (Bounded).
+            var looked = walkStalled ? null
+                : Bounded(watch => ReadGroup(paths, isInbox, unsealedHomes, seen, watch, ct), ct);
+            if (looked is null) { walkStalled = true; break; }
+
+            seen = looked.Seen;
+            skipped += looked.Skipped;
+            unreadable.UnionWith(looked.Unreadable);
+            if (looked.Truncated) truncated = true;
+            cutIn ??= looked.CutIn;
+            var complete = looked.Complete;
+
             // EVERY PLACE IN THIS GROUP COULD BE READ. A folder the disk would not list holds files this
             // pass never saw, and "I could not look" is not "it is gone" — the reason a pass that ran out
             // of budget marks nothing missing, reached from the other side.
-            var read = true;
+            var read = looked.Read;
 
-            foreach (var (home, dir) in paths)
+            // A ROLE'S HOME IS A DIFFERENT QUESTION FROM THE INBOX'S, and it is measured rather than assumed:
+            // the app writes down every file IT puts in a home, and a file whose path and
+            // bytes both match that record is the app's. Anything else in there is the
+            // agent's, which is what this used to say about all of it — including the
+            // language reference the app writes and the briefs the relay delivers.
+            //
+            // AND IT IS MEASURED HERE, OUTSIDE THE DATABASE LOCK (U-exec-env-fix item 1): an executor's cell writes its whole
+            // home, so the bytes at a name the app wrote may be a sparse terabyte, and a read inside Observe's write lock held
+            // every reader and writer of the database for its length. Only for a sighting no live row has — the one Observe
+            // would write — and bounded and cancellable (WeWroteIt); a word left unmeasured is the agent's. ON THE WORKER TOO
+            // (U-material-pass-2): it is a read of the disk, and one the disk holds ends the walk as a held listing does.
+            var measured = new MaterialOrigin?[looked.Files.Count];
+            if (!isInbox)
             {
-                if (!isInbox && unsealedHomes.Contains(home)) { read = false; continue; }
-                var full = Path.Combine(_root, home, dir);
-                switch (LookAtFolder(full))
+                var ask = Enumerable.Range(0, looked.Files.Count)
+                    .Where(i => looked.Files[i] is var f && _appFiles.Names(f.Rel)
+                                && !_store.IsLive(f.Rel, f.Size, new DateTimeOffset(f.ModifiedUtc, TimeSpan.Zero)))
+                    .ToList();
+                if (ask.Count > 0)
                 {
-                    case Look.NotThere: continue;
-                    case Look.CouldNotRead: read = false; unreadable.Add(Relative(full)); continue;
+                    var answers = Bounded(watch => ask.Select(i =>
+                    {
+                        if (watch.Left) return false;
+                        var ours = WeWroteIt(looked.Files[i].Rel, looked.Files[i].Size, ct);
+                        watch.Read();
+                        return ours;
+                    }).ToArray(), ct);
+                    if (answers is null) { walkStalled = true; break; }
+                    for (var k = 0; k < ask.Count; k++) measured[ask[k]] = answers[k] ? MaterialOrigin.App : MaterialOrigin.Agent;
                 }
+            }
 
-                var (files, refused, stopped) = Walk(full, ref skipped, ct);
-                foreach (var folder in refused) { read = false; unreadable.Add(Relative(folder)); }
+            for (var i = 0; i < looked.Files.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var file = looked.Files[i];
+                // ONE QUESTION PER GROUP, ASKED PER SIGHTING and only for a row that is about to
+                // be written (see the Func overload of Observe).
+                //
+                // The inbox's is attestation: an agent that starts while this walk is running
+                // must not be attested away by a question asked before it existed, and asking
+                // later can only make the answer stricter.
+                var word = measured[i];
+                Func<MaterialOrigin> origin = isInbox
+                    ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
+                    : () => word ?? MaterialOrigin.Agent;
 
-                // A WALK THAT STOPPED COLLECTING AT THE BUDGET WITH FOLDERS LEFT UNVISITED did not look everywhere, however many files it
-                // brought back (U-perf-scan): one that stopped on exactly the budget used to read as complete — the loop below never met
-                // a file past it — and stamped every file in the folders it never listed removed, and shortened the inbox's window.
-                if (stopped) { complete = false; truncated = true; }
-
-                foreach (var file in files)
-                {
-                    if (seen >= FileLimit) { complete = false; truncated = true; break; }
-                    ct.ThrowIfCancellationRequested();
-
-                    // A FILE THE LISTING NAMED AND THE DISK WILL NOT DESCRIBE is a place this pass could
-                    // not read, not a file that has gone: its row is not in `present`, so counting it gone
-                    // would stamp it removed. One that really has gone since the listing is skipped.
-                    var (look, size, modifiedUtc) = LookAtFile(file);
-                    if (look == Look.NotThere) continue;
-                    if (look == Look.CouldNotRead) { read = false; unreadable.Add(Relative(Path.GetDirectoryName(file)!)); continue; }
-
-                    var rel = Relative(file);
-                    // ONE QUESTION PER GROUP, ASKED PER SIGHTING and only for a row that is about to
-                    // be written (see the Func overload of Observe).
-                    //
-                    // The inbox's is attestation: an agent that starts while this walk is running
-                    // must not be attested away by a question asked before it existed, and asking
-                    // later can only make the answer stricter.
-                    //
-                    // A ROLE'S HOME IS A DIFFERENT QUESTION, and it is measured rather than assumed:
-                    // the app writes down every file IT puts in a home, and a file whose path and
-                    // bytes both match that record is the app's. Anything else in there is the
-                    // agent's, which is what this used to say about all of it — including the
-                    // language reference the app writes and the briefs the relay delivers.
-                    //
-                    // AND IT IS MEASURED HERE, OUTSIDE THE DATABASE LOCK (U-exec-env-fix item 1): an executor's cell writes its whole
-                    // home, so the bytes at a name the app wrote may be a sparse terabyte, and a read inside Observe's write lock held
-                    // every reader and writer of the database for its length. Only for a sighting no live row has — the one Observe
-                    // would write — and bounded and cancellable (WeWroteIt); a word left unmeasured is the agent's.
-                    MaterialOrigin? measured = !isInbox && _appFiles.Names(rel)
-                        && !_store.IsLive(rel, size, new DateTimeOffset(modifiedUtc, TimeSpan.Zero))
-                            ? WeWroteIt(rel, size, ct) ? MaterialOrigin.App : MaterialOrigin.Agent
-                            : null;
-                    Func<MaterialOrigin> origin = isInbox
-                        ? () => _noAgentSince(since) ? MaterialOrigin.Inbox : MaterialOrigin.InboxUnattested
-                        : () => measured ?? MaterialOrigin.Agent;
-
-                    // THE WORD THE NEW ROW WENT IN WITH, kept as the store is answered so the pass
-                    // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
-                    // The store asks only for a row it is about to write, so this is set exactly
-                    // when `isNew` is, and nothing about the row changes by being counted.
-                    var written = new MaterialOrigin?[1];
-                    pending.Add((new MaterialStore.Sighting(rel, () => (written[0] = origin()).Value, size,
-                        new DateTimeOffset(modifiedUtc, TimeSpan.Zero), RunnableExts.Contains(Path.GetExtension(file))), written));
-                    seen++;
-                    if (pending.Count >= SightingsPerWrite) Record();
-                }
-
-                if (!complete) break;
+                // THE WORD THE NEW ROW WENT IN WITH, kept as the store is answered so the pass
+                // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
+                // The store asks only for a row it is about to write, so this is set exactly
+                // when `isNew` is, and nothing about the row changes by being counted.
+                var written = new MaterialOrigin?[1];
+                pending.Add((new MaterialStore.Sighting(file.Rel, () => (written[0] = origin()).Value, file.Size,
+                    new DateTimeOffset(file.ModifiedUtc, TimeSpan.Zero), RunnableExts.Contains(Path.GetExtension(file.Full))), written));
+                if (pending.Count >= SightingsPerWrite) Record();
             }
 
             // EVERY SIGHTING IS RECORDED BEFORE THE GROUP IS SWEPT: MarkMissing keeps only the ids in `present`.
@@ -359,6 +513,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             // `read` is the same rule for a group with a place in it the disk would not read: the files
             // there were not seen, so none of them is gone (U-inbox-unreadable). Per GROUP, so the other
             // group — read in full — is still swept as it always was.
+            //
+            // A group whose walk did not come back (U-material-pass-2) never reaches here: it broke out above with nothing recorded.
             if (complete && !truncated && read) removed += _store.MarkMissing(origins, present, now);
         }
 
@@ -379,7 +535,9 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // Fail-closed, in the direction that costs a weaker word on a row rather than a claim nobody can
         // support. The mark and the wall time go in together, and a pass asked of no register leaves the
         // mark where it was.
-        if (!truncated && unreadable.Count == 0)
+        //
+        // A READ THE DISK DID NOT RETURN (U-material-pass-2) is a place this pass did not look: the window stays where it was.
+        if (!truncated && unreadable.Count == 0 && !walkStalled)
             db.Write(_ =>
             {
                 db.SetKv(LastScanKey, Sql.T(now));
@@ -393,6 +551,9 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             HashDeferred = deferred,
             HashDeferrals = deferrals,
             HashStalled = stalled,
+            WalkStalled = walkStalled,
+            CutIn = truncated ? cutIn : null,
+            FileLimit = FileLimit,
             AddedBy = addedBy,
             Unreadable = unreadable.Count,
             // The owner's drop folder first, because that is the place they look after; then the homes.
@@ -472,7 +633,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         {
             using var fs = new FileStream(HomeFiles.OpenRead(_root, rel), FileAccess.Read);
             if (fs.Length != size) return false;
-            return _appFiles.Wrote(rel, Sha256Hex.OfAtMost(fs, AppFileManifest.MaxMeasuredBytes, ct));
+            return _appFiles.Wrote(rel, Measurer(fs, AppFileManifest.MaxMeasuredBytes, ct));
         }
         catch (IOException) { return false; }               // refused, gone or being written: not measured as the app's
         catch (UnauthorizedAccessException) { return false; }
@@ -516,8 +677,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
         // A READ AN EARLIER PASS LEFT WAITING ON THE DISK (U-perf-scan) holds every read of this workspace until it has come back: a disk
         // that stopped answering would otherwise take one more waiting read, and one more thread, every pass.
-        var held = Stalled.TryGetValue(_root, out var waiting) && !waiting.IsCompleted;
-        if (!held && waiting is not null) Stalled.TryRemove(new KeyValuePair<string, Task>(_root, waiting));
+        var held = StillHeld();
 
         var batch = _store.NeedingHash(HashesPerPass);
         foreach (var m in batch)
@@ -675,30 +835,43 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// </summary>
     public bool InboxHoldsUnrecorded(CancellationToken ct = default)
     {
-        var inbox = Path.Combine(_root, InboxDir);
-        switch (LookAtFolder(inbox))
-        {
-            case Look.NotThere: return false;
-            case Look.CouldNotRead: return true;
-        }
-
-        var skipped = 0;
-        var (files, refused, _) = Walk(inbox, ref skipped, ct);
-        if (refused.Count > 0 || files.Count >= FileLimit) return true;
+        // A READ OF THIS WORKSPACE THE DISK HAS NOT RETURNED (U-material-pass-2) answers yes without another: the loop asks this before
+        // every tick, and a listing held here held the dispatcher — no lane was leased while the disk stalled. Yes costs one pass, which
+        // the same hold turns into a pass that reads nothing and lets go at once.
+        if (StillHeld()) return true;
 
         var recorded = _store.Live([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested]);
-        foreach (var file in files)
+        var inbox = Path.Combine(_root, InboxDir);
+        var answer = Bounded<object>(watch =>
         {
-            ct.ThrowIfCancellationRequested();
+            var look = LookAtFolder(inbox);
+            watch.Read();
+            switch (look)
+            {
+                case Look.NotThere: return false;
+                case Look.CouldNotRead: return true;
+            }
 
-            var (look, size, modifiedUtc) = LookAtFile(file);
-            if (look == Look.NotThere) continue;
-            if (look == Look.CouldNotRead) return true;
+            var skipped = 0;
+            var (files, refused, _) = Walk(inbox, ref skipped, ct, watch);
+            if (refused.Count > 0 || files.Count >= FileLimit) return true;
 
-            var tuple = (Relative(file), size, Sql.T(new DateTimeOffset(modifiedUtc, TimeSpan.Zero)));
-            if (!recorded.Contains(tuple)) return true;
-        }
-        return false;
+            foreach (var file in files)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (watch.Left) return true;
+
+                var (fileLook, size, modifiedUtc) = LookAtFile(file);
+                watch.Read();
+                if (fileLook == Look.NotThere) continue;
+                if (fileLook == Look.CouldNotRead) return true;
+
+                var tuple = (Relative(file), size, Sql.T(new DateTimeOffset(modifiedUtc, TimeSpan.Zero)));
+                if (!recorded.Contains(tuple)) return true;
+            }
+            return false;
+        }, ct);
+        return answer is not bool known || known;
     }
 
     /// <summary>What one read of the disk found at a path.</summary>
@@ -748,7 +921,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// </summary>
     /// <returns>And whether it STOPPED at the budget with a folder left unlisted (<c>U-perf-scan</c>): a walk that did saw part of the
     /// tree whatever its count.</returns>
-    (List<string> Files, List<string> Unreadable, bool Stopped) Walk(string dir, ref int skipped, CancellationToken ct)
+    (List<string> Files, List<string> Unreadable, bool Stopped) Walk(string dir, ref int skipped, CancellationToken ct, ReadWatch watch)
     {
         // Recursion is written out rather than using EnumerateFiles(SearchOption.AllDirectories)
         // because that overload cannot skip a subtree — it would walk every node_modules it found
@@ -756,7 +929,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         var files = new List<string>();
         var unreadable = new List<string>();
         var stopped = false;
-        Collect(dir, 0, files, ref skipped, unreadable, ref stopped, ct);
+        Collect(dir, 0, files, ref skipped, unreadable, ref stopped, ct, watch);
         return (files, unreadable, stopped);
     }
 
@@ -768,18 +941,21 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// answers yes for them, and for the skipped ones neither.
     /// </param>
     /// <param name="stopped">Set when this walk stops at the budget with a folder still to list.</param>
-    void Collect(string dir, int depth, List<string> into, ref int skipped, List<string> unreadable, ref bool stopped, CancellationToken ct)
+    void Collect(string dir, int depth, List<string> into, ref int skipped, List<string> unreadable, ref bool stopped, CancellationToken ct,
+        ReadWatch watch)
     {
         if (depth > DepthLimit) { skipped++; return; }
         ct.ThrowIfCancellationRequested();
+        if (watch.Left) return;   // the pass has gone on without this walk: what it lists now is handed to nobody
 
         string[] entries, subs;
         try
         {
             (entries, subs) = _reads.List(dir);
         }
-        catch (IOException) { unreadable.Add(dir); return; }
-        catch (UnauthorizedAccessException) { unreadable.Add(dir); return; }
+        catch (IOException) { unreadable.Add(dir); watch.Read(); return; }
+        catch (UnauthorizedAccessException) { unreadable.Add(dir); watch.Read(); return; }
+        watch.Read();
 
         into.AddRange(entries);
         // Stop collecting, not just stop consuming. Enumerating a hundred thousand paths into a list
@@ -790,7 +966,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         {
             var name = Path.GetFileName(subs[i]);
             if (NoiseDirs.Contains(name) || name.StartsWith('.')) { skipped++; continue; }
-            Collect(subs[i], depth + 1, into, ref skipped, unreadable, ref stopped, ct);
+            Collect(subs[i], depth + 1, into, ref skipped, unreadable, ref stopped, ct, watch);
             if (into.Count >= FileLimit) { stopped |= i < subs.Length - 1; return; }
         }
     }
@@ -831,6 +1007,13 @@ public sealed record WorkspaceReads(
     Func<string, (string[] Files, string[] Folders)> List,
     Func<string, (long Size, DateTime WrittenUtc)?> Stat)
 {
+    /// <summary>
+    /// HOW LONG ONE OF THESE READS MAY GO WITHOUT COMING BACK before the pass takes it for one the disk is holding (<c>U-material-pass-2</c>):
+    /// it is then left to finish on its own, and the pass goes on without that place. Ten seconds: one listing or one stat, where a pass
+    /// over 20,000 unchanged files took about a second (U-perf-scan); a test's disk that never answers passes its own.
+    /// </summary>
+    public TimeSpan StallAfter { get; init; } = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// The machine's own disk, every path read as the disk reads it — links followed. The owner's inbox only, in the product
     /// (<see cref="Under"/>); internal so that no product code can hand a pass a home read this way (fix pass 4: the app once did).
