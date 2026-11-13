@@ -129,6 +129,13 @@ sealed class DashboardPage
     readonly TextBlock _missionLast = Ui.Muted("");
     readonly TextBox _guidance;
 
+    /// <summary>
+    /// WHETHER THIS PC IS KEPT AWAKE WHILE THE AI WORKS (<c>U-windows-awake</c>), and the owner's one press either way. Built once and
+    /// rewritten on the tick; hidden where there is nothing to ask (anything but Windows).
+    /// </summary>
+    readonly TextBlock _awakeLine = Ui.With(Ui.Micro(""), t => t.TextWrapping = TextWrapping.Wrap);
+    readonly Button _awakeButton;
+
     string _healthSignature = "";
     string _unconfirmedSignature = "";
 
@@ -242,6 +249,8 @@ sealed class DashboardPage
             // this window opened.
             () => _host.SpendToday);
 
+        _awakeButton = Ui.Ghost(AppHost.LetItSleep, ToggleAwake);
+
         _guidance = Ui.TextField(host.Gateway.Settings.Guidance,
             // NO FIXED INSTRUMENT (U-owner-words-2): "focus on ES" stood here on a crypto paper home.
             "e.g. keep positions small until the journal shows three good days");
@@ -273,6 +282,8 @@ sealed class DashboardPage
                 b.HorizontalAlignment = HorizontalAlignment.Left;
                 b.Margin = new Thickness(0, Theme.S2, 0, 0);
             }),
+            _awakeLine,
+            Ui.With(_awakeButton, b => b.HorizontalAlignment = HorizontalAlignment.Left),
             Ui.With(Ui.Divider(), d => d.Margin = new Thickness(0, Theme.S2, 0, 0)),
             Ui.Label("Guidance"),
             // Words, not authority, and the box says so. Nothing typed here can widen a limit,
@@ -344,6 +355,32 @@ sealed class DashboardPage
         }
     }
 
+    // ---- the PC kept awake while the AI works -------------------------------------------------------
+
+    void RefreshAwake()
+    {
+        var reading = _host.AwakeNow();
+        var shown = reading != AwakeReading.NotThisMachine;
+        _awakeLine.IsVisible = shown;
+        _awakeButton.IsVisible = shown;
+        if (!shown) return;
+        _awakeLine.Text = AppHost.AwakeWords(reading);
+        _awakeLine.Foreground = reading switch
+        {
+            AwakeReading.Holding => Theme.TextFaint,
+            AwakeReading.WhenItWorks => Theme.TextFaint,
+            _ => Theme.Caution
+        };
+        _awakeButton.Content = reading == AwakeReading.OwnerLetsItSleep ? AppHost.KeepItAwake : AppHost.LetItSleep;
+    }
+
+    /// <summary>ONE PRESS EACH WAY: keeping the PC awake moves no money and grants nothing, and letting it sleep only takes it away.</summary>
+    void ToggleAwake()
+    {
+        _host.SetKeepAwake(_host.AwakeNow() == AwakeReading.OwnerLetsItSleep);
+        RefreshAwake();
+    }
+
     // ---- the AI's own work -----------------------------------------------------------------------
 
     /// <summary>
@@ -379,6 +416,7 @@ sealed class DashboardPage
     void RefreshMission(MissionStatus status, bool running, AiSpendToday spend)
     {
         Ui.SetResting(_workButton, running ? PauseTheAi : LetTheAiWork, running ? "secondary" : "primary");
+        RefreshAwake();
 
         _missionCost.Text = MissionCost(spend);
         _missionCost.IsVisible = _missionCost.Text.Length > 0;

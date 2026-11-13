@@ -141,6 +141,10 @@ Filename: "{app}\TradeAgent.exe"; Description: "Start {#AppName}"; Flags: nowait
 ; to be passed /relaunch=1 cannot start the app twice.
 Filename: "{app}\TradeAgent.exe"; Flags: nowait runasoriginaluser; Check: RelaunchAfterSilentInstall
 
+; The owner's "Open TradeAgent when I sign in to Windows" is this account's own Run value named TradeAgent, written by the app only on
+; his two presses and never by Setup. Uninstall removes it in [Code] below (CurUninstallStepChanged), and only when it opens this
+; install's TradeAgent.exe: a value that opens another copy is that copy's.
+;
 ; Uninstall leaves %LOCALAPPDATA%\TradeAgent in place on purpose: it holds the user's trading records
 ; and the AI's work. Removing an audit trail during an uninstall is not a decision an installer makes.
 [UninstallDelete]
@@ -153,4 +157,16 @@ Type: filesandordirs; Name: "{app}\bridge"
 function RelaunchAfterSilentInstall(): Boolean;
 begin
   Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  RunKey: String;
+  Command: String;
+begin
+  RunKey := 'Software\Microsoft\Windows\CurrentVersion\Run';
+  if CurUninstallStep = usUninstall then
+    if RegQueryStringValue(HKEY_CURRENT_USER, RunKey, 'TradeAgent', Command) then
+      if Pos(Lowercase(ExpandConstant('{app}\TradeAgent.exe')), Lowercase(Command)) > 0 then
+        RegDeleteValue(HKEY_CURRENT_USER, RunKey, 'TradeAgent');
 end;

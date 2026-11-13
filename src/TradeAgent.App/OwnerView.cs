@@ -394,6 +394,9 @@ sealed class OwnerPage
     /// <summary>What each seat runs on — his until a board seat is active (the orchestrator's ruling).</summary>
     readonly SeatChoices _seatChoices;
 
+    /// <summary>Whether Windows opens TradeAgent when he signs in (<c>U-windows-awake</c>): his, two presses on, one off.</summary>
+    readonly SignInStartCard _signInStart;
+
     public Control Root { get; }
 
     /// <summary>
@@ -766,6 +769,8 @@ sealed class OwnerPage
         // WHAT EACH SEAT RUNS ON, beside the key its worker needs: his while no board seat is active, then gone.
         _seatChoices = new SeatChoices(_host, BoardActive, Refresh);
 
+        _signInStart = new SignInStartCard(_host);
+
         // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3): his, always, each two presses — the board only proposes them.
         _boardComposition = new BoardComposition(() => _host.Board, _host.Gateway.SetBoardBudgetShare, _host.Gateway.FoundBoardSeat,
             _host.Gateway.RetireBoardSeat);
@@ -783,6 +788,7 @@ sealed class OwnerPage
             Ui.Fold(Labels.OwnerGroupEvidence, Ui.Col(Theme.S6, evidence, settings.Friction, settings.Holdout, campaigns, standings), open: false,
                 Summary(Labels.OwnerGroupEvidenceSummary)),
             Ui.Fold(Labels.OwnerGroupUpdates, settings.Updates, open: false, Summary(Labels.OwnerGroupUpdatesSummary)),
+            _signInStart.Fold = Ui.Fold(Labels.OwnerGroupSignIn, _signInStart.Root, open: false, Summary(Labels.OwnerGroupSignInSummary)),
             Ui.Fold(Labels.OwnerGroupExplained, settings.WhatTheseChange, open: false, Summary(Labels.OwnerGroupExplainedSummary)));
 
         var scroll = Pages.Scroll(sections);
@@ -842,6 +848,7 @@ sealed class OwnerPage
         ShowCampaignBudgets();
         _perception.Update();
         _seatChoices.Update();
+        _signInStart.Update();
 
         Refresh();
     }
