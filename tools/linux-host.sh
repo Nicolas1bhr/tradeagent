@@ -253,6 +253,48 @@ show 'the account tradeagent (absent before the first install)' getent passwd tr
 show 'sudo without a password' sudo -n true
 show 'apt present (the kit installs its packages with it)' command -v apt-get
 show 'sqlite3 present (the kit installs it)' command -v sqlite3
+# FAIL2BAN, READ ONLY (U-window-door; D10 F7). On 2026-11-07 the owner's own failed ssh logins got his Mac's address banned by
+# the sshd jail, and every fleet tool, the one that opens his window included, came from that address. This reads the jail and
+# says what it found; it writes nothing, unbans nothing and exempts nothing (only `status` and `get` are asked). Whether to
+# exempt an address is the owner's security choice, and no verb of this tool makes it.
+fail2ban_read() {
+    if ! command -v fail2ban-client > /dev/null 2>&1; then
+        echo "fail2ban: not installed here, so no jail can lock this machine out"
+        return 0
+    fi
+    local from status ignore
+    from="${SSH_CONNECTION%% *}"
+    if ! status="$(sudo -n fail2ban-client status sshd 2>&1)"; then
+        echo "fail2ban: installed; its sshd jail is not running ($(printf '%s' "$status" | head -n 1))"
+        return 0
+    fi
+    ignore="$(sudo -n fail2ban-client get sshd ignoreip 2>&1 || true)"
+    printf '%s\n' "$status"
+    printf 'ignoreip, as the jail has it:\n%s\n' "$ignore"
+    python3 -I - "$from" "$ignore" "$status" << 'PY'
+import ipaddress, re, sys
+frm, ignore, status = sys.argv[1], sys.argv[2], sys.argv[3]
+nets = []
+for tok in re.findall(r"[0-9A-Fa-f:.]+(?:/\d+)?", ignore):
+    try:
+        nets.append(ipaddress.ip_network(tok, strict=False))
+    except ValueError:
+        pass
+banned = re.search(r"Banned IP list:\s*(.*)", status)
+banned = banned.group(1).split() if banned else []
+try:
+    addr = ipaddress.ip_address(frm)
+except ValueError:
+    print(f"fail2ban: the sshd jail is on, {len(banned)} address(es) banned now; this tool's own address could not be read ('{frm}')")
+    sys.exit(0)
+print(f"fail2ban: the sshd jail is on, {len(banned)} address(es) banned now" + (f" ({' '.join(banned)})" if banned else ""))
+if any(addr.version == n.version and addr in n for n in nets):
+    print(f"fail2ban: {addr}, the address this tool comes from, is exempt from the sshd jail")
+else:
+    print(f"fail2ban: {addr}, the address this tool comes from, is NOT exempt: a failed login from this machine can lock the fleet out of your server, the tool that opens your window included")
+PY
+}
+show 'fail2ban (read only): the sshd jail, its exemptions, its bans, and the address this tool comes from' fail2ban_read
 REMOTE
 }
 
