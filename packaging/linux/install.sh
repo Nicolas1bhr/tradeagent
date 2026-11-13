@@ -288,6 +288,9 @@ if [ "$start" = no ]; then
     exit 0
 fi
 
+# A HAND INSTALL ALWAYS STARTS (U-service-limits): the unit allows 6 starts in 10 minutes, hand ones included, and a crash
+# loop leaves it failed at that limit; reset-failed empties the count, so this run's start is never refused by it.
+systemctl reset-failed tradeagent-display.service tradeagent.service 2> /dev/null || true
 if [ "$changed_display" = yes ] && systemctl is-active --quiet tradeagent-display.service; then
     # Restarting the display restarts the app with it (Requires=), each quitting the way it quits.
     echo "== restarting the display, and the app with it =="

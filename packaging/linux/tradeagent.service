@@ -14,11 +14,24 @@
 #     supervisor/ and starts each AI launch in an attempt-<id>/ cgroup of its own, so every process of a
 #     launch is born there whatever session it makes, and cgroup.kill ends all of it. This line is the only
 #     root-owned part; the app never uses sudo. Without it a cell is refused, naming this line.
+#   - A CRASH LOOP STOPS (U-service-limits; R31 D12 § H). Restart=always brings the app back 10 s after it dies — short, so
+#     a single crash costs ten seconds of the tape and CI's kill -9 check (recording again within 30 s) holds. Before this
+#     unit had no start limit, and systemd's default (5 starts in 10 s) never trips at 10 s spacing, so a crash at start-up
+#     restarted it every 10-20 s for ever, each start running the cell benchmark and resuming the AI. Now: at most 6 starts
+#     in any 10-minute window (systemd's window is fixed: it opens at the first start after the last one ended). A loop whose
+#     runs last under about 2 minutes reaches the 7th start inside it, and systemd leaves the unit failed
+#     (Result=start-limit-hit) within 10 minutes of the loop's first start; nothing restarts it. Every start counts, a
+#     hand one too, and only `systemctl reset-failed tradeagent.service` empties the count: the kit and tools/linux-host.sh
+#     run it before their own start, so a hand install always starts. A slower loop is the app's own half: a start soon
+#     after one that did not close properly waits ten minutes before the AI works on its own (AppHost, CrashWait).
+#     Fixed, not growing (RestartSteps= needs systemd 254): the window bounds the loop either way.
 [Unit]
 Description=TradeAgent on display :@DISPLAY@
 Requires=tradeagent-display.service
 After=tradeagent-display.service network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=6
 
 [Service]
 Type=simple

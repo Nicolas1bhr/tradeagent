@@ -174,7 +174,7 @@ state="$home/.local/share/TradeAgent/state"
 was_active=no kit_owns_it=no
 # EVERY way out of this script, before the kit takes over, leaves the recorder as it was found: a failed command, a refusal
 # (`exit 1` runs no ERR trap — the 2026-10-22 review's R2: too little room for the backup left it stopped), a signal.
-on_exit() { local rc=$?; trap - EXIT; if [ "$was_active" = yes ] && [ "$kit_owns_it" = no ]; then systemctl start tradeagent.service || true; fi; rm -rf "$stage"; exit "$rc"; }
+on_exit() { local rc=$?; trap - EXIT; if [ "$was_active" = yes ] && [ "$kit_owns_it" = no ]; then systemctl reset-failed tradeagent.service 2> /dev/null || true; systemctl start tradeagent.service || true; fi; rm -rf "$stage"; exit "$rc"; }
 trap on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
