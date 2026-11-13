@@ -68,6 +68,25 @@ public class MaterialPassCostTests
     }
 
     /// <summary>
+    /// PAST THE OLD 5,000 A PASS STILL LOOKS EVERYWHERE: it was the limit, so a workspace over it never had a complete pass — removals
+    /// went unrecorded and the inbox's window froze.
+    /// </summary>
+    [Fact]
+    public void A_pass_over_six_thousand_files_is_complete_and_records_a_removal()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        for (var i = 0; i < 6000; i++) Drop(root, $"agent/data/d{i / 500}/f{i}.csv", $"{i}");
+        Assert.True(new MaterialScanner(db, root, _ => true) { HashesPerPass = 0 }.Scan().Complete);
+
+        File.Delete(Path.Combine(root, "agent", "data", "d0", "f0.csv"));
+        var pass = new MaterialScanner(db, root, _ => true) { HashesPerPass = 0 }.Scan();
+
+        Assert.True(pass.Complete, "a pass over 6,000 files ran out of budget");
+        Assert.Equal((5999, 1), (pass.Seen, pass.Removed));
+    }
+
+    /// <summary>
     /// THE BUDGET'S EDGE: a walk that stopped collecting at the budget with folders left unvisited, whose count landed exactly on the
     /// budget, read as a complete pass — and marked every file in the folders it never listed removed. "I did not look" is not "it is
     /// gone".
