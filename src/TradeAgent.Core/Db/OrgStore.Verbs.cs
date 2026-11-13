@@ -351,14 +351,17 @@ public sealed partial class OrgStore
                           + $"leads ({OrgBounds.MaxMembers.ToString(CultureInfo.InvariantCulture)}).");
 
         // THE EARNING TEST: a unit's first position needs no more than its charter did; a unit chartered as a bounded experiment hires
-        // inside it until its collapse date; anything else cites current work of the caller's subtree.
+        // inside it until its collapse date; anything else cites current work of the caller's subtree. THE FIRST IS THE FIRST IT EVER
+        // HELD (R29 F-A1): a unit emptied by a retirement has had its first, so hire and retire in a cycle no longer pass the test on
+        // nothing. A hire the owner vetoed is undone, so it leaves the unit's first unspent.
         string route;
         var subtree = SubtreeOf(r.Caller).Select(u => u.Id).ToList();
         var current = r.Refs.Where(x => Earns(x, subtree, now)).ToList();
-        if (inUnit.Count == 0) route = "first";
+        if (inUnit.Count == 0 && !HeldAPosition(unit.Id)) route = "first";
         else if (ExperimentUntil(unit.Id) is { } collapse && collapse > now) route = $"experiment collapse_by={Sql.T(collapse)}";
         else if (current.Count > 0) route = "evidence " + string.Join(",", current.Select(x => $"{x.Kind}:{x.Id}"));
-        else throw Refused(EarningWords($"a hire into {OrgEnvelopes.NameOf(unit.Id)}, which has positions already,", subtree));
+        else throw Refused(EarningWords($"a hire into {OrgEnvelopes.NameOf(unit.Id)}, which "
+                                       + (inUnit.Count > 0 ? "has positions already," : "has had its first position already (one that has since ended),"), subtree));
 
         if (r.Forecasts.Count is 0 or > DecisionLimits.MaxForecasts)
             throw Refused($"a hire carries 1 to {DecisionLimits.MaxForecasts.ToString(CultureInfo.InvariantCulture)} forecasts — such as "
@@ -419,6 +422,21 @@ public sealed partial class OrgStore
         return at >= 0 && DateTimeOffset.TryParse(detail[(at + marker.Length)..], CultureInfo.InvariantCulture,
                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var collapse)
             ? collapse : null;
+    }
+
+    /// <summary>
+    /// WHETHER <paramref name="unitId"/> HAS EVER HELD A POSITION that ended other than by the owner's veto of its hire (R29 F-A1): the
+    /// hire that made it spent the unit's "first" route. A position moved away by a merge is not ended, and the merged unit is closed.
+    /// </summary>
+    bool HeldAPosition(string unitId)
+    {
+        using var c = db.Cmd("""
+            SELECT EXISTS (SELECT 1 FROM org_position p WHERE p.unit_id = $u AND p.status = $ended
+               AND NOT EXISTS (SELECT 1 FROM org_event v WHERE v.kind = $vetoed AND v.position_id = p.id AND v.decider = $owner
+                                  AND instr(v.detail, $hired) > 0))
+            """, ("$u", unitId), ("$ended", OrgPositionStatus.Ended), ("$vetoed", OrgEventKind.Vetoed), ("$owner", OrgDecider.Owner),
+            ("$hired", $" kind={OrgEventKind.Hired} "));
+        return Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) != 0;
     }
 
     /// <summary>Why a unit of <paramref name="kind"/> cannot hang from <paramref name="parent"/>, or null: a division under the root, a subdivision under a division, a team under either.</summary>
