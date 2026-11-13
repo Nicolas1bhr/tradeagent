@@ -403,8 +403,8 @@ public sealed class GdeltRecorder : IAsyncDisposable
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException) { note = $"GDELT did not answer within {RequestTimeout.TotalSeconds:0.#} s"; }
-            catch (Exception ex) { note = "GDELT could not be reached: " + ex.Message.ReplaceLineEndings(" "); }
+            catch (OperationCanceledException) { note = $"{GdeltGkg.TimeoutNotePrefix}{RequestTimeout.TotalSeconds:0.#} s"; }
+            catch (Exception ex) { note = GdeltGkg.UnreachableNotePrefix + ex.Message.ReplaceLineEndings(" "); }
         }
         var receivedAt = _now();
 
@@ -496,8 +496,8 @@ public sealed class GdeltRecorder : IAsyncDisposable
                 : (status, body, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException) { return (null, null, $"GDELT did not answer within {RequestTimeout.TotalSeconds:0.#} s"); }
-        catch (Exception ex) { return (null, null, "GDELT could not be reached: " + ex.Message.ReplaceLineEndings(" ")); }
+        catch (OperationCanceledException) { return (null, null, $"{GdeltGkg.TimeoutNotePrefix}{RequestTimeout.TotalSeconds:0.#} s"); }
+        catch (Exception ex) { return (null, null, GdeltGkg.UnreachableNotePrefix + ex.Message.ReplaceLineEndings(" ")); }
     }
 
     /// <summary>

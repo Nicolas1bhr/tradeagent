@@ -343,9 +343,13 @@ public sealed class GrantedWorkerTools(
             fields ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             if (!fields.TryGetValue("max_bytes", out var asked))
                 fields["max_bytes"] = JsonSerializer.SerializeToElement(MaxTapeAnswerBytes);
-            else if (asked.ValueKind == JsonValueKind.Number && asked.TryGetDecimal(out var n) && n > MaxTapeAnswerBytes)
+            // A NUMBER SENT AS TEXT TOO (the opus review): the gateway reads both, so this ceiling reads both.
+            else if ((asked.ValueKind == JsonValueKind.Number && asked.TryGetDecimal(out var n)
+                      || asked.ValueKind == JsonValueKind.String
+                      && decimal.TryParse(asked.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out n))
+                     && n > MaxTapeAnswerBytes)
                 return ToolAnswer.Refused(
-                    $"'max_bytes' through this tool is at most {MaxTapeAnswerBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}, "
+                    $"'max_bytes' through this tool is at most {MaxTapeAnswerBytes.ToString(CultureInfo.InvariantCulture)}, "
                     + "the most one of its answers carries; leave it out, and a row larger than that comes in parts.", Summary(tool, op));
         }
 

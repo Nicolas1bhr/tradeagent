@@ -673,6 +673,10 @@ public class TapeOverPipeTests(ITestOutputHelper log)
         var larger = await tools.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("c-big", TradeAgent.AgentRuntime.GrantedWorkerTools.Data,
             JsonSerializer.Serialize(new Dictionary<string, object> { ["op"] = Ops.DataTape, ["source"] = GdeltGkg.Source, ["max_bytes"] = 1_000_000 })));
         Assert.Contains("'max_bytes' through this tool is at most", larger.Content, StringComparison.Ordinal);
+        // SENT AS TEXT, which the gateway reads as a number too, it is refused the same (the opus review).
+        var asText = await tools.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("c-text", TradeAgent.AgentRuntime.GrantedWorkerTools.Data,
+            JsonSerializer.Serialize(new Dictionary<string, object> { ["op"] = Ops.DataTape, ["source"] = GdeltGkg.Source, ["max_bytes"] = "4194304" })));
+        Assert.Contains("'max_bytes' through this tool is at most", asText.Content, StringComparison.Ordinal);
     }
 
     /// <summary>

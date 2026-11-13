@@ -591,8 +591,9 @@ public sealed class TapeReader
     /// GDELT'S FILES REFUSED WHEN READ AND NOW PAST THE BACKFILL (<c>U-tape-gdelt-2</c> item 3), as the tape stands at
     /// <paramref name="asOf"/>. A start's backfill asks again for any file labelled inside <see cref="GdeltGkg.BackfillWindow"/> that
     /// the tape holds no record of, so a refused file is read again while it is young — and never once its label is older. This
-    /// names those: an attempt GDELT answered 200 whose note says TradeAgent kept nothing (the daily cap's notes aside: that bound
-    /// was said when it stopped the file), at a label older than the window, with no record of the file on the tape.
+    /// names those: an attempt GDELT answered 200 whose note says TradeAgent kept nothing — the daily cap's notes aside (that bound
+    /// was said when it stopped the file), and a transfer GDELT stopped answering after its headers (a failure, not a refusal) — at a
+    /// label older than the window, with no record of the file on the tape.
     ///
     /// <para>Off the tape's own rows, by its indexes alone: GDELT's two file series on the attempts' index and the file records on
     /// the observations'. Counts and labels only — never a row's value — so, like the day's read, it takes no holdout.</para>
@@ -621,7 +622,11 @@ public sealed class TapeReader
             while (r.Read())
             {
                 var note = r.GetString(2);
-                if (note.StartsWith(GdeltGkg.CapNotePrefix, StringComparison.Ordinal)) continue;
+                // NOT A REFUSAL: the daily cap (said when it stopped the file), and a transfer GDELT stopped answering after its
+                // headers — answered 200, read by nothing.
+                if (note.StartsWith(GdeltGkg.CapNotePrefix, StringComparison.Ordinal)
+                    || note.StartsWith(GdeltGkg.TimeoutNotePrefix, StringComparison.Ordinal)
+                    || note.StartsWith(GdeltGkg.UnreachableNotePrefix, StringComparison.Ordinal)) continue;
                 if (GdeltGkg.LabelOf(r.GetString(1)) is not { } label || label >= before || held.Contains(label)) continue;
                 var id = r.GetInt64(0);
                 if (!refused.TryGetValue(label, out var seen) || seen.Id < id) refused[label] = (id, note);
