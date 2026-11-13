@@ -1316,6 +1316,14 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 $"a request id may not start with '{MintedIdPrefix}' — that prefix is how cancel-all and " +
                 "close-all name the per-order requests they mint, and an id using it could collide with one");
 
+        // AND A PAPER RUN'S OWN PREFIX (`U-paper-oco`): every request id a run sends opens with its holder, `dp-` and twelve of its id
+        // (Deployments.HolderFor), and the paper book reads whose holding an order is off that id (Deployments.HolderOf). An agent's id
+        // under it could collide with a run's own operation, and its order would be booked to that run's holding.
+        if (rid.StartsWith(RunIdPrefix, StringComparison.OrdinalIgnoreCase))
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"a request id may not start with '{RunIdPrefix}' — that prefix is how a paper run names its own orders, and an id "
+                + "using it could collide with one of them and be counted in that run's holding");
+
         if (!IsConservativeId(rid))
             return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
                 $"a request id may use only letters, digits and '-', up to {MaxRequestIdChars} characters — it is " +
@@ -1656,6 +1664,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// bet on the one field the rule says must not be guessed at.
     /// </summary>
     const string MintedIdPrefix = "op-";
+
+    /// <summary>The prefix every request id of a paper run opens with (<c>Deployments.HolderFor</c>), and so one an agent may not use either.</summary>
+    const string RunIdPrefix = "dp-";
 
     /// <summary>
     /// The most characters a CLIENT ORDER ID may run to in total.

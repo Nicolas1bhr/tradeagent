@@ -303,9 +303,46 @@ public sealed class Deployments(Database db)
     /// already there rather than sending a second order.</para>
     /// </summary>
     public static string RequestIdFor(string deploymentId, DateTimeOffset barOpen, int seq) =>
-        $"dp-{StrategyDeploymentRow.Short(deploymentId)}-"
+        $"{HolderFor(deploymentId)}-"
         + (barOpen.ToUnixTimeSeconds() / 60).ToString(CultureInfo.InvariantCulture)
         + $"-{seq.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// THE RUN'S IDENTITY AS THE WIRE CARRIES IT: <c>dp-&lt;12 of the deployment&gt;</c>, the prefix every one of its request
+    /// ids opens with (<see cref="RequestIdFor"/>), and so every one of its client order ids after the gateway's <c>TA-</c>
+    /// (<c>U-paper-oco</c>). The paper book keeps each run's holding apart inside its one account by it (<see cref="HolderOf"/>).
+    /// </summary>
+    public static string HolderFor(string deploymentId) => $"dp-{StrategyDeploymentRow.Short(deploymentId)}";
+
+    /// <summary>
+    /// WHOSE HOLDING AN ORDER ON THE APP'S PAPER BOOK BELONGS TO, READ OFF ITS CLIENT ORDER ID: the run's
+    /// <see cref="HolderFor"/> when the id is exactly the gateway's <c>TA-</c> before a run's request id
+    /// (<c>TA-dp-&lt;12 hex&gt;-&lt;minute&gt;-&lt;sequence&gt;</c>), and null — the account's own — for every other id (<c>U-paper-oco</c>).
+    ///
+    /// <para><b>Read off the id, not carried beside it</b>: the id is the one thing every order of the run already carries, round-trips
+    /// (safety rule 1) and the book already keys on, so an order placed before this rule existed has its holder exactly as one placed
+    /// after it, and there is no second field that could disagree with it. An agent's request id may not open with <c>dp-</c>
+    /// (<c>GatewayPipeServer</c>), so no other caller's order can read as a run's. A test pins this against
+    /// <c>TradingGateway.ClientOrderIdFor</c> and <see cref="RequestIdFor"/>.</para>
+    /// </summary>
+    public static string? HolderOf(string? clientOrderId)
+    {
+        const string prefix = "TA-dp-";
+        if (clientOrderId is null || !clientOrderId.StartsWith(prefix, StringComparison.Ordinal)) return null;
+
+        var rest = clientOrderId.AsSpan(prefix.Length);
+        if (rest.Length < 12 + 4 || rest[12] != '-') return null;
+        foreach (var c in rest[..12])
+            if (c is not ((>= '0' and <= '9') or (>= 'a' and <= 'f'))) return null;
+
+        var tail = rest[13..];
+        var dash = tail.IndexOf('-');
+        if (dash <= 0 || dash == tail.Length - 1) return null;
+        foreach (var c in tail[..dash]) if (c is not (>= '0' and <= '9')) return null;
+        foreach (var c in tail[(dash + 1)..]) if (c is not (>= '0' and <= '9')) return null;
+
+        return clientOrderId[3..(prefix.Length + 12)];
+    }
 
     /// <summary>
     /// STARTS ONE DEPLOYMENT, or leaves the row that is already there alone. Returns the row AS

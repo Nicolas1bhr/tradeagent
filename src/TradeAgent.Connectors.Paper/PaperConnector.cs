@@ -1,6 +1,7 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Connectors.Paper;
 
@@ -560,9 +561,15 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     /// <para>MARKET first, at the OPEN plus adverse slippage: it is the earliest price in the bar and
     /// the earliest one an order placed before the bar could have had. Then STOPs, which fill at the
     /// OPEN when the bar gapped through them and at their own level otherwise. Then LIMITs, at their
-    /// level — and only if no stop fired on that instrument in this bar, because a bar that touched
+    /// level — and only if no stop of the SAME POSITION fired in this bar, because a bar that touched
     /// both a position's stop and its target counts as the STOP. Bars carry no intrabar ordering, and
-    /// the other reading invents a winning trade.</para>
+    /// the other reading invents a winning trade. A position is a paper run's own or the account's
+    /// (<c>U-paper-oco</c>): one run's stop does not hold back another run's target.</para>
+    ///
+    /// <para><b>Every bar is its own call, in open-time order, and a run's fill cancels its other resting
+    /// sells in that fill's commit</b> (<see cref="PaperBook.TryFill(PaperFill, out bool, out IReadOnlyList{string})"/>),
+    /// so when several minutes settle in one read the first of a run's stop and target reached is the
+    /// only one that fills.</para>
     /// </summary>
     void Apply(string symbol, KlineBar bar)
     {
@@ -584,7 +591,10 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         foreach (var o in candidates.Where(o => o.Type == OrderType.Market))
             Fill(o, bar, Slipped(bar.Open, o.Side, friction), friction);
 
-        var protectionFired = false;
+        // A STOP HOLDS BACK ONLY ITS OWN POSITION'S TARGET (`U-paper-oco`): the rule is about one position, and on this one account
+        // each paper run's position is its own (Deployments.HolderOf, off the client order id); every other order is the account's.
+        // A stop of one run firing used to hold back every limit on the symbol, another run's touched target with it.
+        var protectionFired = new HashSet<string>(StringComparer.Ordinal);
         foreach (var o in candidates.Where(o => o.Type is OrderType.Stop or OrderType.StopLimit))
         {
             if (o.StopPrice is not { } level) continue;
@@ -594,19 +604,22 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
             // the whole point of the rule. Otherwise it is the level itself.
             var gapped = o.Side == OrderSide.Buy ? bar.Open >= level : bar.Open <= level;
             Fill(o, bar, gapped ? bar.Open : level, friction);
-            protectionFired = true;
+            protectionFired.Add(PositionOf(o));
         }
 
-        if (!protectionFired)
-            foreach (var o in candidates.Where(o => o.Type == OrderType.Limit))
-            {
-                if (o.LimitPrice is not { } level) continue;
-                var touched = o.Side == OrderSide.Buy ? bar.Low <= level : bar.High >= level;
-                if (touched) Fill(o, bar, level, friction);
-            }
+        foreach (var o in candidates.Where(o => o.Type == OrderType.Limit))
+        {
+            if (protectionFired.Contains(PositionOf(o))) continue;
+            if (o.LimitPrice is not { } level) continue;
+            var touched = o.Side == OrderSide.Buy ? bar.Low <= level : bar.High >= level;
+            if (touched) Fill(o, bar, level, friction);
+        }
 
         Book.MarkSettled(symbol, bar.OpenTime, bar.Close);
     }
+
+    /// <summary>Whose position an order is on this one account: a paper run's (its client order id names it), or the account's own, "".</summary>
+    static string PositionOf(OrderInfo o) => Deployments.HolderOf(o.ClientOrderId) ?? "";
 
     /// <summary>Adverse always: a buy pays up, a sell gets less. Slippage that helped would be a gift.</summary>
     static decimal Slipped(decimal price, OrderSide side, PaperFriction friction) =>
@@ -633,7 +646,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
 
         // The constraint decides. A re-served bar gets here and writes nothing at all — and a sell beyond what is held
         // at this bar is not filled either: it ends REJECTED, and that is said once, as a fill is.
-        var filled = Book.TryFill(attempt, out var rejected);
+        var filled = Book.TryFill(attempt, out var rejected, out var cancelled);
         if (rejected)
         {
             OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);
@@ -642,6 +655,9 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         if (filled is not { } fill) return;
 
         OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);
+        // AND THE RUN'S OTHER RESTING SELLS THAT ONE-CANCELS-OTHER TOOK OFF THE BOOK IN THE SAME COMMIT (PaperBook.TryFill).
+        foreach (var sibling in cancelled)
+            if (Book.ByClientOrderId(sibling) is { } gone) OrderChanged?.Invoke(gone);
         ExecutionReceived?.Invoke(Executed(fill));
         foreach (var p in Book.Positions())
             if (string.Equals(p.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase))
