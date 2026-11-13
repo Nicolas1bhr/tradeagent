@@ -428,7 +428,7 @@ reviewers*.
 
 ## Market data — the history, and the minutes as they happen
 
-On the **Settings** page there is a card called **Market data**, and it does three separate things.
+On the **Settings** page there is a card called **Market data**, and it does four separate things.
 
 **Download 36 months** fetches the thirty-six most recent complete months of that pair's 1-minute bars from
 Binance's public archive and checks every file against the checksum Binance published beside it. That is
@@ -661,15 +661,18 @@ run — to pay for itself. That is the instruction it works to, not a promise ab
 The control is on the **Dashboard**, under **The AI's own work**.
 
 **Starting it takes two presses; pausing it takes one.** The first press turns the button red and
-says *"Confirm: let the AI keep working without being asked, up to 5 USD a day"* — the second half
-of that sentence is the daily spending limit, and it is described below. Pausing is a single press,
+says *"Confirm: let the AI keep working without being asked, up to 40 USD a day of your ChatGPT plan's
+capacity"* when you signed in with ChatGPT, or *"… up to 5 USD a day of real money"* on an API key — the
+second half of that sentence is the daily limit that applies, and it is described below. Pausing is a single press,
 because nobody should have to press a button twice to make something stop.
 
 The card beside the button says which of four things is happening:
 
 - **working** — it is doing something right now.
-- **waiting until 14:32** — it has finished and asked to be left alone until then. It never waits
-  longer than half an hour.
+- **waiting until 14:32** — it has finished and is waiting; when TradeAgent knows what for, the card
+  says so after the time — your plan's usage limit to reset, for example. The Operations Director and the
+  Research Director never ask to be left alone for longer than half an hour; a chief can wait for hours
+  (see *Your chief and the organisation*).
 - **paused** — you pressed Pause. It stays paused, including after you close TradeAgent and open it
   again.
 - **stopped** — the AI has not been started at all. Press **Start the AI** first.
@@ -682,6 +685,14 @@ working when TradeAgent opens: TradeAgent starts the AI itself, exactly as the *
 would and with the same checks, so nothing needs pressing — and if it cannot start it (while real-money
 trading is switched on, for example), the card says why after the word **stopped**, and so does the
 **Activity** log. If you had paused it, it is still paused — a pause is never undone for you.
+
+**After TradeAgent did not close properly, it waits first.** If the last start ended without TradeAgent
+closing properly — a crash, a power cut — soon after it began, the AI waits before it works on its own
+again: 10 minutes, twice as long for each such start in a row, never more than 2 hours, so a fault that
+keeps restarting TradeAgent cannot spend a turn each time. A single crash after a long run waits for
+nothing. Meanwhile no AI turn is taken; your positions stay managed and the market recording goes on.
+The card says *waiting until …* and why. Pressing **Let the AI work on its own** ends the wait at once,
+and a pause you pressed still stands when it ends.
 
 **On Windows, TradeAgent keeps the PC awake while the AI works on its own.** The screen can still turn
 off; the PC does not go to sleep by itself. Closing the lid, pressing the power button, or running on
@@ -698,6 +709,11 @@ in, as it was when it closed — the AI back at work if it was working, still pa
 Windows has to be signed in first; TradeAgent does not sign in for you. One press turns it off, and
 uninstalling TradeAgent removes it. If you switch TradeAgent off in Windows' own list of startup apps,
 the page says so and offers to open that list.
+
+**After a Windows Update restart the computer waits at the lock screen**, and TradeAgent and the AI stay
+closed until someone signs in, because TradeAgent opens at sign-in and not before. Windows has a setting of
+its own for this, under its sign-in options: *Use my sign-in info to automatically finish setting up after
+an update*. Whether to switch it on is your choice; TradeAgent never changes it.
 
 ### What it costs you, and the daily limit
 
@@ -888,7 +904,11 @@ While the AI works on its own, TradeAgent watches the free space on the disk it 
 seconds. **Below a floor it pauses the AI, exactly as if you had pressed Pause the AI**: anything
 running ends, its cost is closed, and the work it was doing waits. The floor is a tenth of the disk,
 at most 10 GB and never under 2 GB. So a large server keeps its other programs' room, and a small
-laptop does not stop long before it has to. The Dashboard says what it saw and what to do.
+laptop does not stop long before it has to. **It counts files too**, on a disk that holds a fixed number of
+them: a disk can run out of room for new files while it still has space, so when its free file entries
+fall below a tenth of all it has (never under 500,000, and never more than a quarter of all) it pauses the
+AI the same way. The
+Dashboard says what it saw and what to do.
 
 Your positions are still managed and the market recording goes on: neither of them is the AI.
 TradeAgent does not start the AI again by itself, however much room comes back. **Free some space,
