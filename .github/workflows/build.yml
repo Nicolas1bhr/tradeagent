@@ -136,8 +136,9 @@ jobs:
       # This is 833 of the 914 tests, including every test that asserts what the product does.
       #
       # A WINDOWS SHARD RUNS ITS PART OF IT: this category filter AND the shard's, as shard-filter.sh prints it —
-      # the classes test-shards.txt lists for this shard, or for the last shard every test of a class listed
-      # nowhere. Still the whole solution, so a new project is discovered here as it is everywhere else.
+      # every class whose name test-shards.txt routes to this shard by prefix (U-ci-shards-3), and for the last
+      # shard also every class no prefix matches. Still the whole solution, so a new project is discovered here as
+      # it is everywhere else.
       - name: Test everything outside the timing category
         id: suite
         shell: bash
@@ -330,11 +331,12 @@ jobs:
           [ "$total" -ge 8 ] && [ "$executed" -eq "$total" ] && [ "$passed" -eq "$total" ] \
             || { echo "::error title=Windows cell rows::$total total, $executed executed, $passed passed: every row must run and hold"; exit 1; }
 
-      # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx. A RED for a class that ran here and is not listed
-      # for this shard (nor nested in one that is), or for a listed class that ran in the last shard: the shard
-      # filters match by substring, so a class whose name contains a listed one could run in two shards, and this
-      # is where that would show. A WARNING for a listed class that ran nothing here: a class renamed or deleted
-      # leaves a stale line, while its tests, under their new name, run in the last shard.
+      # THIS SHARD RAN EXACTLY ITS CLASSES, read from its trx (U-ci-shards-3). A RED for a class that ran here and
+      # does not route here by test-shards.txt's longest matching prefix, for a class whose name is not
+      # TradeAgent.Tests.<Segment>.<Class> (the filters match prefixes as substrings, which is exact only for
+      # those), and for a shard that ran no test at all: a filter that matches nothing exits 0, and a shard that
+      # silently ran nothing would hide its share of the suite. A WARNING for a prefix routed here that no class
+      # ran under: a stale line, whose classes, if any are left, go by a shorter prefix or to the last shard.
       # THE CLASS NAMES COME FROM TestMethod ELEMENTS ONLY: newlines are flattened before the split on
       # '<', so every line starts at a tag, and a test whose captured output PRINTS `className="..."`
       # (escaped text, never a tag) is not read as a class that ran.
@@ -375,6 +377,17 @@ jobs:
         with:
           pattern: test-results-*
           path: ${{ runner.temp }}/run-results
+      # HOW THE WINDOWS SHARDS SPREAD (U-ci-shards-3), from every shard's suite trx: the classes each one held, and
+      # a ::warning (never a red: how long a shard takes never fails a run) when the classes no prefix in test-shards.txt matches,
+      # which all run in the last shard, pass a tenth of them — the way the old complement shard grew to 53 minutes.
+      - name: Say how the windows shards spread
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "$RUNNER_TEMP/run-results" -path '*/test-results-windows-latest-shard-*' -name results.trx -exec cat {} + \
+            | tr '\r\n' '  ' | tr '<' '\n' | { grep '^TestMethod[[:space:]]' || true; } \
+            | { grep -o '[[:space:]]className="[^"]*"' || true; } | cut -d'"' -f2 | sort -u \
+            | .github/ci/shard-filter.sh spread - | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Compare the record with what this run measured
         shell: bash
         env:
