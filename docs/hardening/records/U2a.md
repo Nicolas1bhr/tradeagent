@@ -297,7 +297,7 @@ Bounce on `d25dbb4` from Codex round 4 (5H/6M/3L, `records/codex-U2a-r4.txt`) an
 F5, F6 and the gateway half of F8 were split to U2c-1 round 4 by the manager and are NOT touched here;
 `TradingGateway.cs`, `Stores.cs` and `GatewayTypes.cs` are not opened.
 
-**Windows box reachable this round** (`tools/win-state.sh` → tailscale up, `DESKTOP-K8VRIT9`,
+**Windows box reachable this round** (`tools/win-state.sh` → tailscale up, `<the box>`,
 session Active/console, desktop live, ATAS installed+running, `C:\ta\repo` present; exit 3 = no UI
 agent, console work only — which is all a test run needs). On-box results at the end of this section.
 
@@ -413,7 +413,7 @@ Passed!  - Failed: 0, Passed: 238, Skipped: 0, Total: 238, Duration: 2 m 42 s - 
 > the end of this file) reaches the same conclusion by a checked route. The inference drawn here —
 > that the Windows pipe buffer is too small to swallow a 512 KiB frame — is re-established there.
 
-`tools/win-push.sh` (740K, 446 files) then `tools/win-run.sh`, against `DESKTOP-K8VRIT9`, ATAS
+`tools/win-push.sh` (740K, 446 files) then `tools/win-run.sh`, against `<the box>`, ATAS
 installed and running, console session live. The installed app, ATAS and the real home were not
 touched: the suite redirects `TRADEAGENT_HOME` to a scratch directory and every pipe name in these
 tests is a fresh GUID, so nothing bound the installation's own pipe.
@@ -918,7 +918,7 @@ files changed in the diff; the fourth, `ApprovalReauthorizationTests.cs`, is `+1
 is `public TimeSpan EmergencyBudget => inner.EmergencyBudget;` — a new interface member on a test
 double, not a test.
 
-**The box run** (`DESKTOP-K8VRIT9`, one granted run). `tools/win-state.sh` first: tailscale up,
+**The box run** (`<the box>`, one granted run). `tools/win-state.sh` first: tailscale up,
 session `Active (id 1, console)`, desktop live. `tools/win-push.sh` from the clean worktree:
 `packed 760K` / `unpacked: 155 files` — 156 files locally excluding `.git`/`bin`/`obj`/`artifacts`,
 minus the worktree's `.git` pointer file (a file, not a directory, so `tar --exclude='.git'` drops
@@ -1579,7 +1579,7 @@ dcc9e620429668f3eb34831cd14e3a92681dcf1d46b7762d2248e2d8fe313df0  …\src\TradeA
 cs files under src+tests: 90                                      (Mac: 90)
 ```
 
-One SSH session, `DESKTOP-K8VRIT9`, console session Active, ATAS running, no UI agent (console work
+One SSH session, `<the box>`, console session Active, ATAS running, no UI agent (console work
 only, which is all this needed):
 
 ```
@@ -1990,7 +1990,7 @@ cs files under src+tests (excluding bin/obj): 90                  (Mac: 90)
 IDENTITY OK: the box tree is the Mac tree
 ```
 
-One ssh session (`tools/win-ps.sh`, one script), `DESKTOP-K8VRIT9`, console session Active, ATAS
+One ssh session (`tools/win-ps.sh`, one script), `<the box>`, console session Active, ATAS
 running and untouched, no UI agent (console work only, which is all this needed):
 
 ```

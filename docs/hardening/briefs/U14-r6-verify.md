@@ -10,7 +10,7 @@ design and the "reinstall the add-on" sentence vanishes); the peer is left parke
 every behavioural clause of the rule holds. Two of the builder's tests were silently deleted by a later edit and
 restored (caught by a mutant that reported no failure) — rule: a SURVIVED mutant is evidence only if the test count moved.
 
-Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r6`, detached at
+Worktree: `~/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r6`, detached at
 `f8a724c`; first command `git checkout -b u14-verify-r6-probes`; cherry-pick from `u14-verify-r5-probes` as useful.
 Work ONLY there. **The box is NOT yours** (serialised; the U2a builder holds the grant).
 

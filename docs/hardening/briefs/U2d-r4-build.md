@@ -5,15 +5,15 @@ leg [1]; an Opus verifier [2] runs on your final sha; Codex [3] on trigger (the 
 this batch (round 3's verdict was 0H/2M/4L; you close the two MED and the LOW batch).
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2d.md` — rounds 1–3, the
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2d.md` — rounds 1–3, the
    verifier's positives worth keeping, and "Round 4 (briefed, NOT started)". Original records lost; branch = truth.
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2d-updater-fail-closed.md`.
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2d-updater-fail-closed.md`.
 
 ## Where you work
 
-- Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2d-build`, branch
+- Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u2d-build`, branch
   `u2d-updater-fail-closed` @ `c519966` (base `3931c10`, 12 commits).
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`. No `timeout`; tool calls cap at 10 min;
   full suite ≈ 2–3 min, output to a file. The Windows box is OFFLINE (`UpdateSources.Install` stays unexecuted; say so).
@@ -58,7 +58,7 @@ one wiring line you can name. If an item needs more, STOP that item and report.
 ## Rules
 
 No `Co-Authored-By` trailers; one-sentence commit messages; commit after every item. Checkpoint AS YOU GO by appending
-`## Round 4 (build record, <date>)` to `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2d.md`
+`## Round 4 (build record, <date>)` to `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2d.md`
 (MAIN worktree path; no git there — the manager commits it). Honesty contract (§6); banned words: should work, looks
 correct, probably, I believe, minor, trivial, static-verified, basically. Do not push, merge, or touch other worktrees.
 Docs listed under "Docs to change at integration" in the record are NOT yours — the manager batches them.

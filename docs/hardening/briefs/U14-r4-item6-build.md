@@ -5,19 +5,19 @@ leg [1] (builder). Leg [2] (an independent Opus adversarial verifier) and leg [3
 on your final sha, each in its own worktree. **Round cap for this item: 2** — it is a LOW batch closing a PASS round.
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate; R1–R6 and §6 bind you).
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md` (the four safety rules on `IAtasAdapter`).
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/PROGRAM.md` (record conventions).
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` — the unit record. The
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate; R1–R6 and §6 bind you).
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md` (the four safety rules on `IAtasAdapter`).
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/PROGRAM.md` (record conventions).
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` — the unit record. The
    original build/verify records were LOST with a wiped scratchpad; this reconstruction and the branch commits are the truth.
    The finding labels V20/V24/V26 in it come from the lost verify record; only the sentence next to them survives.
-5. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u14-coid-witness-rewrite.md`.
+5. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u14-coid-witness-rewrite.md`.
 
 Those docs live on `main`; your branch predates them, so read them at the absolute paths above.
 
 ## Where you work
 
-- Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u14-build`, branch
+- Worktree: `~/Projects/ai-trading-software-for-mihael-worktrees/u14-build`, branch
   `u14-coid-witness-rewrite` @ `a8b3fb0` (base `3f1d8f2`, 25 commits). Work ONLY in this worktree. Never `cd` into the
   main checkout to edit code; never touch other worktrees.
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`; `dotnet build TradeAgent.sln`;
@@ -70,7 +70,7 @@ delivering an item requires a file outside this list, STOP that item and report;
 - No `Co-Authored-By` trailers in commit messages (owner's rule). Commit messages: one plain sentence saying what changed
   and why.
 - Checkpoint as you go: append a section `## Round 4 — item 6 (build record, <date>)` to
-  `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` (the MAIN worktree
+  `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` (the MAIN worktree
   file) and update it after EVERY sub-item — RED quote, GREEN, the mutant and its bite, the commit sha. Do not run git
   in the main worktree; the manager commits the record. Anything only in your context dies with the connection.
 - Honesty contract (§6): every claim is "verified by running X → output" or "NOT verified: why". Banned words: should

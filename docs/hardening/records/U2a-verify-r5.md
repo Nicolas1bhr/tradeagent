@@ -1,7 +1,7 @@
 # U2a — ADVERSARIAL-VERIFY record · round 5 (leg [2], Opus, targeted on the bounce)
 
 **Sha under test:** `0909ada` = `d25dbb4` + 10 commits, one per finding.
-**Verify worktree:** `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r5`,
+**Verify worktree:** `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r5`,
 branch `u2a-verify-r5-probes` (from detached `0909ada`). Nothing pushed. No product fix applied.
 **Same verifier as round 4** (record `records/U2a-verify-r4.md`, FAIL 2H/1M/1L).
 **Toolchain:** dotnet 10.0.400, macOS 25.5.0 Darwin, Apple silicon, 11 cores.

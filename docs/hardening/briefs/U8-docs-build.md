@@ -6,8 +6,8 @@ to remove. **Legs:** you are the builder; the manager reviews against the source
 **Rounds: cap 1** plus the manager's correction pass.
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` §6 (honesty contract) and §0.
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md` — "The user never sees a terminal. Not once."
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` §6 (honesty contract) and §0.
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md` — "The user never sees a terminal. Not once."
    applies to the USER GUIDE too: no command line in any sentence addressed to the owner.
 3. `docs/hardening/PROGRAM.md` (D5–D8), `docs/hardening/HANDOFF-2026-09-03.md` §2, §5 (the decisions as resolved) and §7
    (the docs backlog), `docs/hardening/records/U3-update-proof.md` and `U4-windows-eyes.md` (what was actually seen on
@@ -17,7 +17,7 @@ to remove. **Legs:** you are the builder; the manager reviews against the source
 
 ## Where you work
 
-Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u8-docs`, branch `u8-docs` cut from
+Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u8-docs`, branch `u8-docs` cut from
 `main` by the manager. Docs only: you may create `docs/DEPLOYMENT.md` and `docs/MONITORING-PHASE.md` and edit
 `docs/USER-GUIDE.md`. You may NOT edit code, tests, `BUILD-STATUS.md` or `RESUME-HERE.md` (the manager refreshes those
 at v0.1.2). Toolchain if you need to count screens or read strings: `export PATH="$HOME/.dotnet:$PATH"`; the box is
@@ -65,7 +65,7 @@ how to stop (the kill switch, then closing positions in ATAS by hand). The outbo
 - Owner-facing text: short sentences, the app's own words for its screens and buttons, no command lines, no paths.
 - Commit on `u8-docs` per document; one-sentence messages; no `Co-Authored-By` trailers. Do not push, merge, or touch
   other worktrees.
-- Checkpoint AS YOU GO: write `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U8-docs.md`
+- Checkpoint AS YOU GO: write `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U8-docs.md`
   (MAIN worktree path; no git there) with the source map and "What I did NOT do".
 
 ## Report back

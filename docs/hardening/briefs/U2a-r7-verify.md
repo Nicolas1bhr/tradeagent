@@ -7,7 +7,7 @@ bounds ONLY the caller's wait, on ONE clock across gate + write + reply; livenes
 as grace — a peer that answers nothing within it is dropped, a late answer (2 s < t ≤ 10 s) is kept and recorded on
 the pending RPC; a wedged heartbeating peer is now detected at ≈10 s (stated cost).
 
-Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r7`, detached at the
+Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r7`, detached at the
 sha; first command `git checkout -b u2a-verify-r7-probes`; cherry-pick from `u2a-verify-r6-probes` as useful. Work
 ONLY there; the box is not yours (the builder's verified-tree box run is a claim you read).
 

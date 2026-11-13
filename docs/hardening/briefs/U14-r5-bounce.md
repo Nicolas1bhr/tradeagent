@@ -50,7 +50,7 @@ forbidden. Two of the HIGHs are class findings — fix the class, not the instan
 ## Process
 
 Commit per finding; no `Co-Authored-By`; commit before mutants, `cp` restore, `touch`. Append `## Round 5 (build record,
-<date>)` to `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` AS YOU GO — a
+<date>)` to `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` AS YOU GO — a
 table `finding · real/refuted · RED · GREEN · mutant · commit`. Targeted gates per finding; `dotnet build TradeAgent.sln` +
 FULL suite once at the end with counts pasted. §9.9: for F8 and F13 answer whether a property test over
 (committed, temp) shapes could catch the class. Report: tip sha; the table in one line per finding; suite counts;
