@@ -80,11 +80,20 @@ public class GdeltGkgTests(ITestOutputHelper log)
             Assert.False(refused.OverBudget);
         }
 
-        // A KEPT ROW THE TAPE CANNOT HOLD WHOLE REFUSES THE FILE: past 64 KB as the tape keeps it.
-        var oversize = await GkgFile.Read(GkgFile.Zip(Label, [.. rows,
+        // A KEPT ROW PAST 64 KB AS THE TAPE KEEPS IT IS KEPT WHOLE, AND ITS FILE WITH IT (U-tape-gdelt). Until 2026-11-13 it
+        // refused the file: the tape held 65,536 bytes a row, and GDELT's rows reach 437,260 as the tape keeps them.
+        var large = await GkgFile.Read(GkgFile.Zip(Label, [.. rows,
             GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: "wc:9," + new string('c', TapeStore.MaxPayloadBytes))]), Label);
+        log.WriteLine("large: " + (large.Refused ?? "kept"));
+        Assert.Null(large.Refused);
+        Assert.Equal(7, large.Kept.Count);
+        Assert.True(Encoding.UTF8.GetByteCount(large.Kept[^1].Payload) > TapeStore.MaxPayloadBytes);
+
+        // AN OVERSIZE ROW — longer than a GKG row may be as GDELT serves it — refuses the file, and nothing is kept.
+        var oversize = await GkgFile.Read(GkgFile.Zip(Label, [.. rows,
+            GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: "wc:9," + new string('c', GdeltGkg.MaxRowBytes))]), Label);
         log.WriteLine("refused: " + oversize.Refused);
-        Assert.StartsWith("the kept row 20261006004500-9 is ", oversize.Refused, StringComparison.Ordinal);
+        Assert.Equal("row 10 is longer than the 1024 KB a GKG row may be", oversize.Refused);
         Assert.Empty(oversize.Kept);
 
         // NOT UTF-8 — measured in 2 of 24 GDELT files on 2026-10-06, a raw Latin-1 byte in an address: read past in a
@@ -102,6 +111,37 @@ public class GdeltGkgTests(ITestOutputHelper log)
         Assert.Equal("the kept row 20261006004500-9 is not UTF-8, so it cannot be kept whole and the file is not stored in part",
             keptLatin1.Refused);
         Assert.Empty(keptLatin1.Kept);
+    }
+
+    /// <summary>
+    /// EVERY ROW THE READER ACCEPTS, THE TAPE KEEPS WHOLE, HOWEVER ITS CHARACTERS ESCAPE (<c>U-tape-gdelt</c>). The canonical
+    /// JSON the tape keeps writes '&lt;', '&gt;', '&amp;', a quote and every character past ASCII as a six-byte escape, so a
+    /// GKG row grows as it is kept — on the owner's server on 2026-11-12, 102 files were not read, the last for a kept row of
+    /// 437,260 bytes, past the 65,536 a row could hold. The worst row the reader accepts — <see cref="GdeltGkg.MaxRowBytes"/>
+    /// long, one field all '&lt;' — is kept whole, at six bytes a character and still inside the 8 MiB the tape holds of an
+    /// archive row. One byte longer is not a GKG row: the file is refused in words and nothing is kept.
+    /// RED at 5ca22a31: "the kept row 20261006004500-9 is 6291… bytes as the tape keeps it, past the 65536 a row may hold".
+    /// </summary>
+    [Fact]
+    public async Task The_longest_row_the_reader_accepts_is_kept_whole_however_its_characters_escape()
+    {
+        var shell = GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: "");
+        var room = GdeltGkg.MaxRowBytes - Encoding.UTF8.GetByteCount(string.Join('\t', shell));
+        var worst = GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: new string('<', room));
+        Assert.Equal(GdeltGkg.MaxRowBytes, Encoding.UTF8.GetByteCount(string.Join('\t', worst)));
+
+        var read = await GkgFile.Read(GkgFile.Zip(Label, worst), Label);
+        log.WriteLine($"refused={read.Refused ?? "-"} kept={read.Kept.Count} keptBytes={read.KeptBytes}");
+        Assert.Null(read.Refused);
+        var kept = Assert.Single(read.Kept);
+        Assert.Equal(new string('<', room), Json(kept.Payload).GetProperty("V2GCAM").GetString());
+        Assert.InRange(read.KeptBytes, 6L * room, 8L * 1024 * 1024);
+
+        var longer = GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: new string('<', room + 1));
+        var refused = await GkgFile.Read(GkgFile.Zip(Label, longer), Label);
+        log.WriteLine("refused: " + refused.Refused);
+        Assert.Equal("row 1 is longer than the 1024 KB a GKG row may be", refused.Refused);
+        Assert.Empty(refused.Kept);
     }
 
     /// <summary>

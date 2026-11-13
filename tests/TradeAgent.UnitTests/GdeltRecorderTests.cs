@@ -118,6 +118,47 @@ public class GdeltRecorderTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A KEPT ROW PAST 64 KB AS THE TAPE KEEPS IT IS RECORDED WHOLE, AND ITS FILE WITH IT (<c>U-tape-gdelt</c>). On the owner's
+    /// server on 2026-11-12, 102 files were not read, the last because "the kept row 20261112190000-1055 is 437260 bytes as
+    /// the tape keeps it, past the 65536 a row may hold". A row with 72,000 accented letters in its GCAM is about 144 KB as
+    /// GDELT serves it and about 432 KB as the tape keeps it, each letter escaping to six bytes. Its file is recorded — the
+    /// record and both crypto rows — its attempt carries no note, and the large row is its 27 fields whole, hashed by
+    /// TradeAgent from that text. RED at 5ca22a31: the attempt said the file was not read, and only the attempt was written.
+    /// </summary>
+    [Fact]
+    public async Task A_kept_row_past_64_KB_as_the_tape_keeps_it_is_recorded_whole_with_its_file()
+    {
+        using var host = new FakeArchive();
+        var large = GkgFile.Row(Label, 2, title: "Solana and XRP: the week ahead", gcam: "wc:9," + new string('é', 72_000));
+        var zip = Publish(host, Label, GkgFile.Zip(Label, GkgFile.Row(Label, 0, themes: "ECON_BITCOIN"), GkgFile.Row(Label, 1), large));
+        host.PublishAt(GdeltGkg.ListingPath, GkgFile.Listing(Label, zip));
+
+        var file = NewFile();
+        using var store = new TapeStore(file);
+        var now = Label.AddSeconds(2);
+        await using var recorder = Recorder(store, host, () => now);
+
+        var look = await recorder.LookOnceAsync();
+        var fetch = store.Fetches(GdeltGkg.Source, GdeltRecorder.LiveSeries)
+            .Single(f => f.Url.EndsWith(".gkg.csv.zip", StringComparison.Ordinal));
+        log.WriteLine($"look: {look}; note: {fetch.Note ?? "-"}");
+
+        Assert.Null(fetch.Note);
+        Assert.Equal((true, 3), (look.Worked, look.Stored));
+        var observed = store.ObservationsOf(fetch.Id);
+        Assert.Equal(new[] { GdeltGkg.BatchSubject, "20261006004500-0", "20261006004500-2" }, observed.Select(o => o.Subject));
+
+        var row = observed.Single(o => o.Subject == "20261006004500-2");
+        var bytes = Encoding.UTF8.GetByteCount(row.Payload!);
+        log.WriteLine($"the large row is {bytes} bytes as the tape keeps it");
+        Assert.InRange(bytes, 400_000, 500_000);
+        var fields = System.Text.Json.JsonDocument.Parse(row.Payload!).RootElement;
+        for (var i = 0; i < GdeltGkg.Fields.Count; i++)
+            Assert.Equal(large[i], fields.GetProperty(GdeltGkg.Fields[i]).GetString());
+        Assert.Equal(TapeJson.Sha256(row.Payload!), row.PayloadSha256);
+    }
+
+    /// <summary>
     /// THE SAME FILE READ TWICE WRITES NO SECOND OBSERVATION. A live look records it — its record and its two crypto
     /// rows — and the backfill's step reads it again, as a race between the two would: a second attempt is a row, and
     /// nothing else is, because the record of the same file is the same record. A second look does not even ask for it.
