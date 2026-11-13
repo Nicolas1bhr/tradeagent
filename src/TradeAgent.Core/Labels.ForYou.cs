@@ -114,6 +114,46 @@ public static partial class Labels
     /// <summary>A dormant position as the activation list names it.</summary>
     public static string DormantPosition(string id, string unit) => $"{id}, dormant in {unit}";
 
+    /// <summary>
+    /// THE SEAT A DORMANT POSITION WOULD RUN ON, as the activation card shows it (<c>U-owner-words-4</c> item 4): the class this computer
+    /// declares for it now. Nobody declared is said as what the app counts it as — a seat that runs as him, outside a sealed workspace.
+    /// </summary>
+    public static string DormantSeat(string? seatClass) => "It would run on " + seatClass switch
+    {
+        null => "no seat declared yet, so TradeAgent counts it as one that runs as you, outside a sealed workspace.",
+        Db.SeatClasses.Cli => "a command-line seat, which runs as you, outside a sealed workspace.",
+        Db.SeatClasses.Broker => "a seat without a shell, which reaches TradeAgent only through its own tools.",
+        Db.SeatClasses.Harness => "TradeAgent's own worker, with no shell.",
+        Db.SeatClasses.Cell => "a sealed workspace.",
+        Db.SeatClasses.Puppet => "a test seat that runs no model.",
+        _ => $"a kind of seat this version has no words for (“{seatClass}”)."
+    };
+
+    /// <summary>
+    /// ITS TEAM'S ENVELOPE, as the activation card shows it: the unit's own share of what the unit above it may spend on the AI each day,
+    /// and its shares of a campaign's trials and verdicts, as the chart records them — or that it has none of its own.
+    /// </summary>
+    public static string DormantEnvelope(string unit, string? share, string? trials, string? verdicts)
+    {
+        var day = share is { } s
+            ? $"{Cap(unit)} may spend {s} of what the unit above it may spend on the AI each day"
+            : $"{Cap(unit)} has no share of its own of the AI's day: it spends from the unit above it";
+        var campaign = (trials, verdicts) switch
+        {
+            (null, null) => "",
+            ({ } t, null) => $"; {t} of a campaign's trials",
+            (null, { } v) => $"; {v} of a campaign's verdicts",
+            ({ } t, { } v) => $"; {t} of a campaign's trials and {v} of its verdicts",
+        };
+        return day + campaign + ".";
+    }
+
+    /// <summary>Press two refused because what press one showed has moved: nothing was activated.</summary>
+    public static string DormantMoved(string what) =>
+        $"Nothing was activated: {what} changed after your first press. The card now shows it as it is; press again if you still want it.";
+
+    static string Cap(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
     // ---- the board's acts, on the Board page ------------------------------------------------------------------------------------
 
     public const string BoardActs = "The board's acts";
