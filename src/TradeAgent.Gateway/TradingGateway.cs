@@ -14255,7 +14255,10 @@ public sealed partial class TradingGateway : IAsyncDisposable
         {
             // SENT TO ANOTHER PLATFORM (U-windows-cards): the connected platform's history is no evidence about it — an account id is
             // unique only within a platform, and the paper venue standing in for ATAS lists its own book under any — so nothing is
-            // asked of it, and his answer stands alone, as it does where no history can be asked. The row says which was connected.
+            // asked of it, and his answer stands alone. The row says which was connected. For an ATAS row that is what ATAS itself
+            // gives (it proves no history). For a row of a platform that could prove its own — paper's, answered while ATAS is
+            // connected — its history goes unasked here exactly as it did before this rule, when the connected ATAS's veto asked
+            // nothing (opus review; carded, not changed: refusing would hold that row until the owner switched platforms).
             note = $"{note} (it was sent to {asked.ConnectorId}; TradeAgent was connected to {Connector.Id}, whose order history says "
                    + "nothing about it, so it was not asked)";
         }
