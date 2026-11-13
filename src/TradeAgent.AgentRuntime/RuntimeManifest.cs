@@ -979,7 +979,9 @@ public static class RuntimeCatalog
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
-        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\""
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\"",
+        // THE DOOR'S TIME LIMIT, THE APP'S OWN (U-door-bounds): unset, the vendor's 300 s default applied unstated. See BrokerSeat.DoorToolTimeout.
+        "-c", BrokerSeat.DoorTimeoutPair
     ];
 
     /// <summary>
@@ -1015,7 +1017,9 @@ public static class RuntimeCatalog
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.url=\"{SeatPlan.DoorSlot}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.bearer_token_env_var=\"{TradeAgent.Security.AgentGrants.Variable}\"",
         "-c", $"mcp_servers.{BrokerSeat.DoorServer}.required=true",
-        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\""
+        "-c", $"mcp_servers.{BrokerSeat.DoorServer}.default_tools_approval_mode=\"approve\"",
+        // THE DOOR'S TIME LIMIT, as the broker carries it (U-door-bounds).
+        "-c", BrokerSeat.DoorTimeoutPair
     ];
 
     /// <summary><paramref name="args"/> less every adjacent <paramref name="flag"/> <paramref name="value"/> pair.</summary>

@@ -31,6 +31,43 @@ public static class BrokerSeat
     public const string DoorServer = "tradeagent";
 
     /// <summary>
+    /// HOW LONG THE SEAT'S HARNESS WAITS FOR ONE DOOR CALL, STATED BY THE APP (<c>U-door-bounds</c>): carried on both door classes as
+    /// <c>mcp_servers.tradeagent.tool_timeout_sec</c> (<see cref="DoorTimeoutPair"/>). Unset, codex 0.160.1 applies its own default, 300 s
+    /// (<c>codex-mcp/src/rmcp_client.rs:106</c> at rust-v0.160.1, read in the source, never run): a number nobody in the app had stated and the
+    /// vendor can move in any release. It is the server's limit for every call to it — the harness asks for no tighter one
+    /// (<c>core/src/mcp_tool_call.rs:466</c> passes none; <c>codex-mcp/src/connection_manager.rs:1014-1019</c> takes the smaller) — read as
+    /// seconds in a float (<c>config/src/mcp_types.rs:284-286, :658-680</c>).
+    ///
+    /// <para><b>Why 300 s.</b> At least <see cref="DoorTimeoutMargin"/> times <see cref="LongestDoorCall"/>, the longest call the door admits,
+    /// and at most a quarter of a turn's 30 minutes, so a call that reaches it leaves the turn time to ask again. A call past it is not lost:
+    /// the vendor stops waiting, the door keeps computing and records the answer (a verdict, once recorded, is answered as it stands and charged
+    /// nothing when asked again), so no call needs a "still running" answer of its own.</para>
+    ///
+    /// <para><b>Compared whole with the class's deny set</b> (<see cref="OverrideRefusal(RuntimeManifest, string)"/>'s "deny set" field): a
+    /// <c>runtimes.json</c> that moves it refuses the class. It bounds how long a verdict may run before the model is told it failed, which is
+    /// evidence the run stands on, so it is this build's, never a file's.</para>
+    /// </summary>
+    public static readonly TimeSpan DoorToolTimeout = TimeSpan.FromSeconds(300);
+
+    /// <summary>The door's limit as the one <c>-c</c> value both door classes carry.</summary>
+    public static string DoorTimeoutPair =>
+        $"mcp_servers.{DoorServer}.tool_timeout_sec={DoorToolTimeout.TotalSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// THE LONGEST CALL THE DOOR ADMITS, MEASURED (<c>U-door-bounds</c>, 2026-11-13, the owner's Windows desktop under six other builders'
+    /// load): a verdict over a 36-month holdout, 1,578,240 one-minute bars, 8.90 s — scaled to <c>Backtest.MaxJudgedBars</c> (1,607,040) and
+    /// rounded up. The same run measured a 12-month verdict (525,600 bars) at 3.55 s and a 200,000-bar backtest at 4.16 s.
+    /// <c>DoorCallDurationTests</c> re-runs the measurement on every platform.
+    /// </summary>
+    public static readonly TimeSpan LongestDoorCall = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// THE MARGIN THE LIMIT KEEPS OVER <see cref="LongestDoorCall"/>: a host five times slower than the measuring one running a program five
+    /// times heavier per bar than the measured one.
+    /// </summary>
+    public const int DoorTimeoutMargin = 25;
+
+    /// <summary>
     /// THE MODEL A BROKER OR CELL SEAT RUNS ON, WITH CLASSIC TOOLS (<c>U-cell-model-catalog</c>, option C of 2026-10-25): gpt-5.5 retired
     /// from Codex with ChatGPT sign-in on 2026-10-14 and every model on the owner's plan is <c>code_mode_only</c>, so the seat runs
     /// gpt-6-luna on the app's own catalog — the vendor's bundled entry without <c>tool_mode</c> (<see cref="SeatPlan.ModelCatalog"/>).
