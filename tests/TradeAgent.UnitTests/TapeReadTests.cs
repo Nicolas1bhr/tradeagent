@@ -311,6 +311,69 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.Contains("never evaluation evidence", line, StringComparison.Ordinal);
     }
 
+    /// <summary>A GDELT file's attempt as the recorder writes one: its own address, answered <paramref name="status"/>, with its note.</summary>
+    static TapeFetch GdeltAttempt(DateTimeOffset label, string series, int? status, string? note) => new()
+    {
+        Source = GdeltGkg.Source,
+        Series = series,
+        Url = GdeltGkg.BatchUrl("http://127.0.0.1:9", label),
+        RequestedAt = label.AddMinutes(16),
+        ReceivedAt = label.AddMinutes(16).AddSeconds(2),
+        HttpStatus = status,
+        Note = note
+    };
+
+    /// <summary>
+    /// (U-tape-gdelt-2 item 3) A GDELT FILE TRADEAGENT REFUSED WHEN IT READ IT, NOW PAST THE BACKFILL'S SEVEN DAYS, IS NAMED IN THE
+    /// REPORT: the backfill re-asks a refused file only while its label is under seven days old, so one refused before
+    /// <c>U-tape-gdelt</c> raised the row bound and older than that is never read again, and nothing said so. The reader counts the files
+    /// GDELT served (200) and TradeAgent refused — "the file was not read" and "the tape refused the file" — that the tape holds no
+    /// record of and whose label is past the window at the report's instant, with their labels' bounds and the newest refusal in words;
+    /// and the tape's line says so. Not counted: a refused file later recorded, one still inside the window (the next start asks for it),
+    /// one GDELT did not answer or did not publish, and one the daily cap stopped (a bound the owner was told of then).
+    /// RED at 5f341109: the reader has no such read, and the line says nothing of the two files.
+    /// </summary>
+    [Fact]
+    public async Task A_gdelt_file_refused_past_the_backfill_window_is_named_in_the_report()
+    {
+        var noon = TestEnv.LocalNoon();
+        var instant = noon.AddMinutes(50);
+        using var store = new TapeStore(NewFile());
+        var lost = GdeltGkg.LabelAtOrBefore(instant - GdeltGkg.BackfillWindow - TimeSpan.FromHours(1));
+        var older = lost - TimeSpan.FromHours(30);
+        var later = lost - TimeSpan.FromHours(2);
+        var inside = GdeltGkg.LabelAtOrBefore(instant - TimeSpan.FromDays(2));
+        const string tooBig = "the file was not read: the kept row 1-9 is 437260 bytes as the tape keeps it, past the 65536 a row may hold";
+
+        store.Append(GdeltAttempt(older, "gkg-backfill", 200, "the tape refused the file: an archive file's row is 70000 bytes"));
+        store.Append(GdeltAttempt(later, "gkg-live", 200, tooBig));
+        store.AppendArchive(GdeltAttempt(later, "gkg-backfill", 200, null), new TapeArchiveBatch
+        {
+            RecordSeries = GdeltGkg.BatchSeries, RecordSubject = GdeltGkg.BatchSubject, ItemsSeries = GdeltGkg.ItemsSeries,
+            Label = later, Bytes = 10, PublishedMd5 = new string('1', 32), ComputedMd5 = new string('1', 32),
+            Sha256 = new string('2', 64), Rows = 5, Filter = GdeltGkg.Filter
+        }, [new TapeItem($"{GdeltGkg.LabelText(later)}-1", later, """{"GKGRECORDID":"x"}""")]);
+        store.Append(GdeltAttempt(inside, "gkg-live", 200, tooBig));
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(3), "gkg-live", 503, "GDELT answered 503 and nothing was read"));
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(4), "gkg-live", null, "GDELT did not answer within 120 s"));
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(5), "gkg-backfill", 404, "GDELT has not published the file"));
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(6), "gkg-live", 200, GdeltGkg.CapNotePrefix + "its kept rows pass the cap"));
+        store.Append(GdeltAttempt(lost, "gkg-live", 200, tooBig));
+        store.Append(GdeltAttempt(lost, "gkg-backfill", 200, tooBig));
+
+        var refused = new TapeReader(store.File).RefusedPastBackfill(instant);
+        Assert.Equal((2, older, lost, tooBig), (refused.Files, refused.Oldest, refused.Newest, refused.NewestReason));
+        // ONE FILE A SECOND LATER IS INSIDE THE WINDOW AT THAT INSTANT, AND IS NOT NAMED.
+        Assert.Equal(1, new TapeReader(store.File).RefusedPastBackfill(lost + GdeltGkg.BackfillWindow).Files);
+
+        var (gw, db) = await ReportingAt(instant, store.File);
+        using var _1 = db;
+        var line = TapeLineOf(gw, noon);
+        Assert.Contains(
+            $"2 GDELT files TradeAgent refused when it read them, labelled {Stamp(older)} to {Stamp(lost)}, are past the 7 days a start "
+            + "goes back to ask again, so the tape will never hold them — the newest refusal: " + tooBig, line, StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------------------ U-tape-gaps: what the tape did not record
 
     /// <summary>The deliveries of one series every <paramref name="every"/> from <paramref name="first"/> to <paramref name="last"/>, both included.</summary>
@@ -800,6 +863,7 @@ public class TapeReadTests(ITestOutputHelper log)
             reader.Day(yesterday, from, instant);
             reader.Day(from, to, instant);
             reader.Recording(instant);
+            reader.RefusedPastBackfill(instant);
         }
         finally
         {

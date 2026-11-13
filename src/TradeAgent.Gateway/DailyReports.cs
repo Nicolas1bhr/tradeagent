@@ -819,7 +819,9 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         if (gateway.Tape is not { } tape) return null;
         try
         {
-            return TapeWords(tape.Day(from, to, _now()), gateway.Settings.RecordMarketContext, gateway.Settings.RecordGdeltNews);
+            var now = _now();
+            return TapeWords(tape.Day(from, to, now), gateway.Settings.RecordMarketContext, gateway.Settings.RecordGdeltNews,
+                tape.RefusedPastBackfill(now));
         }
         catch (Exception ex)
         {
@@ -829,7 +831,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     }
 
     /// <summary>The tape's day in the owner's words: see <see cref="TapeLine"/>.</summary>
-    static string TapeWords(TapeDay day, bool marketContext, bool gdeltNews)
+    static string TapeWords(TapeDay day, bool marketContext, bool gdeltNews, TapeRefusedFiles refused)
     {
         var b = new StringBuilder();
         b.Append($"{day.Rows:N0} rows recorded from {day.Requests:N0} requests, {day.Failed:N0} of them recorded a failure; ");
@@ -853,6 +855,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         if (!marketContext) b.Append(" — at this report's instant Record market context is switched OFF");
         if (!gdeltNews) b.Append(" — at this report's instant Record GDELT news is switched OFF");
         if (day.LastError is { Length: > 0 } why) b.Append(" — last failure: ").Append(why);
+
+        // WHAT THE TAPE WILL NEVER HOLD, SAID AT EVERY REPORT WHILE IT STANDS (U-tape-gdelt-2 item 3): a start asks again only for
+        // files under the backfill's window, so a file refused when it was read and older than that is lost to the tape for good.
+        if (refused is { Files: > 0, Oldest: { } oldest, Newest: { } newest })
+            b.Append($"; {(refused.Files == 1 ? "1 GDELT file" : $"{refused.Files:N0} GDELT files")} TradeAgent refused when it read ")
+             .Append(refused.Files == 1 ? $"it, labelled {Stamp(oldest)}, is" : $"them, labelled {Stamp(oldest)} to {Stamp(newest)}, are")
+             .Append($" past the {GdeltGkg.BackfillWindow.TotalDays:0} days a start goes back to ask again, so the tape will never hold ")
+             .Append(refused.Files == 1 ? "it" : "them").Append(" — the newest refusal: ").Append(refused.NewestReason);
 
         // THE CREDIT TRAVELS WITH THE FIGURE. GDELT's terms ask every use of its data to cite the project and link to its
         // site, and this document is shown to the owner and served to the AI.
