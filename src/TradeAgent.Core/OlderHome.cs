@@ -292,7 +292,7 @@ public static class OlderHome
     }
 
     /// <summary>A tape's verified copy waiting in <paramref name="Folder"/>, or the words saying why there is none to carry.</summary>
-    sealed record StagedTape(string Folder, string? File, string? Refused);
+    sealed record StagedTape(string Folder, string? File, string? Refused, int? ClimbedFrom = null);
 
     /// <summary>
     /// THE TAPE, COPIED AND CHECKED BEFORE THE HOME MOVES (<c>U-founding-carry</c>): the market-context tape is a point-in-time record nobody
@@ -304,9 +304,13 @@ public static class OlderHome
     /// whole and where it was, and the press can be made again. A crash here leaves the same. The copy's stay on the disk is the long part
     /// of this press; what remains after the move is two renames, and a crash between them leaves the tape whole in the old folder.</para>
     ///
-    /// <para><b>Only a tape this build reads as it is.</b> Only a tape at <see cref="TapeStore.Schema"/>, marked a real home's (or unmarked,
-    /// which every real tape before the mark is), that passes SQLite's own check, is carried. Anything else — another layout version, a
-    /// proving ground's tape, a damaged file — is not: retrying would not change it, so the home still moves and the words say so.
+    /// <para><b>Only a tape this build reads, climbed on the copy if it is older</b> (<c>U-tape-gdelt-2</c> item 1). A tape at
+    /// <see cref="TapeStore.Schema"/>, marked a real home's (or unmarked, which every real tape before the mark is), that passes SQLite's
+    /// own check, is carried byte for byte. One at an older layout is brought to this build's on the STAGED COPY, by the very open the new
+    /// home would make (<see cref="TapeStore"/>'s ladder, whose rungs change no stored row: rung 4 edits a check in place), before the home
+    /// moves — so a ladder that refuses it costs the new home nothing, and the old home keeps its own, untouched, at its layout. Anything
+    /// else — a newer layout, a ladder that refuses, a proving ground's tape, a damaged file — is not carried: retrying would not change
+    /// it, so the home still moves and the words say so.
     /// A decision or lens row naming an attempt names one recorded in the set-aside home; those ids carry a GUID, so nothing the new home
     /// records can ever take one of them.</para>
     /// </summary>
@@ -335,11 +339,35 @@ public static class OlderHome
         }
 
         string? why;
-        try { why = TapeRefusal(staged); }
+        int? climbed = null;
+        try { (why, climbed) = Climb(staged); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SqliteException) { why = $"it could not be read ({ex.Message})"; }
-        if (why is null) return new StagedTape(folder, staged, null);
+        if (why is null) return new StagedTape(folder, staged, null, climbed);
         RemoveFolder(folder);
         return new StagedTape(folder, null, why);
+    }
+
+    /// <summary>
+    /// Why the staged copy is not one this build carries, or null — and, for a copy at an older layout, the layout it was brought from.
+    /// The layout is read first, read-only: a newer tape is refused untouched. An older one is opened by <see cref="TapeStore"/> as a
+    /// real home's, the open the new home would make, so its ladder runs on the copy and nothing else; a refusal of that open is the
+    /// tape's refusal, in the ladder's own words. Then the copy is checked as a tape at this build's layout is.
+    /// </summary>
+    static (string? Why, int? From) Climb(string staged)
+    {
+        var (why, layout) = Layout(staged);
+        if (why is not null) return (why, null);
+        if (layout == TapeStore.Schema) return (TapeRefusal(staged), null);
+        try
+        {
+            using (new TapeStore(staged, kind: Proving.HomeKind.Real)) { }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or SqliteException)
+        {
+            return ($"this version could not bring its layout {layout} to {TapeStore.Schema} ({ex.Message.ReplaceLineEndings(" ")})", null);
+        }
+        finally { SqliteConnection.ClearAllPools(); }
+        return (TapeRefusal(staged), layout);
     }
 
     /// <summary>The checked copy takes the tape's name in the new home, and the words say what happened to the tape.</summary>
@@ -371,6 +399,9 @@ public static class OlderHome
             return $"The market-context tape was not carried into the new folder: it could not be put in place ({ex.Message}). It is kept, whole, in {aside}.";
         }
         RemoveFolder(staged.Folder);
+        if (staged.ClimbedFrom is { } from)
+            return $"The market-context tape was carried into the new folder: copied, then brought from layout version {from} to " +
+                   $"{TapeStore.Schema} on the copy, every row it recorded kept as it was; the old folder keeps its own, at layout {from}.";
         return $"The market-context tape was copied into the new folder byte for byte (layout version {TapeStore.Schema}); the old " +
                "folder keeps its own.";
     }
@@ -387,18 +418,54 @@ public static class OlderHome
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
-    /// <summary>Why a staged copy of a tape is not one this build carries, or null. Read-only; the connection let go before return.</summary>
+    /// <summary>A staged copy of a tape opened read-only, the way <see cref="Proving.HomeMark"/> reads one: immutable when closed.</summary>
+    static SqliteConnection ReadOnly(string file)
+    {
+        // IMMUTABLE WHEN CLOSED (HomeMark.Read's way): a read-only open of a WAL file with no -wal makes one beside it.
+        var c = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = File.Exists(file + "-wal") ? file : Proving.HomeMark.ImmutableUri(file), Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
+        c.Open();
+        return c;
+    }
+
+    /// <summary>
+    /// The layout a staged copy names, or why it names none this build can carry: no layout row, an unreadable one, or one newer than
+    /// this build's. Read-only; the connection let go before return.
+    /// </summary>
+    static (string? Why, int Layout) Layout(string file)
+    {
+        try
+        {
+            using var c = ReadOnly(file);
+            if (!TableExists(c, "tape_meta")) return ("it holds no tape layout", 0);
+            string? version;
+            using (var cmd = c.CreateCommand())
+            {
+                cmd.CommandText = "SELECT value FROM tape_meta WHERE key='schema'";
+                version = Convert.ToString(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+            if (!int.TryParse(version, NumberStyles.None, CultureInfo.InvariantCulture, out var layout) || layout < 1)
+                return ($"its layout is version {(string.IsNullOrEmpty(version) ? "none" : version)}, which no TradeAgent wrote", 0);
+            if (layout > TapeStore.Schema)
+                return ($"its layout is version {layout}, newer than this version's {TapeStore.Schema}", layout);
+            // THE MARK BEFORE THE CLIMB: a proving ground's tape is never opened as a real home's, not even on a copy.
+            var word = Proving.HomeMark.Read(c, "tape_meta");
+            if (Proving.HomeMark.Refusal("the market-context tape", file, word, Proving.HomeKind.Real) is not null)
+                return ($"it is marked '{word}', not a real home's", layout);
+            return (null, layout);
+        }
+        finally { SqliteConnection.ClearAllPools(); }
+    }
+
+    /// <summary>Why a staged copy of a tape is not one this build carries as it is, or null. Read-only; the connection let go before return.</summary>
     static string? TapeRefusal(string file)
     {
         try
         {
-            // IMMUTABLE WHEN CLOSED (HomeMark.Read's way): a read-only open of a WAL file with no -wal makes one beside it.
-            using var c = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = File.Exists(file + "-wal") ? file : Proving.HomeMark.ImmutableUri(file), Mode = SqliteOpenMode.ReadOnly,
-                Pooling = false
-            }.ToString());
-            c.Open();
+            using var c = ReadOnly(file);
             if (!TableExists(c, "tape_meta")) return "it holds no tape layout";
             string? version;
             using (var cmd = c.CreateCommand())

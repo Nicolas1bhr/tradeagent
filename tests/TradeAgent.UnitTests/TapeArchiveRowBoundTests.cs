@@ -107,7 +107,7 @@ public class TapeArchiveRowBoundTests(ITestOutputHelper log)
     /// THE TABLE AS RUNG 1 WROTE IT, its bound on a row <paramref name="bound"/>, rows and ids kept — SQLite's own way of
     /// changing a table, run by the test to stand for a tape a build before rung 4 left, then stamped at layout 3.
     /// </summary>
-    static void AsAtLayoutThree(string file, string bound = "65536")
+    internal static void AsAtLayoutThree(string file, string bound = "65536")
     {
         Exec(file, $"""
             PRAGMA foreign_keys=OFF;
