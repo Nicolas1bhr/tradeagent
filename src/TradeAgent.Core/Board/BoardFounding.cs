@@ -30,7 +30,9 @@ public static class BoardFounding
     /// EACH PAIR'S FOUNDING DEPLOYMENTS: THREE (R25 D11 as amended by the orchestrator on the owner's behalf, 2026-10-31). The
     /// inconclusive path into paper may hold a third of an envelope's slots, rounded down, none below three
     /// (<see cref="Strategy.Inconclusive.Slots"/>): with one deployment that third is zero and no inconclusive version could ever be
-    /// observed forward, while every verdict under today's holdout defaults is inconclusive (R27). Three gives each pair one
+    /// observed forward, while every verdict was inconclusive under the old six-month holdout default (R27). Since D12 the holdout
+    /// is the last <see cref="EvidenceDefaults.HoldoutMonths"/> months, at least <see cref="Strategy.Inconclusive.ShortHoldout"/>, so a
+    /// verdict can be conclusive; the inconclusive slot stays for the versions whose verdict is not. Three gives each pair one
     /// inconclusive slot beside two favourable ones, inside the same 5,000 USDT.
     /// </summary>
     public const int PaperDeployments = 3;
@@ -128,16 +130,21 @@ public static class BoardFounding
     /// <summary>The one instrument the founding ALLOWLIST names: what the founding policy allows off the app's own paper venues.</summary>
     public const string PaperInstrument = "BTCUSDT";
 
-    /// <summary>Where the founding paper values come from, as the founding event records it — the app's decision, citing its source.</summary>
+    /// <summary>
+    /// Where the founding paper values come from, as the founding event records it — the app's decision, in plain words. The sources
+    /// behind each value are R25 D11 (as amended), R25 D14, R30 D18 and D20; they are named here, in this comment, and never in the
+    /// recorded words (<c>U-owner-words-4</c> item 1): the detail is a row the owner's pages may show, and nothing hashes it. A founding
+    /// recorded by an earlier build keeps its own words — no stored row is rewritten.
+    /// </summary>
     public const string PaperValuesSource =
-        "the allowlist is the value the owner chose for M0 attempt 4's paper loop (BTCUSDT), and the paper envelopes the orchestrator's "
-        + "ruling on his behalf (R25 D11), set here by the app as its founding values: one standing envelope per pair under evidence — "
+        "the allowlist is BTCUSDT, the instrument the owner chose for an earlier paper loop, and the paper envelopes are the values ruled "
+        + "on his behalf, set here by the app as its founding values: one standing envelope per pair under evidence — "
         + "BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000 — each pair at most 5,000 USDT notional in all, the "
-        + "notional cap binding above each pair's floor price; three deployments per pair, each its third (D11 amended: one inconclusive "
-        + "slot beside two favourable); no expiry while no board seat is active; at most 15 open positions, five pairs by three runs, paper "
-        + "only (R25 D14); the most one run's order may be is its allocation, each pair's quantity divided by its three runs (R30 D18), and one "
-        + "order of any other caller stays at most 1; a paper run's own orders go out under 45 a minute, fifteen runs by an entry and its two "
-        + "protections (D20), and every other caller stays at 6";
+        + "notional cap binding above each pair's floor price; three deployments per pair, each its third (one of them may hold a version "
+        + "whose verdict was inconclusive, beside two favourable ones); no expiry while no board seat is active; at most 15 open positions, "
+        + "five pairs by three runs, paper only; the most one run's order may be is its allocation, each pair's quantity divided by its three "
+        + "runs, and one order of any other caller stays at most 1; a paper run's own orders go out under 45 a minute, fifteen runs by an "
+        + "entry and its two protections, and every other caller stays at 6";
 
     /// <summary>
     /// THE FOUNDING COMPOSITION (R24 § 4.1): three seats on at least two model classes, none of them <c>cli</c>. One vendor family

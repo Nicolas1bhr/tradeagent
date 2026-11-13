@@ -111,8 +111,11 @@ public class BoardTests(ITestOutputHelper log)
                 pair, quantity, 5_000m, 3, null), BoardFounding.V1.PaperEnvelopeFor(pair));
         Assert.Equal((0.1m, 2.5m, 50m, 10m, 5_000m), (BoardFounding.PaperPairs[0].MaxQuantity, BoardFounding.PaperPairs[1].MaxQuantity,
             BoardFounding.PaperPairs[2].MaxQuantity, BoardFounding.PaperPairs[3].MaxQuantity, BoardFounding.PaperPairs[4].MaxQuantity));
-        Assert.Contains("BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000",
-            Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'"), StringComparison.Ordinal);
+        var founded = Scalar(db, "SELECT detail FROM board_event WHERE kind='founded'")!;
+        Assert.Contains("BTCUSDT at most 0.1, ETHUSDT 2.5, SOLUSDT 50, BNBUSDT 10, XRPUSDT 5000", founded, StringComparison.Ordinal);
+        // THE FOUNDING'S RECORDED WORDS CITE NO DECISION BY ITS NUMBER (U-owner-words-4 item 1): RED at the base, which recorded
+        // "(R25 D11)", "(D11 amended: …", "(R25 D14)", "(R30 D18)" and "(D20)" into the row the owner's pages may show.
+        Assert.DoesNotMatch(OwnerWordsLiteralTests.Citation, founded);
         // THE METER'S AND THE LOOP'S VALUES are the ones the settings shipped until U-board-a2 moved them here (item 9): the plan's 40,
         // a 30-minute review, 24 hours a head, one lane each, the shipped allowance and the shipped re-wake floors.
         Assert.Equal((40m, 30, 24, 1, 1, 1, TurnAllowance.Default.InputTokens, TurnAllowance.Default.OutputTokens),

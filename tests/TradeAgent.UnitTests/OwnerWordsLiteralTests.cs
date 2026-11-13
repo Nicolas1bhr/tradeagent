@@ -19,7 +19,12 @@ public class OwnerWordsLiteralTests
 {
     static readonly string[] Exempt = ["InvariantRegistry.cs", "DataLicence.cs", "TapeSourceCatalog.cs"];
 
-    static readonly Regex Citation = new(@"§|\((R\d{2}|ORDER-\d{3})\)");
+    /// <summary>
+    /// A section mark, a bare "(R24)", an invariant id in parentheses — and, since <c>U-owner-words-4</c> item 1, a decision cited by its
+    /// number: "(R25 D11)", "R30 D18" inside a sentence, "(D20)" or "(D11 amended: …". The founding event's recorded detail carried all
+    /// four, and none of them is a doc-section shape the first reader looked for.
+    /// </summary>
+    internal static readonly Regex Citation = new(@"§|\((R\d{2}|ORDER-\d{3})\)|\bR\d{2} D\d{1,2}\b|\(D\d{1,2}(\)| amended)");
 
     /// <summary>Every line of code under <c>src/</c> that carries a citation outside a comment, as "file:line: text".</summary>
     internal static List<string> CitationsIn(string src)
@@ -70,13 +75,21 @@ public class OwnerWordsLiteralTests
                 var bad = "only an active seat acts (R24 § 4.1).";
                 var bare = $"the board's now (R24): it is a board act";
                 var id = "never shaped by a note (ORDER-001).";
+                var ruled = "the envelopes ruled on his behalf (R25 D11), set here";
+                var inline = "its allocation, each pair's quantity divided by its three runs (R30 D18 as ruled)";
+                var bare2 = "an entry and its two protections (D20), and every other";
+                var amended = "each its third (D11 amended: one inconclusive slot)";
+                var plain = "a D-day and R2-D2 are no citation, nor is (Day 20)";
+                x = ((D0 * q + D1) * q + 1);
                 """);
             File.WriteAllText(Path.Combine(dir, "InvariantRegistry.cs"), "var x = \"VISION § 6.3\";");
             var hits = CitationsIn(dir);
-            Assert.Equal(3, hits.Count);
+            Assert.Equal(7, hits.Count);
             Assert.Contains(hits, h => h.StartsWith("A.cs:6:", StringComparison.Ordinal));
             Assert.Contains(hits, h => h.StartsWith("A.cs:7:", StringComparison.Ordinal));
             Assert.Contains(hits, h => h.StartsWith("A.cs:8:", StringComparison.Ordinal));
+            foreach (var line in new[] { 9, 10, 11, 12 })
+                Assert.Contains(hits, h => h.StartsWith($"A.cs:{line}:", StringComparison.Ordinal));
         }
         finally { Directory.Delete(dir, true); }
     }
