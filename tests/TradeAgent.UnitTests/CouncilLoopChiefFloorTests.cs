@@ -287,6 +287,44 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// (e2) WORK OWED BY A HOLDER THE GATE HOLDS IS NOT MOVING (<c>U-chief-floor-held</c>, R31 A1-2). The legacy pair are held beside an active chief by the
+    /// no-unconfined-neighbour rule, but they are on the chart, active and in the chief's subtree, so a mandate to <c>research</c> is written. It is never served
+    /// while the chief is active, and it must not switch the chief's backstop off until its deadline: the chief's next wake stays its 4-hour floor. The same
+    /// mandate to a holder the gate admits does stop the backstop.
+    ///
+    /// <para>RED at base: the ceiling moved to the 24-hour one ("Expected: 2026-11-06T20:00, Actual: 2026-11-07T16:00") — the loop never asked the gate about the holder.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_mandate_to_a_held_holder_does_not_switch_the_backstop_off()
+    {
+        var start = ChartDay;
+        var now = start;
+        var (host, db, org, chief) = ChiefHome(() => now);
+        using var _ = db;
+        host.Refusals[CouncilRoles.Research] = new TurnRefusal(RefusalKind.HostOrLaunch,
+            $"'{CouncilRoles.Research}' runs unconfined, and '{chief}' is active beyond the legacy pair on this host.");
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+        var pending = () => Assert.Single(Ceilings(host, chief), e => !e.Consumed);
+
+        await loop.TurnAsync();
+        now = start.AddHours(4);
+        await loop.TurnAsync();
+        var turned = new AiAttemptStore(db).LastWoken(chief)!.StartedAt;
+
+        var held = org.Assign(Work(chief, CouncilRoles.Research, now), now);
+        await loop.TurnAsync();
+        Assert.Equal(turned.AddHours(4), pending().DueAt);
+        Assert.Equal(MissionEventStore.ChiefFloorWake, pending().Payload);
+        Assert.DoesNotContain(host.Opened, o => o.Role == CouncilRoles.Research);
+
+        // THE STORE'S OWN ANSWER, both ways: asked nobody, the mandate reads as moving; asked the gate, it does not.
+        Assert.Null(org.ChiefFloor(chief, ShippedFloors, now));
+        Assert.Equal(ChiefEvery, org.ChiefFloor(chief, ShippedFloors, now, r => r != CouncilRoles.Research));
+        Assert.Null(org.ChiefFloor(chief, ShippedFloors, now, _ => true));
+        Assert.Equal(MandateEventKind.Issued, org.MandateStatus(held.Id));
+    }
+
+    /// <summary>
     /// (f) A CHIEF THAT ASKED FOR ITS WAKE KEEPS IT, UNLESS NOTHING IS CHARTERED. With a unit chartered its pending request is its plan, and the ceiling stands; with
     /// nothing chartered the request does not hold the organisation still.
     /// </summary>
