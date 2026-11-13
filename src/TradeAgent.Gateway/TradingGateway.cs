@@ -731,7 +731,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// with an instrument's check; a close of a pair that left it since the position was opened was refused like an opener, and the run's
     /// stop, target, exit and END with it. A close is never an instrument approval: what it may sell is bounded by
     /// <see cref="RefuseAStaleCloseOrThrow"/> — exactly the position held, a run's exactly its own book — before anything reaches the wire.
-    /// Every opening order, and every close under any other list, meets the list exactly as before.
+    /// Every opening order, and every close under any other list, meets the list exactly as before; a modification is judged as an
+    /// opener (<see cref="ResultingOrderOrThrow"/> carries no close intent), so none passes this way.
     /// </summary>
     bool InstrumentAllowedFor(PlaceIntent intent) =>
         InstrumentAllowedHere(intent.Symbol) || (intent.Intent is OrderIntent.Close && FoundingCoversThisVenue);

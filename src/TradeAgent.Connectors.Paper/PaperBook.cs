@@ -425,11 +425,13 @@ public sealed class PaperBook : IDisposable
     /// account carries every run on a symbol in one position, so three more things are answered in the same transaction:
     ///
     /// <list type="bullet">
-    /// <item><b>An order already CANCELLED or REJECTED never fills.</b> Read inside the transaction: a run's other resting sell cancelled
-    /// by an earlier fill of this very bar is still in the bar's candidate list, and that list is not the book.</item>
+    /// <item><b>An order already CANCELLED or REJECTED never fills</b>, read inside the transaction. A defence: the bar's candidate list
+    /// is read once, before any of its fills, and today the settlement order (stops before limits, a stop's own target held back) means
+    /// no order cancelled earlier in the same bar is reached again — this keeps that true by the book rather than by the loop's order.</item>
     /// <item><b>A run's sell fills only against what that run holds</b> — its own fills, read off their client order ids
-    /// (<see cref="Deployments.HolderOf"/>) — as well as against the account's holding. A sell covered only by another run's units is
-    /// REJECTED, unfilled, in words, exactly as a sell beyond the account's holding is.</item>
+    /// (<see cref="Deployments.HolderOf"/>) — and never against what the account holds beyond every other run's own: a sell the run did
+    /// not send may have taken units, and the book cannot say whose. A sell that would reach another run's units is REJECTED, unfilled,
+    /// in words, exactly as a sell beyond the account's holding is.</item>
     /// <item><b>A run's resting sells are one-cancels-other.</b> When one of them — a stop or a target — fills, every other resting
     /// sell of the same run on that symbol still working is CANCELLED in the fill's own commit, and <paramref name="cancelled"/> names
     /// them (<paramref name="oneCancelsOther"/> false only under a test seam: <c>PaperConnectorOptions.OneCancelsOtherOffUnderTest</c>). The runner cancelled the loser too, but only on the live minute after the fill landed, and when several minutes settle in
@@ -486,10 +488,18 @@ public sealed class PaperBook : IDisposable
             }
 
             var (held, _) = PositionOf(tx, fill.Symbol);
-            var runHolds = fill.Side == OrderSide.Sell && holder is not null
-                ? HeldBy(tx, holder, fill.Symbol, fill.ExecutionId)
-                : (decimal?)null;
-            if (fill.Side == OrderSide.Sell && (held < fill.Quantity || runHolds < fill.Quantity))
+            // A RUN'S ROOM: what its own fills hold, and never more than the account holds beyond every OTHER run's own. A sell the
+            // run did not send — the owner's hand, a close of the whole account — can have taken units, and whose they were the
+            // book cannot say; so a run's sell may not reach into what another run still counts as its own.
+            decimal? runHolds = null, othersHold = null;
+            if (fill.Side == OrderSide.Sell && holder is not null)
+            {
+                var runs = RunHoldings(tx, fill.Symbol, fill.ExecutionId);
+                runHolds = runs.GetValueOrDefault(holder);
+                othersHold = runs.Where(r => r.Key != holder).Sum(r => Math.Max(r.Value, 0m));
+            }
+            var runRoom = runHolds is { } own ? Math.Min(own, held - othersHold!.Value) : (decimal?)null;
+            if (fill.Side == OrderSide.Sell && (held < fill.Quantity || runRoom < fill.Quantity))
             {
                 tx.Rollback("attempt");
 
@@ -504,9 +514,9 @@ public sealed class PaperBook : IDisposable
                       + $"{T(fill.BarOpenTime)} found {D(held)} held. A spot account cannot sell what it does not hold, "
                       + "and this book simulates one; nothing was filled."
                     : $"insufficient holdings: a sell of {D(fill.Quantity)} {fill.Symbol} reached on the bar opening "
-                      + $"{T(fill.BarOpenTime)} found {D(runHolds!.Value)} held by the run that placed it ({holder}), of {D(held)} "
-                      + "in the account. A run's sell reduces only that run's own holding, never another run's on the same "
-                      + "account; nothing was filled.");
+                      + $"{T(fill.BarOpenTime)} found {D(runHolds!.Value)} held by the run that placed it ({holder}), and "
+                      + $"{D(held)} in the account of which other runs count {D(othersHold!.Value)} as their own. A run's sell "
+                      + "reduces only that run's own holding, never another run's on the same account; nothing was filled.");
                 reject.Parameters.AddWithValue("$coid", fill.ClientOrderId);
                 rejected = reject.ExecuteNonQuery() == 1;
 
@@ -553,30 +563,28 @@ public sealed class PaperBook : IDisposable
     }
 
     /// <summary>
-    /// WHAT ONE RUN HOLDS OF ONE SYMBOL ON THIS BOOK: the signed sum of its own fills — every fill whose client order id names it
-    /// (<see cref="Deployments.HolderOf"/>) — read inside the caller's transaction, leaving out the fill being judged.
+    /// WHAT EACH RUN HOLDS OF ONE SYMBOL ON THIS BOOK: the signed sum of its own fills — every fill whose client order id names a run
+    /// (<see cref="Deployments.HolderOf"/>) — by run, read inside the caller's transaction, leaving out the fill being judged.
     /// </summary>
-    decimal HeldBy(SqliteTransaction tx, string holder, string symbol, string exceptExecution)
+    Dictionary<string, decimal> RunHoldings(SqliteTransaction tx, string symbol, string exceptExecution)
     {
         using var c = _conn.CreateCommand();
         c.Transaction = tx;
         c.CommandText = """
             SELECT client_order_id, side, quantity FROM paper_fill
-             WHERE symbol=$s AND execution_id<>$x AND substr(client_order_id, 1, $n)=$p
+             WHERE symbol=$s AND execution_id<>$x AND substr(client_order_id, 1, 6)='TA-dp-'
             """;
         c.Parameters.AddWithValue("$s", symbol);
         c.Parameters.AddWithValue("$x", exceptExecution);
-        c.Parameters.AddWithValue("$p", "TA-" + holder + "-");
-        c.Parameters.AddWithValue("$n", ("TA-" + holder + "-").Length);
-        var held = 0m;
+        var runs = new Dictionary<string, decimal>(StringComparer.Ordinal);
         using var r = c.ExecuteReader();
         while (r.Read())
         {
-            if (Deployments.HolderOf(r.GetString(0)) != holder) continue;
+            if (Deployments.HolderOf(r.GetString(0)) is not { } run) continue;
             var quantity = Dec(r.GetString(2));
-            held += r.GetString(1) == nameof(OrderSide.Buy) ? quantity : -quantity;
+            runs[run] = runs.GetValueOrDefault(run) + (r.GetString(1) == nameof(OrderSide.Buy) ? quantity : -quantity);
         }
-        return held;
+        return runs;
     }
 
     /// <summary>

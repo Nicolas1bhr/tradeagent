@@ -670,10 +670,12 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         if (filled is not { } fill) return;
 
         OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);
-        // AND THE RUN'S OTHER RESTING SELLS THAT ONE-CANCELS-OTHER TOOK OFF THE BOOK IN THE SAME COMMIT (PaperBook.TryFill).
+        ExecutionReceived?.Invoke(Executed(fill));
+        // AND THE RUN'S OTHER RESTING SELLS THAT ONE-CANCELS-OTHER TOOK OFF THE BOOK IN THE SAME COMMIT (PaperBook.TryFill) — said
+        // AFTER the fill, so no reader meets the cancelled leg while the winner's fill has not yet reached it: that reading is a
+        // position still long with its other leg gone, which reads as UNPROTECTED and asks for it again.
         foreach (var sibling in cancelled)
             if (Book.ByClientOrderId(sibling) is { } gone) OrderChanged?.Invoke(gone);
-        ExecutionReceived?.Invoke(Executed(fill));
         foreach (var p in Book.Positions())
             if (string.Equals(p.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase))
                 PositionChanged?.Invoke(new PositionInfo($"PP-{p.Symbol}", Book.AccountId, p.Symbol,
