@@ -3689,7 +3689,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// <summary>
     /// THE MOST ONE <c>data-tape</c> ANSWER'S ROWS TAKE ON THE WIRE: 4 MiB, each row measured as it is written. A tape
     /// payload reaches 64 KB, so for GDELT's items and OKX's announcements it is this and not the row limit that stops a
-    /// read; five thousand market rows of a few hundred bytes each fit under it.
+    /// read; five thousand market rows of a few hundred bytes each fit under it. A row is never split: a GDELT row kept
+    /// past it (<see cref="TapeStore.MaxArchivePayloadBytes"/>, <c>U-tape-gdelt</c>) is served alone, with <c>more</c> set
+    /// when another row follows.
     /// </summary>
     public const long MaxTapeReplyBytes = 4L * 1024 * 1024;
 

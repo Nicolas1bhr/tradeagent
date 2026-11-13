@@ -301,7 +301,7 @@ public class FoundingCarryTests(ITestOutputHelper log)
         log.WriteLine(words);
 
         Assert.Contains("was not carried", words);
-        Assert.Contains("its layout is version 2 and this version reads 3", words);
+        Assert.Contains($"its layout is version 2 and this version reads {TapeStore.Schema}", words);
         Assert.Contains(aside, words);
         Assert.Equal(before, Fingerprint(aside));
         Assert.Equal([], Directory.GetFiles(home, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(home, f)));

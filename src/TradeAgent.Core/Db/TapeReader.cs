@@ -261,8 +261,8 @@ public sealed class TapeReader
     ///
     /// <para><b>Bounded twice and never silently.</b> At most <see cref="TapeQuery.Limit"/> rows, and the rows' cost as
     /// <paramref name="cost"/> measures them (the payload's UTF-8 bytes when it is null) at most
-    /// <see cref="TapeQuery.MaxBytes"/> — a row is never split, so the first row is served whatever it costs, and a
-    /// payload is at most 64 KB. When either bound stops the read and the tape holds another matching row, the answer
+    /// <see cref="TapeQuery.MaxBytes"/> — a row is never split, so the first row is served whatever it costs: a
+    /// payload is at most 64 KB, or <see cref="TapeStore.MaxArchivePayloadBytes"/> for an archive file's kept row. When either bound stops the read and the tape holds another matching row, the answer
     /// says so (<see cref="TapeWindow.More"/>, <see cref="TapeWindow.CappedBy"/>).</para>
     ///
     /// <para><b>The holdout is required, and it is checked HERE, before the tape is opened</b> (<c>U-tape-holdout</c>): a

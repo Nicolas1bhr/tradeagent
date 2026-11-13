@@ -304,7 +304,8 @@ public class LensTests(ITestOutputHelper log)
     /// <summary>
     /// (i) THE RUNG RERUNS CLEANLY AFTER A CRASH BEFORE ITS STAMP. A tape whose <c>lens</c> table and built-in row were
     /// written but whose version row still says 2 — and a tape at rung 2 that never had the table — each open at
-    /// rung 3 with exactly one built-in row; the version row says 3.
+    /// this build's layout (3 when this test was written; 4 since <c>U-tape-gdelt</c>'s rung) with exactly one built-in
+    /// row, and the version row says so.
     /// </summary>
     [Fact]
     public void The_rung_reruns_cleanly_after_a_crash_before_its_stamp()
@@ -314,16 +315,17 @@ public class LensTests(ITestOutputHelper log)
         Exec(crashed, "UPDATE tape_meta SET value='2' WHERE key='schema'");
 
         var rungTwo = NewTape();
-        using (var t = new TapeStore(rungTwo)) Assert.Equal(3, t.Version);
+        using (var t = new TapeStore(rungTwo)) Assert.Equal(TapeStore.Schema, t.Version);
         Exec(rungTwo, "DROP TABLE lens; UPDATE tape_meta SET value='2' WHERE key='schema'");
 
         foreach (var file in new[] { crashed, rungTwo })
         {
             using var reopened = new TapeStore(file);
-            Assert.Equal(3, reopened.Version);
+            Assert.Equal(TapeStore.Schema, reopened.Version);
             var row = Assert.Single(reopened.Lenses());
             Assert.Equal(BuiltInLenses.OkxAnnouncement, row.Id);
-            Assert.Equal("3", Scalar(file, "SELECT value FROM tape_meta WHERE key='schema'"));
+            Assert.Equal(TapeStore.Schema.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Scalar(file, "SELECT value FROM tape_meta WHERE key='schema'"));
         }
     }
 

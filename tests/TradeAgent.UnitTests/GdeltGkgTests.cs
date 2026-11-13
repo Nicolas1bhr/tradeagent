@@ -137,6 +137,10 @@ public class GdeltGkgTests(ITestOutputHelper log)
         Assert.Equal(new string('<', room), Json(kept.Payload).GetProperty("V2GCAM").GetString());
         Assert.InRange(read.KeptBytes, 6L * room, 8L * 1024 * 1024);
 
+        // THE RELATION, PINNED: six bytes for every byte a row may be, and a kilobyte of names, inside the tape's archive bound.
+        Assert.Equal(8 * 1024 * 1024, TapeStore.MaxArchivePayloadBytes);
+        Assert.True(6L * GdeltGkg.MaxRowBytes + 1024 <= TapeStore.MaxArchivePayloadBytes);
+
         var longer = GkgFile.Row(Label, 9, themes: "ECON_BITCOIN", gcam: new string('<', room + 1));
         var refused = await GkgFile.Read(GkgFile.Zip(Label, longer), Label);
         log.WriteLine("refused: " + refused.Refused);
