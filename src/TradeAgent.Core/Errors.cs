@@ -1330,7 +1330,10 @@ public static class Errors
         // switching to paper or to fully automatic. "The AI is not allowed to trade" would be false
         // in those last two.
         [ErrorCode.MODE_FORBIDS_EXECUTION]         = ("TradeAgent's current mode does not allow this order.", "Check the mode on the Dashboard. An order the AI has already proposed can only be approved in the confirm-each-order mode it was proposed in.", false),
-        [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Paper mode refused to send an order to a real-money account.", "Select a simulation account, or switch mode deliberately.", false),
+        // TRUE FOR BOTH WITNESSES (U-live-witness): raised when the account is not a simulation account AND when the account says
+        // simulated but the platform does not report practice (on ATAS, a chart bound to a real-money account). "Select a simulation
+        // account" alone would be false in the second, and the owner has no mode to switch to: the mode is the board's.
+        [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Practice mode refused an order, because the account it would go to is not certainly a practice account.", "Nothing was sent. Choose a practice account in Settings. If the platform is ATAS, the chart must be connected to a practice account too.", false),
         [ErrorCode.APPROVAL_REQUIRED]              = ("An order asked for a per-order approval, which no longer exists.", "Nothing was sent. Strategies trade through TradeAgent's own runner, and real money stays closed until the security board can act.", false),
         [ErrorCode.EMERGENCY_PRESS_UNRESOLVED]     = ("The last press of this emergency control has not been resolved yet.", "Open the Dashboard, read what it did, and confirm each line. Then you can press it again.", false),
         // A CLOSING ORDER IS SIZED FROM A POSITION, and the position it was sized from is not the one
