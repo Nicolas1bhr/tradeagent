@@ -12,11 +12,17 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public partial class OrgAutonomyTests
 {
-    /// <summary>A unit under <see cref="Team"/> with a vacant head, so <see cref="Head"/> — its parent's head — hires into it.</summary>
-    static string SubUnit(Database db, string id)
+    /// <summary>
+    /// A unit under <see cref="Team"/> with a vacant head, so <see cref="Head"/> — its parent's head — hires into it. <paramref name="experiment"/>:
+    /// chartered as a bounded experiment collapsing 60 days on, so it hires inside its life on nothing cited, its first hire or not.
+    /// </summary>
+    static string SubUnit(Database db, string id, bool experiment = false)
     {
         Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($t,$p,'team',NULL,'active',$at)",
             ("$t", id), ("$p", Team), ("$at", Stamp));
+        if (experiment)
+            Exec(db, "INSERT INTO org_event(at, unit_id, kind, decider, detail) VALUES($at, $t, 'chartered', $h, $d)",
+                ("$at", Stamp), ("$t", id), ("$h", Head), ("$d", $"unit={id} kind=team parent={Team} experiment collapse_by={Sql.T(DateTimeOffset.UtcNow.AddDays(60))}"));
         return id;
     }
 
@@ -74,7 +80,9 @@ public partial class OrgAutonomyTests
         Assert.False(asked.Ok);
         Assert.Contains("the security board's floor", asked.Error!.Message, StringComparison.Ordinal);
 
-        var unit = SubUnit(db, "team-a7a7c0d1");
+        // AN EXPERIMENT'S UNIT (U-org-cards-3 item 1, changed in the open): it hires inside its life on nothing cited, so the cycle still
+        // runs five times. An emptied unit chartered on cited work no longer hires on the "first" route after its first retirement.
+        var unit = SubUnit(db, "team-a7a7c0d1", experiment: true);
         var forecasts = JsonSerializer.Serialize(new[]
         {
             new { predicate = ForecastVocabulary.UnitAdmissible, target = ForecastVocabulary.Admitted, by = DateTimeOffset.UtcNow.AddDays(45).ToString("O"), probability = 0.4m }

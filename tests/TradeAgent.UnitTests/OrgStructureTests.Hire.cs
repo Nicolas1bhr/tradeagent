@@ -82,6 +82,48 @@ public partial class OrgStructureTests
         org.Hire(HireAsk(cited, refs: [CurrentRun(db)]), Now);
     }
 
+    /// <summary>
+    /// (4d) A UNIT EMPTIED BY A RETIREMENT HAS HAD ITS FIRST HIRE (<c>U-org-cards-3</c> item 1; R29 F-A1's "first" route): the division's
+    /// head hires a team's head on the first route, retires it, and the next hire into the emptied team is refused by the earning test in
+    /// words, nothing written, until it cites current work — hire and retire in a cycle no longer pass the test on nothing. A hire the
+    /// OWNER vetoed is undone, so the unit's first stays unspent.
+    /// <para>RED at base: the second hire on nothing passes as <c>first</c> (no exception thrown).</para>
+    /// </summary>
+    [Fact]
+    public void A_unit_emptied_by_a_retirement_has_had_its_first_hire_and_a_vetoed_one_leaves_it_unspent()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var team = Team(db, org);
+        var first = org.Hire(HireAsk(team, asHead: true), Now);
+        Assert.EndsWith(" first", Detail(db, first.EventId), StringComparison.Ordinal);
+        org.Retire(new RetireRequest(Head, "turn-test", first.Position.Id, "the cycle", ["retire"], [], [Admissible()]), Now);
+        Assert.Null(org.Units().Single(u => u.Id == team).HeadPositionId);
+
+        var before = Written(db);
+        var refused = Assert.Throws<TradeAgentException>(() => org.Hire(HireAsk(team, asHead: true), Now));
+        Assert.Contains("the earning test", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("has had its first position already", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Written(db));
+        var earned = org.Hire(HireAsk(team, asHead: true, refs: [CurrentRun(db)]), Now);
+        Assert.Contains(" evidence run:", Detail(db, earned.EventId), StringComparison.Ordinal);
+
+        // THE OWNER'S VETO UNDOES A HIRE: a team whose only hire he vetoed still hires its first on nothing.
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES('team-0ve70ed0', $p, 'team', NULL, 'active', $at)",
+            ("$p", Div), ("$at", Now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+        var vetoed = org.Hire(HireAsk("team-0ve70ed0", asHead: true), Now);
+        org.Veto(vetoed.EventId, Now);
+        Assert.Equal(OrgPositionStatus.Ended, org.Position(vetoed.Position.Id)!.Status);
+        var again = org.Hire(HireAsk("team-0ve70ed0", asHead: true), Now);
+        Assert.EndsWith(" first", Detail(db, again.EventId), StringComparison.Ordinal);
+    }
+
+    static string Detail(Database db, long eventId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT detail FROM org_event WHERE id = $id", ("$id", eventId));
+        return (string)c.ExecuteScalar()!;
+    });
+
     public static TheoryData<string> HireRefusals => new()
     {
         "a member is not the parent's head", "a team head does not grow its own team", "a hire into div-operations is a board act",
