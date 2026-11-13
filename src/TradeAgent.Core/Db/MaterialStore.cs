@@ -102,6 +102,24 @@ public sealed class MaterialStore(Database db)
         });
     }
 
+    /// <summary>One file a pass saw, as <see cref="ObserveAll"/> records it: the same arguments <see cref="Observe(string, Func{MaterialOrigin}, long, DateTimeOffset, bool, DateTimeOffset)"/> takes.</summary>
+    public readonly record struct Sighting(string RelPath, Func<MaterialOrigin> Origin, long Size, DateTimeOffset ModifiedAt, bool Runnable);
+
+    /// <summary>
+    /// MANY SIGHTINGS IN ONE COMMIT (<c>U-perf-scan</c>, R28 G2): each recorded exactly as <see cref="Observe(string, Func{MaterialOrigin}, long, DateTimeOffset, bool, DateTimeOffset)"/>
+    /// records it, in order, inside ONE write. A pass used to make one durable commit per file it saw — at <c>synchronous=FULL</c>
+    /// an fsync of the journal each, 4,903 every 30 seconds over 4,900 unchanged files. The rows, the versions and the words are
+    /// the same; only the number of commits changed. Each origin is still asked only for a row about to be written, and asked
+    /// here, at the write — after the walk, which can only make the inbox's answer stricter.
+    /// </summary>
+    public IReadOnlyList<(bool Added, long Id)> ObserveAll(IReadOnlyList<Sighting> sightings, DateTimeOffset now) =>
+        sightings.Count == 0 ? [] : db.Write(_ =>
+        {
+            var results = new List<(bool, long)>(sightings.Count);
+            foreach (var s in sightings) results.Add(Observe(s.RelPath, s.Origin, s.Size, s.ModifiedAt, s.Runnable, now));
+            return results;
+        });
+
     public void SetHash(long id, string sha256) => db.Write(_ =>
     {
         using var c = db.Cmd("UPDATE material SET sha256=$h WHERE id=$i AND sha256 IS NULL", ("$h", sha256), ("$i", id));
