@@ -510,6 +510,61 @@ public class PolicyGateTests
         Assert.Empty(conn.Broker.Orders);
     }
 
+    /// <summary>
+    /// THE ROUTED ACCOUNT'S OWN WITNESS DECIDES (<c>U-live-witness</c>; the live-reachability audit's F1). On ATAS the platform's
+    /// "practice" flag describes the chart's BOUND portfolio, not the account an order is sent to, so a real-money account can sit
+    /// behind a platform that says practice. In PAPER that order is refused and nothing reaches the broker. This changes the meaning
+    /// the dispatch gate stated OPENLY: it used to take either witness as proof ("either witness is enough"); now the account's own
+    /// flag is required and the platform's can only narrow. RED at 1aa93e13, where the platform's word alone let the order through.
+    /// </summary>
+    [Fact]
+    public async Task Paper_mode_refuses_a_real_money_account_behind_a_platform_that_says_practice()
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = false })) { PlatformIsPaper = true });
+        using var dbh = db;
+        await using var _ = gw;
+        Assert.True(conn.Capabilities.IsPaper);
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "paper-real-behind-practice", TestEnv.Buy()));
+        Assert.Equal(ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
+        Assert.Contains("is not a simulation account", denied.Message, StringComparison.Ordinal);
+        Assert.Empty(conn.Inner.Broker.Orders);
+    }
+
+    /// <summary>
+    /// AND THE PLATFORM CAN STILL NARROW: a simulated account on a platform that does not call itself practice is an installation
+    /// whose two witnesses disagree, the case the paper envelope already refuses; one paper order is refused there too, in words
+    /// that say which witness said no.
+    /// </summary>
+    [Fact]
+    public async Task Paper_mode_refuses_a_simulated_account_on_a_platform_that_does_not_say_practice()
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = true })) { PlatformIsPaper = false });
+        using var dbh = db;
+        await using var _ = gw;
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "paper-sim-on-unsure-platform", TestEnv.Buy()));
+        Assert.Equal(ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
+        Assert.Contains("does not report itself as a practice platform", denied.Message, StringComparison.Ordinal);
+        Assert.Empty(conn.Inner.Broker.Orders);
+    }
+
+    /// <summary>A gateway in PAPER on <paramref name="conn"/>, its account selected and the instrument allowed: every other gate open.</summary>
+    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> PaperOn(RecordingConnector conn)
+    {
+        var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s => s.SelectedAccountId = conn.Inner.Broker.AccountId);
+        gw.UpdateRiskUnderTest(r =>
+        { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m; });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        Assert.Equal(TradingMode.PAPER, gw.Policy.Mode);
+        return (gw, conn, db);
+    }
+
     [Fact]
     public async Task Live_trading_requires_an_explicit_switch_and_not_merely_a_live_account()
     {

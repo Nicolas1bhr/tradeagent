@@ -21,12 +21,13 @@ namespace TradeAgent.Tests.Unit;
 /// bounded by it.</para>
 ///
 /// <para><b>The account must be provably simulated by BOTH sources.</b> The dispatch gate's own paper
-/// check (<c>TradingGateway</c>, the <c>MODE_ACCOUNT_MISMATCH</c> refusal) asks
-/// <c>account.IsSimulated || Capabilities.IsPaper</c>, which is right there: it is refusing an order,
-/// and either witness is enough to prove the account is not real money. THIS is a standing grant that
-/// will be spent without the owner in the room, over and over, for as long as it lasts — so it asks
-/// for both, and an installation where the two disagree is one where nobody can say which of them is
-/// wrong.</para>
+/// check (<c>TradingGateway</c>, the <c>MODE_ACCOUNT_MISMATCH</c> refusal) asked
+/// <c>account.IsSimulated || Capabilities.IsPaper</c> until <c>U-live-witness</c>, on the premise that
+/// either witness proves the account is not real money. That premise is false on ATAS, where the
+/// platform's flag describes the chart's bound portfolio and not the account an order is sent to, so
+/// that check now asks for both as well (<c>PolicyGateTests</c> holds it). THIS is a standing grant that
+/// will be spent without the owner in the room, over and over, for as long as it lasts, and an
+/// installation where the two disagree is one where nobody can say which of them is wrong.</para>
 /// </summary>
 public class PaperEnvelopeTests(Xunit.Abstractions.ITestOutputHelper log)
 {
