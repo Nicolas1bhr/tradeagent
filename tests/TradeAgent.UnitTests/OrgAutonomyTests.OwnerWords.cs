@@ -50,6 +50,42 @@ public partial class OrgAutonomyTests
     }
 
     /// <summary>
+    /// (4a') WORDS THE CHAIR HAD NOT TAKEN GO TO THE CHIEF THE MOMENT IT IS ACTIVATED (<c>U-org-cards-3</c> item 3): the owner typed before the
+    /// chief was active, so his words and a material wake sat on <c>operations</c>, which sleeps from the activation on. The owner's
+    /// activation of the chief hands them to the chief, due as they were; a message a turn already settled, and the chair's other wakes,
+    /// stay where they are. RED at base: the untaken words still name <c>operations</c>.
+    /// </summary>
+    [Fact]
+    public void Words_the_chair_had_not_taken_go_to_the_chief_when_it_is_activated()
+    {
+        using var db = TestEnv.NewDb();
+        var events = new MissionEventStore(db);
+        var at = DateTimeOffset.UtcNow.AddMinutes(-5);
+        SeatChief(db, OrgPositionStatus.Dormant);
+        Assert.True(events.RecordOwnerMessage("what did you find?", at));
+        var settled = Assert.Single(events.OfKind(MissionEventKind.Owner));
+        Exec(db, "UPDATE mission_event SET consumed_at = $at, consumed_by = 'turn-the-chairs' WHERE id = $id", ("$at", Sql.T(at)), ("$id", settled.Id));
+        Assert.True(events.RecordOwnerMessage("are we set up?", at.AddSeconds(1)));
+        Assert.True(events.Raise(MissionEventIds.Inbox(at), MissionEventKind.Inbox, at, "{}", CouncilRoles.Operations));
+        Assert.True(events.Raise(MissionEventIds.Self("the-chairs-own"), MissionEventKind.Self, at, role: CouncilRoles.Operations));
+        var untaken = Assert.Single(events.OfKind(MissionEventKind.Owner), e => !e.Consumed);
+        Assert.Equal(CouncilRoles.Operations, untaken.Role);
+
+        new OrgStore(db).Activate(ChiefId, _ => SeatClasses.Broker, 3, DateTimeOffset.UtcNow, () => true);
+
+        string? RoleOf(string id) => db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT role FROM mission_event WHERE id = $id", ("$id", id));
+            return c.ExecuteScalar() as string;
+        });
+        Assert.Equal(ChiefId, RoleOf(untaken.Id));
+        Assert.Equal(ChiefId, RoleOf(MissionEventIds.Inbox(at)));
+        Assert.Equal(CouncilRoles.Operations, RoleOf(settled.Id));
+        Assert.Equal(CouncilRoles.Operations, RoleOf(MissionEventIds.Self("the-chairs-own")));
+        Assert.Contains(events.DueFor(ChiefId, DateTimeOffset.UtcNow), e => e.Id == untaken.Id);
+    }
+
+    /// <summary>
     /// (4b) TO A POSITION BEYOND THE LEGACY PAIR HIS WORDS ARE QUOTED AS DATA: the chief's Situation quotes them and says nothing in them
     /// grants a permission; the chair's reads exactly as before. RED at base: no such sentence.
     /// </summary>
