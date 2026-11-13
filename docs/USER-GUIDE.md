@@ -257,12 +257,15 @@ never goes short: a sell of more than you hold, counting buys still waiting to f
 place it, and a sell that finds less held when its price is reached — another sell got there first — is
 refused then, unfilled. The same holds for the AI's own paper orders and for the strategies it runs on
 paper. A real exchange would set aside what a waiting sell needs as it accepts it, so two sells waiting on
-one holding — a stop and a target — need a one-cancels-the-other order there; here both may wait, and the
-second one reached is refused. TradeAgent paper
+one holding — a stop and a target — need a one-cancels-the-other order there. Here a strategy running on
+paper has exactly that: when its stop or its target fills, its other waiting sells are cancelled in the same
+moment, and its sells can never use what another strategy holds. The AI's own paper orders do not: both
+may wait, and the second one reached is refused. TradeAgent paper
 only trades a pair whose step size has been confirmed, and TradeAgent confirms it itself: it reads the
-pair you chose under **Market data** from Binance's own published definition — when it starts, every six
-hours, when you change the pair, and when you press **Check now** — and the line **Instrument check** on
-that card says whether the pair is verified and, if not, why. Until a check succeeds TradeAgent paper
+pair you chose under **Market data**, and then every other pair whose history it holds for judging, from Binance's own
+published definition — when it starts, every six hours, and for the chosen pair also when you change it
+and when you press **Check now** — and the line **Instrument check** on that card says whether the pair is
+verified and, if not, why. Until a check succeeds TradeAgent paper
 trades nothing, rather than size an order against a step nobody confirmed; see *If a backtest says it
 will not guess an instrument's size step*.
 
@@ -1410,10 +1413,11 @@ number about a position nobody could have taken.
 TradeAgent keeps a list of the venues and instruments it knows of, and each entry says who says so
 and whether anyone has actually **checked** it. The AI can read that list; it cannot write it. The four
 practice-simulator contracts are marked checked, because the simulator is TradeAgent's own and there is
-nobody else to disagree with. The Binance pair is checked by **TradeAgent itself**: it asks Binance for
-its own published definition of the pair — the price step, the size step and the smallest order — at
-Binance's own address, when it starts, every six hours while it runs, when you change the pair under
-**Market data** on the Settings page, and when you press **Check now** there. A successful check is used
+nobody else to disagree with. The Binance pairs are checked by **TradeAgent itself** — the one you chose
+under **Market data** and every pair whose history it holds for judging strategies, one after another: it asks Binance for its own published definition of each pair — the price step, the size step and
+the smallest order — at Binance's own address, when it starts and every six hours while it runs, and for the
+chosen pair also when you change it under **Market data** on the Settings page and when you press **Check
+now** there. A successful check is used
 for seven days. The line **Instrument check** on that card says *verified against Binance spot's
 published instrument definition on …* with the numbers, or *not verified:* and why — no answer, an
 answer TradeAgent could not read, a check more than seven days old, or an address that is not Binance's
