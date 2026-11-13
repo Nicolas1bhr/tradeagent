@@ -643,6 +643,9 @@ public sealed class AgentSession(
     /// <summary>What the stream of the turn in flight has reported using so far, held outside the read (<see cref="AgentTurnEnded.Usage"/>); null until it reports.</summary>
     TurnUsage? _usage;
 
+    /// <summary>The vendor's usage limit the stream of the turn in flight has said, held outside the read (<see cref="AgentTurnEnded.Limit"/>); null until it says one.</summary>
+    VendorLimit? _limit;
+
     /// <summary>The sentence the turn in flight was ended in for its wall-clock limit (<see cref="AgentTurnEnded.TimedOut"/>); null otherwise.</summary>
     volatile string? _timedOut;
 
@@ -909,6 +912,7 @@ public sealed class AgentSession(
         _modelRefused = null;
         _timedOut = null;
         _usage = null;
+        _limit = null;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var clock = limit is { } most ? new TurnClock(most, () => TimedOutAsync(Labels.ChatTurnPastItsLimit(most))) : null;
         try
@@ -965,7 +969,9 @@ public sealed class AgentSession(
                 UsageUnreported = _session is not null && (!ran || overLimit is not null) ? AgentTurnEnded.UsageOfACutTurn(_usage) : null,
                 // And the vendor's refusal, for the same reason: one reading of the stream, carried
                 // to the loop that has to wait for it and the meter that has to price it.
-                Limit = vendorLimit,
+                // Held outside the read as the usage is (U-turn-cards item 3): a turn cancelled after the vendor said its limit still carries it, so the
+                // loop holds that pool and the turn's wakes come back, as for a turn that read to its end.
+                Limit = vendorLimit ?? _limit,
                 // AND WHAT THE TEARDOWN COULD NOT END. The meter closes this turn's row on this event; a
                 // process of the turn still running past that is spend no ceiling sees, so the meter holds
                 // the next launch while any of these is the same process and still running.
@@ -1253,6 +1259,8 @@ public sealed class AgentSession(
         {
             // AND WHAT IT MEASURED (U-turn-bounds-2): a turn cancelled after its usage arrived keeps the figures, as it keeps a warning.
             _usage = state.Usage;
+            // AND THE VENDOR'S LIMIT (U-turn-cards item 3): a limit read before a cancel is not lost on that path.
+            _limit = state.Limit;
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
             _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
             if (state.ToolsDead is { } vendorSaid) _toolsDead = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ToolsUnavailable, vendorSaid);

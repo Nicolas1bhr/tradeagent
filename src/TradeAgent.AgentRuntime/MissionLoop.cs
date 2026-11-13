@@ -4894,12 +4894,13 @@ public sealed class MissionLoop
     /// <para><b>So does a turn the vendor refused for its usage limit before any work</b> (<c>U-vendor-limit-wakes</c>): the vendor
     /// ran nothing, so nothing was answered and the wakes are the loop's only record of what was owed. They are given back exactly
     /// as the gate's are, due again when the vendor's hold lifts — the hold set after this commit keeps every launch on that pool
-    /// until then — and the owner's words show the vendor's own sentence. A limit met AFTER work is settled as any failed turn is:
-    /// the work happened.</para>
+    /// until then — and the owner's words show the vendor's own sentence.</para>
     ///
-    /// <para><b>A turn that worked and then did not finish</b> — its model refused mid-turn, or ended at its wall-clock limit (<c>U-turn-bounds-2</c>) — gives
-    /// back the same way: what it spent stays on its row, and spending is no evidence that a wake's work finished. Only a record the app itself wrote
-    /// is: <see cref="FinishedOnRecord"/>. Those wakes are settled, so that work is not run twice; everything else is owed again.</para>
+    /// <para><b>A turn that worked and then did not finish</b> — its model refused mid-turn, or ended at its wall-clock limit (<c>U-turn-bounds-2</c>), or
+    /// met the vendor's usage limit after work (<c>U-turn-cards</c> item 1) — gives back the same way: what it spent stays on its row, and spending is
+    /// no evidence that a wake's work finished. Only a record the app itself wrote is: <see cref="FinishedOnRecord"/>. Those wakes are settled, so that
+    /// work is not run twice; everything else is owed again. <b>So does a turn the loop's own stop ended</b> (<c>U-turn-cards</c> item 2): its
+    /// output is published in the same commit, so the brief its owner's words became stays theirs, and a judgment recorded against it stays made.</para>
     /// </summary>
     void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended, string consumer,
         bool fenced = false, bool stopped = false)
@@ -4913,7 +4914,7 @@ public sealed class MissionLoop
             try
             {
                 var owed = wake;
-                if (ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false })
+                if (stopped || ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false } or { Limit.BeforeAnyWork: false })
                 {
                     var finished = wake.Where(e => FinishedOnRecord(events, e, consumer)).ToList();
                     foreach (var e in finished) events.Settle(e.Id, MissionEventDisposition.Answered, $"its work is on the record; then: {why}");
@@ -4973,14 +4974,16 @@ public sealed class MissionLoop
 
     /// <summary>
     /// THE SENTENCE OF A REFUSAL THAT LET THE TURN DO NO WORK, or null where the turn ran: the activation gate's at its last
-    /// check, the vendor's usage limit met before any work (<see cref="VendorLimit.BeforeAnyWork"/>), a seat whose tools could not
+    /// check, the vendor's usage limit (before any work, <see cref="VendorLimit.BeforeAnyWork"/>, or after it), a seat whose tools could not
     /// run (<see cref="AgentTurnEnded.ToolsUnavailable"/>), a model the vendor refused, or a turn ended at its wall-clock limit. Such a turn reached no
     /// end of its own, so nothing it was woken for counts as answered: it gives back its wakes (<see cref="Settle"/> keeps those it finished on the
     /// record) and every word typed into it, and what its packet showed is shown again.
     /// </summary>
     static string? UnworkedRefusal(AgentTurnEnded? ended) =>
         ended?.GateRefused is { } late ? late.Refusal.Words
-        : ended?.Limit is { BeforeAnyWork: true } limit ? limit.Message
+        // THE VENDOR'S LIMIT, BEFORE WORK OR AFTER IT (U-turn-cards item 1): either way the turn reached no end of its own. After work, what it spent stays
+        // on its row and is charged as it was; only the wakes change, from `failed` to the finished-on-record rule.
+        : ended?.Limit is { } limit ? limit.Message
         // A SEAT WHOSE TOOLS COULD NOT RUN (U-cli-code-mode): the model wrote, but nothing it tried ran, so nothing was answered.
         : ended?.ToolsUnavailable is { } dead ? dead
         // A MODEL THE VENDOR REFUSED (U-turn-bounds, D17; U-turn-bounds-2 mid-turn): the turn cannot finish, and the wakes are not silently spent on it.
