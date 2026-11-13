@@ -4705,7 +4705,8 @@ stripped ETH and XRP of both their stop and their target. Under the founding rat
 never refuses the owner's press or an agent's order for up to a minute, and those six never come out of the runs' 45. At
 most 51 go out in a sliding minute, on paper only. Under any figure the board decides, any other mode or venue, the minute
 is one count for every caller, as it was. "Founding" is who set the
-field, as for D18, and a figure the board decides binds a run like every other caller. 45 is a constant of this
+field, not its value (a board that went to 10 and back to 6 decided 6), and a figure the board decides binds a run like
+every other caller. 45 is a constant of this
 build and no policy field, so no act, verb or seat can widen it, and a home that keeps its founding row has it. A
 cancel takes no place in the count, as it never has.
 

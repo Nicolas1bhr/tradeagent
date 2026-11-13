@@ -39,7 +39,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
-    /// <summary>The minute's dispatches, each marked with whether it was a paper run's own under the founding rate (<see cref="CountedWithTheRuns"/>).</summary>
+    /// <summary>The minute's dispatches, each marked with whether it was a paper run's own under the founding rate (<see cref="RateFor"/>).</summary>
     readonly List<(DateTimeOffset At, bool WithTheRuns)> _recentDispatches = [];
 
     /// <summary>Composites a caller in THIS process is running right now. See <see cref="ClaimCompositeOwner"/>.</summary>
@@ -4506,7 +4506,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// them is the one thing a founding figure must not make.
     ///
     /// <para><b>Two counts under the founding rate, one under any other (U-rate-limits).</b> While <see cref="FoundingRateStands"/>, a run's orders and every
-    /// other caller's are counted apart in the one sliding minute (<see cref="CountedWithTheRuns"/>): the runs' forty-five do not take the owner's press or an
+    /// other caller's are counted apart in the one sliding minute (<see cref="RateFor"/>): the runs' forty-five do not take the owner's press or an
     /// agent's order off its six, and those six do not come out of the runs' minute. Under a figure the board decided, or off the app's paper venues, or in
     /// another mode, every dispatch counts toward the one figure, as it always did.</para>
     ///
@@ -4515,12 +4515,23 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// decides binds a run like every other caller, including a narrowing to 6 from something else, and a refused protection is asked again on a later minute
     /// (<c>ForwardRuns</c>). The number is a constant of this build, so no act, verb or seat can widen it.</para>
     /// </summary>
-    internal int MaxOrdersPerMinuteFor(string? run) =>
-        CountedWithTheRuns(run) ? BoardFounding.PaperRunOrdersPerMinute : Policy.Risk.MaxOrdersPerMinute;
+    internal int MaxOrdersPerMinuteFor(string? run) => RateFor(run).Limit;
+
+    /// <summary>
+    /// THIS CALLER'S PLACE IN THE MINUTE, FROM ONE READ OF THE POLICY: its figure, whether the founding rate keeps two counts, and which of them is its own.
+    /// One read, so a board act landing in between cannot measure an order in one count against the other's figure.
+    /// </summary>
+    (int Limit, bool Apart, bool WithTheRuns) RateFor(string? run)
+    {
+        var flat = Policy.Risk.MaxOrdersPerMinute;
+        var apart = FoundingRateStands;
+        var withTheRuns = apart && CountedWithTheRunsUnderTheFoundingRate(run);
+        return (withTheRuns ? BoardFounding.PaperRunOrdersPerMinute : flat, apart, withTheRuns);
+    }
 
     /// <summary>
     /// WHETHER THE FOUNDING ORDER RATE GOVERNS THIS GATEWAY'S MINUTE: PAPER, one of the app's own paper venues, and the policy's rate still the founding record's
-    /// by who set it as well as by its value. Only then is there a runs' count beside everyone else's (<see cref="CountedWithTheRuns"/>).
+    /// by who set it as well as by its value. Only then is there a runs' count beside everyone else's (<see cref="RateFor"/>).
     /// </summary>
     bool FoundingRateStands =>
         Policy.Mode == TradingMode.PAPER && OnAnAppPaperVenue
@@ -4530,8 +4541,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// WHETHER THIS CALLER'S ORDER IS A PAPER RUN'S OWN UNDER THE FOUNDING RATE: counted in the runs' minute and bound by
     /// <see cref="BoardFounding.PaperRunOrdersPerMinute"/>. A run on a stopped or a live row, an id that is no run's, and nobody at all are every other caller.
     /// </summary>
-    bool CountedWithTheRuns(string? run) =>
-        run is { Length: > 0 } && FoundingRateStands
+    bool CountedWithTheRunsUnderTheFoundingRate(string? run) =>
+        run is { Length: > 0 }
         && _deployments.ById(run) is { } deployment
         && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false };
 
@@ -7225,9 +7236,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
     void RateLimitOrThrow(string? run)
     {
-        var limit = MaxOrdersPerMinuteFor(run);
-        var apart = FoundingRateStands;
-        var withTheRuns = CountedWithTheRuns(run);
+        var (limit, apart, withTheRuns) = RateFor(run);
         lock (_recentDispatches)
         {
             var at = Now;
@@ -7259,9 +7268,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// </summary>
     DispatchSlot ReserveDispatchOrThrow(string? run = null)
     {
-        var limit = MaxOrdersPerMinuteFor(run);
-        var apart = FoundingRateStands;
-        var withTheRuns = CountedWithTheRuns(run);
+        var (limit, apart, withTheRuns) = RateFor(run);
         lock (_recentDispatches)
         {
             var at = Now;
