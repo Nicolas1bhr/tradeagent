@@ -77,7 +77,7 @@ public sealed partial class OrgStore
             $"position={chief} seat={press.Seat} wake={wake}");
         if (!new MissionEventStore(db).Raise(wake, MissionEventKind.OwnerWake, now,
                 payload: eventId.ToString(CultureInfo.InvariantCulture), role: chief))
-            throw Refused($"a wake of {chief} at this instant is already on the queue, so no second one was raised.");
+            throw Refused("a wake of the chief at this instant is already on the queue, so no second one was raised.");
         return new ChiefWoken(chief, wake, eventId);
     });
 
@@ -91,20 +91,20 @@ public sealed partial class OrgStore
             return Refuse(null, null, "No chief is appointed, so there is none to wake. Appoint a chief and activate it first.");
         var seat = row.SeatRuntime is { } runtime ? $"{runtime} · {row.SeatModel ?? "its runtime's default model"}" : "no seat";
         if (row.Status != OrgPositionStatus.Active)
-            return Refuse(chief, seat, $"The chief {chief} is {row.Status}: only an active chief is woken. Activate it first.");
+            return Refuse(chief, seat, $"The chief is {row.Status}: only an active chief is woken. Activate it first.");
         if (!facts.ProvenCell)
-            return Refuse(chief, seat, $"This host has no proven executor cell recorded, so the chief {chief} is not woken: no position "
-                                       + "beyond the legacy pair runs on a real model before one is (ORCHESTRATION § 2.3).");
+            return Refuse(chief, seat, "This host has no proven executor cell recorded, so the chief is not woken: no position "
+                                       + "beyond the legacy pair runs on a real model before one is.");
         if (!facts.AgentStarted)
-            return Refuse(chief, seat, $"The AI is not started, so the chief {chief} is not woken. Press \"Start the AI\" on the Dashboard first.");
+            return Refuse(chief, seat, "The AI is not started, so the chief is not woken. Press \"Start the AI\" on the Dashboard first.");
         if (!facts.WorksOnItsOwn)
-            return Refuse(chief, seat, $"The AI is paused, so the chief {chief} is not woken: its turn is taken only while the AI works on its "
+            return Refuse(chief, seat, "The AI is paused, so the chief is not woken: its turn is taken only while the AI works on its "
                                        + "own. Press \"Let the AI work on its own\" on the Dashboard first.");
         if (new MissionEventStore(db).HasUnconsumed(MissionEventKind.OwnerWake, chief))
-            return Refuse(chief, seat, $"The wake you pressed for the chief {chief} has not been taken yet: one press is one wake, so nothing "
+            return Refuse(chief, seat, "The wake you pressed for the chief has not been taken yet: one press is one wake, so nothing "
                                        + "more is raised until its turn has run.");
         return new ChiefWakePreview(chief, seat,
-            $"Wake the chief {chief} once, now: one turn on {seat}, {Spends(facts.Billing)}. {after}",
+            $"Wake the chief once, now: one turn on {seat}, {Spends(facts.Billing)}. {after}",
             null) { After = after };
     }
 
@@ -122,8 +122,8 @@ public sealed partial class OrgStore
     };
 
     public static string ChiefWakeAfter(TimeSpan ceiling, TimeSpan? backstop = null) =>
-        "Nothing else is started by this press. After the turn the chief wakes again only when it asks to (its next.json, or its own "
-        + "`trade org wake` request), when work is addressed to it, "
+        // IN THE OWNER'S WORDS (U-owner-words-2; the real run of 2026-11-13, shot 63): it named the chief's file and a command.
+        "Nothing else is started by this press. After the turn the chief wakes again only when it asks to be woken, when work is addressed to it, "
         + (backstop is { } every
             ? $"every {every.TotalHours.ToString("0.##", CultureInfo.InvariantCulture)} h while no work is moving and it has not asked, "
             : "")

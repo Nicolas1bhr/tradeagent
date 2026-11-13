@@ -7,6 +7,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
+using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
@@ -795,5 +796,91 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
             release.Set();
             await host.Gateway.DisposeAsync();
         }
+    }
+
+    /// <summary>
+    /// THE APP'S OWN WORDS NAME NO FILE, NO DOC SECTION, NO COMMAND AND NO INTERNAL ID (<c>U-owner-words-2</c>; the real run's screens of
+    /// 2026-11-13: the chief's card said "its next.json, or its own `trade org wake` request", and the AI's work line said "(ORCHESTRATION § 2.3)"
+    /// with a position's id in the sentence). Every owner page, over an empty home and over the working organisation with its chief active and
+    /// every two-press armed, is read for those shapes, and so are the activation gate's words for a held director. An id may stand as a label of
+    /// its own beside a name (a text that is the id alone); it never stands inside a sentence. Exempt: the Settings page's kit card, which names
+    /// the files of the kit the owner writes himself, and the Oversight page's Protections register (see below). RED at the base: "Chief
+    /// (pos-…), dormant", "pos-…, dormant in unit team-…", and the gate's "'research' runs unconfined, and 'pos-…' … (ORCHESTRATION § 2.3)".
+    /// </summary>
+    [Fact]
+    public void The_owner_pages_carry_no_file_name_section_mark_command_or_internal_id()
+    {
+        var hits = new List<string>();
+        // THE PROTECTIONS REGISTER ON THE OVERSIGHT PAGE IS EXEMPT, BY ITS OWN TEXTS: it lists, by design, where each protection is written and
+        // the code and tests that keep it (U-invariant-registry) — a record for a reviewer, carded for the orchestrator, not the app's words to him.
+        HashSet<string> register = [];
+        HeadlessUi.Run(() => register = [.. ProtectionsSection.Build(InvariantRegistry.All).GetLogicalDescendants().OfType<TextBlock>()
+            .Select(t => t.Text ?? "").Where(t => t.Length > 0)]);
+        Assert.NotEmpty(register);
+        void Read(IEnumerable<Frame> frames, string home)
+        {
+            foreach (var f in frames)
+                foreach (var t in f.Texts.Distinct().Where(t => !register.Contains(t)))
+                    foreach (var shape in OwnerWordShapes.Of(t))
+                    {
+                        hits.Add($"{home}/{f.Page}: {shape} in \"{Cut(t)}\"");
+                        output.WriteLine($"FULL {home}/{f.Page}: {t}");
+                    }
+        }
+        using (var empty = new Database(Path.Combine(UiTestHome.Home, $"words-empty-{Guid.NewGuid():n}.db")))
+            Read(RenderAll(empty, "words-empty", 1280, 800, armed: true), "empty");
+        using (var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"words-{Guid.NewGuid():n}.db")))
+            Read(RenderAll(db, "words", 1280, 800, host =>
+            {
+                // THE ACTIVATE PRESS'S NOTE, as the Organisation page shows it: here refused, this test host holding no proven workspace.
+                var note = host.ActivateChief(new OrgStore(db).Chief());
+                output.WriteLine(note);
+                hits.AddRange(OwnerWordShapes.Of(note).Select(shape => $"working/activate-note: {shape} in \"{Cut(note)}\""));
+                host.Gateway.Reports.WriteNow(host.ReportInputs());
+            }, armed: true), "working");
+        // AND THE CHIEF'S WAKE CARD, beside its press and in its armed sentence (shot 63): what wakes it after its one turn.
+        var after = OrgStore.ChiefWakeAfter(TimeSpan.FromHours(24), TimeSpan.FromHours(4));
+        hits.AddRange(OwnerWordShapes.Of(after).Select(shape => $"chief-wake: {shape} in \"{Cut(after)}\""));
+
+        // AND THE WORDS THE DASHBOARD SHOWS FOR A HELD DIRECTOR (shot 70), from the activation gate itself: Research, unconfined, beside the
+        // active chief, and the chief's own activation refused before a proven workspace.
+        using (var gate = new Database(Path.Combine(UiTestHome.Home, $"words-gate-{Guid.NewGuid():n}.db")))
+        {
+            var research = new OrgStore(gate).Standing(CouncilRoles.Research);
+            var held = PositionActivation.Decide(CouncilRoles.Research, research, new SeatFacts
+            {
+                Standing = research, DeclaredClass = SeatClasses.Cli, ActiveBeyondLegacy = ["pos-83d109e913fc"], UnconfinedSeatSetting = 3
+            });
+            Assert.NotNull(held);
+            output.WriteLine(held.Words);
+            hits.AddRange(OwnerWordShapes.Of(held.Words).Select(shape => $"gate/held: {shape} in \"{Cut(held.Words)}\""));
+        }
+        foreach (var h in hits.Distinct()) output.WriteLine(h);
+        Assert.True(hits.Count == 0, $"{hits.Distinct().Count()} owner words carry a file, section mark, command or id: {string.Join(" | ", hits.Distinct().Take(6))}");
+    }
+}
+
+/// <summary>The shapes an owner's page never carries in its own words (<c>U-owner-words-2</c>): one reader, so every test asks the same question.</summary>
+static class OwnerWordShapes
+{
+    static readonly (string Name, System.Text.RegularExpressions.Regex Shape)[] Shapes =
+    [
+        ("a section mark", new(@"§")),
+        ("a backticked command or name", new(@"`")),
+        ("a file name", new(@"\b[\w-]+\.(json|jsonl|md|db|log|toml|yaml|yml|sh|ps1|dll|exe|csv)\b")),
+        ("a folder path", new(@"(^|[\s(""'])(\.\./|\./|~/|/home/|/var/|/etc/)|\b(in|out|inbox|trading|state)/(\s|$|[)'""])")),
+        ("a terminal command", new(@"\btrade (org|data|mandate|escalation|review|ledger|forecast|board|wake)\b")),
+        ("an internal id", new(@"\b(pos|team|unit|turn|act|mandate|req|ord)-[0-9a-f]{6,}")),
+    ];
+
+    static readonly System.Text.RegularExpressions.Regex IdAlone = new(@"^(pos|team|unit|turn|act|mandate|req|ord)-[0-9a-f]{6,}$");
+
+    /// <summary>Each forbidden shape in <paramref name="text"/>; none for an id that stands alone as a label, or the owner's own kit file.</summary>
+    public static IEnumerable<string> Of(string text)
+    {
+        // An id standing alone is a label; the kit card's sentence names the files of the kit he writes himself — his own lane.
+        if (IdAlone.IsMatch(text.Trim()) || text.Contains("kit.json", StringComparison.Ordinal)) yield break;
+        foreach (var (name, shape) in Shapes)
+            if (shape.Match(text) is { Success: true } m) yield return $"{name} ({m.Value.Trim()})";
     }
 }

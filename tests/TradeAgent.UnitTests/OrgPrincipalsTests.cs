@@ -256,7 +256,9 @@ public class OrgPrincipalsTests : IDisposable
             Assert.Null(host.ConversationFor(CouncilRoles.Operations));
             var neighbour = host.ActivationRefusal(CouncilRoles.Research);
             Assert.Equal(RefusalKind.HostOrLaunch, neighbour?.Kind);
-            Assert.Contains($"'{Third}'", neighbour!.Words, StringComparison.Ordinal);
+            // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
+            Assert.Contains("active on this host: the legacy pair run confined too", neighbour!.Words, StringComparison.Ordinal);
+            Assert.DoesNotContain(Third, neighbour!.Words, StringComparison.Ordinal);
 
             // THE LEGACY PAIR ALONE KEEP THEIR EXISTING TWO-ROLE BEHAVIOUR.
             foreach (var other in new[] { Third, "pos-staff" })

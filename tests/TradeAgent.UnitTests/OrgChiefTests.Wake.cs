@@ -50,7 +50,7 @@ public partial class OrgChiefTests
 
         Assert.Contains("No chief is appointed", org.PreviewChiefWake(Facts()).Refusal, StringComparison.Ordinal);
         var chief = org.AppointChief(Puppet, Known, Now).Chief!;
-        Assert.Contains($"The chief {chief} is dormant", org.PreviewChiefWake(Facts()).Refusal, StringComparison.Ordinal);
+        Assert.Contains("The chief is dormant", org.PreviewChiefWake(Facts()).Refusal, StringComparison.Ordinal);
         org.Activate(chief, _ => SeatClasses.Puppet, 3, Now, () => false);
 
         (ChiefWakeFacts Facts, string Words)[] refused =
@@ -80,7 +80,7 @@ public partial class OrgChiefTests
 
     /// <summary>
     /// (w2) ONE PRESS PAIR IS ONE WAKE AND ONE OWNER EVENT, AND MOVES NOTHING THE BOARD HOLDS: the armed preview names the chief, its seat,
-    /// that it spends his plan, what wakes it next (its next.json or its ceiling) and how to stop it; press two writes one
+    /// that it spends his plan, what wakes it next (its own ask or its ceiling) and how to stop it; press two writes one
     /// <c>woken-once</c> event decided by the owner naming the position, and one <c>owner-wake</c> for the chief, due now, carrying that event's
     /// id — and no board policy, no ceiling wake and no other row of the chart.
     /// </summary>
@@ -92,8 +92,11 @@ public partial class OrgChiefTests
         var chief = ActiveChief(org);
         var at = DateTimeOffset.UtcNow;
         var shown = org.PreviewChiefWake(Facts());
-        foreach (var said in new[] { chief, "puppet · scripted-1", "plan or your API key", "next.json", "ceiling, 24 h", "Pause the AI", "Remove the chief" })
+        // IN THE OWNER'S WORDS (U-owner-words-2; the real run's shot 63): the chief, its file and a command were named here; now none is.
+        foreach (var said in new[] { "Wake the chief once", "puppet · scripted-1", "plan or your API key", "asks to be woken", "ceiling, 24 h", "Pause the AI", "Remove the chief" })
             Assert.Contains(said, shown.Words, StringComparison.Ordinal);
+        foreach (var never in new[] { chief, "next.json", "trade org wake", "`" })
+            Assert.DoesNotContain(never, shown.Words, StringComparison.Ordinal);
 
         var policies = Count(db, "board_policy");
         var units = Count(db, "org_unit");
@@ -174,7 +177,7 @@ public partial class OrgChiefTests
         org.Activate(chief, _ => SeatClasses.Puppet, 3, Now, () => false);
         page.Update();
         Assert.True(card.WakeOnce.IsVisible && card.WakeWhat.IsVisible);
-        foreach (var said in new[] { "next.json", "ceiling", "Pause the AI", "Remove the chief" })
+        foreach (var said in new[] { "asks to be woken", "ceiling", "Pause the AI", "Remove the chief" })
             Assert.Contains(said, card.WakeWhat.Text, StringComparison.Ordinal);
 
         // PAUSED: either press arms nothing, and the refusal is said on the card.
@@ -188,7 +191,7 @@ public partial class OrgChiefTests
         facts = Facts();
         Press(card.WakeOnce);
         Assert.True(Ui.IsArmed(card.WakeOnce));
-        Assert.Contains($"Wake the chief {chief} once", card.WakeOnce.Content as string, StringComparison.Ordinal);
+        Assert.Contains("Wake the chief once", card.WakeOnce.Content as string, StringComparison.Ordinal);
         Assert.Equal(before, State(db));
         Press(card.WakeOnce);
         Assert.Equal($"woke {chief}", card.Done.Text);
