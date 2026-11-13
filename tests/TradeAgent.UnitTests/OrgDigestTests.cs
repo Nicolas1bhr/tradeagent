@@ -843,6 +843,146 @@ public partial class OrgDigestTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE SAME REFUSAL NAMING ANOTHER ID IS THE SAME REFUSAL (<c>U-digest-polish-2</c>): the watch acts on one refusal five times in the same words,
+    /// and the app's words carry the path, the hash, the mandate and the figures of each call. Five refusals of one tool that differ only there fold
+    /// into one group shown by its shape, counted 5, and raised; five of another tool in genuinely different sentences, each carrying ids too, stay
+    /// five groups of one and raise nothing. A deployment's refused answers fold the same way.
+    ///
+    /// <para>RED at base: five groups of one for the first tool ("Sequence contains more than one matching element"), and no flag.</para>
+    /// </summary>
+    [UnixFact]
+    public void The_same_refusal_with_other_ids_and_figures_is_one_refusal_and_five_different_ones_are_not()
+    {
+        var f = Build();
+        string[] paths = ["org/pos-3fa2c1/out/plan.md", "workspace/inbox/notes-2.txt", "agent/journal/2026-10-31.md", "org/pos-77aa01/out/a.csv", "research/ideas/x9.md"];
+        string[] different =
+        [
+            $"mandate {OrgStore.MintMandate()} is held by pos-1b2c3d4e5f6a, not pos-9e8d7c6b5a4f: only its holder's launches are charged to it.",
+            $"mandate {OrgStore.MintMandate()} has 2 launches whose cost is not known, and an unknown cost is never read as zero.",
+            "'offset' 4096 is inside a character of 'research/a.md': continue from a previous answer's 'next_offset'. Nothing was read.",
+            "'workspace/b.md' is not text (it holds a zero byte or is not well-formed UTF-8), so there is nothing to show of it without altering it.",
+            $"mandate {OrgStore.MintMandate()} is escalated to its decider pos-0f1e2d3c4b5a: code has stopped retrying it.",
+        ];
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var tools = new ToolCallStore(db);
+            // THE APP'S OWN SENTENCE (GatewayPipeServer's material read), each call naming its own file and hash.
+            for (var i = 0; i < 5; i++)
+                tools.Record(new ToolCallRow { At = At("2026-10-31T12:00:00Z").AddMinutes(i), Attempt = "a2", Role = "pos-aaaaaa", Tool = Ops.MaterialRead, Served = false,
+                    Refusal = $"'{paths[i]}' has changed since TradeAgent measured it, so what is on disk is not the file {Sha(paths[i])[..12]} names. The next pass "
+                              + "records the new version under its own hash. Nothing was read." });
+            for (var i = 0; i < 5; i++)
+                tools.Record(new ToolCallRow { At = At("2026-10-31T12:10:00Z").AddMinutes(i), Attempt = "a2", Role = "pos-aaaaaa", Tool = "mandate_deliver", Served = false, Refusal = different[i] });
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            for (var i = 0; i < 2; i++)
+                db.Exec($"INSERT INTO deployment_op(request_id, deployment_id, bar_open_time, kind, intent, state, answer, created_at) VALUES('rq{i}', 'dep-paper-active-0001', 'bq{i}', "
+                        + $"'entry', '{{}}', '{DeploymentOpState.Refused}', 'the envelope allows {i + 2}, the plan asked for {i + 7}', '2026-10-31T09:3{i}:00.0000000Z');");
+            db.Exec("PRAGMA foreign_keys=ON;");
+        }
+        var d = Json(f);
+        var groups = d.GetProperty("refusals").GetProperty("groups").EnumerateArray().ToList();
+        var read = groups.Single(g => g.GetProperty("what").GetString() == Ops.MaterialRead);
+        Assert.Equal(5, read.GetProperty("count").GetInt32());
+        Assert.Equal(5, read.GetProperty("wordings").GetInt32());
+        const string Shape = "'…' has changed since TradeAgent measured it, so what is on disk is not the file <id> names. The next pass ";
+        Assert.StartsWith(Shape, read.GetProperty("words").GetString(), StringComparison.Ordinal);                     // the shape, cut where any line is cut
+        Assert.Equal(read.GetProperty("shape").GetString(), read.GetProperty("words").GetString());
+        Assert.StartsWith($"'{paths[4]}' has changed", read.GetProperty("example").GetString(), StringComparison.Ordinal);    // the latest wording, whole
+
+        var other = groups.Where(g => g.GetProperty("what").GetString() == "mandate_deliver").ToList();
+        Assert.Equal(5, other.Count);
+        Assert.All(other, g => Assert.Equal(1, g.GetProperty("count").GetInt32()));
+        Assert.Contains(other, g => g.GetProperty("words").GetString() == Shortened(different[0]));                            // one wording: its own words, as before
+
+        // The fixture's 'the envelope allows 1, the plan asked for 3' and these two are one answer of the deployment gate.
+        var op = groups.Single(g => g.GetProperty("source").GetString() == "deployment-op");
+        Assert.Equal(3, op.GetProperty("count").GetInt32());
+        Assert.Equal("the envelope allows <n>, the plan asked for <n>", op.GetProperty("words").GetString());
+
+        var attention = d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()!).ToList();
+        Assert.Contains(attention, a => a.StartsWith($"refused 5x: {Ops.MaterialRead}: '…' has changed since TradeAgent measured it", StringComparison.Ordinal)
+                                        && a.EndsWith("(5 wordings, one shape)", StringComparison.Ordinal));
+        Assert.DoesNotContain(attention, a => a.Contains("mandate_deliver", StringComparison.Ordinal));
+
+        var (exit, human, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
+        Assert.True(exit == 0, err);
+        Assert.Contains($"   5x [tool] {Ops.MaterialRead}: '…' has changed", human, StringComparison.Ordinal);
+    }
+
+    static string Shortened(string text) => text.Length <= 110 ? text : text[..109] + "…";
+
+    /// <summary>
+    /// THE TURNS THE LOOP DID NOT START, ON THEIR OWN LINE AND NOT AS REFUSALS (<c>U-digest-polish-2</c>). The loop writes a line for each one it did not
+    /// start; most are the lane's ("a turn is already running for this role"), the loop working as designed. One pattern is raised: a position refused
+    /// by a gate five times since its last launch began or ended, with no launch between and none running. A position launched between, one whose
+    /// launch is running, one whose launch ended after them, and one refused only at the lane, are counted and not raised.
+    ///
+    /// <para>RED at base: the digest had no "not_started" section (KeyNotFoundException), and the lines reached no watcher.</para>
+    /// </summary>
+    [UnixFact]
+    public void The_turns_the_loop_did_not_start_are_counted_on_their_own_line_and_a_position_refused_again_and_again_is_raised()
+    {
+        var f = Build();
+        const string stuck = "pos-5b0001", after = "pos-5b0002", running = "pos-5b0003", busy = "pos-5b0004", longer = "pos-5b0005";
+        const string Lane = "a turn is already running for this role, so this turn was not started.";
+        string Gate(int i) => $"mandate {OrgStore.MintMandate()}'s allocation is {i + 1}.5: 0.{i}5 spent and 0.2 reserved leave no room for this launch's 0.05. "
+                              + "Its decider is told; nothing was started.";
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var sb = new StringBuilder();
+            void Line(string at, string role, string why) =>
+                sb.Append($"INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES('{at}', 'Mission', 'turn_refused', 'info', "
+                          + $"'{TradeAgent.Core.Json.Write(new { why = $"{CouncilRoles.Title(role)}: {why}" }).Replace("'", "''", StringComparison.Ordinal)}');");
+            for (var i = 0; i < 5; i++)
+            {
+                var at = $"2026-10-31T1{i}:00:00.0000000Z";
+                Line(at, stuck, Gate(i));
+                Line(at, after, Gate(i));
+                Line(at, running, Gate(i));
+                Line(at, longer, Gate(i));
+            }
+            for (var i = 0; i < 7; i++) Line($"2026-10-31T13:0{i}:00.0000000Z", busy, Lane);
+            for (var i = 0; i < 3; i++) Line($"2026-10-31T13:4{i + 1}:00.0000000Z", CouncilRoles.Operations, Lane);   // while a9 is launched
+            Line("2026-10-29T10:00:00.0000000Z", stuck, Gate(9));                                                         // before T0: not counted
+            db.Exec(sb.ToString());
+            var attempts = new AiAttemptStore(db);
+            Attempt(attempts, "between", after, "2026-10-31T11:30:00Z", BillingClasses.Plan, "gpt-6-luna", 0.05m, 0.05m, 0);     // ended 11:35: three since
+            Attempt(attempts, "open", running, "2026-10-31T09:00:00Z", BillingClasses.Plan, "gpt-6-luna", 0.05m, null, null, end: false);
+            // A launch that began before them and ENDED after them: its end is the last launch, so none of the five came after it.
+            attempts.Begin(new AiAttempt { Id = "long", StartedAt = At("2026-10-31T09:00:00Z"), Runtime = "codex", RequestedModel = "gpt-6-luna", ReservedCost = 0.05m, Role = longer, BillingClass = BillingClasses.Plan });
+            attempts.End("long", 0, At("2026-10-31T14:30:00Z"), 100, 0, 0, 50, 0, "gpt-6-luna", 0.05m, null, null, null, null);
+        }
+        var d = Json(f);
+        var ns = d.GetProperty("not_started");
+        Assert.Equal(30, ns.GetProperty("total").GetInt32());
+        Assert.Equal(10, ns.GetProperty("lane").GetInt32());
+        Assert.Equal(20, ns.GetProperty("gate").GetInt32());
+        Assert.Equal([stuck], ns.GetProperty("stuck").EnumerateArray().Select(s => s.GetString()!).ToArray());
+        var by = ns.GetProperty("positions").EnumerateArray().ToDictionary(p => p.GetProperty("position").GetString()!);
+        Assert.Equal(5, by[stuck].GetProperty("gate_since_launch").GetInt32());
+        Assert.Equal(3, by[after].GetProperty("gate_since_launch").GetInt32());
+        Assert.True(by[running].GetProperty("running").GetBoolean());
+        Assert.Equal(0, by[longer].GetProperty("gate_since_launch").GetInt32());
+        Assert.Equal(0, by[busy].GetProperty("gate").GetInt32());
+        Assert.Equal(3, by[CouncilRoles.Operations].GetProperty("lane").GetInt32());                                   // the chair's title read back to its role
+        var cause = ns.GetProperty("causes").EnumerateArray().First();
+        Assert.Equal(20, cause.GetProperty("count").GetInt32());                                                       // twenty mandates, figures and ids: one shape
+        Assert.StartsWith("mandate <id>'s allocation is <n>: <n> spent and <n> reserved", cause.GetProperty("shape").GetString(), StringComparison.Ordinal);
+
+        Assert.Equal(10, d.GetProperty("refusals").GetProperty("total").GetInt32());                                   // not refusals: the fixture's ten, unchanged
+        var attention = d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()!).ToList();
+        Assert.Contains(attention, a => a.StartsWith($"{stuck}: 5 turns refused to start since its last launch (none on record), none launched between; the last 10-31 14:00: mandate man-",
+            StringComparison.Ordinal));
+        foreach (var p in new[] { after, running, busy, longer, CouncilRoles.Operations })
+            Assert.DoesNotContain(attention, a => a.StartsWith(p + ":", StringComparison.Ordinal));
+
+        var (exit, human, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
+        Assert.True(exit == 0, err);
+        Assert.Contains("turns not started since T0: 30 (10 at the lane: the loop retries them; 20 by a gate); ", human, StringComparison.Ordinal);
+        Assert.Contains("  most often x20 (pos-5b0001,pos-5b0002,pos-5b0003,pos-5b0005): mandate <id>'s allocation is <n>", human, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// THE DISK ON EVERY RUN, AND ATTENTION WHEN THE GUARD HAS TRIPPED (<c>U-disk-guard</c>): free space, its total and the guard's own floor, the trip's figures in
     /// an ATTENTION line from the app's own record, the two kinds of trip apart, and a disk under the floor with no pause recorded called out too.
     /// </summary>
@@ -955,6 +1095,8 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("LOG_IPC", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"{0}\", \"protocol_rejected\""),
         ("LOG_MISSION", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"{0}\", \"turn_refused\", \"info\""),
         ("LOG_TURN_REFUSED", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"{0}\", \"info\""),
+        // the lane's own refusal, as the loop words it where a lease is refused (U-digest-polish-2)
+        ("LANE_NOT_STARTED", "src/TradeAgent.AgentRuntime/MissionLoop.cs", "Refused?.Invoke($\"{{CouncilRoles.Title(role)}}: {{leaseRefused}}{0}\");"),
         ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
         ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
         // JSON KEYS the app spells by a member's name in its writer: the loop's line for a turn it did not start, and the pipe's refusal of an op
@@ -1025,6 +1167,10 @@ public partial class OrgDigestTests(ITestOutputHelper log)
     [System.Text.RegularExpressions.GeneratedRegex("""(?:=|<>|!=|\bIN\s*\(|\bLIKE)\s*'[^'{?]|\[["']\w+["']\]\)?(?:\.\w+\(\))?\s*(?:==|!=|\bnot in\b|\bin\b)\s*\(?(?:None,\s*)?["']""")]
     private static partial System.Text.RegularExpressions.Regex TypedInPlace();
 
+    /// <summary>A quoted SQL word joined to a column with <c>||</c>, either side: a value built to be compared, with its word typed in place.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"'[^'{?]+'\s*\|\||\|\|\s*'[^'{?]+'")]
+    private static partial System.Text.RegularExpressions.Regex SqlLiteralJoined();
+
     [Fact]
     public void No_word_is_typed_into_a_comparison_outside_the_digests_vocabulary()
     {
@@ -1035,6 +1181,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             .Where(x => !x.Line.TrimStart().StartsWith('#') && !x.Line.Contains("[\"app_db\"]", StringComparison.Ordinal))    // the digest's own field, not a column
             .Where(x => TypedInPlace().IsMatch(x.Line)).Select(x => $"line {x.At + 1}: {x.Line.Trim()}").ToList();
         Assert.True(typed.Count == 0, "a word typed into a comparison, not taken from class W:\n" + string.Join("\n", typed));
+
+        // NOR INTO A VALUE BUILT IN SQL TO BE COMPARED (U-digest-polish-2): `'TA-' || request_id` matched fills by a prefix typed in place of the app's own.
+        var built = lines.Select((l, i) => (Line: l, At: i)).Where(x => x.At < from || x.At > to)
+            .Where(x => !x.Line.TrimStart().StartsWith('#') && SqlLiteralJoined().IsMatch(x.Line)).Select(x => $"line {x.At + 1}: {x.Line.Trim()}").ToList();
+        Assert.True(built.Count == 0, "a word typed into a value SQL builds, not taken from class W:\n" + string.Join("\n", built));
 
         // AND NO KEY IS TYPED INTO A READ OF THE APP'S JSON (U-digest-polish): every name a parse of what the app wrote is bound to
         // (`meta = json.loads(`, `ctx = turn_context(`), and a read straight off turn_context(...), takes its key from class W. The digest's own

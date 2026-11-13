@@ -115,6 +115,9 @@ class W:
     TURN_STOPS = (ENDED_TURN_LIMIT, ENDED_MODEL_REFUSED, ENDED_USAGE_LIMIT)
     # engineering_log: a turn that was not started, in words, each line opening with the position's title
     LOG_MISSION, LOG_TURN_REFUSED = "Mission", "turn_refused"
+    # ...and how the lane's own refusal ends (MissionLoop's Lease: a turn already running for the role, a material pass, the lanes full):
+    # the loop working as designed, retried at its next look. Every other line is a gate's (a seat stepped aside, a mandate refused).
+    LANE_NOT_STARTED = ", so this turn was not started."
     # engineering_log.severity of a line the app wrote because something of its own failed (a sweep, a record, a handler)
     SEVERITY_ERROR = "error"
     TITLE_OPERATIONS, TITLE_RESEARCH = "Operations Director", "Research Director"
@@ -265,6 +268,56 @@ def money(d):
 def short(text, n=110):
     one = re.sub(r"\s+", " ", str(text or "")).strip()
     return one if len(one) <= n else one[: n - 1] + "…"
+
+
+# THE SHAPE OF A REFUSAL'S WORDS (U-digest-polish-2): the app's sentence with what varies from call to call taken out, so the same refusal
+# carrying another id, figure, quoted value, path or time is counted as the same refusal. In this order, so a later rule never sees what an
+# earlier one put in: a value in quotes (an apostrophe inside a word opens nothing), an ISO instant or a clock time, a path, an id the app
+# mints (a prefix and hex, or a long hex run), and then any word with a digit in it: a number, an id six or more long, or a short word whose
+# digits alone vary ("T0", "45m", "v2"). The words around them stand exactly as the app wrote them.
+_SHAPE_QUOTED = (re.compile(r"(?<![\w'])'[^'\n]*'(?!\w)"), re.compile(r'"[^"\n]*"'))
+_SHAPE_TIME = re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?|\b\d{1,2}:\d{2}(?::\d{2})?\b")
+_SHAPE_PATH = re.compile(r"(?<![\w<])(?:~|\.{1,2})?/?(?:[\w.@+-]+/)+[\w.@+-]*")
+_SHAPE_HEX_ID = re.compile(r"\b[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\b|\b(?:[A-Za-z]{1,12}[-_:])+[0-9a-f]{6,}\b|\b[0-9a-f]{8,}\b")
+_SHAPE_DIGITS = re.compile(r"[\w.:+-]*\d[\w.:+-]*")
+_SHAPE_NUMBER = re.compile(r"[+-]?\d[\d,]*(?:\.\d+)?")
+
+
+def _shape_path(m):
+    p = m.group(0)
+    return "<path>" if p[0] in "/~." or p.count("/") >= 2 or re.search(r"\.\w{1,6}$", p) else p
+
+
+def _shape_digits(m):
+    word = m.group(0)
+    core = word.rstrip(".:,+-")    # a sentence's own full stop or colon stays the sentence's
+    tail = word[len(core):]
+    if _SHAPE_NUMBER.fullmatch(core):
+        return "<n>" + tail
+    return ("<id>" if len(core) >= 6 else re.sub(r"\d+", "<n>", core)) + tail
+
+
+def shape(text):
+    one = re.sub(r"\s+", " ", str(text or "")).strip()
+    one = _SHAPE_QUOTED[1].sub('"…"', _SHAPE_QUOTED[0].sub("'…'", one))
+    one = _SHAPE_PATH.sub(_shape_path, _SHAPE_TIME.sub("<time>", one))
+    return _SHAPE_DIGITS.sub(_shape_digits, _SHAPE_HEX_ID.sub("<id>", one))
+
+
+def by_shape(rows, what, words, source):
+    """ROWS GROUPED BY THEIR WORDS' SHAPE: rows already counted per exact wording (`n`, `last`) fold into one group per (what, shape). A group of
+    one wording shows those words as they stand; a group of several shows the shape, and says how many wordings it holds."""
+    groups = {}
+    for r in rows:
+        key = (r[what], shape(r[words]))
+        g = groups.setdefault(key, {"source": source, "what": r[what], "shape": short(key[1]), "count": 0, "wordings": 0, "last_at": None, "example": None})
+        g["count"] += r["n"]
+        g["wordings"] += 1
+        if (r["last"] or "") >= (g["last_at"] or ""):
+            g["last_at"], g["example"] = r["last"], short(r[words])
+    for g in groups.values():
+        g["words"] = g["example"] if g["wordings"] == 1 else g["shape"]
+    return list(groups.values())
 
 
 def charge(row):
@@ -424,8 +477,8 @@ class Digest:
             fills = self.app.execute(
                 "SELECT f.at, f.side, f.quantity, f.price, f.fee FROM fill f WHERE f.account_id = ? AND f.symbol = ? AND "
                 "(f.request_id IN (SELECT request_id FROM deployment_op WHERE deployment_id = ?) OR "
-                " f.client_order_id IN (SELECT 'TA-' || request_id FROM deployment_op WHERE deployment_id = ?)) ORDER BY f.at, f.rowid",
-                (r["account_id"], r["symbol"], r["id"], r["id"])).fetchall()
+                " f.client_order_id IN (SELECT ? || request_id FROM deployment_op WHERE deployment_id = ?)) ORDER BY f.at, f.rowid",
+                (r["account_id"], r["symbol"], r["id"], W.CLIENT_ORDER_PREFIX, r["id"])).fetchall()
             listed.append({"id": r["id"][:12], "symbol": r["symbol"], "mode": r["mode"], "state": r["state"], "account": r["account_id"],
                            "started_at": r["started_at"], "end_reason": r["end_reason"], "suspended_reason": r["suspended_reason"],
                            **self.pnl(fills, r["account_id"], r["symbol"]),
@@ -570,9 +623,11 @@ class Digest:
 
     # -- 6. refusals, grouped with their words and counts
     def refusals(self):
-        tools = [{"source": "tool", "what": r["tool"], "words": short(r["refusal"]), "count": r["n"], "last_at": r["last"]} for r in self.app.execute(
+        # BY THE WORDS' SHAPE, NOT THEIR LETTERS (U-digest-polish-2): the same refusal naming another id or figure each time is one refusal
+        # repeated, which is what the five-repeat flag is for. A group's `words` are its wording when it has one, its shape when it has several.
+        tools = by_shape(self.app.execute(
             "SELECT tool, refusal, COUNT(*) AS n, MAX(at) AS last FROM tool_call WHERE served = 0 AND at >= ? "
-            "GROUP BY tool, refusal ORDER BY n DESC, tool", (self.since_s,))]
+            "GROUP BY tool, refusal", (self.since_s,)), "tool", "refusal", "tool")
         pipe = {}
         marks = ",".join("?" * len(W.PIPE_REFUSALS))
         for r in self.app.execute(f"SELECT event, metadata, at FROM engineering_log WHERE component = ? AND event IN ({marks}) AND at >= ?",
@@ -584,12 +639,13 @@ class Digest:
                 pass
             op, code = meta.get(W.REFUSAL_OP) if isinstance(meta, dict) else None, meta.get(W.REFUSAL_CODE) if isinstance(meta, dict) else None
             key = (r["event"], op or "-", code or "-")
-            e = pipe.setdefault(key, {"source": "pipe", "what": r["event"], "words": f"op {op or '-'} / {code or '-'}", "count": 0, "last_at": None})
+            words = f"op {op or '-'} / {code or '-'}"
+            e = pipe.setdefault(key, {"source": "pipe", "what": r["event"], "words": words, "shape": words, "wordings": 1, "example": words, "count": 0, "last_at": None})
             e["count"] += 1
             e["last_at"] = max(e["last_at"] or "", r["at"] or "")
-        ops = [{"source": "deployment-op", "what": r["kind"], "words": short(r["answer"]), "count": r["n"], "last_at": r["last"]} for r in self.app.execute(
+        ops = by_shape(self.app.execute(
             "SELECT kind, answer, COUNT(*) AS n, MAX(created_at) AS last FROM deployment_op WHERE state = ? AND created_at >= ? "
-            "GROUP BY kind, answer ORDER BY n DESC, kind", (W.DEPLOYMENT_OP_REFUSED, self.since_s))]
+            "GROUP BY kind, answer", (W.DEPLOYMENT_OP_REFUSED, self.since_s)), "kind", "answer", "deployment-op")
         groups = sorted(tools + list(pipe.values()) + ops, key=lambda g: (-g["count"], g["source"], g["what"]))
         return {"total": sum(g["count"] for g in groups), "groups": groups}
 
@@ -692,6 +748,51 @@ class Digest:
             elif r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
                 why.pop(pos, None)
         return why
+
+    # -- 9b. THE TURNS THE LOOP DID NOT START (U-digest-polish-2): every `turn_refused` line since T0, by position and by the shape of its words.
+    #        NOT refusals: most are the lane's, which the loop retries at its next look ("a turn is already running for this role" is normal).
+    #        A STUCK POSITION is the one pattern flagged: five or more GATE refusals since its last launch began or ended, and none of its launches
+    #        running. The lane's refusals cannot make it (they come while another turn holds the lane, and are not counted toward it); a gate tells
+    #        a cause once, so five in a row with no launch between is a position refused again and again for new reasons or new mandates, whose
+    #        settled wakes keep it off the overdue list.
+    def not_started(self):
+        titles = {W.TITLE_OPERATIONS: W.ROLE_DEFAULT, W.TITLE_RESEARCH: W.ROLE_RESEARCH}
+        launched, running = {}, set()
+        for r in self.app.execute("SELECT role, MAX(started_at) AS started, MAX(ended_at) AS ended, SUM(CASE WHEN state = ? THEN 1 ELSE 0 END) AS open "
+                                  "FROM ai_attempt GROUP BY role", (W.ATTEMPT_LAUNCHED,)):
+            pos = position_of(r["role"])
+            for at in (parse_ts(r["started"]), parse_ts(r["ended"])):
+                if at is not None and (launched.get(pos) is None or at > launched[pos]):
+                    launched[pos] = at
+            if r["open"]:
+                running.add(pos)
+        positions, causes, lane = {}, {}, 0
+        for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
+                                  (W.LOG_MISSION, W.LOG_TURN_REFUSED, self.since_s)):
+            line = turn_context(r["metadata"]).get(W.LOG_WHY)
+            line = line if isinstance(line, str) else ""
+            title, words = line.split(": ", 1) if ": " in line else ("?", line)
+            pos = titles.get(title, title)
+            at_lane = words.endswith(W.LANE_NOT_STARTED)
+            lane += at_lane
+            p = positions.setdefault(pos, {"position": pos, "count": 0, "lane": 0, "gate": 0, "gate_since_launch": 0, "last_at": None, "last_words": None,
+                                           "last_launch_at": stored(launched[pos]) if pos in launched else None, "running": pos in running})
+            p["count"] += 1
+            p["lane"] += at_lane
+            if not at_lane:
+                p["gate"] += 1
+                if pos not in launched or (parse_ts(r["at"]) or self.now) > launched[pos]:
+                    p["gate_since_launch"] += 1
+            p["last_at"], p["last_words"] = r["at"], short(words)
+            c = causes.setdefault(shape(words), {"shape": short(shape(words)), "count": 0, "positions": set()})
+            c["count"] += 1
+            c["positions"].add(pos)
+        for c in causes.values():
+            c["positions"] = sorted(c["positions"])[:4]
+        rows = sorted(positions.values(), key=lambda p: (-p["count"], p["position"]))
+        return {"total": sum(p["count"] for p in rows), "lane": lane, "gate": sum(p["gate"] for p in rows), "positions": rows,
+                "causes": sorted(causes.values(), key=lambda c: (-c["count"], c["shape"])),
+                "stuck": [p["position"] for p in rows if p["gate_since_launch"] >= REPEATED_REFUSAL and not p["running"]]}
 
     def wakes(self):
         pending = {}
@@ -1061,7 +1162,8 @@ class Digest:
 SECTIONS = (("app", "app_state"), ("positions", "positions"), ("turns", "turns"), ("org_events", "org_events"), ("arrows", "arrows"),
             ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("app_errors", "app_errors"),
             ("pace", "pace"),
-            ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("cell_proof", "cell_proof"), ("tape_health", "tape_health"))
+            ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("not_started", "not_started"), ("cell_proof", "cell_proof"),
+            ("tape_health", "tape_health"))
 
 
 def build(app_path, tape_path, state, now, since, opts):
@@ -1111,6 +1213,11 @@ def gib(n):
     return "?" if n is None else f"{n / GIB:.1f} GiB"
 
 
+def wordings(g):
+    """A group folded from several wordings says so: its words are then the shape, '<id>' and '<n>' standing where the wordings differed."""
+    return f" ({g['wordings']} wordings, one shape)" if g.get("wordings", 1) > 1 else ""
+
+
 def attention(d):
     flags = []
     pause = d.get("app", {}).get("disk_pause")
@@ -1130,7 +1237,7 @@ def attention(d):
         flags.append(f"AI day-total PASSED: {dt_['plan_counted']} of {money(plan_total)}")
     for g in d.get("refusals", {}).get("groups", []):
         if g["count"] >= REPEATED_REFUSAL:
-            flags.append(f"refused {g['count']}x: {g['what']}: {short(g['words'], 90)}")
+            flags.append(f"refused {g['count']}x: {g['what']}: {short(g['words'], 90)}" + wordings(g))
     dep = d.get("deployments", {})
     for g in dep.get("by_mode_state", []):
         if g["mode"] != W.MODE_PAPER and g["state"] != W.DEPLOYMENT_ENDED:
@@ -1161,6 +1268,11 @@ def attention(d):
         kinds = ae["groups"]
         flags.append(f"{ae['total']} app error(s) logged since T0: " + ", ".join(f"{g['component']}/{g['event']} x{g['count']}" for g in kinds[:3])
                      + (f" (+{len(kinds) - 3} more kinds)" if len(kinds) > 3 else ""))
+    ns = d.get("not_started", {})
+    for p in ns.get("positions", []):
+        if p["position"] in (ns.get("stuck") or []):
+            flags.append(f"{p['position']}: {p['gate_since_launch']} turns refused to start since its last launch ({stamp(p['last_launch_at']) if p['last_launch_at'] else 'none on record'}), "
+                         f"none launched between; the last {stamp(p['last_at'])}: {short(p['last_words'], 90)}")
     od = d.get("wakes", {}).get("overdue") or []
     if od:
         # EVERY OVERDUE POSITION BY NAME, and how many: the wakes below may show only one at the tightest line cap. The reasons of the first two.
@@ -1292,7 +1404,7 @@ def render(d, cap):
     s = d["refusals"]
     if not unread("refusals", s):
         L.append(f"refusals since T0: {s['total']} in {len(s['groups'])} group(s)")
-        add_list(s["groups"], cap["refusals"], lambda g: f"  {g['count']:>4}x [{g['source']}] {g['what']}: {g['words']}")
+        add_list(s["groups"], cap["refusals"], lambda g: f"  {g['count']:>4}x [{g['source']}] {g['what']}: {g['words']}" + wordings(g))
 
     s = d["errors"]
     if not unread("ai errors", s):
@@ -1358,6 +1470,16 @@ def render(d, cap):
         taken = ", ".join(f"{k} {v}" for k, v in sorted(s["consumed_since_by_disposition"].items())) or "none"
         L.append(f"  wakes taken since T0: {taken}; on failed turns {s['failed_turn_wakes_since']}, on lost turns {s['lost_turn_wakes_since']}, raised again {s['raised_again_after_lost_since']}")
         add_list(s["blocked_now"], cap["blocked"], lambda b: f"  blocked x{b['count']} ({','.join(b['roles'])}): {b['words']}")
+
+    s = d["not_started"]
+    if not unread("turns not started", s):
+        # NOT REFUSALS: the lane's are the loop retrying at its next look; a gate's name a cause. One line, and the commonest cause's shape.
+        L.append(f"turns not started since T0: {s['total']} ({s['lane']} at the lane: the loop retries them; {s['gate']} by a gate)"
+                 + ("" if not s["positions"] else "; " + ", ".join(f"{p['position']} {p['count']}" for p in s["positions"][:4])
+                    + (f" (+{len(s['positions']) - 4} more)" if len(s["positions"]) > 4 else "")))
+        if s["causes"]:
+            c = s["causes"][0]
+            L.append(f"  most often x{c['count']} ({','.join(c['positions'])}): {short(c['shape'], 100)}")
 
     s = d["cell_proof"]
     if not unread("cell proof", s):
