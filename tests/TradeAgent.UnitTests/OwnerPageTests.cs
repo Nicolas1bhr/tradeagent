@@ -46,8 +46,9 @@ public class OwnerPageTests
     public Task The_owners_page_holds_exactly_the_owners_presses() => OnThePage((page, host) =>
     {
         var presses = Presses(page);
-        // THE SECTIONS' HEADERS (U-ui-glance): seven, each only showing or hiding the controls under it.
-        Assert.Equal(7, page.Root.GetLogicalDescendants().OfType<Button>().Count(b => Ui.IsFold(b, out _)));
+        // THE SECTIONS' HEADERS (U-ui-glance): eight since U-windows-awake added "When you sign in to Windows" (shown on Windows only), each only
+        // showing or hiding the controls under it.
+        Assert.Equal(8, page.Root.GetLogicalDescendants().OfType<Button>().Count(b => Ui.IsFold(b, out _)));
         var card = (PerceptionCard)typeof(OwnerPage).GetField("_perception", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
         var choices = card.Choices.Select(b => (string)b.Content!).ToList();
 
@@ -71,6 +72,9 @@ public class OwnerPageTests
             "Use my numbers", "Clear my numbers", Labels.SetHoldout, Labels.SetHoldoutFixture,
             // UPDATES (item 3).
             "Check for updates", "What's new", "Install update", "Turn off automatic checks",
+            // OPENING WHEN HE SIGNS IN TO WINDOWS (U-windows-awake item 2): his, two presses on and one off, and the press to Windows' own
+            // startup list, where only he switches an entry back on. Grants nothing and moves no money.
+            AppHost.StartAtSignInLabel, AppHost.OpenStartupApps,
             // THE BOARD'S COMPOSITION AND BUDGET (U-org-surface-b item 5; R24 § 4.3, CHANGE-001): his, each two presses — the board only
             // proposes them. Three presses: the share, founding a seat, retiring the seat chosen in its list.
             Labels.SetBoardBudgetSharePress, Labels.FoundBoardSeatPress, Labels.RetireBoardSeatPress

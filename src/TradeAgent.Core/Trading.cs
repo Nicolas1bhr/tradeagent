@@ -376,6 +376,14 @@ public sealed class TradeAgentSettings
     public bool ResumeAiOnStart { get; set; } = true;
 
     /// <summary>
+    /// WHETHER TRADEAGENT KEEPS THIS PC AWAKE WHILE THE AI WORKS ON ITS OWN (<c>U-windows-awake</c>). On by default, because an
+    /// organisation on a laptop that idles to sleep after a few minutes is not running; one press each way on the Dashboard, because it
+    /// moves no money and grants nothing. It changes no setting of Windows: the app holds a power request only while the AI works on its
+    /// own, and gives it back when the AI is paused or the app closes. Read only on Windows.
+    /// </summary>
+    public bool KeepAwakeWhileAiWorks { get; set; } = true;
+
+    /// <summary>
     /// WHY THE FREE-SPACE GUARD PAUSED THE AI, or null when it has not. Written in the same write as <see cref="AiWorksOnItsOwn"/> going false, so
     /// a restart stays paused and still says why; cleared only by the owner's press, because the guard never resumes anything. It grants nothing.
     /// </summary>

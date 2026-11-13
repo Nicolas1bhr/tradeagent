@@ -316,6 +316,10 @@ public static partial class Labels
     public const string OwnerGroupEvidenceSummary =
         "What a turn is priced at, what trading costs are assumed, the held-back data and what a research campaign may spend.";
     public const string OwnerGroupUpdatesSummary = "Updating TradeAgent itself.";
+
+    /// <summary>The owner's page's group for starting with Windows (<c>U-windows-awake</c>), shown on Windows only.</summary>
+    public const string OwnerGroupSignIn = "When you sign in to Windows";
+    public const string OwnerGroupSignInSummary = "Whether Windows opens TradeAgent when you sign in, so a restart does not leave the AI stopped.";
     public const string OwnerGroupExplainedSummary = "What the platform, the account and each limit on this page change.";
 
     /// <summary>A section's header press, closed and open. Closing a section disarms every half-pressed button in it.</summary>

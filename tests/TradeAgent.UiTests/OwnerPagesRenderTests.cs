@@ -273,6 +273,49 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         AssertFits(frames, width, height);
     }
 
+    /// <summary>A Windows that takes every power request and keeps one Run value, for the pages' Windows-only lines.</summary>
+    sealed class WindowsOnPaper : IKeepAwake, ISignInStart
+    {
+        public string? Value;
+        public bool Supported => true;
+        public bool Hold(string reason) => true;
+        public void Release() { }
+        public string? Command() => Value;
+        public bool TurnedOffInWindows() => false;
+        public void Register(string command) => Value = command;
+        public void Remove() => Value = null;
+    }
+
+    /// <summary>
+    /// A LAPTOP THAT RUNS UNATTENDED, ON THE PAGES (<c>U-windows-awake</c>): with the AI working on its own on a Windows, the Dashboard says the
+    /// PC is kept awake with what still sleeps it, and the owner's page carries the sign-in section; every press of both, armed, fits.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Sizes))]
+    public async Task The_windows_lines_for_an_unattended_laptop_render_and_fit_with_their_presses_armed(int width, int height)
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"awake-{Guid.NewGuid():n}.db"));
+        AppHost? held = null;
+        var frames = RenderAll(db, "awake", width, height, host =>
+        {
+            held = host;
+            var windows = new WindowsOnPaper();
+            host.KeepAwake = windows;
+            host.SignInStart = windows;
+            host.ThisProgram = () => Path.Combine(UiTestHome.Home, "TradeAgent.exe");
+            Assert.Null(host.LetTheAiWorkOnItsOwn());
+        }, armed: true);
+        try
+        {
+            var byPage = frames.ToDictionary(f => f.Page);
+            Assert.Contains(AppHost.AwakeWords(AwakeReading.Holding), byPage["dashboard"].Texts);
+            Assert.Contains(AppHost.LetItSleep, byPage["dashboard"].Texts);
+            Assert.Contains(Labels.OwnerGroupSignInSummary, byPage["owner"].Texts);
+            AssertFits(frames, width, height);
+        }
+        finally { if (held is not null) await held.Mission.PauseAsync(); }
+    }
+
     [Theory]
     [MemberData(nameof(Sizes))]
     public void Every_owner_page_renders_and_fits_its_box_over_an_empty_home(int width, int height)

@@ -28,7 +28,7 @@ public sealed record BridgeReinstall(bool Ok, string Sentence);
 /// Composition root. Owns every long-lived object exactly once, so the window is only a view over
 /// state rather than a place where state accidentally lives.
 /// </summary>
-public sealed class AppHost : IAsyncDisposable
+public sealed partial class AppHost : IAsyncDisposable
 {
     SingleInstanceLock? _lock;
     Database? _db;
@@ -1776,6 +1776,9 @@ public sealed class AppHost : IAsyncDisposable
         host.Connector = connector;
         host.Gateway = new TradingGateway(db, connector, host.Health);
         host.ReadDisk = static () => new DiskSpace(1L << 42, 1L << 43);
+        // A TEST'S HOST ASKS WINDOWS FOR NOTHING and reads no Run value of the account it runs under: a test stands its own double in.
+        host.KeepAwake = KeepAwakes.None;
+        host.SignInStart = SignInStarts.None;
         host.ComposeTheAi(db);
         return host;
     }
@@ -2365,6 +2368,10 @@ public sealed class AppHost : IAsyncDisposable
                 // a row and an activity line.
                 if (pass % (12 * 60 * 6) == 0) _ = CheckInstrumentsAsync(ct);
 
+                // THE PC KEPT AWAKE EXACTLY WHILE THE AI WORKS ON ITS OWN (U-windows-awake): every pass, so a loop that stopped by any road
+                // gives the request back within five seconds.
+                AwakePass();
+
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) { return; }
@@ -2759,6 +2766,7 @@ public sealed class AppHost : IAsyncDisposable
             Mission.Start();
         }
         Gateway.Log.Activity("The AI was set to work on its own");
+        AwakePass();
 
         // THE PRESS IS ITSELF A REASON TO LOOK. Without this the owner presses the button and
         // nothing happens until the next scheduled review — half an hour of a card reading
@@ -2815,7 +2823,11 @@ public sealed class AppHost : IAsyncDisposable
                 if (because is not null) s.DiskPause = because;
             });
         }
-        finally { await Mission.PauseAsync(); }
+        finally
+        {
+            await Mission.PauseAsync();
+            AwakePass();
+        }
         Gateway.Log.Activity(line, because is null ? "info" : "warn");
         Changed?.Invoke();
     }
@@ -2998,6 +3010,7 @@ public sealed class AppHost : IAsyncDisposable
                 Gateway.Update(s => s.AiWorksOnItsOwn = false);
                 break;
         }
+        AwakePass();
     }
 
     /// <summary>
@@ -3661,6 +3674,9 @@ public sealed class AppHost : IAsyncDisposable
         // the way out raised (TradeAgentApp), and a second pass over disposed objects would throw.
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
+        // THE PC GIVEN BACK ITS SLEEP FIRST (U-windows-awake): Stopped now reads true, so this pass releases, and a background pass that
+        // read the app still open finished under the same gate before it.
+        AwakePass();
         await StopTheAiForQuitAsync();
         if (_loop is not null)
         {
