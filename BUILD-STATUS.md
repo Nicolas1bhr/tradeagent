@@ -1,5 +1,14 @@
 # BUILD-STATUS
 
+**Current state (main `aa126ada`, 2026-11-13).** The organisation's first 72-hour unattended run started on the owner's Linux
+server at T0 2026-11-13T01:18:30Z (the second "Wake the chief once") and is due to end 2026-11-16T01:18:30Z: paper only, on
+the run's kit (branch `run/m-org1-2` = `5ca22a31`) plus HOTFIX-1 (installed 2026-11-13T11:25:52Z). Its evidence is the fleet's
+`records/M-org1-72h.md` until an entry here quotes it. NOT VERIFIED: verdict → paper → fills on a real seat; 72 hours
+unattended; a real model on a head or executor seat; anything on Windows 11 beyond the cell proof rows. Real money is closed in
+code: no policy this build writes or reads selects a real-money mode (`BoardPolicy`). Landing entries are at the END of this
+file, newest last. The milestone below is the ATAS walk of 2026-08-31, kept as the record; the app's per-order Approve press it used has
+since been removed.
+
 **Milestone: `LIVE_CONFIRM` is walked end to end through ATAS.** An AI session proposed an order, the
 gateway parked it, a human approved it in the app, and it reached ATAS and came back with a broker
 order id — then was cancelled and the book verified clean. Detail in the 2026-08-31 Windows section.
@@ -43,11 +52,14 @@ agent-facing pipe demanded an ACL and a token. Both halves now enforce — and t
 same-user adversary is written down rather than claimed away. Detail in the 2026-08-29 section.
 
 The product's two defining promises — *no terminal, ever* and *it installs what it needs itself* —
-remain verified by running them on real Windows 11.
+were verified by running them on real Windows 11 on 2026-08-26/27 (the 0.1 builds). NOT VERIFIED since:
+the 0.2.0 installer on Windows 11 (no 0.2.0 release has been cut), and either promise on the Linux host, where the fleet
+installed the kit.
 
-**Built and verified on:** macOS 26 / arm64 locally, `windows-latest` / `ubuntu-latest` /
-`macos-latest` in CI (.NET 10), and a real Windows 11 Pro 26200 machine.
-**Target platform:** Windows 11 x64.
+**Built and verified on:** macOS 26 / arm64 locally; `windows-latest` (Windows Server 2025, build 26100,
+as admin) / `ubuntu-latest` / `macos-latest` in CI (.NET 10); a real Windows 11 Pro 26200 machine (the
+ATAS box); the owner's Linux server (the linux-x64 kit).
+**Target platforms:** Windows 11 x64 (MVP-W, the product) and a Linux x64 host (MVP-L, the first proof).
 **Written with:** Claude Opus 5 (Anthropic), via Claude Code.
 
 The rule this file is written under: every line below is either **verified by running something,
