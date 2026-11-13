@@ -11641,6 +11641,21 @@ public sealed partial class TradingGateway : IAsyncDisposable
         IReadOnlyList<ExecutionRequest> lost, string confirmKey, string events, string accountId, CancellationToken ct)
     {
         var verdicts = new List<LossFlattenVerdict>();
+
+        // A LOST CLOSE SENT TO ANOTHER PLATFORM IS NEVER DECIDED FROM THIS ONE (U-windows-cards-2): neither his answer under this
+        // platform's veto, nor this platform's history, nor this platform's book says anything about an order and a position on
+        // another — an account id is unique only within a platform. Undecided, so nothing is written, settled or sent: it waits for
+        // TradeAgent to be on that platform again. The breach and the exit are kept to their own platform already, so today no
+        // generation's leg is another platform's; this holds the confirm to that should one ever be.
+        if (lost.FirstOrDefault(l => !string.Equals(l.ConnectorId, Connector.Id, StringComparison.Ordinal)) is { } elsewhere)
+        {
+            var undecidedElsewhere = $"it was sent to {elsewhere.ConnectorId}, and TradeAgent is connected to {Connector.Id}, whose "
+                                     + "order history and account say nothing about it";
+            _confirmWaits[confirmKey] = $"the {elsewhere.Instrument} close — {undecidedElsewhere}";
+            Note(confirmKey, $"{events}_undecided", "info", $"{elsewhere.RequestId} ({elsewhere.Instrument}): {undecidedElsewhere}");
+            return null;
+        }
+
         foreach (var leg in lost)
         {
             // HIS ANSWER OR THE PLATFORM'S: a lost close the owner has settled on the Dashboard is decided by
@@ -11811,22 +11826,35 @@ public sealed partial class TradingGateway : IAsyncDisposable
         CancellationToken ct)
     {
         if (!Connector.Capabilities.ReconciliationProvable) return (null, null);
+        return await TheLiveOrderVetoAsync(row, said, YourPlatformsHistory,
+            (since, c) => Connector.GetOrdersAsync(row.AccountId, true, since, c), ct);
+    }
 
+    /// <summary>The words for the connected platform's history, the one every veto asked before <c>U-windows-cards-2</c>.</summary>
+    const string YourPlatformsHistory = "your platform's order history";
+
+    /// <summary>
+    /// THE LIVE-ORDER VETO OVER ONE HISTORY (<c>U-windows-cards-2</c>): <see cref="ThePlatformsLiveOrderVetoAsync"/>'s read and rule, over
+    /// <paramref name="read"/> — the connected platform's, or the row's own platform's where it is another and the host can read it
+    /// (<see cref="GatewayOptions.HistoryElsewhere"/>) — and named in every refusal by <paramref name="history"/>.
+    /// </summary>
+    async Task<(OrderInfo? Listed, string? Outranked)> TheLiveOrderVetoAsync(ExecutionRequest row, string said, string history,
+        Func<DateTimeOffset, CancellationToken, Task<IReadOnlyList<OrderInfo>>> read, CancellationToken ct)
+    {
         OrderInfo? match;
         try
         {
-            match = (await Connector.GetOrdersAsync(row.AccountId, true, row.CreatedAt - TimeSpan.FromMinutes(5), ct))
-                .FirstOrDefault(o => o.ClientOrderId == row.ClientOrderId);
+            match = (await read(row.CreatedAt - TimeSpan.FromMinutes(5), ct)).FirstOrDefault(o => o.ClientOrderId == row.ClientOrderId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (null, $"{said}, and your platform's order history could not be read to check that the "
+            return (null, $"{said}, and {history} could not be read to check that the "
                           + $"close is not still live ({ex.Message})");
         }
 
         // THE VETO: a live close decides nothing, whatever he said.
         if (match is not null && !DecidesALostClose(match.State))
-            return (match, $"{said}, but your platform's order history holds it as {match.State}: a close that "
+            return (match, $"{said}, but {history} holds it as {match.State}: a close that "
                            + "is still live can still fill, and that outranks your answer");
 
         return (match, null);
@@ -14272,59 +14300,90 @@ public sealed partial class TradingGateway : IAsyncDisposable
         if (asked is not null && IsPressRecord(asked.RequestId) && AnsweredAndUnfinished(asked.State) && outcome != asked.State
             && !string.Equals(asked.ConnectorId, Connector.Id, StringComparison.Ordinal))
         {
-            // SENT TO ANOTHER PLATFORM (U-windows-cards): the connected platform's history is no evidence about it — an account id is
-            // unique only within a platform, and the paper venue standing in for ATAS lists its own book under any — so nothing is
-            // asked of it, and his answer stands alone. The row says which was connected. For an ATAS row that is what ATAS itself
-            // gives (it proves no history). For a row of a platform that could prove its own — paper's, answered while ATAS is
-            // connected — its history goes unasked here exactly as it did before this rule, when the connected ATAS's veto asked
-            // nothing (opus review; carded, not changed: refusing would hold that row until the owner switched platforms).
-            note = $"{note} (it was sent to {asked.ConnectorId}; TradeAgent was connected to {Connector.Id}, whose order history says "
-                   + "nothing about it, so it was not asked)";
+            if (_opt.HistoryElsewhere is { } elsewhere && elsewhere.Reads(asked.ConnectorId))
+            {
+                // SENT TO ANOTHER PLATFORM WHOSE OWN HISTORY THE HOST CAN READ (U-windows-cards-2): paper's, answered while ATAS or the
+                // simulator is connected. That platform's history is the evidence about it, and it is asked exactly as the connected
+                // one's would be — its veto, then its final listing — never the connected platform's, which says nothing about it.
+                var history = $"the order history of {asked.ConnectorId}, where it was sent,";
+                var said = Said(asked, outcome);
+                var veto = await TheLiveOrderVetoAsync(asked, said, history,
+                    (since, c) => elsewhere.GetOrdersAsync(asked.ConnectorId, asked.AccountId, since, c), ct);
+                note = TheHistoryJudgesTheAnswer(asked, outcome, said, note, veto, history)
+                       + $" (it was sent to {asked.ConnectorId} and answered while TradeAgent was connected to {Connector.Id}; "
+                       + $"{asked.ConnectorId}'s own order history was asked)";
+            }
+            else
+            {
+                // SENT TO ANOTHER PLATFORM (U-windows-cards): the connected platform's history is no evidence about it — an account id is
+                // unique only within a platform, and the paper venue standing in for ATAS lists its own book under any — so nothing is
+                // asked of it, and his answer stands alone. The row says which was connected. For an ATAS row that is what ATAS itself
+                // gives (it proves no history without its live bridge). A platform the host can read without connecting it is the
+                // branch above (U-windows-cards-2).
+                note = $"{note} (it was sent to {asked.ConnectorId}; TradeAgent was connected to {Connector.Id}, whose order history says "
+                       + "nothing about it, so it was not asked)";
+            }
         }
         else if (asked is { } row && IsPressRecord(row.RequestId) && AnsweredAndUnfinished(row.State) && outcome != row.State)
         {
-            var said = $"You answered that {Described(row)} " + outcome switch
-            {
-                ExecutionState.FILLED => "was filled",
-                ExecutionState.CANCELLED => "is no longer working at your platform",
-                _ => $"is {outcome}"
-            };
-            var (listed, outranked) = await ThePlatformsLiveOrderVetoAsync(row, said, ct);
-            if (outranked is not null)
-            {
-                _log.TryEngineering("Gateway", "card_answer_outranked", "warn", requestId: row.RequestId,
-                    metadataJson: Json.Write(new
-                    {
-                        state = row.State.ToString(), answered = outcome.ToString(), listed = listed?.State.ToString()
-                    }));
-                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                    $"{outranked}. Nothing was recorded: answer it again once your platform shows it filled or cancelled.");
-            }
-
-            // A FINAL LISTING HIS ANSWER CONTRADICTS IS REFUSED, NEVER WRITTEN (U-press-row-answer item 3). Past the veto a
-            // listing is final, and it settles whether the close filled: written over it, his answer would be a record
-            // false about what ran, made with the proof of that in hand. The row keeps its state, its flag and its words.
-            if (listed is not null && TheAnswerAFinalListingGives(outcome, listed.State) is { } matching)
-            {
-                _log.TryEngineering("Gateway", "card_answer_contradicted", "warn", requestId: row.RequestId,
-                    metadataJson: Json.Write(new
-                    {
-                        state = row.State.ToString(), answered = outcome.ToString(), listed = listed.State.ToString(),
-                        matching
-                    }));
-                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                    $"{said}, but your platform's order history holds it as {listed.State}: "
-                    + (listed.State == ExecutionState.FILLED ? "it filled there" : "it ended there without filling in full")
-                    + $", so the answer that matches it is \"{matching}\". Nothing was recorded.");
-            }
-
-            if (listed is not null && listed.State != outcome)
-                note = $"{note} (your platform's order history held it as {listed.State} when you answered)";
+            var said = Said(row, outcome);
+            note = TheHistoryJudgesTheAnswer(row, outcome, said, note, await ThePlatformsLiveOrderVetoAsync(row, said, ct),
+                YourPlatformsHistory);
         }
 
         var answered = ForceResolve(requestId, outcome, note);
         await RefreshHealthAsync(ct);
         return answered;
+    }
+
+    /// <summary>The card's words for what the owner answered about <paramref name="row"/>; every refusal begins with them.</summary>
+    string Said(ExecutionRequest row, ExecutionState outcome) => $"You answered that {Described(row)} " + outcome switch
+    {
+        ExecutionState.FILLED => "was filled",
+        ExecutionState.CANCELLED => "is no longer working at your platform",
+        _ => $"is {outcome}"
+    };
+
+    /// <summary>
+    /// ONE HISTORY'S JUDGEMENT OF THE CARD'S ANSWER (<c>U-press-row-answer</c>; one helper since <c>U-windows-cards-2</c>): the veto's
+    /// refusal thrown, a final listing his answer contradicts thrown, and otherwise his note with what the listing held beside it.
+    /// <paramref name="history"/> names whose history it is in every word. Nothing is written here.
+    /// </summary>
+    string TheHistoryJudgesTheAnswer(ExecutionRequest row, ExecutionState outcome, string said, string note,
+        (OrderInfo? Listed, string? Outranked) veto, string history)
+    {
+        var (listed, outranked) = veto;
+        if (outranked is not null)
+        {
+            _log.TryEngineering("Gateway", "card_answer_outranked", "warn", requestId: row.RequestId,
+                metadataJson: Json.Write(new
+                {
+                    state = row.State.ToString(), answered = outcome.ToString(), listed = listed?.State.ToString(), platform = row.ConnectorId
+                }));
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"{outranked}. Nothing was recorded: answer it again once your platform shows it filled or cancelled.");
+        }
+
+        // A FINAL LISTING HIS ANSWER CONTRADICTS IS REFUSED, NEVER WRITTEN (U-press-row-answer item 3). Past the veto a
+        // listing is final, and it settles whether the close filled: written over it, his answer would be a record
+        // false about what ran, made with the proof of that in hand. The row keeps its state, its flag and its words.
+        if (listed is not null && TheAnswerAFinalListingGives(outcome, listed.State) is { } matching)
+        {
+            _log.TryEngineering("Gateway", "card_answer_contradicted", "warn", requestId: row.RequestId,
+                metadataJson: Json.Write(new
+                {
+                    state = row.State.ToString(), answered = outcome.ToString(), listed = listed.State.ToString(),
+                    matching, platform = row.ConnectorId
+                }));
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"{said}, but {history} holds it as {listed.State}: "
+                + (listed.State == ExecutionState.FILLED ? "it filled there" : "it ended there without filling in full")
+                + $", so the answer that matches it is \"{matching}\". Nothing was recorded.");
+        }
+
+        return listed is not null && listed.State != outcome
+            ? $"{note} ({history} held it as {listed.State} when you answered)"
+            : note;
     }
 
     /// <summary>

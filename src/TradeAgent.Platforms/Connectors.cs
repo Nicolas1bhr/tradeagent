@@ -116,6 +116,26 @@ public static class Connectors
     };
 
     /// <summary>
+    /// WHAT THE HOST CAN READ OF A PLATFORM IT IS NOT CONNECTED TO (<c>U-windows-cards-2</c>): TradeAgent's own paper venue, whose book is
+    /// a file of the app's, read without connecting it (<see cref="PaperBook.ReadOrders"/>). ATAS answers only through its live bridge
+    /// and the simulator keeps its book in memory, so neither is read.
+    /// </summary>
+    public static IOrderHistoryElsewhere HistoryElsewhere(string? paperBookFile = null) => new PaperHistory(paperBookFile);
+
+    sealed class PaperHistory(string? bookFile) : IOrderHistoryElsewhere
+    {
+        // THE BOOK THE APP'S OWN PAPER CONNECTOR KEEPS: Create builds it with no account of its own, so its book is TheAccount's, and it
+        // lists that one book under whatever account it is asked about — so this does too, exactly as the connected venue would answer.
+        public bool Reads(string connectorId) => connectorId == Paper;
+
+        public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string connectorId, string accountId, DateTimeOffset since,
+            CancellationToken ct = default) =>
+            connectorId == Paper
+                ? Task.FromResult(PaperBook.ReadOrders(bookFile ?? PaperConnector.DefaultBookFile(PaperConnector.TheAccount), since))
+                : throw new InvalidOperationException($"TradeAgent cannot read the order history of {connectorId} without connecting to it");
+    }
+
+    /// <summary>
     /// THE PAPER CONNECTOR'S PRICES: the host's own source, else the FORWARD-BAR LEDGER, else
     /// nothing at all.
     ///

@@ -34,6 +34,13 @@ public sealed class GatewayOptions
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
     /// <summary>
+    /// THE HISTORY OF A PLATFORM OTHER THAN THE CONNECTED ONE (<c>U-windows-cards-2</c>), where the host can read it without connecting
+    /// it: the owner's card answer about a press close sent there is put under that platform's own live-order veto, never the
+    /// connected one's. Null, the default: no other platform is read, and his answer about such a close stands alone.
+    /// </summary>
+    public IOrderHistoryElsewhere? HistoryElsewhere { get; set; }
+
+    /// <summary>
     /// How long after a dispatch could last have been in flight we wait before "the broker has never
     /// heard of this order" is allowed to mean it never landed. Protects against reading a slow
     /// backend as an absent one.

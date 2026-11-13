@@ -203,6 +203,22 @@ public interface IConnectorStatusDetail
 /// a connector can prove, is the one report allowed to overrule the record, and it is what lets the
 /// gateway settle a failed mutation without pausing over an order the broker never saw.
 /// </summary>
+/// <summary>
+/// THE ORDER HISTORY OF A PLATFORM THAT IS NOT THE CONNECTED ONE, read without connecting it (<c>U-windows-cards-2</c>): what a host can
+/// answer about an order it sent to a platform it has since switched away from — TradeAgent's own paper venue, whose book is a file of
+/// the app's. A platform it cannot read that way (ATAS, which only a live bridge answers for) is one <see cref="Reads"/> says no to,
+/// and then nothing about that platform is asked. Rule 2 holds here as on a connector: a history that does not reach back to
+/// <c>since</c> throws rather than answering short.
+/// </summary>
+public interface IOrderHistoryElsewhere
+{
+    /// <summary>Whether this reads <paramref name="connectorId"/>'s history, and that history is provable (client ids and a full history).</summary>
+    bool Reads(string connectorId);
+
+    /// <summary>Every order <paramref name="connectorId"/> holds from <paramref name="since"/> on, final ones included. Throws where it cannot tell.</summary>
+    Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string connectorId, string accountId, DateTimeOffset since, CancellationToken ct = default);
+}
+
 public interface ITradingConnector : IAsyncDisposable
 {
     string Id { get; }

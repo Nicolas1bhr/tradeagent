@@ -85,6 +85,41 @@ public sealed class PaperBook : IDisposable
         StartingEquity = Dec(Meta("starting_equity"));
     }
 
+    /// <summary>
+    /// EVERY ORDER A BOOK HOLDS FROM <paramref name="since"/> ON, READ WITHOUT OPENING IT FOR WRITING (<c>U-windows-cards-2</c>): for a
+    /// host connected to another platform that asks what paper did with an order it sent here. Nothing is created, migrated, settled
+    /// or written — a working order stays working, as it does while no bar reaches the book. A file that does not exist is a book that
+    /// never held an order; one a newer build wrote is refused, as the constructor refuses it.
+    /// </summary>
+    public static IReadOnlyList<OrderInfo> ReadOrders(string file, DateTimeOffset since)
+    {
+        if (!System.IO.File.Exists(file)) return [];
+        using var book = new PaperBook(file);
+        return book.Orders(includeInactive: true, since);
+    }
+
+    /// <summary>The book opened read-only: no folder made, no table made, no meta written. <see cref="ReadOrders"/>'s.</summary>
+    PaperBook(string file)
+    {
+        File = file;
+        _conn = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = file,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
+        _conn.Open();
+        Exec("PRAGMA busy_timeout=5000;");
+        var found = Meta("schema");
+        if (found is null || int.Parse(found, CultureInfo.InvariantCulture) > Schema)
+            throw new InvalidOperationException(
+                $"the paper book at {file} " + (found is null ? "has no layout version" : $"was written by a newer TradeAgent (its layout is version {found}, "
+                + $"this build understands {Schema})") + ". Nothing has been read from it.");
+        AccountId = Meta("account") ?? "";
+        Currency = Meta("currency") ?? "";
+        StartingEquity = Meta("starting_equity") is { } e ? Dec(e) : 0m;
+    }
+
     void Migrate() => Exec("""
         CREATE TABLE IF NOT EXISTS paper_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 

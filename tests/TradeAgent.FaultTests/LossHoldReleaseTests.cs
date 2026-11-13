@@ -167,6 +167,41 @@ public class LossHoldReleaseTests(ITestOutputHelper log)
     static DateTimeOffset NoLongerOnItsWay(TradingGateway gw, ExecutionRequest lost) =>
         lost.DispatchedAt!.Value + gw.DispatchStrandedAfter + Grace;
 
+    // ---------------------------------------------------------------- (a2)
+
+    /// <summary>
+    /// (a2) A LOST CLOSE SENT TO ANOTHER PLATFORM IS NEVER DECIDED FROM THIS ONE (<c>U-windows-cards-2</c>; the U-windows-cards card 3):
+    /// the owner answers it "It was filled", and past every clock the confirm writes nothing — neither his answer under this platform's veto
+    /// nor this platform's book says anything about an order and a position on another — and it says what it waits for. No path today
+    /// sends a generation's leg to another platform (the breach is kept to its own), so the leg's platform is written here by hand.
+    ///
+    /// <para><b>RED on the base</b>: the confirm was written from his answer, judged by the connected platform's history and its book.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_lost_close_sent_to_another_platform_is_never_confirmed_from_this_one()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+
+        await gw.PlaceAsync(new AgentContext("a"), "elsewhere-open", TestEnv.Buy("ES"));
+        conn.Faults.DropAfterBrokerAccept = 1;
+        var lost = await BreachWithALostClose(gw, conn, clock);
+        using (var c = db.Cmd("UPDATE execution_request SET connector_id = 'atas' WHERE request_id = $r", ("$r", lost.RequestId)))
+            Assert.Equal(1, c.ExecuteNonQuery());
+        Assert.Equal("atas", gw.Requests.Get(lost.RequestId)!.ConnectorId);
+
+        AnswerEveryRecord(gw, lost.RequestId, ExecutionState.FILLED, "I checked in ATAS: the close filled");
+        clock.MoveTo(NoLongerOnItsWay(gw, lost) + TimeSpan.FromSeconds(1));
+        await Passes(gw, clock, 2);
+
+        log.WriteLine($"undecided             : {string.Join(" | ", Undecided(db))}");
+        Assert.Equal(0, Confirms(db));
+        Assert.Contains(Undecided(db), u => u.Contains("it was sent to atas", StringComparison.Ordinal)
+                                            && u.Contains($"connected to {conn.Id}", StringComparison.Ordinal));
+        Assert.Equal(1, conn.Closes);
+    }
+
     // ---------------------------------------------------------------- (a)
 
     /// <summary>

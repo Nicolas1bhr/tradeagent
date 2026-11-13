@@ -676,6 +676,13 @@ public sealed partial class AppHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE GATEWAY'S OPTIONS IN THE APP (<c>U-windows-cards-2</c>): the product defaults, with the history of a platform the app is not
+    /// connected to that it can read without connecting it — paper's own book — so the owner's answer about a press close sent there is
+    /// judged by that platform's history, never by the connected one's.
+    /// </summary>
+    static GatewayOptions GatewayOptionsHere() => new() { HistoryElsewhere = Platforms.Connectors.HistoryElsewhere() };
+
+    /// <summary>
     /// THE OWNER'S REPAIR OF A REFUSED POSITION'S FOLDER (<c>U-repair-position-home</c>): in-process only — no pipe op, verb or board act
     /// reaches it — and it moves no money and widens no limit. Refused in words while a launch of that position is open, because a folder is
     /// never moved from under a running seat; otherwise the folder is moved aside whole and rebuilt (<see cref="WorkspaceBuilder.RepairHome"/>)
@@ -1304,7 +1311,7 @@ public sealed partial class AppHost : IAsyncDisposable
             // Which backend to talk to is a persisted choice (AtasHome.PlatformAtStart, above); the simulator is the safe default.
             Connector = Platforms.Connectors.Create(chosen, ConnectorChoiceNow());
 
-            Gateway = new TradingGateway(_db, Connector, Health);
+            Gateway = new TradingGateway(_db, Connector, Health, GatewayOptionsHere());
             // THE ATAS ACCOUNT, HELD ASIDE ON THE PAPER STAND-IN AND HANDED BACK TO ATAS (U-atas-home-no-atas-build): before anything reads it.
             AtasHome.HoldTheAtasAccount(_db, Gateway, chosen);
             // THE COLLECTOR RAISES THE `data` WAKE ITSELF and this is what pokes the loop, the way
@@ -1898,7 +1905,7 @@ public sealed partial class AppHost : IAsyncDisposable
 
         Health.Set(Components.TradingConnection, HealthState.STARTING);
         Connector = Platforms.Connectors.Create(id, ConnectorChoiceNow());
-        Gateway = new TradingGateway(_db, Connector, Health);
+        Gateway = new TradingGateway(_db, Connector, Health, GatewayOptionsHere());
         Gateway.StateChanged += OnGatewayStateChanged;
         // A new gateway is a new object and the sink is on the object, exactly like the hook below.
         // Forgetting this line is how a fill on the new platform stops waking the AI.

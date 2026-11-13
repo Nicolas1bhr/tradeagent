@@ -48,7 +48,8 @@ ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoic
     PaperInstruments = () => (settingsOf?.Venues ?? new VenueStore(db)).Catalogue()
 });
 
-await using var gateway = new TradingGateway(db, connector, health);
+// AS THE APP'S (U-windows-cards-2): an owner's answer about a close sent to paper is judged by paper's own book when this host is on another platform.
+await using var gateway = new TradingGateway(db, connector, health, new GatewayOptions { HistoryElsewhere = TradeAgent.Platforms.Connectors.HistoryElsewhere() });
 settingsOf = gateway;
 var token = IpcToken.Ensure();
 await using var server = new GatewayPipeServer(gateway, token);
