@@ -56,10 +56,10 @@ public static class InvariantRegistry
     /// <summary>ORCHESTRATION § 5's seat types, in its column order, with the words the owner's Oversight page uses for each.</summary>
     public static readonly IReadOnlyList<(string SeatClass, string Title)> SeatTypes =
     [
-        (SeatClasses.Cli, "Legacy pair, CLI seat (unconfined)"),
+        (SeatClasses.Cli, "Command-line seat, which runs as you"),
         (SeatClasses.Broker, "Thinking seat, broker-only"),
         (SeatClasses.Harness, "Thinking seat, API harness"),
-        (SeatClasses.Cell, "Doing seat, confined cell")
+        (SeatClasses.Cell, "Doing seat, in a sealed workspace")
     ];
 
     /// <summary>The kind of computer this process runs on.</summary>

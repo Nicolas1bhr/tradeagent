@@ -97,7 +97,7 @@ public static class BoardSeatGate
             || assurance < CapabilityPolicy.Minimum(Capability.DecisionVerbs))
             return new(RefusalKind.Position,
                 $"board seat {id} is recorded on a '{recorded}' seat, which cannot carry the board's decision verbs (a board seat is "
-                + "broker-only, confined or the app's harness, never unconfined), so nothing is started for it.");
+                + "broker-only, in a sealed workspace or the app's harness, never one that runs as you outside a sealed workspace), so nothing is started for it.");
 
         var about = verifiedClass ?? declaredClass;
         if (about is null)

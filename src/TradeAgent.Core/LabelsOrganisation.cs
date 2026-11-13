@@ -120,7 +120,7 @@ public static partial class Labels
     public const string ChiefReplace = "Replace the chief";
     public const string ChiefReplaceConfirm = "Press again: end the chief, cancel its open mandates and appoint a new one on the chosen seat";
     public const string ChiefActivate = "Activate";
-    public const string ChiefActivateConfirm = "Press again: activate the chief — a real-model seat needs a recorded proven cell";
+    public const string ChiefActivateConfirm = "Press again: activate the chief — a real-model seat needs a proven sealed workspace for the AI";
     public const string ChiefRemove = "Remove the chief";
     public const string ChiefRemoveConfirm = "Press again: end the chief and cancel its open mandates; no one takes its place";
 
@@ -148,15 +148,15 @@ public static partial class Labels
     /// <summary>Offered: the cells run with no internet, and what one press and Windows' one prompt change.</summary>
     public const string CellWebOffered =
         "The AI's helpers on this computer work with no internet. One press lets them reach secure websites (port 443) and nothing else: " +
-        "Windows then asks \"Do you want to allow this app to make changes to your device?\" once — click Yes. TradeAgent then checks it on every cell.";
+        "Windows then asks \"Do you want to allow this app to make changes to your device?\" once — click Yes. TradeAgent then checks it in each of the AI's sealed workspaces.";
 
     public const string CellWebAsking = "Waiting for your answer on Windows' permission prompt…";
 
     public const string CellWebMeasuring =
-        "Permission given. TradeAgent is checking, cell by cell, that the AI's helpers reach secure websites and nothing else…";
+        "Permission given. TradeAgent is checking, workspace by workspace, that the AI's helpers reach secure websites and nothing else…";
 
     public const string CellWebProved =
-        "The AI's helpers reach secure websites (port 443) and nothing else — checked on all eight cells of this computer.";
+        "The AI's helpers reach secure websites (port 443) and nothing else — checked in all eight of the AI's sealed workspaces on this computer.";
 
     public const string CellWebDeclined =
         "You said No on Windows' prompt, so the AI's helpers keep working with no internet on this computer. Press again whenever you want to allow it.";
@@ -170,20 +170,20 @@ public static partial class Labels
         $"The AI's helpers still reach secure websites on an earlier check, and today's check did not confirm it: {why}. You can press again.";
 
     /// <summary>The rule was placed, and the check did not show it holding on every cell — the benchmark's own sentence.</summary>
-    public static string CellWebNotMeasured(string said) => $"the rule was set, but TradeAgent's check did not show it holding on every cell ({said})";
+    public static string CellWebNotMeasured(string said) => $"the rule was set, but TradeAgent's check did not show it holding in every sealed workspace ({said})";
 
-    public const string CellProofHeld = "A cell proof is recorded for this machine and this build.";
+    public const string CellProofHeld = "This computer and this build have a recorded proof that the AI's sealed workspace holds.";
 
     public const string CellProofNone =
-        "No cell proof is recorded for this machine and this build, so no seat can run in a confined cell here.";
+        "This computer and this build have no recorded proof that the AI's sealed workspace holds, so no seat can run in one here.";
 
     /// <summary>A position's seat boundary, in words — from the seat class the app recorded for its latest launch, never from a position's own word.</summary>
     public static string SeatAssuranceWords(SeatAssurance assurance) => assurance switch
     {
-        SeatAssurance.Unconfined => "unconfined: a command-line seat started as you, with a shell, so it can run anything you can",
+        SeatAssurance.Unconfined => "runs as you, outside a sealed workspace: a command-line seat started as you, with a shell, so it can run anything you can",
         SeatAssurance.Mediated => "mediated: a broker-only seat that reaches only what the app serves, though its process itself could reach more",
         SeatAssurance.Brokered => "brokered: the app's own harness, no outside process, every tool the app's own code",
-        SeatAssurance.Confined => "confined: started in a cell whose confinement was proved on this machine",
+        SeatAssurance.Confined => "sealed: started in a sealed workspace that was proved to hold on this computer",
         _ => "not a boundary this build knows"
     };
 

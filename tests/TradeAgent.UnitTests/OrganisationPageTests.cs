@@ -74,7 +74,7 @@ public class OrganisationPageTests
 
         var member = team.Positions.Single(p => p.Id == Member);
         Assert.Equal("Set to run on: nothing of its own, and where it runs is not resolved here.", member.Seat);
-        Assert.Contains("unconfined: a command-line seat started as you", member.Cell, StringComparison.Ordinal);
+        Assert.Contains("runs as you, outside a sealed workspace: a command-line seat started as you", member.Cell, StringComparison.Ordinal);
         Assert.Equal("Paid from: your ChatGPT plan's capacity.", member.Billing);
 
         var dormant = team.Positions.Single(p => p.Id == "pos-5ac0ffee0009");
@@ -212,7 +212,7 @@ public class OrganisationPageTests
         Assert.Same(root, page.Root);
         Assert.Same(team, page.CardOf(Team));
         Assert.Equal(before, Texts(team).Take(before.Count).ToList());   // the same text blocks, in the same places
-        Assert.Contains("unconfined", AllText(team), StringComparison.Ordinal);
+        Assert.Contains("runs as you, outside a sealed workspace", AllText(team), StringComparison.Ordinal);
         Assert.Contains("your ChatGPT plan's capacity", AllText(team), StringComparison.Ordinal);
         Assert.Contains("dormant", AllText(team), StringComparison.Ordinal);
         Assert.Contains("pos-5ac0ffee0009", AllText(team), StringComparison.Ordinal);

@@ -842,23 +842,76 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// THE PROTECTIONS REGISTER SITS IN A CLOSED "FOR REVIEWERS" FOLD UNDER A PLAIN SUMMARY (<c>U-owner-words-3</c> item 3, the orchestrator's
+    /// ruling): the Oversight page says, per protection, in a sentence of his words, what is protected and whether it holds on this computer
+    /// — read from the class the register shows, so the summary never says more than the record — and the register itself (ids, files, doc
+    /// sections, code paths, tests) is out of sight until he opens the fold. RED at base: the register stood open as the whole section, with
+    /// no summary and no fold.
+    /// </summary>
+    [Fact]
+    public void The_protections_register_sits_in_a_closed_reviewers_fold_under_a_plain_summary()
+    {
+        HeadlessUi.Run(() =>
+        {
+            var section = ProtectionsSection.Build(InvariantRegistry.All);
+            var fold = Assert.Single(section.GetLogicalDescendants().OfType<Button>(), b => Ui.IsFold(b, out _));
+            Assert.True(Ui.IsFold(fold, out var open) && !open, "the reviewers' fold is open by default");
+            Assert.Contains(fold.GetLogicalDescendants().OfType<TextBlock>(), t => t.Text == ProtectionsSection.ReviewersTitle.ToUpperInvariant());
+
+            var win = new Window { Width = 1280, Height = 800, Content = new ScrollViewer { Content = section } };
+            win.Show();
+            win.UpdateLayout();
+            var seen = section.GetSelfAndVisualDescendants().OfType<TextBlock>().Where(t => t.IsEffectivelyVisible).Select(t => t.Text ?? "").ToList();
+            foreach (var inv in InvariantRegistry.All)
+            {
+                Assert.True(ProtectionsSection.Plain.ContainsKey(inv.Id), $"{inv.Id} has no plain words");
+                Assert.Contains(ProtectionsSection.Plain[inv.Id], seen);
+                Assert.DoesNotContain(inv.Id, seen);          // the id, the file and the code path are behind the fold
+                Assert.DoesNotContain(inv.Statement, seen);
+            }
+            Assert.Contains(ProtectionsSection.Holds(InvariantRegistry.All[0], InvariantRegistry.ThisPlatform), seen);
+            var words = seen.SelectMany(t => OwnerWordShapes.Of(t).Select(shape => $"{shape} in \"{Cut(t)}\"")).ToList();
+            Assert.True(words.Count == 0, string.Join(" | ", words));
+
+            // OPENED, THE REGISTER IS THERE WHOLE.
+            Ui.SetFold(fold, true);
+            win.UpdateLayout();
+            var opened = section.GetSelfAndVisualDescendants().OfType<TextBlock>().Where(t => t.IsEffectivelyVisible).Select(t => t.Text ?? "").ToList();
+            foreach (var inv in InvariantRegistry.All) Assert.Contains(inv.Id, opened);
+            win.Close();
+        });
+
+        // WHETHER IT HOLDS, FROM THE SHOWN CLASS: every seat hard is "holds for every kind"; a claim the register shows advisory is "only asked".
+        var all = new Invariant("T-1", "s", "w", [], ["A.b"], [.. InvariantRegistry.SeatTypes.Select(t => new SeatClaim(t.SeatClass, EnforcementClass.HardApp, "b", ["A.c"]))]);
+        Assert.Equal("Holds for every kind of AI seat.", ProtectionsSection.Holds(all, ProofPlatform.Linux));
+        var mixed = all with { Seats = [new SeatClaim(SeatClasses.Harness, EnforcementClass.HardApp, "b", ["A.c"]), new SeatClaim(SeatClasses.Cli, EnforcementClass.Advisory, "b", []),
+                                        new SeatClaim(SeatClasses.Broker, EnforcementClass.Mediated, "b", ["A.c"]), new SeatClaim(SeatClasses.Cell, EnforcementClass.Gap, "b", [])] };
+        Assert.Equal("Holds for seats on TradeAgent's own worker; holds only through TradeAgent's own tools for seats without a shell; only asked of "
+                     + "command-line seats (they run as you); not yet closed for seats in a sealed workspace.",
+            ProtectionsSection.Holds(mixed, ProofPlatform.Linux));
+    }
+
+    /// <summary>
     /// THE APP'S OWN WORDS NAME NO FILE, NO DOC SECTION, NO COMMAND AND NO INTERNAL ID (<c>U-owner-words-2</c>; the real run's screens of
     /// 2026-11-13: the chief's card said "its next.json, or its own `trade org wake` request", and the AI's work line said "(ORCHESTRATION § 2.3)"
     /// with a position's id in the sentence). Every owner page, over an empty home and over the working organisation with its chief active and
     /// every two-press armed, is read for those shapes, and so are the activation gate's words for a held director. An id may stand as a label of
     /// its own beside a name (a text that is the id alone); it never stands inside a sentence. Exempt: the Settings page's kit card, which names
-    /// the files of the kit the owner writes himself, and the Oversight page's Protections register (see below). RED at the base: "Chief
+    /// the files of the kit the owner writes himself, and the Oversight page's Protections register inside its closed "For reviewers" fold (see
+    /// below). Since U-owner-words-3 it also reads the build's words for the AI's seats ("legacy pair", "unconfined", "cell") and the activation
+    /// gate's refusals in states no seed renders. RED at the base: "Chief
     /// (pos-…), dormant", "pos-…, dormant in unit team-…", and the gate's "'research' runs unconfined, and 'pos-…' … (ORCHESTRATION § 2.3)".
     /// </summary>
     [Fact]
     public void The_owner_pages_carry_no_file_name_section_mark_command_or_internal_id()
     {
         var hits = new List<string>();
-        // THE PROTECTIONS REGISTER ON THE OVERSIGHT PAGE IS EXEMPT, BY ITS OWN TEXTS: it lists, by design, where each protection is written and
-        // the code and tests that keep it (U-invariant-registry) — a record for a reviewer, carded for the orchestrator, not the app's words to him.
+        // THE PROTECTIONS REGISTER INSIDE THE OVERSIGHT PAGE'S "FOR REVIEWERS" FOLD IS EXEMPT, BY ITS OWN TEXTS (U-owner-words-3 item 3, the
+        // orchestrator's ruling): it lists, by design, where each protection is written and the code and tests that keep it — a record for a
+        // reviewer, closed by default. The plain summary above the fold, and everything else on the page, is read like any other words.
         HashSet<string> register = [];
-        HeadlessUi.Run(() => register = [.. ProtectionsSection.Build(InvariantRegistry.All).GetLogicalDescendants().OfType<TextBlock>()
-            .Select(t => t.Text ?? "").Where(t => t.Length > 0)]);
+        HeadlessUi.Run(() => register = [.. ProtectionsSection.Register(InvariantRegistry.All, InvariantRegistry.ThisPlatform).GetLogicalDescendants()
+            .OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)]);
         Assert.NotEmpty(register);
         void Read(IEnumerable<Frame> frames, string home)
         {
@@ -897,6 +950,29 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
             Assert.NotNull(held);
             output.WriteLine(held.Words);
             hits.AddRange(OwnerWordShapes.Of(held.Words).Select(shape => $"gate/held: {shape} in \"{Cut(held.Words)}\""));
+
+            // AND THE GATE'S OTHER REFUSALS (U-owner-words-3 item 2), each a state no seed renders and each shown on the Dashboard's held
+            // line or the Organisation page when it holds: the chief before a proven sealed workspace, at the owner's ceiling, beside an open
+            // turn outside a sealed workspace and with nothing told; a director whose neighbours could not be read.
+            var chief = research! with { Id = "pos-0c1e0f0a0b0d", IsLegacy = false, Status = OrgPositionStatus.Active };
+            List<string> earlier = [held.Words];
+            var broker = new SeatFacts { Standing = chief, DeclaredClass = SeatClasses.Broker, ProvenCell = true };
+            foreach (var (state, refusal) in new (string, TurnRefusal?)[]
+                     {
+                         ("code-on-a-shell", PositionActivation.Decide(chief.Id, chief, broker with { DeclaredClass = SeatClasses.Cli })),
+                         ("unproven", PositionActivation.Decide(chief.Id, chief, broker with { ProvenCell = false })),
+                         ("ceiling", UnconfinedSeatCeiling.Refusal(chief.Id, SeatClasses.Cli, ["research", "operations", "pos-0a0b0c0d0e0f"], 3)),
+                         ("open-neighbour", PositionActivation.Decide(chief.Id, chief, broker with { OpenUnconfined = ["research"] })),
+                         ("unset", PositionActivation.Decide(chief.Id, chief, null)),
+                         ("unreadable", PositionActivation.Decide(CouncilRoles.Research, research, null, SeatClasses.Cli)),
+                     })
+            {
+                Assert.NotNull(refusal);
+                output.WriteLine($"{state}: {refusal.Words}");
+                Assert.DoesNotContain(refusal.Words, earlier);   // each state reaches its own refusal, not an earlier rule's
+                earlier.Add(refusal.Words);
+                hits.AddRange(OwnerWordShapes.Of(refusal.Words).Select(shape => $"gate/{state}: {shape} in \"{Cut(refusal.Words)}\""));
+            }
         }
         foreach (var h in hits.Distinct()) output.WriteLine(h);
         Assert.True(hits.Count == 0, $"{hits.Distinct().Count()} owner words carry a file, section mark, command or id: {string.Join(" | ", hits.Distinct().Take(6))}");
@@ -914,6 +990,9 @@ static class OwnerWordShapes
         ("a folder path", new(@"(^|[\s(""'])(\.\./|\./|~/|/home/|/var/|/etc/)|\b(in|out|inbox|trading|state)/(\s|$|[)'""])")),
         ("a terminal command", new(@"\btrade (org|data|mandate|escalation|review|ledger|forecast|board|wake)\b")),
         ("an internal id", new(@"\b(pos|team|unit|turn|act|mandate|req|ord)-[0-9a-f]{6,}")),
+        // U-owner-words-3 item 2: the build's own words for the AI's seats. The owner reads "the Operations Director and the Research
+        // Director", "runs as you, outside a sealed workspace" and "a sealed workspace".
+        ("a build word", new(@"\b(legacy pair|unconfined|cells?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)),
     ];
 
     static readonly System.Text.RegularExpressions.Regex IdAlone = new(@"^(pos|team|unit|turn|act|mandate|req|ord)-[0-9a-f]{6,}$");

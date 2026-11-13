@@ -961,7 +961,7 @@ public sealed partial class AppHost : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
+            Gateway.Log.Activity($"The check that the AI's sealed workspace holds could not run ({ex.Message}); no proof was written.", "warn");
         }
     }
 
@@ -1033,7 +1033,7 @@ public sealed partial class AppHost : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Gateway.Log.Activity($"Cell benchmark: it could not run ({ex.Message}); no cell proof was written.", "warn");
+            Gateway.Log.Activity($"The check that the AI's sealed workspace holds could not run ({ex.Message}); no proof was written.", "warn");
             return ($"the check could not run: {ex.Message}", false);
         }
         finally { _windowsBench.Release(); }
@@ -1476,7 +1476,7 @@ public sealed partial class AppHost : IAsyncDisposable
             if (OperatingSystem.IsLinux())
                 Gateway.Log.Activity(cgroups.Held
                     ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
-                    : $"The AI's launches are held by their session only, and no cell can start: {cgroups.Refusal}.",
+                    : $"The AI's launches are held by their session only, and no sealed workspace for the AI can start: {cgroups.Refusal}.",
                     cgroups.Held && swept.Left.Count == 0 ? "info" : "warn");
 
             // THE HOST BENCHMARK, AT EVERY START ON LINUX (U-cell-linux-c item 5): no press, no flag, no setting. It launches real
@@ -2260,7 +2260,7 @@ public sealed partial class AppHost : IAsyncDisposable
         // EVERY SEAT IS TOLD AT ONCE (U-kit-socket-2): each home's canon rewritten now, or as soon as the turn it is in ends.
         var told = HomeCanons.Refresh(view);
         Gateway.Log.Activity($"You installed the head-start kit {view.Index.Name} ({view.Index.Skills.Count} skills, {view.Index.Tools.Count} tools, " +
-                             $"kit {view.Hash[..12]}) from {view.Source}. Executors' cells are given it from their next turn; every seat is told of it: " +
+                             $"kit {view.Hash[..12]}) from {view.Source}. Executors' sealed workspaces are given it from their next turn; every seat is told of it: " +
                              told.Words + ".");
         Changed?.Invoke();
         return null;
@@ -2272,7 +2272,7 @@ public sealed partial class AppHost : IAsyncDisposable
         var before = Kit.Current();
         if (Kit.Remove() is { } refusal) return refusal;
         var told = HomeCanons.Refresh(null);
-        Gateway.Log.Activity($"You removed the head-start kit{(before.Last is { } r ? $" {r.Name} (kit {r.Hash[..12]})" : "")}. No cell is given it " +
+        Gateway.Log.Activity($"You removed the head-start kit{(before.Last is { } r ? $" {r.Name} (kit {r.Hash[..12]})" : "")}. No sealed workspace is given it " +
                              $"from its next turn; every seat stops being told of it: {told.Words}.");
         Changed?.Invoke();
         return null;

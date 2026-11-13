@@ -40,10 +40,10 @@ sealed class KitCard
             _install,
             _note,
             Ui.Divider(),
-            Ui.Muted("Your own skills and tools for the AI. Every executor's sealed cell can read the kit and run its tools; nothing the AI " +
+            Ui.Muted("Your own skills and tools for the AI. Every executor's sealed workspace can read the kit and run its tools; nothing the AI " +
                      "runs can change it, and if the folder ever changes after you install it, no seat is given it until you add it again."),
             Ui.Micro($"A kit is a folder, or a zip of one, holding {Kit.IndexFile} (its name and a one-line description of each skill and tool), " +
-                     $"{Kit.SkillsDir}/<name>/{Kit.SkillFile} for each skill and {Kit.ToolsDir}/<name> for each tool. Executors' cells read it from " +
+                     $"{Kit.SkillsDir}/<name>/{Kit.SkillFile} for each skill and {Kit.ToolsDir}/<name> for each tool. Executors' sealed workspaces read it from " +
                      "their next turn; every seat is told of it at once, or as soon as the turn it is in ends.")));
         Update();
     }
@@ -124,7 +124,7 @@ sealed class KitCard
     {
         if (_chosen is null || _chosenHash is null) return;
         var refusal = _host.InstallKit(_chosen, _chosenHash);
-        _note.Text = refusal ?? "Installed. Executors' cells read it from their next turn; every seat is told of it at once, or as soon as the turn it is in ends.";
+        _note.Text = refusal ?? "Installed. Executors' sealed workspaces read it from their next turn; every seat is told of it at once, or as soon as the turn it is in ends.";
         _install.IsVisible = false;
         _chosen = _chosenHash = null;
         Update();
@@ -133,7 +133,7 @@ sealed class KitCard
     /// <summary>PRESS TWO of a removal.</summary>
     void Remove()
     {
-        _note.Text = _host.RemoveKit() ?? "Removed. No cell is given it from its next turn.";
+        _note.Text = _host.RemoveKit() ?? "Removed. No sealed workspace is given it from its next turn.";
         Update();
     }
 }

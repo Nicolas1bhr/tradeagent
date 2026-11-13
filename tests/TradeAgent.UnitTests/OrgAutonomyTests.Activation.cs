@@ -167,8 +167,8 @@ public partial class OrgAutonomyTests
 
         var cases = new (string Unit, Action Arrange, string Words)[]
         {
-            ("team-a7a7c0e1", () => Host(gw, db, _ => SeatClasses.Broker, provenCell: false), "no proven executor cell recorded"),
-            ("team-a7a7c0e2", () => Host(gw, db, _ => SeatClasses.Cli), "only onto a broker or a cell seat"),
+            ("team-a7a7c0e1", () => Host(gw, db, _ => SeatClasses.Broker, provenCell: false), "no proven sealed workspace for the AI recorded"),
+            ("team-a7a7c0e2", () => Host(gw, db, _ => SeatClasses.Cli), "only onto a broker or a sealed-workspace seat"),
             ("team-a7a7c0e3", () => gw.SeatFactsOf = null, "nothing has told this host which seat"),
             ("team-a7a7c0e4", () => { Host(gw, db, _ => SeatClasses.Broker); gw.AiEnvelopes = Metered(db, spent: 9.95m); }, "committed today"),
             ("team-a7a7c0e5", () => { Host(gw, db, _ => SeatClasses.Broker, turn: null); gw.AiEnvelopes = Metered(db); }, "could not price one turn"),

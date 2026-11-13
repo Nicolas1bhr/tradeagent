@@ -145,7 +145,7 @@ public partial class BoardTurnTests(ITestOutputHelper log)
             var unproven = real.Begin("## Board", role: "board-1");
             Assert.False(unproven.Admitted, "board-1 ran a real model with no proven cell recorded");
             Assert.Equal(RefusalKind.HostOrLaunch, unproven.Kind);
-            Assert.Contains("no proven executor cell recorded", unproven.Refusal, StringComparison.Ordinal);
+            Assert.Contains("no proven sealed workspace for the AI recorded", unproven.Refusal, StringComparison.Ordinal);
             Assert.Equal(2, Attempts(db));
 
             ThinkingSeatsTests.ProveCell(db);

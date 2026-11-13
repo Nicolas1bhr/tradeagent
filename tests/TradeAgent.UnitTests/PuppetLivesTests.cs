@@ -328,7 +328,7 @@ public class PuppetLivesTests(ITestOutputHelper output) : IDisposable
 
         var refused = life.Host.ActivationRefusal(third);
         Assert.Equal(RefusalKind.HostOrLaunch, refused?.Kind);
-        Assert.Contains("no proven executor cell recorded", refused!.Words, StringComparison.Ordinal);
+        Assert.Contains("no proven sealed workspace for the AI recorded", refused!.Words, StringComparison.Ordinal);
         Assert.Empty(life.AttemptsOf(third));
         Assert.Equal(0, life.Turns(third));
         var wake = life.Host.Wakes!.Get(thirds)!;

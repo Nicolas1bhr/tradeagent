@@ -146,7 +146,7 @@ public class ExecutorCellTests : IDisposable
         var platformOk = CellPlatform.Read().Refusal() is null;
         foreach (var (what, prove, said) in new (string, Action<Database, RuntimeManifest>, string)[]
                  {
-                     ("no proof at all", (_, _) => { }, "no proven executor cell recorded"),
+                     ("no proof at all", (_, _) => { }, "no proven sealed workspace for the AI recorded"),
                      ("a proof that is not route (a)'s", (db, _) => ThinkingSeatsTests.ProveCell(db), "no cell proof counts"),
                      ("route (a)'s proof measuring only none", (db, codex) => new CellProofStore(db).Record(RouteA.Provider,
                          CellBenchmark.Profile(RouteA.Provider, CellPlatform.Read(), codex.Install.ExecutableSha256!), [CellEgress.None.Name]),

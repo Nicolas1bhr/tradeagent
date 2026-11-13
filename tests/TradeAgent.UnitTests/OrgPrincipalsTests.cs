@@ -229,10 +229,12 @@ public class OrgPrincipalsTests : IDisposable
                 IsLegacy: false, HomeDir: $"org/{Third}"), standing);
             // U-thinking-seats-a: the process-wide register is unset in a test process, which refuses a position beyond the legacy
             // pair; this host's own register declares the probe's CLI seat, whose shell is code — a refusal about the position.
-            Assert.Contains($"'{Third}'", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
+            // (U-owner-words-3, changed in the open: it asserted the id in the sentence; the owner's words name no id since U-owner-words-2.)
+            Assert.Contains("the activation gate's register is not set", PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
+            Assert.DoesNotContain(Third, PositionActivation.Refusal(Third, standing), StringComparison.Ordinal);
             var gated = host.ActivationRefusal(Third);
             Assert.Equal(RefusalKind.Position, gated?.Kind);
-            Assert.Contains("code needs a confined cell", gated!.Words, StringComparison.Ordinal);
+            Assert.Contains("code runs only in a sealed workspace", gated!.Words, StringComparison.Ordinal);
             Assert.Contains("not an active position", host.ActivationRefusal("nobody-here")?.Words, StringComparison.Ordinal);
             Assert.Equal(RefusalKind.Position, host.ActivationRefusal("nobody-here")!.Kind);
             Assert.Null(new OrgStore(db).Standing(AppPrincipals.Perception));
@@ -257,7 +259,7 @@ public class OrgPrincipalsTests : IDisposable
             var neighbour = host.ActivationRefusal(CouncilRoles.Research);
             Assert.Equal(RefusalKind.HostOrLaunch, neighbour?.Kind);
             // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
-            Assert.Contains("active on this host: the legacy pair run confined too", neighbour!.Words, StringComparison.Ordinal);
+            Assert.Contains("run in a sealed workspace too, or not at all", neighbour!.Words, StringComparison.Ordinal);
             Assert.DoesNotContain(Third, neighbour!.Words, StringComparison.Ordinal);
 
             // THE LEGACY PAIR ALONE KEEP THEIR EXISTING TWO-ROLE BEHAVIOUR.

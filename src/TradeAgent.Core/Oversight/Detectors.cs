@@ -76,7 +76,7 @@ public abstract class OversightDetector
     ];
 
     protected const string CliBlind =
-        "on the legacy pair's CLI seats it cannot see file reads, shared-file side channels or runs a shell started, which no app row meters";
+        "on the seats of the Operations Director and the Research Director, which run as you, it cannot see file reads, shared-file side channels or runs a shell started, which no app row meters";
 
     protected static string T(DateTimeOffset t) => Sql.T(t);
     protected static string N(decimal d) => d.ToString(CultureInfo.InvariantCulture);

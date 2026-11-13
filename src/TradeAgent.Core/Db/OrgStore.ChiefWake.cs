@@ -93,8 +93,8 @@ public sealed partial class OrgStore
         if (row.Status != OrgPositionStatus.Active)
             return Refuse(chief, seat, $"The chief is {row.Status}: only an active chief is woken. Activate it first.");
         if (!facts.ProvenCell)
-            return Refuse(chief, seat, "This host has no proven executor cell recorded, so the chief is not woken: no position "
-                                       + "beyond the legacy pair runs on a real model before one is.");
+            return Refuse(chief, seat, "This computer has no proven sealed workspace for the AI recorded, so the chief is not woken: no position "
+                                       + "other than the Operations Director and the Research Director runs on a real model before one is.");
         if (!facts.AgentStarted)
             return Refuse(chief, seat, "The AI is not started, so the chief is not woken. Press \"Start the AI\" on the Dashboard first.");
         if (!facts.WorksOnItsOwn)

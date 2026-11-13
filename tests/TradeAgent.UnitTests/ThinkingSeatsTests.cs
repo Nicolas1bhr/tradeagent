@@ -47,7 +47,7 @@ public class ThinkingSeatsTests : IDisposable
         var refused = meter.Begin("## Situation", role: Third);
         Assert.False(refused.Admitted, "a position beyond the legacy pair was admitted on a CLI seat");
         Assert.Equal(RefusalKind.Position, refused.Kind);
-        Assert.Contains("code needs a confined cell", refused.Refusal, StringComparison.Ordinal);
+        Assert.Contains("code runs only in a sealed workspace", refused.Refusal, StringComparison.Ordinal);
         Assert.Equal(0, Attempts(db));
 
         // THE SEAM SAYS THE SAME WITH THE DECLARED SEAT, BEFORE ANY CONVERSATION IS OPENED.
@@ -79,7 +79,7 @@ public class ThinkingSeatsTests : IDisposable
         var refused = meter.Begin("## Situation", role: Third);
         Assert.False(refused.Admitted, "a head ran on a real-model seat with no proven cell recorded");
         Assert.Equal(RefusalKind.HostOrLaunch, refused.Kind);
-        Assert.Contains("no proven executor cell", refused.Refusal, StringComparison.Ordinal);
+        Assert.Contains("no proven sealed workspace", refused.Refusal, StringComparison.Ordinal);
 
         ProveCell(db, platform: "elsewhere-x64");
         ProveCell(db, build: "0.0.1-another-build");
@@ -158,7 +158,7 @@ public class ThinkingSeatsTests : IDisposable
         await harness.SendMissionAsync("## Situation");
         Assert.Empty(provider.Requests);
         Assert.Contains(harness.History, t => t.Role == ChatRole.System
-                                              && t.Text.Contains("no proven executor cell", StringComparison.Ordinal));
+                                              && t.Text.Contains("no proven sealed workspace", StringComparison.Ordinal));
     }
 
     // ---- (e) no unconfined neighbour ------------------------------------------------------------------------------
@@ -186,9 +186,9 @@ public class ThinkingSeatsTests : IDisposable
             Assert.DoesNotContain(SeatHomeTests.Argv(dump), l => l.StartsWith("exec", StringComparison.Ordinal));
             var said = chat.History.Last(t => t.Role == ChatRole.System).Text;
             // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
-            Assert.Contains("active on this host: the legacy pair run confined too", said, StringComparison.Ordinal);
+            Assert.Contains("run in a sealed workspace too, or not at all", said, StringComparison.Ordinal);
             Assert.DoesNotContain(Third, said, StringComparison.Ordinal);
-            Assert.Contains("confined too, or not there", said, StringComparison.Ordinal);
+            Assert.Contains("run in a sealed workspace too, or not at all", said, StringComparison.Ordinal);
             Assert.Contains("how are we doing?", chat.TakeTyped());   // held, never consumed
 
             var research = meter.Begin("## Situation", role: CouncilRoles.Research);
@@ -299,7 +299,7 @@ public class ThinkingSeatsTests : IDisposable
         Assert.Null(events.Get(review)!.Disposition);
         Assert.Equal(MissionEventDisposition.Blocked, events.Get(owner)!.Disposition);
         // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
-        Assert.Contains("active on this host: the legacy pair run confined too", events.Get(owner)!.DispositionDetail, StringComparison.Ordinal);
+        Assert.Contains("run in a sealed workspace too, or not at all", events.Get(owner)!.DispositionDetail, StringComparison.Ordinal);
         Assert.DoesNotContain(Third, events.Get(owner)!.DispositionDetail, StringComparison.Ordinal);
         Assert.Equal(1L, OwnerRows(db));   // never re-raised as a failed turn's retry
 
@@ -519,18 +519,18 @@ public class ThinkingSeatsTests : IDisposable
             var launch = PositionActivation.AtLaunch(legacy, SeatClasses.Cli, neighbours);
             Assert.Equal(RefusalKind.HostOrLaunch, launch?.Kind);
             // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
-            Assert.Contains("active on this host: the legacy pair run confined too", launch!.Words, StringComparison.Ordinal);
+            Assert.Contains("run in a sealed workspace too, or not at all", launch!.Words, StringComparison.Ordinal);
             Assert.DoesNotContain(Third, launch!.Words, StringComparison.Ordinal);
             var seam = PositionActivation.Ask(legacy, chart.Standing(legacy), neighbours);
             Assert.Equal(RefusalKind.HostOrLaunch, seam?.Kind);
-            Assert.Contains("confined too, or not there", seam!.Words, StringComparison.Ordinal);
+            Assert.Contains("run in a sealed workspace too, or not at all", seam!.Words, StringComparison.Ordinal);
             Assert.Null(PositionActivation.AtLaunch(legacy, SeatClasses.Harness, neighbours));   // brokered: no unconfined neighbour
         }
 
         var blind = new SeatRegister { Facts = _ => null, Neighbours = () => throw new InvalidOperationException("unreadable") };
         var unread = PositionActivation.AtLaunch(CouncilRoles.Research, SeatClasses.Cli, blind);
         Assert.Equal(RefusalKind.HostOrLaunch, unread?.Kind);
-        Assert.Contains("could not read whether any position beyond the legacy pair is active", unread!.Words, StringComparison.Ordinal);
+        Assert.Contains("could not read whether any position other than the Operations Director and the Research Director is active", unread!.Words, StringComparison.Ordinal);
 
         // THE READ SUCCEEDS AND NAMES NOBODY: the legacy pair run exactly as before.
         SetStatus(db, Third, OrgPositionStatus.Dormant);
@@ -580,7 +580,7 @@ public class ThinkingSeatsTests : IDisposable
         var beside = PositionActivation.AtLaunch(CouncilRoles.Operations, SeatClasses.Cli, app.Seats, testHost: false);
         Assert.Equal(RefusalKind.HostOrLaunch, beside?.Kind);
         // THE NEIGHBOURS BY THEIR NUMBER, NEVER BY ID (U-owner-words-2: these words reach the owner's Dashboard; they named '{Third}').
-        Assert.Contains("active on this host: the legacy pair run confined too", beside!.Words, StringComparison.Ordinal);
+        Assert.Contains("run in a sealed workspace too, or not at all", beside!.Words, StringComparison.Ordinal);
         Assert.DoesNotContain(Third, beside!.Words, StringComparison.Ordinal);
         SetStatus(db, Third, OrgPositionStatus.Dormant);
         Assert.Null(PositionActivation.AtLaunch(CouncilRoles.Operations, SeatClasses.Cli, app.Seats, testHost: false));
