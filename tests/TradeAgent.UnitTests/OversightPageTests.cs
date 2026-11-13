@@ -95,6 +95,40 @@ public class OversightPageTests(ITestOutputHelper log)
         Assert.Empty(refused.Findings);
     }
 
+    /// <summary>
+    /// THE THRESHOLDS AND A FINDING'S NAME SAY WHAT IS LOOKED FOR, NEVER A DETECTOR'S ID (<c>U-owner-words-4</c> item 2). RED at the base:
+    /// the thresholds read "spend-no-accept: window", "stall: no accepted work for", "owner-words-late: deadline", and a finding's card
+    /// printed its detector's id. Each detector has its own phrase, none of them the id, and an unknown name never reads as itself.
+    /// </summary>
+    [Fact]
+    public void The_thresholds_and_a_findings_name_say_what_is_looked_for_never_a_detectors_id()
+    {
+        var ids = OversightDetector.All.Select(d => d.Name).ToList();
+        var words = OversightWords.Of(null, null, "USD");
+        foreach (var (name, _) in words.Thresholds)
+            foreach (var id in ids)
+            {
+                Assert.DoesNotContain(id + ":", name, StringComparison.OrdinalIgnoreCase);
+                if (id.Contains('-')) Assert.DoesNotContain(id, name, StringComparison.OrdinalIgnoreCase);
+            }
+        Assert.Contains(words.Thresholds, t => t.Name == "Your words not taken up within" && t.Value == "24 h");
+
+        var unknown = OversightWords.DetectorWords("a-detector-of-a-newer-line");
+        Assert.DoesNotContain("a-detector-of-a-newer-line", unknown, StringComparison.Ordinal);
+        foreach (var id in ids)
+        {
+            var phrase = OversightWords.DetectorWords(id);
+            Assert.NotEqual(unknown, phrase);
+            if (id.Contains('-')) Assert.DoesNotContain(id, phrase, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Equal(ids.Count, ids.Select(OversightWords.DetectorWords).Distinct(StringComparer.Ordinal).Count());
+
+        using var store = new OversightStore(NewFile(), Now);
+        store.Commit([Finding("owner-words-late", "words:1", OrgIds.Root, "org")], new Dictionary<string, long>(), Now);
+        var card = Assert.Single(OversightWords.Of(OversightRead.From(store), null, "USD").Findings);
+        Assert.Equal("Your words not taken up in time", card.Detector);
+    }
+
     // ---- (g) built once ---------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -257,8 +291,8 @@ public class OversightPageTests(ITestOutputHelper log)
         Assert.Null(swept.Failure);
         var words = OversightWords.Of(OversightRead.From(store), null, "USD");
         foreach (var f in words.Findings) log.WriteLine($"{f.Detector} {f.Measured}");
-        Assert.Contains(words.Findings, f => f.Detector == "refusals" && f.Measured.Contains("event=protocol_rejected", StringComparison.Ordinal));
-        Assert.Contains(words.Findings, f => f.Detector == "refusals" && f.Measured.Contains("refused=1", StringComparison.Ordinal));
+        Assert.Contains(words.Findings, f => f.Detector == OversightWords.DetectorWords("refusals") && f.Measured.Contains("event=protocol_rejected", StringComparison.Ordinal));
+        Assert.Contains(words.Findings, f => f.Detector == OversightWords.DetectorWords("refusals") && f.Measured.Contains("refused=1", StringComparison.Ordinal));
         foreach (var f in words.Findings)
             foreach (var said in new[] { f.Measured, f.Cites, f.UnitPath, f.Blind, f.Id })
                 Assert.DoesNotContain(Planted, said, StringComparison.OrdinalIgnoreCase);

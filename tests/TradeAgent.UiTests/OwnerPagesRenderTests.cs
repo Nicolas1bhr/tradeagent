@@ -1020,6 +1020,11 @@ static class OwnerWordShapes
         // U-owner-words-3 item 2: the build's own words for the AI's seats. The owner reads "the Operations Director and the Research
         // Director", "runs as you, outside a sealed workspace" and "a sealed workspace".
         ("a build word", new(@"\b(legacy pair|unconfined|cells?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)),
+        // U-owner-words-4 item 2: an Oversight detector by its id — "owner-words-late: deadline" on the thresholds. A hyphenated id
+        // anywhere, a one-word id ("stall", "refusals") only as a label before a colon, as the thresholds wrote it.
+        ("a detector id", new(string.Join("|", TradeAgent.Core.Oversight.OversightDetector.All.Select(d => d.Name.Contains('-')
+            ? $@"\b{System.Text.RegularExpressions.Regex.Escape(d.Name)}\b"
+            : $@"\b{System.Text.RegularExpressions.Regex.Escape(d.Name)}:")))),
     ];
 
     static readonly System.Text.RegularExpressions.Regex IdAlone = new(@"^(pos|team|unit|turn|act|mandate|req|ord)-[0-9a-f]{6,}$");
