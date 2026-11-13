@@ -7,6 +7,7 @@
 #   tools/linux-host.sh limits                         read-only: Yama's ptrace_scope, core_pattern, the service's Max core file size line
 #   tools/linux-host.sh install <tarball> "<word>"     stop -> back up the home's databases -> the kit -> health
 #   tools/linux-host.sh stop "<word>"                  systemctl stop tradeagent.service; the data stays
+#   tools/linux-host.sh window-password "<word>"       the owner types a new password for his window in a dialog here; restarts nothing
 #
 # THE WINDOW'S PASSWORD IS THE OWNER'S (U-window-door). It is the key to his only door to the app on this host (a VNC viewer,
 # Screen Sharing on his Mac), so he chooses it himself, in a dialog on the screen of the machine this runs on: on macOS
@@ -42,7 +43,7 @@ kit="$here/../packaging/linux"
 verb="${1:-}"
 [ $# -gt 0 ] && shift
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # word_ok "<word>" "<zone>": today's date in that zone, then at least three characters of the owner's own words.
 word_ok() {
@@ -110,7 +111,7 @@ OSA
 ask_on_windows() {
     local ps b64
     ps="$(cat << 'PS'
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
 try {
     if (-not [Environment]::UserInteractive) { [Console]::Error.WriteLine('not an interactive desktop session'); exit 3 }
     Add-Type -AssemblyName System.Windows.Forms
@@ -188,6 +189,7 @@ case "$verb" in
         # T0 goes onto a remote command line: a date, a date-time or a span (72h), and nothing a shell would read as more.
         case "$od_since" in *[!0-9A-Za-z:.+-]*) usage ;; esac ;;
     install) [ $# -eq 2 ] || usage ;;
+    window-password) [ $# -eq 1 ] || usage ;;
     stop) [ $# -eq 1 ] || usage ;;
     *) usage ;;
 esac
@@ -203,7 +205,7 @@ source "$env_file"
 : "${TA_LINUX_USER:?set TA_LINUX_USER in $env_file}"
 : "${TA_LINUX_KEY:?set TA_LINUX_KEY in $env_file: key authentication only}"
 port="${TA_LINUX_PORT:-22}"
-case "$verb" in install) need_word "$2" ;; stop) need_word "$1" ;; esac
+case "$verb" in install) need_word "$2" ;; stop | window-password) need_word "$1" ;; esac
 
 _opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o LogLevel=ERROR
        -o ServerAliveInterval=30 -o ServerAliveCountMax=4
@@ -279,6 +281,55 @@ case "$pid" in
     '' | 0) echo 'Max core file size: tradeagent.service has no main process' >&2; exit 1 ;;
 esac
 grep '^Max core file size' "/proc/$pid/limits"
+REMOTE
+}
+
+# window_password "<word>": a new password for the owner's window, typed by him in the dialog (as a first install asks), written
+# by root as the app's account beside ~/.vnc/vncauth (0600) and renamed over it, so the file is always whole: the old one until
+# the rename, the new one after. Xvnc reads its -PasswordFile at each login (CI's linux-host job logs in to show it: the old
+# password refused and the new one accepted at the next connection, both units' MainPID unchanged), so NOTHING is restarted: no
+# gap in the tape, no turn cut, and anyone connected now stays connected. A /root/tradeagent-vnc-pass that an older tool left
+# (it held the minted password nobody was ever handed) is removed, unread. This verb is the fleet's way to re-key the window on
+# the owner's dated word while he is locked out of it; while he is in, his own Settings change it.
+window_password() {
+    local word="$1" pw stage
+    echo "== a new password for the owner's window, on his word: $word; asking him to choose it, on this machine's screen =="
+    pw="$(ask_window_password)" || exit 2
+    stage="$(lx_ssh 'umask 077 && mktemp -d' < /dev/null)"
+    case "$stage" in /*) ;; *) echo "linux-host: the host gave no staging folder" >&2; exit 1 ;; esac
+    printf '%s\n' "$pw" | lx_root_staged "$stage" linux-host-window-password.sh "$stage" 3<< 'REMOTE'
+set -euo pipefail
+stage="$1"
+account=tradeagent home=/var/lib/tradeagent
+new=""
+on_exit() { local rc=$?; trap - EXIT; rm -rf "$stage"; if [ -n "$new" ]; then rm -f "$new"; fi; exit "$rc"; }
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+refuse() { echo "window-password: $*; the window's password is unchanged" >&2; exit 1; }
+pw=""
+IFS= read -r pw || true
+LC_ALL=C
+[[ $pw =~ ^[[:graph:]]{6,8}$ ]] || refuse "the password that came is not 6 to 8 letters, digits or symbols"
+getent passwd "$account" > /dev/null || refuse "TradeAgent is not installed here (no account $account): a first install sets the window's password"
+[ -d "$home/.vnc" ] || refuse "$home/.vnc does not exist: a first install sets the window's password"
+vncpasswd="$(command -v tigervncpasswd || command -v vncpasswd || true)"
+[ -n "$vncpasswd" ] || refuse "TigerVNC's password tool (tigervncpasswd) is not on PATH"
+new="$home/.vnc/vncauth.new.$$"
+(umask 077 && printf '%s\n' "$pw" | "$vncpasswd" -f > "$new")
+pw=""
+[ -s "$new" ] || refuse "TigerVNC's password tool wrote nothing"
+chown "$account:$account" "$new"
+chmod 0600 "$new"
+mv -f "$new" "$home/.vnc/vncauth"
+new=""
+legacy=/root/tradeagent-vnc-pass
+if [ -e "$legacy" ] || [ -L "$legacy" ]; then
+    rm -f "$legacy"
+    echo "== removed $legacy, which an older tool left, without reading it =="
+fi
+echo "== the window's password is the one the owner just chose; nothing was restarted: the next connection uses it, and anyone connected now stays connected =="
 REMOTE
 }
 
@@ -380,6 +431,7 @@ case "$verb" in
     org-digest) org_digest ;;
     limits) limits ;;
     install) install_kit "$1" "$2" ;;
+    window-password) window_password "$1" ;;
     stop)
         lx_root "$1" << 'REMOTE'
 set -euo pipefail

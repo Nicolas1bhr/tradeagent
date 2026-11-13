@@ -133,5 +133,32 @@ for bad in 'Qx9' 'Qx9 Wq7z' 'Qx9Wq7zLL'; do
     fi
 done
 
+# ---- 5. window-password: the same path, on the owner's dated word ----------------------------------------------------
+run wp-no-word TA_WINDOW_PASSWORD_FROM="$work/bin/seam" "$tool" window-password "yes"
+if [ "$rc" != 0 ] && [ ! -e "$work/fake/n" ] && grep -q "dated word" "$work/wp-no-word.out"; then
+    pass "window-password without a dated word: refused before any call to the host"
+else
+    fail "window-password without a dated word: exit $rc, calls: $(cat "$work/fake/n" 2> /dev/null || echo 0)"
+fi
+run wp-no-screen env -u TA_WINDOW_PASSWORD_FROM "$tool" window-password "$word"
+if [ "$rc" != 0 ] && [ ! -e "$work/fake/n" ] && grep -q "no screen to ask the owner on" "$work/wp-no-screen.out"; then
+    pass "window-password with no dialog and no seam: refused in words before any call to the host"
+else
+    fail "window-password with no dialog and no seam: exit $rc, calls: $(cat "$work/fake/n" 2> /dev/null || echo 0)"
+fi
+run wp TA_WINDOW_PASSWORD_FROM="$work/bin/seam" "$tool" window-password "$word"
+holders="$({ grep -laF -- "$pw" "$work"/fake/stdin.* 2> /dev/null || true; } | sed 's/.*\.//' | sort -n | tr '\n' ' ')"
+runner="$(calls_matching 'linux-host-window-password.sh' | while read -r n; do if tr '\0' '\n' < "$work/fake/argv.$n" | grep -q 'sudo -n bash'; then echo "$n"; fi; done)"
+if [ "$rc" = 0 ] && [ -n "$runner" ] && [ "$holders" = "$runner " ] && [ "$(cat "$work/fake/stdin.$runner")" = "$pw" ]; then
+    pass "window-password: the password is in one call's stdin, the root run of its script (call $runner), as its one line"
+else
+    fail "window-password: exit $rc; the password is in the stdin of calls '$holders'; the root run is call '$runner'"
+fi
+if found "$pw" "$work"/fake/argv.* "$work"/fake/env.* "$work/wp.out" "$work/home" "$work/tmp"; then
+    fail "window-password: the password is in an argument, an environment, the output or a file on the fleet's machine"
+else
+    pass "window-password: no argument, environment, output line or file on the fleet's machine holds it"
+fi
+
 echo
 if [ "$fails" = 0 ]; then echo "tool-password-tests: all passed"; else echo "tool-password-tests: $fails FAILED"; exit 1; fi
