@@ -657,7 +657,7 @@ public class SeatHomeTests
     /// <summary>
     /// (c3d) THE REAL OWNER READ (<c>U-test-meaning</c>, A8-1): the foreign-owner rows run only through
     /// <see cref="SeatProfile.MachineOwnerUnderTest"/>, so <c>MachineOwnerOf</c>'s Windows ACL read replaced by <c>return null;</c> (a null
-    /// owner is accepted) stayed green. With the seam empty, a folder this test makes is owned by its token's owner — the account, or the
+    /// owner is accepted) stayed green. With the seam empty, a folder this test makes is owned by the owner Windows gives this process's new objects — the account, or the
     /// Administrators group when elevated, as CI's runner is — and the read names exactly that.
     ///
     /// <para><b>RED on the mutant</b>: the ACL read → <c>return null;</c>.</para>
