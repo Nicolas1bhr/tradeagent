@@ -37,7 +37,7 @@ public partial class ForwardRunnerTests
         var run = Assert.Single(digest.GetProperty("deployments").GetProperty("deployments").EnumerateArray());
         Assert.Equal(words, run.GetProperty("unprotected").GetString());
         var flags = digest.GetProperty("attention").EnumerateArray().Select(a => a.GetString()!).ToList();
-        Assert.Contains(flags, a => a.StartsWith("paper run ", StringComparison.Ordinal) && a.EndsWith(": " + words, StringComparison.Ordinal));
+        Assert.Contains(flags, a => a.StartsWith("run ", StringComparison.Ordinal) && a.Contains($" {TradingMode.PAPER}/", StringComparison.Ordinal) && a.EndsWith(": " + words, StringComparison.Ordinal));
 
         // THE SAME RULE WHERE A REFUSED STOP HAS AN ORDER ROW: none here (the rate refused it before the write-ahead row), so it is missing. A write-ahead row a
         // gate refused before the wire leaves it missing; one a person's press can still send may yet rest, so only the target is. The app's reading and the

@@ -1137,7 +1137,7 @@ def attention(d):
             flags.append(f"{g['count']} deployment(s) in mode '{g['mode']}' ({g['state']}): NOT paper")
     for x in dep.get("deployments", []):
         if x.get("unprotected"):
-            flags.append(f"paper run {x['id']} {x['symbol']} ({x['state']}): {x['unprotected']}")
+            flags.append(f"run {x['id']} {x['symbol']} {x['mode']}/{x['state']}: {x['unprotected']}")
     notes = dep.get("notes") or {}
     if notes.get("unprotected_at_close_since"):
         flags.append(f"{notes['unprotected_at_close_since']} paper day note(s) since T0 say {W.UNPROTECTED_AT_CLOSE}, the last {stamp(notes['unprotected_at_close_last_at'])}")
