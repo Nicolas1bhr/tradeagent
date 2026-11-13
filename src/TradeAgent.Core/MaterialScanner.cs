@@ -174,6 +174,24 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// <summary>How many of a pass's deferrals its result names in words; the count is all of them.</summary>
     public const int DeferralsNamed = 10;
 
+    /// <summary>
+    /// THE HASH OF ONE OPEN FILE, cancellable between reads: <see cref="Sha256Hex.Of(Stream, CancellationToken)"/> in the product. A test
+    /// passes one whose read the operating system holds and that no cancellation reaches, which is what a stalled disk is.
+    /// </summary>
+    internal Func<Stream, CancellationToken, string> Hasher { get; init; } = Sha256Hex.Of;
+
+    /// <summary>
+    /// HOW MUCH LONGER THAN ITS BOUND A HASH READ IS WAITED FOR (<c>U-perf-scan</c>): the bound is checked between reads, so a read that
+    /// is merely slow returns within one more block; past this it is a read the disk is holding.
+    /// </summary>
+    static readonly TimeSpan StallGrace = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// EACH WORKSPACE'S HASH READ THAT DID NOT COME BACK (<c>U-perf-scan</c>), by workspace root, process-wide because the disk is: the
+    /// read left to finish on its own, closed when it does. While it waits no pass reads another file of that workspace.
+    /// </summary>
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> Stalled = new(StringComparer.Ordinal);
+
     public ScanResult Scan(CancellationToken ct = default, IReadOnlySet<string>? unsealed = null)
     {
         var now = _now();
@@ -486,6 +504,11 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 deferrals.Add($"{m.RelPath} ({m.SizeBytes:N0} bytes) was not hashed this pass: {why} It is tried again next pass.");
         }
 
+        // A READ AN EARLIER PASS LEFT WAITING ON THE DISK (U-perf-scan) holds every read of this workspace until it has come back: a disk
+        // that stopped answering would otherwise take one more waiting read, and one more thread, every pass.
+        var held = Stalled.TryGetValue(_root, out var waiting) && !waiting.IsCompleted;
+        if (!held && waiting is not null) Stalled.TryRemove(new KeyValuePair<string, Task>(_root, waiting));
+
         var batch = _store.NeedingHash(HashesPerPass);
         foreach (var m in batch)
         {
@@ -493,6 +516,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
             // NOR IS A FILE IN AN UNSEALED HOME OPENED TO BE HASHED (U-org-lanes, review 2): the lane writing it has not committed.
             if (unsealedHomes.Any(h => m.RelPath.StartsWith(h + "/", StringComparison.Ordinal))) continue;
+
+            if (held)
+            {
+                Defer(m, "a read of a file here did not come back from the disk, and nothing here is read until it has.");
+                continue;
+            }
 
             var left = HashTimePerPass - clock.Elapsed;
             if (left <= TimeSpan.Zero)
@@ -512,27 +541,57 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 // A POSITION'S HOME IS OPENED WITHOUT FOLLOWING A LINK AT ANY COMPONENT (U-execution-environment fix pass 4, the second
                 // re-review's [P2] 4): an executor's cell writes its whole home, so a name the walk measured may be a link by now, and the
                 // bytes hashed onto its row would be another file's. The owner's inbox, which no cell writes, is opened as it always was.
-                using var fs = IsInInbox(m.RelPath)
+                var fs = IsInInbox(m.RelPath)
                     ? File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)
                     : new FileStream(HomeFiles.OpenRead(_root, m.RelPath, oneName: false), FileAccess.Read);
-                if (!IsStill(fs, m)) continue;
-
-                // CANCELLABLE BETWEEN READS (U-exec-env-fix item 1): a cell can leave a sparse terabyte at any name in its home, and a
-                // pass that is asked to stop stops here too rather than at the end of the file. The same cut-off is the pass's wall time.
-                spent += m.SizeBytes;
-                using var bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                bound.CancelAfter(left);
-                string digest;
-                try { digest = Sha256Hex.Of(fs, bound.Token); }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                CancellationTokenSource? bound = null;
+                var leftReading = false;
+                try
                 {
-                    Defer(m, $"it did not finish within the {HashTimePerPass.TotalSeconds:0.#} s a pass has for hashing.");
-                    continue;
-                }
-                if (!IsStill(fs, m)) continue;
+                    if (!IsStill(fs, m)) continue;
 
-                _store.SetHash(m.Id, digest);
-                hashed++;
+                    // CANCELLABLE BETWEEN READS (U-exec-env-fix item 1): a cell can leave a sparse terabyte at any name in its home, and a
+                    // pass that is asked to stop stops here too rather than at the end of the file. The same cut-off is the pass's wall time.
+                    spent += m.SizeBytes;
+                    bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    bound.CancelAfter(left);
+                    var (file, token) = (fs, bound.Token);
+
+                    // AND WAITED FOR, NOT MADE, HERE (U-perf-scan; U-cards-2's card): a read the operating system holds is not between
+                    // reads, and no cancellation reaches it. The pass waits as long as its bound and a moment more, then leaves the read to
+                    // finish on its own — its file and its bound closed only once it has, never under it — and goes on.
+                    var reading = Task.Run(() => Hasher(file, token));
+                    bool back;
+                    try { back = reading.Wait(left + StallGrace); }
+                    catch (AggregateException) { back = true; }
+                    if (!back)
+                    {
+                        leftReading = true;
+                        var closing = bound;
+                        Stalled[_root] = reading.ContinueWith(_ => { file.Dispose(); closing.Dispose(); },
+                            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                        held = true;
+                        Defer(m, $"a read of it did not come back from the disk within the {HashTimePerPass.TotalSeconds:0.#} s a pass has "
+                                 + "for hashing; it is left to finish, and nothing here is read until it has.");
+                        continue;
+                    }
+
+                    string digest;
+                    try { digest = reading.GetAwaiter().GetResult(); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        Defer(m, $"it did not finish within the {HashTimePerPass.TotalSeconds:0.#} s a pass has for hashing.");
+                        continue;
+                    }
+                    if (!IsStill(fs, m)) continue;
+
+                    _store.SetHash(m.Id, digest);
+                    hashed++;
+                }
+                finally
+                {
+                    if (!leftReading) { fs.Dispose(); bound?.Dispose(); }
+                }
             }
             catch (IOException) { }                 // still being written, or gone — the next pass retries
             catch (UnauthorizedAccessException) { }
