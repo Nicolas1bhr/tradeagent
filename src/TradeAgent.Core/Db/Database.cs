@@ -149,6 +149,14 @@ public sealed class Database : IDisposable
     int _depth;
 
     /// <summary>
+    /// HOW MANY OUTERMOST WRITES THIS HANDLE HAS COMMITTED (<c>U-perf-scan</c>): each one is a durable commit at <c>synchronous=FULL</c>, an
+    /// fsync of the journal, which on a modest disk is the cost a pass pays per write rather than the SQL in it. Counted under the write
+    /// lock and read for the tests that hold a pass to a number of them; nothing decides anything by it.
+    /// </summary>
+    internal long Commits { get { lock (_gate) return _commits; } }
+    long _commits;
+
+    /// <summary>
     /// All writes funnel through here, transactionally, so a process never self-collides.
     ///
     /// <para><b>A NESTED CALL JOINS THE TRANSACTION ALREADY OPEN; it does not start a second one.</b>
@@ -184,6 +192,7 @@ public sealed class Database : IDisposable
                 {
                     var r = body(_conn);
                     tx.Commit();
+                    _commits++;
                     return r;
                 }
                 finally { _depth--; }

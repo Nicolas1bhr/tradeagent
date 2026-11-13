@@ -143,6 +143,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// <summary>Files per pass. A drop larger than this is picked up over successive passes.</summary>
     public int FileLimit { get; init; } = 5_000;
 
+    /// <summary>
+    /// SIGHTINGS PER COMMIT (<c>U-perf-scan</c>): a pass records what it saw this many at a time, so 5,000 files are ten durable
+    /// commits rather than 5,000, and no one commit holds the database's write lock for long.
+    /// </summary>
+    public const int SightingsPerWrite = 500;
+
     /// <summary>Directory depth. Deep trees are almost always something unpacked, not something handed over.</summary>
     public int DepthLimit { get; init; } = 12;
 
@@ -215,6 +221,25 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             var complete = true;
             var isInbox = origins[0] == MaterialOrigin.Inbox;
 
+            // THE GROUP'S SIGHTINGS, RECORDED A CHUNK AT A TIME (U-perf-scan, R28 G2): one commit per chunk, never one per file. Each
+            // is recorded as Observe records it, with its origin asked only for a row about to be written, at the write — after the
+            // file's bytes were read (WeWroteIt), never under the lock while they are.
+            var pending = new List<(MaterialStore.Sighting Sighting, MaterialOrigin?[] Written)>();
+            void Record()
+            {
+                if (pending.Count == 0) return;
+                var recorded = _store.ObserveAll([.. pending.Select(p => p.Sighting)], now);
+                for (var i = 0; i < recorded.Count; i++)
+                {
+                    var (isNew, id) = recorded[i];
+                    present.Add(id);
+                    if (!isNew) continue;
+                    added++;
+                    if (pending[i].Written[0] is { } word) addedBy[word] = addedBy.GetValueOrDefault(word) + 1;
+                }
+                pending.Clear();
+            }
+
             // EVERY PLACE IN THIS GROUP COULD BE READ. A folder the disk would not list holds files this
             // pass never saw, and "I could not look" is not "it is gone" — the reason a pass that ran out
             // of budget marks nothing missing, reached from the other side.
@@ -230,8 +255,13 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     case Look.CouldNotRead: read = false; unreadable.Add(Relative(full)); continue;
                 }
 
-                var (files, refused) = Walk(full, ref skipped, ct);
+                var (files, refused, stopped) = Walk(full, ref skipped, ct);
                 foreach (var folder in refused) { read = false; unreadable.Add(Relative(folder)); }
+
+                // A WALK THAT STOPPED COLLECTING AT THE BUDGET WITH FOLDERS LEFT UNVISITED did not look everywhere, however many files it
+                // brought back (U-perf-scan): one that stopped on exactly the budget used to read as complete — the loop below never met
+                // a file past it — and stamped every file in the folders it never listed removed, and shortened the inbox's window.
+                if (stopped) { complete = false; truncated = true; }
 
                 foreach (var file in files)
                 {
@@ -275,22 +305,18 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // can say what ARRIVED (ScanResult.Arrived) without asking the question twice.
                     // The store asks only for a row it is about to write, so this is set exactly
                     // when `isNew` is, and nothing about the row changes by being counted.
-                    MaterialOrigin? written = null;
-                    var (isNew, id) = _store.Observe(rel, () => (written = origin()).Value, size,
-                        new DateTimeOffset(modifiedUtc, TimeSpan.Zero),
-                        RunnableExts.Contains(Path.GetExtension(file)), now);
-
-                    present.Add(id);
+                    var written = new MaterialOrigin?[1];
+                    pending.Add((new MaterialStore.Sighting(rel, () => (written[0] = origin()).Value, size,
+                        new DateTimeOffset(modifiedUtc, TimeSpan.Zero), RunnableExts.Contains(Path.GetExtension(file))), written));
                     seen++;
-                    if (isNew)
-                    {
-                        added++;
-                        if (written is { } word) addedBy[word] = addedBy.GetValueOrDefault(word) + 1;
-                    }
+                    if (pending.Count >= SightingsPerWrite) Record();
                 }
 
                 if (!complete) break;
             }
+
+            // EVERY SIGHTING IS RECORDED BEFORE THE GROUP IS SWEPT: MarkMissing keeps only the ids in `present`.
+            Record();
 
             // A pass that ran out of budget saw only part of the tree, and "I did not see it" is not
             // "it is gone". Marking the remainder removed there would invent a deletion — the exact
@@ -573,7 +599,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         }
 
         var skipped = 0;
-        var (files, refused) = Walk(inbox, ref skipped, ct);
+        var (files, refused, _) = Walk(inbox, ref skipped, ct);
         if (refused.Count > 0 || files.Count >= FileLimit) return true;
 
         var recorded = _store.Live([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested]);
@@ -636,15 +662,18 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// the disk would not list — "what it could not read", returned beside what it could, because a
     /// walk that dropped the second half let a pass that never saw a folder count itself complete.
     /// </summary>
-    (List<string> Files, List<string> Unreadable) Walk(string dir, ref int skipped, CancellationToken ct)
+    /// <returns>And whether it STOPPED at the budget with a folder left unlisted (<c>U-perf-scan</c>): a walk that did saw part of the
+    /// tree whatever its count.</returns>
+    (List<string> Files, List<string> Unreadable, bool Stopped) Walk(string dir, ref int skipped, CancellationToken ct)
     {
         // Recursion is written out rather than using EnumerateFiles(SearchOption.AllDirectories)
         // because that overload cannot skip a subtree — it would walk every node_modules it found
         // and only then let us discard the results.
         var files = new List<string>();
         var unreadable = new List<string>();
-        Collect(dir, 0, files, ref skipped, unreadable, ct);
-        return (files, unreadable);
+        var stopped = false;
+        Collect(dir, 0, files, ref skipped, unreadable, ref stopped, ct);
+        return (files, unreadable, stopped);
     }
 
     /// <param name="skipped">Folders left out ON PURPOSE — noise, dot-folders, past the depth limit —
@@ -654,7 +683,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// pass did not see, so <see cref="Scan"/> is incomplete and <see cref="InboxHoldsUnrecorded"/>
     /// answers yes for them, and for the skipped ones neither.
     /// </param>
-    void Collect(string dir, int depth, List<string> into, ref int skipped, List<string> unreadable, CancellationToken ct)
+    /// <param name="stopped">Set when this walk stops at the budget with a folder still to list.</param>
+    void Collect(string dir, int depth, List<string> into, ref int skipped, List<string> unreadable, ref bool stopped, CancellationToken ct)
     {
         if (depth > DepthLimit) { skipped++; return; }
         ct.ThrowIfCancellationRequested();
@@ -670,14 +700,14 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         into.AddRange(entries);
         // Stop collecting, not just stop consuming. Enumerating a hundred thousand paths into a list
         // and then discarding all but the first few thousand is the same amount of walking.
-        if (into.Count >= FileLimit) return;
+        if (into.Count >= FileLimit) { stopped |= subs.Length > 0; return; }
 
-        foreach (var sub in subs)
+        for (var i = 0; i < subs.Length; i++)
         {
-            var name = Path.GetFileName(sub);
+            var name = Path.GetFileName(subs[i]);
             if (NoiseDirs.Contains(name) || name.StartsWith('.')) { skipped++; continue; }
-            Collect(sub, depth + 1, into, ref skipped, unreadable, ct);
-            if (into.Count >= FileLimit) return;
+            Collect(subs[i], depth + 1, into, ref skipped, unreadable, ref stopped, ct);
+            if (into.Count >= FileLimit) { stopped |= i < subs.Length - 1; return; }
         }
     }
 
