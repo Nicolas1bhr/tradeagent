@@ -226,6 +226,8 @@ public static class BrokerSeat
         // accepted surface proves nothing about a launched seat whose override dropped the entry (CRED-001, Law 2).
         yield return ("home's forbidden paths", Seq(seat.Forbidden));
         yield return ("workspace's forbidden names", Seq(seat.WorkspaceForbidden));
+        // AND IN THE ACCOUNT'S OWN PROFILE (U-windows-cards): on Windows codex's skill root there is read whatever the seat's HOME is.
+        yield return ("account's forbidden paths", Seq(seat.AccountForbidden));
         yield return ("credential files", Seq(seat.PrivateFiles));
         yield return ("deny set", Seq(seat.ArgsFor(seatClass)));
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(seatClass)));

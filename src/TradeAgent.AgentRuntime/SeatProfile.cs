@@ -857,6 +857,9 @@ public static class SeatProfile
                 $"TradeAgent will not start the AI while {inWorkspace} exists in its working folder: the AI would load it as its " +
                 "own settings or skills. Remove it to continue.");
 
+        if (AccountRefusal(manifest, AccountProfile(), seat.AccountForbidden) is { } inProfile)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, inProfile);
+
         // THE CLI'S OWN REPORTS RUN IN AN EMPTY FOLDER OF THE APP'S, NEVER IN THE POSITION'S HOME (U-execution-environment fix pass 5, the
         // fourth re-review's G2): an executor's cell writes its whole home, and these run the vendor CLI unconfined. They read the seat's
         // own codex home (CODEX_HOME) and its sign-in; the only thing a working folder adds is its own settings, which the look above has
@@ -1074,6 +1077,78 @@ public static class SeatProfile
             { return $"{path} (which TradeAgent could not examine: {ex.Message})"; }
         }
         return null;
+    }
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-windows-cards</c>), set only by the test assembly (<c>InternalsVisibleTo</c>) on its own async flow: the folder
+    /// <see cref="AccountProfile"/> answers, on any host. Nothing in the product sets it, and no file, setting or pipe op reaches it.
+    /// </summary>
+    internal static readonly AsyncLocal<string?> AccountProfileUnderTest = new();
+
+    /// <summary>
+    /// THE FOLDER THE CLI TAKES FOR ITS HOME WHATEVER ITS ENVIRONMENT SAYS, or null where it takes <c>HOME</c>: on Windows the account's
+    /// profile known folder, read by the same call codex's <c>dirs::home_dir()</c> makes (dirs-sys 0.5.0:
+    /// <c>SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DONT_VERIFY)</c>). The harness is this app's own child, under the same account,
+    /// so the call answers it the same folder. Null where the call fails: then codex has no home either, and lists no skill from one.
+    /// </summary>
+    public static string? AccountProfile()
+    {
+        if (AccountProfileUnderTest.Value is { } underTest) return underTest;
+        if (!OperatingSystem.IsWindows()) return null;
+        var folder = IntPtr.Zero;
+        try
+        {
+            return SHGetKnownFolderPath(FolderIdProfile, KnownFolderDontVerify, IntPtr.Zero, out folder) == 0 && folder != IntPtr.Zero
+                ? System.Runtime.InteropServices.Marshal.PtrToStringUni(folder)
+                : null;
+        }
+        finally { if (folder != IntPtr.Zero) System.Runtime.InteropServices.Marshal.FreeCoTaskMem(folder); }
+    }
+
+    /// <summary>FOLDERID_Profile, the user's profile folder (KnownFolders.h).</summary>
+    static readonly Guid FolderIdProfile = new("5E6C858F-0E22-4760-9AFE-EA3317B67173");
+
+    /// <summary>KF_FLAG_DONT_VERIFY, the flag dirs-sys 0.5.0 passes (ShlObj_core.h).</summary>
+    const uint KnownFolderDontVerify = 0x00004000;
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", ExactSpelling = true)]
+    static extern int SHGetKnownFolderPath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPStruct)] Guid id,
+        uint flags, IntPtr forUser, out IntPtr path);
+
+    /// <summary>
+    /// THE REFUSAL WHILE ONE OF <paramref name="names"/> UNDER <paramref name="profile"/> HOLDS ANYTHING (<c>U-windows-cards</c>), or null:
+    /// see <see cref="SeatPlan.AccountForbidden"/>.
+    /// </summary>
+    public static string? AccountRefusal(RuntimeManifest manifest, string? profile, string[] names)
+    {
+        if (profile is null) return null;
+        foreach (var name in names)
+        {
+            var path = Path.GetFullPath(Path.Combine(profile, name.Replace('/', Path.DirectorySeparatorChar)));
+            string? holds;
+            try { holds = WhatItHolds(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { holds = $"is there and TradeAgent could not look into it ({ex.Message})"; }
+            if (holds is null) continue;
+            return $"TradeAgent will not start the AI while {path} {holds}: {manifest.DisplayName} reads that folder of your Windows " +
+                   "account as its own skills whatever TradeAgent sets, so it would show the AI the skills you keep there. Nothing was " +
+                   "started, and TradeAgent never opens what is in it. Move that folder out of your user folder to continue.";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Null where <paramref name="path"/> is absent or a plain, empty folder; otherwise what is there, in words that name nothing in it.
+    /// Never followed: a link is refused as a link, because what it leads to can change after this look.
+    /// </summary>
+    static string? WhatItHolds(string path)
+    {
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        if ((attributes & FileAttributes.ReparsePoint) != 0) return "is a link";
+        if ((attributes & FileAttributes.Directory) == 0) return "is a file";
+        return Directory.EnumerateFileSystemEntries(path).Any() ? "holds something" : null;
     }
 
     /// <summary>The first of <paramref name="names"/> that exists under the seat's own home <paramref name="root"/>, as a full path, or null.</summary>
