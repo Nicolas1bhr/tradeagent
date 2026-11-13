@@ -396,6 +396,7 @@ public class OrgScorecardTests
         (nameof(Scorecards.ForecastsSql), Scorecards.ForecastsSql),
         (nameof(Scorecards.UnitMandatesSql), Scorecards.UnitMandatesSql),
         (nameof(Scorecards.UnitAdmissibleYieldSql), Scorecards.UnitAdmissibleYieldSql),
+        (nameof(BaseRateMemo.CheckSql), BaseRateMemo.CheckSql),
     ];
 
     static string Source() => File.ReadAllText(Path.Combine(DayOnePrograms.RepoRoot(), "src", "TradeAgent.Core", "Db", "OrgStore.Scorecards.cs"));

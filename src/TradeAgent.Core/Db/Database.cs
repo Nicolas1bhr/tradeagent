@@ -157,6 +157,13 @@ public sealed class Database : IDisposable
     long _commits;
 
     /// <summary>
+    /// WHETHER A WRITE IS OPEN ON THIS THREAD (<c>U-perf-scorecard</c>). Meaningful only inside a <see cref="Read{T}"/> or
+    /// <see cref="Write{T}"/> body, where the gate is held and so the open write, if any, is this thread's own. A read inside a write sees
+    /// rows that write may still roll back, so nothing kept past the read may be taken from it (<see cref="BaseRateMemo"/>).
+    /// </summary>
+    internal bool Writing => _depth > 0;
+
+    /// <summary>
     /// All writes funnel through here, transactionally, so a process never self-collides.
     ///
     /// <para><b>A NESTED CALL JOINS THE TRANSACTION ALREADY OPEN; it does not start a second one.</b>
