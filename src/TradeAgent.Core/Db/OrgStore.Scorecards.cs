@@ -36,7 +36,8 @@ public sealed record ForecastScore(
 /// joins: the run's version and attempt, the funding lineage written at admission, never a figure); for <c>none</c>, one without.</item>
 /// </list>
 /// It reads no claim but the forecast's own (its predicate, subject, target, dates and probability) and stores nothing: a score is computed
-/// each time it is read (ORGANISATION § 8, "computed by the app at read").
+/// each time it is read (ORGANISATION § 8, "computed by the app at read"); a base rate it measured is kept in memory beside the handle
+/// only while it is exactly what a new measure would say (<see cref="BaseRateMemo"/>, <c>U-perf-scorecard</c>).
 /// </summary>
 public static class ForecastScorer
 {
@@ -157,6 +158,96 @@ public static class ForecastScorer
 }
 
 /// <summary>
+/// THE BASE RATES ALREADY MEASURED, KEPT IN MEMORY BESIDE ONE DATABASE HANDLE (<c>U-perf-scorecard</c>; R31 D17, G3). A page refresh reads
+/// every position's scorecard, and each resolved forecast's base rate was measured again on every read, under the one database lock, at a
+/// cost of resolved forecasts × mandate events (2.6 s a refresh at 1,000 × 5,000 on synthetic rows). A base rate reads only records stamped
+/// before its forecast, so it is kept here once measured and handed back unchanged.
+///
+/// <para><b>Kept only while it is exactly what a new measure would say.</b> The base-rate reads (<see cref="ForecastScorer.BaseRateSql"/>)
+/// read <c>strategy_promotion</c>, <c>org_mandate_event</c>, <c>org_unit</c>, <c>strategy_run</c> and <c>ai_attempt_funding</c>; no code
+/// updates or deletes a row of them in a way those reads see (the unit columns they read, <c>kind</c> and <c>created_at</c>, are written
+/// once) and nothing VACUUMs a home, so their rowids only rise. Before a kept rate is handed back, <see cref="Check"/> reads the rows
+/// added since the last check (rowid above the mark — an index seek, nothing walked) and the earliest stamp among them; every kept rate
+/// whose forecast that stamp could reach (<see cref="Reach"/>) is dropped and measured again. A row stamped at or after a forecast never
+/// moves its base rate, which is the scorer's own cut (EVID-001), so in the app's normal course nothing is dropped.</para>
+///
+/// <para><b>Never from inside a write</b> (<see cref="Database.Writing"/>): such a read sees rows the write may still roll back, and a rate
+/// kept from them, or a mark set past them, would outlive them. Nothing here is written to the database: a score is still computed at read
+/// (ORGANISATION § 8), from base rates that are the records' own. It is used only inside <see cref="Scorecards.Of"/>'s read, under the
+/// handle's one gate.</para>
+/// </summary>
+internal sealed class BaseRateMemo
+{
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Database, BaseRateMemo> Memos = new();
+
+    /// <summary>The memo of <paramref name="db"/>'s handle, made on first use; it lives as long as the handle.</summary>
+    internal static BaseRateMemo Of(Database db) => Memos.GetValue(db, _ => new BaseRateMemo());
+
+    /// <summary>
+    /// The rows added to the five tables since the marks, and the earliest stamp among them: a new verdict's <c>at</c>, a new mandate
+    /// event's <c>at</c>, a new unit's <c>created_at</c>, a new run's <c>created_at</c>, and, for a new funding row, the earliest run of its
+    /// attempt — the stamp each base-rate read compares with the forecast's.
+    /// </summary>
+    internal const string CheckSql =
+        "SELECT (SELECT MAX(rowid) FROM strategy_promotion), (SELECT MIN(at) FROM strategy_promotion WHERE rowid > $promotion), "
+        + "(SELECT MAX(id) FROM org_mandate_event), (SELECT MIN(at) FROM org_mandate_event WHERE id > $event), "
+        + "(SELECT MAX(rowid) FROM org_unit), (SELECT MIN(created_at) FROM org_unit WHERE rowid > $unit), "
+        + "(SELECT MAX(rowid) FROM strategy_run), (SELECT MIN(created_at) FROM strategy_run WHERE rowid > $run), "
+        + "(SELECT MAX(rowid) FROM ai_attempt_funding), "
+        + "(SELECT MIN((SELECT MIN(r.created_at) FROM strategy_run r WHERE r.attempt = f.attempt_id)) FROM ai_attempt_funding f WHERE f.rowid > $funding)";
+
+    readonly record struct Key(string Predicate, string Subject, string Target, string At, string By);
+
+    readonly Dictionary<Key, (BaseRate Rate, string Reach)> _rates = [];
+
+    // THE MARKS: the highest rowid of each table at the last check. long.MaxValue before the first, so the first check reads no row.
+    long _promotion = long.MaxValue, _event = long.MaxValue, _unit = long.MaxValue, _run = long.MaxValue, _funding = long.MaxValue;
+
+    /// <summary>How many base rates this memo has measured and kept, for the tests that hold a refresh to measuring none again.</summary>
+    internal long Measured { get; private set; }
+
+    /// <summary>
+    /// THE LATEST STAMP A NEW RECORD COULD MOVE THIS FORECAST'S BASE RATE AT: its <c>at</c> (every read cuts at <c>&lt; at</c>), and for
+    /// <c>unit-admissible</c> also its charter cut (<c>at</c> less the horizon), whichever is later — compared as the reads compare, as text.
+    /// </summary>
+    static string Reach(string predicate, DateTimeOffset at, DateTimeOffset by)
+    {
+        var t = Sql.T(at);
+        if (predicate != ForecastVocabulary.UnitAdmissible) return t;
+        var chartered = Sql.T(at - (by - at));
+        return string.CompareOrdinal(chartered, t) > 0 ? chartered : t;
+    }
+
+    /// <summary>Drops every kept rate a row added since the last check could move, and moves the marks to the rows there are now.</summary>
+    internal void Check(Database db)
+    {
+        using var c = db.Cmd(CheckSql, ("$promotion", _promotion), ("$event", _event), ("$unit", _unit), ("$run", _run), ("$funding", _funding));
+        using var r = c.ExecuteReader();
+        r.Read();
+        string? floor = null;
+        for (var i = 1; i < 10; i += 2)
+            if (Sql.S(r.GetValue(i)) is { } stamp && (floor is null || string.CompareOrdinal(stamp, floor) < 0))
+                floor = stamp;
+        if (floor is not null)
+            foreach (var k in _rates.Where(e => string.CompareOrdinal(e.Value.Reach, floor) >= 0).Select(e => e.Key).ToList())
+                _rates.Remove(k);
+        long Mark(int i) => r.IsDBNull(i) ? 0 : r.GetInt64(i);
+        (_promotion, _event, _unit, _run, _funding) = (Mark(0), Mark(2), Mark(4), Mark(6), Mark(8));
+    }
+
+    /// <summary>The kept base rate of a forecast of these terms, or null where none is kept.</summary>
+    internal BaseRate? Kept(string predicate, string subject, string target, DateTimeOffset at, DateTimeOffset by) =>
+        _rates.TryGetValue(new Key(predicate, subject, target, Sql.T(at), Sql.T(by)), out var e) ? e.Rate : null;
+
+    /// <summary>Keeps a base rate just measured for a forecast of these terms.</summary>
+    internal void Keep(string predicate, string subject, string target, DateTimeOffset at, DateTimeOffset by, BaseRate rate)
+    {
+        _rates[new Key(predicate, subject, target, Sql.T(at), Sql.T(by))] = (rate, Reach(predicate, at, by));
+        Measured++;
+    }
+}
+
+/// <summary>
 /// ONE MANAGER VERSION'S CALIBRATION (<c>U-org-scorecards-a</c> a2; ORGANISATION § 5, "per manager version"): the runtime and effective
 /// model the forecasts' attempts recorded (<see cref="Name"/>), the number of resolved, scored forecasts and the SUMS of their scores —
 /// every mean is a sum over <see cref="Scored"/>, never a mean of means — and, apart and never in a score, the forecasts resolved void,
@@ -254,6 +345,7 @@ public sealed class Scorecards(Database db)
         var scores = new List<ForecastScore>();
         var refused = new List<string>();
         var versions = new List<ManagerVersionScore>();
+        BaseRateMemo? memo = null;
         using var c = db.Cmd(ForecastsSql, ("$position", position));
         using var r = c.ExecuteReader();
         while (r.Read())
@@ -285,7 +377,15 @@ public sealed class Scorecards(Database db)
                 continue;
             }
             var at = Sql.Time(r.GetValue(8));
-            if (ForecastScorer.BaseRateOf(db, predicate, r.GetString(3), r.GetString(4), at, Sql.Time(r.GetValue(5)), out var why) is not { } baseRate)
+            var (subject, target, by) = (r.GetString(3), r.GetString(4), Sql.Time(r.GetValue(5)));
+            // THE BASE RATE MEASURED ONCE (U-perf-scorecard): the memo is checked against the rows added since, once a read, and never
+            // used from inside a write (BaseRateMemo).
+            if (memo is null && !db.Writing) (memo = BaseRateMemo.Of(db)).Check(db);
+            string? why = null;
+            var baseRate = memo?.Kept(predicate, subject, target, at, by);
+            if (baseRate is null && (baseRate = ForecastScorer.BaseRateOf(db, predicate, subject, target, at, by, out why)) is not null)
+                memo?.Keep(predicate, subject, target, at, by, baseRate);
+            if (baseRate is null)
             {
                 refused.Add($"forecast {id} is not scored: {why}");
                 continue;
