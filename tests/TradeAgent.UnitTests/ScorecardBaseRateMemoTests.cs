@@ -199,13 +199,14 @@ public class ScorecardBaseRateMemoTests
     }
 
     /// <summary>
-    /// THE CHECK WALKS NO TABLE (<see cref="BaseRateMemo.CheckSql"/>): it runs on every read that scores a forecast, so each of its reads of
-    /// the five tables is an index seek on the rowid — the highest rowid, and the rows above the mark. The one walk it may make is of
-    /// <c>strategy_run</c> by attempt, per funding row added since the last check, never per read: SQLite's own plan says so.
-    /// The watched mutant: <c>org_mandate_event</c>'s rows above the mark found by <c>at</c> instead of <c>id</c> — a SCAN of it.
+    /// THE CHECK READS ONLY THE ROWS ABOVE ITS MARKS (<see cref="BaseRateMemo.CheckSql"/>): it runs on every read that scores a forecast,
+    /// so each of the five tables' new rows is found by a seek on the rowid (<c>USING INTEGER PRIMARY KEY (rowid&gt;?)</c>, five of them) and
+    /// its highest rowid by the min/max optimisation; nothing is walked. The run of a new funding row's attempt is read per new funding row,
+    /// never per read. SQLite's own plan says so.
+    /// The watched mutant: <c>org_mandate_event</c>'s rows above the mark found by <c>at</c> instead of <c>id</c> — an index walk, four seeks.
     /// </summary>
     [Fact]
-    public void The_check_walks_no_table()
+    public void The_check_reads_only_the_rows_above_its_marks()
     {
         using var db = TestEnv.NewDb();
         var steps = db.Read(conn =>
@@ -218,8 +219,11 @@ public class ScorecardBaseRateMemoTests
             while (r.Read()) all.Add(r.GetString(3));
             return all;
         });
-        Assert.NotEmpty(steps);
-        var walks = steps.Where(s => s.StartsWith("SCAN ", StringComparison.Ordinal) && s != "SCAN r" && !s.StartsWith("SCAN CONSTANT", StringComparison.Ordinal)).ToList();
+        var plan = string.Join('\n', steps);
+        Assert.True(steps.Count(s => s.EndsWith(" USING INTEGER PRIMARY KEY (rowid>?)", StringComparison.Ordinal)) == 5, plan);
+        foreach (var table in new[] { "strategy_promotion", "org_mandate_event", "org_unit", "strategy_run", "f" })
+            Assert.Contains($"SEARCH {table} USING INTEGER PRIMARY KEY (rowid>?)", steps);
+        var walks = steps.Where(s => s.StartsWith("SCAN ", StringComparison.Ordinal) && s != "SCAN CONSTANT ROW").ToList();
         Assert.True(walks.Count == 0, "the check walks a table:\n" + string.Join('\n', steps));
     }
 }
