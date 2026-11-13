@@ -3823,7 +3823,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         + "'payload_sha256' is TradeAgent's hash of that text. Rows come newest arrival first; 'from' and 'to' bound the "
         + "source time and 'as_of' the arrival, all inclusive. At most "
         + $"{TapeReader.MaxRows.ToString("N0", CultureInfo.InvariantCulture)} rows and "
-        + $"{MaxTapeReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of rows a call: when 'more' is true "
+        + $"{MaxTapeReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of rows a call; a row is never split, "
+        + "so one row larger than that (a GDELT item can be) is served alone. When 'more' is true "
         + "the answer stopped there — 'capped_by' says which bound — and asking again with 'before' set to "
         + "'next_before' continues exactly where it stopped. Nothing on this channel writes the tape.";
 

@@ -82,7 +82,8 @@ public sealed record LensRegistration(LensRecord? Lens, bool New, string? Refusa
 /// <item><b>Three times per datum</b>: the vendor's source time, the instant it arrived, and which
 /// revision it is. <see cref="AsOf"/> answers "what had arrived by t" and nothing later.</item>
 /// <item><b>One transaction per fetch</b>: the attempt and everything it brought commit together or not
-/// at all. Anything this store refuses — a payload over 64 KB, one that is not JSON, a subject that
+/// at all. Anything this store refuses — a payload over 64 KB (an archive file's kept row: over
+/// <see cref="MaxArchivePayloadBytes"/>), one that is not JSON, a subject that
 /// could not be part of a key — is refused BEFORE the transaction opens, so a refusal never leaves an
 /// attempt recorded with half its items.</item>
 /// <item><b>The evidence class is computed here</b>, per observation, from recorded fields
@@ -467,7 +468,7 @@ public sealed class TapeStore : IDisposable
             throw new InvalidOperationException(
                 $"the market-context tape at {File} holds a table tape_obs whose bound on a row is not one TradeAgent wrote "
                 + $"(it reads neither '<= 65536' nor '<= {MaxArchivePayloadBytes.ToString(CultureInfo.InvariantCulture)}' once), "
-                + "so its layout 4 was not written. Nothing has been changed in it.");
+                + "so its layout 4 was not written and the tape was not opened. Its rows are as they were.");
 
         Exec("""
             INSERT INTO tape_meta(key, value) VALUES('schema', '4')
