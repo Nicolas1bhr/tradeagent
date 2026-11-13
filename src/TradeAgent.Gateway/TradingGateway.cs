@@ -726,6 +726,17 @@ public sealed partial class TradingGateway : IAsyncDisposable
         Policy.Risk.InstrumentAllowed(symbol)
         || (FoundingCoversThisVenue && _instrumentCache.Any(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase)));
 
+    /// <summary>
+    /// THE ALLOWLIST AS ONE ORDER MEETS IT: <see cref="InstrumentAllowedHere"/> — or, where <see cref="FoundingCoversThisVenue"/>, a CLOSE
+    /// (<c>U-paper-oco</c>, R31 A3-2). There the list is the venue's instrument list, which the next read replaces whole and which lapses
+    /// with an instrument's check; a close of a pair that left it since the position was opened was refused like an opener, and the run's
+    /// stop, target, exit and END with it. A close is never an instrument approval: what it may sell is bounded by
+    /// <see cref="RefuseAStaleCloseOrThrow"/> — exactly the position held, a run's exactly its own book — before anything reaches the wire.
+    /// Every opening order, and every close under any other list, meets the list exactly as before.
+    /// </summary>
+    bool InstrumentAllowedFor(PlaceIntent intent) =>
+        InstrumentAllowedHere(intent.Symbol) || (intent.Intent is OrderIntent.Close && FoundingCoversThisVenue);
+
     /// <summary>A TEST SEAM: called after a pass's first look at the policy's envelope and before its write. Null in the app.</summary>
     internal Action? PolicyEnvelopeTermsRead { get; set; }
 
@@ -4566,7 +4577,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
         string? unread = null;
         if (FoundingCoversThisVenue && (_instrumentCache.Count == 0 || !InstrumentAllowedHere(intent.Symbol)))
             unread = await AskForTheInstrumentListAsync(ct);
-        if (!InstrumentAllowedHere(intent.Symbol))
+        if (!InstrumentAllowedFor(intent))
             throw unread is null
                 ? new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{intent.Symbol} is not on the allowed instrument list")
                 : new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
@@ -4692,7 +4703,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         var r = Policy.Risk;
 
-        if (!InstrumentAllowedHere(intent.Symbol))
+        if (!InstrumentAllowedFor(intent))
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"{intent.Symbol} is not on the allowed instrument list");
 

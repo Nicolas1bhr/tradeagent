@@ -598,7 +598,7 @@ public sealed class ForwardRuns
         var enter = signal.Kind == IntentKind.Enter;
         var asked = enter ? signal.Quantity : account.Quantity;
 
-        if (Sized(deployment, bar, asked, enter ? "the declared size" : "the exit's close") is not { } quantity)
+        if (Sized(deployment, bar, asked, enter ? "the declared size" : "the exit's close", closing: !enter) is not { } quantity)
             return false;
 
         var cancelled = !enter && await CancelProtectionAsync(deployment, bar, seq, ct);
@@ -664,7 +664,7 @@ public sealed class ForwardRuns
     async Task<bool> SendExitAgainAsync(StrategyDeploymentRow deployment, KlineBar bar, PlaceIntent refused,
         AccountReading account, Func<int> seq, CancellationToken ct)
     {
-        if (Sized(deployment, bar, account.Quantity, "the refused exit's close, sent again") is not { } quantity)
+        if (Sized(deployment, bar, account.Quantity, "the refused exit's close, sent again", closing: true) is not { } quantity)
             return false;
 
         var cancelled = await CancelProtectionAsync(deployment, bar, seq, ct);
@@ -731,7 +731,7 @@ public sealed class ForwardRuns
         var request = Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq);
         if (!live) return (request, false);
 
-        var sized = Sized(deployment, bar, quantity, $"the {kind}'s size", out var unsized);
+        var sized = Sized(deployment, bar, quantity, $"the {kind}'s size", out var unsized, closing: true);
         var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, type, sized ?? quantity,
             type == OrderType.Limit ? level : null, type == OrderType.Stop ? level : null,
             TimeInForce.Day, $"deployment:{deployment.Id} {kind}")
@@ -911,7 +911,7 @@ public sealed class ForwardRuns
     async Task<bool> FlattenAsync(StrategyDeploymentRow deployment, KlineBar bar,
         AccountReading account, int seq, string why, CancellationToken ct)
     {
-        if (Sized(deployment, bar, account.Quantity, "the maximum hold's close") is not { } quantity)
+        if (Sized(deployment, bar, account.Quantity, "the maximum hold's close", closing: true) is not { } quantity)
             return false;
 
         var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, OrderType.Market, quantity,
@@ -940,13 +940,24 @@ public sealed class ForwardRuns
     /// nobody confirmed against the venue's own definition would make every simulated position one
     /// that could not have been taken. Out of the box that list is empty, so a run on an installation
     /// whose owner has recorded no venue row places nothing and says why.</para>
+    ///
+    /// <para><b>A CLOSE IS NOT REFUSED FOR WANT OF A VERIFIED INCREMENT</b> (<c>U-paper-oco</c>, R31 A3-2): a stop, a target, an exit or
+    /// a maximum hold's close sells what the run holds, which was rounded to the venue's increment when it was bought. When the
+    /// instrument's check has lapsed since, or the catalogue cannot be read, there is no step to round to — and nothing to round:
+    /// the close goes at the quantity held, and a close of what is held is never an instrument approval. An entry still refuses.</para>
     /// </summary>
-    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what) =>
-        Sized(deployment, bar, quantity, what, out _);
+    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what, bool closing = false) =>
+        Sized(deployment, bar, quantity, what, out _, closing);
 
-    /// <summary><see cref="Sized(StrategyDeploymentRow, KlineBar, decimal, string)"/>, and the reason in words when there is no order to place.</summary>
-    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what, out string? why)
+    /// <summary><see cref="Sized(StrategyDeploymentRow, KlineBar, decimal, string, bool)"/>, and the reason in words when there is no order to place.</summary>
+    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what, out string? why, bool closing = false)
     {
+        if (closing && quantity > 0m && Increment(deployment.Symbol) is null)
+        {
+            why = null;
+            return quantity;
+        }
+
         if (Increment(deployment.Symbol) is not { } step)
         {
             why = $"this installation's venue catalogue holds no VERIFIED instrument '{deployment.Symbol}', "
