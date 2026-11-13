@@ -30,7 +30,8 @@ public class PaperOcoTests(ITestOutputHelper log)
     const string RunB = "bbbbbbbbbbbb0000000000000000000000000000000000000000000000000000";
 
     /// <summary>A run's client order id exactly as the gateway mints it: <c>TA-</c> and the run's request id for that minute.</summary>
-    static string Id(string run, int minute, int seq) => "TA-" + Deployments.RequestIdFor(run, T0.AddMinutes(minute), seq);
+    static string Id(string run, int minute, int seq) =>
+        TradeAgent.Gateway.TradingGateway.ClientOrderIdFor(Deployments.RequestIdFor(run, T0.AddMinutes(minute), seq));
 
     static string NewFile() => Path.Combine(TestEnv.Home, $"paper-oco-{Guid.NewGuid():n}.db");
 
@@ -170,6 +171,35 @@ public class PaperOcoTests(ITestOutputHelper log)
         Assert.Equal((ExecutionState.REJECTED, 0m), (target.State, target.FilledQuantity));
         Assert.Contains("insufficient holdings", target.RejectReason, StringComparison.Ordinal);
         Assert.Contains("the run that placed it", target.RejectReason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A RUN'S SELL NEVER REACHES ANOTHER RUN'S UNITS EVEN AFTER A SELL NO RUN SENT (the opus review of this unit): the account's own market
+    /// sell of one unit — the owner's hand — leaves one unit, which run B still counts as its own. Run A's stop is then reached: it is
+    /// REJECTED, unfilled, and run B's unit stays. Whose unit the owner sold the book cannot say; what it can say is that run A's sell
+    /// would take what run B holds.
+    ///
+    /// <para><b>RED on the unit's first cut</b> (the run's own fills alone): run A's stop filled on the one unit left, and the account held 0.</para>
+    /// </summary>
+    [Fact]
+    public async Task After_a_sell_no_run_sent_a_runs_stop_does_not_reach_another_runs_unit()
+    {
+        var (paper, source, _) = await TwoRunsHoldingOneEachAsync();
+        await using var _p = paper;
+
+        await paper.PlaceOrderAsync(Order(Id(RunA, 1, 1), OrderSide.Sell, OrderType.Stop, stop: 95m));
+        await paper.PlaceOrderAsync(Order("owner-hand-sell-1", OrderSide.Sell, OrderType.Market));
+
+        // Minute 2: the owner's sell fills at the open. Minute 3: run A's stop is reached.
+        source.Add(Bar(2, 100m, 101m, 99m, 100m), Bar(3, 99m, 99m, 94m, 96m));
+
+        var (held, orders, fills) = await ReadAsync(paper);
+
+        Assert.Equal(1m, held);
+        Assert.Equal("owner-hand-sell-1", Assert.Single(fills, f => f.Side == OrderSide.Sell).ClientOrderId);
+        var stop = Assert.Single(orders, o => o.ClientOrderId == Id(RunA, 1, 1));
+        Assert.Equal((ExecutionState.REJECTED, 0m), (stop.State, stop.FilledQuantity));
+        Assert.Contains("other runs count 1", stop.RejectReason, StringComparison.Ordinal);
     }
 
     /// <summary>
