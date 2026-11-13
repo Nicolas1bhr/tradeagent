@@ -18,7 +18,7 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
   --disk-file   (tests) a JSON [free, total] read instead of asking the filesystem.
 
-Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, strategy_*, fill, cell_proof,
+Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, engineering_log, strategy_*, fill, cell_proof,
 tape_fetch). A deployment's profit and loss is a SIMULATION (paper): a book of fills at modelled prices, never money. A cost is the
 AI's list-price equivalent, never a bill. A section that cannot be read says so; it is never a guess and never a zero.
 
@@ -103,6 +103,8 @@ class W:
     TURN_STOPS = (ENDED_TURN_LIMIT, ENDED_MODEL_REFUSED, ENDED_USAGE_LIMIT)
     # engineering_log: a turn that was not started, in words, each line opening with the position's title
     LOG_MISSION, LOG_TURN_REFUSED = "Mission", "turn_refused"
+    # engineering_log.severity of a line the app wrote because something of its own failed (a sweep, a record, a handler)
+    SEVERITY_ERROR = "error"
     TITLE_OPERATIONS, TITLE_RESEARCH = "Operations Director", "Research Director"
     # mission_event.payload of a chief's ceiling moved short: nothing is moving, so it wakes at its floor (R30 D21)
     WAKE_CHIEF_FLOOR = "chief-floor"
@@ -494,6 +496,14 @@ class Digest:
             "SELECT kind, answer, COUNT(*) AS n, MAX(created_at) AS last FROM deployment_op WHERE state = ? AND created_at >= ? "
             "GROUP BY kind, answer ORDER BY n DESC, kind", (W.DEPLOYMENT_OP_REFUSED, self.since_s))]
         groups = sorted(tools + list(pipe.values()) + ops, key=lambda g: (-g["count"], g["source"], g["what"]))
+        return {"total": sum(g["count"] for g in groups), "groups": groups}
+
+    # -- 7a. the app's own errors: every engineering_log line it wrote at its error severity since T0, by where and what. Not one is
+    #        judged here: a paper run's protection that failed to record and a dropped connection read alike, and the watcher reads each.
+    def app_errors(self):
+        groups = [{"component": r["component"], "event": r["event"], "count": r["n"], "first_at": r["first"], "last_at": r["last"]} for r in self.app.execute(
+            "SELECT component, event, COUNT(*) AS n, MIN(at) AS first, MAX(at) AS last FROM engineering_log WHERE severity = ? AND at >= ? "
+            "GROUP BY component, event ORDER BY n DESC, component, event", (W.SEVERITY_ERROR, self.since_s))]
         return {"total": sum(g["count"] for g in groups), "groups": groups}
 
     # -- 7. ai_attempt errors
@@ -954,7 +964,8 @@ class Digest:
 
 
 SECTIONS = (("app", "app_state"), ("positions", "positions"), ("turns", "turns"), ("org_events", "org_events"), ("arrows", "arrows"),
-            ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("pace", "pace"),
+            ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("app_errors", "app_errors"),
+            ("pace", "pace"),
             ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("cell_proof", "cell_proof"), ("tape_health", "tape_health"))
 
 
@@ -1044,6 +1055,11 @@ def attention(d):
         flags.append(f"{lost} AI launch(es) LOST since T0")
     if er.get("failed_since"):
         flags.append(f"{er['failed_since']} of {er['attempts_since']} AI launches failed or reported a vendor error since T0")
+    ae = d.get("app_errors", {})
+    if ae.get("total"):
+        kinds = ae["groups"]
+        flags.append(f"{ae['total']} app error(s) logged since T0: " + ", ".join(f"{g['component']}/{g['event']} x{g['count']}" for g in kinds[:3])
+                     + (f" (+{len(kinds) - 3} more kinds)" if len(kinds) > 3 else ""))
     od = d.get("wakes", {}).get("overdue") or []
     if od:
         # EVERY OVERDUE POSITION BY NAME, and how many: the wakes below may show only one at the tightest line cap. The reasons of the first two.
@@ -1183,6 +1199,11 @@ def render(d, cap):
         add_list(s["groups"], cap["errors"], lambda g: f"  {g['count']:>3}x {g['state']} exit {g['exit_code']} {','.join(g['positions'])}: "
                  + (f"{g['ended']}: " if g["ended"] else "") + f"{g['vendor_said'] or g['words'] or '(no vendor words)'}"
                  + (f" [offered {g['offered_tools']} tools]" if g["offered_tools"] is not None else ""))
+
+    s = d["app_errors"]
+    if not unread("app errors", s):
+        L.append(f"app errors logged since T0: {s['total']}" + (f" in {len(s['groups'])} kind(s)" if s["groups"] else "  (none)"))
+        add_list(s["groups"], cap["errors"], lambda g: f"  {g['count']:>4}x {g['component']}/{g['event']}  first {stamp(g['first_at'])}  last {stamp(g['last_at'])}")
 
     s = d["pace"]
     if not unread("pace", s):

@@ -703,6 +703,43 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         foreach (var p in overdue) Assert.Contains(p, named, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// THE APP'S OWN ERRORS ARE READ (<c>U-digest-polish</c>): a line the app wrote at its error severity, a paper run's protection that failed to
+    /// record among them, is counted by where and what, raised in ATTENTION and shown; a warning is not an error and a line before T0 is not this run's.
+    ///
+    /// <para>RED at base: the digest read no line of the engineering log by its severity, so a run could log errors for three days and the
+    /// watcher's digest said nothing of them.</para>
+    /// </summary>
+    [UnixFact]
+    public void The_apps_own_errors_since_T0_are_counted_raised_and_shown()
+    {
+        var f = Build();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var log = new LogStore(db);
+            // AS THE APP WRITES THEM, through its own store: the store stamps now, so T0 and now are the real clock's here.
+            log.Engineering("Gateway", "loss_flatten_failed", "error");
+            log.Engineering("Gateway", "loss_flatten_failed", "error");
+            log.Engineering("Ipc", "op_failed", "error");
+            log.Engineering("Ipc", "accept_failed", "warn");
+            db.Exec("INSERT INTO engineering_log(at, component, event, severity) VALUES('2020-01-01T00:00:00.0000000Z', 'Gateway', 'before_t0', 'error');");
+        }
+        string[] args = ["--state", f.State, "--since", DateTimeOffset.UtcNow.AddHours(-1).ToString("o"), "--now", DateTimeOffset.UtcNow.AddHours(1).ToString("o"),
+            "--no-systemd", .. f.Identity()];
+        var (exit, o, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), [.. args, "--json"]);
+        Assert.True(exit == 0, err);
+        var d = JsonDocument.Parse(o).RootElement;
+        var errors = d.GetProperty("app_errors");
+        Assert.Equal(3, errors.GetProperty("total").GetInt32());
+        var groups = errors.GetProperty("groups").EnumerateArray().Select(g => $"{g.GetProperty("component").GetString()}/{g.GetProperty("event").GetString()} x{g.GetProperty("count").GetInt32()}").ToArray();
+        Assert.Equal(new[] { "Gateway/loss_flatten_failed x2", "Ipc/op_failed x1" }, groups);
+        Assert.Contains(d.GetProperty("attention").EnumerateArray(), a => a.GetString() == "3 app error(s) logged since T0: Gateway/loss_flatten_failed x2, Ipc/op_failed x1");
+
+        var (_, human, _) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), args);
+        Assert.Contains("app errors logged since T0: 3 in 2 kind(s)", human, StringComparison.Ordinal);
+        Assert.Contains("   2x Gateway/loss_flatten_failed", human, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void Evidence_per_pair_and_the_paper_notes_are_read()
     {
@@ -896,6 +933,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("LOG_WHY", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"turn_refused\", \"info\", metadataJson: Json.Write(new {{ {0} }}))"),
         ("REFUSAL_OP", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "JsonSerializer.Serialize(new {{ {0} = RefusalMark.OpName(op), code = "),
         ("REFUSAL_CODE", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "RefusalMark.OpName(op), {0} = code.ToString(), role = "),
+        ("SEVERITY_ERROR", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"Ipc\", \"op_failed\", \"{0}\""),
     ];
 
     /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>
