@@ -3363,7 +3363,12 @@ tasks taking turns — each with its id, subject, source time, arrival, revision
 `O-ARCH`), fetch id, payload SHA-256 and payload as recorded (canonical JSON text, so its hash is checkable), or a null
 payload with its `quarantine`. One snapshot, in two phases: the ids off `ix_tape_obs_asof`, then each row by id, so a read
 never carries a payload it does not serve. Bounded by the row limit and by **4 MiB of rows**, each measured as it is
-written (`GatewayPipeServer.MaxTapeReplyBytes`); a row is never split. An answer either bound stopped carries `more: true`,
+written (`GatewayPipeServer.MaxTapeReplyBytes`); a row is never split silently. **`max_bytes`** (16 KiB to 4 MiB,
+`U-tape-gdelt-2`) bounds the WHOLE answer as written, its words included; the harness's `data` tool sends 64,512 for its
+caller (`GrantedWorkerTools.MaxTapeAnswerBytes`), so the broker door's 64 KiB result is never cut. A first row that does not
+fit comes in parts: its payload is as many bytes as fit, and its `part` (`from`, `bytes`, `of`, `next_from`, `read`) says
+which, and that `before` = its id + 1 with **`payload_from`** = `next_from` reads the next; `payload_sha256` is the whole
+payload's hash. Without `max_bytes` the answer is what it always was. An answer either bound stopped carries `more: true`,
 `capped_by` (`limit` or `bytes`) and `next_before`, and `before` set to it continues exactly — a GDELT file's rows share
 both their label and their arrival, so no time could. **`data-list`** adds `tape`: under "TAPE — recorded by TradeAgent as
 it arrived; O-LIVE rows only are first-hand; not evaluation evidence", every catalogue series, every series the tape holds

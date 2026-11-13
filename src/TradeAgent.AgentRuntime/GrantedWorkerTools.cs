@@ -62,6 +62,13 @@ public sealed class GrantedWorkerTools(
     /// <summary>The most one <c>read_file</c> or <c>list_files</c> may return. Bounded per CALL.</summary>
     public const int MaxBytesPerCall = ApiConversation.MaxRetrievalBytesPerCall;
 
+    /// <summary>
+    /// THE MOST ONE <c>data-tape</c> ANSWER TAKES THROUGH THIS TOOL (<c>U-tape-gdelt-2</c> item 2): the per-call bound with 1 KiB to
+    /// spare, sent to the gateway as <c>max_bytes</c>, so the answer fits the one tool result the broker door carries
+    /// (<c>BrokerDoor.MaxResultBytes</c>) and is never cut there; a row larger than that comes in parts, said so in the row.
+    /// </summary>
+    public const int MaxTapeAnswerBytes = MaxBytesPerCall - 1024;
+
     /// <summary>The most one <c>write_file</c> may stage. A worker writes reports, not datasets.</summary>
     public const int MaxWriteBytes = 256 * 1024;
 
@@ -328,12 +335,26 @@ public sealed class GrantedWorkerTools(
             return ToolAnswer.Refused($"'{tool}' is not available in this build's configuration.",
                 Summary(tool, op));
 
+        var fields = Fields(args);
+        // THE TAPE'S ANSWER BOUNDED TO WHAT THIS TOOL CARRIES (U-tape-gdelt-2 item 2): sent for the caller, and a larger one asked
+        // for is refused in words, never clamped — an answer cut by the transport after the gateway gave it would be cut silently.
+        if (op == Ops.DataTape)
+        {
+            fields ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            if (!fields.TryGetValue("max_bytes", out var asked))
+                fields["max_bytes"] = JsonSerializer.SerializeToElement(MaxTapeAnswerBytes);
+            else if (asked.ValueKind == JsonValueKind.Number && asked.TryGetDecimal(out var n) && n > MaxTapeAnswerBytes)
+                return ToolAnswer.Refused(
+                    $"'max_bytes' through this tool is at most {MaxTapeAnswerBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}, "
+                    + "the most one of its answers carries; leave it out, and a row larger than that comes in parts.", Summary(tool, op));
+        }
+
         var request = new IpcRequest
         {
             Op = op,
             Session = Session(),
             RequestId = RequestId(args),
-            Args = Fields(args)
+            Args = fields
         };
 
         IpcResponse response;
@@ -493,7 +514,8 @@ public sealed class GrantedWorkerTools(
             + "no fill, no queue position and no intrabar ordering. 'data-tape' reads the market's context "
             + "as TradeAgent recorded it arriving — each row a measurement with the vendor's source time, "
             + "its arrival, its revision and an evidence class (O-LIVE alone is first-hand), newest arrival "
-            + "first, at most 5,000 rows; a flagged item comes without its text, and GDELT's rows carry the "
+            + "first, at most 5,000 rows and one answer of at most 64,512 bytes, a row larger than that served in parts "
+            + "its 'part' says how to read on; a flagged item comes without its text, and GDELT's rows carry the "
             + "citation its terms require. Nothing here collects or changes data; the account owner does "
             + "that in TradeAgent.",
             OpsSchema(DataOps, GatewaySchema.Ops())),
