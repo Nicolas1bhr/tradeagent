@@ -37,6 +37,10 @@ read_db() { sudo -u "$account" sqlite3 -readonly -batch -noheader -cmd '.timeout
 started() { read_db "SELECT count(*) FROM activity WHERE text = 'TradeAgent started';" 2> /dev/null || echo 0; }
 lines_like() { read_db "SELECT count(*) FROM activity WHERE text LIKE '$1%';" 2> /dev/null || echo 0; }
 noticed() { lines_like 'The last time TradeAgent started, at '; }
+# Each start's resume records what it decided (engineering_log, event start_decided): the positive mark that it ran, and its choice.
+decided() { read_db "SELECT count(*) FROM engineering_log WHERE event = 'start_decided' AND json_extract(metadata, '\$.decision') = '$1';" 2> /dev/null || echo 0; }
+decided_past() { [ "$(decided "$1")" -gt "$2" ]; }
+last_in_a_row() { read_db "SELECT json_extract(metadata, '\$.in_a_row') FROM engineering_log WHERE event = 'start_decided' ORDER BY id DESC LIMIT 1;"; }
 waits() { lines_like 'The AI waits until '; }
 works_on_its_own() { read_db "SELECT coalesce(json_extract(value, '\$.ai_works_on_its_own'), 0) FROM kv WHERE key = 'settings';"; }
 set_owners_word() {   # written as the app's own account, with the app stopped
@@ -62,7 +66,7 @@ note "disk: $(df -h --output=avail,pcent "$home" | tail -n 1 | tr -s ' '); inode
 # ---- 1. a crash loop with the AI set to work on its own --------------------------------------------------
 set_owners_word true
 systemctl reset-failed "$unit"
-s0="$(started)"; w0="$(waits)"; n0="$(noticed)"
+s0="$(started)"; w0="$(waits)"; n0="$(noticed)"; d0="$(decided WaitAfterACrash)"; r0="$(decided Resume)"
 t0="$(now)"
 systemctl start "$unit"
 starts=0 kills=0 seen="$s0"
@@ -72,9 +76,11 @@ while :; do
     starts=$((starts + 1)); seen="$(started)"
     # Every start after a killed one says so and waits; the first follows the rollback step's orderly stop.
     if [ "$starts" -gt 1 ]; then
-        wait_until 60 waits_past "$((w0 + starts - 2))" || fail "start $starts after a crash did not say the AI waits ($(waits) wait lines; disk pause? $(lines_like 'The AI was paused'))"
+        wait_until 60 decided_past WaitAfterACrash "$((d0 + starts - 2))" \
+            || fail "start $starts after a crash did not decide to wait (Resume: $(decided Resume), StayPaused: $(decided StayPaused); disk pause? $(lines_like 'The AI was paused'))"
+        wait_until 10 waits_past "$((w0 + starts - 2))" || fail "start $starts decided to wait and did not say so"
     else
-        sleep 5
+        wait_until 60 decided_past Resume "$r0" || fail "the first start, after an orderly stop, did not decide to resume (WaitAfterACrash: $(decided WaitAfterACrash))"
     fi
     [ "$starts" -le 7 ] || fail "systemd started the app $starts times: the start limit did not stop the loop"
     pid="$(show MainPID)"
@@ -86,6 +92,8 @@ note "the loop: $starts starts, $kills kills, start limit hit $(( t_limit - t0 )
 [ $(( t_limit - t0 )) -lt 600 ] || fail "the limit took $(( t_limit - t0 )) s, past the 10-minute window"
 [ "$(( $(waits) - w0 ))" -eq 5 ] || fail "$(( $(waits) - w0 )) wait lines over 5 starts after a crash"
 [ "$(( $(noticed) - n0 ))" -eq 5 ] || fail "$(( $(noticed) - n0 )) did-not-close lines over 5 starts after a crash"
+[ "$(( $(decided Resume) - r0 ))" -eq 1 ] || fail "$(( $(decided Resume) - r0 )) starts of the loop resumed the AI, not the first alone"
+[ "$(last_in_a_row)" = 5 ] || fail "the last start of the loop counted $(last_in_a_row) starts in a row that did not close, not 5"
 [ "$(works_on_its_own)" = 1 ] || fail "the loop changed the owner's word: ai_works_on_its_own reads $(works_on_its_own)"
 s_limit="$(started)"
 sleep 30
@@ -96,7 +104,7 @@ pass "a crash loop stopped at the limit: $starts starts in $(( t_limit - t0 )) s
 # ---- 2. a hand restart -----------------------------------------------------------------------------------
 # A bare restart first, as an operator would type it; where systemd refuses it while the limit stands, reset-failed (what the
 # kit and the fleet's tool run) and a start. Either way the start that follows comes after a killed one, so it waits.
-seen="$(started)"; w1="$(waits)"
+seen="$(started)"; w1="$(waits)"; d1="$(decided WaitAfterACrash)"
 if systemctl restart "$unit" > "$out/crash-loop-bare-restart.txt" 2>&1; then bare="started (exit 0)"; else bare="refused (exit $?): $(tr '\n' ' ' < "$out/crash-loop-bare-restart.txt")"; fi
 sleep 3
 note "ANSWER: a bare 'systemctl restart' while the limit stands: $bare; then ActiveState=$(show ActiveState), Result=$(show Result)"
@@ -106,7 +114,8 @@ if [ "$(show ActiveState)" != active ] && [ "$(show ActiveState)" != activating 
     systemctl start "$unit"
 fi
 wait_until 120 started_past "$seen" || fail "after the limit a hand start did not start the app within 120 s"
-wait_until 60 waits_past "$w1" || fail "the hand start after the crash loop did not wait"
+wait_until 60 decided_past WaitAfterACrash "$d1" || fail "the hand start after the crash loop did not decide to wait"
+wait_until 10 waits_past "$w1" || fail "the hand start after the crash loop decided to wait and did not say so"
 pass "after the limit a hand start works (bare restart: ${bare%% (*}), and it waits: the start before it was killed"
 
 # D12's question: does a hand restart reset NRestarts? One crash first, so the count is above zero.
@@ -115,10 +124,10 @@ crash "$(show MainPID)"
 wait_until 60 started_past "$seen" || fail "the crash after the hand start was not restarted within 60 s"
 r_crash="$(show NRestarts)"
 [ "$r_crash" -gt "$r_before" ] || fail "NRestarts did not rise on a crash ($r_before -> $r_crash)"
-seen="$(started)"; w2="$(waits)"
+seen="$(started)"; w2="$(waits)"; r2="$(decided Resume)"
 systemctl restart "$unit"
 wait_until 120 started_past "$seen" || fail "a hand 'systemctl restart' did not start the app within 120 s"
-sleep 10
+wait_until 60 decided_past Resume "$r2" || fail "the start after a hand restart did not decide to resume (WaitAfterACrash: $(decided WaitAfterACrash))"
 r_hand="$(show NRestarts)"
 note "ANSWER: NRestarts $r_before after a hand start, $r_crash after a crash, $r_hand after a hand 'systemctl restart'"
 [ "$(waits)" = "$w2" ] || fail "the start after a hand restart waited: an orderly quit was read as a crash"
@@ -128,15 +137,15 @@ pass "a hand 'systemctl restart' works and is an orderly quit: the start after i
 systemctl stop "$unit"
 set_owners_word false
 systemctl reset-failed "$unit"
-seen="$(started)"; n3="$(noticed)"; w3="$(waits)"
+seen="$(started)"; n3="$(noticed)"; w3="$(waits)"; p3="$(decided StayPaused)"
 systemctl start "$unit"
 wait_until 120 started_past "$seen" || fail "the paused home did not start within 120 s"
-sleep 5
+wait_until 60 decided_past StayPaused "$p3" || fail "the paused home's start did not decide to stay paused"
 seen="$(started)"
 crash "$(show MainPID)"
 wait_until 60 started_past "$seen" || fail "the paused home was not restarted after its crash within 60 s"
 wait_until 60 noticed_past "$n3" || fail "the start after the paused home's crash did not say the last start did not close properly"
-sleep 5
+wait_until 60 decided_past StayPaused "$((p3 + 1))" || fail "the start after the paused home's crash did not decide to stay paused (WaitAfterACrash: $(decided WaitAfterACrash))"
 [ "$(works_on_its_own)" = 0 ] || fail "after a crash the paused AI reads ai_works_on_its_own=$(works_on_its_own)"
 [ "$(waits)" = "$w3" ] || fail "a paused AI waited after a crash: there is nothing to wait for"
 pass "the owner's pause survives a crash: still paused, the crash said, no wait"

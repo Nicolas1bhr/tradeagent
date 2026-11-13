@@ -389,6 +389,70 @@ public class ResumeOnStartTests : IDisposable
         finally { await Close(host); }
     }
 
+    /// <summary>
+    /// THE OWNER'S PRESS ENDS THE WAIT: "Let the AI work on its own" during it is his later word, so the AI starts now and the end of the wait adds nothing.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_press_during_the_wait_after_a_crash_starts_the_ai_at_once()
+    {
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; },
+            lastLines: [(CrashWait.StartedLine, DateTimeOffset.UtcNow.AddMinutes(-2))]);
+        host.CrashClean = TimeSpan.FromSeconds(2);
+        try
+        {
+            host.ReadTheLastStart();
+            await host.ResumeOnStartAsync();
+            Assert.True(host.AiWaitsAfterACrash);
+            Assert.Null(host.LetTheAiWorkOnItsOwn());
+            Assert.False(host.AiWaitsAfterACrash, "the owner's press left the wait standing");
+            Assert.Null(host.CrashWaitWords);
+            await Until(() => host.Agent.Running ? "" : null, "the owner's press during the wait never started the AI", () => $"the AI running {host.Agent.Running}");
+            Assert.True(host.Mission.Running);
+
+            await host.CrashResume!.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.DoesNotContain(host.Gateway.Log.RecentActivity(), a => a.Text.StartsWith("TradeAgent has run ", StringComparison.Ordinal));
+        }
+        finally { await Close(host); }
+    }
+
+    /// <summary>
+    /// THE WAIT DOUBLES WITH EACH START IN A ROW THAT DID NOT CLOSE PROPERLY, up to two hours, so a fault that kills the app as each first turn starts is let
+    /// through ever more rarely (review of U-service-limits: a fixed ten minutes let one through every ten). And a start that ran past its own wait and half an
+    /// hour more before it died resumes at once: a single crash, not a loop.
+    /// </summary>
+    [Fact]
+    public void The_wait_doubles_with_each_start_in_a_row_that_did_not_close_and_a_long_run_is_not_a_loop()
+    {
+        var clean = CrashWait.Clean;
+        Assert.Equal(TimeSpan.Zero, CrashWait.WaitFor(0, clean));
+        Assert.Equal([10, 20, 40, 80, 120, 120], new[] { 1, 2, 3, 4, 5, 9 }.Select(n => CrashWait.WaitFor(n, clean).TotalMinutes).ToArray());
+
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(CrashWait.Recently(now.AddMinutes(-29), 1, now, clean));
+        Assert.False(CrashWait.Recently(now.AddMinutes(-31), 1, now, clean));
+        // The second in a row had waited 10 minutes: a death 35 minutes after it began is still inside its wait and half an hour.
+        Assert.True(CrashWait.Recently(now.AddMinutes(-35), 2, now, clean));
+        Assert.False(CrashWait.Recently(now.AddMinutes(-41), 2, now, clean));
+        Assert.False(CrashWait.Recently(null, 3, now, clean));
+    }
+
+    /// <summary>The count of starts in a row is read from the log: the started lines since the last stopped one.</summary>
+    [Fact]
+    public async Task The_starts_in_a_row_that_did_not_close_are_counted_since_the_last_orderly_stop()
+    {
+        var at = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; },
+            lastLines: [(CrashWait.StartedLine, at), (CrashWait.StartedLine, at), (CrashWait.StoppedLine, at),
+                        (CrashWait.StartedLine, at), (CrashWait.StartedLine, at), (CrashWait.StartedLine, at)]);
+        try
+        {
+            host.ReadTheLastStart();
+            Assert.Equal(3, host.DidNotCloseInARow);
+            Assert.Contains(host.Gateway.Log.RecentActivity(), a => a.Text.Contains("(the 3 starts before this one all did not)", StringComparison.Ordinal));
+        }
+        finally { await Close(host); }
+    }
+
     /// <summary>The decision itself: paused first, then the resume setting, then the wait.</summary>
     [Theory]
     [InlineData(false, true, true, "StayPaused")]

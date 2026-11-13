@@ -21,7 +21,8 @@
 # GOING BACK NEEDS NO TARBALL. The release that was running stays installed beside the new one (two are kept, no
 # more), so a rollback is, as root:
 #   ln -sfn <its folder name> /opt/tradeagent/current.new && mv -Tf /opt/tradeagent/current.new /opt/tradeagent/current
-#   systemctl restart tradeagent.service
+#   systemctl reset-failed tradeagent.service; systemctl restart tradeagent.service
+# (reset-failed first: after a crash loop the unit's start limit refuses a bare restart until its window runs out.)
 # The next run of this kit keeps whichever release `current` names then. One limit: a build refuses a home whose
 # schema is newer than its own, so going back past a schema rung needs the databases from before the newer release
 # first ran (tools/linux-host.sh install backs them up to /var/backups/tradeagent/ before it runs this kit).

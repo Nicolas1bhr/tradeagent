@@ -727,6 +727,7 @@ jobs:
           step="the rollback"
           sudo ln -sfn "$second" /opt/tradeagent/current.new
           sudo mv -Tf /opt/tradeagent/current.new /opt/tradeagent/current
+          sudo systemctl reset-failed tradeagent.service
           sudo systemctl restart tradeagent.service
           expect "$second" "$third" current kit
           sleep 30

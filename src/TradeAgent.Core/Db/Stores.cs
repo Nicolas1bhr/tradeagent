@@ -574,6 +574,14 @@ public sealed class LogStore(Database db)
         return r.Read() ? (Sql.Time(r.GetValue(0)), r.GetString(1)) : ((DateTimeOffset, string)?)null;
     });
 
+    /// <summary>How many activity rows read exactly <paramref name="counted"/> since the last that reads <paramref name="since"/> (all of them where none does).</summary>
+    public int CountSinceLast(string counted, string since) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT count(*) FROM activity WHERE text = $c AND id > coalesce((SELECT max(id) FROM activity WHERE text = $s), 0)",
+            ("$c", counted), ("$s", since));
+        return Convert.ToInt32(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    });
+
     public List<(DateTimeOffset At, string Level, string Text)> RecentActivity(int take = 200) => db.Read(_ =>
     {
         using var c = db.Cmd("SELECT at,level,text FROM activity ORDER BY id DESC LIMIT $n", ("$n", take));

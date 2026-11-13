@@ -19,11 +19,13 @@
 #     unit had no start limit, and systemd's default (5 starts in 10 s) never trips at 10 s spacing, so a crash at start-up
 #     restarted it every 10-20 s for ever, each start running the cell benchmark and resuming the AI. Now: at most 6 starts
 #     in any 10-minute window (systemd's window is fixed: it opens at the first start after the last one ended). A loop whose
-#     runs last under about 2 minutes reaches the 7th start inside it, and systemd leaves the unit failed
-#     (Result=start-limit-hit) within 10 minutes of the loop's first start; nothing restarts it. Every start counts, a
-#     hand one too, and only `systemctl reset-failed tradeagent.service` empties the count: the kit and tools/linux-host.sh
-#     run it before their own start, so a hand install always starts. A slower loop is the app's own half: a start soon
-#     after one that did not close properly waits ten minutes before the AI works on its own (AppHost, CrashWait).
+#     runs last under about 90 s (six runs and their 10 s restarts inside 600 s) reaches the 7th start inside it, and systemd
+#     leaves the unit failed (Result=start-limit-hit) within 10 minutes of the loop's first start; nothing restarts it.
+#     Every start counts, a hand one too (systemd's documentation); `systemctl reset-failed tradeagent.service` empties the
+#     count, and a hand start is accepted again once the window has run out. The kit and tools/linux-host.sh run reset-failed
+#     before their own start, so a hand install always starts. A slower loop is the app's own half: a start soon after one
+#     that did not close properly waits before the AI works on its own, ten minutes doubling per start in a row, at most
+#     two hours (AppHost, CrashWait).
 #     Fixed, not growing (RestartSteps= needs systemd 254): the window bounds the loop either way.
 [Unit]
 Description=TradeAgent on display :@DISPLAY@

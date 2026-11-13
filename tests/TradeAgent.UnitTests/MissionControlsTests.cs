@@ -251,7 +251,8 @@ public class MissionControlsTests
         Assert.DoesNotContain("Ui.Button(LetTheAiWork", dashboard);
 
         // The start's decision reads the last start (U-service-limits); the end of a wait decides again from the settings alone.
-        Assert.Contains("switch (DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, now)))", host);
+        Assert.Contains("var decided = DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, DidNotCloseInARow, now, CrashClean));", host);
+        Assert.Contains("switch (decided)", host);
         Assert.Contains("switch (DecideOnStart(Gateway.Settings))", host);
         Assert.Contains("case MissionOnStart.ForgetItWasWorking:", host);
         // What each arm of the resume DOES is driven through the host's own composition in

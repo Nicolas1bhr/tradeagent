@@ -2815,6 +2815,10 @@ public sealed partial class AppHost : IAsyncDisposable
             Gateway.Update(s => { s.AiWorksOnItsOwn = true; s.DiskPause = null; });
             Mission.Start();
         }
+        // THE OWNER'S PRESS ENDS A WAIT AFTER A CRASH (U-service-limits): his word is the later one, so the AI is started now, as the end of the wait would.
+        bool endedAWait;
+        lock (_waitGate) { endedAWait = _waitUntil is not null; _waitUntil = null; }
+        if (endedAWait) _ = StartTheAiForTheResumeAsync();
         Gateway.Log.Activity("The AI was set to work on its own");
         AwakePass();
 
@@ -2871,7 +2875,7 @@ public sealed partial class AppHost : IAsyncDisposable
     async Task PauseTheAiAsync(string line, DiskPause? because)
     {
         // COUNTED BEFORE THE LOOP IS PAUSED, under the wait's gate (U-service-limits): the end of a wait after a crash never starts the loop over it.
-        lock (_waitGate) _pauses++;
+        lock (_waitGate) { _pauses++; _pausesInFlight++; }
         var pausing = Mission.PauseAsync();
         try
         {
@@ -2883,6 +2887,7 @@ public sealed partial class AppHost : IAsyncDisposable
         }
         finally
         {
+            lock (_waitGate) _pausesInFlight--;
             await pausing;
             AwakePass();
         }
@@ -3067,13 +3072,17 @@ public sealed partial class AppHost : IAsyncDisposable
         await DiskGuardPassAsync();
 
         var now = DateTimeOffset.UtcNow;
-        switch (DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, now)))
+        var decided = DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, DidNotCloseInARow, now, CrashClean));
+        // THE DECISION, RECORDED (U-service-limits): what CI's crash loop reads to know each start's resume ran and what it chose.
+        Gateway.Log.TryEngineering("App", "start_decided", "info", metadataJson: Json.Write(new { decision = decided.ToString(), in_a_row = DidNotCloseInARow }));
+        switch (decided)
         {
             case MissionOnStart.Resume:
                 await ResumeTheAiAsync();
                 break;
             case MissionOnStart.WaitAfterACrash:
-                WaitThenDecideAgain(now + CrashClean);
+                _waitedFor = CrashWait.WaitFor(DidNotCloseInARow, CrashClean);
+                WaitThenDecideAgain(now + _waitedFor);
                 break;
             case MissionOnStart.ForgetItWasWorking:
                 Gateway.Update(s => s.AiWorksOnItsOwn = false);
@@ -3104,6 +3113,12 @@ public sealed partial class AppHost : IAsyncDisposable
     /// </summary>
     internal DateTimeOffset? DidNotClose { get; private set; }
 
+    /// <summary>How many starts in a row, the last one included, did not close properly (<see cref="CrashWait.InARow"/>); 0 where the last one did.</summary>
+    internal int DidNotCloseInARow { get; private set; }
+
+    /// <summary>How long this start's wait was, for the words at its end.</summary>
+    TimeSpan _waitedFor;
+
     /// <summary>How long a start after one that did not close properly waits before the AI works on its own (<see cref="CrashWait.Clean"/>). A test shortens it.</summary>
     internal TimeSpan CrashClean { get; set; } = CrashWait.Clean;
 
@@ -3114,14 +3129,18 @@ public sealed partial class AppHost : IAsyncDisposable
     DateTimeOffset? _waitUntil;
 
     /// <summary>
-    /// THE OWNER'S PAUSE AGAINST THE END OF THE WAIT: a pause counts itself under this lock before it pauses the loop, and the end of the wait starts the
-    /// loop under it only if no pause was counted since it read the owner's word. So either the end of the wait sees the pause and starts nothing, or the
-    /// pause comes after the loop started and pauses it. Without it a pause pressed while the AI was starting was walked over by the loop starting after it.
+    /// THE OWNER'S PAUSE AGAINST THE END OF THE WAIT: a pause counts itself under this lock before it pauses the loop and stays counted as in flight until its
+    /// flag is written, and the end of the wait starts the loop under it only with no pause in flight, none counted since it read the owner's word, and the
+    /// flag still on. So either the end of the wait sees the pause and starts nothing, or the pause began after the loop started and pauses it. Without it a
+    /// pause pressed while the AI was starting was walked over by the loop starting after it.
     /// </summary>
     readonly Lock _waitGate = new();
 
     /// <summary>The owner's pauses (and the free-space guard's), counted. Under <see cref="_waitGate"/>.</summary>
     int _pauses;
+
+    /// <summary>Pauses begun whose flag is not written yet (review of <c>U-service-limits</c>): while one is, the end of the wait starts no loop. Under <see cref="_waitGate"/>.</summary>
+    int _pausesInFlight;
 
     /// <summary>Cancelled by the quit, so a wait that ends during it starts nothing.</summary>
     readonly CancellationTokenSource _crashWait = new();
@@ -3133,16 +3152,23 @@ public sealed partial class AppHost : IAsyncDisposable
     internal void ReadTheLastStart()
     {
         DateTimeOffset? at;
+        var inARow = 0;
         bool read = true;
-        try { at = CrashWait.DidNotClose(Gateway.Log); }
+        try
+        {
+            at = CrashWait.DidNotClose(Gateway.Log);
+            if (at is not null) inARow = CrashWait.InARow(Gateway.Log);
+        }
         catch (Exception ex)
         {
             read = false;
             at = DateTimeOffset.UtcNow;
+            inARow = 1;
             Gateway.Log.TryEngineering("CrashWait", "last_start_unreadable", "warn", ex: ex);
         }
         DidNotClose = at;
-        if (at is not null) Gateway.Log.TryActivity(CrashWait.Noticed(read ? at : null), "warn");
+        DidNotCloseInARow = at is null ? 0 : Math.Max(1, inARow);
+        if (at is not null) Gateway.Log.TryActivity(CrashWait.Noticed(read ? at : null, DidNotCloseInARow), "warn");
     }
 
     /// <summary>
@@ -3194,18 +3220,32 @@ public sealed partial class AppHost : IAsyncDisposable
         if (Stopped) return;
         await DiskGuardPassAsync();
         int pauses;
-        lock (_waitGate) { _waitUntil = null; pauses = _pauses; }
+        lock (_waitGate)
+        {
+            // THE OWNER'S PRESS ENDED IT ALREADY (LetTheAiWorkOnItsOwn): his word is the later one, and what it started stands.
+            if (_waitUntil is null) return;
+            _waitUntil = null;
+            pauses = _pauses;
+        }
+        var waited = _waitedFor;
         switch (DecideOnStart(Gateway.Settings))
         {
             case MissionOnStart.Resume:
                 if (Stopped) return;
                 await StartTheAiForTheResumeAsync();
+                // A QUIT THAT BEGAN WHILE THE AI WAS STARTING (review of U-service-limits) is not walked over: the AI this started is stopped again.
+                if (Stopped)
+                {
+                    try { await Agent.StopAsync().WaitAsync(QuitBound); }
+                    catch (Exception) { /* bounded: the quit's own stop and the unit's cgroup are behind it */ }
+                    return;
+                }
                 lock (_waitGate)
                 {
-                    if (Stopped || _pauses != pauses || !Gateway.Settings.AiWorksOnItsOwn) break;
+                    if (Stopped || _pausesInFlight > 0 || _pauses != pauses || !Gateway.Settings.AiWorksOnItsOwn) break;
                     Mission.Start();
                 }
-                Gateway.Log.TryActivity(CrashWait.Resumed(CrashClean));
+                if (Agent.Running) Gateway.Log.TryActivity(CrashWait.Resumed(waited));
                 break;
             case MissionOnStart.ForgetItWasWorking:
                 Gateway.Update(s => s.AiWorksOnItsOwn = false);
@@ -3883,8 +3923,8 @@ public sealed partial class AppHost : IAsyncDisposable
         _crashWait.Cancel();
         if (CrashResume is { } resume)
         {
-            try { await resume.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (Exception) { /* over the bound: Stopped is already true, and it starts nothing after it reads that */ }
+            try { await resume.WaitAsync(TimeSpan.FromSeconds(3)); }
+            catch (Exception) { /* over the bound: Stopped is already true, and what it starts after it reads that it stops again */ }
         }
 
         // THE PC GIVEN BACK ITS SLEEP FIRST (U-windows-awake): Stopped now reads true, so this pass releases, and a background pass that
