@@ -551,6 +551,112 @@ public class PolicyGateTests
         Assert.Empty(conn.Inner.Broker.Orders);
     }
 
+    /// <summary>
+    /// THE ROUTED ACCOUNT IS ASKED AGAIN AT THE MOMENT OF SENDING (<c>U-live-witness-2</c>; U-live-witness's card 1). The paper check
+    /// runs early in the risk check, and every read after it is awaited: on ATAS a chart rebound to another portfolio inside that
+    /// window changes what the platform says, and the re-check before the wire used to ask only the MODE. Each row moves one witness
+    /// inside the quote read, after the check passed: the platform stops saying practice, the routed account's own flag says real
+    /// money, or the platform no longer knows the account. In PAPER nothing may reach the broker. RED at 5f341109, where the order
+    /// went out on the first reading.
+    /// </summary>
+    [Theory]
+    [InlineData("platform")]
+    [InlineData("account")]
+    [InlineData("gone")]
+    public async Task Paper_mode_refuses_a_placement_whose_routed_account_stopped_saying_practice_while_it_was_in_flight(string which)
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = true })) { PlatformIsPaper = true });
+        using var dbh = db;
+        await using var _ = gw;
+        conn.Seam = kind =>
+        {
+            if (kind == RecordingConnector.HeldCall.Quote) Rebind(conn, which);
+            return Task.CompletedTask;
+        };
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), $"paper-rebound-{which}", TestEnv.Buy()));
+        Assert.Equal(which == "gone" ? ErrorCode.ACCOUNT_NOT_FOUND : ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
+        Assert.Contains("nothing was sent", denied.Message, StringComparison.Ordinal);
+        Assert.Equal(0, conn.Places);
+        Assert.Empty(conn.Inner.Broker.Orders);
+    }
+
+    /// <summary>
+    /// AND A MODIFICATION IS ASKED THE SAME QUESTION at the same moment: changing a working order on a real-money account is a real
+    /// order by another verb. The order rests on the practice account, the platform stops saying practice inside the risk check's
+    /// quote read, and the change must not reach the platform. RED at 5f341109.
+    /// </summary>
+    [Fact]
+    public async Task Paper_mode_refuses_a_modification_whose_platform_stopped_saying_practice_while_it_was_in_flight()
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = true })) { PlatformIsPaper = true });
+        using var dbh = db;
+        await using var _ = gw;
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "paper-rest",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+        Assert.Equal(ExecutionState.WORKING, placed.State);
+
+        conn.Seam = kind =>
+        {
+            if (kind == RecordingConnector.HeldCall.Quote) Rebind(conn, "platform");
+            return Task.CompletedTask;
+        };
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.ModifyAsync(new AgentContext("a"), "paper-rest-modify", placed.ConnectorOrderId!, null, 4001m, null));
+        Assert.Equal(ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
+        Assert.Equal(0, conn.Modifies);
+        Assert.Equal(4000m, Assert.Single(conn.Inner.Broker.Orders).LimitPrice);
+    }
+
+    /// <summary>
+    /// ONE LOOKUP, ONE ACCOUNT, FOR THE BOOK AND THE WITNESS (<c>U-live-witness-2</c>; U-live-witness's card 2). A modification read
+    /// the order book under one account lookup and checked "is this practice money" on a second, separate one, with an awaited read
+    /// between them: the owner choosing another account inside the book read made the witness speak for an account the change was
+    /// not going to. Here the order rests on a real-money account and the owner's choice moves to a practice account during the book
+    /// read; the change is refused in the risk check, before any request is written, and the platform is not touched. RED at
+    /// 5f341109, where the practice account's flag let the change through to the real one.
+    /// </summary>
+    [Fact]
+    public async Task A_modification_reads_its_book_and_its_witness_from_one_account_lookup()
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = true })) { PlatformIsPaper = true });
+        using var dbh = db;
+        await using var _ = gw;
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "book-rest",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+        var real = conn.Inner.Broker.AccountId;
+        Assert.Equal(real, placed.AccountId);
+
+        // From here the platform holds two accounts: the one the order rests on, which says real money, and a practice one.
+        conn.AccountAnswer = id =>
+            id == real ? conn.Inner.Broker.Account() with { IsSimulated = false }
+            : id == "PRACTICE-2" ? conn.Inner.Broker.Account() with { Id = "PRACTICE-2", IsSimulated = true }
+            : null;
+        conn.BeforeOrdersRead = () => gw.Update(s => s.SelectedAccountId = "PRACTICE-2");
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.ModifyAsync(new AgentContext("a"), "book-rest-modify", placed.ConnectorOrderId!, null, 4001m, null));
+        Assert.Equal(ErrorCode.MODE_ACCOUNT_MISMATCH, denied.Code);
+        Assert.Contains($"account {real} ", denied.Message, StringComparison.Ordinal);
+        Assert.Null(gw.GetRequest("book-rest-modify"));
+        Assert.Equal(0, conn.Modifies);
+        Assert.Equal(4000m, Assert.Single(conn.Inner.Broker.Orders).LimitPrice);
+    }
+
+    /// <summary>One witness moved, as a chart rebound on ATAS moves it: see the rows above.</summary>
+    static void Rebind(RecordingConnector conn, string which)
+    {
+        switch (which)
+        {
+            case "platform": conn.PlatformIsPaper = false; break;
+            case "account": conn.AccountIsSimulated = false; break;
+            default: conn.AccountAnswer = _ => null; break;
+        }
+    }
+
     /// <summary>A gateway in PAPER on <paramref name="conn"/>, its account selected and the instrument allowed: every other gate open.</summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> PaperOn(RecordingConnector conn)
     {

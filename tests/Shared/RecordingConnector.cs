@@ -127,11 +127,25 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     /// is granted on the <c>&amp;&amp;</c> (see <c>PaperEnvelopeTests</c>). These are inert until set,
     /// and each one moves exactly one witness: <see cref="PlatformIsPaper"/> the platform's own
     /// capability, <see cref="AccountIsSimulated"/> the flag on the account the platform hands back.</para>
+    ///
+    /// <para><b>Settable while a call is in flight</b> (<c>U-live-witness-2</c>): an ATAS chart rebound to another
+    /// portfolio changes what the platform says between the gateway's check and its send, so a test moves a
+    /// witness from inside a <see cref="Seam"/> to say exactly that.</para>
     /// </summary>
-    public bool? PlatformIsPaper { get; init; }
+    public bool? PlatformIsPaper { get; set; }
 
     /// <summary>See <see cref="PlatformIsPaper"/>: the other witness, on the account row itself.</summary>
-    public bool? AccountIsSimulated { get; init; }
+    public bool? AccountIsSimulated { get; set; }
+
+    /// <summary>
+    /// WHAT AN ACCOUNT LOOKUP BY ID ANSWERS, when a test needs a platform holding more than the simulator's one account
+    /// (<c>U-live-witness-2</c>): a real account and a practice one side by side, as an ATAS installation can have.
+    /// Consulted before the simulator; null from it is "no such account". Inert until set.
+    /// </summary>
+    public Func<string, AccountInfo?>? AccountAnswer;
+
+    /// <summary>Runs before every orders read, so a test can move the owner's choice of account inside one. Inert until set.</summary>
+    public Action? BeforeOrdersRead;
 
     /// <summary>
     /// THE CLAIM THAT A CLOSE CARRIES THE ID IT IS HANDED, AS THIS PLATFORM STATES IT
@@ -164,7 +178,9 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
         Read(Restated(Inner.GetAccountsAsync(ct)));
 
     public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) =>
-        Read(Restated(Inner.GetAccountAsync(a, ct)));
+        AccountAnswer is { } answer
+            ? Read(Task.FromResult(answer(a) is { } named ? Restated(named) : null))
+            : Read(Restated(Inner.GetAccountAsync(a, ct)));
 
     async Task<AccountInfo?> Restated(Task<AccountInfo?> call) =>
         await call.ConfigureAwait(false) is { } account ? Restated(account) : null;
@@ -258,6 +274,7 @@ public sealed class RecordingConnector(FakeConnector inner, string? id = null) :
     public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default)
     {
         if (inactive) Interlocked.Increment(ref HistoryReads);
+        BeforeOrdersRead?.Invoke();
         return since is not null && HistoryThrows is { } boom
             ? Read(Task.FromException<IReadOnlyList<OrderInfo>>(boom))
             : Read(Inner.GetOrdersAsync(a, inactive, since, ct));
