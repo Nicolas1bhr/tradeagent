@@ -11,7 +11,8 @@ namespace TradeAgent.AgentRuntime;
 /// or <paramref name="Path"/> itself.</param>
 /// <param name="Items">How many entries the folder <paramref name="Move"/> holds (1 for a link or a file); null where it could not be counted.</param>
 /// <param name="OnMachine">True for the machine's folder, false for the account's.</param>
-public sealed record HeldFolder(string Path, string Holds, string Move, int? Items, bool OnMachine)
+/// <param name="Root">The folder it was looked for under: the account's profile, or the machine's program-data folder.</param>
+public sealed record HeldFolder(string Path, string Holds, string Move, int? Items, bool OnMachine, string Root)
 {
     /// <summary>"3 items", "1 item", or "what is there" where nothing could be counted.</summary>
     public string Count => Items switch { null => "what is there", 1 => "1 item", var n => $"{n} items" };
@@ -79,10 +80,11 @@ public static class HeldFolders
         if (root is null) return;
         foreach (var name in names.Distinct(StringComparer.Ordinal))
         {
-            if (SeatProfile.FirstHeld(root, [name]) is not { } found) continue;
+            var look = onMachine ? SeatProfile.FirstHeldOnMachine(root, [name]) : SeatProfile.FirstHeld(root, [name]);
+            if (look is not { } found) continue;
             if (held.Any(h => string.Equals(h.Path, found.Path, StringComparison.Ordinal))) continue;
             var move = FirstLinkOrSelf(root, found.Path);
-            held.Add(new HeldFolder(found.Path, found.Holds, move, ItemsIn(move), onMachine));
+            held.Add(new HeldFolder(found.Path, found.Holds, move, ItemsIn(move), onMachine, root));
         }
     }
 
@@ -155,8 +157,8 @@ public static class HeldFolders
         foreach (var step in plan.Steps)
         {
             var from = step.Held.Move;
-            if (!now.Any(h => string.Equals(h.Path, step.Held.Path, StringComparison.Ordinal)
-                              && string.Equals(h.Move, from, StringComparison.Ordinal)))
+            // THE SAME FOLDER AS THE SENTENCE SAID (opus review): its path, what moves, what it holds and how many — or nothing moves.
+            if (!now.Any(h => h == step.Held))
             {
                 said.Add($"{step.Held.Path} was not moved: it changed after you pressed, so TradeAgent left it as it is now.");
                 continue;
@@ -169,6 +171,14 @@ public static class HeldFolders
             }
             try
             {
+                // LOOKED AT AGAIN THE MOMENT BEFORE THE RENAME (opus review): a link made on the way since the look above is refused.
+                // What a rename by path cannot close is a link made in the instant between this look and the rename itself; that
+                // moves one folder within wherever the link points, deleting and opening nothing (the residual is carded).
+                if (LinkAbove(step.Held.Root, from) is { } link)
+                {
+                    said.Add($"{from} was not moved: {link} is a link now, and TradeAgent never moves anything through a link. Nothing was changed.");
+                    continue;
+                }
                 Rename(from, step.To);
                 moved.Add(step);
                 said.Add($"TradeAgent moved {step.Held.Count} from {from} to {step.To}. Nothing was deleted, and nothing in it was opened. " +
@@ -189,6 +199,19 @@ public static class HeldFolders
             ? "Nothing TradeAgent checks holds the AI any more: it can start."
             : $"The AI still cannot start: {string.Join("; ", still.Select(h => $"{h.Path} {h.Holds}"))}.");
         return new SetAside(still.Count == 0, string.Join(" ", said), moved);
+    }
+
+    /// <summary>The first folder below <paramref name="root"/> and above <paramref name="move"/> that is a link now; null where none is.</summary>
+    static string? LinkAbove(string root, string move)
+    {
+        var at = root;
+        var parts = Path.GetRelativePath(root, move).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts.SkipLast(1))
+        {
+            at = Path.Combine(at, part);
+            if (AttributesOf(at) is { } a && (a & FileAttributes.ReparsePoint) != 0) return at;
+        }
+        return null;
     }
 
     /// <summary>One rename of the name itself — a folder whole, or a link or a file as itself, never its target.</summary>

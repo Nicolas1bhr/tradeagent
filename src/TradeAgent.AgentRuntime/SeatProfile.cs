@@ -1188,11 +1188,66 @@ public static class SeatProfile
     /// <see cref="AccountRefusal"/>'s; only the words differ, because this folder is the whole computer's and not the account's.
     /// </summary>
     public static string? MachineRefusal(RuntimeManifest manifest, string? machine, string[] names) =>
-        FirstHeld(machine, names) is { } held
+        FirstHeldOnMachine(machine, names) is { } held
             ? $"TradeAgent will not start the AI while {held.Path} {held.Holds}: {manifest.DisplayName} reads that folder of this " +
               "computer as settings and skills for every Windows account on it, whatever TradeAgent sets, and any account or program " +
               $"on the computer can put things there. Nothing was started, and TradeAgent never opens what is in it. {MoveAsideWords}"
             : null;
+
+    /// <summary>
+    /// <see cref="FirstHeld"/> UNDER THE MACHINE'S FOLDER, AND NOTHING THERE ANOTHER ACCOUNT OWNS (<c>U-windows-cards-2</c>, opus review): any
+    /// local account may create <c>OpenAI</c> or <c>OpenAI\Codex</c> under ProgramData, and the account that made it may write in it at any
+    /// time — an empty folder that passes the look now can hold a settings file the moment after. So each name from the root down to the
+    /// forbidden path that exists must be owned by this account, SYSTEM, the Administrators group or a Windows service, or it holds the
+    /// AI, named with its owner's id. A folder whose owner cannot be read holds it too. Off Windows nothing is read: the folder is none.
+    /// </summary>
+    public static (string Path, string Holds)? FirstHeldOnMachine(string? root, IEnumerable<string> names)
+    {
+        if (root is null) return null;
+        foreach (var name in names)
+        {
+            if (FirstHeld(root, [name]) is { } held) return held;
+            var at = root;
+            foreach (var part in name.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                at = Path.Combine(at, part);
+                if (!Directory.Exists(at)) break;
+                string? owner;
+                try { owner = MachineOwnerOf(at); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                               or PlatformNotSupportedException)
+                { return (at, $"is there and TradeAgent could not read which account owns it ({ex.Message})"); }
+                if (owner is not null && !AcceptedMachineOwner(owner))
+                    return (at, $"belongs to another account of this computer ({owner}), which can put things in it at any time");
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-windows-cards-2</c>): the owner's security id <see cref="FirstHeldOnMachine"/> reads for a folder, on any host.
+    /// Nothing in the product sets it, and no file, setting or pipe op reaches it.
+    /// </summary>
+    internal static readonly AsyncLocal<Func<string, string?>?> MachineOwnerUnderTest = new();
+
+    /// <summary>The owner's security id of the folder <paramref name="at"/>: Windows' own, or the test's; null off Windows.</summary>
+    static string? MachineOwnerOf(string at)
+    {
+        if (MachineOwnerUnderTest.Value is { } underTest) return underTest(at);
+        if (!OperatingSystem.IsWindows()) return null;
+        return System.IO.FileSystemAclExtensions.GetAccessControl(new DirectoryInfo(at), System.Security.AccessControl.AccessControlSections.Owner)
+            .GetOwner(typeof(System.Security.Principal.SecurityIdentifier))?.Value
+            ?? throw new InvalidOperationException("Windows named no owner");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="sid"/> may own a folder of the machine's codex layer: this account, SYSTEM (S-1-5-18), the Administrators
+    /// group (S-1-5-32-544, which an elevated installer's folders get) or a Windows service (S-1-5-80-…, TrustedInstaller among them) — none
+    /// of which another standard account can be.
+    /// </summary>
+    static bool AcceptedMachineOwner(string sid) =>
+        sid is "S-1-5-18" or "S-1-5-32-544" || sid.StartsWith("S-1-5-80-", StringComparison.Ordinal)
+        || (OperatingSystem.IsWindows() && string.Equals(System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value, sid, StringComparison.Ordinal));
 
     /// <summary>The way out both refusals end on: the Dashboard's two presses (<c>U-windows-cards-2</c>), never a terminal.</summary>
     public const string MoveAsideWords =

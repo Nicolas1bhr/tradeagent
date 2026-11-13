@@ -14360,8 +14360,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 {
                     state = row.State.ToString(), answered = outcome.ToString(), listed = listed?.State.ToString(), platform = row.ConnectorId
                 }));
+            // ELSEWHERE, THE WAY BACK IS THAT PLATFORM (opus review): paper's book does not move while TradeAgent is on another one.
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"{outranked}. Nothing was recorded: answer it again once your platform shows it filled or cancelled.");
+                $"{outranked}. Nothing was recorded: " + (string.Equals(row.ConnectorId, Connector.Id, StringComparison.Ordinal)
+                    ? "answer it again once your platform shows it filled or cancelled."
+                    : $"{row.ConnectorId} does not move it while TradeAgent is connected to {Connector.Id}, so switch back to " +
+                      $"{row.ConnectorId} and answer it there once it shows it filled or cancelled."));
         }
 
         // A FINAL LISTING HIS ANSWER CONTRADICTS IS REFUSED, NEVER WRITTEN (U-press-row-answer item 3). Past the veto a

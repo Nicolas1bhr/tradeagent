@@ -87,13 +87,16 @@ public sealed class PaperBook : IDisposable
 
     /// <summary>
     /// EVERY ORDER A BOOK HOLDS FROM <paramref name="since"/> ON, READ WITHOUT OPENING IT FOR WRITING (<c>U-windows-cards-2</c>): for a
-    /// host connected to another platform that asks what paper did with an order it sent here. Nothing is created, migrated, settled
-    /// or written — a working order stays working, as it does while no bar reaches the book. A file that does not exist is a book that
-    /// never held an order; one a newer build wrote is refused, as the constructor refuses it.
+    /// host connected to another platform that asks what paper did with an order it sent here. The book is not migrated, settled or
+    /// written — a working order stays working, as it does while no bar reaches the book; only SQLite's own read index beside a WAL
+    /// book (its <c>-wal</c> and <c>-shm</c> files) may be made by the open. A file that is not there THROWS (opus review): an order
+    /// sent to paper proves the book existed, so a missing one is a book that cannot be read, never one that lists nothing (rule 2).
+    /// One a newer build wrote is refused, as the constructor refuses it.
     /// </summary>
     public static IReadOnlyList<OrderInfo> ReadOrders(string file, DateTimeOffset since)
     {
-        if (!System.IO.File.Exists(file)) return [];
+        if (!System.IO.File.Exists(file))
+            throw new FileNotFoundException($"TradeAgent's paper book is not at {file}, so what paper did with the order cannot be read", file);
         using var book = new PaperBook(file);
         return book.Orders(includeInactive: true, since);
     }
