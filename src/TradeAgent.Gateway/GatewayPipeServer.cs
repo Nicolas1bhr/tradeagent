@@ -215,11 +215,11 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     ///   = 50 s  (`WorstCaseOperationPath`)
     ///
     /// A HANDLER IS NOT ONE CALL, so the drain multiplies that by the longest chain a handler issues
-    /// in series — see <see cref="SerialConnectorCallsPerHandler"/>, which is five, and
+    /// in series — see <see cref="SerialConnectorCallsPerHandler"/>, which is six, and
     /// <see cref="RiskReducingHandlerPath"/>, which is the other shape — and adds
     /// <see cref="HandlerOverhead"/> for the handler's own work and
-    /// <see cref="SettleAfterCancelTimeout"/> for the write-back. At shipped values:
-    /// 5 × 50 + 1 + 5 = 256 s, and disposal's ceiling 5 + that + 5 = 266 s.
+    /// <see cref="SettleAfterCancelTimeout"/> for the write-back. At shipped values the longest row
+    /// is `modify`'s seven: 7 × 50 + 1 + 5 = 356 s, and disposal's ceiling 5 + that + 5 = 366 s.
     ///
     /// THE MIDDLE TERM WAS WRONG UNTIL 2026-09-03 and this number with it. It counted one
     /// WriteTimeout for the whole write, but WriteTimeout is a per-chunk PROGRESS budget reset by
@@ -232,7 +232,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// test asserts this default still covers it, so changing a connector deadline breaks a test
     /// rather than silently reintroducing the abandoned order.
     ///
-    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 256 s here — 266 s over
+    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 356 s here — 366 s over
     /// the whole of disposal — but ONLY while a request is
     /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
     /// before this wait. Waiting is the right side of that trade, because the alternative is an
@@ -396,9 +396,9 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         new(Core.Ops.BoardShow, TimeSpan.Zero, "one act of the security board, blind until the caller's own word on it is sealed, and the policy in force, in process"),
         new(Core.Ops.BoardPowerPropose, TimeSpan.Zero, "the security board's records: one proposal of its own power, applied by nothing, in process"),
 
-        new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
-        new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
-        new(Core.Ops.Modify, ModifyHandlerPath, "one orders read that both resolves the target and takes it as it stands, then a cold placement's own chain and the modify"),
+        new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> quote -> instruments -> positions -> in PAPER the routed account again -> place"),
+        new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> quote -> instruments -> positions -> in PAPER the routed account again -> place"),
+        new(Core.Ops.Modify, ModifyHandlerPath, "the account, one orders read that both resolves the target and takes it as it stands, a cold placement's own reads, in PAPER the routed account again, and the modify"),
 
         new(Core.Ops.Cancel, RiskReducingReadPath, "resolve the target, then cancel — both inside the one budget"),
         new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
@@ -449,8 +449,12 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// Codex F2), so it issues a placement's chain on top of its own read. A row that is short is a
     /// shutdown drain that abandons a modification mid-flight, so it grows with the handler — and
     /// this is now the longest row in the table, which is why the drain moved with it.
+    ///
+    /// SEVEN since <c>U-live-witness-2</c>: in PAPER the account the change is routed to is read once
+    /// more immediately before the re-check at the wire, because "is this practice money" can change
+    /// on ATAS while the other reads are in flight (a chart rebound to another portfolio).
     /// </summary>
-    TimeSpan ModifyHandlerPath => 6 * gateway.Connector.WorstCaseOperationPath;
+    TimeSpan ModifyHandlerPath => 7 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
     /// The worst an ORDINARY handler can cost: every call in its chain paying the full per-call
@@ -523,39 +527,42 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     ///
     /// Three was written down as "a prerequisite read, a target resolution, the mutation", which is
     /// the shape of a <c>modify</c> and is not the longest one. `TradingGateway.PlaceAsync` on a
-    /// process that has not warmed its caches issues FIVE, every one of them awaited before the next
-    /// (Codex round-8 CHECK d):
+    /// process that has not warmed its caches issues SIX in PAPER, every one of them awaited before
+    /// the next (Codex round-8 CHECK d; the sixth since U-live-witness-2):
     ///
     ///   1. the account — `AccountAsync`, which is `GetAccountAsync` or `GetAccountsAsync`;
     ///   2. the open positions — the `MaxOpenPositions` check;
     ///   3. a quote — required for EVERY order, so a stale price cannot size one;
     ///   4. the instrument list — read once and cached, so only a cold process pays it;
-    ///   5. the order itself.
+    ///   5. in PAPER, the routed account again — `GetAccountAsync`, the last read before the
+    ///      re-check at the wire, so a practice witness that changed in flight is seen;
+    ///   6. the order itself.
     ///
     /// "Cold" is not a contrived state: it is every placement made before anything else has warmed
     /// the caches, which at shutdown is exactly the placement most likely to still be in flight.
     ///
-    /// WHY NOT SEVEN, which is what a cold `close` issues (a `RequireAccountId` and a positions read,
-    /// and then all five of `PlaceAsync`): `close` is RISK-REDUCING, so all seven share one
+    /// WHY NOT EIGHT, which is what a cold `close` issues (a `RequireAccountId` and a positions read,
+    /// and then all six of `PlaceAsync`): `close` is RISK-REDUCING, so all eight share one
     /// <see cref="RiskReducingHandlerPath"/> budget between them on a connector that reads
-    /// <see cref="PlaceOrderCommand.Intent"/>, and six of the seven on one that does not. Counting
+    /// <see cref="PlaceOrderCommand.Intent"/>, and seven of the eight on one that does not. Counting
     /// its calls at the ordinary rate would over-cover it by minutes. The sweeps are excluded for the
     /// same reason and one more: their legs are issued concurrently, so their call COUNT is not their
     /// serial depth at all.
     ///
     /// A test counts the cold placement's calls over the real pipe and asserts this number covers
-    /// what it counted, so a handler that grows a sixth call fails there instead of silently
+    /// what it counted, so a handler that grows a seventh call fails there instead of silently
     /// shortening this bound (§9.9).
     ///
     /// THE PRICE, STATED, AND IT WENT UP: at the shipped ATAS values (`WorstCaseOperationPath` 50 s)
-    /// the drain is 5 × 50 + 1 + 5 = 256 s, and disposal's ceiling is 5 + that + 5 = 266 s. Round 8
+    /// an ordinary handler is 6 × 50 = 300 s, the drain is set by `modify`'s 7 × 50 + 1 + 5 = 356 s,
+    /// and disposal's ceiling is 5 + that + 5 = 366 s (U-live-witness-2 added one call to each). Round 8
     /// put that figure at 155 s and it was too short by two calls; the extra second is
     /// <see cref="HandlerOverhead"/>, added in round 12. It is paid ONLY while a request is
     /// genuinely in flight — an idle handler is freed when its pipe closes, before this wait — and
     /// the alternative is an order that reached the broker and is recorded DISPATCHING for ever. It
     /// remains a product decision rather than an arithmetic one, and it is the manager's to take.
     /// </summary>
-    public const int SerialConnectorCallsPerHandler = 5;
+    public const int SerialConnectorCallsPerHandler = 6;
 
     /// <summary>
     /// WHAT A HANDLER COSTS ON TOP OF ITS CONNECTOR CALLS, and the term that makes the drain bound
@@ -575,7 +582,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// work is a pipe read, a JSON parse and two or three SQLite writes on a local file. It does not
     /// scale with anything a connector reports, so deriving it from a connector deadline would be
     /// the fiction. One second is a judgement — three orders of magnitude over the 17 ms measured on
-    /// an idle Mac, room for a loaded box, and a rounding error against a drain of 256 s. It is
+    /// an idle Mac, room for a loaded box, and a rounding error against a drain of 356 s. It is
     /// asserted against every handler this suite drives, so a handler that grows real overhead fails
     /// there rather than by shortening a shutdown.
     /// </summary>

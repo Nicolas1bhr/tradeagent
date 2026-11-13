@@ -715,8 +715,8 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
 | `connectors` `material-list` `material-note` `data-list` `data-bars` `data-tape` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `pnl` | **3W** | the account, the positions, then the instruments. The fills cost nothing: they come out of the ledger. Both reads may FAIL without failing the handler — the report names what it could not include |
-| `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
-| `modify` | **6W** | one orders read that both resolves the target and takes it as it stands, then everything a cold placement does — account, positions, quote, instruments — and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
+| `buy` `sell` | **6W** | a cold placement: account → quote → instruments → positions → in PAPER the routed account again, the last read before the wire → place |
+| `modify` | **7W** | the account, one orders read that both resolves the target and takes it as it stands, everything else a cold placement reads — quote, instruments, positions — then in PAPER the routed account again, and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
 | `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
 | `close` | **E + W** | all of it inside the budget on a connector that reads the close intent, plus ONE ordinary placement for one that does not |
@@ -745,8 +745,8 @@ came from the same memory. Every operation in the protocol vocabulary is now dri
 pipe, and an op the dispatcher has no arm for answers `unknown operation '…'`; everything else must
 have a row, and every row must name an operation the dispatcher handles.
 
-At shipped ATAS values that is `max(5×50, 2 + 4×50) + 1 + 5 = 256 s`, and disposal's ceiling is
-`5 + 256 + 5 = 266 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
+At shipped ATAS values the longest row is `modify`'s, so that is `7×50 + 1 + 5 = 356 s`, and disposal's ceiling is
+`5 + 356 + 5 = 366 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
 freed when its pipe closes, before this wait. **The reason `close-all` costs one wave and not the
 whole book:** `RunLegs` checks the operation deadline before issuing each leg, so once `E` is gone
 every remaining leg is reported `not-sent` instead of being issued — at the instant the last wave is
@@ -4537,7 +4537,9 @@ provably simulated by BOTH witnesses** (`AccountInfo.IsSimulated` AND `Capabilit
 mode is PAPER at the press. The dispatch gate's own `MODE_ACCOUNT_MISMATCH` check asks for the same
 two since `U-live-witness`: it took either witness until then, and on ATAS the platform's flag describes
 the chart's bound portfolio, not the account an order is routed to, so the account's own flag is
-required and the platform's may only narrow. This is a standing authority the app will spend without
+required and the platform's may only narrow. Since `U-live-witness-2` both are asked AGAIN of the
+routed account as the last read before the wire, for a placement and a modification: a chart rebound
+while the other reads were in flight is refused and nothing is sent. This is a standing authority the app will spend without
 the owner in the room, and an installation whose two witnesses disagree is one where nobody can say
 which is wrong.
 **Withdrawal is the one UPDATE in the product's ledgers that is not a fresh row**, and it is written

@@ -7340,6 +7340,44 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 $"mode is now {Policy.Mode}; this request was authorized under {stored.Mode} and is not sent");
     }
 
+    /// <summary>
+    /// THE SAME, AND IN PAPER THE ACCOUNT THE ORDER IS ROUTED TO, ASKED AGAIN (<c>U-live-witness-2</c>). The mode is checked
+    /// against the record; so is the paper witness, because it is the other half of what PAPER means. The risk check asked
+    /// "is this practice money" early, and everything after it is awaited: on ATAS the platform's practice flag describes the
+    /// chart's bound portfolio, so a chart rebound to another portfolio inside that window changed the answer and the re-check
+    /// before the wire, which asked only the mode, did not see it. <paramref name="routed"/> is the platform's own fresh reading
+    /// of <c>stored.AccountId</c> (<see cref="RoutedAccountAtDispatchAsync"/>), read by the caller BEFORE this call so that
+    /// nothing awaited comes between this line and the wire; both witnesses must still say practice, the platform's read here
+    /// and now. A placement and a modification send through this; a cancel does not, because it only ever takes risk away and
+    /// it was never asked the paper question.
+    /// </summary>
+    void ReauthorizeAtDispatchOrThrow(AgentContext ctx, ExecutionRequest stored, AccountInfo? routed)
+    {
+        ReauthorizeAtDispatchOrThrow(ctx, stored);
+        if (stored.Mode != TradingMode.PAPER) return;
+
+        if (routed is null || !string.Equals(routed.Id, stored.AccountId, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
+                $"account {stored.AccountId} could not be found on {Connector.DisplayName} just before sending, so whether it is "
+                + "still a practice account cannot be checked, and the mode is PAPER: nothing was sent");
+        if (!(routed.IsSimulated && Connector.Capabilities.IsPaper))
+            throw new GatewayDeniedException(ErrorCode.MODE_ACCOUNT_MISMATCH,
+                routed.IsSimulated
+                    ? $"the {Connector.DisplayName} platform stopped reporting itself as a practice platform while this order for "
+                      + $"account {routed.Id} was being checked, and the mode is PAPER: nothing was sent"
+                    : $"account {routed.Id} stopped saying it is a simulation account while this order was being checked, and the "
+                      + "mode is PAPER: nothing was sent");
+    }
+
+    /// <summary>
+    /// The routed account as the platform states it NOW, for <see cref="ReauthorizeAtDispatchOrThrow(AgentContext, ExecutionRequest, AccountInfo?)"/>:
+    /// one read, in PAPER only (no other mode asks the paper question), and the last awaited read before the wire. Its cost is
+    /// one connector call in a paper placement's chain and a paper modification's, which the pipe's drain counts
+    /// (<c>GatewayPipeServer.SerialConnectorCallsPerHandler</c>).
+    /// </summary>
+    async Task<AccountInfo?> RoutedAccountAtDispatchAsync(ExecutionRequest stored, CancellationToken ct) =>
+        stored.Mode == TradingMode.PAPER ? await Connector.GetAccountAsync(stored.AccountId, ct) : null;
+
     // ---------------------------------------------------------------- mutations
 
     /// <summary>
@@ -8512,7 +8550,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // The cost is that a close whose position moved is refused with POSITION_MOVED even when
         // authority was also revoked. Both are true, both refuse, and nothing is sent; the agent's
         // next attempt is refused at the top of PlaceAsync with the authority code.
-        ReauthorizeAtDispatchOrThrow(ctx, stored);
+        //
+        // The routed account's fresh reading is that rule's one exception in shape and not in
+        // substance: it is awaited, so it is taken ABOVE the re-check, as the last read, and judged
+        // inside it (U-live-witness-2).
+        var routed = await RoutedAccountAtDispatchAsync(stored, ct);
+        ReauthorizeAtDispatchOrThrow(ctx, stored, routed);
 
         // AND THE DECISION'S OWN AGE, HERE, FOR THE SAME REASON THE RE-AUTHORIZATION IS HERE. See
         // RefuseAStaleDecisionOrThrow: every read above this line is awaited, and a signal that was
@@ -8932,7 +8975,14 @@ public sealed partial class TradingGateway : IAsyncDisposable
         AuthorizeOrThrow(ctx);
         if (!Connector.Capabilities.SupportsModify)
             throw new GatewayDeniedException(ErrorCode.TRADING_PERMISSION_UNAVAILABLE, $"{Connector.DisplayName} cannot modify orders");
-        var accountId = await RequireAccountId(ct);
+
+        // ONE LOOKUP, ONE ACCOUNT, FOR THE BOOK AND THE WITNESS (U-live-witness-2). The book was read
+        // under one lookup of the owner's choice and "is this practice money" was asked of a second,
+        // separate one, with the awaited book read between them: a choice moved inside that read made
+        // the witness speak for an account the change was not going to. The account is read once, and
+        // its id is the book's, the record's and the witness's.
+        var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");
+        var accountId = account.Id;
 
         // THE TARGET AS IT STANDS BEFORE THE CHANGE, and it is written down rather than only used
         // here, because the reconciler judges the same modification later from the record alone. It
@@ -8944,7 +8994,6 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // a change's effect on exposure is a statement about the order it is aimed at, and there is
         // no honest one to make without it.
         var (target, before) = await ResolveModifyTargetAsync(orderRef, accountId, ct);
-        var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");
         await RiskCheckOrThrow(ResultingOrderOrThrow(target, before, quantity, limitPrice, stopPrice), account, ct);
 
         var record = new ExecutionRequest
@@ -9053,8 +9102,11 @@ public sealed partial class TradingGateway : IAsyncDisposable
         // an awaited read, and the kill switch, the mode and the live-activation switch are all
         // things the person at the keyboard can change while one is in flight (REVIEW 2026-09-05
         // finding 6 / Codex F4). This is the last point at which refusing still means nothing was
-        // sent.
-        ReauthorizeAtDispatchOrThrow(ctx, stored);
+        // sent. In PAPER the routed account is read once more first and judged in the re-check, as a
+        // placement's is (U-live-witness-2): a working order on a real-money account changed is a
+        // real order by another verb.
+        var routed = await RoutedAccountAtDispatchAsync(stored, ct);
+        ReauthorizeAtDispatchOrThrow(ctx, stored, routed);
         using var slot = ReserveDispatchOrThrow();
 
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
