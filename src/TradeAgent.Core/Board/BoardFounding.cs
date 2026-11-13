@@ -46,7 +46,8 @@ public static class BoardFounding
     /// <para><b>AND THE MOST ONE RUN'S ORDER MAY BE, PER PAIR (R30 D18):</b> its share, each figure here divided by <see cref="PaperDeployments"/>:
     /// BTC 0.0333…, ETH 0.8333…, SOL 16.66…, BNB 3.33…, XRP 1,666.66…. It is not a second number to keep equal: the run's allocation is that share
     /// and the gateway reads the row (<c>TradingGateway.MaxOrderQuantityFor</c>), so capital binds, not the flat <see cref="RiskPolicy.MaxOrderQuantity"/>
-    /// of 1, which stays the limit on every other caller and in every mode but paper.</para>
+    /// of 1, which stays the limit on every other caller and in every mode but paper. A figure the board decides is read per pair in that unit: 0.5 is half
+    /// a run's share (<c>TradingGateway.OpenerShare</c>).</para>
     /// </summary>
     public static IReadOnlyList<(string Instrument, decimal MaxQuantity)> PaperPairs { get; } =
     [

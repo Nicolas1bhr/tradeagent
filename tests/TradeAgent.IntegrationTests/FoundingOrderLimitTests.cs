@@ -234,11 +234,69 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A BOARD THAT SETTLES ON 1 DECIDED 1 (the Codex review's P1): 1 as a board's own figure, set by an act after it was 2, is equal to the founding value
-    /// and is not the founding record. A run's opener is bound by it. RED with the founding limit read by its value: 2 SOL passed at the share of 16.66….
+    /// A FIGURE THE BOARD DECIDES IS READ PER PAIR, IN THE FOUNDING FIGURE'S OWN UNIT (U-rate-limits; D18): the founding 1 is one run's share of its pair, so a
+    /// board's figure is that many shares, and never more than the one its allocation holds. A raise to 2 for every other caller is no narrowing of any run:
+    /// a full-size entry on SOL, BNB and XRP still fills. RED at the base, the one figure for every pair: <c>quantity 8.333 exceeds the limit of 2</c>, no fill.
     /// </summary>
     [Fact]
-    public async Task A_figure_the_board_decided_binds_a_runs_opener_even_when_it_equals_the_founding_one()
+    public async Task A_figure_the_board_raised_does_not_cut_a_normal_entry_on_any_pair()
+    {
+        await using var rig = await Founded(db => BoardDecides(db, 2m));
+        Assert.Equal(2m, rig.Gw.Policy.Risk.MaxOrderQuantity);
+
+        rig.Minute(1);
+        await rig.Runner.AdvanceAsync();
+        rig.Minute(2);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Minute(3);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+
+        foreach (var (pair, price) in Pairs)
+        {
+            var run = rig.RunOn(pair);
+            foreach (var op in rig.Gw.Deployments.OpsOf(run.Id)) log.WriteLine($"{pair} {op.Kind} {op.State}: {op.Answer}");
+            var fill = Assert.Single(rig.Gw.Deployments.FillsOf(run));
+            Assert.InRange(fill.Quantity, 0.99m * 1_666.66666666m / price, 1_666.66666666m / price);
+        }
+    }
+
+    /// <summary>
+    /// AND A NARROWING NARROWS EVERY RUN BY THE SAME PART OF ITS OWN SHARE: a board's 0.5 is half of each run's share, 8.33333333 SOL, 1.66666666 BNB and
+    /// 833.33333333 XRP, rounded down, where the one figure gave 0.5 of each. Over it is refused in the limit's words; under it the order goes on to the capital
+    /// gate. Every other caller's limit is the figure itself, as before. RED at the base: <c>quantity 8 exceeds the limit of 0.5</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_figure_the_board_narrowed_narrows_each_runs_share_by_the_same_part()
+    {
+        await using var rig = await Founded(db => BoardDecides(db, 0.5m));
+        rig.Minute(1);
+
+        foreach (var (pair, over, limit) in new[]
+                 {
+                     ("SOLUSDT", 8.4m, 8.33333333m), ("BNBUSDT", 1.7m, 1.66666666m), ("XRPUSDT", 834m, 833.33333333m)
+                 })
+            Assert.Contains($"exceeds the limit of {limit}", await Asked(rig, pair, over), StringComparison.Ordinal);
+
+        Assert.DoesNotContain("exceeds the limit", await Asked(rig, "SOLUSDT", 8m), StringComparison.Ordinal);
+
+        var owner = await Assert.ThrowsAsync<GatewayDeniedException>(() => rig.Gw.PlaceAsync(AgentContext.Operator, "owner-order",
+            new PlaceIntent("SOLUSDT", OrderSide.Buy, OrderType.Market, 0.6m, null, null, TimeInForce.Day, null)));
+        Assert.Contains("exceeds the limit of 0.5", owner.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A BOARD THAT SETTLES BACK ON 1 GIVES A RUN ITS SHARE AND NO MORE (the Codex review's P1, still held): 1 decided after 2 is no raise over what 2 gave, and
+    /// an order over the share is refused at the share. With a figure read past the share (the raise not capped), 17 SOL would pass this limit.
+    ///
+    /// <para><b>Changed in the open.</b> This was <c>A_figure_the_board_decided_binds_a_runs_opener_even_when_it_equals_the_founding_one</c>, which held a run's
+    /// opener to the board's 1 itself, 2 SOL refused: under one figure for every pair that refused every normal entry on SOL, BNB and XRP (U-paper-closure's
+    /// card). The figure is now read per pair (D18's unit: the founding 1 is one run's share), so the 1 is one share; what P1 protects, that settling on a
+    /// figure is never a raise over the one before it, holds because the reading only grows with the figure and stops at the share.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_board_that_settles_back_on_1_gives_a_run_its_share_and_no_more()
     {
         await using var rig = await Founded(db =>
         {
@@ -248,7 +306,20 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         rig.Minute(1);
 
         Assert.Equal(BoardFounding.V1.Risk.MaxOrderQuantity, rig.Gw.Policy.Risk.MaxOrderQuantity);
-        Assert.Contains("exceeds the limit of 1", await Asked(rig, "SOLUSDT", 2m), StringComparison.Ordinal);
+        Assert.Contains("exceeds the limit of 16.66666666", await Asked(rig, "SOLUSDT", 17m), StringComparison.Ordinal);
+        Assert.DoesNotContain("exceeds the limit", await Asked(rig, "SOLUSDT", 2m), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// UNDER A RAISE THE SHARE STILL BINDS: a board's 2 is two shares for nobody; an order over one run's share is refused at the share.
+    /// </summary>
+    [Fact]
+    public async Task Under_a_figure_the_board_raised_an_order_over_the_share_is_refused_at_the_share()
+    {
+        await using var rig = await Founded(db => BoardDecides(db, 2m));
+        rig.Minute(1);
+        Assert.Contains("exceeds the limit of 16.66666666", await Asked(rig, "SOLUSDT", 17m), StringComparison.Ordinal);
+        Assert.Contains("exceeds the limit of 1666.66666666", await Asked(rig, "XRPUSDT", 1_700m), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -286,7 +357,10 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
 
     /// <summary>
     /// NOTHING ELSE MOVED: another caller's order on the same pair is bound by the flat 1, the owner's included, and a figure other than the founding one
-    /// binds a run too. The per-pair limit is a paper run's own, under the founding value, and it is a way toward nothing.
+    /// binds a run too, by the same part of its share. The per-pair limit is a paper run's own, and it is a way toward nothing.
+    ///
+    /// <para><b>Changed in the open.</b> A figure moved to 0.5 held the run's opener to 0.5 itself (<c>exceeds the limit of 0.5</c> for 2 SOL); it is now half
+    /// the run's share, 8.33333333 SOL (U-rate-limits, the board's figure read per pair, D18's unit), so the order over it is 9.</para>
     /// </summary>
     [Fact]
     public async Task The_flat_limit_stays_on_every_other_caller_and_a_decided_figure_binds_a_run()
@@ -300,6 +374,6 @@ public class FoundingOrderLimitTests(ITestOutputHelper log)
         Assert.Contains("exceeds the limit of 1", owner.Message, StringComparison.Ordinal);
 
         rig.Gw.UpdateRiskUnderTest(r => r.MaxOrderQuantity = 0.5m);
-        Assert.Contains("exceeds the limit of 0.5", await Asked(rig, "SOLUSDT", 2m), StringComparison.Ordinal);
+        Assert.Contains("exceeds the limit of 8.33333333", await Asked(rig, "SOLUSDT", 9m), StringComparison.Ordinal);
     }
 }
