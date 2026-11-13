@@ -3137,11 +3137,11 @@ public sealed partial class AppHost : IAsyncDisposable
         }
 
         /// <summary>The chief's backstop, from the security board's policy IN FORCE (R30 D21, <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>).</summary>
-        public TimeSpan? ChiefFloor(string position, DateTimeOffset now)
+        public TimeSpan? ChiefFloor(string position, DateTimeOffset now, Func<string, bool> mayTurn)
         {
             if (host._db is not { } db) return null;
             var floors = host.Gateway is { } gateway ? RewakeFloorsOf(gateway.Policy) : RewakeFloors.From(null, null);
-            return new OrgStore(db).ChiefFloor(position, floors, now);
+            return new OrgStore(db).ChiefFloor(position, floors, now, mayTurn);
         }
 
         /// <summary>The organisation's sweep over the mandates (<c>U-org-assignments-a</c>): it writes org records and wakes, never a turn.</summary>

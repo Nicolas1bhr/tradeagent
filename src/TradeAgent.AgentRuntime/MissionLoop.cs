@@ -739,9 +739,10 @@ public interface IMissionHost
     /// <summary>
     /// THE INTERVAL AT WHICH <paramref name="position"/> IS WOKEN INSTEAD OF ITS CEILING, or null where the ceiling stands (R30 D21,
     /// <c>U-chief-moves</c>; <see cref="OrgStore.ChiefFloor"/>). The default is a host with no chart: the ceiling stands. A seam that throws leaves
-    /// it standing too, the saving direction.
+    /// it standing too, the saving direction. <paramref name="mayTurn"/> is the loop's own activation answer for a holder now (null refusal, or a
+    /// seam that threw): work owed by a position the gate refuses is not moving (<c>U-chief-floor-held</c>).
     /// </summary>
-    TimeSpan? ChiefFloor(string position, DateTimeOffset now) => null;
+    TimeSpan? ChiefFloor(string position, DateTimeOffset now, Func<string, bool> mayTurn) => null;
 
     /// <summary>
     /// A SEAT OF THE SECURITY BOARD'S WHOLE PROMPT for the turn <paramref name="attemptId"/> answering <paramref name="wake"/>
@@ -4043,7 +4044,7 @@ public sealed class MissionLoop
         {
             // A CHIEF WITH NOTHING MOVING IS WOKEN SOONER (R30 D21): the same one wake, measured from the same turn, so the floor a turn resets still
             // cannot be a heartbeat, and a turn that does nothing buys only the next interval. It stops by itself, at the pass after work moves.
-            var backstop = _host.ChiefFloor(head.Id, now) is { } shorter && shorter > TimeSpan.Zero && shorter < every ? shorter : (TimeSpan?)null;
+            var backstop = _host.ChiefFloor(head.Id, now, role => RefusalOf(role) is null) is { } shorter && shorter > TimeSpan.Zero && shorter < every ? shorter : (TimeSpan?)null;
             var interval = backstop ?? every;
             var why = backstop is null ? null : MissionEventStore.ChiefFloorWake;
             var last = _host.LastWokenAt(head.Id);
