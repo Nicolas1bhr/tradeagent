@@ -1259,10 +1259,8 @@ public sealed class AgentSession(
         {
             // AND WHAT IT MEASURED (U-turn-bounds-2): a turn cancelled after its usage arrived keeps the figures, as it keeps a warning.
             _usage = state.Usage;
-            // AND THE VENDOR'S LIMIT (U-turn-cards item 3): a limit read before a cancel is not lost on that path. Whether work came before it is judged
-            // again at the end of what was read (the opus review): a cut turn that worked after the vendor's line was no turn that did nothing, and a
-            // limit before any work is what lets the meter charge nothing; unknown is never zero.
-            _limit = state.Limit is { BeforeAnyWork: true } early && state.Worked ? early with { BeforeAnyWork = false } : state.Limit;
+            // AND THE VENDOR'S LIMIT (U-turn-cards item 3): a limit read before a cancel is not lost on that path, carried as the turn's end judges it.
+            _limit = state.CarriedLimit;
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
             _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
             if (state.ToolsDead is { } vendorSaid) _toolsDead = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ToolsUnavailable, vendorSaid);
@@ -1327,7 +1325,9 @@ public sealed class AgentSession(
             if (process.ExitCode == 0 && state.ToolsDead is null && state.ModelRefused is null)
                 SeatMarks.Clear(manifest, seat.Profile, launchModel, this, checkedAt);
             FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
-            return (process.ExitCode, raw.ToString(), state.Usage, state.Limit);
+            // THE LIMIT AS THE END OF THE READ JUDGES IT (U-turn-cards-2 item 2), as the cancelled read's is: a limit before any work that work followed is
+            // carried as after work, so the turn keeps its reservation as its cost.
+            return (process.ExitCode, raw.ToString(), state.Usage, state.CarriedLimit);
         }
         finally
         {
@@ -1573,6 +1573,14 @@ public sealed class AgentSession(
         /// <summary>The vendor's refusal of this turn for its usage limit, or null. The first one stands.</summary>
         public VendorLimit? Limit { get; set; }
 
+        /// <summary>
+        /// THE LIMIT AS THE TURN CARRIES IT OUT, judged again at the end of what was read (U-turn-cards' opus review; <c>U-turn-cards-2</c> item 2 for a read
+        /// that reached its end): a limit before any work that work followed is a limit after work, because a turn that worked after the vendor's line was
+        /// no turn that did nothing, and "before any work" is what lets the meter charge nothing; unknown is never zero. Only ever that way round: what
+        /// came after the line never makes a limit after work read as one before it.
+        /// </summary>
+        public VendorLimit? CarriedLimit => Limit is { BeforeAnyWork: true } early && Worked ? early with { BeforeAnyWork = false } : Limit;
+
         /// <summary>The vendor's warning items' messages, in order (<c>U-cli-code-mode</c>).</summary>
         public List<string> Warnings { get; } = [];
 
@@ -1653,9 +1661,10 @@ public sealed class AgentSession(
 
             // THE VENDOR REFUSING THE TURN FOR ITS OWN USAGE LIMIT, recognised by the manifest's data and
             // never by a sentence written here. Held rather than shown now, so that it is the LAST thing
-            // the turn says (FinishTurn). Whether any work came before it is settled HERE, at the moment
+            // the turn says (FinishTurn). Whether any work came before it is read HERE, at the moment
             // of the refusal, from what the stream had shown so far — the meter charges a turn nothing on
-            // that answer, so it must not be read off anything that arrived afterwards.
+            // that answer, so nothing that arrived afterwards may make it "before any work". Work that
+            // came after it makes the turn one that worked (TurnState.CarriedLimit, U-turn-cards-2).
             if (manifest.UsageLimit?.Read(msg, DateTimeOffset.UtcNow) is { } limit)
             {
                 state.Limit ??= limit with { Vendor = manifest.DisplayName, BeforeAnyWork = !state.Worked };
