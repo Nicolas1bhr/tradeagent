@@ -306,7 +306,7 @@ public class BrokerSeatTests : IDisposable
 
     /// <summary>
     /// (d) A <c>runtimes.json</c> OVERRIDE OF THE BROKER CLASS IS REFUSED, NAMING BOTH: an entry whose broker deny set, class environment,
-    /// feature or tool-server allowlist, model flag, workspace's forbidden names, the account's forbidden paths (U-windows-cards) or credential files differs from this build's refuses the
+    /// feature or tool-server allowlist, model flag, workspace's forbidden names, the account's forbidden paths (U-windows-cards), the machine's (U-windows-cards-2) or credential files differs from this build's refuses the
     /// class with the field, the file's version and this build's; nothing is admitted (the pin and the home's forbidden paths: below). The file's other runtimes and the legacy pair's CLI class are untouched.
     ///
     /// <para>RED at base: it did not compile — no class had fields of its own and nothing compared them.</para>
@@ -323,6 +323,7 @@ public class BrokerSeatTests : IDisposable
                      ("model flag", m => m.ModelArgs = ["--model", "{model}"]),
                      ("workspace's forbidden names", m => m.Seat!.WorkspaceForbidden = [".agents"]),
                      ("account's forbidden paths", m => m.Seat!.AccountForbidden = []),
+                     ("machine's forbidden paths", m => m.Seat!.MachineForbidden = []),
                      ("credential files", m => m.Seat!.PrivateFiles = ["codex/auth.json"])
                  })
         {
