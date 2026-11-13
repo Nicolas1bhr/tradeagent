@@ -245,7 +245,8 @@ sealed class DashboardPage
         // rewrites the text of these four controls and touches nothing else, so a half-pressed
         // "Confirm: let the AI keep working…" and a half-typed guidance box both survive it.
         _workButton = BuildWorkOnItsOwn(
-            () => _host.Mission.Running,
+            // WAITING AFTER A CRASH COUNTS AS WORKING (U-service-limits): the owner's word is that it works, so the press offered is the pause.
+            () => _host.Mission.Running || _host.AiWaitsAfterACrash,
             () => _host.LetTheAiWorkOnItsOwn(),
             () => _ = PauseMissionAsync(),
             // Asked at ARM time, not at build time: the cap the second press names has to be the one
@@ -346,7 +347,7 @@ sealed class DashboardPage
         _agentButton.Content = _host.Agent.Running ? "Stop the AI" : "Start the AI";
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
-        RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
+        RefreshMission(_host.Mission.Status, _host.Mission.Running || _host.AiWaitsAfterACrash, _host.SpendToday);
         _glance.Update();
         _signIn.Update();
         _heldFolders.Update();
@@ -438,10 +439,12 @@ sealed class DashboardPage
             : Theme.TextFaint;
 
         var disk = _host.DiskPauseWords;
-        _missionState.Text = MissionSentence(status, _host.AiNotStarted, disk);
+        var waiting = _host.CrashWaitWords;
+        _missionState.Text = MissionSentence(status, _host.AiNotStarted, disk, waiting);
         _missionState.Foreground = status.State switch
         {
             _ when disk is not null => Theme.Caution,
+            not MissionState.Working when waiting is not null => Theme.Caution,
             MissionState.Working => Theme.Positive,
             MissionState.Waiting => Theme.TextMuted,
             MissionState.Paused => Theme.Caution,
@@ -473,11 +476,13 @@ sealed class DashboardPage
     /// AND THE FREE-SPACE GUARD'S PAUSE OUTRANKS BOTH (<see cref="AppHost.DiskPauseWords"/>): it is the reason the AI is not working, whichever of the two
     /// the loop reads as, and the only place that says what to do about it. While a turn unwinds the line still says working, because that is still true.
     /// </summary>
-    internal static string MissionSentence(MissionStatus status, string? notStarted = null, string? diskPause = null) =>
+    internal static string MissionSentence(MissionStatus status, string? notStarted = null, string? diskPause = null, string? crashWait = null) =>
         Whose(status) + status.State switch
         {
             MissionState.Working => "working",
             _ when diskPause is { Length: > 0 } => diskPause,
+            // A WAIT AFTER A START THAT DID NOT CLOSE PROPERLY (U-service-limits; AppHost.CrashWaitWords): the reason nothing is turning, and until when.
+            _ when crashWait is { Length: > 0 } => crashWait,
             // THE VENDOR'S LIMIT OUTRANKS THE NEXT LOOK. The look is only when the loop checks the hold
             // again; the hold is when the AI can work, and it is a fact about the owner's plan rather
             // than about this app — so the card names whose limit it is.

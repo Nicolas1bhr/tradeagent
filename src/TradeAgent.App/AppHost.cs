@@ -1466,7 +1466,9 @@ public sealed partial class AppHost : IAsyncDisposable
             _audit = new AuditLine(_db!.FilePath);
             _audit.Start();
 
-            Gateway.Log.Activity("TradeAgent started");
+            // THE LAST START, READ BEFORE THIS ONE WRITES ITS OWN LINE (U-service-limits): whether it closed properly decides whether the resume below waits.
+            ReadTheLastStart();
+            Gateway.Log.Activity(CrashWait.StartedLine);
             // THE HEAD-START KIT A BUILD CARRIES (U-kit-socket item 3), installed before any seat starts — never over the owner's own.
             try { if (Kit.InstallBundled() is { } bundled) Gateway.Log.Activity(bundled); }
             catch (Exception ex) { Gateway.Log.Engineering("Kit", "bundled_kit_failed", "warn", ex: ex); }
@@ -2868,6 +2870,8 @@ public sealed partial class AppHost : IAsyncDisposable
     /// </summary>
     async Task PauseTheAiAsync(string line, DiskPause? because)
     {
+        // COUNTED BEFORE THE LOOP IS PAUSED, under the wait's gate (U-service-limits): the end of a wait after a crash never starts the loop over it.
+        lock (_waitGate) _pauses++;
         var pausing = Mission.PauseAsync();
         try
         {
@@ -3008,7 +3012,13 @@ public sealed partial class AppHost : IAsyncDisposable
         Resume,
 
         /// <summary>It was working, resuming is switched off, and the record is corrected to match.</summary>
-        ForgetItWasWorking
+        ForgetItWasWorking,
+
+        /// <summary>
+        /// It was working and resuming is on, but the start before this one did not close properly soon after it began (<see cref="CrashWait"/>): the
+        /// AI and the loop wait <see cref="CrashWait.Clean"/>, then the decision is made again from the owner's word as it stands then.
+        /// </summary>
+        WaitAfterACrash
     }
 
     /// <summary>
@@ -3023,10 +3033,13 @@ public sealed partial class AppHost : IAsyncDisposable
     /// Separated from the doing so the decision can be driven without a database, a pipe server and a
     /// broker connection.
     /// </summary>
-    internal static MissionOnStart DecideOnStart(TradeAgentSettings s) =>
+    /// <para><b>After a start that did not close properly</b> (<c>U-service-limits</c>), a working AI waits instead of resuming. Paused comes first and
+    /// stays paused: the wait never turns anything on.</para>
+    internal static MissionOnStart DecideOnStart(TradeAgentSettings s, bool afterACrash = false) =>
         !s.AiWorksOnItsOwn ? MissionOnStart.StayPaused :
-        s.ResumeAiOnStart ? MissionOnStart.Resume :
-        MissionOnStart.ForgetItWasWorking;
+        !s.ResumeAiOnStart ? MissionOnStart.ForgetItWasWorking :
+        afterACrash ? MissionOnStart.WaitAfterACrash :
+        MissionOnStart.Resume;
 
     /// <summary>
     /// WHAT <see cref="StartAsync"/> DOES LAST: acts on <see cref="DecideOnStart"/>.
@@ -3053,18 +3066,156 @@ public sealed partial class AppHost : IAsyncDisposable
         // THE GUARD LOOKS FIRST: a restart does not walk a working AI back onto a disk that has no room for it.
         await DiskGuardPassAsync();
 
-        switch (DecideOnStart(Gateway.Settings))
+        var now = DateTimeOffset.UtcNow;
+        switch (DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, now)))
         {
             case MissionOnStart.Resume:
-                try { if (Onboarding.IsComplete()) await StartTheAiAsync(); }
-                catch (Exception) { /* said on the card and in the activity log by StartTheAiAsync */ }
-                Mission.Start();
+                await ResumeTheAiAsync();
+                break;
+            case MissionOnStart.WaitAfterACrash:
+                WaitThenDecideAgain(now + CrashClean);
                 break;
             case MissionOnStart.ForgetItWasWorking:
                 Gateway.Update(s => s.AiWorksOnItsOwn = false);
                 break;
         }
         AwakePass();
+    }
+
+    /// <summary>The AI started and then the loop: what a resume is.</summary>
+    async Task ResumeTheAiAsync()
+    {
+        await StartTheAiForTheResumeAsync();
+        Mission.Start();
+    }
+
+    /// <summary>The resume's start of the AI, once setup is finished and where it is not already running; a refusal is said by <see cref="StartTheAiAsync"/>.</summary>
+    async Task StartTheAiForTheResumeAsync()
+    {
+        try { if (Onboarding.IsComplete() && !Agent.Running) await StartTheAiAsync(); }
+        catch (Exception) { /* said on the card and in the activity log by StartTheAiAsync */ }
+    }
+
+    // ---- a start soon after one that did not close properly (U-service-limits) ----------------------------------------------------
+
+    /// <summary>
+    /// WHEN THE START BEFORE THIS ONE BEGAN, where it did not close properly (<see cref="CrashWait.DidNotClose"/>); null where it did or there was none.
+    /// Read by <see cref="ReadTheLastStart"/>, before this start writes its own line.
+    /// </summary>
+    internal DateTimeOffset? DidNotClose { get; private set; }
+
+    /// <summary>How long a start after one that did not close properly waits before the AI works on its own (<see cref="CrashWait.Clean"/>). A test shortens it.</summary>
+    internal TimeSpan CrashClean { get; set; } = CrashWait.Clean;
+
+    /// <summary>The wait and what follows it, while one stands or has run; null where this start did not wait. A test awaits it.</summary>
+    internal Task? CrashResume { get; private set; }
+
+    /// <summary>The end of the wait, while it stands. Under <see cref="_waitGate"/>.</summary>
+    DateTimeOffset? _waitUntil;
+
+    /// <summary>
+    /// THE OWNER'S PAUSE AGAINST THE END OF THE WAIT: a pause counts itself under this lock before it pauses the loop, and the end of the wait starts the
+    /// loop under it only if no pause was counted since it read the owner's word. So either the end of the wait sees the pause and starts nothing, or the
+    /// pause comes after the loop started and pauses it. Without it a pause pressed while the AI was starting was walked over by the loop starting after it.
+    /// </summary>
+    readonly Lock _waitGate = new();
+
+    /// <summary>The owner's pauses (and the free-space guard's), counted. Under <see cref="_waitGate"/>.</summary>
+    int _pauses;
+
+    /// <summary>Cancelled by the quit, so a wait that ends during it starts nothing.</summary>
+    readonly CancellationTokenSource _crashWait = new();
+
+    /// <summary>
+    /// READS WHETHER THE LAST START CLOSED PROPERLY, and says so in the activity log where it did not. What <see cref="StartAsync"/> does before it writes
+    /// "TradeAgent started". A log that cannot be read counts as a start that did not close, now: the wait errs on the side of no charge.
+    /// </summary>
+    internal void ReadTheLastStart()
+    {
+        DateTimeOffset? at;
+        bool read = true;
+        try { at = CrashWait.DidNotClose(Gateway.Log); }
+        catch (Exception ex)
+        {
+            read = false;
+            at = DateTimeOffset.UtcNow;
+            Gateway.Log.TryEngineering("CrashWait", "last_start_unreadable", "warn", ex: ex);
+        }
+        DidNotClose = at;
+        if (at is not null) Gateway.Log.TryActivity(CrashWait.Noticed(read ? at : null), "warn");
+    }
+
+    /// <summary>
+    /// WHETHER THE AI IS WAITING AFTER A START THAT DID NOT CLOSE PROPERLY: a wait stands and the owner's word is still that it works on its own. The
+    /// Dashboard's button reads it as working, so the press it offers is the pause.
+    /// </summary>
+    public bool AiWaitsAfterACrash
+    {
+        get { lock (_waitGate) return _waitUntil is not null && Gateway.Settings.AiWorksOnItsOwn; }
+    }
+
+    /// <summary>What the card and the at-a-glance line say while the AI waits after a start that did not close properly, or null.</summary>
+    internal string? CrashWaitWords
+    {
+        get
+        {
+            DateTimeOffset? until;
+            lock (_waitGate) until = _waitUntil;
+            return until is { } u && Gateway.Settings.AiWorksOnItsOwn ? CrashWait.Card(u) : null;
+        }
+    }
+
+    /// <summary>
+    /// THE WAIT: nothing of the AI starts until <paramref name="until"/>; then <see cref="DecideAgainAfterTheWaitAsync"/>. Everything else of the app
+    /// runs as ever — the tape, the paper runs, the background passes, the free-space guard.
+    /// </summary>
+    void WaitThenDecideAgain(DateTimeOffset until)
+    {
+        lock (_waitGate) _waitUntil = until;
+        Gateway.Log.TryActivity(CrashWait.Waits(until), "warn");
+        var ct = _crashWait.Token;
+        CrashResume = Task.Run(async () =>
+        {
+            var left = until - DateTimeOffset.UtcNow;
+            try { if (left > TimeSpan.Zero) await Task.Delay(left, ct); }
+            catch (OperationCanceledException) { return; }
+            try { await DecideAgainAfterTheWaitAsync(); }
+            catch (Exception ex) { Gateway.Log.TryEngineering("CrashWait", "resume_failed", "warn", ex: ex); }
+        });
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// THE END OF THE WAIT DECIDES AGAIN, FROM THE OWNER'S WORD AS IT STANDS NOW: a pause pressed during the wait (his, or the free-space guard's) stays a
+    /// pause; resuming switched off meanwhile is honoured as at a start. The guard looks first, as it does at a start.
+    /// </summary>
+    async Task DecideAgainAfterTheWaitAsync()
+    {
+        if (Stopped) return;
+        await DiskGuardPassAsync();
+        int pauses;
+        lock (_waitGate) { _waitUntil = null; pauses = _pauses; }
+        switch (DecideOnStart(Gateway.Settings))
+        {
+            case MissionOnStart.Resume:
+                if (Stopped) return;
+                await StartTheAiForTheResumeAsync();
+                lock (_waitGate)
+                {
+                    if (Stopped || _pauses != pauses || !Gateway.Settings.AiWorksOnItsOwn) break;
+                    Mission.Start();
+                }
+                Gateway.Log.TryActivity(CrashWait.Resumed(CrashClean));
+                break;
+            case MissionOnStart.ForgetItWasWorking:
+                Gateway.Update(s => s.AiWorksOnItsOwn = false);
+                break;
+            default:
+                Gateway.Log.TryActivity(CrashWait.StaysPaused);
+                break;
+        }
+        AwakePass();
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -3728,6 +3879,14 @@ public sealed partial class AppHost : IAsyncDisposable
         // the way out raised (TradeAgentApp), and a second pass over disposed objects would throw.
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
+        // A WAIT AFTER A CRASH ENDS HERE (U-service-limits): its end starts nothing during the quit, and the one already deciding is let finish first.
+        _crashWait.Cancel();
+        if (CrashResume is { } resume)
+        {
+            try { await resume.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception) { /* over the bound: Stopped is already true, and it starts nothing after it reads that */ }
+        }
+
         // THE PC GIVEN BACK ITS SLEEP FIRST (U-windows-awake): Stopped now reads true, so this pass releases, and a background pass that
         // read the app still open finished under the same gate before it.
         AwakePass();
@@ -3790,7 +3949,7 @@ public sealed partial class AppHost : IAsyncDisposable
         // THE STOP, WRITTEN DOWN (U-linux-host item 2): the counterpart of "TradeAgent started", the last line before
         // the ledgers close, so an orderly quit — the window's, the OS's or the system's SIGTERM — is told apart from
         // a death in the record itself. A crash writes nothing here, and that absence is the evidence.
-        try { Gateway?.Log.Activity("TradeAgent stopped"); }
+        try { Gateway?.Log.Activity(CrashWait.StoppedLine); }
         catch (Exception) { /* the quit goes on whether or not it could be written down */ }
         if (_door is not null) await _door.DisposeAsync();
         if (_server is not null) await _server.DisposeAsync();

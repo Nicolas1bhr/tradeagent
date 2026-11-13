@@ -92,7 +92,7 @@ sealed record GlanceRead
         var wakes = Part("wakes", () => host.Db is { } db ? new MissionEventStore(db).NextDueByRole() : null);
 
         string? loop;
-        try { loop = DashboardPage.MissionSentence(host.Mission.Status, host.AiNotStarted, host.DiskPauseWords); }
+        try { loop = DashboardPage.MissionSentence(host.Mission.Status, host.AiNotStarted, host.DiskPauseWords, host.CrashWaitWords); }
         catch (Exception) { loop = null; }
 
         return new GlanceRead

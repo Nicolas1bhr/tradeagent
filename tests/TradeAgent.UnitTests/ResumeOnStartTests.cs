@@ -268,6 +268,148 @@ public class ResumeOnStartTests : IDisposable
         Assert.Equal(2, Occurrences(host, "StartTheAiAsync()"));   // its declaration and the resume's call
     }
 
+    // ---- 4. a start soon after one that did not close properly (U-service-limits) ------------------------
+
+    /// <summary>
+    /// A CRASH LOOP CANNOT SPIN THE AI'S CHARGES. The last start wrote "TradeAgent started" and never "TradeAgent stopped" — it died — two minutes ago,
+    /// with the AI working on its own and a wake due. This start reads that before it writes its own line, and the resume WAITS: no AI started, no loop,
+    /// so no turn and no reservation, and the card says until when. Once the clean interval has passed it decides again and the wake is taken by a turn
+    /// that launched only after the wait ended.
+    /// </summary>
+    [Fact]
+    public async Task A_restart_soon_after_a_start_that_did_not_close_properly_takes_no_turn_until_a_clean_interval_has_passed()
+    {
+        var (host, _, presence) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; },
+            lastLines: [(CrashWait.StartedLine, DateTimeOffset.UtcNow.AddMinutes(-2))]);
+        host.CrashClean = TimeSpan.FromSeconds(3);
+        try
+        {
+            var due = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var wake = MissionEventIds.Review(due);
+            Assert.True(host.Wakes!.RaiseDue(wake, MissionEventKind.Review, due.AddMinutes(-30), due));
+
+            host.ReadTheLastStart();
+            await host.ResumeOnStartAsync();
+            var waitEnds = DateTimeOffset.UtcNow + host.CrashClean - TimeSpan.FromMilliseconds(50);
+
+            Assert.False(host.Agent.Running, "a start soon after a crash started the AI at once: each start of a crash loop can charge a turn");
+            Assert.False(host.Mission.Running);
+            Assert.True(host.Gateway.Settings.AiWorksOnItsOwn, "the wait changed the owner's word");
+            Assert.True(host.AiWaitsAfterACrash);
+            Assert.Contains("did not close properly", host.CrashWaitWords);
+            Assert.StartsWith("waiting until ", DashboardPage.MissionSentence(host.Mission.Status, host.AiNotStarted, host.DiskPauseWords, host.CrashWaitWords));
+            var lines = host.Gateway.Log.RecentActivity().Select(a => a.Text).ToList();
+            Assert.Contains(lines, l => l.StartsWith("The last time TradeAgent started, at ", StringComparison.Ordinal));
+            Assert.Contains(lines, l => l.StartsWith("The AI waits until ", StringComparison.Ordinal));
+            Assert.NotNull(host.CrashResume);
+
+            await host.CrashResume!.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.True(host.Agent.Running, "the clean interval passed and the AI was never resumed");
+            Assert.True(host.Mission.Running);
+            Assert.False(host.AiWaitsAfterACrash);
+            var taken = await Until(() => host.Wakes.Get(wake) is { Disposition: not null } e ? e : null,
+                "the wake was never taken after the wait", () => LoopAt(host, wake, presence, waitEnds));
+            Assert.True(taken.ConsumedAt >= waitEnds, $"the wake was taken at {taken.ConsumedAt:O}, before the wait ended at {waitEnds:O}");
+        }
+        finally { await Close(host); }
+    }
+
+    /// <summary>
+    /// THE OWNER'S PAUSE SURVIVES THE WAIT. He presses Pause while the AI waits after a crash: the end of the wait decides again from his word as it stands
+    /// then, and starts nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_pause_pressed_during_the_wait_after_a_crash_stands_when_the_wait_ends()
+    {
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; },
+            lastLines: [(CrashWait.StartedLine, DateTimeOffset.UtcNow.AddMinutes(-2))]);
+        host.CrashClean = TimeSpan.FromSeconds(2);
+        try
+        {
+            host.ReadTheLastStart();
+            await host.ResumeOnStartAsync();
+            Assert.True(host.AiWaitsAfterACrash);
+            await host.PauseTheAiAsync();
+            Assert.False(host.AiWaitsAfterACrash, "a paused AI still reads as waiting to work");
+
+            await host.CrashResume!.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert.False(host.Agent.Running, "the end of the wait started the AI over the owner's pause");
+            Assert.False(host.Mission.Running, "the end of the wait started the loop over the owner's pause");
+            Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+            Assert.Contains(host.Gateway.Log.RecentActivity(), a => a.Text == CrashWait.StaysPaused);
+        }
+        finally { await Close(host); }
+    }
+
+    /// <summary>A PAUSED AI AFTER A CRASH STAYS PAUSED, and there is nothing to wait for: the crash is said, no wait is.</summary>
+    [Fact]
+    public async Task A_restart_after_a_crash_with_the_ai_paused_starts_nothing_and_waits_for_nothing()
+    {
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = false; s.ResumeAiOnStart = true; },
+            lastLines: [(CrashWait.StartedLine, DateTimeOffset.UtcNow.AddMinutes(-1))]);
+        try
+        {
+            host.ReadTheLastStart();
+            await host.ResumeOnStartAsync();
+            Assert.False(host.Agent.Running);
+            Assert.False(host.Mission.Running);
+            Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+            Assert.False(host.AiWaitsAfterACrash);
+            Assert.Null(host.CrashResume);
+            var lines = host.Gateway.Log.RecentActivity().Select(a => a.Text).ToList();
+            Assert.Contains(lines, l => l.StartsWith("The last time TradeAgent started, at ", StringComparison.Ordinal));
+            Assert.DoesNotContain(lines, l => l.StartsWith("The AI waits until ", StringComparison.Ordinal));
+        }
+        finally { await Close(host); }
+    }
+
+    /// <summary>
+    /// NO WAIT WITHOUT A RECENT CRASH: a start that closed properly (the kit's restart, the owner's quit), and one that died more than half an hour after
+    /// it began (a single crash after a long run, not a loop), both resume at once.
+    /// </summary>
+    [Theory]
+    [InlineData(true, 2)]
+    [InlineData(false, 31)]
+    public async Task A_restart_after_a_proper_close_or_a_crash_long_after_its_start_resumes_at_once(bool closedProperly, int minutesAgo)
+    {
+        var started = DateTimeOffset.UtcNow.AddMinutes(-minutesAgo);
+        (string, DateTimeOffset)[] last = closedProperly
+            ? [(CrashWait.StartedLine, started), (CrashWait.StoppedLine, started.AddMinutes(1))]
+            : [(CrashWait.StartedLine, started)];
+        var (host, _, _) = await Restarted(s => { s.AiWorksOnItsOwn = true; s.ResumeAiOnStart = true; }, lastLines: last);
+        try
+        {
+            host.ReadTheLastStart();
+            await host.ResumeOnStartAsync();
+            Assert.True(host.Agent.Running, "a start with no recent crash behind it waited");
+            Assert.True(host.Mission.Running);
+            Assert.False(host.AiWaitsAfterACrash);
+            Assert.Null(host.CrashResume);
+        }
+        finally { await Close(host); }
+    }
+
+    /// <summary>The decision itself: paused first, then the resume setting, then the wait.</summary>
+    [Theory]
+    [InlineData(false, true, true, "StayPaused")]
+    [InlineData(true, false, true, "ForgetItWasWorking")]
+    [InlineData(true, true, true, "WaitAfterACrash")]
+    [InlineData(true, true, false, "Resume")]
+    public void The_start_decides_paused_then_the_setting_then_the_wait(bool working, bool resume, bool afterACrash, string expected) =>
+        Assert.Equal(Enum.Parse<AppHost.MissionOnStart>(expected),
+            AppHost.DecideOnStart(new TradeAgentSettings { AiWorksOnItsOwn = working, ResumeAiOnStart = resume }, afterACrash));
+
+    /// <summary>StartAsync reads the last start BEFORE it writes its own line: read after, every start would find itself and nothing would ever wait.</summary>
+    [Fact]
+    public void The_start_reads_the_last_start_before_it_writes_its_own()
+    {
+        var source = Code(Path.Combine(Root(), "src", "TradeAgent.App", "AppHost.cs"));
+        var read = source.IndexOf("ReadTheLastStart();", StringComparison.Ordinal);
+        var write = source.IndexOf("Gateway.Log.Activity(CrashWait.StartedLine);", StringComparison.Ordinal);
+        Assert.True(read > 0 && write > read, "StartAsync does not read the last start before it writes \"TradeAgent started\"");
+        Assert.Equal(1, Occurrences(source, "Gateway.Log.Activity(CrashWait.StartedLine);"));
+    }
+
     // ---- the restart --------------------------------------------------------------------------------
 
     /// <summary>
@@ -276,7 +418,8 @@ public class ResumeOnStartTests : IDisposable
     /// register handed back is the one the host's AI processes report to.
     /// </summary>
     static async Task<(AppHost Host, string DatabasePath, AgentPresence Presence)> Restarted(
-        Action<TradeAgentSettings> lastSession, bool setupFinished = true, bool slowVersion = false)
+        Action<TradeAgentSettings> lastSession, bool setupFinished = true, bool slowVersion = false,
+        (string Text, DateTimeOffset At)[]? lastLines = null)
     {
         RuntimeCatalog.SaveOverrides([ProbeRuntime(slowVersion)]);
 
@@ -286,6 +429,13 @@ public class ResumeOnStartTests : IDisposable
         await using (var before = new TradingGateway(db, connector, new HealthRegistry()))
             before.Update(s => { s.SelectedRuntimeId = Probe; lastSession(s); });
         if (setupFinished) new OnboardingStore(db).Complete(OnboardingStep.SETUP_COMPLETE);
+        // THE LAST SESSION'S OWN START AND STOP LINES, at the times it wrote them.
+        foreach (var (text, at) in lastLines ?? [])
+            db.Write(_ =>
+            {
+                using var c = db.Cmd("INSERT INTO activity(at,level,text) VALUES($a,'info',$t)", ("$a", at.UtcDateTime.ToString("O")), ("$t", text));
+                return c.ExecuteNonQuery();
+            });
 
         await connector.ConnectAsync();
         var presence = new AgentPresence();

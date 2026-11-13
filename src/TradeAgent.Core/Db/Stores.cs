@@ -563,6 +563,17 @@ public sealed class LogStore(Database db)
         return c.ExecuteNonQuery();
     });
 
+    /// <summary>
+    /// THE NEWER OF TWO ACTIVITY LINES (<c>U-service-limits</c>): the last row whose text is exactly one of them, with its time, or null where neither was
+    /// ever written (or the log was pruned past both). Read backwards by id, so it stops at the first match.
+    /// </summary>
+    public (DateTimeOffset At, string Text)? LastOf(string one, string other) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT at,text FROM activity WHERE text IN ($a,$b) ORDER BY id DESC LIMIT 1", ("$a", one), ("$b", other));
+        using var r = c.ExecuteReader();
+        return r.Read() ? (Sql.Time(r.GetValue(0)), r.GetString(1)) : ((DateTimeOffset, string)?)null;
+    });
+
     public List<(DateTimeOffset At, string Level, string Text)> RecentActivity(int take = 200) => db.Read(_ =>
     {
         using var c = db.Cmd("SELECT at,level,text FROM activity ORDER BY id DESC LIMIT $n", ("$n", take));

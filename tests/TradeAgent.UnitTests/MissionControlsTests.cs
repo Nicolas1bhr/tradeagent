@@ -240,7 +240,8 @@ public class MissionControlsTests
         var host = File.ReadAllText(Path.Combine(Root(), "src", "TradeAgent.App", "AppHost.cs"));
 
         Assert.Contains("_workButton = BuildWorkOnItsOwn(", dashboard);
-        Assert.Contains("() => _host.Mission.Running,", dashboard);
+        // U-service-limits: a wait after a crash reads as working, so the press the button offers then is the pause.
+        Assert.Contains("() => _host.Mission.Running || _host.AiWaitsAfterACrash,", dashboard);
         Assert.Contains("() => _host.LetTheAiWorkOnItsOwn(),", dashboard);
 
         // The one-press version of the same control, so a revert cannot pass by adding rather than
@@ -249,6 +250,8 @@ public class MissionControlsTests
         Assert.DoesNotContain("Ui.Secondary(LetTheAiWork", dashboard);
         Assert.DoesNotContain("Ui.Button(LetTheAiWork", dashboard);
 
+        // The start's decision reads the last start (U-service-limits); the end of a wait decides again from the settings alone.
+        Assert.Contains("switch (DecideOnStart(Gateway.Settings, CrashWait.Recently(DidNotClose, now)))", host);
         Assert.Contains("switch (DecideOnStart(Gateway.Settings))", host);
         Assert.Contains("case MissionOnStart.ForgetItWasWorking:", host);
         // What each arm of the resume DOES is driven through the host's own composition in
