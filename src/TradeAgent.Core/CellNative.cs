@@ -70,7 +70,7 @@ public static class CellNative
     // ---- seccomp (include/uapi/linux/seccomp.h, filter.h, audit.h) -------------------------------------------------
 
     const uint SeccompRetKillProcess = 0x80000000, SeccompRetErrno = 0x00050000, SeccompRetUserNotif = 0x7fc00000, SeccompRetAllow = 0x7fff0000;
-    const uint EPERM = 1, EACCES = 13;
+    const uint EPERM = 1, EACCES = 13, EOPNOTSUPP = 95;
     const uint AuditArchX64 = 0xC000003E, AuditArchArm64 = 0xC00000B7;
     const uint X32SyscallBit = 0x40000000;
     const uint AF_UNIX = 1, AF_INET = 2, AF_INET6 = 10, SOCK_STREAM = 1, SOCK_DGRAM = 2, SOCK_SEQPACKET = 5, SOCK_NONBLOCK = 0x800,
@@ -78,11 +78,11 @@ public static class CellNative
 
     /// <summary>
     /// The system calls the filter reads by number: <c>socket</c>, <c>socketpair</c>, <c>listen</c>, the three sends whose flags it
-    /// reads, <c>ioctl</c>, the denied ones and the mediated ones; everything else passes to Landlock. <c>Seccomp</c> is the call that
-    /// installs it.
+    /// reads, <c>ioctl</c>, <c>fallocate</c>, the denied ones and the mediated ones; everything else passes to Landlock. <c>Seccomp</c> is
+    /// the call that installs it.
     /// </summary>
     internal sealed record Table(uint AuditArch, uint Socket, uint Socketpair, uint Listen, uint Sendto, uint Sendmsg, uint Sendmmsg, uint Ioctl, uint Seccomp,
-        uint[] Denied, uint[] Mediated);
+        uint Fallocate, uint[] Denied, uint[] Mediated);
 
     /// <summary>The filesystem calls a kernel gives every architecture one number for: <c>fchmodat2</c>, <c>setxattrat</c>, <c>removexattrat</c>, <c>file_setattr</c>.</summary>
     internal const uint SysFchmodat2 = 452, SysSetxattrat = 463, SysRemovexattrat = 466, SysFileSetattr = 469;
@@ -98,7 +98,7 @@ public static class CellNative
 
     internal static Table? TableFor(Architecture arch) => arch switch
     {
-        Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, 16, 317,
+        Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, 16, 317, 285,
         [
             425, 426, 427, 250, 248, 249, 321, 298, 323,                // io_uring_setup/enter/register, keyctl, add_key, request_key, bpf, perf_event_open, userfaultfd
             92, 93, 94, 260,                                            // chown, fchown, lchown, fchownat
@@ -109,7 +109,7 @@ public static class CellNative
             90, 91, 268, SysFchmodat2,                                  // chmod, fchmod, fchmodat, fchmodat2
             132, 235, 261, 280                                          // utime, utimes, futimesat, utimensat
         ]),
-        Architecture.Arm64 => new(AuditArchArm64, 198, 199, 201, 206, 211, 269, 29, 277,
+        Architecture.Arm64 => new(AuditArchArm64, 198, 199, 201, 206, 211, 269, 29, 277, 47,
         [
             425, 426, 427, 219, 217, 218, 280, 241, 282,
             54, 55,                                                     // fchownat, fchown (arm64 has no chown or lchown)
@@ -455,6 +455,12 @@ public static class CellNative
     /// like read EPERM as "not root". A mode (<c>chmod</c>, <c>fchmod</c>, <c>fchmodat</c>, <c>fchmodat2</c>) and a time (<c>utime</c>,
     /// <c>utimes</c>, <c>futimesat</c>, <c>utimensat</c>, which is <c>futimens</c> too): a user notification, because the tools a cell
     /// runs do need those in the workspace and the filter cannot read a path. <see cref="CellMediator"/> answers them.</para>
+    ///
+    /// <para><b>Space taken without writing it</b> (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c>, in every mode — EOPNOTSUPP. It
+    /// allocates a file's blocks at the speed of the filesystem's metadata, and the per-file bound is per FILE, so seventy calls would take
+    /// the disk inside one of the free-space guard's reads. EOPNOTSUPP, not EPERM, because it is the answer programs already fall back
+    /// from (glibc's <c>posix_fallocate</c> writes the blocks itself), so a tool's preallocation becomes real writes the guard can see.
+    /// Punching a hole goes with it; nothing a cell runs needs one to work.</para>
     /// </summary>
     /// <summary>
     /// WHAT THE KERNEL IS TOLD, AS ONE STRING (<c>U-cell-linux-c</c> item 5): the seccomp program's bytes for this processor and the
@@ -473,6 +479,7 @@ public static class CellNative
         if (architecture == Architecture.X64) b.Jge(X32SyscallBit, "eperm", null);
         foreach (var nr in t.Denied) b.Jeq(nr, "eperm", null);
         foreach (var nr in t.Mediated) b.Jeq(nr, "notify", null);
+        b.Jeq(t.Fallocate, "eopnotsupp", null);
         b.Jeq(t.Ioctl, "ioctl", null);
         b.Jeq(t.Listen, "eacces", null);
         b.Jeq(t.Sendto, "flags3", null);
@@ -493,6 +500,7 @@ public static class CellNative
         b.Label("allow").Ret(SeccompRetAllow);
         b.Label("eacces").Ret(SeccompRetErrno | EACCES);
         b.Label("eperm").Ret(SeccompRetErrno | EPERM);
+        b.Label("eopnotsupp").Ret(SeccompRetErrno | EOPNOTSUPP);
         b.Label("notify").Ret(SeccompRetUserNotif);
         b.Label("kill").Ret(SeccompRetKillProcess);
         return b.Assemble();
