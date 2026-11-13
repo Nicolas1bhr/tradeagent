@@ -16,7 +16,7 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
   --now     (tests) the instant "now" is, ISO with a zone.   --no-systemd   (tests) do not ask systemd about the unit.
   --vocabulary   (tests) print every word this file compares a column to, as JSON, and stop.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
-  --disk-file   (tests) a JSON [free, total] read instead of asking the filesystem.
+  --disk-file   (tests) a JSON [free, total] or [free, total, free inodes, total inodes] read instead of asking the filesystem.
 
 Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, engineering_log, strategy_*, fill, cell_proof,
 tape_fetch). A deployment's profit and loss is a SIMULATION (paper): a book of fills at modelled prices, never money. A cost is the
@@ -49,6 +49,9 @@ STATE_UNDER_HOME = ".local/share/TradeAgent/state"
 MAX_LINES = 60
 GIB = 1 << 30
 DISK_FLOOR_SHARE, DISK_FLOOR_MOST, DISK_FLOOR_LEAST = 10, 10 * GIB, 2 * GIB    # DiskFloor.For: a tenth of the disk, at most 10 GiB, never under 2 (held to it by OrgDigestTests)
+# THE WATCH'S OWN INODE FLOOR (R31 A4): the app's guard reads free bytes only, and millions of small files can use up the filesystem's inodes while it
+# reads plenty free; ext4 keeps none back for root, so the host's other services would stop too. Raised under the larger of a tenth and 500,000.
+INODE_FLOOR_SHARE, INODE_FLOOR_LEAST = 10, 500_000
 
 
 class W:
@@ -1195,18 +1198,32 @@ def build(app_path, tape_path, state, now, since, opts):
 
 def read_disk(state, disk_file):
     """FREE SPACE ON THE FILESYSTEM HOLDING THE STATE FOLDER, on every run, as this host answers now: a statvfs, which writes nothing. It is what the app's
-    free-space guard reads, and this file's floor is the guard's: free is what the app's own account can use. A read that fails says so; it is never a zero."""
+    free-space guard reads, and this file's floor is the guard's: free is what the app's own account can use. A read that fails says so; it is never a zero.
+    And THE INODES beside them (R31 A4), which the guard does not read: f_favail of f_files, what the app's own account can still create. A filesystem
+    that counts none (f_files 0: it makes them as it goes) says so, and is never flagged."""
     try:
+        ifree = itotal = None
         if disk_file:
             with open(disk_file, encoding="utf-8") as f:
-                free, total = json.load(f)
+                read = json.load(f)
+            if not isinstance(read, list) or len(read) not in (2, 4):
+                raise ValueError("--disk-file holds neither [free, total] nor [free, total, free inodes, total inodes]")
+            free, total = read[0], read[1]
+            if len(read) == 4:
+                ifree, itotal = read[2], read[3]
         else:
             v = os.statvfs(state)
             free, total = v.f_bavail * v.f_frsize, v.f_blocks * v.f_frsize
+            ifree, itotal = v.f_favail, v.f_files
     except (OSError, ValueError, TypeError) as ex:
         return {"unreadable": str(ex)}
     floor = max(DISK_FLOOR_LEAST, min(total // DISK_FLOOR_SHARE, DISK_FLOOR_MOST))
-    return {"free": free, "total": total, "floor": floor, "below_floor": free < floor}
+    out = {"free": free, "total": total, "floor": floor, "below_floor": free < floor,
+           "inodes_free": ifree, "inodes_total": itotal, "inodes_free_pct": None, "inodes_floor": None, "inodes_below_floor": None}
+    if itotal:
+        ifloor = max(itotal // INODE_FLOOR_SHARE, INODE_FLOOR_LEAST)
+        out.update(inodes_free_pct=round(ifree * 100 / itotal, 1), inodes_floor=ifloor, inodes_below_floor=ifree < ifloor)
+    return out
 
 
 def gib(n):
@@ -1229,6 +1246,9 @@ def attention(d):
     disk = d.get("disk", {})
     if disk.get("below_floor") and not pause:
         flags.append(f"free space {gib(disk['free'])} is UNDER the guard's floor {gib(disk['floor'])} and no pause is recorded")
+    if disk.get("inodes_below_floor"):
+        flags.append(f"free inodes {disk['inodes_free']:,} of {disk['inodes_total']:,} ({disk['inodes_free_pct']}%) are UNDER {disk['inodes_floor']:,} "
+                     f"(the larger of {100 // INODE_FLOOR_SHARE}% and {INODE_FLOOR_LEAST:,}), with {gib(disk['free'])} free: the app's guard reads bytes only, so nothing pauses")
     if d.get("app", {}).get("ai_works_on_its_own") is False:
         flags.append("the AI is NOT set to work on its own: nothing turns")
     dt_ = d.get("day_total", {})
@@ -1345,7 +1365,9 @@ def render(d, cap):
 
     s = d["disk"]
     if not unread("disk", s):
-        L.append(f"disk: {gib(s['free'])} free of {gib(s['total'])}  guard floor {gib(s['floor'])}")
+        L.append(f"disk: {gib(s['free'])} free of {gib(s['total'])}  guard floor {gib(s['floor'])}"
+                 + (f"; inodes {s['inodes_free']:,} free of {s['inodes_total']:,} ({s['inodes_free_pct']}%), floor {s['inodes_floor']:,}" if s.get("inodes_total")
+                    else "; inodes: this filesystem counts none" if s.get("inodes_total") == 0 else ""))
 
     s = d["positions"]
     if not unread("positions", s):
