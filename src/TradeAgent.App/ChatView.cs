@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using TradeAgent.AgentRuntime;
+using TradeAgent.ConnectorSdk;
 
 namespace TradeAgent.App;
 
@@ -37,6 +38,9 @@ sealed class ChatView
     readonly Border _composer;
 
     readonly Control _emptyState;
+
+    /// <summary>The suggestions shown before the first exchange, for a test to read whether or not they are on screen now.</summary>
+    internal Control EmptyState => _emptyState;
     readonly Control _noAgentState;
     readonly Control _busyIndicator;
 
@@ -409,18 +413,11 @@ sealed class ChatView
         foreach (var s in new[]
                  {
                      "What is my account balance?",
-                     "What is ES trading at?",
                      "Explain what you would do today, but do not trade.",
                      "Show me my open positions."
                  })
-        {
-            // Ghost, and left ghost: these are prompts, not commands, and four outlined buttons
-            // stacked above the composer would out-shout the primary action sitting right below them.
-            var text = s;
-            var b = Ui.Ghost(text, () => { _input.Text = text; _input.Focus(); _input.CaretIndex = text.Length; });
-            b.Margin = new Thickness(0, 0, Theme.S2, Theme.S2);
-            suggestions.Children.Add(b);
-        }
+            suggestions.Children.Add(Suggestion(s));
+        _ = AddPriceSuggestionAsync(suggestions);
 
         return Ui.Col(Theme.S4,
             Ui.H2("Talk to the AI here"),
@@ -430,6 +427,31 @@ sealed class ChatView
             Ui.With(Ui.Eyebrow("Try asking"), t => t.Margin = new Thickness(0, Theme.S2, 0, 0)),
             suggestions);
     }
+
+    /// <summary>One suggestion: ghost, because these are prompts, not commands, and four outlined buttons stacked above the composer
+    /// would out-shout the primary action sitting right below them.</summary>
+    Button Suggestion(string text)
+    {
+        var b = Ui.Ghost(text, () => { _input.Text = text; _input.Focus(); _input.CaretIndex = text.Length; });
+        b.Margin = new Thickness(0, 0, Theme.S2, Theme.S2);
+        return b;
+    }
+
+    /// <summary>
+    /// THE PRICE QUESTION NAMES AN INSTRUMENT THIS HOME TRADES (<c>U-owner-words-2</c>; the real run of 2026-11-13): the chat suggested "What
+    /// is ES trading at?" on a crypto paper account, a futures example fixed in the code. It names the first instrument the platform in force
+    /// lists, second in the row as it always stood, and is not offered where the platform lists none or cannot be asked.
+    /// </summary>
+    internal async Task AddPriceSuggestionAsync(WrapPanel suggestions)
+    {
+        IReadOnlyList<InstrumentInfo> listed;
+        try { listed = await _host.Connector.GetInstrumentsAsync(); }
+        catch (Exception) { return; }
+        if (listed.FirstOrDefault()?.Symbol is not { Length: > 0 } symbol) return;
+        suggestions.Children.Insert(Math.Min(1, suggestions.Children.Count), Suggestion(PriceQuestion(symbol)));
+    }
+
+    internal static string PriceQuestion(string symbol) => $"What is {symbol} trading at?";
 
     Control BuildNoAgentState()
     {

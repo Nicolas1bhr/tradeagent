@@ -243,7 +243,8 @@ sealed class DashboardPage
             () => _host.SpendToday);
 
         _guidance = Ui.TextField(host.Gateway.Settings.Guidance,
-            "e.g. focus on ES during the US session; keep positions small until the journal shows three good days");
+            // NO FIXED INSTRUMENT (U-owner-words-2): "focus on ES" stood here on a crypto paper home.
+            "e.g. keep positions small until the journal shows three good days");
         _guidance.AcceptsReturn = true;
         _guidance.TextWrapping = TextWrapping.Wrap;
         _guidance.MinHeight = 72;
