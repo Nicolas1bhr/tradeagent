@@ -19,6 +19,8 @@
   <ItemGroup>
     <!-- The puppet's file writer and the tests' reader are one source file, so the stress test drives the writer the puppet ships. -->
     <Compile Include="../TradeAgent.Puppet/PuppetFiles.cs" Link="PuppetFiles.cs" />
+    <!-- THE WINDOWS CELL PROBE'S OWN CODE (U-cell-probe): compiled in here from the program's source, so its verdict rows drive what it ships. -->
+    <Compile Include="../../src/TradeAgent.CellProbe/Probe.cs" Link="CellProbe/Probe.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Where this build's puppet and trade command are, in THIS configuration: a life runs the programs built with it. -->

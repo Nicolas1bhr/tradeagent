@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- THE WINDOWS CELL PROBE (U-cell-probe; R31 D5): the program two Windows proof rows run inside a cell, in place of PowerShell 5.1.
+       No references, so the self-contained single file packaging/build.ps1 publishes beside the app carries nothing but the runtime.
+       net10.0, not net10.0-windows: its verdict code is compiled into the unit tests on every OS; the Windows calls are guarded. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>cell-probe</AssemblyName>
+    <RootNamespace>TradeAgent.CellProbe</RootNamespace>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- Trimmed: the benchmark copies it into its own folder at every start (13 MB trimmed, 73 MB whole, win-x64 on .NET 10). -->
+    <PublishTrimmed>true</PublishTrimmed>
+  </PropertyGroup>
+</Project>
