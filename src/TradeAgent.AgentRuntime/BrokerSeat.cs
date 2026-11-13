@@ -228,6 +228,8 @@ public static class BrokerSeat
         yield return ("workspace's forbidden names", Seq(seat.WorkspaceForbidden));
         // AND IN THE ACCOUNT'S OWN PROFILE (U-windows-cards): on Windows codex's skill root there is read whatever the seat's HOME is.
         yield return ("account's forbidden paths", Seq(seat.AccountForbidden));
+        // AND IN THE MACHINE'S SHARED PROGRAM-DATA FOLDER (U-windows-cards-2): codex's Windows system layer, read by every seat.
+        yield return ("machine's forbidden paths", Seq(seat.MachineForbidden));
         yield return ("credential files", Seq(seat.PrivateFiles));
         yield return ("deny set", Seq(seat.ArgsFor(seatClass)));
         yield return ("class environment", Pairs(seat.ClassEnvironment.GetValueOrDefault(seatClass)));

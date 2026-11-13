@@ -501,6 +501,93 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// (c2b) THE MACHINE'S CODEX SYSTEM LAYER REFUSES THE LAUNCH IN WORDS (<c>U-windows-cards-2</c>; A5 card 2). On Windows the pinned
+    /// codex reads <c>%ProgramData%\OpenAI\Codex</c> — its settings, its requirements and its skills — for every account, whatever
+    /// CODEX_HOME says, and any local account may create that folder. While it holds anything, no seat starts, and the refusal names the
+    /// folder and nothing in it; absent or an empty folder, the same seat starts. No link below the program-data folder is followed. The
+    /// folder is the test's seam, so the rule runs on every runner; <see cref="On_windows_the_machine_folder_is_the_program_data_known_folder_and_elsewhere_there_is_none"/>
+    /// holds the real reader.
+    ///
+    /// <para><b>RED on the base</b>: nothing looks at the machine's folder, and the seat starts over a planted settings file.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_machines_codex_folder_refuses_the_launch_in_words_and_nothing_in_it_is_named()
+    {
+        var (codex, exe, dump) = Seat(nameof(The_machines_codex_folder_refuses_the_launch_in_words_and_nothing_in_it_is_named));
+        var workspace = Path.Combine(Path.GetDirectoryName(exe)!, "role-home");
+        Directory.CreateDirectory(workspace);
+        var machine = Path.Combine(Path.GetDirectoryName(exe)!, "the-machines-program-data");
+        var openAi = Path.Combine(machine, "OpenAI");
+        var folder = Path.Combine(openAi, "Codex");
+        Directory.CreateDirectory(machine);
+        SeatProfile.MachineFolderUnderTest.Value = machine;
+        try
+        {
+            var session = Session(codex, exe, workspace, new FakeProbe());
+            Assert.False(session.CheckSeat().Refused);                       // no OpenAI folder at all
+            Directory.CreateDirectory(folder);
+            Assert.False(session.CheckSeat().Refused);                       // a plain, empty folder holds nothing to read
+
+            File.WriteAllText(Path.Combine(folder, "config.toml"), "[mcp_servers.planted]\ncommand = \"planted-server\"\n");
+
+            var verdict = session.CheckSeat();
+            Assert.True(verdict.Refused, $"{folder} holding a settings file did not refuse the admission");
+            Assert.Equal(ErrorCode.AI_SEAT_REFUSED, verdict.Code);
+            Assert.Contains(folder, verdict.Refusal, StringComparison.Ordinal);
+            Assert.Contains("every Windows account", verdict.Refusal, StringComparison.Ordinal);
+            Assert.Contains("Move these aside", verdict.Refusal, StringComparison.Ordinal);
+            Assert.DoesNotContain("config.toml", verdict.Refusal, StringComparison.Ordinal);
+            Assert.DoesNotContain("planted", verdict.Refusal, StringComparison.Ordinal);
+
+            var ended = await Turn(session);
+            Assert.Contains(folder, ended.Raw, StringComparison.Ordinal);
+            Assert.DoesNotContain(Argv(dump), line => line.StartsWith("exec", StringComparison.Ordinal));
+
+            // Moved away, the same seat starts.
+            Directory.Delete(openAi, recursive: true);
+            Assert.False(session.CheckSeat().Refused);
+            Assert.Equal(0, (await Turn(session)).ExitCode);
+
+            // A FILE OR A LINK IN ITS PLACE, OR A LINK AT OpenAI, EACH REFUSES; nothing past a link is looked at.
+            var elsewhere = Path.Combine(Path.GetDirectoryName(exe)!, "machine-elsewhere");
+            Directory.CreateDirectory(Path.Combine(elsewhere, "Codex"));
+            Directory.CreateDirectory(openAi);
+            File.WriteAllText(folder, "");
+            Assert.Contains($"{folder} is a file", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            File.Delete(folder);
+            Assert.True(Link(folder, Path.Combine(elsewhere, "Codex"), folder: true));
+            Assert.Contains($"{folder} is a link", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            Directory.Delete(folder);
+            Directory.Delete(openAi);
+            Assert.True(Link(openAi, elsewhere, folder: true));
+            Assert.Contains($"{folder} is reached through a link at {openAi}", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            Directory.Delete(openAi);
+            Assert.False(session.CheckSeat().Refused);
+        }
+        finally { SeatProfile.MachineFolderUnderTest.Value = null; }
+    }
+
+    /// <summary>
+    /// (c3b) THE REAL MACHINE READER (<c>U-windows-cards-2</c>): on Windows the ProgramData known folder, as codex reads it; on Linux and
+    /// macOS none (codex's system layer there is <c>/etc/codex</c>, root's). The codex seat plan forbids its OpenAI\Codex folder there.
+    /// </summary>
+    [Fact]
+    public void On_windows_the_machine_folder_is_the_program_data_known_folder_and_elsewhere_there_is_none()
+    {
+        Assert.Equal(["OpenAI/Codex"], RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex").Seat!.MachineForbidden);
+        Assert.NotNull(SeatProfile.MachineFolderForEveryTest);              // this assembly's seats never read the real one
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Null(SeatProfile.KnownFolderProgramData());
+            return;
+        }
+        var machine = SeatProfile.KnownFolderProgramData();
+        Assert.NotNull(machine);
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), machine, ignoreCase: true);
+        Assert.True(Directory.Exists(machine), $"{machine} is not a folder");
+    }
+
+    /// <summary>
     /// (c3) THE REAL READER (<c>U-windows-cards</c>): on Windows the account's profile known folder — the folder .NET's own known-folder
     /// lookup gives for the user profile; on
     /// Linux and macOS none, because there codex's home is <c>HOME</c>, the seat home's. The codex seat plan forbids its skills root there.

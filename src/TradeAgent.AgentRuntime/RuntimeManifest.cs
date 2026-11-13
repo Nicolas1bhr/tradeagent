@@ -235,6 +235,16 @@ public sealed class SeatPlan
     /// </summary>
     public string[] AccountForbidden { get; set; } = [];
 
+    /// <summary>
+    /// PATHS UNDER THE MACHINE'S SHARED PROGRAM-DATA FOLDER THAT MUST HOLD NOTHING WHEN A SEAT STARTS (<c>U-windows-cards-2</c>; A5 card 2):
+    /// on Windows the folder the CLI reads as its system layer — settings, requirements and skills for every account of the machine —
+    /// whatever <c>CODEX_HOME</c> or <c>HOME</c> says (<see cref="SeatProfile.MachineFolder"/>). Unlike Linux's root-owned <c>/etc</c>,
+    /// any local account may create a folder there, so nothing the app checks elsewhere keeps it the app's. The rule is
+    /// <see cref="AccountForbidden"/>'s: absent or a plain, empty folder, nothing in it opened or named, no link below the root followed.
+    /// Elsewhere nothing is read. Data: a vendor's system root.
+    /// </summary>
+    public string[] MachineForbidden { get; set; } = [];
+
     /// <summary>The CLI's own report of its features, run under the seat home with the deny set's keys. Empty for none.</summary>
     public string[] FeaturesArgs { get; set; } = [];
 
@@ -1212,6 +1222,12 @@ public static class RuntimeCatalog
                 // prompt with `skills.include_instructions` false too (ext/skills/src/extension.rs:420-477, the selection runs before and
                 // apart from the instructions block), so every class is exposed, not only the cell's. No key or variable moves that root.
                 AccountForbidden = [".agents/skills"],
+                // THE MACHINE'S CODEX SYSTEM LAYER ON WINDOWS (U-windows-cards-2; A5 card 2): the pinned 0.160.1 reads
+                // `%ProgramData%\OpenAI\Codex\config.toml` and `requirements.toml` (vendor config/src/loader/mod.rs:82, :724-850:
+                // SHGetKnownFolderPath(FOLDERID_ProgramData), else C:\ProgramData, joined with OpenAI\Codex) and lists `skills\` there as
+                // the Admin skill root (ext/skills/src/host_roots.rs:113-118). No key or variable moves it, and any local account may
+                // create it: an `[mcp_servers.x]` there would be spawned by the harness, unconfined, beside the sign-in.
+                MachineForbidden = ["OpenAI/Codex"],
                 // 0.04 s and 0.03 s on this Mac (survey § 4). Under the deny set's keys, RUN 2026-10-11 over an empty home, exactly
                 // these were on — the allowlist is that run's list, and anything else on is a release or a key that changed.
                 FeaturesArgs = ["features", "list"],

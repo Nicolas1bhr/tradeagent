@@ -860,6 +860,9 @@ public static class SeatProfile
         if (AccountRefusal(manifest, AccountProfile(), seat.AccountForbidden) is { } inProfile)
             return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, inProfile);
 
+        if (MachineRefusal(manifest, MachineFolder(), seat.MachineForbidden) is { } onMachine)
+            return SeatVerdict.Refuse(ErrorCode.AI_SEAT_REFUSED, onMachine);
+
         // THE CLI'S OWN REPORTS RUN IN AN EMPTY FOLDER OF THE APP'S, NEVER IN THE POSITION'S HOME (U-execution-environment fix pass 5, the
         // fourth re-review's G2): an executor's cell writes its whole home, and these run the vendor CLI unconfined. They read the seat's
         // own codex home (CODEX_HOME) and its sign-in; the only thing a working folder adds is its own settings, which the look above has
@@ -1106,13 +1109,46 @@ public static class SeatProfile
     }
 
     /// <summary>On Windows the account's profile known folder, the call dirs-sys makes; null elsewhere, or where the call fails.</summary>
-    internal static string? KnownFolderProfile()
+    internal static string? KnownFolderProfile() => OperatingSystem.IsWindows() ? KnownFolder(FolderIdProfile, KnownFolderDontVerify) : null;
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-windows-cards-2</c>), as <see cref="AccountProfileUnderTest"/> is: the folder <see cref="MachineFolder"/>
+    /// answers, on any host. Nothing in the product sets it, and no file, setting or pipe op reaches it.
+    /// </summary>
+    internal static readonly AsyncLocal<string?> MachineFolderUnderTest = new();
+
+    /// <summary>
+    /// A TEST ASSEMBLY'S DEFAULT (<c>U-windows-cards-2</c>), as <see cref="AccountProfileForEveryTest"/> is: an empty folder of the
+    /// assembly's own, so no seat test reads the real machine's. <see cref="MachineFolderUnderTest"/> outranks it. Nothing in the
+    /// product sets it.
+    /// </summary>
+    internal static string? MachineFolderForEveryTest;
+
+    /// <summary>
+    /// THE MACHINE'S SHARED PROGRAM-DATA FOLDER THE CLI READS ITS SYSTEM LAYER UNDER, or null where it reads none there: on Windows
+    /// the ProgramData known folder, read by the call codex itself makes (vendor config/src/loader/mod.rs at rust-v0.160.1:
+    /// <c>SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT)</c>) and, where that call fails, <c>C:\ProgramData</c> —
+    /// the vendor's own fallback, so the folder looked at is the one codex would read either way. See
+    /// <see cref="SeatPlan.MachineForbidden"/>.
+    /// </summary>
+    public static string? MachineFolder()
     {
-        if (!OperatingSystem.IsWindows()) return null;
+        if (MachineFolderUnderTest.Value is { } underTest) return underTest;
+        if (MachineFolderForEveryTest is { } everyTest) return everyTest;
+        return KnownFolderProgramData();
+    }
+
+    /// <summary>On Windows the ProgramData known folder as codex reads it, its fallback included; null elsewhere.</summary>
+    internal static string? KnownFolderProgramData() =>
+        OperatingSystem.IsWindows() ? KnownFolder(FolderIdProgramData, KnownFolderDefault) ?? @"C:\ProgramData" : null;
+
+    /// <summary>One known folder by its id, or null where the call fails. Windows only.</summary>
+    static string? KnownFolder(Guid id, uint flags)
+    {
         var folder = IntPtr.Zero;
         try
         {
-            return SHGetKnownFolderPath(FolderIdProfile, KnownFolderDontVerify, IntPtr.Zero, out folder) == 0 && folder != IntPtr.Zero
+            return SHGetKnownFolderPath(id, flags, IntPtr.Zero, out folder) == 0 && folder != IntPtr.Zero
                 ? System.Runtime.InteropServices.Marshal.PtrToStringUni(folder)
                 : null;
         }
@@ -1122,8 +1158,14 @@ public static class SeatProfile
     /// <summary>FOLDERID_Profile, the user's profile folder (KnownFolders.h).</summary>
     static readonly Guid FolderIdProfile = new("5E6C858F-0E22-4760-9AFE-EA3317B67173");
 
+    /// <summary>FOLDERID_ProgramData, the machine's shared program-data folder (KnownFolders.h).</summary>
+    static readonly Guid FolderIdProgramData = new("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97");
+
     /// <summary>KF_FLAG_DONT_VERIFY, the flag dirs-sys 0.5.0 passes (ShlObj_core.h).</summary>
     const uint KnownFolderDontVerify = 0x00004000;
+
+    /// <summary>KF_FLAG_DEFAULT, the flag codex's own ProgramData lookup passes (ShlObj_core.h).</summary>
+    const uint KnownFolderDefault = 0;
 
     [System.Runtime.InteropServices.DllImport("shell32.dll", ExactSpelling = true)]
     static extern int SHGetKnownFolderPath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPStruct)] Guid id,
@@ -1133,20 +1175,45 @@ public static class SeatProfile
     /// THE REFUSAL WHILE ONE OF <paramref name="names"/> UNDER <paramref name="profile"/> HOLDS ANYTHING (<c>U-windows-cards</c>), or null:
     /// see <see cref="SeatPlan.AccountForbidden"/>.
     /// </summary>
-    public static string? AccountRefusal(RuntimeManifest manifest, string? profile, string[] names)
+    public static string? AccountRefusal(RuntimeManifest manifest, string? profile, string[] names) =>
+        FirstHeld(profile, names) is { } held
+            ? $"TradeAgent will not start the AI while {held.Path} {held.Holds}: {manifest.DisplayName} reads that folder of your Windows " +
+              "account as its own skills whatever TradeAgent sets, so it would show the AI the skills you keep there. Nothing was " +
+              $"started, and TradeAgent never opens what is in it. {MoveAsideWords}"
+            : null;
+
+    /// <summary>
+    /// THE REFUSAL WHILE ONE OF <paramref name="names"/> UNDER THE MACHINE'S <paramref name="machine"/> FOLDER HOLDS ANYTHING
+    /// (<c>U-windows-cards-2</c>), or null: see <see cref="SeatPlan.MachineForbidden"/>. The rule and the look are
+    /// <see cref="AccountRefusal"/>'s; only the words differ, because this folder is the whole computer's and not the account's.
+    /// </summary>
+    public static string? MachineRefusal(RuntimeManifest manifest, string? machine, string[] names) =>
+        FirstHeld(machine, names) is { } held
+            ? $"TradeAgent will not start the AI while {held.Path} {held.Holds}: {manifest.DisplayName} reads that folder of this " +
+              "computer as settings and skills for every Windows account on it, whatever TradeAgent sets, and any account or program " +
+              $"on the computer can put things there. Nothing was started, and TradeAgent never opens what is in it. {MoveAsideWords}"
+            : null;
+
+    /// <summary>The way out both refusals end on: the Dashboard's two presses (<c>U-windows-cards-2</c>), never a terminal.</summary>
+    public const string MoveAsideWords =
+        "To continue, press \"Move these aside\" on the Dashboard: TradeAgent moves it to a folder beside it and deletes nothing.";
+
+    /// <summary>
+    /// The first of <paramref name="names"/> under <paramref name="root"/> that is not absent or a plain, empty folder, and what is
+    /// there in words that name nothing in it; null where every one is clear, or where there is no <paramref name="root"/>. A look that
+    /// fails is held too: it refuses, never passes.
+    /// </summary>
+    public static (string Path, string Holds)? FirstHeld(string? root, IEnumerable<string> names)
     {
-        if (profile is null) return null;
+        if (root is null) return null;
         foreach (var name in names)
         {
-            var path = Path.GetFullPath(Path.Combine(profile, name.Replace('/', Path.DirectorySeparatorChar)));
+            var path = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
             string? holds;
-            try { holds = WhatItHolds(profile, path); }
+            try { holds = WhatItHolds(root, path); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { holds = $"is there and TradeAgent could not look into it ({ex.Message})"; }
-            if (holds is null) continue;
-            return $"TradeAgent will not start the AI while {path} {holds}: {manifest.DisplayName} reads that folder of your Windows " +
-                   "account as its own skills whatever TradeAgent sets, so it would show the AI the skills you keep there. Nothing was " +
-                   "started, and TradeAgent never opens what is in it. Move that folder out of your user folder to continue.";
+            if (holds is not null) return (path, holds);
         }
         return null;
     }
