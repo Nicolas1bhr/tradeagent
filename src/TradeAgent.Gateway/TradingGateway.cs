@@ -416,11 +416,12 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// on ONE account of the platform that is connected right now.
     ///
     /// <para><b>The account must be provably simulated by BOTH witnesses</b> —
-    /// <c>AccountInfo.IsSimulated</c> AND <c>ConnectorCapabilities.IsPaper</c> — which is deliberately
-    /// stricter than the <c>||</c> the dispatch gate's own paper check uses. That check is refusing ONE
-    /// order and either witness settles it; this is a standing authority the app will spend without the
-    /// owner in the room, for as long as it lasts, and an installation whose two witnesses disagree is
-    /// one where nobody can say which of them is wrong. `docs/CONTRACTS.md` records the choice.</para>
+    /// <c>AccountInfo.IsSimulated</c> AND <c>ConnectorCapabilities.IsPaper</c> — the same two the dispatch
+    /// gate's own paper check has asked for since <c>U-live-witness</c> (it took either before, and on ATAS
+    /// the platform's flag describes the chart's bound portfolio, not the account an order goes to). This is
+    /// a standing authority the app will spend without the owner in the room, for as long as it lasts, and an
+    /// installation whose two witnesses disagree is one where nobody can say which of them is wrong.
+    /// `docs/CONTRACTS.md` records the choice.</para>
     ///
     /// <para><b>And the mode must be PAPER at the press.</b> Not because the grant authorises anything
     /// in a live mode — a paper allocation authorises nothing in <c>LIVE_CONFIRM</c> or
@@ -4578,10 +4579,16 @@ public sealed partial class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"quantity {intent.Quantity} exceeds the limit of {most}");
 
-        // Paper mode must never reach a real-money account, whatever the agent asked for.
-        if (Policy.Mode == TradingMode.PAPER && !(account.IsSimulated || Connector.Capabilities.IsPaper))
+        // Paper mode must never reach a real-money account, whatever the agent asked for. THE ACCOUNT THE ORDER GOES TO MUST SAY SO
+        // ITSELF (U-live-witness; the live-reachability audit's F1): on ATAS the platform's practice flag describes the chart's bound
+        // portfolio, not the account an order is routed to, so the platform's word may only narrow this check, never widen it. The
+        // `||` this replaces took either witness as proof and let a real account behind a practice-bound chart through.
+        if (Policy.Mode == TradingMode.PAPER && !(account.IsSimulated && Connector.Capabilities.IsPaper))
             throw new GatewayDeniedException(ErrorCode.MODE_ACCOUNT_MISMATCH,
-                $"account {account.Id} is not a simulation account and the mode is PAPER");
+                account.IsSimulated
+                    ? $"account {account.Id} says simulated but the {Connector.DisplayName} platform does not report itself as a "
+                      + "practice platform, and the mode is PAPER"
+                    : $"account {account.Id} is not a simulation account and the mode is PAPER");
 
         // The rate limit's EARLY refusal, so a request over the limit is turned away before it costs
         // a quote. It is advisory: what actually bounds the minute is the reservation taken at the

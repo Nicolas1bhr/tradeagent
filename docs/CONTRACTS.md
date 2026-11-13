@@ -4509,10 +4509,12 @@ Its id is the SHA-256 of nine facts — platform, account, instrument, currency,
 `max_deployments`, and the two instants it runs between — with `reason` and `withdrawn_at` outside the
 hash for the reason `effective_to` is outside an allocation's. **It is refused unless the account is
 provably simulated by BOTH witnesses** (`AccountInfo.IsSimulated` AND `Capabilities.IsPaper`) and the
-mode is PAPER at the press. That is deliberately stricter than the `||` the dispatch gate's own
-`MODE_ACCOUNT_MISMATCH` check uses, and the difference is stated: that check refuses ONE order and
-either witness settles it, while this is a standing authority the app will spend without the owner in
-the room, and an installation whose two witnesses disagree is one where nobody can say which is wrong.
+mode is PAPER at the press. The dispatch gate's own `MODE_ACCOUNT_MISMATCH` check asks for the same
+two since `U-live-witness`: it took either witness until then, and on ATAS the platform's flag describes
+the chart's bound portfolio, not the account an order is routed to, so the account's own flag is
+required and the platform's may only narrow. This is a standing authority the app will spend without
+the owner in the room, and an installation whose two witnesses disagree is one where nobody can say
+which is wrong.
 **Withdrawal is the one UPDATE in the product's ledgers that is not a fresh row**, and it is written
 under `WHERE withdrawn_at IS NULL`, so it is write-once by the statement: an allocation is superseded
 because a ceiling is a number, whereas withdrawing an envelope must stop EVERY row beneath it at once,
