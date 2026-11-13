@@ -68,7 +68,7 @@ public sealed partial class GatewayPipeServer
         var caller = OrgVerbCaller(ctx, Capability.DecisionVerbs);
         var hired = Gateway.Org.Hire(new HireRequest(caller, ctx.AttemptId, Require(req, "unit"), NamedFlag(req, "head", whenAbsent: false),
             Require(req, "rationale"), TextList(req, "options"), OrgRefs(req), ForecastClaims(req, "forecasts")), DateTimeOffset.UtcNow,
-            SelfActivationRefusal, RewakeFloors.Of(Gateway.Policy));
+            id => SelfActivationRefusal(id, caller, ctx.AttemptId), RewakeFloors.Of(Gateway.Policy));
         var active = hired.Dormant is null;
         return new
         {
@@ -223,8 +223,11 @@ public sealed partial class GatewayPipeServer
     /// host's facts for it (<see cref="PositionActivation.SelfActivation"/> — a broker or cell seat, the proven cell, the seat's assurance,
     /// the unconfined seats), then one turn of its seat (<see cref="TradingGateway.AiReservation"/>) against its funding chain today — its
     /// unit's envelopes up to the plan's day-total (<see cref="NoRoomFor"/>). A host that reads none of it keeps the hire dormant.
+    /// <para><b>AN ACTIVATION WAKES TWO, SO IT IS PRICED AT TWO TURNS</b> (<c>U-org-cards-3</c> item 2; R29 F-A1): the hire's and its
+    /// <paramref name="hirer"/>'s — one more turn of the hirer's own recorded launch <paramref name="hirerLaunch"/> — summed on every unit the
+    /// two funding chains share, so a day with room for one turn no longer commits two.</para>
     /// </summary>
-    string? SelfActivationRefusal(string position)
+    string? SelfActivationRefusal(string position, string hirer, string? hirerLaunch)
     {
         SeatFacts? facts;
         try { facts = Gateway.SeatFactsOf?.Invoke(position); }
@@ -237,7 +240,10 @@ public sealed partial class GatewayPipeServer
         // either is a turn nobody can show fits, so the hire stays dormant.
         if (turn is not { } reserves || reserves <= 0m)
             return $"TradeAgent could not price one turn of {position}'s seat, so it does not activate a seat nobody can show fits its day.";
-        return NoRoomFor(position, reserves, $"{position}'s seat");
+        if ((hirerLaunch is { } launch ? Gateway.Attempt(launch) : null) is not { ReservedCost: > 0m } hiring)
+            return $"TradeAgent could not price the turn the activation wakes {hirer} for, so it does not commit two turns nobody can show fit the day.";
+        return NoRoomFor([(position, reserves), (hirer, hiring.ReservedCost)],
+            $"the two turns this activation wakes ({position}'s and {hirer}'s)");
     }
 
     /// <summary>
@@ -294,21 +300,35 @@ public sealed partial class GatewayPipeServer
     /// every unit the host's meter reads for it (<see cref="TradingGateway.AiEnvelopes"/>, nearest first, ending at the root — the plan's
     /// day-total), today's spend, reservations and unmeasured charge plus that turn, against its envelope. No reading is a reason.
     /// </summary>
-    string? NoRoomFor(string position, decimal reserves, string seat)
+    string? NoRoomFor(string position, decimal reserves, string seat) => NoRoomFor([(position, reserves)], $"one turn of {seat}");
+
+    /// <summary>
+    /// THE SAME QUESTION FOR SEVERAL TURNS AT ONCE: each position's funding chain read as above, and on every unit (and ceiling) the
+    /// chains share the turns that reach it summed — <paramref name="what"/> names them in the words.
+    /// </summary>
+    string? NoRoomFor(IReadOnlyList<(string Position, decimal Reserves)> turns, string what)
     {
-        IReadOnlyList<UnitDay>? days;
-        try { days = Gateway.AiEnvelopes?.Invoke(position); }
-        catch (Exception) { days = null; }
-        if (days is null || days.Count == 0)
-            return $"TradeAgent could not read the AI envelope of {position}'s unit today, so it does not commit a turn nobody can show fits.";
-        foreach (var d in days)
+        var reach = new Dictionary<(string Unit, string Ceiling), (UnitDay Day, decimal Reserves)>();
+        foreach (var (position, reserves) in turns)
+        {
+            IReadOnlyList<UnitDay>? days;
+            try { days = Gateway.AiEnvelopes?.Invoke(position); }
+            catch (Exception) { days = null; }
+            if (days is null || days.Count == 0)
+                return $"TradeAgent could not read the AI envelope of {position}'s unit today, so it does not commit a turn nobody can show fits.";
+            foreach (var d in days)
+                reach[(d.UnitId, d.Ceiling)] = reach.TryGetValue((d.UnitId, d.Ceiling), out var seen)
+                    ? (seen.Day, seen.Reserves + reserves)
+                    : (d, reserves);
+        }
+        foreach (var (d, reserves) in reach.Values)
         {
             if (d.Envelope is not { } envelope) continue;
             var committed = d.Spent + d.Reserved + d.UnmeasuredCharge;
             if (committed + reserves > envelope)
                 return $"{OrgEnvelopes.NameOf(d.UnitId)} has {committed.ToString(CultureInfo.InvariantCulture)} of its "
-                       + $"{envelope.ToString(CultureInfo.InvariantCulture)} ({d.Ceiling}) committed today, and one turn of {seat} reserves "
-                       + $"{reserves.ToString(CultureInfo.InvariantCulture)}.";
+                       + $"{envelope.ToString(CultureInfo.InvariantCulture)} ({d.Ceiling}) committed today, and {what} "
+                       + $"{(turns.Count == 1 ? "reserves" : "reserve")} {reserves.ToString(CultureInfo.InvariantCulture)}.";
         }
         return null;
     }

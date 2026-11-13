@@ -189,6 +189,37 @@ public partial class OrgAutonomyTests
     }
 
     /// <summary>
+    /// (2d) AN ACTIVATION WAKES TWO, SO IT IS PRICED AT TWO TURNS (<c>U-org-cards-3</c> item 2; R29 F-A1): the hire's turn and its hirer's,
+    /// summed on the units their chains share. With 9.85 of 10 spent, one turn of 0.10 fits and two do not: the hire stays dormant, says
+    /// why, and wakes nobody. With 9.75 spent both fit, and it activates and wakes both.
+    /// <para>RED at base: the hire at 9.85 activates (<c>status</c> active), committing two turns to a day with room for one.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_self_activation_is_priced_at_the_two_turns_it_wakes()
+    {
+        var (gw, db, server) = await Pipe();
+        await using var _gw = gw;
+        using var _db = db;
+        await using var _server = server;
+        Host(gw, db, _ => SeatClasses.Broker, turn: 0.10m);
+
+        gw.AiEnvelopes = Metered(db, spent: 9.85m);
+        var tight = await server.CallAsync(HireFrame(SubUnit(db, "team-a7a7c0e9")), Head, Launch(db, Head, reserved: 0.10m));
+        Assert.True(tight.Ok, tight.Error?.Message);
+        Assert.Equal(OrgPositionStatus.Dormant, Body(tight).GetProperty("status").GetString());
+        var why = Body(tight).GetProperty("dormant_because").GetString()!;
+        Assert.Contains("committed today", why, StringComparison.Ordinal);
+        Assert.Contains($"and {Head}'s) reserve 0.20", why, StringComparison.Ordinal);
+        Assert.Empty(ActivatedWakes(db));
+
+        gw.AiEnvelopes = Metered(db, spent: 9.75m);
+        var room = await server.CallAsync(HireFrame(SubUnit(db, "team-a7a7c0ea")), Head, Launch(db, Head, reserved: 0.10m));
+        Assert.True(room.Ok, room.Error?.Message);
+        Assert.Equal(OrgPositionStatus.Active, Body(room).GetProperty("status").GetString());
+        Assert.Equal(2, ActivatedWakes(db).Count);
+    }
+
+    /// <summary>
     /// (2c) THE OWNER'S ACTIVATION WAKES THE POSITION AND ITS HIRER TOO (gap 5): a hire left dormant, activated by his in-process press,
     /// raises one wake to it and one to the head that hired it. RED at base: activation wakes nobody.
     /// </summary>
