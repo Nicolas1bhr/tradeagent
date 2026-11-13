@@ -479,6 +479,23 @@ public class SeatHomeTests
             Directory.Delete(agents, recursive: true);
             Assert.False(session.CheckSeat().Refused);
             Assert.Equal(0, (await Turn(session)).ExitCode);
+
+            // NOT A PLAIN FOLDER, AND NEVER FOLLOWED (opus review): a file in its place, a link in its place, and a link at .agents
+            // above an empty skills folder each refuse, naming the folder; nothing past a link is looked at.
+            var elsewhere = Path.Combine(Path.GetDirectoryName(exe)!, "somewhere-else");
+            Directory.CreateDirectory(Path.Combine(elsewhere, "skills"));
+            Directory.CreateDirectory(agents);
+            File.WriteAllText(skills, "");
+            Assert.Contains($"{skills} is a file", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            File.Delete(skills);
+            Assert.True(Link(skills, Path.Combine(elsewhere, "skills"), folder: true));
+            Assert.Contains($"{skills} is a link", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            Directory.Delete(skills);
+            Directory.Delete(agents);
+            Assert.True(Link(agents, elsewhere, folder: true));
+            Assert.Contains($"{skills} is reached through a link at {agents}", session.CheckSeat().Refusal ?? "", StringComparison.Ordinal);
+            Directory.Delete(agents);
+            Assert.False(session.CheckSeat().Refused);
         }
         finally { SeatProfile.AccountProfileUnderTest.Value = null; }
     }
@@ -492,12 +509,13 @@ public class SeatHomeTests
     public void On_windows_the_account_profile_is_the_known_folder_and_elsewhere_there_is_none()
     {
         Assert.Equal([".agents/skills"], RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex").Seat!.AccountForbidden);
+        Assert.NotNull(SeatProfile.AccountProfileForEveryTest);              // this assembly's seats never read the real one
         if (!OperatingSystem.IsWindows())
         {
-            Assert.Null(SeatProfile.AccountProfile());
+            Assert.Null(SeatProfile.KnownFolderProfile());
             return;
         }
-        var profile = SeatProfile.AccountProfile();
+        var profile = SeatProfile.KnownFolderProfile();
         Assert.NotNull(profile);
         Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), profile, ignoreCase: true);
         Assert.True(Directory.Exists(profile), $"{profile} is not a folder");

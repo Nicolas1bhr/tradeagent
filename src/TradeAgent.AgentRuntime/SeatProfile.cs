@@ -1086,6 +1086,13 @@ public static class SeatProfile
     internal static readonly AsyncLocal<string?> AccountProfileUnderTest = new();
 
     /// <summary>
+    /// A TEST ASSEMBLY'S DEFAULT (<c>U-windows-cards</c>, opus review): set once by a test assembly's module initializer to an empty folder
+    /// of its own, so no seat test anywhere reads the real account's profile — a Windows box whose account keeps skills would refuse every
+    /// seat a test starts for reasons outside the test. <see cref="AccountProfileUnderTest"/> outranks it. Nothing in the product sets it.
+    /// </summary>
+    internal static string? AccountProfileForEveryTest;
+
+    /// <summary>
     /// THE FOLDER THE CLI TAKES FOR ITS HOME WHATEVER ITS ENVIRONMENT SAYS, or null where it takes <c>HOME</c>: on Windows the account's
     /// profile known folder, read by the same call codex's <c>dirs::home_dir()</c> makes (dirs-sys 0.5.0:
     /// <c>SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DONT_VERIFY)</c>). The harness is this app's own child, under the same account,
@@ -1094,6 +1101,13 @@ public static class SeatProfile
     public static string? AccountProfile()
     {
         if (AccountProfileUnderTest.Value is { } underTest) return underTest;
+        if (AccountProfileForEveryTest is { } everyTest) return everyTest;
+        return KnownFolderProfile();
+    }
+
+    /// <summary>On Windows the account's profile known folder, the call dirs-sys makes; null elsewhere, or where the call fails.</summary>
+    internal static string? KnownFolderProfile()
+    {
         if (!OperatingSystem.IsWindows()) return null;
         var folder = IntPtr.Zero;
         try
@@ -1126,7 +1140,7 @@ public static class SeatProfile
         {
             var path = Path.GetFullPath(Path.Combine(profile, name.Replace('/', Path.DirectorySeparatorChar)));
             string? holds;
-            try { holds = WhatItHolds(path); }
+            try { holds = WhatItHolds(profile, path); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { holds = $"is there and TradeAgent could not look into it ({ex.Message})"; }
             if (holds is null) continue;
@@ -1139,15 +1153,24 @@ public static class SeatProfile
 
     /// <summary>
     /// Null where <paramref name="path"/> is absent or a plain, empty folder; otherwise what is there, in words that name nothing in it.
-    /// Never followed: a link is refused as a link, because what it leads to can change after this look.
+    /// No link is followed below <paramref name="profile"/>: one at any name between it and <paramref name="path"/> is refused as a link
+    /// before anything past it is looked at, because what it leads to can change after this look (opus review). The profile itself is
+    /// the account's own, as Windows names it.
     /// </summary>
-    static string? WhatItHolds(string path)
+    static string? WhatItHolds(string profile, string path)
     {
-        FileAttributes attributes;
-        try { attributes = File.GetAttributes(path); }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
-        if ((attributes & FileAttributes.ReparsePoint) != 0) return "is a link";
-        if ((attributes & FileAttributes.Directory) == 0) return "is a file";
+        var relative = Path.GetRelativePath(profile, path).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        var at = profile;
+        for (var i = 0; i < relative.Length; i++)
+        {
+            at = Path.Combine(at, relative[i]);
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(at); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
+            var last = i == relative.Length - 1;
+            if ((attributes & FileAttributes.ReparsePoint) != 0) return last ? "is a link" : $"is reached through a link at {at}";
+            if ((attributes & FileAttributes.Directory) == 0) return last ? "is a file" : null;
+        }
         return Directory.EnumerateFileSystemEntries(path).Any() ? "holds something" : null;
     }
 
