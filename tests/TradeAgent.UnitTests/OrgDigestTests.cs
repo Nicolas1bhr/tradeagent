@@ -637,6 +637,72 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("pos-aaaaaa: no reason on record", bare, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// EVERY OVERDUE POSITION IS NAMED, AND NO ATTENTION FLAG IS HIDDEN, AT EVERY LINE CAP (<c>U-digest-polish</c>). A watcher reads the human digest
+    /// every three hours of the run; the lines it may print shrink as the home fills, and a position falling overdue is the thing it is read for.
+    /// The fixture's home plus five positions overdue, rendered at each of the digest's own caps.
+    ///
+    /// <para>RED at base: at the tightest cap the wakes showed one overdue position and "(+N more)", the attention line named four of six,
+    /// and the attention list itself stopped at two flags, so the overdue flag was one of those hidden behind "(+N more)".</para>
+    /// </summary>
+    [UnixFact]
+    public void Every_overdue_position_and_every_attention_flag_shows_at_every_line_cap()
+    {
+        var f = Build();
+        var late = new[] { "pos-1a0001", "pos-1a0002", "pos-1a0003", "pos-1a0004", "pos-1a0005" };
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var wakes = new MissionEventStore(db);
+            foreach (var p in late)
+            {
+                db.Exec($"INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES('{p}', '{OrgIds.Research}', 'org/{p}', 'active', '2026-10-31T01:00:00.0000000Z');");
+                Assert.True(wakes.RaiseDue($"late-{p}", MissionEventKind.Ceiling, At("2026-10-31T12:00:00Z"), At("2026-10-31T13:00:00Z"), role: p));
+            }
+        }
+
+        // The digest's own render at each of its own caps, over the home as main() reads it: a driver beside the fixture, never in the repo.
+        var driver = Path.Combine(f.Root, "render-every-cap.py");
+        var output = Path.Combine(f.Root, "render-every-cap.json");
+        File.WriteAllText(driver, """
+            import importlib.util, json, sys
+            spec = importlib.util.spec_from_file_location("org_digest", sys.argv[1])
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            seen = {}
+            human = m.human
+            m.human = lambda d: seen.setdefault("d", d) and []
+            assert m.main(sys.argv[3:]) == 0
+            d = seen["d"]
+            with open(sys.argv[2], "w") as out:
+                json.dump({"caps": [m.render(d, c) for c in m.CAPS], "human": human(d), "attention": d["attention"], "overdue": d["wakes"]["overdue"]}, out)
+            """);
+        var (exit, _, err) = Run(driver, [Path.Combine(RepoRoot(), "tools", "org-digest.py"), output, .. DigestArgs(f)]);
+        Assert.True(exit == 0, err);
+        var read = JsonDocument.Parse(File.ReadAllText(output)).RootElement;
+        var overdue = read.GetProperty("overdue").EnumerateArray().Select(o => o.GetString()!).ToList();
+        Assert.Equal(late.Append("pos-aaaaaa").ToArray(), overdue.Order(StringComparer.Ordinal).ToArray());
+        var flags = read.GetProperty("attention").EnumerateArray().Select(a => a.GetString()!).ToList();
+        Assert.True(flags.Count > 2, "the fixture no longer raises more flags than the tightest cap once showed");
+
+        var caps = read.GetProperty("caps").EnumerateArray().Select(c => c.EnumerateArray().Select(l => l.GetString()!).ToList()).ToList();
+        Assert.Equal(4, caps.Count);
+        foreach (var lines in caps.Append(read.GetProperty("human").EnumerateArray().Select(l => l.GetString()!).ToList()))
+        {
+            foreach (var flag in flags) Assert.Contains("  ! " + flag, lines);
+            var from = lines.FindIndex(l => l.StartsWith("next wake per active position:", StringComparison.Ordinal));
+            Assert.True(from >= 0, "the wakes block is not where this test looks");
+            var to = lines.FindIndex(from, l => l.StartsWith("  wakes taken since T0:", StringComparison.Ordinal));
+            Assert.True(to > from, "the wakes block has no end where this test looks");
+            var block = string.Join("\n", lines.Skip(from).Take(to - from));
+            foreach (var p in overdue) Assert.Contains(p, block, StringComparison.Ordinal);
+        }
+        var tightest = caps[^1];
+        Assert.Contains(tightest, l => l.StartsWith("  (+", StringComparison.Ordinal) && l.Contains("overdue among them: ", StringComparison.Ordinal));
+        var named = Assert.Single(flags, a => a.StartsWith("overdue wake(s): ", StringComparison.Ordinal));
+        Assert.Contains($"({overdue.Count} positions)", named, StringComparison.Ordinal);
+        foreach (var p in overdue) Assert.Contains(p, named, StringComparison.Ordinal);
+    }
+
     [UnixFact]
     public void Evidence_per_pair_and_the_paper_notes_are_read()
     {

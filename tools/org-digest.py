@@ -11,7 +11,8 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
   --since   T0: an ISO date or date-time (no zone = the host's local zone; the app's own stored instants are accepted as they are),
             or a span back from now: 72h, 3d. Default: the start of the host's local day (the owner's day: the one the AI's daily
             ceilings reset on).
-  --json    the whole digest as one JSON object; otherwise a human digest of at most 60 lines, one line per fact.
+  --json    the whole digest as one JSON object; otherwise a human digest of at most 60 lines, one line per fact. Its lists shrink to
+            fit; its ATTENTION flags never do, and every overdue position is named at every size.
   --now     (tests) the instant "now" is, ISO with a zone.   --no-systemd   (tests) do not ask systemd about the unit.
   --vocabulary   (tests) print every word this file compares a column to, as JSON, and stop.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
@@ -1045,8 +1046,9 @@ def attention(d):
         flags.append(f"{er['failed_since']} of {er['attempts_since']} AI launches failed or reported a vendor error since T0")
     od = d.get("wakes", {}).get("overdue") or []
     if od:
+        # EVERY OVERDUE POSITION BY NAME, and how many: the wakes below may show only one at the tightest line cap. The reasons of the first two.
         reasons = [w for w in d["wakes"]["active_positions"] if w["position"] in od]
-        flags.append("overdue wake(s): " + ", ".join(od[:4]) + "; " + ("; ".join(why_line(w) for w in reasons[:2])))
+        flags.append("overdue wake(s): " + ", ".join(od) + f" ({len(od)} position{'' if len(od) == 1 else 's'}); " + ("; ".join(why_line(w) for w in reasons[:2])))
     t = d.get("tape_health", {})
     if t.get("stalest") and t["stalest"]["age_s"] is not None and t["stalest"]["age_s"] > 7200:
         flags.append(f"tape: {t['stalest']['source']} last delivered {t['stalest']['age_s'] // 3600}h ago")
@@ -1108,8 +1110,9 @@ def render(d, cap):
     working = {True: "on", False: "OFF", None: "?"}[app.get("ai_works_on_its_own")]
     L.append(f"ORG DIGEST (read-only)  now {d['now'][:19]}Z  since T0 {d['since'][:19]}Z  app-db {d['app_db']} schema {app.get('schema')}  tape-db {d['tape_db']}  AI on its own {working}")
     if d["attention"]:
+        # NEVER CAPPED: a flag behind "(+N more)" is an alarm nobody reads. They stand at the top, so even the 60-line cut never takes one.
         L.append("ATTENTION")
-        add_list(d["attention"], cap["attention"], lambda a: "  ! " + a)
+        L.extend("  ! " + a for a in d["attention"])
 
     s = d["disk"]
     if not unread("disk", s):
@@ -1220,9 +1223,15 @@ def render(d, cap):
     if not unread("wakes", s):
         L.append("next wake per active position:" + ("" if s["active_positions"] else " (no active position)"))
         overdue_first = sorted(s["active_positions"], key=lambda w: w["position"] not in s["overdue"])
-        add_list(overdue_first, cap["wakes"], lambda w: f"  {w['position']:<14} " + (
+        shown, hidden = overdue_first[:cap["wakes"]], overdue_first[cap["wakes"]:]
+        L.extend(f"  {w['position']:<14} " + (
             f"{w['kind']}{' (the chief at its floor: nothing moving)' if w['chief_floor'] else ''} in {age(w['in_seconds'])} ({w['pending']} pending)" if w["next_due"] else "no wake queued")
-            + f"  last woken {w['last_consumed_at'][:19] if w['last_consumed_at'] else '-'}" + (f"  {why_line(w)}" if w["in_seconds"] is not None and w["in_seconds"] < 0 else ""))
+            + f"  last woken {w['last_consumed_at'][:19] if w['last_consumed_at'] else '-'}" + (f"  {why_line(w)}" if w["in_seconds"] is not None and w["in_seconds"] < 0 else "")
+            for w in shown)
+        if hidden:
+            # THE TAIL NAMES EVERY OVERDUE POSITION IT HIDES: "(+3 more)" alone read as three quiet seats.
+            late = [w["position"] for w in hidden if w["position"] in s["overdue"]]
+            L.append(f"  (+{len(hidden)} more" + (f"; overdue among them: {', '.join(late)}" if late else "") + ")")
         taken = ", ".join(f"{k} {v}" for k, v in sorted(s["consumed_since_by_disposition"].items())) or "none"
         L.append(f"  wakes taken since T0: {taken}; on failed turns {s['failed_turn_wakes_since']}, on lost turns {s['lost_turn_wakes_since']}, raised again {s['raised_again_after_lost_since']}")
         add_list(s["blocked_now"], cap["blocked"], lambda b: f"  blocked x{b['count']} ({','.join(b['roles'])}): {b['words']}")
@@ -1245,12 +1254,15 @@ def render(d, cap):
     return L
 
 
+# THE LINE CAPS, widest first: the human digest takes the first that fits MAX_LINES. The ATTENTION flags are never capped (render).
+CAPS = [dict(positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, wakes=6, blocked=2),
+        dict(positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, wakes=3, blocked=1),
+        dict(positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, wakes=2, blocked=1),
+        dict(positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, wakes=1, blocked=1)]
+
+
 def human(d):
-    caps = [dict(attention=6, positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, wakes=6, blocked=2),
-            dict(attention=4, positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, wakes=3, blocked=1),
-            dict(attention=3, positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, wakes=2, blocked=1),
-            dict(attention=2, positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, wakes=1, blocked=1)]
-    for cap in caps:
+    for cap in CAPS:
         lines = render(d, cap)
         if len(lines) <= MAX_LINES:
             return lines
