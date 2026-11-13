@@ -503,8 +503,15 @@ public static class Versions
     /// <para><b>56 — a paper run's fills, read by account, platform and time</b> (<c>U-paper-closure</c>, rung <see cref="FillScopeIndexRung"/>,
     /// after 55; R28 G1): the index <c>ix_fill_scope</c> on <c>fill(account_id, connector, at)</c>, the shape
     /// <c>FillStore.Scoped</c> reads. An index and nothing else: no row moves.</para>
+    ///
+    /// <para><b>57 — the scorecards' two reads, indexed</b> (<c>U-perf-scan</c>, rung <see cref="ScorecardIndexRung"/>, after 56; R28 G3):
+    /// <c>ix_forecast_forecaster</c> on <c>org_forecast(forecaster, at)</c> and <c>ix_mandate_event_kind</c> on
+    /// <c>org_mandate_event(kind, at)</c>, the shapes a scorecard reads on every refresh. Indexes and nothing else: no row moves.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = FillScopeIndexRung;
+    public const int DatabaseSchemaVersion = ScorecardIndexRung;
+
+    /// <summary>The scorecard indexes' rung, spelled once (<c>U-perf-scan</c>); a unit overtaken renumbers it here.</summary>
+    public const int ScorecardIndexRung = 57;
 
     /// <summary>The fill-scope index's rung, spelled once (<c>U-paper-closure</c>); a unit overtaken renumbers it here.</summary>
     public const int FillScopeIndexRung = 56;
