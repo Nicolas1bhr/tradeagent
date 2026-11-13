@@ -39,6 +39,12 @@ sealed record OwnerInboxSources
     /// <summary>The owner's activation of a dormant position; its words, or a refusal thrown with nothing written.</summary>
     public Func<string, string>? Activate { get; init; }
 
+    /// <summary>
+    /// The seat class this computer declares for a position now — the host's own answer, the one its activation and every launch read —
+    /// or null when nobody declared one. The activation card shows it, and its press two is bound to it.
+    /// </summary>
+    public Func<string, string?> SeatClassOf { get; init; } = _ => null;
+
     /// <summary>The clock the page's times are printed against.</summary>
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
@@ -56,6 +62,7 @@ sealed record OwnerInboxSources
         },
         VetoStructure = host.VetoStructure,
         Activate = host.ActivatePosition,
+        SeatClassOf = host.DeclaredSeatClass,
     };
 }
 
@@ -100,7 +107,7 @@ sealed class OwnerInboxPage
     internal readonly LiveList<BoardPowerProposalRow> Power;
     internal readonly LiveList<(BoardActRecord Act, BoardVetoPreview Preview)> BoardVetoes;
     internal readonly LiveList<VetoableEvent> StructureVetoes;
-    internal readonly LiveList<OrgPositionRow> Dormant;
+    internal readonly LiveList<DormantSubject> Dormant;
 
     /// <summary>The chart's readable names, read with the dormant list on each pass.</summary>
     OrgNames _names = OrgNames.None;
@@ -118,7 +125,7 @@ sealed class OwnerInboxPage
             a => a.Act.Act.Id, BoardVetoCard);
         StructureVetoes = new LiveList<VetoableEvent>(StructureVetoCards, Ui.Muted(Labels.ForYouStructureVetoesNone),
             e => e.EventId.ToString(System.Globalization.CultureInfo.InvariantCulture), StructureVetoCard);
-        Dormant = new LiveList<OrgPositionRow>(ActivateCards, Ui.Muted(Labels.ForYouActivateNone), p => p.Id, DormantCard);
+        Dormant = new LiveList<DormantSubject>(ActivateCards, Ui.Muted(Labels.ForYouActivateNone), d => d.Position.Id, DormantCard);
 
         var left = Ui.Col(Theme.S6,
             _unreadable,
@@ -196,8 +203,9 @@ sealed class OwnerInboxPage
                 var positions = org.Positions();
                 _names = OrgNames.Of(units, positions);
                 var chief = units.FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
-                var open = units.Where(u => u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-                Dormant.Update([.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.Contains(p.UnitId))]);
+                var open = units.Where(u => u.Status != OrgUnitStatus.Closed).ToDictionary(u => u.Id, StringComparer.Ordinal);
+                Dormant.Update([.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.ContainsKey(p.UnitId))
+                    .Select(p => new DormantSubject(p, _sources.SeatClassOf(p.Id), open[p.UnitId]))]);
             }, failures);
 
         _unreadable.IsVisible = failures.Count > 0;
@@ -319,17 +327,48 @@ sealed class OwnerInboxPage
         return (Ui.Col(Theme.S1, title, words, press), Fill);
     }
 
-    /// <summary>A DORMANT POSITION, NOT THE CHIEF: his two-press activation, a board seat active or not.</summary>
-    (Control, Action<OrgPositionRow>) DormantCard(OrgPositionRow first)
+    /// <summary>
+    /// A DORMANT POSITION, NOT THE CHIEF: his two-press activation, a board seat active or not — the position, the seat it would run
+    /// on and its team's envelope (<c>U-owner-words-4</c> item 4; A6-N1: the card showed only the names).
+    /// <para><b>Press two is about what press one showed</b>, as the board-veto card's is: a tick whose seat class or envelope differs
+    /// from the shown one disarms the press before showing the new one, and press two reads both again at the press and refuses, nothing
+    /// written, when either moved since the card last showed them.</para>
+    /// </summary>
+    (Control, Action<DormantSubject>) DormantCard(DormantSubject first)
     {
-        var positionId = first.Id;
+        var positionId = first.Position.Id;
+        var shown = first;
         var title = Strong("");
+        var seat = Ui.Micro("");
+        var envelope = Ui.Micro("");
         var press = Ui.Confirm(Labels.ActivatePositionPress, Labels.ActivatePositionConfirm,
-            () => Pressed(_activateNote, () => _sources.Activate!(positionId)));
+            () => Pressed(_activateNote, () =>
+            {
+                var now = DormantNow(positionId);
+                if ((now is null ? "the position" : shown.WhatMoved(now)) is { } moved)
+                    throw new TradeAgentException(ErrorCode.INVALID_REQUEST, Labels.DormantMoved(moved));
+                return _sources.Activate!(positionId);
+            }));
         press.HorizontalAlignment = HorizontalAlignment.Left;
-        // IN THE CHART'S NAMES (U-owner-words-2): the card read "pos-…, dormant in unit team-…".
-        void Fill(OrgPositionRow p) => OrgText.Set(title, Labels.DormantPosition(_names.Position(p.Id), _names.Unit(p.UnitId)));
-        return (Ui.Col(Theme.S1, title, press), Fill);
+        void Fill(DormantSubject d)
+        {
+            if (shown.WhatMoved(d) is not null) Ui.DisarmConfirm(press);
+            shown = d;
+            // IN THE CHART'S NAMES (U-owner-words-2): the card read "pos-…, dormant in unit team-…".
+            OrgText.Set(title, Labels.DormantPosition(_names.Position(d.Position.Id), _names.Unit(d.Position.UnitId)));
+            OrgText.Set(seat, Labels.DormantSeat(d.SeatClass));
+            OrgText.Set(envelope, Labels.DormantEnvelope(_names.Unit(d.Unit.Id), d.Unit.EnvelopeShare, d.Unit.TrialShare, d.Unit.VerdictShare));
+        }
+        return (Ui.Col(Theme.S1, title, seat, envelope, press), Fill);
+    }
+
+    /// <summary>A dormant position's subject as the stores hold it now — or null when it is no longer a dormant position in an open unit.</summary>
+    DormantSubject? DormantNow(string positionId)
+    {
+        if (_sources.Org() is not { } org || org.Position(positionId) is not { Status: OrgPositionStatus.Dormant } p) return null;
+        return org.Units().FirstOrDefault(u => u.Id == p.UnitId) is { Status: not OrgUnitStatus.Closed } unit
+            ? new DormantSubject(p, _sources.SeatClassOf(p.Id), unit)
+            : null;
     }
 
     /// <summary>
@@ -346,4 +385,18 @@ sealed class OwnerInboxPage
         }
         Update();
     }
+}
+
+/// <summary>
+/// WHAT A DORMANT POSITION'S ACTIVATION CARD SHOWS (<c>U-owner-words-4</c> item 4): the position, the seat class this computer declares for
+/// it, and its unit as the chart holds it — whose envelope (its share of the day, of a campaign's trials and of its verdicts) the card says.
+/// </summary>
+sealed record DormantSubject(OrgPositionRow Position, string? SeatClass, OrgUnitRow Unit)
+{
+    /// <summary>What moved between this subject and <paramref name="now"/>, in words, or null when the seat and the envelope are as shown.</summary>
+    public string? WhatMoved(DormantSubject now) =>
+        !string.Equals(SeatClass, now.SeatClass, StringComparison.Ordinal) ? "the seat it would run on"
+        : (Unit.Id, Unit.EnvelopeShare, Unit.TrialShare, Unit.VerdictShare) != (now.Unit.Id, now.Unit.EnvelopeShare, now.Unit.TrialShare, now.Unit.VerdictShare)
+            ? "its team's envelope"
+            : null;
 }

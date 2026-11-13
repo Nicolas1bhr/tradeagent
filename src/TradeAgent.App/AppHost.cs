@@ -641,7 +641,7 @@ public sealed partial class AppHost : IAsyncDisposable
             ? new LaneProfile(LaneAssurance.Confined, seatClass!, InboxUnwritable: false)
             : LaneProfile.Unconfined;
 
-    string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
+    internal string? DeclaredSeatClass(string role) => RuntimeObjectFor(role) switch
     {
         null => null,
         ApiAgentRuntime => SeatClasses.Harness,
