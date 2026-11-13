@@ -84,4 +84,29 @@ public class ChiefWakeHostFactsTests : IDisposable
         Assert.Contains($"You woke the chief {chief} once", host.WakeChiefOnce(again), StringComparison.Ordinal);
         Assert.Equal(before + 1, Wakes());
     }
+
+    /// <summary>
+    /// (2) THE "WORK ON ITS OWN" PRESS WAKES THE CHIEF WHILE ONE IS ACTIVE (<c>U-chief-floor-held</c>, R31 A1-3). The press is also the owner's resume after
+    /// the free-space guard paused the AI. Raised for Operations, which the no-unconfined-neighbour rule holds while a chief is active, it woke nobody,
+    /// and the organisation waited for the chief's next floor. Now its one wake goes where the owner's words go: the active chief.
+    ///
+    /// <para>RED at base: the press's review wake named Operations ("Expected: pos-…, Actual: operations").</para>
+    /// </summary>
+    [Fact]
+    public async Task The_work_on_its_own_press_wakes_the_active_chief_once()
+    {
+        await using var life = await PuppetLife.Begin("press-chief", ChiefAndProof);
+        var host = life.Host;
+        var chief = new OrgStore(host.Db).ActiveChief()!;
+        life.Script(chief, ["usage 10 0 5", "final Noted."]);
+        List<MissionEvent> Pressed() => [.. host.Wakes!.OfKind(MissionEventKind.Review)
+            .Where(e => e.Payload?.Contains("the owner set the AI to work on its own", StringComparison.Ordinal) == true)];
+        Assert.Empty(Pressed());
+
+        Assert.Null(host.LetTheAiWorkOnItsOwn());
+        await host.Mission.PauseAsync();
+
+        var wake = Assert.Single(Pressed());
+        Assert.Equal(chief, wake.Role);
+    }
 }
