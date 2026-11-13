@@ -133,6 +133,37 @@ public class DiskGuardTests
         Assert.True(DiskWatch.MayResume(null, new DiskSpace(60 * GiB, 100 * GiB, 655_360, 6_553_600)));
     }
 
+    /// <summary>
+    /// A BYTES TRIP WHOSE PRESS FINDS THE BYTES BACK AND THE FILES SHORT IS REFUSED IN WORDS THAT NAME THE FILES: the press needs both, so the words say both
+    /// whenever the half that did not trip is short too, and only then.
+    /// </summary>
+    [Fact]
+    public void The_refusal_names_what_the_read_lacks_whichever_half_tripped()
+    {
+        var bytesTrip = DiskWatch.PauseFor(new DiskSpace(5 * GiB, 100 * GiB, 6_000_000, 6_553_600), Now);
+        var filesShort = new DiskSpace(60 * GiB, 100 * GiB, 900_000, 6_553_600);
+        Assert.False(DiskWatch.MayResume(bytesTrip, filesShort));
+        var said = DiskWords.Refused(bytesTrip, filesShort);
+        foreach (var word in new[] { "15 GB", "60 GB is free now", "983,040 new files", "900,000 can be made now" })
+            Assert.Contains(word, said, StringComparison.Ordinal);
+        Assert.DoesNotContain("new files", DiskWords.Refused(bytesTrip, new DiskSpace(12 * GiB, 100 * GiB, 6_000_000, 6_553_600)), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// FIGURES THAT ARE NO FIXED COUNT DO NOT BLIND THE GUARD: more free than in all, or a count past a signed word (read negative), as some network and FUSE
+    /// filesystems report, are no files floor, as btrfs's 0 is; the bytes still count. A real count is kept as read.
+    /// </summary>
+    [Theory]
+    [InlineData(6_553_600, 400_000, 400_000, 6_553_600)]
+    [InlineData(6_553_600, 6_553_600, 6_553_600, 6_553_600)]
+    [InlineData(6_553_600, 0, 0, 6_553_600)]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(100, 200, 0, 0)]
+    [InlineData(-1, -1, 0, 0)]
+    [InlineData(6_553_600, -1, 0, 0)]
+    public void Figures_that_are_no_fixed_count_read_as_none(long files, long favail, long filesFree, long kept) =>
+        Assert.Equal((filesFree, kept), DiskSpace.FixedCount(files, favail));
+
     /// <summary>On Linux the read has the filesystem's file counts beside its bytes; elsewhere none, and the files floor is not applied.</summary>
     [Fact]
     public void A_read_on_linux_has_the_filesystems_file_counts()
@@ -173,6 +204,12 @@ public class DiskGuardTests
 
         host.ReadDisk = () => new DiskSpace(60 * GiB, 100 * GiB, 900_000, 6_553_600);
         Assert.Contains("983,040", host.LetTheAiWorkOnItsOwn(), StringComparison.Ordinal);
+        Assert.False(host.Mission.Running);
+        // A PRESS WITH THE FILES BACK AND THE BYTES SHORT IS REFUSED SAYING SO: the words name what the read actually lacks.
+        host.ReadDisk = () => new DiskSpace(12 * GiB, 100 * GiB, 6_000_000, 6_553_600);
+        var bytesShort = host.LetTheAiWorkOnItsOwn();
+        Assert.Contains("15 GB", bytesShort, StringComparison.Ordinal);
+        Assert.Contains("12 GB is free now", bytesShort, StringComparison.Ordinal);
         Assert.False(host.Mission.Running);
         host.ReadDisk = () => Roomy;
         Assert.Null(host.LetTheAiWorkOnItsOwn());
