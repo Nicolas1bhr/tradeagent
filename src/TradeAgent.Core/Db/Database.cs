@@ -3353,6 +3353,19 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{fillScopeIndexRung}') ON CONFLICT(key) DO UPDATE SET value='{fillScopeIndexRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE: a unit overtaken renumbers it in Versions, nothing else.
+        const int scorecardIndexRung = Versions.ScorecardIndexRung;
+        if (have < scorecardIndexRung)
+        {
+            // THE SCORECARDS' TWO READS, INDEXED (`U-perf-scan`, R28 G3): every refresh of a page with a scorecard reads a position's
+            // forecasts by `org_forecast.forecaster`, oldest first, and the base rates and a unit's mandates read `org_mandate_event` by
+            // `kind` and time — both walked every row of their table. Indexes and nothing else, IF NOT EXISTS, the stamp last: a crash
+            // between them runs this again over what it made.
+            Exec("CREATE INDEX IF NOT EXISTS ix_forecast_forecaster ON org_forecast(forecaster, at);");
+            Exec("CREATE INDEX IF NOT EXISTS ix_mandate_event_kind ON org_mandate_event(kind, at);");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{scorecardIndexRung}') ON CONFLICT(key) DO UPDATE SET value='{scorecardIndexRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
