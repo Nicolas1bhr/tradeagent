@@ -210,10 +210,12 @@ public class BoardTests(ITestOutputHelper log)
     /// hash its body's own, written with the CHECKs off, is read as Watch only, in words, and a gateway started over it holds no live
     /// mode and no real money. No path of this build writes such a row: the store refuses it before it is written, and the only live in
     /// this build is the test host's in-memory seam, which never passes through the reader. RED at 1aa93e13: the row was the policy in
-    /// force.
+    /// force. EACH REAL-MONEY MODE HAS A ROW WITH REAL MONEY OFF (<c>U-test-meaning</c>, A8-2): the autonomous row with it on is refused by
+    /// the activation alone, so the reader's autonomous arm dropped stayed green until its own row came.
     /// </summary>
     [Theory]
     [InlineData(TradingMode.LIVE_CONFIRM, false)]
+    [InlineData(TradingMode.LIVE_AUTONOMOUS, false)]
     [InlineData(TradingMode.LIVE_AUTONOMOUS, true)]
     [InlineData(TradingMode.PAPER, true)]
     public async Task A_live_policy_row_written_past_the_checks_is_read_as_watch_only(TradingMode mode, bool live)
