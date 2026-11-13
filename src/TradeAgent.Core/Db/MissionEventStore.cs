@@ -804,6 +804,22 @@ public sealed class MissionEventStore(Database db)
     }
 
     /// <summary>
+    /// THE CHAIR'S UNTAKEN OWNER WORDS AND MATERIAL WAKES, HANDED TO THE CHIEF THE MOMENT IT IS ACTIVATED (<c>U-org-cards-3</c> item 3;
+    /// R25 D4): every <see cref="MissionEventKind.Owner"/> and <see cref="MissionEventKind.Inbox"/> row not yet consumed and addressed to
+    /// the chair (<see cref="CouncilRoles.Operations"/>, or no role) now names <paramref name="chief"/>. The legacy pair stay asleep while
+    /// a chief is active, so words left on the chair would never be answered — and would read as overdue for ever. A message a turn
+    /// already took is left alone: that turn has it. Inside the caller's write. Answers how many rows moved.
+    /// </summary>
+    public int HandTheChairsWordsTo(string chief) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET role = $chief
+             WHERE kind IN ($owner, $inbox) AND consumed_at IS NULL AND (role IS NULL OR role = $chair)
+            """, ("$chief", chief), ("$owner", MissionEventKind.Owner), ("$inbox", MissionEventKind.Inbox), ("$chair", CouncilRoles.Operations));
+        return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
     /// MARKS EVERY EARLIER MESSAGE THAT SAID EXACTLY THIS, AND THAT NOBODY HAS TAKEN, SUPERSEDED BY
     /// <paramref name="by"/>.
     ///
