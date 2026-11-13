@@ -114,6 +114,10 @@ sealed class DashboardPage
 
     /// <summary>The "AI sign-in" card on this page (<c>U-seat-signin</c>), for a test to read and press.</summary>
     internal SeatSignInCard SignIn => _signIn;
+    readonly HeldFoldersCard _heldFolders;
+
+    /// <summary>The "Move these aside" card on this page (<c>U-windows-cards-2</c>), for a test to read and press.</summary>
+    internal HeldFoldersCard HeldFolders => _heldFolders;
     readonly StackPanel _unconfirmed = new() { Spacing = Theme.S5 };
     readonly Border _unconfirmedCard;
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
@@ -261,6 +265,13 @@ sealed class DashboardPage
             Ui = work => Dispatcher.UIThread.Post(work)
         });
 
+        // THE OWNER'S WAY OUT OF A HELD AI ON WINDOWS (U-windows-cards-2): built once here, updated in place on the tick.
+        _heldFolders = new HeldFoldersCard(new HeldFoldersSources
+        {
+            Find = TradeAgent.AgentRuntime.HeldFolders.Here,
+            Activity = line => host.Gateway.Log.Activity(line)
+        });
+
         var aiCard = Ui.Col(Theme.S3,
             _missionState,
             _missionCounts,
@@ -290,6 +301,7 @@ sealed class DashboardPage
         var left = Ui.Col(Theme.S6,
             _unconfirmedCard,
             _signIn.Root,
+            _heldFolders.Root,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
             _glance.Root,
             Ui.Section("The AI's own work", aiCard),
@@ -326,6 +338,7 @@ sealed class DashboardPage
         RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
         _glance.Update();
         _signIn.Update();
+        _heldFolders.Update();
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
         // request left stranded in DISPATCHING — so the card shows exactly the records that are
