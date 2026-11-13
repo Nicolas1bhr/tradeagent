@@ -17,6 +17,13 @@ static class DiskWords
         if (pause.Unreadable)
             return "paused because TradeAgent could not read how much space is free on this computer's disk, and it does not leave the AI working with nothing " +
                    $"watching the disk. {StillRunning}. Check the disk, then press \"{DashboardPage.LetTheAiWork}\". It will not start again by itself";
+        if (pause.ForFiles)
+        {
+            var room = now is { } seen ? $" ({Count(seen.FilesFree)} can be made now)" : "";
+            return $"paused to protect this computer's disk: it had room for only {Count(pause.FilesFree)} new files, and the AI stops under {Count(pause.FilesFloor)}. " +
+                   $"{StillRunning}. Remove some files, then press \"{DashboardPage.LetTheAiWork}\" once there is room for at least {Count(DiskFloor.FilesToResume(pause.Files))} " +
+                   $"new files{room}. It will not start again by itself";
+        }
         var free = now is { } read ? $" ({Size(read.Free)} is free now)" : "";
         return $"paused to protect this computer's disk: {Size(pause.Free)} was free, and the AI stops under {Size(pause.Floor)}. {StillRunning}. Free some space, " +
                $"then press \"{DashboardPage.LetTheAiWork}\" once at least {Size(DiskFloor.ToResume(pause.Total))} is free{free}. It will not start again by itself";
@@ -34,12 +41,17 @@ static class DiskWords
 
     /// <summary>The health row over a low disk with no AI to pause.</summary>
     public static string LowRow(DiskSpace? read) =>
-        read is { } r ? $"only {Size(r.Free)} free; the AI will not start under {Size(DiskFloor.For(r.Total))}" : Unread;
+        read is not { } r ? Unread
+        : r.Free < DiskFloor.For(r.Total) ? $"only {Size(r.Free)} free; the AI will not start under {Size(DiskFloor.For(r.Total))}"
+        : $"room for only {Count(r.FilesFree)} new files; the AI will not start under {Count(DiskFloor.FilesFor(r.Files))}";
 
     /// <summary>The health row over a read that failed. One failed read changes nothing: half a minute of them pauses a working AI.</summary>
     public const string Unread = "the free space could not be read just now; a working AI carries on, and is paused if this lasts half a minute";
 
     const long Gib = 1L << 30;
+
+    /// <summary>A count of files as the owner reads one: "400,000".</summary>
+    static string Count(long files) => files.ToString("N0", CultureInfo.InvariantCulture);
 
     static string Size(long bytes) => (bytes / (double)Gib).ToString("0.#", CultureInfo.InvariantCulture) + " GB";
 }
