@@ -189,8 +189,7 @@ changed_app=no
 
 if [ "$have_pass" = yes ]; then
     new="$home/.vnc/vncauth.new"
-    (umask 077 && printf '%s
-' "$vnc_pass" | "$vncpasswd" -f > "$new")
+    (umask 077 && printf '%s\n' "$vnc_pass" | "$vncpasswd" -f > "$new")
     vnc_pass=""
     chown "$account:$account" "$new"
     if cmp -s "$new" "$home/.vnc/vncauth"; then rm -f "$new"

@@ -500,7 +500,7 @@ jobs:
         run: |
           shellcheck --version
           shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh packaging/linux/ci/crash-loop.sh tools/linux-host.sh
-          shellcheck packaging/linux/ci/tool-password-tests.sh
+          shellcheck packaging/linux/ci/tool-password-tests.sh packaging/linux/ci/door.sh
           shellcheck .github/ci/shard-filter.sh
 
       # THE WINDOW'S PASSWORD ON THE FLEET'S SIDE (U-window-door): tools/linux-host.sh against a fake ssh and scp. The password
@@ -754,6 +754,22 @@ jobs:
         run: |
           sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" packaging/linux/ci/crash-loop.sh
           grep -E 'ANSWER|PASS|loop:' "$GITHUB_WORKSPACE/linux-host-evidence/crash-loop.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      # THE OWNER'S DOOR TO HIS WINDOW (U-window-door; R31 D10). As the runner, over the same real ssh as the fleet's-tool step:
+      # a first install on a home with no vncauth takes the password the tool's test seam gives (the owner's dialog, in CI) and a
+      # REAL VNC login accepts it (packaging/linux/ci/vnc-auth.py, standard-library Python: nothing downloaded); window-password
+      # makes the next login refuse the old password and accept the new one with both units' MainPID unchanged, which is the
+      # proof that TigerVNC reads -PasswordFile at each login; the kit's own password-only change restarts nothing; and no file,
+      # output or journal line on the host holds any of the passwords.
+      - name: The window's password, through the fleet's tool
+        run: |
+          ev="$GITHUB_WORKSPACE/linux-host-evidence"
+          sudo chown -R "$USER" "$ev"
+          set -- linux-artifact/TradeAgent-*-linux-x64.tar.gz
+          rc=0
+          OUT="$ev" KEY="$RUNNER_TEMP/ta-key" ADDRESS="$ADDRESS" TARBALL="$1" packaging/linux/ci/door.sh || rc=$?
+          { echo '### the window door'; echo; echo '```'; grep -E 'PASS|FAIL|door:' "$ev/door.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - uses: actions/upload-artifact@v7
         if: always()
