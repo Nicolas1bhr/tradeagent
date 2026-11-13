@@ -105,6 +105,9 @@ public partial class CellLinuxTests
             except OSError:
                 pass
             ioctl("ioctl-fssetxattr", FS_IOC_FSSETXATTR, struct.pack("<I", struct.unpack_from("<I", attr)[0] | 0x80) + bytes(attr[4:]))
+            # EXT4_IOC_SETVERSION, both widths (U-cell-ceilings; A4 N1): a generation set through a read-only descriptor moves the file's ctime to now.
+            ioctl("ioctl-ext4-setversion", 0x40086604, struct.pack("<Q", 7))
+            ioctl("ioctl-ext4-setversion32", 0x40046604, struct.pack("<I", 7))
             os.close(fd)
 
         def hard_link(tag, p):

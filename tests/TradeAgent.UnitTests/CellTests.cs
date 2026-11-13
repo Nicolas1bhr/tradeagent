@@ -435,6 +435,8 @@ public class CellSeccompTests
     /// A FILE'S ATTRIBUTES (<c>U-cell-metadata</c>; R29 F-D1), number by number on both architectures: every owner, extended-attribute and
     /// flag call is EPERM, every mode and time call goes to the supervisor, and a number left out of either list would be ALLOW and no
     /// other row of this class would notice. The inode flag requests go by the low word of the argument, as the kernel reads them.
+    /// ext4's own <c>EXT4_IOC_SETVERSION</c> (0x40086604, and 0x40046604 for a 32-bit caller) is in the list beside <c>FS_IOC_SETVERSION</c> (<c>U-cell-ceilings</c>;
+    /// A4 N1): a read-only descriptor and being the owner set a file's generation and move its ctime to now.
     /// </summary>
     [Theory]
     [InlineData(System.Runtime.InteropServices.Architecture.X64, X64,
@@ -445,7 +447,8 @@ public class CellSeccompTests
     {
         foreach (var nr in refused) Assert.Equal(Eperm, Run(arch, audit, nr, 3, 0, 0));
         foreach (var nr in mediated) Assert.Equal(Notify, Run(arch, audit, nr, 3, 0, 0));
-        foreach (var request in new ulong[] { 0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A, 0xFFFFFFFF_40086602 })
+        foreach (var request in new ulong[] { 0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x40086604, 0x40046604, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A,
+                     0xFFFFFFFF_40086602, 0xFFFFFFFF_40086604 })
             Assert.Equal(Eperm, Run(arch, audit, ioctl, 3, request));
         // WHAT AN ORDINARY PROGRAM ASKS OF ioctl, AND THE READ HALF OF THE SAME REQUESTS: untouched.
         foreach (var request in new ulong[] { 0x5401 /* TCGETS */, 0x541B /* FIONREAD */, 0x80086601 /* FS_IOC_GETFLAGS */, 0x801C581F /* FS_IOC_FSGETXATTR */ })
