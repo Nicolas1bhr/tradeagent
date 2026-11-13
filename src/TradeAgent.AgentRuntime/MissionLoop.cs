@@ -3155,15 +3155,14 @@ public sealed class MissionLoop
             // and no seam, no seat check and no write is spent on it until its backoff ends.
             var due = queued.Where(r => !StandingAside(r))
                 .Where(r => !deferred.Contains(r) || Unheld(events, r, DueFor(events, r), null).Count > 0).ToList();
-            if (queued.Count == 0)
-            {
-                // NOTHING IS DUE, so a rest that is over is forgotten and the next refusal of anyone is a first one. A rest still running stands: the next
-                // wake of a position whose turns keep failing waits it out, so a failing seat is never launched faster than its backoff (U-turn-bounds-2).
-                lock (_gate)
-                    foreach (var over in _stoodAside.Where(a => a.Value.Until <= _now()).Select(a => a.Key).ToList())
-                        _stoodAside.Remove(over);
-                return new Picked([], Idle(events));
-            }
+            // A REST THAT IS OVER, OF A POSITION WITH NOTHING DUE, IS FORGOTTEN, so its next refusal is a first one: told again, and backed off from the start.
+            // A rest still running stands: the next wake of a position whose turns keep failing waits it out, so a failing seat is never launched faster
+            // than its backoff (U-turn-bounds-2). Asked on every pick, not only when nothing at all is due (U-chief-floor-held, R31 A1-4): the legacy pair,
+            // held beside an active chief, are due for the whole run, and a position that is still due keeps its run of refusals as it was.
+            lock (_gate)
+                foreach (var over in _stoodAside.Where(a => a.Value.Until <= _now() && !queued.Contains(a.Key)).Select(a => a.Key).ToList())
+                    _stoodAside.Remove(over);
+            if (queued.Count == 0) return new Picked([], Idle(events));
             if (due.Count == 0) return new Picked([], queued.Any(StandingAside) ? WaitingForTheAside(events) : Idle(events));
 
             // A POSITION THE ACTIVATION SEAM REFUSES IS NEVER CHOSEN and handed no conversation: left in, the oldest wake of

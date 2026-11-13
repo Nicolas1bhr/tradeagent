@@ -782,6 +782,53 @@ public partial class CouncilLoopTests
     }
 
     /// <summary>
+    /// AN ASIDE THAT IS OVER IS FORGOTTEN WHILE OTHERS ARE STILL DUE (<c>U-chief-floor-held</c>, R31 A1-4). Research is held for the whole run (its wakes kept, so
+    /// it is always due). A third position is refused for its host, then has nothing due; its rest ends. When it is refused again later, that is a new episode:
+    /// it rests the FIRST backoff again, not a doubled one, and the refusal is told again in the log the watch reads.
+    ///
+    /// <para>RED at base: the clean-up ran only when nothing at all was due, so the second refusal rested 60 s and was not told ("Expected: 00:00:30, Actual:
+    /// 00:01:00").</para>
+    /// </summary>
+    [Fact]
+    public async Task An_aside_that_is_over_is_forgotten_while_another_position_is_still_due()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var now = new DateTimeOffset(2026, 11, 13, 2, 0, 0, TimeSpan.Zero);
+        var host = new CouncilHost(db, root, new Concurrency()) { Clock = () => now };
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+        var told = new List<string>();
+        loop.Refused += why => { lock (told) told.Add(why); };
+        const string third = "pos-7f3a90c1";
+        const string words = "no proven executor cell on this host";
+        host.Add(third);
+        host.Refusals[CouncilRoles.Research] = new TurnRefusal(RefusalKind.HostOrLaunch, "research is held beside an active position");
+        host.Refusals[third] = new TurnRefusal(RefusalKind.HostOrLaunch, words);
+        void Wake(string role, int n) => host.Events!.Raise(MissionEventIds.ForRole($"{MissionEventKind.Review}:{n}", role),
+            MissionEventKind.Review, now.AddSeconds(-1), role: role);
+        int Told() { lock (told) return told.Count(t => t.Contains(words, StringComparison.Ordinal)); }
+
+        Wake(CouncilRoles.Research, 1);
+        Wake(third, 2);
+        await loop.TurnAsync();
+        Assert.Equal(TimeSpan.FromSeconds(30), loop.StandingAsideFor(third)!.Value.Until - now);
+        Assert.Equal(1, Told());
+
+        // ITS WAKE IS SETTLED ELSEWHERE, so it has nothing due; research still has. Its rest ends, and a pass looks.
+        Assert.Equal(1, host.Events!.SettleRefused(third, now, "settled for the test"));
+        now = now.AddMinutes(10);
+        await loop.TurnAsync();
+        Assert.Null(loop.StandingAsideFor(third));
+
+        // A NEW WAKE, REFUSED AGAIN: a first refusal, told again.
+        Wake(third, 3);
+        await loop.TurnAsync();
+        Assert.Equal(TimeSpan.FromSeconds(30), loop.StandingAsideFor(third)!.Value.Until - now);
+        Assert.Equal(2, Told());
+        Assert.Empty(host.Opened);
+    }
+
+    /// <summary>
     /// (d, <c>U-thinking-seats-a</c>, adopting O3's kinds) A REFUSED POSITION IS STEPPED OVER, WHICHEVER ITS KIND, AND THE LEGACY
     /// PAIR KEEP TURNING: a position refused for itself (<see cref="RefusalKind.Position"/>, a capability its seat cannot carry) has
     /// its review settled <see cref="MissionEventDisposition.Refused"/>; one refused for its host (<see cref="RefusalKind.HostOrLaunch"/>,
