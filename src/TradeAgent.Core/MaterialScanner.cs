@@ -196,7 +196,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
     /// <summary>
     /// EACH WORKSPACE'S HASH READ THAT DID NOT COME BACK (<c>U-perf-scan</c>), by workspace root, process-wide because the disk is: the
-    /// read left to finish on its own, closed when it does. While it waits no pass reads another file of that workspace.
+    /// read left to finish on its own, closed when it does. While it waits no pass hashes another file of that workspace. The walk's
+    /// listings, the stat of each file and the app-origin measure still touch the disk, unbounded: a stall there still holds the pass.
     /// </summary>
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> Stalled = new(StringComparer.Ordinal);
 
@@ -386,11 +387,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 return 0;
             });
 
-        var (hashed, deferred, deferrals) = HashPending(ct, unsealedHomes);
+        var (hashed, deferred, deferrals, stalled) = HashPending(ct, unsealedHomes);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated)
         {
             HashDeferred = deferred,
             HashDeferrals = deferrals,
+            HashStalled = stalled,
             AddedBy = addedBy,
             Unreadable = unreadable.Count,
             // The owner's drop folder first, because that is the place they look after; then the homes.
@@ -493,7 +495,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     /// A row that fails either check is simply left unhashed: the next walk sees the new tuple and
     /// records it as the new version it is.
     /// </summary>
-    (int Hashed, int Deferred, IReadOnlyList<string> Deferrals) HashPending(CancellationToken ct, IReadOnlySet<string> unsealedHomes)
+    (int Hashed, int Deferred, IReadOnlyList<string> Deferrals, bool Stalled) HashPending(CancellationToken ct, IReadOnlySet<string> unsealedHomes)
     {
         var hashed = 0;
 
@@ -569,15 +571,22 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // reads, and no cancellation reaches it. The pass waits as long as its bound and a moment more, then leaves the read to
                     // finish on its own — its file and its bound closed only once it has, never under it — and goes on.
                     var reading = Task.Run(() => Hasher(file, token));
+                    // A QUIT IS NOT HELD EITHER: the wait ends at the pass's own cancellation, the read is left as a stalled one is, and
+                    // the cancellation goes on up.
                     bool back;
-                    try { back = reading.Wait(left + StallGrace); }
+                    try { back = reading.Wait(left + StallGrace, ct); }
                     catch (AggregateException) { back = true; }
+                    catch (OperationCanceledException)
+                    {
+                        if (reading.IsCompleted) throw;
+                        leftReading = true;
+                        LeaveReading(reading, file, bound);
+                        throw;
+                    }
                     if (!back)
                     {
                         leftReading = true;
-                        var closing = bound;
-                        Stalled[_root] = reading.ContinueWith(_ => { file.Dispose(); closing.Dispose(); },
-                            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                        LeaveReading(reading, file, bound);
                         held = true;
                         Defer(m, $"a read of it did not come back from the disk within the {HashTimePerPass.TotalSeconds:0.#} s a pass has "
                                  + "for hashing; it is left to finish, and nothing here is read until it has.");
@@ -618,8 +627,13 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             }
         }
 
-        return (hashed, deferred, deferrals);
+        return (hashed, deferred, deferrals, held);
     }
+
+    /// <summary>A read that did not come back, left to finish on its own: its file and its bound are closed once it has, never under it.</summary>
+    void LeaveReading(Task reading, FileStream file, CancellationTokenSource bound) =>
+        Stalled[_root] = reading.ContinueWith(_ => { file.Dispose(); bound.Dispose(); },
+            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
 
     /// <summary>Is the open file still the one this row was written about?</summary>
     static bool IsStill(FileStream fs, Material m) =>

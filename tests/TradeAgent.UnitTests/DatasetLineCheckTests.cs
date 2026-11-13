@@ -76,4 +76,17 @@ public class DatasetLineCheckTests
         page.RunOne();
         Assert.True(check.Read(Set(1), () => { }).Failed);
     }
+
+    [Fact]
+    public void A_dataset_the_ledger_rejected_inside_the_minute_is_said_rejected_at_once_not_from_the_last_check()
+    {
+        var page = new PageThread();
+        var check = new DatasetLineCheck(s => s, () => DateTimeOffset.UnixEpoch, page.Post);
+        check.Read(Set(1), () => { });
+        page.RunOne();
+        Assert.Equal(DatasetState.ACCEPTED, check.Read(Set(1), () => { }).Set?.State);
+
+        var rejected = Set(1) with { State = DatasetState.REJECTED, RejectedReason = "a backtest found a file changed" };
+        Assert.Equal(DatasetState.REJECTED, check.Read(rejected, () => { }).Set?.State);
+    }
 }

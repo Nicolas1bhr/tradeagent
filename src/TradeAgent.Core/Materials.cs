@@ -148,6 +148,12 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     public IReadOnlyList<string> HashDeferrals { get; init; } = [];
 
     /// <summary>
+    /// A HASH READ OF THIS WORKSPACE DID NOT COME BACK FROM THE DISK (<c>U-perf-scan</c>): this pass's or an earlier one's, still waiting.
+    /// Its deferrals are a disk that stopped answering, not files too large for a pass, and the owner is told that reason.
+    /// </summary>
+    public bool HashStalled { get; init; }
+
+    /// <summary>
     /// The pass looked everywhere: it did not run out of budget (<see cref="HashBudgetSpent"/>, which is
     /// the file budget's flag despite its name) and read every place it walked. Only a complete pass
     /// moves the window, and only a complete pass can say that a folder it once could not read is
