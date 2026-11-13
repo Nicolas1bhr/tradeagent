@@ -145,6 +145,31 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// A PAPER RUN'S PREFIX IS REFUSED ON THE WAY IN TOO (<c>U-paper-oco</c>): the paper book counts an order whose client order id is
+    /// <c>TA-dp-…</c> in that run's holding, and a run's own operation could collide with it. <b>RED on the base</b>: accepted.
+    /// </summary>
+    [Theory]
+    [InlineData("dp-aaaaaaaaaaaa-29000000-0")]
+    [InlineData("dp-anything")]
+    [InlineData("DP-UPPERCASE")]
+    public async Task A_request_id_using_a_paper_runs_prefix_is_refused(string id)
+    {
+        var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var reply = await client.SendAsync(Buy(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok, $"'{id}' was accepted, and it can read as a paper run's own order");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains("paper run", reply.Error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// An id that would not survive the trip to the broker is refused before an order carries it.
     /// </summary>
     [Theory]

@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Data.Sqlite;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Connectors.Paper;
 
@@ -417,12 +418,47 @@ public sealed class PaperBook : IDisposable
     /// key's to answer, before the holding is read, so a sell that emptied the book is never rejected by its
     /// own fill. <paramref name="rejected"/> says which of the two a null was.</para>
     /// </summary>
-    public PaperFill? TryFill(PaperFill fill, out bool rejected)
+    public PaperFill? TryFill(PaperFill fill, out bool rejected) => TryFill(fill, out rejected, out _);
+
+    /// <summary>
+    /// <see cref="TryFill(PaperFill, out bool)"/>, and THE RUN'S OWN BOOK INSIDE THE ACCOUNT'S (<c>U-paper-oco</c>, R31 A3-1). One paper
+    /// account carries every run on a symbol in one position, so three more things are answered in the same transaction:
+    ///
+    /// <list type="bullet">
+    /// <item><b>An order already CANCELLED or REJECTED never fills.</b> Read inside the transaction: a run's other resting sell cancelled
+    /// by an earlier fill of this very bar is still in the bar's candidate list, and that list is not the book.</item>
+    /// <item><b>A run's sell fills only against what that run holds</b> — its own fills, read off their client order ids
+    /// (<see cref="Deployments.HolderOf"/>) — as well as against the account's holding. A sell covered only by another run's units is
+    /// REJECTED, unfilled, in words, exactly as a sell beyond the account's holding is.</item>
+    /// <item><b>A run's resting sells are one-cancels-other.</b> When one of them — a stop or a target — fills, every other resting
+    /// sell of the same run on that symbol still working is CANCELLED in the fill's own commit, and <paramref name="cancelled"/> names
+    /// them. The runner cancelled the loser too, but only on the live minute after the fill landed, and when several minutes settle in
+    /// one read the loser's level can be reached before then. A market sell cancels nothing: the runner takes protection off before an
+    /// exit goes, and whatever it missed is refused by the rule above rather than filled on another run.</item>
+    /// </list>
+    /// The account's own orders — any id that is not a run's — keep exactly the rules they had.
+    /// </summary>
+    public PaperFill? TryFill(PaperFill fill, out bool rejected, out IReadOnlyList<string> cancelled)
     {
         rejected = false;
+        cancelled = [];
+        var holder = Deployments.HolderOf(fill.ClientOrderId);
         lock (_gate)
         {
             using var tx = _conn.BeginTransaction();
+
+            using (var state = _conn.CreateCommand())
+            {
+                state.Transaction = tx;
+                state.CommandText = "SELECT state FROM paper_order WHERE client_order_id=$coid";
+                state.Parameters.AddWithValue("$coid", fill.ClientOrderId);
+                if (state.ExecuteScalar() is nameof(ExecutionState.CANCELLED) or nameof(ExecutionState.REJECTED))
+                {
+                    tx.Rollback();
+                    return null;
+                }
+            }
+
             tx.Save("attempt");
             fill = fill with { ExecutionId = "PX-" + Next(tx, "xseq") };
 
@@ -450,7 +486,10 @@ public sealed class PaperBook : IDisposable
             }
 
             var (held, _) = PositionOf(tx, fill.Symbol);
-            if (fill.Side == OrderSide.Sell && held < fill.Quantity)
+            var runHolds = fill.Side == OrderSide.Sell && holder is not null
+                ? HeldBy(tx, holder, fill.Symbol, fill.ExecutionId)
+                : (decimal?)null;
+            if (fill.Side == OrderSide.Sell && (held < fill.Quantity || runHolds < fill.Quantity))
             {
                 tx.Rollback("attempt");
 
@@ -460,10 +499,14 @@ public sealed class PaperBook : IDisposable
                     UPDATE paper_order SET state='REJECTED', reject_reason=$why
                      WHERE client_order_id=$coid AND state NOT IN ('FILLED','CANCELLED','REJECTED')
                     """;
-                reject.Parameters.AddWithValue("$why",
-                    $"insufficient holdings: a sell of {D(fill.Quantity)} {fill.Symbol} reached on the bar opening "
-                    + $"{T(fill.BarOpenTime)} found {D(held)} held. A spot account cannot sell what it does not hold, "
-                    + "and this book simulates one; nothing was filled.");
+                reject.Parameters.AddWithValue("$why", held < fill.Quantity
+                    ? $"insufficient holdings: a sell of {D(fill.Quantity)} {fill.Symbol} reached on the bar opening "
+                      + $"{T(fill.BarOpenTime)} found {D(held)} held. A spot account cannot sell what it does not hold, "
+                      + "and this book simulates one; nothing was filled."
+                    : $"insufficient holdings: a sell of {D(fill.Quantity)} {fill.Symbol} reached on the bar opening "
+                      + $"{T(fill.BarOpenTime)} found {D(runHolds!.Value)} held by the run that placed it ({holder}), of {D(held)} "
+                      + "in the account. A run's sell reduces only that run's own holding, never another run's on the same "
+                      + "account; nothing was filled.");
                 reject.Parameters.AddWithValue("$coid", fill.ClientOrderId);
                 rejected = reject.ExecuteNonQuery() == 1;
 
@@ -488,9 +531,91 @@ public sealed class PaperBook : IDisposable
             ApplyToPosition(tx, fill);
             if (fill.Fee != 0m) AddTo(tx, "fees", fill.Fee);
 
+            if (fill.Side == OrderSide.Sell && holder is not null && IsResting(tx, fill.ClientOrderId))
+                cancelled = CancelTheRunsOtherRestingSells(tx, holder, fill);
+
             tx.Commit();
             return fill;
         }
+    }
+
+    /// <summary>The order types that rest at a level — a run's stop and its target — as against a market order.</summary>
+    const string RestingTypes = "('Stop','StopLimit','Limit')";
+
+    /// <summary>Whether this order rests at a level (a stop or a limit), read inside the caller's transaction.</summary>
+    bool IsResting(SqliteTransaction tx, string clientOrderId)
+    {
+        using var c = _conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = $"SELECT 1 FROM paper_order WHERE client_order_id=$coid AND type IN {RestingTypes}";
+        c.Parameters.AddWithValue("$coid", clientOrderId);
+        return c.ExecuteScalar() is not null;
+    }
+
+    /// <summary>
+    /// WHAT ONE RUN HOLDS OF ONE SYMBOL ON THIS BOOK: the signed sum of its own fills — every fill whose client order id names it
+    /// (<see cref="Deployments.HolderOf"/>) — read inside the caller's transaction, leaving out the fill being judged.
+    /// </summary>
+    decimal HeldBy(SqliteTransaction tx, string holder, string symbol, string exceptExecution)
+    {
+        using var c = _conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = """
+            SELECT client_order_id, side, quantity FROM paper_fill
+             WHERE symbol=$s AND execution_id<>$x AND substr(client_order_id, 1, $n)=$p
+            """;
+        c.Parameters.AddWithValue("$s", symbol);
+        c.Parameters.AddWithValue("$x", exceptExecution);
+        c.Parameters.AddWithValue("$p", "TA-" + holder + "-");
+        c.Parameters.AddWithValue("$n", ("TA-" + holder + "-").Length);
+        var held = 0m;
+        using var r = c.ExecuteReader();
+        while (r.Read())
+        {
+            if (Deployments.HolderOf(r.GetString(0)) != holder) continue;
+            var quantity = Dec(r.GetString(2));
+            held += r.GetString(1) == nameof(OrderSide.Buy) ? quantity : -quantity;
+        }
+        return held;
+    }
+
+    /// <summary>
+    /// ONE-CANCELS-OTHER: every other resting sell of this run on this symbol still working, CANCELLED inside the fill's own
+    /// transaction, with the reason on the order. Answers their client order ids.
+    /// </summary>
+    IReadOnlyList<string> CancelTheRunsOtherRestingSells(SqliteTransaction tx, string holder, PaperFill fill)
+    {
+        var siblings = new List<string>();
+        using (var c = _conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = $"""
+                SELECT client_order_id FROM paper_order
+                 WHERE symbol=$s AND side='Sell' AND type IN {RestingTypes} AND client_order_id<>$coid
+                   AND state NOT IN ('FILLED','CANCELLED','REJECTED') AND substr(client_order_id, 1, $n)=$p
+                """;
+            c.Parameters.AddWithValue("$s", fill.Symbol);
+            c.Parameters.AddWithValue("$coid", fill.ClientOrderId);
+            c.Parameters.AddWithValue("$p", "TA-" + holder + "-");
+            c.Parameters.AddWithValue("$n", ("TA-" + holder + "-").Length);
+            using var r = c.ExecuteReader();
+            while (r.Read())
+                if (Deployments.HolderOf(r.GetString(0)) == holder) siblings.Add(r.GetString(0));
+        }
+
+        foreach (var sibling in siblings)
+        {
+            using var u = _conn.CreateCommand();
+            u.Transaction = tx;
+            u.CommandText = "UPDATE paper_order SET state='CANCELLED', reject_reason=$why WHERE client_order_id=$coid";
+            u.Parameters.AddWithValue("$why",
+                $"one-cancels-other: {fill.ClientOrderId}, another resting sell of the same run, filled on the bar opening "
+                + $"{T(fill.BarOpenTime)}, so this one was cancelled in that fill's own commit; nothing of it was filled.");
+            u.Parameters.AddWithValue("$coid", sibling);
+            u.ExecuteNonQuery();
+        }
+
+        return siblings;
     }
 
     /// <summary>The next number of a counter, inside the caller's transaction so a rollback takes it back.</summary>
