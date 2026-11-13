@@ -3185,8 +3185,8 @@ nothing — the fetch's `items` against the rows naming it is the count — and 
 `revision + 1`, with its own `received_at`. The insert is what refuses: an unchanged re-reading is aimed at
 its revision's own slot `(source, series, natural_key, revision)` and the conflict clause writes nothing, so
 `INSERT OR REPLACE` would visibly move a first reading's arrival and fetch — `TapeStoreTests` watches that
-mutant go red. There is no `UPDATE` in `TapeStore`. One transaction per fetch; what the store refuses (a
-payload over 64 KB, one that is not JSON or names a key twice, a subject that cannot be keyed) is refused
+mutant go red. There is no `UPDATE` of a row in `TapeStore` (rung 4 edits the table's definition, never a row). One
+transaction per fetch; what the store refuses (a payload over 64 KB — an archive file's kept row over 8 MiB — one that is not JSON or names a key twice, a subject that cannot be keyed) is refused
 before the transaction opens, so no attempt is ever recorded with half its items.
 `AsOf(holdout, source, series, subject, t)` answers the observation with the latest source time among those
 received at or before `t`, at its latest revision received by then, as `TapeAsOf(Row, Refusal)`. The holdout is
