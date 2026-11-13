@@ -290,6 +290,20 @@ jobs:
           Write-Output "codex package: $((Get-ChildItem $dir).Name -join ' '); $(& $exe --version)"
           "TA_CELL_CODEX=$exe" >> $env:GITHUB_ENV
 
+      # THE CELL PROBE AS THE APP SHIPS IT (U-cell-probe): the self-contained, trimmed single file packaging/build.ps1 publishes beside the app, from
+      # this tree. The benchmark copies it into its own folder and runs it in a cell for the two rows cmd's own lines cannot make (state-unreadable's
+      # listing, processes-denied), in place of PowerShell 5.1. The rows find it through TA_CELL_PROBE.
+      - name: Publish the cell probe for the Windows cell rows
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'cell-probe'
+          dotnet publish src/TradeAgent.CellProbe/TradeAgent.CellProbe.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o $out --nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Output "cell probe: $((Get-ChildItem $out | ForEach-Object { "$($_.Name) $($_.Length)" }) -join ', ')"
+          "TA_CELL_PROBE=$(Join-Path $out 'cell-probe.exe')" >> $env:GITHUB_ENV
+
       # THE ROWS, AS THE RUNNER IS: elevated (CI's windows runner is an administrator), so TA_CELL_WINDOWS_ADMIN=1 lets the one row that
       # places a firewall rule run — on a machine thrown away after — and makes a missing elevation a red row, never a skip. The UAC
       # prompt the product shows the owner cannot be shown here; that row measures the rule, not the prompt.

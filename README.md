@@ -117,7 +117,7 @@ Program Files, in the per-user location winget uses, or on `PATH`.
 | `-SkipPublish` | Repackage the existing `artifacts/stage` without recompiling — seconds, not minutes, while iterating on `TradeAgent.iss` |
 
 Before it packages anything, the script **verifies the stage**: every shipping artifact must exist and
-be plausibly sized (`TradeAgent.exe`, `trade.exe`, `tradeagent-gateway.exe`, the Provisioning,
+be plausibly sized (`TradeAgent.exe`, `trade.exe`, `tradeagent-gateway.exe`, `cell-probe.exe`, the Provisioning,
 AgentRuntime and Gateway assemblies, and a non-empty `bridge/`), and the whole stage must be large
 enough to be a self-contained publish. A run that produces nothing fails, loudly, naming the missing
 file. It cannot reach the checksum step and print "Done".

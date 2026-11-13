@@ -32,7 +32,7 @@ public sealed class CellWindowsProofTests
         Assert.False(new CellProofStore(db).HoldsProof(), "a fresh home holds no proof");
 
         var codex = PinnedWindowsCodex();   // the pinned windows codex, or the row that needs it FAILS
-        var result = await WindowsCellBenchmark.RunAsync(db, codex, Pin, Launcher());
+        var result = await WindowsCellBenchmark.RunAsync(db, codex, Pin, Launcher(), CellProbe());
         _out.WriteLine(result.Sentence);
         foreach (var r in result.Rows) _out.WriteLine($"  {(r.Held ? "held" : "FAIL")}{(r.Gap ? " (GAP)" : "")}  {r.Name}: {r.Seen}");
 
@@ -94,6 +94,36 @@ public sealed class CellWindowsProofTests
         using var f = File.OpenRead(path);
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(f)).ToLowerInvariant();
         Assert.True(hash == plan.ExecutableSha256, $"{path} hashes to {hash}, not this build's codex pin {plan.ExecutableSha256}");
+        return path;
+    }
+
+    /// <summary>
+    /// THE CELL PROBE AS THE APP SHIPS IT (<c>U-cell-probe</c>): a self-contained single file, the one program in its folder. TA_CELL_PROBE from CI's step, else
+    /// published here from this tree once per test run, as packaging/build.ps1 publishes it; a publish that fails FAILS the row, naming its output.
+    /// </summary>
+    internal static string CellProbe()
+    {
+        var path = Environment.GetEnvironmentVariable("TA_CELL_PROBE");
+        if (string.IsNullOrEmpty(path))
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+            Assert.True(dir is not null, "the tree this test was built from (no TradeAgent.sln above " + AppContext.BaseDirectory + ")");
+            var output = Path.Combine(TestEnv.Root, "cell-probe-" + Guid.NewGuid().ToString("n")[..8]);
+            var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+            var psi = new System.Diagnostics.ProcessStartInfo(string.IsNullOrWhiteSpace(host) || !File.Exists(host) ? "dotnet" : host)
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in new[] { "publish", Path.Combine(dir!.FullName, "src", "TradeAgent.CellProbe", "TradeAgent.CellProbe.csproj"), "-c", "Release",
+                         "-r", "win-x64", "--self-contained", "true", "-p:PublishSingleFile=true", "-o", output, "--nologo" })
+                psi.ArgumentList.Add(a);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var so = p.StandardOutput.ReadToEndAsync();
+            var se = p.StandardError.ReadToEndAsync();
+            Assert.True(p.WaitForExit(TimeSpan.FromMinutes(5)), "the cell probe's publish did not end in 5 minutes");
+            Assert.True(p.ExitCode == 0, $"the cell probe's publish failed ({p.ExitCode}): {so.Result}{se.Result}");
+            path = Path.Combine(output, "cell-probe.exe");
+        }
+        Assert.True(File.Exists(path), $"the cell probe (TA_CELL_PROBE or this tree's publish; got '{path}')");
         return path;
     }
 
