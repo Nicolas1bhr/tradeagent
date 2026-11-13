@@ -211,6 +211,31 @@ holding when it accepts the order, so two sells resting on one holding — a run
 there; this book locks nothing and lets both rest, judging each on its own at placement, and the second one
 reached is the one rejected. Buys are not held to a cash balance.
 
+**EACH PAPER RUN'S STOP AND TARGET ARE ITS OWN** (`U-paper-oco`, R31 A3-1). One paper account carries every run on a
+symbol in one holding, so "the second one reached is the one rejected" held only for one run: with two runs on a pair the
+sum covered a run's leftover stop or target, and when several minutes settled in one read (a restart, a collector backing
+off) it filled on the OTHER run's units — both runs' records wrong from that bar. The book now reads whose an order is off
+its client order id (`Deployments.HolderOf`: `TA-` before a run's `dp-<12 of the deployment>-…` request id; any other id is
+the account's own, and an agent's request id may not open with `dp-`), and in the fill's own transaction: **a run's resting
+sells are one-cancels-other** — a stop or target that fills cancels the run's other resting sells on that symbol in the same
+commit, with the reason on the order, so in a batch the first one reached is the only one that fills; **a run's sell fills only
+against that run's own fills**, as well as the account's holding, and is otherwise `REJECTED` "insufficient holdings … held by
+the run that placed it"; **an order already CANCELLED or REJECTED never fills**, read inside the transaction; and "a bar that
+touched both counts as the stop" is per position — one run's stop no longer holds back another run's touched target. Every
+bar is settled in open-time order, as before. The account's own orders keep exactly the rules above. The runner still cancels
+the loser on the next live minute (on this book it finds nothing working); that is what protects a run on a platform with no
+such link. No layout change: the run is read off an id every order already carries, so an order placed before this rule has
+its run exactly as one placed after it.
+
+**A CLOSE OF WHAT IS HELD IS NEVER REFUSED BY AN INSTRUMENT-LIST MISS** (`U-paper-oco`, R31 A3-2). An instrument's check is
+served seven days; when it lapses (or the catalogue cannot be read) the pair leaves the served list, which every one of
+three readers used to refuse a run's stop, target, exit and maximum hold by, like an opener: the runner (no increment to size
+by), the gateway under the founding list (the venue's list is the list), and this book (no row to round to). Now a close is
+sized at the quantity held (rounded when it was bought), the founding list lets a close past the venue's list — bounded by the
+stale-close read to exactly the position held, a run's exactly its own book — and this book takes a sell placed as a close of
+a symbol it holds without a row, bounded by the holding as every sell is. Every opening order, and every close under any other
+list, is refused exactly as before.
+
 **ITS QUOTE IS THE LAST SETTLED BAR'S CLOSE, STAMPED AT THAT BAR'S CLOSE** (`U-runner-forward`): the
 bar's open plus the bar length its `IPaperBarSource` DECLARES (`BarLength` — one minute for the forward
 ledger and for `MemoryBarSource` unless a caller says otherwise). It used to be the open plus the
