@@ -50,7 +50,9 @@ public sealed partial class GatewayPipeServer
             repeated = made.Repeated,
             note = made.Repeated
                 ? "This charter went in already: the same act as the unit named here, which stands, so nothing was written and no "
-                  + "structural change was spent; dates alone do not make a new act. To charter a second unit, give it its own rationale."
+                  + "structural change was spent; dates alone do not make a new act, and nor do other words for the same terms asked from a "
+                  + "later turn while nobody has been hired into it. To charter a second unit, give it its own terms (its share, its "
+                  + "forecasts, the work it cites), or hire into the one that stands first."
                 : "Chartered: the unit's id is TradeAgent's, its head is vacant until you hire into it with 'org-hire' and its head flag, "
                   + "and its AI share is a fraction of your unit's envelope. The charter is your 'charter' decision — the rationale your "
                   + "own ledger entry, marked claim — and its unit-admissible forecast resolves at its date from the referee's verdicts "

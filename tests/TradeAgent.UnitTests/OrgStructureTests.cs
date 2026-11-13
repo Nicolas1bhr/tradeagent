@@ -151,6 +151,44 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
+    /// (R3c) A REWORDED REPEAT FROM A LATER LAUNCH IS THE SAME ACT (<c>U-org-cards-3</c> item 5; R28 R3): the same terms in other words — its
+    /// reason and its options — asked from the head's next launch while nobody was hired into the unit answer that unit and write nothing,
+    /// so the week's second structural change is not spent on a copy. Once someone is hired into it, the same terms in other words are a
+    /// second unit; and inside the launch that chartered it (the first reply seen) they always were.
+    /// <para>RED at base: the reworded charter from the later launch was a new unit (<c>Repeated</c> false), spending the week's second change.</para>
+    /// </summary>
+    [Fact]
+    public void A_reworded_charter_from_a_later_launch_is_the_same_act_while_its_unit_stands_empty()
+    {
+        using var db = Chart();
+        var org = new OrgStore(db);
+        var run = CurrentRun(db);
+        var first = org.Charter(Ask(refs: [run]), Metered, Now);
+
+        var before = Written(db);
+        var reworded = org.Charter(Ask(refs: [run], forecasts: [Admissible(Now.AddDays(47))]) with
+        {
+            Attempt = "turn-test-later", Rationale = "a team of its own for the funding-skew family", Options = ["charter a team", "wait"]
+        }, Metered, Now.AddMinutes(30));
+        Assert.True(reworded.Repeated);
+        Assert.Equal((first.Unit.Id, first.EventId), (reworded.Unit.Id, reworded.EventId));
+        Assert.Equal(before, Written(db));
+
+        // OTHER TERMS FROM THE LATER LAUNCH ARE A NEW ACT, as before.
+        Assert.False(org.Charter(Ask(share: 0.1m, refs: [run]) with { Attempt = "turn-test-later", Rationale = "a smaller team" }, Metered, Now.AddMinutes(31)).Repeated);
+
+        // ONCE SOMEONE IS HIRED INTO IT, the unit is in use, and the same terms in other words are a second unit.
+        using var fresh = Chart();
+        var org2 = new OrgStore(fresh);
+        var run2 = CurrentRun(fresh);
+        var made = org2.Charter(Ask(refs: [run2]), Metered, Now);
+        org2.Hire(new HireRequest(Head, "turn-test", made.Unit.Id, true, "its head", [], [], [Admissible()]), Now);
+        var second = org2.Charter(Ask(refs: [run2]) with { Attempt = "turn-test-later", Rationale = "the basis family earns a team too" }, Metered, Now.AddMinutes(30));
+        Assert.False(second.Repeated);
+        Assert.NotEqual(made.Unit.Id, second.Unit.Id);
+    }
+
+    /// <summary>
     /// (R3b) ONLY DATES ARE LEFT OUT OF THE SAME ACT (the Codex review): a charter with other forecast terms is its own act, never one quietly dropped as a
     /// repeat of the first.
     /// </summary>
