@@ -5,22 +5,26 @@ prompt, because the software does not have one.
 
 ## What it does
 
-TradeAgent gives an AI assistant a safe, limited way to see your trading account in ATAS and to place
-orders in it — with the emergency switches always in your hands, and every limit coming from the security
-board's policy (the app's founding values until the board decides), never from the AI.
+TradeAgent runs a small AI organisation for you — a chief, and the departments and positions it sets up —
+that researches markets, tests strategies and runs the promising ones on paper. The emergency switches are
+always in your hands, and every limit comes from the security board's policy (the app's founding values until
+the board decides), never from the AI. It starts on TradeAgent paper: real prices, simulated fills, no money.
 
 - **You talk to the AI inside TradeAgent's own window.** There is no black terminal, and nothing to
-  install by hand. The Chat page is the conversation.
-- **ATAS stays your trading screen.** TradeAgent does not replace it. Your charts, your broker login
-  and your orders are still in ATAS.
+  install by hand. The Chat page is the conversation — with your chief, once you have one (see *Your
+  chief and the organisation*).
+- **If you use ATAS, it stays your trading screen.** Your charts, your broker login and your orders stay
+  in ATAS. The installer from 0.2.0 on has no ATAS in it, and trades on TradeAgent paper (see
+  *TradeAgent paper*).
 - **The AI works in its own folder** on your computer. It can write notes, write its own tools, and
   look things up on the internet.
 - **It can keep working when you are not there.** Two presses on the Dashboard and it carries on by
   itself — researching, testing strategies, trading inside the limits in force — until you pause it.
 - **The AI cannot log in to your broker.** It has no access to your password. That is a deliberate
   part of the design, not an oversight.
-- **It starts in practice mode.** The trading mode and real money are the security board's decision, not a
-  switch in the app, and until a board seat is active nothing real can happen.
+- **It starts in Practice mode, on paper.** The trading mode and real money are the security board's
+  decision, not a switch in the app, and this version cannot switch real money on at all: the board's acts
+  refuse a real-money mode, and TradeAgent refuses to read one.
 
 ## Installing it
 
@@ -62,15 +66,21 @@ what it needs.
 
 ### What you will be asked to do
 
-Once, at most: **click Yes on a Windows permission prompt.** That is the whole of it.
+At most twice, and each time it is **a Yes on a Windows permission prompt.** That is the whole of it.
 
 TradeAgent installs into your own account only, so its own installer never asks for an
-administrator password and there is no all-users-or-just-me question to answer. The one place a
-prompt can appear is when TradeAgent installs **ATAS** for you, because ATAS is somebody else's
-program and installs itself for the whole machine. Windows asks; you click Yes.
+administrator password and there is no all-users-or-just-me question to answer. A prompt can appear
+in two places:
 
-If you click No, nothing is installed and nothing is changed, and TradeAgent says so in those
-words. You can try again whenever you like.
+- when TradeAgent installs **ATAS** for you (only in a build that has ATAS), because ATAS is somebody
+  else's program and installs itself for the whole machine;
+- when you press **Let the AI's helpers reach secure websites** on the **Organisation** page, because
+  the one rule that lets the AI's sealed workspaces reach secure websites, and nothing else, belongs to
+  Windows' own firewall.
+
+Windows asks; you click Yes. If you click No, nothing is installed and nothing is changed, and
+TradeAgent says so in those words; after a No on the second, the AI's helpers keep working without
+the internet. You can try again whenever you like.
 
 Nothing in TradeAgent will ever ask you to type a command, open a black window, or copy an
 instruction into one. If a screen ever does, that is a fault worth reporting, not something to work
@@ -151,7 +161,8 @@ Four more things worth knowing:
 **If a new version will not open your folder, it says so and changes nothing.** A folder set up by an earlier build can hold something this
 version cannot read without guessing: an older founding policy, for example, with one paper envelope where this version has one for each
 pair. TradeAgent then shows what it found and offers **Start fresh**, which asks a second time. That moves the old folder aside whole, under a
-name beside the new one, and deletes nothing in it. You will set TradeAgent up again and sign in to the AI again. When it was the founding
+name beside the new one, and deletes nothing in it. You will set TradeAgent up again, sign in to the AI again, and appoint and
+activate your chief again; TradeAgent checks its sealed workspaces again by itself before the chief, or any position it hires, can work. When it was the founding
 policy that stopped it, the market-context tape is copied into the new folder byte for byte, so what it recorded stays true, and the old
 folder keeps its own copy. A tape an older version wrote is copied and then brought up to this version's layout, on the copy only, with
 every recording kept as it was. If the tape cannot be copied, nothing moves and you can press again. If a newer version wrote it, if this
