@@ -436,8 +436,8 @@ public class GatewayPipeBackpressureTests
 
         // AND THE LONGEST ROW IS `modify`, WHICH IS SEVEN. It was four and the drain was 256 s, from
         // the days when a modification went to the wire on an authorization and nothing else; it now
-        // risk-checks the order as it will stand, which is a placement's own chain (account,
-        // positions, quote, instruments) on top of the one orders read that resolves and describes
+        // risk-checks the order as it will stand, which is a placement's own risk reads (account,
+        // instruments, quote) on top of the one orders read that resolves and describes
         // its target (REVIEW 2026-09-05, Codex F2), and in PAPER it reads the routed account once
         // more before the wire (U-live-witness-2; the drain was 306 s before it). 7 × 50 + 1 + 5.
         // This is the number an operator can experience at shutdown, and it moved because the
@@ -445,7 +445,7 @@ public class GatewayPipeBackpressureTests
         Assert.Equal(TimeSpan.FromSeconds(356), server.HandlerDrainTimeout);
 
         // And the risk-reducing shape is covered too, rather than assumed smaller: at shipped values
-        // it is 2 s of emergency budget plus one ordinary Place, which the 255 above already exceeds.
+        // it is 2 s of emergency budget plus one ordinary Place, which the 356 above already exceeds.
         Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyBudget);
         Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
             $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
