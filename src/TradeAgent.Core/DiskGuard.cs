@@ -46,10 +46,20 @@ public sealed record DiskSpace(long Free, long Total, long FilesFree = 0, long F
         try
         {
             if (statvfs(path, buf) != 0) return null;
-            return FixedCount(Marshal.ReadInt64(buf, 40), Marshal.ReadInt64(buf, 56));
+            var raw = new byte[StatvfsSize];
+            Marshal.Copy(buf, raw, 0, StatvfsSize);
+            return FromStatvfs(raw);
         }
         finally { Marshal.FreeHGlobal(buf); }
     }
+
+    /// <summary>
+    /// THE TWO FILE FIGURES FROM A <c>struct statvfs</c> AS 64-BIT LINUX LAYS IT OUT (native byte order): <c>f_files</c> at 40 and <c>f_favail</c> at 56 — never
+    /// <c>f_ffree</c> at 48, which counts the files root may still make (<c>U-cell-ceilings</c> item 5; A8 note 6: the two are equal for an ordinary
+    /// account on CI's runner, so only a buffer whose fields differ tells them apart).
+    /// </summary>
+    internal static (long FilesFree, long Files) FromStatvfs(ReadOnlySpan<byte> raw) =>
+        FixedCount(BitConverter.ToInt64(raw[40..48]), BitConverter.ToInt64(raw[56..64]));
 
     /// <summary><c>f_files</c> and <c>f_favail</c> as a fixed count, or 0 and 0 where they make no sense as one (see <see cref="FilesOn"/>).</summary>
     internal static (long FilesFree, long Files) FixedCount(long files, long favail) => files > 0 && favail >= 0 && favail <= files ? (favail, files) : (0, 0);

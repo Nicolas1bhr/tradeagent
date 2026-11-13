@@ -164,6 +164,21 @@ public class DiskGuardTests
     public void Figures_that_are_no_fixed_count_read_as_none(long files, long favail, long filesFree, long kept) =>
         Assert.Equal((filesFree, kept), DiskSpace.FixedCount(files, favail));
 
+    /// <summary>
+    /// THE FILES AN ORDINARY ACCOUNT MAY STILL MAKE, NOT THE FILES ROOT MAY (<c>U-cell-ceilings</c> item 5; A8 note 6): a <c>struct statvfs</c> whose every
+    /// word differs from its neighbours — so <c>f_ffree</c> (48) is not <c>f_favail</c> (56), as they are on a filesystem keeping inodes back for root —
+    /// reads <c>f_favail</c> and <c>f_files</c> (40), and no other word. On CI's runner the two are equal for this account, so the live read cannot tell.
+    /// </summary>
+    [Fact]
+    public void The_files_read_is_f_favail_and_f_files_and_no_other_word()
+    {
+        // f_bsize, f_frsize, f_blocks, f_bfree, f_bavail, f_files, f_ffree, f_favail, f_fsid, f_flag, f_namemax: eleven 8-byte words, then the spare ints.
+        long[] words = [4096, 4096, 26_214_400, 13_000_000, 12_000_000, 6_553_600, 3_000_000, 2_500_000, 77, 1024, 255];
+        var raw = new byte[256];
+        for (var i = 0; i < words.Length; i++) BitConverter.TryWriteBytes(raw.AsSpan(i * 8, 8), words[i]);
+        Assert.Equal((2_500_000L, 6_553_600L), DiskSpace.FromStatvfs(raw));
+    }
+
     /// <summary>On Linux the read has the filesystem's file counts beside its bytes; elsewhere none, and the files floor is not applied.</summary>
     [Fact]
     public void A_read_on_linux_has_the_filesystems_file_counts()
