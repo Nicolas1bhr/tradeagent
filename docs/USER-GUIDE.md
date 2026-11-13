@@ -308,18 +308,42 @@ asked of you, and nothing is opened outside the TradeAgent window.
 
 ## The window
 
-Seven pages, down the left-hand side.
+Fourteen pages, down the left-hand side, in this order: **Chat**, **Organisation**, **Work**, **Costs**,
+**Dashboard**, **Board**, **Daily report**, **Inbox**, **Owner**, **For you**, **Settings**, **Activity**,
+**Checks** and **Oversight**. Organisation, Work and Costs only read the organisation's own records:
+nothing on them can be changed from them, except the presses each one names below.
 
 **Chat** — the conversation with the AI. Type in the box at the bottom and press send. Its answers
 appear as they are written. When it reads a price, looks at your account or places an order, that
 step shows up in the conversation as its own small line, so you can always see what it actually did
 rather than only what it said. If the AI is not running yet, this page has a **Start the AI** button.
+Once you have appointed and activated a chief, this page is the chief's conversation; see *Your chief
+and the organisation*.
+
+**Organisation** — the chart: your chief, every unit under it and the positions in each, whether each
+position is active or dormant, what it is set to run on, what it last ran on and who paid for it. At
+the top is **At a glance**: who is working now, what waits on whom, today's AI spend, the research
+campaigns, the paper runs and each position's next wake. The chief's own card is here too, with the
+presses described in *Your chief and the organisation*, and so is **Let the AI's helpers reach secure
+websites** on Windows. Two more presses can appear on a position's row, two presses each. **Run on …**,
+one for each other model that position can run on, sets it to that model from its next turn. **Repair
+its folder** appears for a position whose folder TradeAgent could not rebuild when it last started: its
+second press moves the folder aside, kept whole, and builds it afresh; nothing is deleted.
+
+**Work** — what the organisation is doing: the mandates open now, the deliveries waiting to be judged,
+and the decisions taken in the last 7 days, each with the forecasts it was made on. A forecast is its
+author's claim; whether it came true is TradeAgent's own record.
+
+**Costs** — what the organisation's AI turns cost today, unit by unit, a unit's figure including every
+unit below it, and who paid: **Your ChatGPT plan** (counted at list price against the plan's capacity,
+not money charged), **An API key** (real money), or *not established* when nobody could tell, which
+counts against both limits. Under each, what one turn of each position sets aside before it runs, and
+why (see *What it costs you, and the daily limit*).
 
 **Dashboard** — what is true right now: your account, your open orders, anything unconfirmed, and a
 list of green, amber and red dots for every part of the system. Also **Open ATAS** and **Open the AI's
-folder**, **The AI's own work** (the section below), and the **Guidance** box. If the AI is waiting
-for permission to place an order, the request appears here in an amber panel. At the bottom is
-**Performance**, described below.
+folder**, **The AI's own work** (the section below), a short **At a glance** card whose details are on
+the Organisation page, and the **Guidance** box. At the bottom is **Performance**, described below.
 
 ### Performance — what the trading has actually made or lost
 
@@ -341,21 +365,43 @@ says so on screen. If you want the whole picture including what is open, ask the
 `trade pnl`, and it answers with the open positions valued at the last price, and with the same list
 of anything it could not work out.
 
+**Board** — the security board's decisions in force: the trading mode, the seven limits, the AI's
+allowances and the standing paper envelope, each with its value, the version that set it, who decided it
+and since when, and below them the board's acts. Until a board seat is active every value there is marked
+*founding (the app's)* — the app's founding value, never yours and never the AI's. The page only reads; it
+has no button that changes anything.
+
+**Daily report** — what TradeAgent measured, day by day: nothing in it is inferred, and no AI turn is
+spent writing it. **Write it now** writes today's; **Today** and the days beside it (the last fourteen)
+choose which one you read. On a day when something changed, a note from your AI sits above it, labelled
+as written by the AI and not measured by TradeAgent.
+
 **Inbox** — where you hand the AI files to work with, and where you can see what it did with them.
 Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded
 automatically. There is a section on this page below.
 
-**Board** — the security board's decisions in force: the trading mode, the seven limits, the AI's
-allowances and the standing paper envelope, each with its value, the version that set it, who decided it
-and since when. Until a board seat is active every value there is marked *founding (the app's)* — the
-app's founding value, never yours and never the AI's. The page only reads; it has no button that changes
-anything.
-
 **Owner** — what only you decide: the three emergency buttons, your connections (the trading platform,
 the account the AI may see, your keys and the ATAS bridge), the real money the AI may spend, how its work
-is priced, and updates. The AI cannot reach any of it and has no way to ask. Two things on it are yours
-only until the security board is active, and their cards say so: which model and runtime each seat runs
-on, and releasing a held paper scope.
+is priced, the security board's seats and its share of your plan's day, and updates. The AI cannot reach
+any of it and has no way to ask. Two things on it are yours only until the security board is active, and
+their cards say so: which model and runtime each seat runs on, and releasing a held paper scope.
+
+**For you** — what reached you, and the presses that are yours over the organisation:
+
+- **Escalations that reached you** — a question that climbed past every head and reached you. It is a
+  record only: nothing waits on you and nothing wakes. If you want to answer, your words go by Chat.
+- **Your words still owed a turn** — what you typed that no turn has taken yet, and whom it waits for.
+- **The board's proposals of its own power** — a board seat proposing a change to its own power. Nothing
+  applies one: it is a record for you to act on, or no one does.
+- **Board acts you can veto** and **Changes to the chart you can veto** — a unit chartered or closed, or a
+  position hired or retired, by a position. **Veto this act** and **Veto this change** take two presses,
+  and a veto only ever takes away. A vetoed act's proposal is closed, or every field it changed goes back
+  to the narrower of now and before; it never widens a limit or puts anything to work, and an act that
+  only narrowed is never offered, because undoing it would widen. A vetoed change puts the chart back as
+  it was, and grants nothing.
+- **Positions waiting to be activated** — a dormant position and **Activate**, two presses. That is yours
+  until the security board is active, then the board's. Activating starts nothing by itself: no position
+  on a real model runs before TradeAgent has proven its sealed workspaces on this computer.
 
 **Settings** — the market data TradeAgent collects for research. The platform and the account the AI may
 see are on the **Owner** page, under *Connections*, where you can change them after setup. Changing
@@ -368,6 +414,17 @@ refusal, every reason.
 **Checks** — **Check everything** runs every test and names any problem in plain words. **Create
 support package** makes a single file you can send to whoever helps you. It contains logs and
 settings, and no passwords.
+
+**Oversight** — your private line over the organisation: checks TradeAgent's own code runs over the
+organisation's records, shown to you alone and never to any agent. It reports facts and recommends
+nothing; it cannot instruct, pause or block anything. The page shows the latest digest, the findings by
+unit with the newest first, the line's own failures, how hidden it is from each kind of seat, its
+thresholds, and **The most your private line may spend in a day**: raising that asks twice and names
+the figure, lowering it saves in one press. A severe finding also shows as a strip across the top of
+the window within a minute or so, with **Open**, which brings you here, and **Acknowledge**. Last on the
+page is each of TradeAgent's protections in one plain sentence, with whether it holds on this computer
+for each kind of AI seat; where each one is written, kept and proved is in a closed fold, *For
+reviewers*.
 
 ## Market data — the history, and the minutes as they happen
 
