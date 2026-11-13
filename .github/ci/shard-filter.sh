@@ -26,8 +26,9 @@
 # holds three dots, can only occur at the start of the name. `check` REFUSES a class of any other shape, so a
 # namespace that breaks the flatness is a red on the run that adds it, never a test run twice or nowhere. The filter
 # is a few hundred chars per prefix group, not one term per class: the old negative list grew by ~133 chars per listed
-# class toward Windows' 32 767-char command line, and this one is bounded by the alphabet. A filter over 8 000 chars is
-# a ::warning, over 24 000 an ::error.
+# class toward Windows' 32 767-char command line, and this one grows by ~45 chars per prefix line, twice for a top-level
+# one (the last shard's catch-all names each): ~4 000 chars for the last shard on ~100 lines, while the top-level
+# prefixes stay one letter. A filter over 8 000 chars is a ::warning, over 24 000 an ::error.
 #
 # A bad file is REFUSED — exit 1, nothing on stdout, every problem named — in every mode, before anything is printed.
 set -euo pipefail
@@ -116,10 +117,11 @@ awk -v mode="$mode" -v want="$k" -v list="$file" '
     n = tolower($0); r = route(n); s = shardof(r)
     if (mode == "spread") { held[s]++; if (!r) loose++; next }
     if (n !~ /^tradeagent\.tests\.[a-z]+\.[a-z_][a-z0-9_]*(\+[a-z_][a-z0-9_]*)*$/) {
-      printf "::error title=A class this routing cannot model::%s ran in shard %d. The shard filters match prefixes as substrings, which is exact only for a class named TradeAgent.Tests.<Segment>.<Class> (nested types after +); a class named otherwise may run in two shards or none. Move it into a flat test namespace, or change .github/ci/shard-filter.sh to model it.\n", $0, want
+      printf "::error title=A class this routing cannot model::%s ran in shard %d. The shard filters match prefixes as substrings, which is exact only for a class named TradeAgent.Tests.<Segment>.<Class> (nested types after +); a class named otherwise may run in two shards. Move it into a flat test namespace, or change .github/ci/shard-filter.sh to model it.\n", $0, want
       wrong++; next
     }
-    if (s == want) { if (r) hit[r] = 1; next }
+    # A prefix of this shard is in use when a class that ran here starts with it, routed by it or by a longer one of this shard.
+    if (s == want) { for (i = 1; i <= m; i++) if (shard[i] == want && index(n, low[i]) == 1) hit[i] = 1; next }
     printf "::error title=A class ran in a shard it does not route to::%s ran in shard %d but routes to shard %d (%s), so it may run in more than one shard.\n", $0, want, s, (r ? "line " at[r] ", " pre[r] : "no prefix matches it: the last shard")
     wrong++
   }
