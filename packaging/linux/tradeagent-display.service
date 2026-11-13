@@ -15,13 +15,20 @@ Type=simple
 User=@ACCOUNT@
 Group=@ACCOUNT@
 UMask=0077
+# THE ADDRESS FIRST, BOUNDED (U-window-door): a tailnet address can appear after this unit starts at boot, and an Xvnc that
+# failed its bind failed this start job and, through Requires=, the app's, which nothing starts again. 90 s is the wait: it
+# covers a network daemon that brings its interface up from its own saved state after boot, and stays inside this unit's
+# TimeoutStartSec below (the wait, the cookie and the socket's 10 s together). Past it the start fails as before, and
+# Restart=always keeps trying the display; the app then needs a start by hand (the kit's next run does it).
+ExecStartPre=@KIT@/display-prepare address @ADDRESS@ 90
 ExecStartPre=+@KIT@/display-prepare x11-dir
 ExecStartPre=@KIT@/display-prepare cookie @HOME@/.Xauthority :@DISPLAY@
 ExecStart=@XVNC@ :@DISPLAY@ -geometry @GEOMETRY@ -depth 24 -interface @ADDRESS@ -rfbport @PORT@ -SecurityTypes VncAuth -PasswordFile @HOME@/.vnc/vncauth -auth @HOME@/.Xauthority -nolisten tcp -desktop TradeAgent
 ExecStartPost=@KIT@/display-prepare wait :@DISPLAY@
-# The address may come up after this unit does: a failed bind is retried until it exists.
+# A failed start (an address that never came, an Xvnc that died) is retried every 5 s.
 Restart=always
 RestartSec=5
+TimeoutStartSec=150
 
 [Install]
 WantedBy=multi-user.target

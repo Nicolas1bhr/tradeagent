@@ -5,6 +5,15 @@
 #   display-prepare x11-dir             (as root)        the folder every X server's socket lives in, 1777
 #   display-prepare cookie <file> <:n>  (as the account) a fresh X cookie for display :n, in <file>, 0600
 #   display-prepare wait <:n>           (as the account) until the X server's socket exists, at most 10 s
+#   display-prepare address <a> <s>     (as the account) until this host has address <a>, usable, at most <s> seconds
+#
+# THE ADDRESS CAN COME LATE AT BOOT (U-window-door; D10 F3). The owner's window belongs on his private network's address (the
+# tailnet's), and that address exists only once its daemon has brought its interface up, which can be after this unit starts.
+# Xvnc started before it fails to bind and exits; the display's start job fails, and tradeagent.service's start job (Requires=,
+# After=) fails with it. The display's Restart=always brings Xvnc back once the address exists, but nothing starts the app
+# again: after a reboot the window would come back with no app in it. So the display waits for its address first, bounded.
+# An address still "tentative" (IPv6 duplicate detection, during which a bind fails) does not count yet. Loopback is there at
+# once, so a host whose window is on 127.0.0.1 waits for nothing.
 #
 # THE COOKIE IS WHY NO OTHER ACCOUNT ON THE HOST CAN OPEN THE WINDOW. An X server started without one
 # lets every local client in, and a client of the app's display can press its buttons: the operator's
@@ -44,8 +53,29 @@ case "${1:-}" in
             sleep 0.1
         done
         ;;
+    address)
+        address="${2:?display-prepare address needs the address}"
+        bound="${3:?display-prepare address needs its bound in seconds}"
+        case "$bound" in '' | *[!0-9]*) echo "display-prepare: the bound '$bound' is not a number of seconds" >&2; exit 2 ;; esac
+        present() {
+            ip -o addr show 2> /dev/null | awk -v a="$address" '
+                { split($4, p, "/"); if (p[1] == a && $0 !~ / tentative/ && $0 !~ / dadfailed/) found = 1 }
+                END { exit !found }'
+        }
+        waited=0
+        while ! present; do
+            if [ "$waited" -eq 0 ]; then echo "display-prepare: waiting for $address to appear on this host (at most $bound s)"; fi
+            if [ "$waited" -ge "$bound" ]; then
+                echo "display-prepare: $address did not appear on this host within $bound s: Xvnc could not listen on it" >&2
+                exit 1
+            fi
+            sleep 1
+            waited=$((waited + 1))
+        done
+        if [ "$waited" -gt 0 ]; then echo "display-prepare: $address appeared after about $waited s"; fi
+        ;;
     *)
-        echo "usage: display-prepare x11-dir | cookie <file> <:n> | wait <:n>" >&2
+        echo "usage: display-prepare x11-dir | cookie <file> <:n> | wait <:n> | address <address> <seconds>" >&2
         exit 2
         ;;
 esac

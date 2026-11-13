@@ -102,6 +102,11 @@ if found "$pw" "$work"/fake/env.*; then fail "the password is in the environment
 if grep -qaF -- "$pw" "$work/first-install.out"; then fail "never printed: the tool's output holds the password"; else pass "never printed: the tool's output does not hold it"; fi
 if found "$pw" "$work/home" "$work/tmp"; then fail "never on disk: a file under the fleet machine's HOME or TMPDIR holds it: $(grep -rlaF -- "$pw" "$work/home" "$work/tmp")"; else pass "never on disk: no file under the fleet machine's HOME or TMPDIR holds it"; fi
 if grep -q "did NOT come from the owner's dialog" "$work/first-install.out"; then pass "the output says the password came from the test seam"; else fail "the output does not say the password came from the seam"; fi
+if grep -q "the window listens on loopback (127.0.0.1): only an administrator's ssh tunnel reaches it" "$work/first-install.out"; then
+    pass "install says what a loopback address means for the owner"
+else
+    fail "install does not say what the address in force means"
+fi
 
 # ---- 2. no screen to ask on, no seam: refused, nothing staged ------------------------------------------------------
 run no-screen env -u TA_WINDOW_PASSWORD_FROM FAKE_HAS_PASSWORD=no "$tool" install "$tgz" "$word"

@@ -387,6 +387,14 @@ install_kit() {
     for f in install.sh display-prepare tape-health tradeagent.service tradeagent-display.service; do
         [ -f "$kit/$f" ] || { echo "linux-host: the kit file $kit/$f is missing" >&2; exit 2; }
     done
+    # WHAT THE ADDRESS IN FORCE MEANS, for the fleet to read to the owner (U-window-door). The choice stays TA_LINUX_ADDRESS, on
+    # his word; nothing here changes it.
+    case "$TA_LINUX_ADDRESS" in
+        127.* | ::1)
+            echo "== the window listens on loopback ($TA_LINUX_ADDRESS): only an administrator's ssh tunnel reaches it; the owner cannot open it from his own devices ==" ;;
+        *)
+            echo "== the window listens on $TA_LINUX_ADDRESS: the owner's devices on that network open it with a VNC viewer (Screen Sharing on a Mac) and his password, and so can any device on that network that has the password. Only the network encrypts the session, so this must be a private network that encrypts, such as the tailnet, never a plain LAN ==" ;;
+    esac
     # A FIRST INSTALL ASKS THE OWNER FOR HIS WINDOW'S PASSWORD before anything is put on the host: a refusal installs nothing.
     local pw=""
     if ! has_window_password; then
