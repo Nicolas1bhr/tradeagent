@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -81,9 +80,25 @@ internal static class PuppetFiles
         return reader.ReadToEnd();
     }
 
-    /// <summary>The number in the counter file <paramref name="path"/>, or 0 where there is no such file yet.</summary>
+    /// <summary>
+    /// ADDS ONE TO THE COUNTER FILE <paramref name="path"/>: one newline byte on its end, in place. Never a rewrite, so never a rename over it
+    /// (<c>U-turn-cards-2</c> item 4). Even the POSIX rename leaves Windows one gap: a reader whose open had already found the name when the rename
+    /// unlinked the old file is refused with <see cref="UnauthorizedAccessException"/> (delete pending), 1 in 117 788 reads on CI run 43353193261,
+    /// windows shard 5, at the POSIX rename's 8.8 ms a rewrite. A file that is only ever appended to is never unlinked, so no reader can meet it
+    /// being deleted. Readers allow the write (<see cref="ReadAllText"/>), and this allows them.
+    /// </summary>
+    public static void Bump(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        stream.WriteByte((byte)'\n');
+    }
+
+    /// <summary>
+    /// The count in the counter file <paramref name="path"/> (<see cref="Bump"/>: its newlines), or 0 where there is no such file yet. One byte
+    /// cannot be half written; a byte not yet visible is a count not yet seen, never a torn one or one that goes back.
+    /// </summary>
     public static int ReadCount(string path) =>
-        File.Exists(path) ? int.Parse(ReadAllText(path).Trim(), CultureInfo.InvariantCulture) : 0;
+        File.Exists(path) ? ReadAllText(path).Count(c => c == '\n') : 0;
 }
 
 /// <summary>

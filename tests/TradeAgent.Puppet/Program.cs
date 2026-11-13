@@ -174,7 +174,7 @@ static int NextTurn(string scripts, string key)
 {
     var counter = Path.Combine(scripts, $"{key}.turns");
     var n = PuppetFiles.ReadCount(counter) + 1;
-    PuppetFiles.Write(counter, n.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    PuppetFiles.Bump(counter);
     return n;
 }
 
