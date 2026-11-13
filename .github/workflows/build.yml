@@ -26,6 +26,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# MAIN PUSH RUNS ARE SERIAL, AND A SUPERSEDED PENDING ONE IS DROPPED (U-ci-main-serial). GitHub Free gives the repository 20
+# concurrent jobs and one full run takes ~8 of them for 55-75 min, while landings reach main every 5-25 min; on 2026-11-13 the
+# push runs on main took 37% of the pool, and most of them tested a tip that a newer push had already superseded. So the FIRST
+# attempt of a push run on main joins one group, `build-main-push`, with cancel-in-progress false: at most one such run is
+# RUNNING, and it is NEVER cancelled by this block; at most one waits, and it is always the newest push. When a newer push
+# arrives, the run that was waiting (not running) ends `cancelled` and the newer one waits in its place. Nothing goes untested
+# by it: every landing was proven on its own branch run before it was pushed, and the newer tip contains every commit of the
+# one it replaced, so the next main run that contains a landing's tip is that landing's main verdict (fleet/bin/ci-wait.sh
+# follows it). Every other run gets a group of its own and so changes nothing: workflow_dispatch on any branch (run/m-org1-2*
+# included), pull_request, and a RE-RUN of a main push run (run_attempt > 1), which must never cancel the newer tip that waits.
+# Never cancel-in-progress true: it would kill a main run mid-flight, and a tip under constant pushes could go untested for hours.
+concurrency:
+  group: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1') && 'build-main-push' || format('build-{0}-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: false
+
 jobs:
   # THE DEDUPE GATE (U-ci-dedupe). On a PUSH TO MAIN only, asks .github/ci/tested-before.sh whether a completed,
   # first-attempt, every-job-success workflow_dispatch run of this workflow already built a tree equal to this
