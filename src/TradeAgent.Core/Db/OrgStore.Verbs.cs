@@ -247,12 +247,16 @@ public sealed partial class OrgStore
             c.ExecuteNonQuery();
         var forecasts = r.Forecasts.Select(f => AddForecast(r.Caller, r.Attempt, decision.Id, null, f, now, subjectByDefault: id)).ToList();
         var eventId = Event(now, id, null, OrgEventKind.Chartered, r.Caller,
-            $"unit={id} kind={r.Kind} parent={parent.Id} share={Sql.D(r.AiShare)} decision={decision.Id} {ContentMark}{CharterContent(r)} {route}");
+            $"unit={id} kind={r.Kind} parent={parent.Id} share={Sql.D(r.AiShare)} decision={decision.Id} {ContentMark}{CharterContent(r)} "
+            + $"{TermsMark}{CharterContent(r, prose: false)} {route}");
         return new Chartered(Units().Single(u => u.Id == id), decision, forecasts, eventId);
     });
 
     /// <summary>What a <c>chartered</c> event's detail names its content with (<see cref="CharterContent"/>).</summary>
     const string ContentMark = "content=";
+
+    /// <summary>… and its terms: its content without the author's prose (<c>U-org-cards-3</c> item 5).</summary>
+    const string TermsMark = "terms=";
 
     /// <summary>
     /// WHAT MAKES TWO CHARTERS ONE ACT: everything the act says but its dates — the kind, the shares, the reason, the options, the work cited,
@@ -260,10 +264,13 @@ public sealed partial class OrgStore
     /// repeating a call it is unsure of computes them afresh from now. A fraction counts by value, so 0.20 is 0.2. A hash, because the
     /// detail is the app's composed line and the rationale is the author's words.
     /// </summary>
-    static string CharterContent(CharterRequest r) =>
+    /// <para><paramref name="prose"/> false: the TERMS alone — the reason and the options left out too, the words a model rewords when it
+    /// repeats a call it is unsure of (<see cref="RepeatedCharter"/>).</para>
+    static string CharterContent(CharterRequest r, bool prose = true) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Write(new
         {
-            r.Kind, Share = ByValue(r.AiShare), Trials = ByValue(r.TrialShare), Verdicts = ByValue(r.VerdictShare), r.Rationale, r.Options, r.Refs,
+            r.Kind, Share = ByValue(r.AiShare), Trials = ByValue(r.TrialShare), Verdicts = ByValue(r.VerdictShare),
+            Rationale = prose ? r.Rationale : null, Options = prose ? r.Options : null, r.Refs,
             Experiment = r.CollapseBy is not null,
             Forecasts = r.Forecasts.Select(f => new { f.Predicate, f.Subject, f.Target, Probability = ByValue(f.Probability) }).ToList()
         }))))[..16].ToLowerInvariant();
@@ -276,6 +283,12 @@ public sealed partial class OrgStore
     /// THE CHARTER <paramref name="r"/> REPEATS, as what it wrote, or null: the caller's own under the same parent, of the same content
     /// (<see cref="CharterContent"/>), inside the throttle's trailing week — the only span in which a repeat could spend anything — and
     /// still open: a unit closed or vetoed since is over, and chartering it again is a new act.
+    ///
+    /// <para><b>A REWORDED REPEAT IS THE SAME ACT TOO</b> (<c>U-org-cards-3</c> item 5; R28 R3): the same TERMS in other words, asked from a
+    /// LATER launch than the one that chartered the unit, while that unit stands as it was made — nobody ever hired into it. A model whose
+    /// turn ended before it saw the reply asks again from its next launch in fresh words, and a second structural change was spent on a
+    /// copy. Inside one launch the first reply was seen, so a second charter on the same terms there is meant; and a unit someone was
+    /// hired into is being used, so a charter on its terms after that is a second unit.</para>
     /// </summary>
     Chartered? RepeatedCharter(CharterRequest r, OrgUnitRow parent, DateTimeOffset now)
     {
@@ -284,10 +297,15 @@ public sealed partial class OrgStore
         using (var c = db.Cmd("""
             SELECT e.id, e.unit_id FROM org_event e JOIN org_unit u ON u.id = e.unit_id
              WHERE e.kind = $kind AND e.position_id IS NULL AND e.decider = $caller AND e.at > $since
-               AND u.parent_id = $parent AND u.status <> $closed AND instr(e.detail, $content) > 0
-             ORDER BY e.id LIMIT 1
+               AND u.parent_id = $parent AND u.status <> $closed
+               AND (instr(e.detail, $content) > 0
+                    OR (instr(e.detail, $terms) > 0 AND u.head_position_id IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM org_position p WHERE p.unit_id = u.id)
+                        AND NOT EXISTS (SELECT 1 FROM org_decision d WHERE d.id = u.charter_decision_id AND d.attempt_id = $attempt)))
+             ORDER BY instr(e.detail, $content) > 0 DESC, e.id LIMIT 1
             """, ("$kind", OrgEventKind.Chartered), ("$caller", r.Caller), ("$since", Sql.T(now.AddDays(-7))), ("$parent", parent.Id),
-            ("$closed", OrgUnitStatus.Closed), ("$content", $" {ContentMark}{CharterContent(r)} ")))
+            ("$closed", OrgUnitStatus.Closed), ("$content", $" {ContentMark}{CharterContent(r)} "),
+            ("$terms", $" {TermsMark}{CharterContent(r, prose: false)} "), ("$attempt", r.Attempt)))
         using (var read = c.ExecuteReader())
         {
             if (!read.Read()) return null;
