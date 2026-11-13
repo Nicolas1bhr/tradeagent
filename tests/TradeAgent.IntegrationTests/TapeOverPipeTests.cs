@@ -584,6 +584,134 @@ public class TapeOverPipeTests(ITestOutputHelper log)
         Assert.Equal(80, all.Distinct().Count());
     }
 
+    // ---------------------------------------------------------------------------------------------- U-tape-gdelt-2: parts
+
+    /// <summary>A GDELT item whose payload is about <paramref name="kb"/> KB of markup and accented words — what grows on the wire.</summary>
+    static TapeItem LargeGkgRow(DateTimeOffset label, int serial, int kb)
+    {
+        var id = $"{GdeltGkg.LabelText(label)}-{serial}";
+        var xml = string.Concat(Enumerable.Repeat("<PAGE_TITLE>Bitcoin, l'été & the week ahead</PAGE_TITLE>", kb * 1024 / 56));
+        return new(id, label, $$"""{"GKGRECORDID":"{{id}}","V2.1DATE":"{{GdeltGkg.LabelText(label)}}","V2EXTRASXML":"{{xml}}"}""");
+    }
+
+    /// <summary>
+    /// (U-tape-gdelt-2 item 2) A GDELT ROW LARGER THAN ONE TOOL RESULT REACHES AN AGENT IN PARTS, NEVER CUT. An agent's tool result
+    /// carries at most 64 KiB over the broker door (<see cref="TradeAgent.AgentRuntime.BrokerDoor.Bounded"/>), and a GDELT item kept
+    /// since rung 4 can be megabytes: through the harness's own data tool with the door's cut, every answer fits — no
+    /// "[truncated" — the large row comes as parts that say which bytes they hold and how to read the next, the parts joined
+    /// are the payload byte for byte and hash to its <c>payload_sha256</c>, and the row after it then comes as it always has.
+    /// RED at 5f341109: "[truncated — fetch by id: the answer was 1,0…" — the one large row cut by the door, nothing saying how
+    /// to read the rest.
+    /// </summary>
+    [Fact]
+    public async Task A_gdelt_row_larger_than_an_agents_tool_result_reaches_it_in_parts_never_cut()
+    {
+        await using var rig = await Ready();
+        var label = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        rig.Store.AppendArchive(GdeltFetch(label, label.AddDays(1)), GdeltBatch(label), [GkgRow(label, 1), LargeGkgRow(label, 2, 400)]);
+
+        // THE WHOLE ROW, as the pipe serves it with no bound asked: what the parts must join to.
+        await using var wire = await Wire.As(rig, CouncilRoles.Research);
+        var whole = Rows(Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries))));
+        Assert.Equal(2, whole.Count);
+        Assert.False(whole[0].TryGetProperty("part", out _));
+        var payload = whole[0].GetProperty("payload").GetString()!;
+        Assert.True(Encoding.UTF8.GetByteCount(payload) > 400_000, $"the large row's payload is {Encoding.UTF8.GetByteCount(payload)} bytes");
+
+        var role = CouncilRoles.Research;
+        var tools = new TradeAgent.AgentRuntime.GrantedWorkerTools(role, () => Paths.RoleHome(role), () => "attempt-tape-parts",
+            () => rig.Server, deliver: TradeAgent.AgentRuntime.BrokerDoor.Bounded);
+        async Task<JsonElement> Read(params (string Key, object Value)[] args)
+        {
+            var call = new Dictionary<string, object> { ["op"] = Ops.DataTape, ["source"] = GdeltGkg.Source, ["series"] = GdeltGkg.ItemsSeries };
+            foreach (var (k, v) in args) call[k] = v;
+            var answer = await tools.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("c-" + Guid.NewGuid().ToString("n")[..8],
+                TradeAgent.AgentRuntime.GrantedWorkerTools.Data, JsonSerializer.Serialize(call)));
+            var bytes = Encoding.UTF8.GetByteCount(answer.Content);
+            log.WriteLine($"answer: {bytes} bytes");
+            Assert.DoesNotContain("[truncated", answer.Content, StringComparison.Ordinal);
+            Assert.True(bytes <= TradeAgent.AgentRuntime.BrokerDoor.MaxResultBytes, $"the answer took {bytes} bytes");
+            return JsonDocument.Parse(answer.Content).RootElement.Clone();
+        }
+
+        var joined = new StringBuilder();
+        var first = Read();
+        var row = Rows(await first)[0];
+        var id = row.GetProperty("id").GetInt64();
+        var parts = 0;
+        while (true)
+        {
+            parts++;
+            Assert.Equal(id, row.GetProperty("id").GetInt64());
+            var part = row.GetProperty("part");
+            Assert.Equal(Encoding.UTF8.GetByteCount(joined.ToString()), part.GetProperty("from").GetInt64());
+            Assert.Equal(Encoding.UTF8.GetByteCount(payload), part.GetProperty("of").GetInt64());
+            joined.Append(row.GetProperty("payload").GetString());
+            Assert.Equal(Encoding.UTF8.GetByteCount(joined.ToString()), part.GetProperty("from").GetInt64() + part.GetProperty("bytes").GetInt64());
+            if (part.GetProperty("next_from").ValueKind == JsonValueKind.Null)
+            {
+                Assert.Contains("the last part", part.GetProperty("read").GetString(), StringComparison.Ordinal);
+                break;
+            }
+            var next = part.GetProperty("next_from").GetInt64();
+            Assert.Contains($"'before' {id + 1} and 'payload_from' {next}", part.GetProperty("read").GetString(), StringComparison.Ordinal);
+            Assert.True(parts < 64, "the parts never ended");
+            row = Rows(await Read(("before", id + 1), ("payload_from", next)))[0];
+        }
+
+        Assert.InRange(parts, 6, 63);
+        Assert.Equal(payload, joined.ToString());
+        Assert.Equal(whole[0].GetProperty("payload_sha256").GetString(),
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(joined.ToString()))));
+
+        // THE ROW AFTER IT, AS IT ALWAYS CAME: whole, with no part.
+        var after = Rows(await Read(("before", id)));
+        Assert.Equal(whole[1].GetProperty("payload").GetString(), Assert.Single(after).GetProperty("payload").GetString());
+        Assert.False(after[0].TryGetProperty("part", out _));
+
+        // A BOUND THE TOOL DOES NOT CARRY IS REFUSED IN WORDS, NEVER CLAMPED.
+        var larger = await tools.InvokeAsync(new TradeAgent.AgentRuntime.ToolRequest("c-big", TradeAgent.AgentRuntime.GrantedWorkerTools.Data,
+            JsonSerializer.Serialize(new Dictionary<string, object> { ["op"] = Ops.DataTape, ["source"] = GdeltGkg.Source, ["max_bytes"] = 1_000_000 })));
+        Assert.Contains("'max_bytes' through this tool is at most", larger.Content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (U-tape-gdelt-2 item 2) WHAT A PART CANNOT ANSWER IS REFUSED IN WORDS: a bound outside 16 KiB to 4 MiB, a 'payload_from' without
+    /// 'before', one at or past the payload's end, and one whose 'before' does not name the read's first row. (One inside a character
+    /// is refused too, but a payload the tape keeps is canonical JSON, every non-ASCII letter escaped, so no stored row has one.)
+    /// </summary>
+    [Fact]
+    public async Task A_part_the_tape_cannot_serve_is_refused_in_words()
+    {
+        await using var rig = await Ready();
+        var label = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        rig.Store.AppendArchive(GdeltFetch(label, label.AddDays(1)), GdeltBatch(label), [GkgRow(label, 1), LargeGkgRow(label, 2, 40)]);
+        await using var wire = await Wire.As(rig, null);
+        var rows = Rows(Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries))));
+        var id = rows[0].GetProperty("id").GetInt64();
+        var size = Encoding.UTF8.GetByteCount(rows[0].GetProperty("payload").GetString()!);
+
+        async Task<string> Refused(params (string, string)[] args)
+        {
+            var r = await wire.TapeAsync([("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries), .. args]);
+            Assert.False(r.Ok, wire.LastLine);
+            log.WriteLine(r.Error!.Message);
+            return r.Error!.Message;
+        }
+
+        Assert.Contains("'max_bytes' is the most one answer may take", await Refused(("max_bytes", "16383")), StringComparison.Ordinal);
+        Assert.Contains("'max_bytes' is the most one answer may take", await Refused(("max_bytes", "4194305")), StringComparison.Ordinal);
+        Assert.Contains("needs 'before'", await Refused(("payload_from", "10")), StringComparison.Ordinal);
+        var b = (id + 1).ToString(CultureInfo.InvariantCulture);
+        Assert.Contains("is at or past its end", await Refused(("before", b), ("payload_from", size.ToString(CultureInfo.InvariantCulture))), StringComparison.Ordinal);
+        Assert.Contains($"reads on inside row {id + 1}", await Refused(("before", (id + 2).ToString(CultureInfo.InvariantCulture)), ("payload_from", "1")), StringComparison.Ordinal);
+
+        // AND THE REST OF A ROW FROM A BYTE, ASKED WITH NO BOUND, IS THE REST OF IT.
+        var rest = Rows(Data(await wire.TapeAsync(("source", GdeltGkg.Source), ("series", GdeltGkg.ItemsSeries), ("before", b), ("payload_from", "100"))));
+        Assert.Equal(Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(rows[0].GetProperty("payload").GetString()!)[100..]), rest[0].GetProperty("payload").GetString());
+        Assert.True(rest[0].GetProperty("part").GetProperty("next_from").ValueKind == JsonValueKind.Null);
+    }
+
     // ---------------------------------------------------------------------------------------------- data-list
 
     /// <summary>

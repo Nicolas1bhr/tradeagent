@@ -237,6 +237,7 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             {
                 a["source"] = flags.GetValueOrDefault("source") ?? pos.ElementAtOrDefault(1) ?? "";
                 Opt("series"); Opt("subject"); Opt("from"); Opt("to"); Opt("as-of", "as_of"); Opt("limit"); Opt("before");
+                Opt("max-bytes", "max_bytes"); Opt("payload-from", "payload_from");
                 return (Ops.DataTape, a);
             }
 

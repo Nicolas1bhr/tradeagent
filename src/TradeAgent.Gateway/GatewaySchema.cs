@@ -289,7 +289,7 @@ public static class GatewaySchema
             ]),
 
         new(Core.Ops.DataTape,
-            "trade data tape --source S [--series S] [--subject X] [--from D] [--to D] [--as-of D] [--limit N] [--before ID]",
+            "trade data tape --source S [--series S] [--subject X] [--from D] [--to D] [--as-of D] [--limit N] [--before ID] [--max-bytes N] [--payload-from N]",
             false,
             "The market's context as TradeAgent RECORDED IT ARRIVING — the tape: Binance USDⓈ-M premium index with the "
             + "live funding rate, open interest, the 5-minute long/short and taker ratios and settled funding for six "
@@ -326,7 +326,9 @@ public static class GatewaySchema
                 new("to", "string", false, "ISO-8601 date or instant: the latest SOURCE time served, inclusive. Present and unreadable is refused; absent, the read reaches every holdout window after 'from'."),
                 new("as_of", "string", false, "ISO-8601 instant: serve only rows that had ARRIVED by then, inclusive — what TradeAgent knew at that moment. Omit it for everything that has arrived."),
                 new("limit", "number", false, $"How many rows, a whole number from 1 to {Core.Db.TapeReader.MaxRows}; {Core.Db.TapeReader.DefaultRows} when omitted. More is refused, never clamped."),
-                new("before", "number", false, "A row id: serve only rows the tape recorded before it. Pass an answer's 'next_before' to continue it exactly.")
+                new("before", "number", false, "A row id: serve only rows the tape recorded before it. Pass an answer's 'next_before' to continue it exactly."),
+                new("max_bytes", "number", false, $"The most the whole answer may take as written, a whole number from {GatewayPipeServer.MinTapeReplyBytes} to {GatewayPipeServer.MaxTapeReplyBytes}; omitted, the rows may take {GatewayPipeServer.MaxTapeReplyBytes} and a larger row comes whole. A row larger than the answer comes in parts: its 'part' says which bytes of the payload it holds and how to read the next. TradeAgent's own data tool sends it for you."),
+                new("payload_from", "number", false, "A byte of one row's payload: read on inside a row an earlier answer served in parts, from its part's 'next_from', with 'before' set to that row's id + 1 and the same source, series and window.")
             ]),
 
         new(Core.Ops.VenueList, "trade venue list", false,

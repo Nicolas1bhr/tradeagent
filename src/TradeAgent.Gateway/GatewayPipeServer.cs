@@ -3715,6 +3715,13 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     public const long MaxTapeReplyBytes = 4L * 1024 * 1024;
 
     /// <summary>
+    /// THE LEAST A CALLER MAY BOUND ONE <c>data-tape</c> ANSWER TO WITH <c>max_bytes</c> (<c>U-tape-gdelt-2</c> item 2): room for the
+    /// answer's own words (about 4 KB) and a part of a row worth reading. TradeAgent's own tools ask for
+    /// <c>GrantedWorkerTools.MaxTapeAnswerBytes</c>, under the 64 KiB one tool result carries.
+    /// </summary>
+    public const long MinTapeReplyBytes = 16L * 1024;
+
+    /// <summary>
     /// THE TAPE, FOR EVERY ROLE, BOUNDED AND READ-ONLY (<c>U-tape-read</c>).
     ///
     /// <para><b>Every role, and a caller that proved none — and none of them inside a holdout window</b>
@@ -3728,6 +3735,13 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
     /// <para><b>Bounded, and never silently.</b> At most <see cref="TapeReader.MaxRows"/> rows — a larger limit is
     /// refused in words, never clamped — and at most <see cref="MaxTapeReplyBytes"/> of rows. An answer either bound
     /// stopped says which, and hands back the row id that continues it exactly.</para>
+    ///
+    /// <para><b>Bounded as the caller is, and a row too large for it served in parts, never cut</b> (<c>U-tape-gdelt-2</c> item 2).
+    /// <c>max_bytes</c> bounds the WHOLE answer as written — its words included, not only its rows — so a caller whose transport
+    /// carries at most so many bytes a result (an agent's tool: 64 KiB) is handed an answer that fits, never one its transport
+    /// cuts. A row whose payload alone does not fit — a GDELT item can be megabytes as kept — is served with as much of its
+    /// payload as fits and a <c>part</c> saying which bytes those are, how many the payload has, and the <c>before</c> and
+    /// <c>payload_from</c> that read the next part; <c>payload_sha256</c> stays the hash of the whole payload, the parts joined.</para>
     ///
     /// <para><b>Validated in words.</b> A source the tape does not know, a series the source does not record, a subject
     /// the series holds no row of, an unreadable instant and a malformed limit are each refused naming what there is,
@@ -3794,6 +3808,20 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         var asOf = BarInstant(req, "as_of");
         var limit = TapeLimit(req);
         var before = TapeCursor(req);
+        var maxBytes = TapeBudget(req);
+        var payloadFrom = TapePayloadFrom(req);
+        if (payloadFrom is not null && before is null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'payload_from' reads on inside one row an earlier answer served in parts, so it needs 'before' set to that row's "
+                + "id + 1 — both are in the row's 'part', with the same source, series and window as the read that served it.");
+        var citation = CitationOf(tape, source);
+
+        // THE ANSWER'S OWN WORDS ARE PAID FOR FIRST: what is left of max_bytes after the answer with no row in it — every
+        // field at its longest — is what the rows may take, each measured as it is written, with the comma between them.
+        var envelope = Utf8Bytes(new DataTapeReply(source, series, subject, from, to, asOf, limit, TapeReader.MaxRows, true,
+            TapeReader.CappedByBytes, long.MaxValue, citation, TapeNote, []));
+        // ABSENT, THE ANSWER IS WHAT IT ALWAYS WAS: 4 MiB of rows, a row larger than that served whole and alone.
+        var rowsBudget = maxBytes is { } bound ? bound - envelope : MaxTapeReplyBytes;
 
         // THE HOLDOUT IS THE CALLER'S OWN PIPE AUDIENCE WITH THE DATASET LEDGER, read inside the reader at this read: a
         // window reaching any dataset's held-back months is refused there, whoever asks, before the tape is opened.
@@ -3807,20 +3835,102 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             AsOf = asOf,
             Before = before,
             Limit = limit,
-            MaxBytes = MaxTapeReplyBytes
-        }, o => Encoding.UTF8.GetByteCount(Json.Write(TapeRow(o))));
+            MaxBytes = rowsBudget
+        }, o => Utf8Bytes(TapeRow(o)) + (maxBytes is null ? 0 : 1));
 
         if (window.Refusal is { } withheld)
             throw new GatewayDeniedException(ErrorCode.HOLDOUT_WITHHELD, withheld);
 
         var rows = window.Rows.Select(TapeRow).ToList();
+
+        // A ROW NEVER SPLIT SILENTLY: the first row is served whatever it costs (the reader's rule), so here it is served from
+        // 'payload_from' when one was asked, and in a part when it alone does not fit — only ever the first row, because a
+        // row that does not fit stops the reader before any other is added.
+        if (payloadFrom is { } at)
+        {
+            if (rows.Count == 0 || rows[0].Id != before!.Value - 1)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'payload_from' reads on inside row {before!.Value - 1} ('before' less one), and this read's first row is "
+                    + (rows.Count == 0 ? "none: the read matched no row" : $"{rows[0].Id}") + ". Send the same source, series and window "
+                    + "as the read that served the row in parts.");
+            rows[0] = Part(rows[0], at, maxBytes is null ? long.MaxValue : rowsBudget - 1);
+        }
+        else if (maxBytes is not null && Utf8Bytes(rows.FirstOrDefault()) + 1 > rowsBudget)
+            rows[0] = Part(rows[0], 0, rowsBudget - 1);
+
         return new DataTapeReply(
             source, series, subject, from, to, asOf, limit, rows.Count, window.More, window.CappedBy,
             window.More ? rows[^1].Id : null,
             // THE CREDIT TRAVELS WITH THE ROWS. GDELT's terms ask every use of its data to cite the project and link to
             // its site, so an answer holding GDELT's rows carries the row's own citation, in the row's own words.
-            CitationOf(tape, source),
+            citation,
             TapeNote, rows);
+    }
+
+    /// <summary>The UTF-8 bytes <paramref name="value"/> takes as the wire writes it; nothing for null.</summary>
+    static long Utf8Bytes(object? value) => value is null ? 0 : Encoding.UTF8.GetByteCount(Json.Write(value));
+
+    /// <summary>
+    /// ONE ROW'S PAYLOAD FROM BYTE <paramref name="from"/>, as much of it as lets the row take at most <paramref name="room"/> bytes
+    /// as written — the largest such part, found by measuring, because the wire escapes a payload's quotes and markup — cut at a
+    /// character boundary, with the <c>part</c> that says which bytes it holds and how to read the next. A withheld payload, an
+    /// offset at or past the payload's end, and one inside a character are refused in words.
+    /// </summary>
+    static DataTapeRow Part(DataTapeRow row, long from, long room)
+    {
+        if (row.Payload is not { } payload)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"row {row.Id} is served without its payload (its 'quarantine' says why), so there is no part of it to read.");
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        if (from >= bytes.Length)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"row {row.Id}'s payload is {bytes.Length.ToString(CultureInfo.InvariantCulture)} bytes, so 'payload_from' "
+                + $"{from.ToString(CultureInfo.InvariantCulture)} is at or past its end.");
+        if ((bytes[from] & 0xC0) == 0x80)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'payload_from' {from.ToString(CultureInfo.InvariantCulture)} falls inside a character of row {row.Id}'s payload; "
+                + "send a part's 'next_from' as it was given.");
+
+        var start = (int)from;
+        DataTapeRow Served(int end) => row with
+        {
+            Payload = Encoding.UTF8.GetString(bytes, start, end - start),
+            Part = PartOf(row.Id, start, end, bytes.Length)
+        };
+        int Boundary(int end)
+        {
+            while (end > start && end < bytes.Length && (bytes[end] & 0xC0) == 0x80) end--;
+            return end;
+        }
+
+        // THE LARGEST END THAT FITS, by halving: the row as written grows with its part's length, never shrinks, and is never
+        // shorter than the part's own bytes — so no part longer than the room is ever measured.
+        if (Utf8Bytes(Served(bytes.Length)) <= room) return Served(bytes.Length);
+        int lo = start, hi = (int)Math.Min(bytes.Length, start + Math.Min(room, int.MaxValue) + 1L);
+        while (hi - lo > 1)
+        {
+            var mid = lo + (hi - lo) / 2;
+            if (Utf8Bytes(Served(Boundary(mid))) <= room) lo = mid; else hi = mid;
+        }
+        var fits = Boundary(lo);
+        if (fits == start)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'max_bytes' leaves no room for any of row {row.Id}'s payload after the answer's own words; ask for more.");
+        return Served(fits);
+    }
+
+    /// <summary>The words a part of a row's payload carries: which bytes, of how many, and the two arguments that read the next.</summary>
+    static DataTapePart PartOf(long id, int from, int end, int of)
+    {
+        var last = end == of;
+        var span = $"'payload' holds bytes {from.ToString(CultureInfo.InvariantCulture)} to {end.ToString(CultureInfo.InvariantCulture)} "
+                   + $"of this row's {of.ToString(CultureInfo.InvariantCulture)}";
+        return new DataTapePart(from, end - from, of, last ? null : end,
+            last
+                ? span + ": the last part. 'payload_sha256' is the hash of the whole payload, its parts joined in order."
+                : span + $". Ask data-tape again with the same arguments, 'before' {(id + 1).ToString(CultureInfo.InvariantCulture)} and "
+                  + $"'payload_from' {end.ToString(CultureInfo.InvariantCulture)} for the next part; 'payload_sha256' is the hash of the "
+                  + "whole payload, its parts joined in order.");
     }
 
     /// <summary>
@@ -3842,8 +3952,10 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         + "'payload_sha256' is TradeAgent's hash of that text. Rows come newest arrival first; 'from' and 'to' bound the "
         + "source time and 'as_of' the arrival, all inclusive. At most "
         + $"{TapeReader.MaxRows.ToString("N0", CultureInfo.InvariantCulture)} rows and "
-        + $"{MaxTapeReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of rows a call; a row is never split, "
-        + "so one row larger than that (a GDELT item can be) is served alone. When 'more' is true "
+        + $"{MaxTapeReplyBytes.ToString("N0", CultureInfo.InvariantCulture)} bytes of rows a call — or the whole answer within "
+        + "'max_bytes' when it is given — and a row is never cut silently: one row larger than the rows' room (a GDELT item can "
+        + "be) is served alone, whole under the 4 MiB, and in parts under a 'max_bytes' it does not fit, its 'part' saying "
+        + "which bytes of the payload it holds and how to read the next. When 'more' is true "
         + "the answer stopped there — 'capped_by' says which bound — and asking again with 'before' set to "
         + "'next_before' continues exactly where it stopped. Nothing on this channel writes the tape.";
 
@@ -3905,6 +4017,37 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         return (int)raw;
     }
 
+    /// <summary>
+    /// THE MOST ONE ANSWER MAY TAKE, WRITTEN, ITS WORDS INCLUDED, or null: absent is <see cref="MaxTapeReplyBytes"/> of rows as before;
+    /// present, a whole number from <see cref="MinTapeReplyBytes"/> to <see cref="MaxTapeReplyBytes"/>, and anything else is
+    /// REFUSED in words, never clamped.
+    /// </summary>
+    static long? TapeBudget(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("max_bytes")) return null;
+
+        var raw = req.Dec("max_bytes")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < MinTapeReplyBytes || raw > MaxTapeReplyBytes)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'max_bytes' is the most one answer may take as written — a whole number from "
+                + $"{MinTapeReplyBytes.ToString(CultureInfo.InvariantCulture)} to {MaxTapeReplyBytes.ToString(CultureInfo.InvariantCulture)} "
+                + $"— and '{raw.ToString(CultureInfo.InvariantCulture)}' is not one. A row larger than the answer comes in parts.");
+        return (long)raw;
+    }
+
+    /// <summary>The byte of a row's payload a part starts at, or null: a whole number from 0, or a refusal.</summary>
+    static long? TapePayloadFrom(IpcRequest req)
+    {
+        if (req.Args is null || !req.Args.ContainsKey("payload_from")) return null;
+
+        var raw = req.Dec("payload_from")!.Value;
+        if (raw != decimal.Truncate(raw) || raw < 0m || raw > int.MaxValue)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'payload_from' is a byte of a row's payload — a whole number from 0, the 'next_from' of the row's 'part' — and "
+                + $"'{raw.ToString(CultureInfo.InvariantCulture)}' is not one.");
+        return (long)raw;
+    }
+
     /// <summary>The row id a capped answer handed back, or null: a whole number above 0, or a refusal.</summary>
     static long? TapeCursor(IpcRequest req)
     {
@@ -3945,7 +4088,23 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         long Id, string Subject, DateTimeOffset SourceTime, DateTimeOffset ReceivedAt, int Revision,
         string EvidenceClass, long FetchId, string PayloadSha256,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Payload,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] TapeQuarantine? Quarantine);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] TapeQuarantine? Quarantine)
+    {
+        /// <summary>
+        /// Which bytes of the payload this row holds when it is served in parts (<c>U-tape-gdelt-2</c>), or null — and then absent
+        /// from the wire, so a whole row reads exactly as it always has.
+        /// </summary>
+        public DataTapePart? Part { get; init; }
+    }
+
+    /// <summary>
+    /// A PART OF ONE ROW'S PAYLOAD: from which byte, how many, of how many the payload holds, where the next part starts (null on
+    /// the last, and never dropped: "the last part" and "a build with no such field" read differently), and the same in words.
+    /// </summary>
+    sealed record DataTapePart(
+        long From, long Bytes, long Of,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? NextFrom,
+        string Read);
 
     /// <summary>
     /// A date on a data request. Absent is null; PRESENT AND UNREADABLE IS A REFUSAL, the same rule

@@ -97,7 +97,8 @@ public class HarnessTradeArgsTests(ITestOutputHelper log)
         "number" => name switch
         {
             "confidence" => 0.5m, "fees" or "slippage" => 0.001m, "after" => 0,
-            "entry" or "about" => _entry, "before" when op == Ops.LedgerList => _entry + 1, _ => 1
+            "entry" or "about" => _entry, "before" when op == Ops.LedgerList => _entry + 1,
+            "max_bytes" => GrantedWorkerTools.MaxTapeAnswerBytes, _ => 1
         },
         "boolean" => false,
         "string" => (op, name) switch
