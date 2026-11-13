@@ -2804,9 +2804,14 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>
     /// THE ONE PAUSE, the owner's and the free-space guard's. The loop stops whether or not the record could be written: on a disk with no room the write is
     /// what throws, and a pause that came second to it did not happen. The exception still reaches the caller, once the AI is paused.
+    ///
+    /// <para><b>The kills go out before the record is written</b> (<c>U-disk-guard-2</c>; A4-3): the record is a write behind the database's one lock, and a
+    /// trip while another thread held it left the writer running until it let go. So the pause starts first, the record is written while its turns end, and
+    /// this returns once both are done. A crash between the two leaves the owner's flag on, and a restart's guard pass looks before anything resumes.</para>
     /// </summary>
     async Task PauseTheAiAsync(string line, DiskPause? because)
     {
+        var pausing = Mission.PauseAsync();
         try
         {
             Gateway.Update(s =>
@@ -2815,7 +2820,7 @@ public sealed class AppHost : IAsyncDisposable
                 if (because is not null) s.DiskPause = because;
             });
         }
-        finally { await Mission.PauseAsync(); }
+        finally { await pausing; }
         Gateway.Log.Activity(line, because is null ? "info" : "warn");
         Changed?.Invoke();
     }

@@ -459,6 +459,41 @@ public class DiskGuardTests
     }
 
     /// <summary>
+    /// THE KILL DOES NOT WAIT BEHIND THE DATABASE (<c>U-disk-guard-2</c>; A4-3). Every read and write of the app's database goes through one lock, and the
+    /// pause's record is a write: with the record first, a trip while another thread held the lock (a turn's commit, a long read) left the writer running
+    /// until it let go. The tree ends while the lock is still held; the record follows once it is free.
+    /// </summary>
+    [Fact]
+    public async Task A_trip_ends_the_turn_while_another_thread_holds_the_database()
+    {
+        await using var life = await PuppetLife.Begin("disk-locked", settings: s => s.AiWorksOnItsOwn = true);
+        life.Script(Chair, ["signal turning", "await never", "usage 10 0 5", "final Never reached."]);
+        var host = life.Host;
+        life.Wake(Chair);
+        await life.RunUntil(() => life.Reached("turning") && life.Presence.Live > 0, "the chair's puppet is mid-turn");
+
+        using var held = new ManualResetEventSlim();
+        using var letGo = new ManualResetEventSlim();
+        var holder = Task.Run(() => host.Db.Read(_ => { held.Set(); letGo.Wait(); return 0; }));
+        held.Wait();
+        host.ReadDisk = () => Low;
+        var trip = Task.Run(host.DiskGuardPassAsync);
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (life.Presence.Live > 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+            Assert.True(life.Presence.Live == 0, "the turn's tree was still alive 20 s into a trip while another thread held the database");
+            Assert.False(holder.IsCompleted);
+        }
+        finally { letGo.Set(); }
+        await holder;
+        await trip;
+        Assert.False(host.Mission.Running);
+        Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+        Assert.Equal(Low.Free, host.Gateway.Settings.DiskPause?.Free);
+    }
+
+    /// <summary>
     /// A FULL DISK DOES NOT END THE APP'S OWN CLOCK. That loop is what manages positions while the AI is paused. Its failure line went through a
     /// write that throws on a full disk, out of the catch, and the whole loop ended with nothing said; room coming back brought nothing back.
     /// </summary>
