@@ -2996,7 +2996,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
         if (IsChief(position)) return null;
         if (org.UnitOf(position) is not { } unit)
             return $"{position} belongs to no unit on the chart, so no division delegated it a verdict share: only a division's head spends "
-                   + "final judgements (ORGANISATION § 2). Nothing was charged.";
+                   + "final judgements. Nothing was charged.";
         if (unit.Kind == OrgUnitKind.Division && unit.HeadPositionId == position) return null;
 
         foreach (var u in new[] { unit }.Concat(org.Ancestors(unit.Id)))
@@ -3007,7 +3007,7 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
                 return null;
         }
         return $"{position} may not spend a final judgement: only a division's head spends verdicts, or a position whose unit — or a unit "
-               + $"above it, below its division — holds a verdict share its parent's head delegated with 'org-tilt' (ORGANISATION § 2). "
+               + $"above it, below its division — holds a verdict share its parent's head delegated with 'org-tilt'. "
                + $"{OrgEnvelopes.NameOf(unit.Id)} holds no verdict share, and neither does any unit between it and its division. Every "
                + "judgement leaks something about the held-back months, so the count is spent where a division decides it is. Ask your "
                + "division's head for a verdict share, or the chief for the verdict: a head's own verdict reads the head's own runs. "

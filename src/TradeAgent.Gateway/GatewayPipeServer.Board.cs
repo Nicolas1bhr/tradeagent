@@ -48,7 +48,7 @@ public sealed partial class GatewayPipeServer
         var state = Gateway.BoardSeatState(seat!);
         if (state != BoardSeatStatus.Active)
             throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"board seat {seat} is {state ?? "no seat this board founded"}, not active: only an active seat acts (ORCHESTRATION § 2.3). "
+                $"board seat {seat} is {state ?? "no seat this board founded"}, not active: only an active seat acts. "
                 + "Nothing was written."));
 
         var attempt = ctx.AttemptId is { } id ? Gateway.Attempt(id) : null;
@@ -61,7 +61,7 @@ public sealed partial class GatewayPipeServer
         if (AssuranceNamed(attempt.Assurance) is not { } assurance || assurance < minimum)
             throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"the board's verbs need a seat of at least {SeatClasses.Name(minimum)} assurance, and this launch of {seat} was admitted "
-                + $"on a {attempt.SeatClass ?? "unrecorded"} seat recorded {attempt.Assurance ?? "with no assurance"} (R24 § 4.1: broker-only "
+                + $"on a {attempt.SeatClass ?? "unrecorded"} seat recorded {attempt.Assurance ?? "with no assurance"} (broker-only "
                 + "or confined, never unconfined). Nothing was written."));
         return seat!;
     }

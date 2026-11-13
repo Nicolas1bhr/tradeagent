@@ -41,7 +41,7 @@ public sealed partial class GatewayPipeServer
             throw RefusalMark.Mark(new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"the organisation's verbs need a seat of at least {SeatClasses.Name(minimum)} assurance, and this launch of "
                 + $"{position} was admitted on a {attempt.SeatClass ?? "unrecorded"} seat recorded "
-                + $"{attempt.Assurance ?? "with no assurance"} (ORCHESTRATION § 2.3). Heading a unit grants no verb by itself. "
+                + $"{attempt.Assurance ?? "with no assurance"}. Heading a unit grants no verb by itself. "
                 + "Nothing was written."));
         return position;
     }

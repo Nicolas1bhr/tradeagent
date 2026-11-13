@@ -198,7 +198,7 @@ public sealed record ProvingConfiguration(
             if (c.TrialBudget != first.TrialBudget || c.VerdictBudget != first.VerdictBudget || c.AiEnvelope != first.AiEnvelope
                 || c.DeadlineSeconds != first.DeadlineSeconds)
                 return $"configurations '{first.Name}' and '{c.Name}' do not work at equal budgets: {Budgets(first)} against {Budgets(c)}. "
-                       + "A ladder compares configurations at equal budgets on the same markets (ORCHESTRATION § 2.14), so the run did not start.";
+                       + "A ladder compares configurations at equal budgets on the same markets, so the run did not start.";
         }
         var twice = configurations.GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
         return twice is null ? null : $"two configurations are named '{twice.Key}', and each names its own home.";

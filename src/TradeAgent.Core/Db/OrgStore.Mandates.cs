@@ -342,7 +342,7 @@ public sealed partial class OrgStore
         // RULING Q4 — THE OWNER'S: operations places orders, and an order is never a mandate's to shape (no instrument, side, size or
         // timing, § 2.2). Refused whoever asks, before the chart is read.
         if (issue.Holder == CouncilRoles.Operations)
-            return ($"'{CouncilRoles.Operations}' holds no mandate: what the {CouncilRoles.Title(CouncilRoles.Operations)} trades is never shaped by an assignment (ORCHESTRATION § 2.2).", true);
+            return ($"'{CouncilRoles.Operations}' holds no mandate: what the {CouncilRoles.Title(CouncilRoles.Operations)} trades is never shaped by an assignment.", true);
         if (Position(issue.Holder) is not { } holder)
             return ($"'{issue.Holder}' is no position on the chart.", false);
         if (holder.Status != OrgPositionStatus.Active)

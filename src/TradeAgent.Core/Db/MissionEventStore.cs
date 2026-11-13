@@ -325,7 +325,7 @@ public static class WakePriority
     {
         if (ClassOf(kind) is null)
             throw new ArgumentException(
-                $"a wake of kind '{kind}' has no priority class in the wake table (ORGANISATION § 10), so it was not raised: "
+                $"a wake of kind '{kind}' has no priority class in the wake table, so it was not raised: "
                 + "a kind is classed in WakePriority before anything may raise it.", nameof(kind));
     }
 

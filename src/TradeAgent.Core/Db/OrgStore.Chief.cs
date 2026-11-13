@@ -159,7 +159,7 @@ public sealed partial class OrgStore
     void OwnersWhileNoBoard(string doing)
     {
         if (new Board.BoardReader(db).AnyActive)
-            throw Refused($"{doing} is the security board's now that a board seat is active (R24 § 4.1): a two-seat act — one active seat "
+            throw Refused($"{doing} is the security board's now that a board seat is active: a two-seat act — one active seat "
                           + "proposes it, another confirms it — under your narrowing veto. You can still remove the chief.");
     }
 

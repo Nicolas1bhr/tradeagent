@@ -1031,7 +1031,7 @@ public partial class OrgDecisionTests
                      (NoteFrame(Head), "never to yourself"),
                      (NoteFrame(AppPrincipals.Referee), "app's own principals"),
                      (NoteFrame(AppPrincipals.Allocator), "app's own principals"),
-                     (NoteFrame(CouncilRoles.Operations), "ORDER-001"),
+                     (NoteFrame(CouncilRoles.Operations), "never shaped by a note"),
                      (NoteFrame(CouncilRoles.Research), "cannot carry the organisation's verbs"),
                      (NoteFrame(Outsider), "cannot carry the organisation's verbs"),
                      (NoteFrame("pos-nobody"), "no position on the chart"),

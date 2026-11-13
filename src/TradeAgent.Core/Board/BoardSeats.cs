@@ -78,7 +78,7 @@ public static class BoardSeatGate
         null => new(RefusalKind.Position,
             $"'{id}' is no seat of the security board, so no turn is launched under it and none is charged to anyone. Nothing was written."),
         _ => new(RefusalKind.Position,
-            $"board seat {id} is {seat.Status}, not active, so no turn is launched for it (R24 § 4.1: only an active seat turns). "
+            $"board seat {id} is {seat.Status}, not active, so no turn is launched for it (only an active seat turns). "
             + "Nothing was written.")
     };
 
@@ -110,12 +110,12 @@ public static class BoardSeatGate
 
         if (!puppet && !provenCell)
             return new(RefusalKind.HostOrLaunch,
-                $"board seat {id} would run a real model ({recorded}) and this host has no proven executor cell recorded: no board seat "
-                + "runs on a real model before one (R24 § 4.1, ORCHESTRATION § 2.3). Nothing is started; its wakes are kept.");
+                $"board seat {id} would run a real model ({recorded}) and this computer has no proven sealed workspace for the AI recorded: no board seat "
+                + "runs on a real model before one. Nothing is started; its wakes are kept.");
 
         if (openUnconfined.Count > 0)
             return new(RefusalKind.HostOrLaunch,
-                $"board seat {id} is not started while an unconfined launch is open on this host "
+                $"board seat {id} is not started while a turn outside a sealed workspace is open on this computer "
                 + $"({string.Join(", ", openUnconfined.Select(o => $"'{o}'"))}). It is tried again when that turn has ended.");
         return null;
     }
