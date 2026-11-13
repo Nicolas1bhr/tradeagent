@@ -66,14 +66,15 @@ public static partial class Labels
 
     public const string ChiefTitle = "The chief";
 
-    /// <summary>Under the chief's presses while no board seat is active: whose they are, and until when (the orchestrator's Q1).</summary>
+    /// <summary>Under the chief's presses while no board seat is active: whose they are, and until when (the orchestrator's Q1; the ruling of 2026-11-13).</summary>
     public const string ChiefYoursUntilBoard =
-        "Yours until the security board is active: you appoint, replace and activate the chief here, two presses each. Once a board seat is "
-        + "active, the board does that by a two-seat act, and you can still remove the chief.";
+        "Yours: you appoint, replace and activate the chief here, two presses each. Once a security board seat is active, the board "
+        + "appoints and replaces the chief by a two-seat act; activating a dormant chief and removing the chief stay yours.";
 
     /// <summary>In their place once a board seat is active.</summary>
     public const string ChiefIsTheBoards =
-        "The security board appoints and replaces the chief now, by a two-seat act under your veto. You can still remove the chief.";
+        "The security board appoints and replaces the chief now, by a two-seat act under your veto. Activating a dormant chief and "
+        + "removing the chief stay yours.";
 
     public const string ChiefNone = "No chief is appointed: the organisation's head is vacant, so it is yours.";
 

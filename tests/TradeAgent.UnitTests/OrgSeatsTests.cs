@@ -206,13 +206,15 @@ public class OrgSeatsTests : IDisposable
     // ---- (c2) the owner switches a position's model among the verified catalog's (U-seat-models) -------------------
 
     /// <summary>
-    /// (c2) THE OWNER SWITCHES A POSITION'S MODEL, ONLY AMONG THE VERIFIED CATALOG'S AND ONLY WHILE NO BOARD SEAT IS ACTIVE (<c>U-seat-models</c>;
+    /// (c2) THE OWNER SWITCHES A POSITION'S MODEL, ONLY AMONG THE VERIFIED CATALOG'S, A BOARD SEAT ACTIVE OR NOT (<c>U-seat-models</c>;
     /// R25 D8): a position with no seat of its own is seated on the runtime its launch resolves to, at the policy's allowance, on the chosen
     /// model, with one <c>org_event seated</c> decided by the owner; a second switch keeps that runtime and allowance. Refused in words, nothing
-    /// written: a model outside the catalog, the model it already runs on, the legacy pair, and anything once a board seat is active.
+    /// written: a model outside the catalog, the model it already runs on, the legacy pair. With a board seat active his switch still writes,
+    /// decided by him. CHANGED OPENLY (<c>U-board-alive-2</c>, the orchestrator's ruling of 2026-11-13: activating a board seat takes nothing
+    /// from the owner, and the board has no act for a position's model): it was "refused once a board seat is active".
     /// </summary>
     [Fact]
-    public void The_owner_switches_a_positions_model_among_the_catalogs_only_while_no_board_seat_is_active()
+    public void The_owner_switches_a_positions_model_among_the_catalogs_while_a_board_seat_is_active_too()
     {
         using var db = TestEnv.NewDb();
         Position(db);
@@ -249,16 +251,17 @@ public class OrgSeatsTests : IDisposable
         Exec(db, "UPDATE org_position SET seat_allow_out='8000' WHERE id=$id", ("$id", Pos));
 
         new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest("board-2", TradeAgent.Core.Board.BoardSeatStatus.Active, now);
-        var refused = Assert.Throws<TradeAgentException>(() => store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now)).Message;
+        Assert.True(new TradeAgent.Core.Board.BoardReader(db).AnyActive);
+        var seatedBefore = Events();
+        Assert.Equal(BrokerSeat.Model, store.ChooseSeatModel(Pos, BrokerSeat.Fallback, BrokerSeat.IsCatalogModel, "codex", Known, now));
         // IN-PROCESS ONLY (AUTH-001): the owner's press in AppHost is its one caller; no op, door verb or trade verb names it.
         var root = RepoRoot();
         Assert.Equal(["src/TradeAgent.App/AppHost.cs", "src/TradeAgent.Core/Db/OrgStore.Seats.cs"],
             Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
                 .Where(f => File.ReadAllText(f).Contains("ChooseSeatModel(", StringComparison.Ordinal))
                 .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')).Order(StringComparer.Ordinal));
-        Assert.Contains("the security board's now that a board seat is active", refused);
-        Assert.Contains("Nothing was written", refused);
-        Assert.Equal(BrokerSeat.Model, store.Position(Pos)!.SeatModel);
+        Assert.Equal(BrokerSeat.Fallback, store.Position(Pos)!.SeatModel);
+        Assert.Equal(seatedBefore + 1, Events());
     }
 
     // ---- (d) the harness never sends a request that could pass the seat allowance --------------------------------

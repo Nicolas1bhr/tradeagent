@@ -71,7 +71,7 @@ sealed record OrgSurfaceSources
 
     /// <summary>
     /// THE CLOSED LIST OF MODELS A POSITION MAY BE SWITCHED TO (<c>U-seat-models</c>): the verified catalog's for a position on a verified seat
-    /// while no board seat is active, else none — and no press is drawn.
+    /// — a board seat active or not, since the board has no act for it — else none, and no press is drawn.
     /// </summary>
     public Func<string, IReadOnlyList<string>> SeatModels { get; init; } = _ => [];
 

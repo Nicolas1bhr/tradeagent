@@ -735,8 +735,8 @@ public sealed partial class AppHost : IAsyncDisposable
 
     /// <summary>
     /// THE OWNER ACTIVATES A DORMANT POSITION (<c>U-org-surface-b</c>; the orchestrator's ruling of 2026-10-24) — his two-press press on
-    /// the "For you" page, IN-PROCESS ONLY (AUTH-001), and his only while no board seat is active: <see cref="OrgStore.Activate"/>
-    /// refuses in words naming the board once one is, nothing written. It starts nothing — every launch still passes the activation
+    /// the "For you" page, IN-PROCESS ONLY (AUTH-001), a board seat active or not (the board has no act that activates a position, so it
+    /// stays his: the orchestrator's ruling of 2026-11-13). It starts nothing — every launch still passes the activation
     /// gate (<see cref="ActivationRefusal"/>), which refuses any real-model seat before a RECORDED proven cell whatever this press did.
     /// One Activity line, and the window refreshes. Returns the words; a refusal throws, nothing written.
     /// </summary>
@@ -770,15 +770,16 @@ public sealed partial class AppHost : IAsyncDisposable
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
-                    $"board seat {seat}'s folder could not be built ({ex.Message}), so it is not activated: a seat sits only with the board's "
-                    + "canon in its home. Nothing was written.");
+                    $"board seat {seat}'s folder could not be built ({ex.Message}), so it is not activated: a seat starts only with the "
+                    + "board's instructions in its own folder. Nothing was written.");
             }
         }
         var row = Gateway.ActivateBoardSeat(seat, s =>
             BoardSeatGate.ActivationRefusal(s.Id, s, SeatClassItWouldStartOn(s.Id), TestHostPuppet(s.Id), new CellProofStore(db).HoldsProof(),
                 BrokerSeat.VendorFamilyOf(RuntimeIdItWouldStartOn(s.Id))));
         Changed?.Invoke();
-        return $"You activated {row.Id}. It sits on its {row.SeatClass} seat and turns only when a proposal wakes it.";
+        return $"You activated {row.Id}. It acts only when a proposal or a position's request wakes it. Appointing and replacing the chief "
+               + "are the board's now; every other press you have stays yours.";
     }
 
     /// <summary>The id of the runtime <paramref name="role"/> would start on: the prepared CLI runtime's, else the one chosen for it; or null.</summary>
@@ -2001,7 +2002,7 @@ public sealed partial class AppHost : IAsyncDisposable
     /// </summary>
     // ---- the owner's presses over the chief (U-org-chief item 7; AUTH-001: in-process only) ---------------------------------------
 
-    /// <summary>Whether a board seat is active, read through the board's one reader; unreadable reads as active, so his appointment presses hide.</summary>
+    /// <summary>Whether a board seat is active, read through the board's one reader; unreadable reads as active, so his appointment and replacement of the chief hide.</summary>
     internal bool BoardActive
     {
         get
@@ -2029,13 +2030,14 @@ public sealed partial class AppHost : IAsyncDisposable
     /// <summary>
     /// THE CLOSED LIST OF MODELS <paramref name="position"/> MAY BE SWITCHED TO: the verified catalog's, default first, for a position that
     /// runs on a verified seat (broker, cell); none for any other — the legacy pair's model is the Owner page's, and a seat the catalog does
-    /// not govern has no list here. Empty while a board seat is active or the class cannot be read. Never throws.
+    /// not govern has no list here. Offered whether or not a board seat is active (the board has no act for a position's model, so it
+    /// stays his: the orchestrator's ruling of 2026-11-13). Empty while the class cannot be read. Never throws.
     /// </summary>
     internal IReadOnlyList<string> SeatModels(string position)
     {
         try
         {
-            if (CouncilRoles.IsKnown(position) || BoardActive || TestHostPuppet(position)) return [];
+            if (CouncilRoles.IsKnown(position) || TestHostPuppet(position)) return [];
             return DeclaredSeatClass(position) is { } declared && BrokerSeat.IsVerified(declared) ? BrokerSeat.Models : [];
         }
         catch (Exception) { return []; }
@@ -2043,7 +2045,7 @@ public sealed partial class AppHost : IAsyncDisposable
 
     /// <summary>
     /// THE OWNER'S SECOND PRESS: <paramref name="position"/> set to run on <paramref name="model"/>, one of the verified catalog's, through
-    /// the store (<see cref="OrgStore.ChooseSeatModel"/>) — refused in words while a board seat is active. Answers the app's words of what was
+    /// the store (<see cref="OrgStore.ChooseSeatModel"/>), a board seat active or not. Answers the app's words of what was
     /// done or why not. The next launch of the position runs on it and its surface is checked for it before admission, as the default's is.
     /// </summary>
     internal string ChooseSeatModel(string position, string model) => ChiefPress(org =>

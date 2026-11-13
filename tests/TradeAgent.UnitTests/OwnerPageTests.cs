@@ -11,7 +11,8 @@ namespace TradeAgent.Tests.Unit;
 /// THE OWNER'S PAGE (<c>U-settings-shed</c>; R24 §§ 4.3, 4.7): it holds exactly the presses that stay his — the emergency family, his
 /// connections and keys, the real money with perception's budget, the evidence settings and the narrowing presses over what is running —
 /// and no press that sets a mode, a limit, an allowance, a lane, an allocation, an envelope grant or real money — the seat choices and
-/// the paper review release stay his only until a board seat is active (the orchestrator's rulings of 2026-10-23).
+/// the paper review release stay his until the board has an act for them, a board seat active or not (the orchestrator's rulings of
+/// 2026-10-23 and 2026-11-13).
 /// </summary>
 public class OwnerPageTests
 {
@@ -38,7 +39,7 @@ public class OwnerPageTests
     /// <summary>
     /// THE OWNER'S PAGE HOLDS EXACTLY THE OWNER'S PRESSES (R24 § 4.3; AUTH-001): a label allowlist over the tree the window builds — the
     /// emergency family, the key's two presses (his and perception's), the real-money cap and perception's budget, the AI's price, the two
-    /// narrowings over what is running and the review release while no board seat is active — and none of the presses that left with
+    /// narrowings over what is running and the review release, a board seat active or not — and none of the presses that left with
     /// the security board's decisions: no mode, no real-money switch, no limit, plan, allowance, review, lane, share,
     /// allocation or envelope grant.
     /// </summary>
@@ -58,7 +59,7 @@ public class OwnerPageTests
             Labels.SaveHarnessKey, Labels.ForgetHarnessKey,
             Labels.SaveDailyCap, Labels.SaveAiPrice,
             Labels.WithdrawEnvelope, Labels.StopDeployment, Labels.ReopenAfterReview,
-            // THE SEAT CHOICES, his until a board seat is active (the orchestrator's ruling): what the Research Director runs on, and the
+            // THE SEAT CHOICES, his until the board has an act for them (the orchestrator's rulings): what the Research Director runs on, and the
             // two model rows — the AI's and the Research Director's — each "TradeAgent's choice" and one press per priced model.
             Labels.RuntimeIsTheCli, Labels.RuntimeIsTheHarness, Labels.AiModelDefault, Labels.AiModelDefault,
             .. host.ModelChoices.Select(m => OwnerPage.ModelLabel(m, host.SpendToday.Currency)),
@@ -118,10 +119,20 @@ public class OwnerPageTests
         host.Gateway.Update(s => s.SelectedRuntimeId = TradeAgent.AgentRuntime.BrokerDoor.CodexId);
         c.ActivateSeat.SelectedItem = "board-1";
 
+        Assert.False(c.ActivateWhat.IsVisible);
         Press(c.Activate);
         Assert.True(Ui.IsArmed(c.Activate));
         Assert.False(host.Board.AnyActive);
+        // THE SECOND PRESS SAYS IN FULL WHAT ACTIVATION CHANGES AND WHAT STAYS HIS (U-board-alive-2; the orchestrator's ruling of 2026-11-13).
+        Assert.True(c.ActivateWhat.IsVisible);
+        Assert.Equal(Labels.ActivateBoardSeatWhat, c.ActivateWhat.Text);
+        foreach (var said in new[] { "real money stays closed", "your veto", "the board's seats and share", "removing the chief",
+                                     "activating a dormant position or the chief", "what each seat runs on", "reopening a held paper scope",
+                                     "tighten a limit", "loosening one takes two active seats", "appointing and replacing the chief",
+                                     "retiring the seat" })
+            Assert.Contains(said, Labels.ActivateBoardSeatWhat, StringComparison.Ordinal);
         Press(c.Activate);
+        Assert.False(c.ActivateWhat.IsVisible);
         Assert.False(host.Board.AnyActive);
         Assert.Contains("no proven executor cell recorded", c.Note.Text, StringComparison.Ordinal);
         Assert.Equal(Theme.Caution, c.Note.Foreground);
@@ -132,6 +143,64 @@ public class OwnerPageTests
         Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Active, host.Board.Seats().Single(s => s.Id == "board-1").Status);
         Assert.DoesNotContain("board-1", (IEnumerable<string>)c.ActivateSeat.ItemsSource!);
         return Task.CompletedTask;
+    });
+
+    /// <summary>
+    /// (U-board-alive-2, THE ORCHESTRATOR'S RULING OF 2026-11-13) HIS ACTIVATION OF A BOARD SEAT TAKES NOTHING FROM HIM: board-1 made active by
+    /// his own two presses on this page, every press the board has no act for still works, decided by him — the seat choices (offered, and a
+    /// press writes the setting), a paper hold's release (offered, and two presses release it), a position's model (his press switches it)
+    /// and a dormant position's activation. RED at base: each was hidden or refused once a board seat was active.
+    /// </summary>
+    [Fact]
+    public Task His_activation_of_a_board_seat_takes_none_of_his_presses() => OnThePage(async (page, host) =>
+    {
+        static void Press(Button b) => b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var gw = host.Gateway;
+        gw.Update(s => { s.SelectedRuntimeId = TradeAgent.AgentRuntime.BrokerDoor.CodexId; s.SelectedAccountId = "ACC-1"; });
+        const string pos = "pos-b0a4dc0ffee1";
+        host.Db.Write(_ =>
+        {
+            using var c = host.Db.Cmd("INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'dormant',$at)",
+                ("$id", pos), ("$u", TradeAgent.Core.Db.OrgIds.Research), ("$h", $"org/{pos}"), ("$at", DateTimeOffset.UtcNow.ToString("O")));
+            return c.ExecuteNonQuery();
+        });
+        var paper = SeedHold(host.Db, gw.Connector.Id, "ACC-1", TradingMode.PAPER, symbol: "BTCUSDT");
+
+        // HIS ACTIVATION, by his two presses on this page.
+        ThinkingSeatsTests.ProveCell(host.Db);
+        var c = (BoardComposition)typeof(OwnerPage).GetField("_boardComposition", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(page)!;
+        c.ActivateSeat.SelectedItem = "board-1";
+        Press(c.Activate);
+        Press(c.Activate);
+        Assert.True(host.Board.AnyActive, c.Note.Text);
+        page.Update(await gw.StatusAsync());
+
+        // THE SEAT CHOICES: offered, and a press writes the setting it always wrote.
+        var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
+        Assert.True(card.Root.IsVisible, "the seat choices were handed to a board that has no act for them");
+        Press((Button)card.ResearchRuntimeRow.Children[1]);
+        Assert.Equal(TradeAgent.AgentRuntime.ApiAgentRuntime.RuntimeId, gw.Settings.RoleRuntime[CouncilRoles.Research]);
+        Assert.False(card.Note.IsVisible, card.Note.Text);
+
+        // A PAPER HOLD'S RELEASE: offered, and his two presses release it through the gateway's own release.
+        Assert.True(Field<Avalonia.Controls.Border>(page, "_releaseCard").IsVisible, "the paper release was handed to a board that has no act for it");
+        Field<TextBox>(page, "_releaseNote").Text = "looked at the paper run";
+        var release = Field<Button>(page, "_release");
+        Press(release);
+        Press(release);
+        Assert.NotNull(host.Db.GetKv(TradeAgent.Gateway.LossHold.ReleaseKey(gw.Connector.Id, paper)));
+        Assert.Empty(gw.HoldsForReview());
+
+        // A POSITION'S MODEL: his press switches it. (Its closed list on the Organisation page needs a prepared AI tool, which this test
+        // host has none of, so the list itself is not read here.)
+        var said = host.ChooseSeatModel(pos, TradeAgent.AgentRuntime.BrokerSeat.Fallback);
+        Assert.Equal(TradeAgent.AgentRuntime.BrokerSeat.Fallback, new TradeAgent.Core.Db.OrgStore(host.Db).Position(pos)!.SeatModel);
+        Assert.StartsWith("You set", said, StringComparison.Ordinal);
+
+        // A DORMANT POSITION'S ACTIVATION: his press activates it, decided by him.
+        host.ActivatePosition(pos);
+        Assert.Equal(TradeAgent.Core.Db.OrgPositionStatus.Active, new TradeAgent.Core.Db.OrgStore(host.Db).Position(pos)!.Status);
+        Assert.True(host.Board.AnyActive);
     });
 
     /// <summary>
@@ -239,41 +308,44 @@ public class OwnerPageTests
     });
 
     /// <summary>
-    /// THE REVIEW RELEASE IS OFFERED ONLY WHILE NO BOARD SEAT IS ACTIVE (the orchestrator's ruling of 2026-10-23): something held and no
-    /// active seat — offered, with the sentence that says it is his only until the board is active; an active seat — never, whatever is held.
+    /// THE REVIEW RELEASE IS OFFERED WHILE SOMETHING IS HELD, A BOARD SEAT ACTIVE OR NOT (the orchestrator's rulings of 2026-10-23 and
+    /// 2026-11-13): offered with the sentence that says it is his until the board is given a way to decide it. CHANGED OPENLY
+    /// (<c>U-board-alive-2</c>): it was "an active seat — never, whatever is held"; the page-level proof with an active seat is
+    /// <see cref="His_activation_of_a_board_seat_takes_none_of_his_presses"/>.
     /// </summary>
     [Fact]
-    public void The_review_release_is_the_owners_only_until_a_board_seat_is_active()
+    public void The_review_release_is_the_owners_until_the_board_can_decide_it()
     {
-        Assert.True(OwnerPage.ReleaseOffered(held: 1, boardActive: false));
-        Assert.False(OwnerPage.ReleaseOffered(held: 0, boardActive: false));
-        Assert.False(OwnerPage.ReleaseOffered(held: 1, boardActive: true));
-        Assert.Contains("yours until the security board is active, then the board's", Labels.ReopenAfterReviewIsYoursUntilTheBoard,
-            StringComparison.Ordinal);
+        Assert.True(OwnerPage.ReleaseOffered(held: 1));
+        Assert.False(OwnerPage.ReleaseOffered(held: 0));
+        Assert.Contains(Labels.YoursUntilTheBoardDecidesIt, Labels.ReopenAfterReviewIsYoursUntilTheBoard, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// SEAT CHOICES STAY THE OWNER'S UNTIL A BOARD SEAT IS ACTIVE (the orchestrator's ruling for the board pair, 2026-10-23: "seat choices
-    /// (model/runtime per role) stay settings until a board seat is ACTIVE"). With every board seat dormant his page offers the model the AI
-    /// runs on, what the Research Director runs on and its model — labelled "yours until the security board is active", the same words as
-    /// the review release — and each press writes the settings row it always wrote.
+    /// SEAT CHOICES STAY THE OWNER'S, A BOARD SEAT ACTIVE OR NOT (the orchestrator's rulings of 2026-10-23 and 2026-11-13: the board's acts
+    /// hold no seat choice, and activating a board seat takes nothing from him the board has no act for). With board-2 active his page
+    /// offers the model the AI runs on, what the Research Director runs on and its model — labelled yours until the board is given a way
+    /// to decide it, the same words as the review release — and each press writes the settings row it always wrote. CHANGED OPENLY
+    /// (<c>U-board-alive-2</c>): it ran with every board seat dormant, and its twin <c>Seat_choices_are_not_offered_once_a_board_seat_is_active</c>
+    /// — the card hidden and a press refused once a seat was active — is removed, since the ruling makes the opposite true.
     /// </summary>
     [Fact]
-    public Task Seat_choices_stay_the_owners_until_a_board_seat_is_active() => OnThePage((page, host) =>
+    public Task Seat_choices_stay_the_owners_while_a_board_seat_is_active() => OnThePage((page, host) =>
     {
-        Assert.False(host.Board.AnyActive);
+        new TradeAgent.Core.Board.BoardStore(host.Db).SetSeatStateUnderTest("board-2", TradeAgent.Core.Board.BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+        Assert.True(host.Board.AnyActive);
         page.Update(host.Gateway.StatusAsync().GetAwaiter().GetResult());
         var presses = Presses(page);
         Assert.Contains(Labels.RuntimeIsTheCli, presses);
         Assert.Contains(Labels.RuntimeIsTheHarness, presses);
         Assert.Equal(2, presses.Count(p => p == Labels.AiModelDefault));
 
-        // THE LABEL, ON BOTH PRESSES THAT ARE HIS ONLY UNTIL THE BOARD IS ACTIVE: the seat choices and the review release.
+        // THE LABEL, ON BOTH PRESSES THAT ARE HIS UNTIL THE BOARD HAS AN ACT FOR THEM: the seat choices and the review release.
         var texts = page.Root.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").ToList();
         Assert.Contains(Labels.SeatChoicesAreYours, texts);
         Assert.Contains(Labels.ReopenAfterReviewIsYoursUntilTheBoard, texts);
-        Assert.Contains(Labels.YoursUntilTheBoardIsActive, Labels.SeatChoicesAreYours, StringComparison.Ordinal);
-        Assert.Contains(Labels.YoursUntilTheBoardIsActive, Labels.ReopenAfterReviewIsYoursUntilTheBoard, StringComparison.Ordinal);
+        Assert.Contains(Labels.YoursUntilTheBoardDecidesIt, Labels.SeatChoicesAreYours, StringComparison.Ordinal);
+        Assert.Contains(Labels.YoursUntilTheBoardDecidesIt, Labels.ReopenAfterReviewIsYoursUntilTheBoard, StringComparison.Ordinal);
 
         // OFFERED, AND EACH PRESS WRITES THE SETTINGS ROW IT ALWAYS WROTE — one press, never armed first.
         var card = Field<OwnerPage.SeatChoices>(page, "_seatChoices");
@@ -296,37 +368,6 @@ public class OwnerPageTests
         Press((Button)card.ModelRow.Children[0]);
         Assert.Null(host.Gateway.Settings.SelectedModelId);
         Assert.False(card.Note.IsVisible);
-        return Task.CompletedTask;
-    });
-
-    /// <summary>
-    /// ONCE A BOARD SEAT IS ACTIVE THE SEAT CHOICES LEAVE HIS SURFACE (the twin): the card is hidden, and a press that arrives anyway —
-    /// a half-read page, a stale tick — writes nothing and says the choice is the board's. A board that cannot be read counts as active.
-    /// (No build stores an active seat before <c>U-board-b</c>, and <c>board_seat</c> is sealed, so the board's answer is handed in.)
-    /// </summary>
-    [Fact]
-    public Task Seat_choices_are_not_offered_once_a_board_seat_is_active() => OnThePage((page, host) =>
-    {
-        var before = Json.Write(host.Gateway.Settings);
-        var changed = 0;
-        foreach (Func<bool> active in new Func<bool>[] { () => true, () => throw new InvalidOperationException("the board could not be read") })
-        {
-            var card = new OwnerPage.SeatChoices(host, () => { try { return active(); } catch (Exception) { return true; } }, () => changed++);
-            card.Update();
-            Assert.False(card.Root.IsVisible);
-
-            Press((Button)card.ResearchRuntimeRow.Children[1]);
-            Press((Button)card.ModelRow.Children[^1]);
-            Press((Button)card.ResearchModelRow.Children[^1]);
-            Assert.Equal(before, Json.Write(host.Gateway.Settings));
-            Assert.Equal(0, changed);
-            Assert.Equal(Labels.SeatChoicesAreTheBoards, card.Note.Text);
-        }
-
-        // AND THE PAGE ITSELF READS THE BOARD ONCE, FAILING CLOSED: the same reader the release uses.
-        var owner = File.ReadAllText(Path.Combine(RepoRoot(), "src", "TradeAgent.App", "OwnerView.cs"));
-        Assert.Contains("_seatChoices = new SeatChoices(_host, BoardActive, Refresh);", owner, StringComparison.Ordinal);
-        Assert.Contains("catch (Exception) { return true; }", owner[owner.IndexOf("bool BoardActive()", StringComparison.Ordinal)..], StringComparison.Ordinal);
         return Task.CompletedTask;
     });
 

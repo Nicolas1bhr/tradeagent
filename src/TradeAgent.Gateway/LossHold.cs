@@ -106,7 +106,7 @@ public static class LossHold
                + "keeps reaching the budget is a strategy or a market for you to look at rather than "
                + $"something to let back in every day. It has been held for review since "
                + $"{at.UtcDateTime:yyyy-MM-dd HH:mm} UTC. It stays closed until it is released on the "
-               + Labels.OwnerPage + " page (yours while no security board seat is active, then the board's), and releasing it lifts this hold only — the closure still has to run its "
+               + Labels.OwnerPage + " page (a paper scope's release is yours until the security board is given a way to decide it), and releasing it lifts this hold only — the closure still has to run its "
                + "time and TradeAgent still has to see your book flat before anything trades.";
     }
 

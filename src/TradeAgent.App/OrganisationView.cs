@@ -391,8 +391,9 @@ sealed class OrganisationPage
 
 /// <summary>
 /// THE OWNER'S PRESSES OVER THE CHIEF (<c>U-org-chief</c> item 7; the orchestrator's Q1), on the organisation's card: while no board seat is active
-/// — "yours until the security board is active" — <b>Appoint a chief</b> over a vacant root, <b>Replace the chief</b> and <b>Activate</b> a dormant
-/// one; and <b>Remove the chief</b> always. Two presses each (the app's two-step button): the first only arms and writes nothing. The seat a new chief runs on is chosen from a CLOSED list of presses, so no scroll over the page can
+/// <b>Appoint a chief</b> over a vacant root and <b>Replace the chief</b> — from the first active seat a two-seat board act (<c>org.chief</c>);
+/// and, a board seat active or not, <b>Activate</b> a dormant one (the board has no act that activates a chief, so it stays his: the
+/// orchestrator's ruling of 2026-11-13, <c>U-board-alive-2</c>) and <b>Remove the chief</b>. Two presses each (the app's two-step button): the first only arms and writes nothing. The seat a new chief runs on is chosen from a CLOSED list of presses, so no scroll over the page can
 /// change it (the owner, 2026-10-22). No veto press: that is <c>U-org-surface-b</c>'s. Built once; <see cref="Update"/> writes text and visibility
 /// in place, and disarms a press it hides.
 ///
@@ -534,7 +535,7 @@ sealed class ChiefCard
         Show(_seatRow, !board);
         Show(Appoint, !board && root.HeadId is null);
         Show(Replace, !board && root.HeadId is not null);
-        Show(Activate, !board && chief is { Status: OrgPositionStatus.Dormant });
+        Show(Activate, chief is { Status: OrgPositionStatus.Dormant });
         Show(Remove, root.HeadId is not null);
 
         // THE WAKE-ONCE PRESS, while an active chief sits — whoever holds the appointment: his word on paid spend is his. A half-press whose

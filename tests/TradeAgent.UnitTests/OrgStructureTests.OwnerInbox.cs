@@ -118,16 +118,18 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
-    /// ACTIVATE IS TWO PRESSES AND REFUSED ONCE A BOARD SEAT IS ACTIVE (the orchestrator's ruling of 2026-10-24): two dormant members and
-    /// a dormant position heading the root (the chief) — the page offers the two members, never the chief, labelled "yours until the security
-    /// board is active". The first press writes nothing and a tick keeps it armed; the second activates, one <c>activated</c> event decided
-    /// by the owner — and the activation gate still refuses the position's launch, because no cell proof is recorded (the press starts
-    /// nothing). Then a press armed on the second hire, a board seat made active through U-board-b1's seam: the tick says it is the
-    /// board's and hides the presses, and the armed second press is refused in words naming the board, nothing written. RED at base: no
+    /// ACTIVATE IS TWO PRESSES AND STAYS HIS WHILE A BOARD SEAT IS ACTIVE (the orchestrator's rulings of 2026-10-24 and 2026-11-13): two
+    /// dormant members and a dormant position heading the root (the chief) — the page offers the two members, never the chief, labelled
+    /// yours until the board is given a way to decide it. The first press writes nothing and a tick keeps it armed; the second activates,
+    /// one <c>activated</c> event decided by the owner — and the activation gate still refuses the position's launch, because no cell proof
+    /// is recorded (the press starts nothing). A board seat is made active through U-board-b1's seam BETWEEN his two presses: the tick keeps
+    /// the presses, their words and the half-press, and his second press activates the position, decided by him. CHANGED OPENLY
+    /// (<c>U-board-alive-2</c>, the orchestrator's ruling of 2026-11-13: activating a board seat takes nothing from the owner, and the board
+    /// has no act that activates a position): it was "the tick hides the presses and the second press is refused". RED at base: no
     /// <c>AppHost.ActivatePosition</c>.
     /// </summary>
     [Fact]
-    public Task Activate_is_two_presses_and_refused_once_a_board_seat_is_active()
+    public Task Activate_is_two_presses_and_stays_his_while_a_board_seat_is_active()
     {
         // A TEAM OF TWO DORMANT POSITIONS beside the legacy pair, and nothing else active: the owner's unconfined-seat ceiling (3, code)
         // counts every active position this test host declares no seat for, so a chart of active heads would refuse the activation
@@ -147,13 +149,18 @@ public partial class OrgStructureTests
             Assert.NotNull(page.Dormant.CardOf(second));
             Assert.Null(page.Dormant.CardOf(chief));
             Assert.Contains(Labels.ActivateIsYoursUntilTheBoard, Texts(page.Root), StringComparison.Ordinal);
-            Assert.Contains(Labels.YoursUntilTheBoardIsActive, Labels.ActivateIsYoursUntilTheBoard, StringComparison.Ordinal);
+            Assert.Contains(Labels.YoursUntilTheBoardDecidesIt, Labels.ActivateIsYoursUntilTheBoard, StringComparison.Ordinal);
 
             var press = PressIn(page.Dormant.CardOf(first)!);
             var before = Written(db);
             Press(press);
             Assert.Equal(before, Written(db));
+            // A BOARD SEAT MADE ACTIVE BETWEEN HIS TWO PRESSES (U-board-b1's seam): the tick keeps the presses, their words and the half-press.
+            new BoardStore(db).SetSeatStateUnderTest("board-1", BoardSeatStatus.Active, Now);
             page.Update();
+            Assert.True(new BoardReader(db).AnyActive);
+            Assert.True(page.ActivateCards.IsVisible, "the owner's activation was handed to a board that has no act for it");
+            Assert.Contains(Labels.ActivateIsYoursUntilTheBoard, Texts(page.Root), StringComparison.Ordinal);
             Assert.True(Ui.IsArmed(press));
             Press(press);
             Assert.True(new OrgStore(db).Position(first)!.Status == OrgPositionStatus.Active, Texts(page.Root));
@@ -173,17 +180,9 @@ public partial class OrgStructureTests
                 Standing = standing, DeclaredClass = SeatClasses.Puppet, ProvenCell = false, UnconfinedActive = [], UnconfinedSeatSetting = 3
             }));
 
-            var armed = PressIn(page.Dormant.CardOf(second)!);
-            Press(armed);
-            new BoardStore(db).SetSeatStateUnderTest("board-1", BoardSeatStatus.Active, Now);
-            page.Update();
-            Assert.False(page.ActivateCards.IsVisible);
-            Assert.Contains(Labels.ActivateIsTheBoards, Texts(page.Root), StringComparison.Ordinal);
-            var unchanged = Written(db);
-            Press(armed);
-            Assert.Equal(unchanged, Written(db));
-            Assert.Equal(OrgPositionStatus.Dormant, new OrgStore(db).Position(second)!.Status);
-            Assert.Contains("the security board's now that a board seat is active", Texts(page.Root), StringComparison.Ordinal);
+            // THE SECOND HIRE'S PRESS STAYS OFFERED with the board seat active (its activation would meet the owner's unconfined-seat
+            // ceiling of three on this host, a refusal of its own).
+            Assert.NotNull(page.Dormant.CardOf(second));
             return Task.CompletedTask;
         });
     }

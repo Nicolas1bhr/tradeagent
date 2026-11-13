@@ -102,13 +102,16 @@ public partial class OrgChiefTests
     }
 
     /// <summary>
-    /// (7b) THE APPOINTMENT PRESSES ARE GONE ONCE A BOARD SEAT IS ACTIVE: with a chief sitting and a half-pressed "Replace the chief", a board
-    /// seat made active through U-board-b1's own path hides the seat list, "Appoint a chief", "Replace the chief" and "Activate" — the half-press
-    /// disarmed — says the board appoints now, and leaves "Remove the chief", which still ends the chief. A press that arrives anyway is
-    /// refused by the store in words naming the board, nothing written. RED at base: the card had no presses.
+    /// (7b) THE APPOINTMENT PRESSES ARE GONE ONCE A BOARD SEAT IS ACTIVE, AND ACTIVATE STAYS: with a chief sitting and a half-pressed "Replace
+    /// the chief", a board seat made active through U-board-b1's own path hides the seat list, "Appoint a chief" and "Replace the chief" — the
+    /// half-press disarmed — and says the board appoints now (it has an act for that). "Activate" and "Remove the chief" stay: the board has no
+    /// act that activates a chief, so his two presses still activate the dormant one, and his removal still ends it. A replacement that
+    /// arrives anyway is refused by the store in words naming the board, nothing written. CHANGED OPENLY (<c>U-board-alive-2</c>, the
+    /// orchestrator's ruling of 2026-11-13: activating a board seat takes nothing from the owner the board has no act for): "Activate" was
+    /// hidden with the appointment presses. RED at base: the card had no presses.
     /// </summary>
     [Fact]
-    public void The_appointment_presses_are_gone_once_a_board_seat_is_active()
+    public void The_appointment_presses_are_gone_once_a_board_seat_is_active_and_activate_stays()
     {
         using var db = TestEnv.NewDb();
         var org = new OrgStore(db);
@@ -121,7 +124,8 @@ public partial class OrgChiefTests
 
         ActivateBoard(db, "board-1");
         page.Update();
-        Assert.False(card.Appoint.IsVisible || card.Replace.IsVisible || card.Activate.IsVisible);
+        Assert.False(card.Appoint.IsVisible || card.Replace.IsVisible);
+        Assert.True(card.Activate.IsVisible, "the owner's activation of a dormant chief was handed to a board that has no act for it");
         Assert.False(Ui.IsArmed(card.Replace));
         Assert.False(card.SeatRow.IsVisible);
         Assert.Contains(Labels.ChiefIsTheBoards, string.Join("\n", Avalonia.LogicalTree.LogicalExtensions.GetLogicalDescendants(card.Root).OfType<TextBlock>().Select(t => t.Text)));
@@ -133,6 +137,14 @@ public partial class OrgChiefTests
         Assert.Contains("the security board's now that a board seat is active", card.Done.Text, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
         Assert.Equal(chief, org.Chief());
+
+        // HIS ACTIVATION STANDS: two presses, the dormant chief active, decided by him.
+        Press(card.Activate);
+        Assert.Equal(OrgPositionStatus.Dormant, org.Position(chief)!.Status);
+        Press(card.Activate);
+        Assert.Equal(OrgPositionStatus.Active, org.Position(chief)!.Status);
+        page.Update();
+        Assert.False(card.Activate.IsVisible);
 
         Press(card.Remove);
         Press(card.Remove);

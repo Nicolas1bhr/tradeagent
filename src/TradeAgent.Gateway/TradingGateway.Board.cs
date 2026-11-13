@@ -211,8 +211,8 @@ public sealed partial class TradingGateway
     public BoardSeat ActivateBoardSeat(string id, Func<BoardSeat, string?> hostRefusal)
     {
         var seat = _board.ActivateBoardSeat(id, hostRefusal, Now);
-        _log.Activity($"You activated the security board's seat {seat.Id} ({seat.SeatClass}). It turns only when a proposal wakes it, and "
-                      + "while a board seat is active your own presses over the chief and the positions' activation are the board's.");
+        _log.Activity($"You activated the security board's seat {seat.Id}. It acts only when a proposal or a position's request wakes it. "
+                      + "Appointing and replacing the chief are the board's now; every other press you have stays yours.");
         StateChanged?.Invoke();
         return seat;
     }

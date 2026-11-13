@@ -271,29 +271,27 @@ public static partial class Labels
     public const string CloseAllPositions = "Close all positions";
 
     /// <summary>
-    /// "REOPEN AFTER REVIEW" IS HIS ONLY UNTIL THE BOARD IS ACTIVE (the orchestrator's ruling of 2026-10-23 on the owner's behalf): said on
-    /// the card that carries the press, so the owner is not surprised the day it is gone.
+    /// "REOPEN AFTER REVIEW" IS HIS UNTIL THE BOARD HAS AN ACT FOR IT (the orchestrator's rulings of 2026-10-23 and 2026-11-13 on the owner's
+    /// behalf): said on the card that carries the press.
     /// </summary>
     public const string ReopenAfterReviewIsYoursUntilTheBoard =
-        "Reopening a held paper scope is " + YoursUntilTheBoardIsActive + ", then the board's.";
+        "Reopening a held paper scope is " + YoursUntilTheBoardDecidesIt + ".";
 
     /// <summary>
-    /// THE WORDS ON EVERY PRESS THAT IS HIS ONLY WHILE NO BOARD SEAT IS ACTIVE (the orchestrator's ruling of 2026-10-23): the release of a
-    /// held paper scope and the seat choices. Spelled once, so the two presses cannot drift apart.
+    /// THE WORDS ON EVERY PRESS THAT STAYS HIS WHILE A BOARD SEAT IS ACTIVE (the orchestrator's ruling of 2026-11-13, <c>U-board-alive-2</c>:
+    /// activating a board seat takes nothing from him that the board has no act for): the release of a held paper scope, the seat choices
+    /// and a dormant position's activation. Spelled once, so the presses cannot drift apart.
     /// </summary>
-    public const string YoursUntilTheBoardIsActive = "yours until the security board is active";
+    public const string YoursUntilTheBoardDecidesIt =
+        "yours, whether or not a security board seat is active, until the board is given a way to decide it itself";
 
-    /// <summary>The seat choices' card title on the owner's page (the orchestrator's ruling: his while no board seat is active).</summary>
+    /// <summary>The seat choices' card title on the owner's page (the orchestrator's rulings: his until the board has an act for it).</summary>
     public const string SeatChoicesTitle = "What each seat runs on";
 
     /// <summary>Under the title: whose the choices are, and until when — the same words as the review release.</summary>
     public const string SeatChoicesAreYours =
-        "Which model the AI runs on, and what the Research Director runs on, are " + YoursUntilTheBoardIsActive + ", then the board's: "
-        + "from the first active board seat this card goes. Choosing a model grants nothing — a dearer one reaches the day's limit sooner.";
-
-    /// <summary>A seat choice refused because a board seat is active (or the board cannot be read): it writes nothing.</summary>
-    public const string SeatChoicesAreTheBoards =
-        "Nothing was changed. A security board seat is active, so what each seat runs on is the board's decision now, never this page's.";
+        "Which model the AI runs on, and what the Research Director runs on, are " + YoursUntilTheBoardDecidesIt + ". "
+        + "Choosing a model grants nothing — a dearer one reaches the day's limit sooner.";
 
     /// <summary>
     /// THE RELEASE REFUSED BECAUSE A HELD SCOPE IS NOT PAPER (Codex P1 on <c>U-settings-shed</c>): the owner's release is for paper scopes
@@ -313,10 +311,6 @@ public static partial class Labels
         $"Nothing was released. The hold on {string.Join(", ", scopes)} does not match the closure it is filed under — it names another "
         + "closure or another mode — so TradeAgent will not release it on a guess. Reopening anything but a paper scope is the security "
         + "board's decision, never this page's, and the release lifts every hold on this account at once.";
-
-    /// <summary>The release refused because a board seat is active (or the board cannot be read): from then on a release is the board's act.</summary>
-    public const string ReleaseRefusedBoardActive =
-        "Nothing was released. A security board seat is active, so reopening a held scope is the board's decision now, never this page's.";
 
     /// <summary>The plan's day-total is the board's decision: the owner's page reads the plan's day and points at where it is decided.</summary>
     public const string PlanDayTotalIsTheBoards =

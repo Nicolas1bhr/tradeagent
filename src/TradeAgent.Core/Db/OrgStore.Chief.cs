@@ -160,7 +160,7 @@ public sealed partial class OrgStore
     {
         if (new Board.BoardReader(db).AnyActive)
             throw Refused($"{doing} is the security board's now that a board seat is active: a two-seat act — one active seat "
-                          + "proposes it, another confirms it — under your narrowing veto. You can still remove the chief.");
+                          + "proposes it, another confirms it — under your narrowing veto. You can still activate a dormant chief and remove the chief.");
     }
 
     /// <summary>The turn allowance a chief is seated at: the policy in force's, read strictly — an unreadable policy refuses, never a default.</summary>

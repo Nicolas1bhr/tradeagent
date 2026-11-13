@@ -15,7 +15,7 @@ public static partial class Labels
 
     public const string ForYouSubtitle =
         "What reached you: escalations nobody below could take, your words still owed a turn, and the board's proposals of its own "
-        + "power. The presses here are yours: a veto, which only ever takes away, and — while no board seat is active — activating a position.";
+        + "power. The presses here are yours: a veto, which only ever takes away, and activating a position.";
 
     /// <summary>What the page says of an escalation: a record, never a wake, and no answer goes from here.</summary>
     public const string ForYouEscalationsAreRecords =
@@ -102,17 +102,14 @@ public static partial class Labels
         _ => $"An event this version has no words for (“{kind}”)"
     };
 
-    // ---- the owner's activation, his only until the board is active --------------------------------------------------------------
+    // ---- the owner's activation, his until the board has an act for it ------------------------------------------------------------
 
     public const string ActivatePositionPress = "Activate";
     public const string ActivatePositionConfirm = "Activate it — the activation gate still decides every launch";
 
     public const string ActivateIsYoursUntilTheBoard =
-        "Activating a dormant position is " + YoursUntilTheBoardIsActive + ", then the board's — an act two seats make, because it "
-        + "widens. Activating starts nothing: no seat on a real model runs before a sealed workspace is proven on this computer.";
-
-    public const string ActivateIsTheBoards =
-        "A security board seat is active, so activating a position is the board's act now — two seats, because it widens — never this page's.";
+        "Activating a dormant position is " + YoursUntilTheBoardDecidesIt + ". Activating starts nothing: no seat on a real model runs "
+        + "before a sealed workspace is proven on this computer.";
 
     /// <summary>A dormant position as the activation list names it.</summary>
     public static string DormantPosition(string id, string unit) => $"{id}, dormant in {unit}";
@@ -172,18 +169,30 @@ public static partial class Labels
     public const string BoardCompositionIsYours =
         "The board's seats and its share of your plan's day are yours, never the board's own: a seat may only propose a change "
         + "to them. Founding a seat starts nothing — it is dormant until a sealed workspace is proven; the board stays on at least two "
-        + "model classes. Activating a seat is refused, in words, until this computer could seat it; once one is active, your presses "
-        + "over the chief and the positions' activation are the board's.";
+        + "model classes. Activating a seat is refused, in words, until this computer could seat it; its second press says what an "
+        + "active seat changes and what stays yours.";
 
     public const string SetBoardBudgetShareConfirm = "Press again to set the board's share";
     public const string FoundBoardSeatConfirm = "Press again to found the seat, dormant";
     public const string RetireBoardSeatConfirm = "Press again to retire the seat — it acts no more";
 
+    /// <summary>The activation's armed press (<c>U-board-alive</c> item 1); <see cref="ActivateBoardSeatWhat"/> shows beside it, in full.</summary>
+    public const string ActivateBoardSeatConfirm = "Press again to activate the seat, as written below";
+
     /// <summary>
-    /// The activation's second press (<c>U-board-alive</c> item 1): what it does — and that, while a seat is active, his presses over the
-    /// chief and the positions' activation become the board's (U-org-chief Q1).
+    /// WHAT THE ACTIVATION DOES AND DOES NOT CHANGE, IN FULL, shown while its press is armed (<c>U-board-alive-2</c>; the orchestrator's ruling
+    /// of 2026-11-13: activating a board seat takes nothing from the owner that the board has no act for). Each clause is code on main:
+    /// a narrowing is one seat's act and a widening two seats' (<c>BoardActs</c>); the chief's appointment and replacement leave his presses
+    /// from the first active seat (<c>OrgStore.Chief</c>); a seat's turns are paid from the board's share; real money stays closed at
+    /// the gateway; retiring is refused while the seats left would stand on fewer than two model classes (<c>BoardStore</c>).
     /// </summary>
-    public const string ActivateBoardSeatConfirm = "Press again to activate — it turns only when a proposal wakes it";
+    public const string ActivateBoardSeatWhat =
+        "Activating this seat lets it act whenever a proposal or a position's request wakes it, and its turns are paid from the board's "
+        + "share of your plan's day. What changes: an active seat may tighten a limit or an allowance on its own, and loosening one takes "
+        + "two active seats; appointing and replacing the chief become the board's, by two seats. What stays as it is: real money stays "
+        + "closed; you keep your veto, the board's seats and share, removing the chief, activating a dormant position or the chief, what "
+        + "each seat runs on, and reopening a held paper scope. The way back is retiring the seat, which is refused while the seats left "
+        + "would stand on fewer than two model classes.";
     public const string BoardShareLabel = "The board's share of the plan's day";
     public const string BoardVendorFamilyPlaceholder = "e.g. openai";
 }

@@ -21,11 +21,11 @@ namespace TradeAgent.App;
 /// keeps its count: stop in one, resume in two; cancel all and close all in two; the real-money cap, perception's budget and a lower AI
 /// price in two on the loosening side. Each one is in-process: no pipe op and no CLI verb reaches any of them (AUTH-001).</para>
 ///
-/// <para><b>Two exceptions, until the board is active</b> (the orchestrator's rulings of 2026-10-23, his to overrule): "Reopen after
-/// review" on a PAPER scope — never any other — is a widening, and it stays his only while no board seat is ACTIVE, so a held paper scope
-/// does not stall paper runs while the board waits for a proven cell; and the seat choices — which model and runtime each seat runs on —
-/// stay his settings for the same span. Both are labelled "yours until the security board is active"; from the first active seat they
-/// are the board's, and this page stops offering them.</para>
+/// <para><b>Two exceptions, until the board has an act for them</b> (the orchestrator's rulings of 2026-10-23 and 2026-11-13, his to
+/// overrule): "Reopen after review" on a PAPER scope — never any other — is a widening, and it stays his so a held paper scope does not
+/// stall paper runs; and the seat choices — which model and runtime each seat runs on — stay his settings. The board's acts hold neither,
+/// so an active board seat takes neither from him (<c>U-board-alive-2</c>: activating a board seat takes nothing from the owner that the
+/// board has no act for); both stay on this page, labelled yours until the board is given a way to decide them.</para>
 ///
 /// <para>The tree is built once and updated in place (CLAUDE.md): <see cref="Update"/> writes text and visibility, and rebuilds nothing.</para>
 /// </summary>
@@ -173,11 +173,11 @@ sealed class OwnerPage
     }
 
     /// <summary>
-    /// WHAT EACH SEAT RUNS ON — HIS UNTIL A BOARD SEAT IS ACTIVE (the orchestrator's ruling for the board pair, 2026-10-23: seat choices
-    /// "stay settings until a board seat is ACTIVE"; the settings page labels them like Reopen). The model the AI runs on, what the Research
-    /// Director runs on and its model: one press each, as they always were — choosing a model grants nothing, a dearer one reaches the
-    /// day's limit sooner, and moving a role onto TradeAgent's own worker only narrows what it may do. While any board seat is active — or
-    /// the board cannot be read — the card is hidden and a press that arrives anyway writes nothing and says so.
+    /// WHAT EACH SEAT RUNS ON — HIS UNTIL THE BOARD HAS AN ACT FOR IT (the orchestrator's rulings of 2026-10-23 and 2026-11-13: an active
+    /// board seat takes from him nothing the board has no act for, and the board's acts hold no seat choice). The model the AI runs on, what
+    /// the Research Director runs on and its model: one press each, as they always were — choosing a model grants nothing, a dearer one
+    /// reaches the day's limit sooner, and moving a role onto TradeAgent's own worker only narrows what it may do. Offered whether or not a
+    /// board seat is active.
     ///
     /// <para>Built once; <see cref="Update"/> writes visibility and emphasis, and rebuilds the model row ONLY when the runtime it was
     /// built for changed (rebuilding a tree is not a refresh).</para>
@@ -185,7 +185,6 @@ sealed class OwnerPage
     internal sealed class SeatChoices
     {
         readonly AppHost _host;
-        readonly Func<bool> _boardActive;
         readonly Action _changed;
         string? _modelRowRuntime;
 
@@ -196,10 +195,9 @@ sealed class OwnerPage
         public TextBlock ModelNote { get; } = Ui.Micro("");
         public TextBlock Note { get; } = Ui.Micro("");
 
-        public SeatChoices(AppHost host, Func<bool> boardActive, Action changed)
+        public SeatChoices(AppHost host, Action changed)
         {
             _host = host;
-            _boardActive = boardActive;
             _changed = changed;
             ModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
             _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
@@ -217,20 +215,9 @@ sealed class OwnerPage
                 Note));
         }
 
-        bool Refused()
-        {
-            if (!_boardActive()) return false;
-            Note.Text = Labels.SeatChoicesAreTheBoards;
-            Note.Foreground = Theme.Caution;
-            Note.IsVisible = true;
-            Update();
-            return true;
-        }
-
         /// <summary>The app-wide model. Null is the button that means "TradeAgent's choice".</summary>
         void ChooseModel(string? model)
         {
-            if (Refused()) return;
             _host.Gateway.Update(s => s.SelectedModelId = model);
             _host.Gateway.Log.Activity(_host.RequestedModel is { Length: > 0 } m
                 ? $"The AI now runs on {m}"
@@ -242,7 +229,6 @@ sealed class OwnerPage
         /// <summary>What a role runs on: the harness, or the AI tool chosen during setup, written as this role's own choice.</summary>
         void ChooseRoleRuntime(string role, string? runtime)
         {
-            if (Refused()) return;
             _host.Gateway.Update(s =>
             {
                 // THE CLI PRESS WRITES THE FACT (U-role-follows-setup): clearing the override would fall back to the harness the moment a worker
@@ -258,7 +244,6 @@ sealed class OwnerPage
         /// <summary>One role's model. Clearing it falls back to the app-wide row above rather than to nothing.</summary>
         void ChooseRoleModel(string role, string? model)
         {
-            if (Refused()) return;
             _host.Gateway.Update(s =>
             {
                 if (model is { Length: > 0 }) s.RoleModel[role] = model;
@@ -274,9 +259,6 @@ sealed class OwnerPage
         /// <summary>The five-second pass: whether the card is offered, and which choice is in force. It never presses.</summary>
         public void Update()
         {
-            Root.IsVisible = !_boardActive();
-            if (!Root.IsVisible) return;
-
             var runtime = _host.Gateway.Settings.SelectedRuntimeId;
             if (!string.Equals(runtime, _modelRowRuntime, StringComparison.Ordinal))
             {
@@ -371,7 +353,7 @@ sealed class OwnerPage
 
     /// <summary>
     /// THE REVIEW-HOLD CARD: a REQUIRED note, a two-press button disabled until something is typed, an edit of the note disarming a
-    /// half-made press. Shown only while something is held AND no board seat is active (see the class summary).
+    /// half-made press. Shown only while something is held, a board seat active or not (see the class summary).
     /// </summary>
     readonly Border _releaseCard;
 
@@ -391,7 +373,7 @@ sealed class OwnerPage
     /// <summary>THE OWNER'S PERCEPTION CARD (<c>U-decision-card</c>): the decision model's key, budget inside the cap, price, limits and Test press.</summary>
     readonly PerceptionCard _perception;
 
-    /// <summary>What each seat runs on — his until a board seat is active (the orchestrator's ruling).</summary>
+    /// <summary>What each seat runs on — his until the board has an act for it (the orchestrator's rulings).</summary>
     readonly SeatChoices _seatChoices;
 
     /// <summary>Whether Windows opens TradeAgent when he signs in (<c>U-windows-awake</c>): his, two presses on, one off.</summary>
@@ -561,10 +543,10 @@ sealed class OwnerPage
     }
 
     /// <summary>
-    /// WHETHER THE RELEASE IS OFFERED: something is held, and no board seat is active — from the first active seat a release is the
-    /// board's act, never this page's (the orchestrator's ruling of 2026-10-23).
+    /// WHETHER THE RELEASE IS OFFERED: something is held on paper — a board seat active or not, since the board's acts hold no release (the
+    /// orchestrator's rulings of 2026-10-23 and 2026-11-13).
     /// </summary>
-    internal static bool ReleaseOffered(int held, bool boardActive) => held > 0 && !boardActive;
+    internal static bool ReleaseOffered(int held) => held > 0;
 
     /// <summary>
     /// THE PRESS THAT TAKES ONE PAPER ENVELOPE BACK. ONE press plus a confirm — the kill switch's rule: this only ever removes authority,
@@ -720,7 +702,7 @@ sealed class OwnerPage
             Ui.Wrap(Theme.S3, _withdrawEnvelope, _stopDeployment),
             _envelopeNote));
 
-        // THE REVIEW-HOLD CARD. Shown only while something is held and no board seat is active (see the class summary).
+        // THE REVIEW-HOLD CARD. Shown only while something is held on paper, a board seat active or not (see the class summary).
         _release = BuildReleaseConfirm(HeldScopes, () => _releaseNote.Text ?? "", ApplyRelease);
         var release = _release;
         _releaseNote.TextChanged += (_, _) =>
@@ -766,8 +748,8 @@ sealed class OwnerPage
         // AFTER THE REAL MONEY, because perception's budget is a slice of that cap.
         _perception = PerceptionCard.For(_host);
 
-        // WHAT EACH SEAT RUNS ON, beside the key its worker needs: his while no board seat is active, then gone.
-        _seatChoices = new SeatChoices(_host, BoardActive, Refresh);
+        // WHAT EACH SEAT RUNS ON, beside the key its worker needs: his, a board seat active or not, until the board has an act for it.
+        _seatChoices = new SeatChoices(_host, Refresh);
 
         _signInStart = new SignInStartCard(_host);
 
@@ -1036,16 +1018,6 @@ sealed class OwnerPage
 
     // ---- the review hold and its release (U-reopen-2) -------------------------------------------
 
-    /// <summary>
-    /// WHETHER ANY BOARD SEAT IS ACTIVE. A BOARD THAT CANNOT BE READ IS NOT "NO BOARD": it answers active, so nothing that is his only
-    /// until the board is active is offered or taken over a board this build cannot read.
-    /// </summary>
-    bool BoardActive()
-    {
-        try { return _host.Board.AnyActive; }
-        catch (Exception) { return true; }
-    }
-
     /// <summary>WHAT IS BEING HELD FOR REVIEW ON PAPER RIGHT NOW, in the owner's words — "your account" and the instruments.</summary>
     IReadOnlyList<string> HeldScopes() => [.. HoldsByPaper().Paper.Select(j => j.Scope)];
 
@@ -1132,7 +1104,7 @@ sealed class OwnerPage
     void ShowHeldForReview()
     {
         var holds = HoldsByPaper().Paper;
-        _releaseCard.IsVisible = ReleaseOffered(holds.Count, BoardActive());
+        _releaseCard.IsVisible = ReleaseOffered(holds.Count);
         if (!_releaseCard.IsVisible) return;
 
         _releaseHeld.Text = string.Join(" ", holds.Select(h => h.Hold!.Why));
@@ -1147,15 +1119,13 @@ sealed class OwnerPage
     void ApplyRelease(string note)
     {
         // PAPER ONLY, READ AGAIN AT THE PRESS: the gateway's release lifts every hold on the account at once, so while any of them is not
-        // paper it is never called — refused in words, nothing written. And never once a board seat is active (a board that cannot be
-        // read counts as active), whatever the card showed a tick ago.
+        // paper it is never called — refused in words, nothing written. A board seat active or not: the board's acts hold no release.
         var notPaper = HoldsByPaper().NotPaper;
         var mismatched = notPaper.Where(h => h.Judgement == HoldJudgement.Mismatch).Select(h => h.Scope).ToList();
-        if (notPaper.Count > 0 || BoardActive())
+        if (notPaper.Count > 0)
         {
             _releaseNoteResult.Text = mismatched.Count > 0 ? Labels.ReleaseRefusedMismatch(mismatched)
-                : notPaper.Count > 0 ? Labels.ReleaseRefusedNotPaper([.. notPaper.Select(h => h.Scope)])
-                : Labels.ReleaseRefusedBoardActive;
+                : Labels.ReleaseRefusedNotPaper([.. notPaper.Select(h => h.Scope)]);
             _releaseNoteResult.Foreground = Theme.Caution;
             _releaseNoteResult.IsVisible = true;
             ShowHeldForReview();
@@ -1362,6 +1332,9 @@ sealed class BoardComposition
     public TextBlock ShareNow { get; } = Ui.Body("");
     public TextBlock Note { get; } = Ui.With(Ui.Micro(""), t => t.IsVisible = false);
 
+    /// <summary>What the activation does and does not change, in full: shown while its press is armed (<c>U-board-alive-2</c>).</summary>
+    public TextBlock ActivateWhat { get; } = Ui.With(Ui.Micro(Labels.ActivateBoardSeatWhat), t => t.IsVisible = false);
+
     public BoardComposition(Func<BoardReader?> board, Func<decimal, decimal> setShare, Func<string, string, string, BoardSeat> found,
         Func<string, BoardSeat> retire, Func<string, string> activate)
     {
@@ -1391,6 +1364,8 @@ sealed class BoardComposition
         Activate = Ui.Confirm(Labels.ActivateBoardSeatPress, Labels.ActivateBoardSeatConfirm,
             () => Done(() => activate(ActivateSeat.SelectedItem as string ?? "")));
         ActivateSeat.SelectionChanged += (_, _) => Ui.DisarmConfirm(Activate);
+        // THE SECOND PRESS SAYS IN FULL WHAT IT DOES AND DOES NOT CHANGE: the sentence shows while the press is armed, and only then.
+        Ui.Repaints(Activate, (_, armed) => ActivateWhat.IsVisible = armed);
         // A CHOICE THAT MOVED DISARMS THE PRESS ARMED FOR ANOTHER: the second press does what the first one showed, or nothing.
         SeatClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
         ModelClass.SelectionChanged += (_, _) => Ui.DisarmConfirm(Found);
@@ -1415,6 +1390,7 @@ sealed class BoardComposition
             Ui.Spacer(Theme.S2),
             Ui.FieldRow("Dormant seat", ActivateSeat),
             Activate,
+            ActivateWhat,
             Note));
         Update();
     }

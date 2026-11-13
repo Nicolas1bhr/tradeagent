@@ -14,7 +14,7 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// THE OWNER'S "FOR YOU" PAGE AND ITS READS (<c>U-org-surface-b</c>; R24 §§ 4.3, 4.7; ORCHESTRATION §§ 2.5, 2.9): what reached the
 /// root, his words still owed and why, the board's power proposals, and his presses — a veto that only takes away, and an activation
-/// that is his only until a board seat is active. Store-level reads here; the chart-level checks are <see cref="OrgStructureTests"/>'.
+/// that stays his, a board seat active or not (U-board-alive-2). Store-level reads here; the chart-level checks are <see cref="OrgStructureTests"/>'.
 /// </summary>
 public class OwnerInboxTests
 {

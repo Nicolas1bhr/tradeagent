@@ -33,14 +33,15 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// THE OWNER SWITCHES A POSITION'S MODEL (<c>U-seat-models</c>; R25 D8) — IN-PROCESS ONLY: no pipe op, door verb, <c>trade</c> verb or
-    /// board act reaches it (AUTH-001), and only while no board seat is ACTIVE (read through <see cref="Board.BoardReader.AnyActive"/>):
-    /// "yours until the security board is active". <paramref name="model"/> must be one <paramref name="catalogModel"/> accepts — the
+    /// board act reaches it (AUTH-001), A BOARD SEAT ACTIVE OR NOT: the board's acts hold no position's model (the chief's seat is an
+    /// <c>org.chief</c> act), and a power the board has no act for stays his (the orchestrator's ruling of 2026-11-13,
+    /// <c>U-board-alive-2</c>: activating a board seat takes nothing from him). <paramref name="model"/> must be one <paramref name="catalogModel"/> accepts — the
     /// verified catalog's, which this assembly cannot see — so a position is never set onto a model whose tools no check has seen. A
     /// position with a seat of its own keeps its runtime and allowance; one with none is seated on <paramref name="runtime"/> (where its
     /// launch resolves now) at the policy's turn allowance, read strictly, as a chief is. One <see cref="OrgEventKind.Seated"/> event
     /// decided by the owner records it. Returns the model it was set to run on before, or null for none of its own.
     ///
-    /// <para><b>Refused in words, nothing written:</b> a board seat active; a position the chart does not hold or that has ended; the legacy
+    /// <para><b>Refused in words, nothing written:</b> a position the chart does not hold or that has ended; the legacy
     /// pair, whose model is the Owner page's; a model outside the catalog; the model it already runs on; the policy unreadable; a seat the
     /// checks refuse.</para>
     /// </summary>
@@ -48,8 +49,6 @@ public sealed partial class OrgStore
     public string? ChooseSeatModel(string position, string model, Func<string, bool> catalogModel, string? runtime,
         Func<string, bool> knownRuntime, DateTimeOffset at) => db.Write(_ =>
     {
-        if (new Board.BoardReader(db).AnyActive)
-            throw Refused("switching a position's model is the security board's now that a board seat is active.");
         if (Position(position) is not { } row) throw Refused($"the chart holds no position '{position}'.");
         if (row.EndedAt is not null || row.Status == OrgPositionStatus.Ended) throw Refused($"position '{position}' has ended; an ended position runs on no model.");
         if (CouncilRoles.IsKnown(position))

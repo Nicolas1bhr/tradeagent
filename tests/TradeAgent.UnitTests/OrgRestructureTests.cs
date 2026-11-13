@@ -406,12 +406,13 @@ public partial class OrgStructureTests
     }
 
     /// <summary>
-    /// (4b) THE OWNER'S ACTIVATION IS HIS ONLY WHILE NO BOARD SEAT IS ACTIVE: a dormant hire turns active, one <c>activated</c> event
-    /// decided by the owner; an active, ended or unknown position is refused; and once a board seat is active the activation is refused
-    /// in words naming the board, nothing written (R24; the orchestrator's generalised ruling).
+    /// (4b) THE OWNER'S ACTIVATION STAYS HIS WHILE A BOARD SEAT IS ACTIVE: a dormant hire turns active, one <c>activated</c> event
+    /// decided by the owner; an active, ended or unknown position is refused; and with a board seat active his press still activates the
+    /// second hire, decided by him. CHANGED OPENLY (<c>U-board-alive-2</c>, the orchestrator's ruling of 2026-11-13: activating a board seat
+    /// takes nothing from the owner, and the board has no act that activates a position): it was "refused once a board seat is active".
     /// </summary>
     [Fact]
-    public void The_owners_activation_is_his_only_while_no_board_seat_is_active()
+    public void The_owners_activation_stays_his_while_a_board_seat_is_active()
     {
         using var db = Chart();
         var org = new OrgStore(db);
@@ -429,12 +430,10 @@ public partial class OrgStructureTests
         // test host's seam — the only writer of `active` in this build (U-board-b1 item 6); the seat's sealed row still says dormant.
         var seat = new TradeAgent.Core.Board.BoardStore(db).Seats()[0].Id;
         new TradeAgent.Core.Board.BoardStore(db).SetSeatStateUnderTest(seat, TradeAgent.Core.Board.BoardSeatStatus.Active, Now);
-        var before = Written(db);
-        var refused = Assert.Throws<TradeAgentException>(() => org.Activate(dormant.Position.Id, Puppets, 3, Now));
-        Assert.Contains("the security board's now that a board seat is active", refused.Message, StringComparison.Ordinal);
-        Assert.Equal(before, Written(db));
-        Assert.Equal(OrgPositionStatus.Dormant, org.Position(dormant.Position.Id)!.Status);
-        // The refusal read the state table, never the seat's sealed row: that row says dormant for ever.
+        Assert.True(new TradeAgent.Core.Board.BoardReader(db).AnyActive);
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(dormant.Position.Id, Puppets, 3, Now).Status);
+        Assert.Equal(1, Count(db, "org_event", $"kind = 'activated' AND position_id = '{dormant.Position.Id}' AND decider = '{OrgDecider.Owner}'"));
+        // The board reads active from the state table; the seat's sealed row says dormant for ever.
         Assert.Equal(TradeAgent.Core.Board.BoardSeatStatus.Dormant, db.Read(_ =>
         {
             using var c = db.Cmd("SELECT status FROM board_seat WHERE id = $id", ("$id", seat));

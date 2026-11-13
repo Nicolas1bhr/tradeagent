@@ -9,7 +9,7 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// THE ROOT GETS A HEAD (<c>U-org-chief</c>; R24 §§ 4.1, 4.3, Q12; ORCHESTRATION §§ 2.1, 2.3, 2.9): the chief is appointed and replaced by
 /// the owner's in-process press only while no board seat is active, and after that only by a two-seat board act on <c>U-board-b1</c>'s
-/// machinery; the owner removes a chief at any time and restores no one; the chief charters divisions and receives escalations without
+/// machinery; the owner activates a dormant chief and removes a chief at any time, and restores no one; the chief charters divisions and receives escalations without
 /// ever reaching <c>operations</c>, the board or an order. NOTHING HERE REACHES A MODEL: a board seat is made active only through b1's own
 /// seam (<c>BoardStore.SetSeatStateUnderTest</c>), every chief is a puppet or a seat that never launches, and every act is a call the test makes.
 /// </summary>
@@ -216,7 +216,9 @@ public partial class OrgChiefTests(ITestOutputHelper log)
     /// (6) A CHIEF ON A MODEL SEAT STAYS DORMANT WITHOUT A RECORDED PROVEN CELL: the owner's activation of a chief whose declared seat runs a
     /// real model — a CLI, a harness, or a seat nobody declared — is refused while this host records no proven cell, nothing written; a
     /// RECORDED proof lets it through; a removed (revoked) proof refuses the next chief again; a puppet, which runs no model, is exempt; and
-    /// once a board seat is active no activation of a chief is his. RED at base: <c>Activate</c> passed a chief on a CLI seat.
+    /// with a board seat active his activation of a chief still stands, past the same rule. CHANGED OPENLY (<c>U-board-alive-2</c>, the
+    /// orchestrator's ruling of 2026-11-13: the board has an act that appoints a chief, dormant, but none that activates one): it was "once a
+    /// board seat is active no activation of a chief is his". RED at base: <c>Activate</c> passed a chief on a CLI seat.
     /// </summary>
     [Fact]
     public void A_chief_on_a_model_seat_stays_dormant_without_a_recorded_proven_cell()
@@ -248,16 +250,20 @@ public partial class OrgChiefTests(ITestOutputHelper log)
             org.Activate(next, _ => SeatClasses.Harness, 3, Now, Proven)).Message, StringComparison.Ordinal);
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(next)!.Status);
 
-        // A PUPPET RUNS NO MODEL, SO IT IS EXEMPT — and once a board seat is active, no chief's activation is his.
+        // A PUPPET RUNS NO MODEL, SO IT IS EXEMPT — and with a board seat active his activation of a chief still stands, past the same
+        // rule: on a model seat with no proof it stays dormant; on a puppet it turns active, decided by him.
         org.VacateChief(org.Chief(), Now);
         var puppet = org.AppointChief(Puppet, Known, Now).Chief!;
         Assert.Equal(OrgPositionStatus.Active, org.Activate(puppet, _ => SeatClasses.Puppet, 3, Now, Proven).Status);
         org.VacateChief(org.Chief(), Now);
         var later = org.AppointChief(Puppet, Known, Now).Chief!;
         ActivateBoard(db, "board-3");
-        Assert.Contains("the security board's now", Assert.Throws<TradeAgentException>(() =>
-            org.Activate(later, _ => SeatClasses.Puppet, 3, Now, Proven)).Message, StringComparison.Ordinal);
+        Assert.True(new BoardReader(db).AnyActive);
+        Assert.Contains("no proven sealed workspace", Assert.Throws<TradeAgentException>(() =>
+            org.Activate(later, _ => SeatClasses.Harness, 3, Now, Proven)).Message, StringComparison.Ordinal);
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(later)!.Status);
+        Assert.Equal(OrgPositionStatus.Active, org.Activate(later, _ => SeatClasses.Puppet, 3, Now, Proven).Status);
+        Assert.Equal(1, Count(db, "org_event", $"kind='activated' AND position_id='{later}' AND decider='owner'"));
     }
 }
 

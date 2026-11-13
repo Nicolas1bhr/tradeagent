@@ -265,8 +265,8 @@ public class OrganisationPageTests
     /// (e) A POSITION'S MODEL SHOWS ON ITS CARD AND IS SWITCHED BY THE OWNER'S TWO PRESSES (<c>U-seat-models</c>; R25 D8): a position on a verified
     /// seat names its model with its standing ("gpt-6-luna (the default)") and carries one two-step press per other model of the catalog — the
     /// first press arms and switches nothing, a refresh between the presses leaves it armed, the second switches; the card then names the
-    /// fallback and offers the default back. A position the catalog does not govern — or any while a board seat is active, when the list is
-    /// empty — carries no press. RED at base: no press, no list.
+    /// fallback and offers the default back. A position the catalog does not govern — its list empty — carries no press (a board seat
+    /// active or not: U-board-alive-2). RED at base: no press, no list.
     /// </summary>
     [Fact]
     public void A_positions_model_shows_on_its_card_and_the_owners_two_presses_switch_it()

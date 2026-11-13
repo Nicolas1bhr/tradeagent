@@ -363,14 +363,14 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// THE OWNER ACTIVATES A DORMANT POSITION (<c>U-org-verbs-d</c> item 4; survey Q2) — IN-PROCESS ONLY (AUTH-001: no pipe op, door
-    /// verb, <c>trade</c> verb or setting reaches it) and only while no board seat is ACTIVE: a board act on plan capacity with no other
-    /// decider stays his until then (R24; the orchestrator's generalised ruling), and once a seat is active it is the board's, refused
-    /// here in words naming it. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>, and — for any
+    /// verb, <c>trade</c> verb or setting reaches it), A BOARD SEAT ACTIVE OR NOT: the board's acts hold no activation of a position, and a
+    /// power the board has no act for stays his (the orchestrator's ruling of 2026-11-13, <c>U-board-alive-2</c>: activating a board seat
+    /// takes nothing from him), until a unit gives the board that act. Dormant → active and one <c>activated</c> event decided by <see cref="OrgDecider.Owner"/>, and — for any
     /// position but the chief — one <see cref="MissionEventKind.Activated"/> wake to it and one to the head that hired it (<c>U-org-autonomy</c>,
     /// gap 5). It starts nothing: the activation gate still decides every launch (<see cref="PositionActivation"/>), the proven-cell rule unchanged.
     /// <paramref name="declaredClass"/> is the host's declared seat class per position, and <paramref name="seatSetting"/> the owner's
     /// unconfined-seat setting: a position on a counted seat is refused while the ceiling is reached (<see cref="UnconfinedSeatCeiling"/>,
-    /// item 5). Refused in words, nothing written: a board seat active; no such position; one not dormant; one in a closed unit; THE
+    /// item 5). Refused in words, nothing written: no such position; one not dormant; one in a closed unit; THE
     /// CHIEF on a seat that runs a real model — or one nobody declared — while <paramref name="provenCell"/> (null: this host's
     /// <see cref="CellProofStore.HoldsProof"/>) answers no RECORDED proven cell (<c>U-org-chief</c> item 6); the unconfined-seat ceiling
     /// reached.
@@ -379,9 +379,6 @@ public sealed partial class OrgStore
     public OrgPositionRow Activate(string positionId, Func<string, string?> declaredClass, int seatSetting, DateTimeOffset now,
         Func<bool>? provenCell = null) => db.Write(_ =>
     {
-        if (new Board.BoardReader(db).AnyActive)
-            throw Refused($"activating {positionId} is the security board's now that a board seat is active: it is a board act on the "
-                          + "organisation's plan capacity, made by board seats — no longer yours in the app.");
         var row = Position(positionId) ?? throw Refused($"'{positionId}' is no position on the chart.");
         if (row.Status != OrgPositionStatus.Dormant) throw Refused($"{positionId} is {row.Status}: only a dormant position is activated.");
         if (Units().FirstOrDefault(u => u.Id == row.UnitId) is not { Status: not OrgUnitStatus.Closed } unit)

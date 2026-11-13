@@ -63,7 +63,8 @@ sealed record OwnerInboxSources
 /// THE OWNER'S "FOR YOU" PAGE (<c>U-org-surface-b</c>; R24 §§ 4.3, 4.4, 4.7; ORCHESTRATION §§ 2.5, 2.9): what reached the root — the
 /// escalations nobody below could take, as records — his words still owed a turn and why, the board's proposals of its own power
 /// ("applied by nothing"), and his presses: a veto of a board act or of a structural change, each two presses that only ever take
-/// away, and — while no board seat is active — the two-press activation of a dormant position that is not the chief.
+/// away, and — a board seat active or not (the orchestrator's ruling of 2026-11-13) — the two-press activation of a dormant position
+/// that is not the chief.
 ///
 /// <para><b>Claim and measurement apart</b> (INBOX-001): an escalation's reason, a proposal's text, a rationale and his own words are
 /// printed in quotation marks after their writer (<see cref="OrgText.Claim"/>); a block reason, a status, a skipped head and a veto's
@@ -185,15 +186,9 @@ sealed class OwnerInboxPage
             }, failures);
         }
 
-        // THE OWNER'S ACTIVATION IS HIS ONLY WHILE NO BOARD SEAT IS ACTIVE — asked ONLY of BoardReader.AnyActive (the seam ruling of
-        // 2026-10-25), and a board that cannot be read answers active: nothing his only until the board is active is offered over a
-        // board this build cannot read.
-        var boardActive = true;
-        if (board is not null)
-            try { boardActive = board.AnyActive; }
-            catch (Exception ex) { failures.Add(ex.Message); }
-        _activateWhose.Text = boardActive ? Labels.ActivateIsTheBoards : Labels.ActivateIsYoursUntilTheBoard;
-        ActivateCards.IsVisible = !boardActive;
+        // THE OWNER'S ACTIVATION STAYS HIS, A BOARD SEAT ACTIVE OR NOT (the orchestrator's ruling of 2026-11-13, U-board-alive-2): the board
+        // has no act that activates a position, and activating a board seat takes nothing from him that the board has no act for. So the
+        // page asks the board nothing here; the store still refuses what is not dormant, and every launch still passes the activation gate.
         if (org is not null && _sources.Activate is not null)
             Read(() =>
             {
@@ -324,7 +319,7 @@ sealed class OwnerInboxPage
         return (Ui.Col(Theme.S1, title, words, press), Fill);
     }
 
-    /// <summary>A DORMANT POSITION, NOT THE CHIEF: his two-press activation, while no board seat is active.</summary>
+    /// <summary>A DORMANT POSITION, NOT THE CHIEF: his two-press activation, a board seat active or not.</summary>
     (Control, Action<OrgPositionRow>) DormantCard(OrgPositionRow first)
     {
         var positionId = first.Id;

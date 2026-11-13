@@ -240,7 +240,7 @@ public class HarnessRoleTests : IDisposable
     /// <summary>
     /// THE ROW OFFERS THE TWO KINDS OF THING AND NOTHING ELSE, and each button hands back exactly what
     /// the settings row stores — null for "the AI tool the owner chose", the harness id for the other.
-    /// (On the owner's page since U-settings-shed, while no board seat is active — the orchestrator's ruling.)
+    /// (On the owner's page since U-settings-shed, a board seat active or not — the orchestrator's rulings of 2026-10-23 and 2026-11-13.)
     /// </summary>
     [Fact]
     public void The_owners_page_offers_the_ai_tool_and_the_apps_own_worker()
