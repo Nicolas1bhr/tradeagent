@@ -211,7 +211,8 @@ sealed class BoardPage
             row.Value.Text = ValueWords(words, field.Value);
             var setBy = history.FirstOrDefault(v => v.Version == field.SetByVersion);
             row.Source.Text = Labels.BoardFieldSource(founding.Contains(field.SetByVersion), field.SetByVersion,
-                setBy is null ? null : Since(setBy.WrittenAt));
+                setBy is null ? null : Since(setBy.WrittenAt))
+                + (Labels.BoardFieldMeans(field.Name, field.Value) is { } means ? "\n" + means : "");
             row.Root.IsVisible = true;
             shown.Add(field.Name);
         }
@@ -330,7 +331,7 @@ sealed class BoardPage
     {
         "mode" => Enum.TryParse<TradingMode>(value, ignoreCase: false, out var m) && Enum.IsDefined(m) ? Ui.ModeLabel(m) : value,
         "live_activated" => value == "true" ? "on" : value == "false" ? "off — no real money" : value,
-        "risk.max_order_quantity" => Labels.MaxOrderQuantityWords(value),
+        "risk.max_order_quantity" => Labels.MaxOrderQuantityValue(value),
         "risk.max_notional_per_order" or "risk.max_loss_per_trade" or "risk.max_daily_loss" =>
             value == "0" ? "0 — not enforced" : value,
         "risk.instrument_allowlist" => value == "none" ? "none — " + Labels.NoInstrumentAllowedHere : value,

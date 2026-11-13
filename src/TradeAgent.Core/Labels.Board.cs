@@ -100,19 +100,35 @@ public static partial class Labels
     /// is the whole of it and no more; its closes are never cut by it. A bare "0.5" said the first and hid the second. The figure is shown as the
     /// policy holds it; one that is not a number is shown as it is.
     /// </summary>
-    public static string MaxOrderQuantityWords(string value)
+    public static string MaxOrderQuantityWords(string value) =>
+        MaxOrderQuantityShare(value) is { } share ? $"{MaxOrderQuantityValue(value)}; {share}" : MaxOrderQuantityValue(value);
+
+    /// <summary>The figure's first reading, short enough for the Board page's value column: units for one order of the owner's or an agent's.</summary>
+    public static string MaxOrderQuantityValue(string value)
     {
         if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var figure))
             return value;
-        if (figure <= 0m) return $"{value} — no order may open; a paper experiment may still close what it holds";
+        if (figure <= 0m) return $"{value} — no order may open";
+        return $"{value} {(figure == 1m ? "unit" : "units")} for one order of yours or an agent's";
+    }
+
+    /// <summary>The figure's second reading, a paper experiment's opener as a share of its allowance on the pair — or null for a figure that is no number.</summary>
+    public static string? MaxOrderQuantityShare(string value)
+    {
+        if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var figure))
+            return null;
+        if (figure <= 0m) return "a paper experiment may still close what it holds";
         var founding = Board.BoardFounding.V1.Risk.MaxOrderQuantity;
         var share = figure >= founding
             ? "the whole of its allowance on the pair, and no more"
             : figure / founding == 0.5m ? "half of its allowance on the pair"
             : $"{(figure / founding * 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} % of its allowance on the pair";
-        return $"{value} {(figure == 1m ? "unit" : "units")} for one order of yours or an agent's; a paper experiment's opening order may use "
-               + $"{share} (its closes are never cut by this figure)";
+        return $"a paper experiment's opening order may use {share} (its closes are never cut by this figure)";
     }
+
+    /// <summary>What a field's figure means beyond its value, for the line under its label on the Board page: only the one-order figure has a second reading.</summary>
+    public static string? BoardFieldMeans(string path, string value) =>
+        path == "risk.max_order_quantity" && MaxOrderQuantityShare(value) is { } share ? char.ToUpperInvariant(share[0]) + share[1..] + "." : null;
 
     /// <summary>What a board act's new figure means, where the figure alone would mislead: the one-order figure (<see cref="MaxOrderQuantityWords"/>).</summary>
     public static string BoardActMeans(string field, string to) => field switch
