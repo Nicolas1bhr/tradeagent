@@ -622,6 +622,13 @@ public sealed class MainWindow : Window
             else button.Classes.Remove("on");
         }
         foreach (var (key, control) in _pages) control.IsVisible = key == page;
+        // BROUGHT UP TO DATE AS IT IS SHOWN (U-perf-scan): a page the tick left alone while it was hidden is never shown stale.
+        _shown = page;
+        if (_lastStatus is { } status)
+        {
+            try { foreach (var shown in PagesToUpdate(page)) UpdatePage(shown, status); }
+            catch (Exception ex) { ShowProblem(ex is TradeAgentException t ? t.Info.UserMessage : ex.Message); }
+        }
         if (page == Page.Chat) _chat?.FocusComposer();
     }
 
@@ -665,20 +672,44 @@ public sealed class MainWindow : Window
         RefreshUpdateBanner(status);
         UpdateRailHealth();
 
-        _chat?.Update();
-        _organisation?.Update();
-        _work?.Update();
-        _costs?.Update();
-        _dashboard?.Update(status);
-        _boardPage?.Update();
-        _report?.Update();
-        _inbox?.Update();
-        _owner?.Update(status);
-        _forYou?.Update();
-        _settings?.Update(status);
-        _activity?.Update();
-        _checks?.Update();
-        _oversightPage?.Update();
+        // THE PAGE THE OWNER IS LOOKING AT, NOT ALL FOURTEEN (U-perf-scan, R28 G3): every tick rebuilt every page's read — the scorecards
+        // among them — on this thread, for pages nobody could see. A page is brought up to date when it is shown (Select) and on every
+        // tick while it is.
+        _lastStatus = status;
+        foreach (var page in PagesToUpdate(_shown)) UpdatePage(page, status);
+    }
+
+    /// <summary>The page shown in the page host; the rail's first until the owner presses another.</summary>
+    Page _shown = Page.Chat;
+
+    /// <summary>The last tick's status, so a page selected between ticks is brought up to date at once.</summary>
+    GatewayStatus? _lastStatus;
+
+    /// <summary>
+    /// THE PAGES ONE TICK UPDATES WHILE <paramref name="shown"/> IS SHOWN (<c>U-perf-scan</c>): that page, and the Settings page with the
+    /// owner's page, whose connection, evidence and update sections are the Settings page's own controls (<c>U-settings-shed</c>).
+    /// </summary>
+    internal static IReadOnlyList<Page> PagesToUpdate(Page shown) => shown == Page.Owner ? [Page.Owner, Page.Settings] : [shown];
+
+    void UpdatePage(Page page, GatewayStatus status)
+    {
+        switch (page)
+        {
+            case Page.Chat: _chat?.Update(); break;
+            case Page.Organisation: _organisation?.Update(); break;
+            case Page.Work: _work?.Update(); break;
+            case Page.Costs: _costs?.Update(); break;
+            case Page.Dashboard: _dashboard?.Update(status); break;
+            case Page.Board: _boardPage?.Update(); break;
+            case Page.Report: _report?.Update(); break;
+            case Page.Inbox: _inbox?.Update(); break;
+            case Page.Owner: _owner?.Update(status); break;
+            case Page.ForYou: _forYou?.Update(); break;
+            case Page.Settings: _settings?.Update(status); break;
+            case Page.Activity: _activity?.Update(); break;
+            case Page.Checks: _checks?.Update(); break;
+            case Page.Oversight: _oversightPage?.Update(); break;
+        }
     }
 
     /// <summary>
