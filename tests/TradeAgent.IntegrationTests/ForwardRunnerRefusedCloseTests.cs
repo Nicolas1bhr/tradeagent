@@ -275,12 +275,15 @@ public partial class ForwardRunnerTests
     ///
     /// <para><b>RED on the base</b>: the account ends short one. <b>Mutant (ii)</b> — item 3 removed — goes red
     /// here.</para>
+    ///
+    /// <para><b>Changed in the open (<c>U-paper-oco</c>):</b> on a book with no one-cancels-other, so the runner's own cancel is what is
+    /// proved; the app's paper book now cancels the loser in the winner's fill and no cancel is needed there.</para>
     /// </summary>
     [Fact]
     public async Task A_losing_stop_whose_cancel_a_gate_refused_is_cancelled_on_the_next_flat_minute_and_no_paper_short_opens()
     {
         await using var rig = await ReadyAsync(
-            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
+            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"), oneCancelsOther: false);
 
         await MinuteAsync(rig, 1, 99m, 100m, 98m, 100m);            // signalled from a close of 100: stop 95, target 101
         await MinuteAsync(rig, 2, 100m, 100.5m, 99.5m, 100m);       // the minute already in progress

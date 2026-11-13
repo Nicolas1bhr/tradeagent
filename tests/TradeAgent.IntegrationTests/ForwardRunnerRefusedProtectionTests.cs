@@ -483,6 +483,42 @@ public partial class ForwardRunnerTests
         Assert.Null(Assert.Single(rig.Gw.DeploymentReadings()).Unprotected);
     }
 
+    /// <summary>
+    /// A STOP THAT WORKS OUT AT NO PRICE IS A REFUSED STOP, NOT AN UNDECLARED ONE (<c>U-paper-oco</c>, R31 A3-3): a fixed stop at 10 signalled at a close of
+    /// 100 is 90 below the reference, and an entry filled at 50 puts it at −40, which is not a price. Nothing can be sent — and the run's own record says
+    /// so, a refused stop operation in words, so the position reads UNPROTECTED on the one line every surface shows. The target rests as declared.
+    ///
+    /// <para><b>RED at the base</b>: no stop operation at all — the reading took the stop for one the program never declared, and the line said nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_stop_that_works_out_at_no_price_reads_unprotected_rather_than_never_declared()
+    {
+        await using var rig = await ReadyAsync(ProgramText("stop fixed 10\ntarget percent 1\n", "entry when close > 99"));
+        rig.Bar(1, 99m, 100m, 98m, 100m);
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(2, 100m, 100.5m, 99.5m, 100m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(3, 50m, 100.2m, 49.8m, 100m);     // the entry fills at THIS open, 50; the close keeps the exit rule quiet
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        await rig.Runner.AdvanceAsync();
+
+        Assert.Equal(1m, await Position(rig));
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        foreach (var o in ops) log.WriteLine($"{o.Kind} {o.State} {o.Answer} {o.IntentJson}");
+        var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
+        Assert.Equal(DeploymentOpState.Refused, stop.State);
+        Assert.Contains("not a price", stop.Answer, StringComparison.Ordinal);
+        Assert.Null(rig.Gw.Requests.Get(stop.RequestId));
+
+        var line = LineOf(rig);
+        log.WriteLine(line);
+        Assert.Contains("UNPROTECTED", line, StringComparison.Ordinal);
+        Assert.Contains("no stop", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("no stop and no target", line, StringComparison.Ordinal);
+    }
+
     /// <summary>A POSITION THAT DECLARED NO PROTECTION IS NOT AN UNPROTECTED ONE: nothing was refused, so nothing is said.</summary>
     [Fact]
     public async Task A_program_that_declared_no_protection_does_not_read_unprotected()

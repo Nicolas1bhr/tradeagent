@@ -166,11 +166,13 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
     /// <paramref name="envelopeQuantity"/> and <paramref name="envelopeNotional"/> are the owner's grant — and so the
     /// allocation's ceilings, which the app's own policy copies from it — 5 and 5,000,000 unless a test is about them.
     /// <paramref name="seed"/> false leaves the installation with no grant, no version and no run, for a test that
-    /// writes its own (<c>PaperBooksTests</c>: two runs on one symbol).
+    /// writes its own (<c>PaperBooksTests</c>: two runs on one symbol). <paramref name="oneCancelsOther"/> false gives the book no
+    /// one-cancels-other between a run's resting sells (<c>U-paper-oco</c>), for a test of the runner's OWN cancel of a loser — what a
+    /// platform without that link relies on; the app's paper book cancels the loser in the winner's fill.
     /// </summary>
     internal static async Task<Rig> ReadyAsync(string program, string? bookFile = null, Database? db = null,
         DateTimeOffset? origin = null, Func<PaperConnector, ITradingConnector>? through = null,
-        decimal envelopeQuantity = 5m, decimal? envelopeNotional = 5_000_000m, bool seed = true)
+        decimal envelopeQuantity = 5m, decimal? envelopeNotional = 5_000_000m, bool seed = true, bool oneCancelsOther = true)
     {
         db ??= TestEnv.NewDb();
 
@@ -191,7 +193,8 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
             Source = source,
             Clock = () => clock.At,
             BookFile = book,
-            Catalogue = Catalogue()
+            Catalogue = Catalogue(),
+            OneCancelsOtherOffUnderTest = !oneCancelsOther
         });
 
         // THE GATEWAY DRIVES THE PAPER CONNECTOR — or, for a test that reads what reaches it, a pass-through around it.
@@ -363,11 +366,16 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
 
     // ---------------------------------------------------------------- (b)
 
+    /// <summary>
+    /// (b) THE STOP AND TARGET REST, AND THE RUNNER CANCELS THE LOSER. <b>Changed in the open (<c>U-paper-oco</c>):</b> on a book with no
+    /// one-cancels-other, which is what proves the runner's own cancel; the app's paper book now cancels the loser in the winner's fill
+    /// (<see cref="With_the_paper_books_one_cancels_other_the_loser_goes_in_the_winners_fill_and_no_cancel_is_sent"/>).
+    /// </summary>
     [Fact]
     public async Task The_stop_and_target_rest_after_the_entry_fills_and_the_loser_is_cancelled_when_the_other_fills()
     {
         await using var rig = await ReadyAsync(
-            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
+            ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"), oneCancelsOther: false);
 
         rig.Bar(1, 99m, 100m, 98m, 100m);             // signalled from a close of 100: stop 95, target 101
         await rig.Runner.AdvanceAsync();
@@ -418,6 +426,48 @@ public partial class ForwardRunnerTests(ITestOutputHelper log)
         Assert.Equal(ExecutionState.CANCELLED, stopOrder.State);
         Assert.Single(rig.Gw.Deployments.OpsOf(rig.Deployment.Id),
             o => o.Kind == DeploymentOpKind.Cancel);
+    }
+
+    /// <summary>
+    /// (b2) ON THE APP'S PAPER BOOK THE LOSER GOES IN THE WINNER'S OWN FILL (<c>U-paper-oco</c>, R31 A3-1): the target fills and the stop is
+    /// CANCELLED in the same commit, unfilled, saying why; the runner then finds nothing of the run still working and sends no cancel.
+    /// </summary>
+    [Fact]
+    public async Task With_the_paper_books_one_cancels_other_the_loser_goes_in_the_winners_fill_and_no_cancel_is_sent()
+    {
+        await using var rig = await ReadyAsync(ProgramText("stop percent 5\ntarget percent 1\n", "entry when close > 99"));
+
+        rig.Bar(1, 99m, 100m, 98m, 100m);
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(2, 100m, 100.5m, 99.5m, 100m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(3, 100m, 100.6m, 99.6m, 100.2m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        await rig.Runner.AdvanceAsync();
+        var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
+        var stop = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Stop);
+        var target = Assert.Single(ops, o => o.Kind == DeploymentOpKind.Target);
+
+        rig.Bar(4, 100.5m, 100.9m, 100.2m, 100.8m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        rig.Bar(5, 101m, 101.5m, 100.8m, 101.2m);
+        await rig.Gw.RefreshHealthAsync();
+        await rig.Runner.AdvanceAsync();
+        await rig.Runner.AdvanceAsync();
+        Show(log, rig);
+
+        var wire = await Wire(rig);
+        var targetOrder = Assert.Single(wire, o => o.ClientOrderId == TradingGateway.ClientOrderIdFor(target.RequestId));
+        var stopOrder = Assert.Single(wire, o => o.ClientOrderId == TradingGateway.ClientOrderIdFor(stop.RequestId));
+        log.WriteLine($"target {targetOrder.State} / stop {stopOrder.State}: {stopOrder.RejectReason}");
+        Assert.Equal(ExecutionState.FILLED, targetOrder.State);
+        Assert.Equal((ExecutionState.CANCELLED, 0m), (stopOrder.State, stopOrder.FilledQuantity));
+        Assert.Contains("one-cancels-other", stopOrder.RejectReason, StringComparison.Ordinal);
+        Assert.DoesNotContain(rig.Gw.Deployments.OpsOf(rig.Deployment.Id), o => o.Kind == DeploymentOpKind.Cancel);
+        Assert.Equal(ExecutionState.CANCELLED, rig.Gw.Requests.Get(stop.RequestId)!.State);
     }
 
     // ---------------------------------------------------------------- (c)

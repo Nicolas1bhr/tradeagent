@@ -55,6 +55,13 @@ public sealed record PaperConnectorOptions
     /// connector was built would go on offering what the venue said that morning.
     /// </summary>
     public Func<VenueCatalogRead>? CatalogueNow { get; init; }
+
+    /// <summary>
+    /// A TEST SEAM, never set in the app: a book whose run's resting sells are NOT one-cancels-other (<c>U-paper-oco</c>), so the
+    /// runner's own cancel of a loser — what protects a run on a platform with no such link — can still be proved on this book.
+    /// Every other rule of a run's book holds with it set.
+    /// </summary>
+    internal bool OneCancelsOtherOffUnderTest { get; init; }
 }
 
 /// <summary>
@@ -567,7 +574,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
     /// (<c>U-paper-oco</c>): one run's stop does not hold back another run's target.</para>
     ///
     /// <para><b>Every bar is its own call, in open-time order, and a run's fill cancels its other resting
-    /// sells in that fill's commit</b> (<see cref="PaperBook.TryFill(PaperFill, out bool, out IReadOnlyList{string})"/>),
+    /// sells in that fill's commit</b> (<see cref="PaperBook.TryFill(PaperFill, out bool, out IReadOnlyList{string}, bool)"/>),
     /// so when several minutes settle in one read the first of a run's stop and target reached is the
     /// only one that fills.</para>
     /// </summary>
@@ -646,7 +653,7 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
 
         // The constraint decides. A re-served bar gets here and writes nothing at all — and a sell beyond what is held
         // at this bar is not filled either: it ends REJECTED, and that is said once, as a fill is.
-        var filled = Book.TryFill(attempt, out var rejected, out var cancelled);
+        var filled = Book.TryFill(attempt, out var rejected, out var cancelled, oneCancelsOther: !_opt.OneCancelsOtherOffUnderTest);
         if (rejected)
         {
             OrderChanged?.Invoke(Book.ByConnectorOrderId(order.ConnectorOrderId)!);

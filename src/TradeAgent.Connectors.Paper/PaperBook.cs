@@ -418,7 +418,7 @@ public sealed class PaperBook : IDisposable
     /// key's to answer, before the holding is read, so a sell that emptied the book is never rejected by its
     /// own fill. <paramref name="rejected"/> says which of the two a null was.</para>
     /// </summary>
-    public PaperFill? TryFill(PaperFill fill, out bool rejected) => TryFill(fill, out rejected, out _);
+    public PaperFill? TryFill(PaperFill fill, out bool rejected) => TryFill(fill, out rejected, out _, oneCancelsOther: true);
 
     /// <summary>
     /// <see cref="TryFill(PaperFill, out bool)"/>, and THE RUN'S OWN BOOK INSIDE THE ACCOUNT'S (<c>U-paper-oco</c>, R31 A3-1). One paper
@@ -432,13 +432,13 @@ public sealed class PaperBook : IDisposable
     /// REJECTED, unfilled, in words, exactly as a sell beyond the account's holding is.</item>
     /// <item><b>A run's resting sells are one-cancels-other.</b> When one of them — a stop or a target — fills, every other resting
     /// sell of the same run on that symbol still working is CANCELLED in the fill's own commit, and <paramref name="cancelled"/> names
-    /// them. The runner cancelled the loser too, but only on the live minute after the fill landed, and when several minutes settle in
+    /// them (<paramref name="oneCancelsOther"/> false only under a test seam: <c>PaperConnectorOptions.OneCancelsOtherOffUnderTest</c>). The runner cancelled the loser too, but only on the live minute after the fill landed, and when several minutes settle in
     /// one read the loser's level can be reached before then. A market sell cancels nothing: the runner takes protection off before an
     /// exit goes, and whatever it missed is refused by the rule above rather than filled on another run.</item>
     /// </list>
     /// The account's own orders — any id that is not a run's — keep exactly the rules they had.
     /// </summary>
-    public PaperFill? TryFill(PaperFill fill, out bool rejected, out IReadOnlyList<string> cancelled)
+    public PaperFill? TryFill(PaperFill fill, out bool rejected, out IReadOnlyList<string> cancelled, bool oneCancelsOther)
     {
         rejected = false;
         cancelled = [];
@@ -531,7 +531,7 @@ public sealed class PaperBook : IDisposable
             ApplyToPosition(tx, fill);
             if (fill.Fee != 0m) AddTo(tx, "fees", fill.Fee);
 
-            if (fill.Side == OrderSide.Sell && holder is not null && IsResting(tx, fill.ClientOrderId))
+            if (oneCancelsOther && fill.Side == OrderSide.Sell && holder is not null && IsResting(tx, fill.ClientOrderId))
                 cancelled = CancelTheRunsOtherRestingSells(tx, holder, fill);
 
             tx.Commit();

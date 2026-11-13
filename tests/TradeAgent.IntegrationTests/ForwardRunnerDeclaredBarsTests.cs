@@ -197,11 +197,14 @@ public partial class ForwardRunnerTests
     /// <para><b>RED on the base</b>: the run was ended before its first bar. <b>Mutant (ii)</b> — the cancel
     /// made only on a minute a declared bar closes on — goes red here: the stop is still working at the fall,
     /// fills, and the account is short one.</para>
+    ///
+    /// <para><b>Changed in the open (<c>U-paper-oco</c>):</b> on a book with no one-cancels-other, so the runner's own cancel is what is
+    /// proved; the app's paper book now cancels the loser in the winner's fill and no cancel is needed there.</para>
     /// </summary>
     [Fact]
     public async Task The_losing_protective_order_is_cancelled_within_one_minute_and_no_paper_short_opens()
     {
-        await using var rig = await ReadyAsync(HourlyText("stop percent 5\ntarget percent 1\n"));
+        await using var rig = await ReadyAsync(HourlyText("stop percent 5\ntarget percent 1\n"), oneCancelsOther: false);
 
         await EnteredAsync(rig);
         var ops = rig.Gw.Deployments.OpsOf(rig.Deployment.Id);
@@ -456,12 +459,16 @@ public partial class ForwardRunnerTests
     /// read that refusal as an order in flight from then on, until <c>U-runner-refused-close</c> changed this
     /// transcript on purpose, in two places and no others: minute 12's second pass reads no order in flight, and
     /// the program's entry on minute 12 is written and at the wire.</para>
+    ///
+    /// <para><b>Changed in the open (<c>U-paper-oco</c>):</b> the transcript is the runner's, so it is taken on a book with no
+    /// one-cancels-other, where the runner's own cancel of the loser is what the transcript pinned. On the app's paper book the loser
+    /// now goes in the winner's fill and minute 5 writes no cancel; nothing else about a one-minute program moved.</para>
     /// </summary>
     [Fact]
     public async Task A_bars_1m_deployment_behaves_exactly_as_before()
     {
         await using var rig = await ReadyAsync(
-            ProgramText("stop percent 5\ntarget percent 1\nmax_hold_bars 3\n", "entry when close > 99"));
+            ProgramText("stop percent 5\ntarget percent 1\nmax_hold_bars 3\n", "entry when close > 99"), oneCancelsOther: false);
 
         (decimal Open, decimal High, decimal Low, decimal Close)[] minutes =
         [

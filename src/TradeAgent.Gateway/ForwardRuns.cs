@@ -731,22 +731,31 @@ public sealed class ForwardRuns
         var request = Deployments.RequestIdFor(deployment.Id, bar.OpenTime, seq);
         if (!live) return (request, false);
 
-        if (Sized(deployment, bar, quantity, $"the {kind}'s size") is not { } sized) return (null, false);
-        if (level <= 0m)
-        {
-            NoTrade(deployment, bar, quantity,
-                FormattableString.Invariant(
-                    $"the declared {kind} works out at {level} from this fill, which is not a price"));
-            return (null, false);
-        }
-
-        var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, type, sized,
+        var sized = Sized(deployment, bar, quantity, $"the {kind}'s size", out var unsized);
+        var intent = new PlaceIntent(deployment.Symbol, OrderSide.Sell, type, sized ?? quantity,
             type == OrderType.Limit ? level : null, type == OrderType.Stop ? level : null,
             TimeInForce.Day, $"deployment:{deployment.Id} {kind}")
         {
             Intent = OrderIntent.Close,
             StrategyVersionId = deployment.VersionId
         };
+
+        // A STOP OR TARGET THAT CANNOT BE SENT IS A REFUSED ONE, ON THE RUN'S OWN RECORD (`U-paper-oco`, R31 A3-3): a size that rounds down
+        // to nothing, or a level this fill puts at no price. It used to write nothing but a log line, so the reading took the kind for one
+        // the program never declared and the position stood with no stop and no surface saying UNPROTECTED. Now it is an operation, refused
+        // in words with nothing sent, which every reading of a missing protection already reads (TradingGateway.ProtectionMissing), and
+        // which is asked again on the same bounded clock as any refusal — it carries the level, so the ask is the same one.
+        var why = unsized ?? (level <= 0m
+            ? FormattableString.Invariant($"the declared {kind} works out at {level} from this fill, which is not a price")
+            : null);
+        if (why is not null)
+        {
+            if (unsized is null) NoTrade(deployment, bar, quantity, why);
+            _deployments.Plan(new DeploymentOpRow(request, deployment.Id, bar.OpenTime, kind, Json.Write(intent),
+                DeploymentOpState.Planned, null, _now(), null));
+            _deployments.Refuse(request, $"nothing was sent: {why}", _now());
+            return (request, true);
+        }
 
         await _gateway.RunDeploymentIntentAsync(deployment, request, kind, bar.OpenTime, intent, ct);
 
@@ -932,22 +941,30 @@ public sealed class ForwardRuns
     /// that could not have been taken. Out of the box that list is empty, so a run on an installation
     /// whose owner has recorded no venue row places nothing and says why.</para>
     /// </summary>
-    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what)
+    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what) =>
+        Sized(deployment, bar, quantity, what, out _);
+
+    /// <summary><see cref="Sized(StrategyDeploymentRow, KlineBar, decimal, string)"/>, and the reason in words when there is no order to place.</summary>
+    decimal? Sized(StrategyDeploymentRow deployment, KlineBar bar, decimal quantity, string what, out string? why)
     {
         if (Increment(deployment.Symbol) is not { } step)
         {
-            NoTrade(deployment, bar, quantity,
-                $"this installation's venue catalogue holds no VERIFIED instrument '{deployment.Symbol}', "
-                + "so there is no quantity increment to round a size down to");
+            why = $"this installation's venue catalogue holds no VERIFIED instrument '{deployment.Symbol}', "
+                  + "so there is no quantity increment to round a size down to";
+            NoTrade(deployment, bar, quantity, why);
             return null;
         }
 
         var sized = quantity <= 0m ? 0m : decimal.Truncate(quantity / step) * step;
-        if (sized > 0m) return sized;
+        if (sized > 0m)
+        {
+            why = null;
+            return sized;
+        }
 
-        NoTrade(deployment, bar, quantity,
-            FormattableString.Invariant(
-                $"{what} came to {quantity}, which rounds down to nothing at the venue's quantity increment of {step}"));
+        why = FormattableString.Invariant(
+            $"{what} came to {quantity}, which rounds down to nothing at the venue's quantity increment of {step}");
+        NoTrade(deployment, bar, quantity, why);
         return null;
     }
 
