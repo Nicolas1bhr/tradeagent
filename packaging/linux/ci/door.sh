@@ -105,6 +105,7 @@ check "both units' MainPID are unchanged after the logins ($(pids))" "a unit res
 # ---- 3. the kit's own password-only change -------------------------------------------------------------------------
 note "3. the kit's password-only change (install.sh --vnc-pass-stdin, the release that runs)"
 before="$(pids)"
+# shellcheck disable=SC2024 # the redirect is the evidence file, the runner's own: only the kit runs as root
 printf '%s\n' "$pw_c" | sudo "$repo/packaging/linux/install.sh" --tarball "$tarball" --address "$address" --zone Europe/Brussels --vnc-pass-stdin \
     > "$out/door-kit.txt" 2>&1
 rc=$?
