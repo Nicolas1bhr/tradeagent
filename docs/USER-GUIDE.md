@@ -943,9 +943,68 @@ put it there — the card says so, and an administrator of the computer can move
 *Not walked on a Windows 11 laptop yet: the rule and the card are proven on the Windows Server that
 TradeAgent's checks run on, which has no such folders of its own.*
 
-### The AI is two roles, one at a time
+### Your chief and the organisation
 
-What you talk to on the **Chat** page is the **Operations Director**. It chairs: your words reach it
+TradeAgent's AI is an organisation, and at its head sits **the chief**. Under it the chief can set up
+units and hire positions into them — the organisation grows only as far as current work needs. All of it
+is on the **Organisation** page: the chart, and the chief's own card.
+
+**Appointing and activating the chief.** On the chief's card, first choose the seat the chief runs on —
+each button names an AI program and a model — then press **Appoint a chief**. Its second press appoints
+one, *dormant*: it does nothing until you press **Activate**, again two presses. A chief on a real model
+is activated only once TradeAgent has proven, on this computer, that the AI's sealed workspace holds;
+until then the press says so and nothing changes. **Replace the chief** ends the chief, cancels its open
+mandates and appoints a new one on the seat you chose; **Remove the chief** ends it and cancels its open
+mandates, and nobody takes its place. Both are two presses. All four are yours until the security board
+is active; from then the board appoints and replaces the chief by an act two of its seats make, and you
+can still remove it.
+
+**Once a chief is active, the Chat page is the chief's.** What you type is recorded for the chief, and
+the chat says so under your words: the chief reads them at the start of its next turn, and its answer
+shows on the same page. Your words reach it as information; your own controls stay yours, in the app.
+**Stop** on the Chat page still stops a turn of the chief's that is running. The Operations Director
+and the Research Director, described below, stay asleep while a chief is active.
+
+**What the chief may do on its own.** It may charter a unit under its own and hire positions into the
+units under it. Each of those is written down with the reasons and at least one forecast, inside the
+organisation's bounds — among them, no more than two units chartered, closed or merged in seven days,
+and never a seventh division — or it is refused in words and nothing is written. A position it hires
+activates itself only where TradeAgent admits it: once TradeAgent has proven the AI's sealed workspace
+on this computer, and with room for one of its turns inside the budgets in force. Otherwise it stays
+dormant and waits under **Positions waiting to be activated** on the **For you** page. A unit chartered
+or closed, or a position hired or retired, by the organisation can be vetoed under **Changes to the
+chart you can veto** on that page, for as long as the chart still lets it be undone; a veto puts the
+chart back. The chief places no order: only the Operations
+Director can send one, and what trades on paper is a tested, frozen strategy, never an AI's answer.
+
+**When the chief wakes.** It takes a turn only while the AI works on its own (see above). Then it wakes
+when it asks to be woken, when work is addressed to it, every 4 hours while no work is moving and it has
+not asked, and otherwise at its ceiling — 24 hours after its last turn. Those figures are the security
+board's, shown on the **Board** page as *The longest a head waits between looks* and *The shortest wait
+before a seat is woken again*; the app's founding values stand until the board decides. The 4 hours never
+goes below what this version ships with, whatever the board sets.
+
+**Wake the chief once.** Beside an active chief, this press gives it one turn now, on your plan, so you
+can watch its first turn instead of waiting for its ceiling. The first press shows the whole sentence of
+what the second will do, including what wakes the chief after it; nothing else is started. One press is
+one wake: until that turn has run, it raises no other. It is refused, in words, while the AI is not
+started or is paused. **To stop the chief**: **Pause the AI** on the Dashboard, or **Remove the chief**
+on its card, which gives the Operations Director — and your chat — back.
+
+**The AI's helpers and the internet, on Windows.** The positions the chief hires work in sealed
+workspaces, and on Windows those start with no internet. **Let the AI's helpers reach secure websites**,
+on the Organisation page, lets them reach secure websites (port 443) and nothing else: one press, then
+Windows asks once whether to allow the change — click Yes — and TradeAgent checks it in each of the AI's
+eight sealed workspaces on this computer before it says so. If you click No, they keep working with no
+internet, and you can press again whenever you like. One thing to expect once it is on: a program inside
+a sealed workspace that checks whether a website's certificate has been withdrawn can fail that check,
+because the check is made over a port the rule keeps closed. TradeAgent's own market data and downloads,
+and your AI sign-in, happen outside those workspaces, so this does not touch them.
+
+### Before there is a chief: the AI is two roles, one at a time
+
+Until you appoint and activate a chief — and again after you remove one — what you talk to on the
+**Chat** page is the **Operations Director**. It chairs: your words reach it
 first, before anything else it is told, and it decides what happens with what the other one finds.
 
 Beside it is a **Research Director** — hypotheses, data, backtests. It never talks to you and it
