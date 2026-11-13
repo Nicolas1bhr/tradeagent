@@ -92,20 +92,99 @@ public class PaperPairsAfterSetupTests(ITestOutputHelper log)
     [Fact]
     public async Task A_pair_setup_verifies_after_onboarding_fills_its_entry_with_no_restart()
     {
-        using var db = TestEnv.NewDb();
+        await using var app = await EveryPairEnteredAsync();
+    }
+
+    /// <summary>
+    /// A CLOSE OF A HELD PAIR IS NEVER REFUSED BY AN INSTRUMENT-LIST MISS (<c>U-paper-oco</c>, R31 A3-2): every pair is entered as above, and then
+    /// eight days pass with no instrument check — every pair's lapses, so the served list is empty and the four pairs the founding list reaches
+    /// only through it are on no list at all. Every program then exits. A close reduces risk and approves no instrument: each run's exit is sized,
+    /// sent, allowed and filled, and every book is flat. Opening is still refused: nothing re-enters while the list is empty.
+    ///
+    /// <para><b>RED at the base</b>: every exit wrote nothing — the runner had no verified increment to size a close by — and every run stayed long.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_held_pair_whose_check_lapsed_still_closes_and_nothing_reopens()
+    {
+        await using var app = await EveryPairEnteredAsync();
+
+        // EIGHT DAYS ON, AND THE VENUE'S LIST READ AGAIN — as any caller reads it, the agents' instruments op among them: empty.
+        var later = Now.AddDays(8);
+        app.Clock.At = later;
+        Assert.Empty(await app.Gw.InstrumentsAsync());
+        for (var minute = 1; minute <= 4; minute++)
+            await app.MinuteAsync(later.AddMinutes(minute), _ => 0.4m);
+
+        foreach (var run in app.Gw.Deployments.All().OrderBy(d => d.Symbol, StringComparer.Ordinal))
+        {
+            var ops = app.Gw.Deployments.OpsOf(run.Id);
+            foreach (var op in ops.Where(o => o.BarOpenTime > Now.AddDays(1)))
+                log.WriteLine($"{run.Symbol} {op.BarOpenTime:MM-dd HH:mm} {op.Kind} {op.State}: {op.Answer}");
+            var book = app.Gw.Deployments.BookOf(run);
+            Assert.True(book.Held == 0m, $"{run.Symbol} still holds {book.Held} after its exit");
+            Assert.Contains(ops, o => o.Kind == DeploymentOpKind.Exit && o.BarOpenTime > Now.AddDays(1) && o.Answer == nameof(ExecutionState.FILLED));
+        }
+        Assert.Empty(await app.Conn.GetPositionsAsync(PaperConnector.TheAccount));
+
+        // AND NOTHING OPENS AGAIN: the prices come back up, the programs signal, and every entry is refused before the wire.
+        for (var minute = 5; minute <= 7; minute++)
+            await app.MinuteAsync(later.AddMinutes(minute), pair => Prices[pair]);
+        Assert.Empty(await app.Conn.GetPositionsAsync(PaperConnector.TheAccount));
+    }
+
+    /// <summary>The app as <see cref="EveryPairEnteredAsync"/> leaves it: every pair's run long, and a way to add one minute to every pair.</summary>
+    sealed class App(Database db, Clock clock, ForwardBarStore bars, ForwardBarSource source, PaperConnector conn, TradingGateway gw) : IAsyncDisposable
+    {
+        public PaperConnector Conn => conn;
+        public Clock Clock => clock;
+        public TradingGateway Gw => gw;
+        public ForwardRuns Runner { get; } = new(gw, db, () => clock.At);
+
+        /// <summary>One closed minute opening at <paramref name="open"/> on every pair, at <paramref name="price"/>, and a pass of the runner over it.</summary>
+        public async Task MinuteAsync(DateTimeOffset open, Func<string, decimal> price)
+        {
+            var close = open + ForwardBars.BarLength;
+            clock.At = close;
+            foreach (var pair in EvidenceDefaults.Pairs)
+                Assert.Equal(1, bars.Append(new ForwardFetchAttempt
+                {
+                    Source = ForwardBars.Source, Symbol = pair, Url = "https://example.invalid/klines (this test wrote the rows; nothing was fetched)",
+                    RequestedAt = close, ReceivedAt = close.AddSeconds(1), HttpStatus = 200
+                }, [new ForwardBars.Kline(open, price(pair), price(pair), price(pair), price(pair), 10m, close)]).Stored);
+            clock.At = close.AddSeconds(3);
+            foreach (var pair in EvidenceDefaults.Pairs) source.Announce(pair, open);
+            await gw.RefreshHealthAsync();
+            await Runner.AdvanceAsync();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await gw.DisposeAsync();
+            await conn.DisposeAsync();
+            db.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// ONBOARDING, THEN SETUP, THEN EVERY PAIR'S ENTRY FILLS — the path a real install takes, asserted on the way (the first test of this class).
+    /// </summary>
+    async Task<App> EveryPairEnteredAsync()
+    {
+        var db = TestEnv.NewDb();
         var clock = new Clock(Now);
         var bars = new ForwardBarStore(db);
         var source = new ForwardBarSource(bars);
 
         // THE BINDING AppHost MAKES: the served catalogue, read at every use.
-        await using var conn = new PaperConnector(new PaperConnectorOptions
+        var conn = new PaperConnector(new PaperConnectorOptions
         {
             Source = source,
             Clock = () => clock.At,
             BookFile = Path.Combine(TestEnv.Home, $"paper-pairs-{Guid.NewGuid():n}.db"),
             CatalogueNow = () => new VenueStore(db, () => clock.At).Catalogue()
         });
-        await using var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        var app = new App(db, clock, bars, source, conn, gw);
         gw.Update(s => s.SelectedAccountId = PaperConnector.TheAccount);
         await conn.ConnectAsync();
 
@@ -137,24 +216,8 @@ public class PaperPairsAfterSetupTests(ITestOutputHelper log)
             Judged(db, campaign, gw.Datasets.ById(campaign.HoldoutDatasetId)!, gw.Datasets.ById(campaign.HoldoutDatasetId)!.Pair);
         Assert.Equal(EvidenceDefaults.Pairs.Count, gw.AllocatePaperDue(Now));
         Assert.Equal(EvidenceDefaults.Pairs.Count, gw.StartPaperDeploymentsDue(Now));
-        var runner = new ForwardRuns(gw, db, () => clock.At);
-
         for (var minute = 1; minute <= 4; minute++)
-        {
-            var open = Now.AddMinutes(minute);
-            var close = open + ForwardBars.BarLength;
-            clock.At = close;
-            foreach (var pair in EvidenceDefaults.Pairs)
-                Assert.Equal(1, bars.Append(new ForwardFetchAttempt
-                {
-                    Source = ForwardBars.Source, Symbol = pair, Url = "https://example.invalid/klines (this test wrote the rows; nothing was fetched)",
-                    RequestedAt = close, ReceivedAt = close.AddSeconds(1), HttpStatus = 200
-                }, [new ForwardBars.Kline(open, Prices[pair], Prices[pair], Prices[pair], Prices[pair], 10m, close)]).Stored);
-            clock.At = close.AddSeconds(3);
-            foreach (var pair in EvidenceDefaults.Pairs) source.Announce(pair, open);
-            await gw.RefreshHealthAsync();
-            await runner.AdvanceAsync();
-        }
+            await app.MinuteAsync(Now.AddMinutes(minute), pair => Prices[pair]);
 
         foreach (var run in gw.Deployments.All().OrderBy(d => d.Symbol, StringComparer.Ordinal))
         {
@@ -164,5 +227,7 @@ public class PaperPairsAfterSetupTests(ITestOutputHelper log)
             Assert.DoesNotContain("is not on the allowed instrument list", entry.Answer ?? "", StringComparison.Ordinal);
             Assert.True(gw.Deployments.FillsOf(run).Any(), $"{run.Symbol}'s entry never filled: {entry.State}: {entry.Answer}");
         }
+
+        return app;
     }
 }

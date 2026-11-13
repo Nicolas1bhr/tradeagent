@@ -363,7 +363,14 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         // DEFINITE refusals, and only definite ones. An instrument this catalogue does not hold
         // verified is a no the book can prove; so is a size that rounds down to nothing at the step
         // the venue trades in. Neither is ambiguous and neither may be retried.
-        if (Row(cmd.Symbol) is not { } row)
+        // EXCEPT A CLOSE OF WHAT THE BOOK HOLDS (`U-paper-oco`, R31 A3-2): a sell placed as a close, of a symbol this book holds, needs
+        // no increment to round to — it sells units that were rounded when they were bought — and a close is never an instrument
+        // approval. So an instrument whose check lapsed after it was bought can still be sold, at the quantity asked, which the
+        // coverage check below and the fill's own (PaperBook.TryFill) bound by what is held. An opening order still refuses.
+        var row = Row(cmd.Symbol);
+        var closingWhatIsHeld = row is null && cmd is { Intent: OrderIntent.Close, Side: OrderSide.Sell }
+            && Book.Positions().Any(p => string.Equals(p.Symbol, cmd.Symbol, StringComparison.OrdinalIgnoreCase) && p.Quantity > 0m);
+        if (row is null && !closingWhatIsHeld)
         {
             TransportLedger.Record(TransportOutcome.NothingWritten);
             throw new ConnectorRejectedException(
@@ -374,13 +381,14 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
                 + "and when they press Check now there — and serves the venue's numbers for seven days.");
         }
 
-        var quantity = decimal.Truncate(cmd.Quantity / row.QuantityIncrement) * row.QuantityIncrement;
+        var quantity = row is null ? cmd.Quantity : decimal.Truncate(cmd.Quantity / row.QuantityIncrement) * row.QuantityIncrement;
         if (quantity <= 0m)
         {
             TransportLedger.Record(TransportOutcome.NothingWritten);
-            throw new ConnectorRejectedException(
-                $"{cmd.Quantity} {cmd.Symbol} rounds DOWN to nothing at this instrument's quantity "
-                + $"increment of {row.QuantityIncrement}");
+            throw new ConnectorRejectedException(row is null
+                ? $"a close of {cmd.Quantity} {cmd.Symbol} is no quantity to sell"
+                : $"{cmd.Quantity} {cmd.Symbol} rounds DOWN to nothing at this instrument's quantity "
+                  + $"increment of {row.QuantityIncrement}");
         }
 
         // AND A SELL THE BOOK CANNOT COVER (`U-runner-exit-hygiene-b`). These are SPOT rows, and a spot account cannot
