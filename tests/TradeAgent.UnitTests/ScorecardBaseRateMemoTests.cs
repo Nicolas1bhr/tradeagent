@@ -199,6 +199,35 @@ public class ScorecardBaseRateMemoTests
     }
 
     /// <summary>
+    /// GUARD — THE ROWS A KEPT BASE RATE STANDS ON ARE ONLY EVER ADDED (the opus review of this unit): the memo's check sees new rows only,
+    /// so it is exact only while no statement in the app updates or deletes a row of <c>strategy_promotion</c>, <c>strategy_run</c>,
+    /// <c>ai_attempt_funding</c> or <c>org_mandate_event</c> (a deleted top row would also hand its rowid to the next insert, below no mark),
+    /// and no update of <c>org_unit</c> sets a column the base-rate reads read (<c>id</c>, <c>kind</c>, <c>created_at</c>). A change that
+    /// needs one makes this red, and the memo's check must learn of it first.
+    /// The watched mutant: an <c>UPDATE strategy_run SET attempt</c> written into the app's source.
+    /// </summary>
+    [Fact]
+    public void The_rows_a_kept_base_rate_stands_on_are_only_ever_added()
+    {
+        var src = Path.Combine(DayOnePrograms.RepoRoot(), "src");
+        var wrong = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+                     .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)))
+        {
+            var text = File.ReadAllText(file);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text,
+                         @"\b(?:UPDATE|DELETE\s+FROM|REPLACE\s+INTO|INSERT\s+OR\s+REPLACE\s+INTO)\s+(?:strategy_promotion|strategy_run|ai_attempt_funding|org_mandate_event)\b",
+                         System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                wrong.Add($"{Path.GetFileName(file)}: {m.Value}");
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\bUPDATE\s+org_unit\s+SET\s+([^""]*?)\s+WHERE\b",
+                         System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                if (System.Text.RegularExpressions.Regex.IsMatch(m.Groups[1].Value, @"\b(?:id|kind|created_at)\s*=", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    wrong.Add($"{Path.GetFileName(file)}: {m.Value}");
+        }
+        Assert.True(wrong.Count == 0, "statements that change a row a kept base rate stands on:\n" + string.Join('\n', wrong));
+    }
+
+    /// <summary>
     /// THE CHECK READS ONLY THE ROWS ABOVE ITS MARKS (<see cref="BaseRateMemo.CheckSql"/>): it runs on every read that scores a forecast,
     /// so each of the five tables' new rows is found by a seek on the rowid (<c>USING INTEGER PRIMARY KEY (rowid&gt;?)</c>, five of them) and
     /// its highest rowid by the min/max optimisation; nothing is walked. The run of a new funding row's attempt is read per new funding row,
