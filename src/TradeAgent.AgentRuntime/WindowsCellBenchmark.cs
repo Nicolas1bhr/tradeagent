@@ -39,9 +39,11 @@ public static class WindowsCellBenchmark
 
     /// <summary>
     /// Runs the benchmark and writes a proof only when every core row held. <paramref name="codex"/> is the pinned codex this host runs
-    /// (null: the route (a) leg fails and nothing is written). Never throws: a failure is a row that did not hold.
+    /// (null: the route (a) leg fails and nothing is written). <paramref name="probe"/> is the cell probe (<see cref="CellDenial.ProbeExe"/>; null: the one
+    /// beside the app; missing: the two rows that run it fail and nothing is written). Never throws: a failure is a row that did not hold.
     /// </summary>
-    public static async Task<BenchResult> RunAsync(Database db, string? codex, string codexPin, IReadOnlyList<string>? launcher = null, CancellationToken ct = default)
+    public static async Task<BenchResult> RunAsync(Database db, string? codex, string codexPin, IReadOnlyList<string>? launcher = null, string? probe = null,
+        CancellationToken ct = default)
     {
         var platform = CellPlatform.Read();
         var profile = CellBenchmark.Profile(RouteA.WindowsProvider, platform, codexPin);
@@ -52,14 +54,14 @@ public static class WindowsCellBenchmark
         var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
         var cmd = Path.Combine(system32, "cmd.exe");
         var curl = Path.Combine(system32, "curl.exe");
-        var powershell = Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
         var root = Path.Combine(Paths.Home, "cell-bench", Guid.NewGuid().ToString("n")[..12]);
         var ws = Path.Combine(root, "ws");
         var codexHome = Path.Combine(root, "codex");
         var home = Path.Combine(root, "home");
         var kitHome = Path.Combine(root, "kit-home");
         var outside = Path.Combine(root, "outside");   // where a row's line runs OUTSIDE a cell: its sinks land here, never in the workspace
-        foreach (var d in new[] { ws, codexHome, home, outside }) Directory.CreateDirectory(d);
+        var probeDir = Path.Combine(root, "probe");    // THE CELL PROBE'S OWN FOLDER, the bench's: the one root its rows add, read and run only
+        foreach (var d in new[] { ws, codexHome, home, outside, probeDir }) Directory.CreateDirectory(d);
 
         try
         {
@@ -67,6 +69,20 @@ public static class WindowsCellBenchmark
                 ? RouteA.WindowsPolicy(ws, codex, RouteA.CodexRoot(codex), codexHome, home, CellEgress.None)
                 : RouteA.WindowsPolicy(ws, cmd, system32, codexHome, home, CellEgress.None);
             var web = new CellPolicy(none.Workspace, none.ReadOnly, none.Executable, none.Environment, CellEgress.Web);
+
+            // THE CELL PROBE (U-cell-probe; R31 D5), IN PLACE OF POWERSHELL 5.1: an enforced App Control policy (Smart App Control On included) runs
+            // PowerShell in ConstrainedLanguage, where both scripts lost their .NET calls and no proof could be written. A COPY in the bench's own
+            // folder, never the install folder, granted read and run by the policy of `none` plus that one root: grants only ever allow, so what is
+            // DENIED under this superset is denied under the agent's own policy, and agents are given no new program. Missing: its rows fail.
+            var probeExe = Path.Combine(probeDir, CellDenial.ProbeExe);
+            string? probeMissing = null;
+            var probeSource = probe ?? CellDenial.ProbeBesideTheApp;
+            try { File.Copy(probeSource, probeExe); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                probeMissing = $"the cell probe {probeSource} could not be put in the bench's folder ({ex.Message}), so this row cannot be measured";
+            }
+            var probed = new CellPolicy(none.Workspace, none.ReadOnly, [.. none.Executable, probeDir], none.Environment, CellEgress.None);
 
             ContainedProcess Launch(CellPolicy under, string program, IReadOnlyList<string> args)
             {
@@ -140,9 +156,10 @@ public static class WindowsCellBenchmark
                         return (!leaked, leaked ? "the ledger's bytes reached the cell" : "");
                     });
                     // THE LISTING IS NOT cmd's: its dir says "Access is denied" of ANY absolute path in a cell, the workspace's own too (measured, CI run 42333529305), so a
-                    // dir of the state folder would have held on every computer with no boundary at all.
-                    var (_, inCell) = await Run(none, powershell, CellDenial.PowerShell(CellDenial.ListScript(ws, Paths.State)));
-                    var free = await OutsidePowerShell(powershell, CellDenial.ListScript(ws, Paths.State), outside, ct);
+                    // dir of the state folder would have held on every computer with no boundary at all. The probe's DENIED is Windows' error 5 and nothing else.
+                    if (probeMissing is not null) return (false, $"{readSeen}; {probeMissing}");
+                    var (_, inCell) = await Run(probed, probeExe, CellDenial.ListProbe(ws, Paths.State));
+                    var free = await OutsideProbe(probeExe, CellDenial.ListProbe(ws, Paths.State), outside, ct);
                     var (list, listSeen) = CellDenial.Judge(["LIST"], inCell, free);
                     return (read && list, $"{readSeen}; {listSeen}");
                 }
@@ -306,18 +323,19 @@ public static class WindowsCellBenchmark
             Process Pinger() => Process.Start(new ProcessStartInfo(Path.Combine(system32, "ping.exe"), "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
             await Row("processes-denied", async () =>
             {
-                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it. One script, three targets (CellDenial.KillScript): in the cell a process of its
+                // A PROCESS OUTSIDE THE CELL CANNOT BE OPENED FOR TERMINATION from inside it. One probe call, three targets (CellDenial.KillProbe): in the cell a process of its
                 // own (it ends), in the cell the helper (refused, and the helper still runs), and outside any cell the helper's twin (it ends). Never the app's own pid: a row
                 // must never risk ending the app.
                 // NOT TASKKILL: in a cell it stops at a sign-in error even on the cell's own process (measured, CI run 42331636963), so it never tried the helper.
+                if (probeMissing is not null) return (false, probeMissing);
                 using var helper = Pinger();
                 using var twin = Pinger();
                 try
                 {
-                    var (inCellCode, inCell) = await Run(none, powershell, CellDenial.PowerShell(CellDenial.KillScript(helper.Id)));
+                    var (inCellCode, inCell) = await Run(probed, probeExe, CellDenial.KillProbe(helper.Id));
                     await Task.Delay(200, ct);
                     var alive = !helper.HasExited;
-                    var free = await OutsidePowerShell(powershell, CellDenial.KillScript(twin.Id), outside, ct);
+                    var free = await OutsideProbe(probeExe, CellDenial.KillProbe(twin.Id), outside, ct);
                     await Task.Delay(200, ct);
                     var ended = twin.HasExited;
                     var (held, seen) = CellDenial.Judge(["KILL"], inCell, free);
@@ -382,7 +400,7 @@ public static class WindowsCellBenchmark
                     return (false, $"the last cell did not run ({ranCode}: {Trim(ranOut)}), so nothing can be said of what it left");
                 WindowsCellStage.SweepFree();
                 var sids = WindowsCellStage.SlotSids().Select(s => new SecurityIdentifier(s)).ToHashSet();
-                var left = new[] { ws, codexHome, home, Kit.Dir(kitHome) }.Where(Directory.Exists).Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
+                var left = new[] { ws, codexHome, home, Kit.Dir(kitHome), probeDir }.Where(Directory.Exists).Sum(d => new DirectoryInfo(d).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier))
                     .Cast<FileSystemAccessRule>().Count(r => sids.Contains((SecurityIdentifier)r.IdentityReference)));
                 var records = Directory.Exists(WindowsCellStage.SlotDirectory) ? Directory.GetFiles(WindowsCellStage.SlotDirectory, "*.grants").Length : 0;
                 return (left == 0 && records == 0, $"after every cell: {left} slot ACE(s) on the bench folders, {records} grant record(s)");
@@ -499,11 +517,13 @@ public static class WindowsCellBenchmark
         }
     }
 
-    /// <summary>The kill probe outside any cell: PowerShell, the same script, no shell around it. Ended after 30 s.</summary>
-    static async Task<string> OutsidePowerShell(string powershell, string script, string folder, CancellationToken ct)
+    /// <summary>
+    /// The cell probe outside any cell: the same copy, its arguments quoted as a cell's command line quotes them, so it reads what it read in the cell. Ended after 30 s.
+    /// </summary>
+    static async Task<string> OutsideProbe(string probe, IReadOnlyList<string> arguments, string folder, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(powershell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, WorkingDirectory = folder };
-        foreach (var a in CellDenial.PowerShell(script)) psi.ArgumentList.Add(a);
+        var psi = new ProcessStartInfo(probe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, WorkingDirectory = folder,
+            Arguments = AppContainerCell.ArgumentLine(arguments) };
         using var p = Process.Start(psi)!;
         p.StandardInput.Close();
         var so = p.StandardOutput.ReadToEndAsync(ct);

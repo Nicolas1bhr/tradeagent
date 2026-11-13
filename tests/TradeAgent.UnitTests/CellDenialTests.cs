@@ -83,26 +83,15 @@ public class CellDenialTests
     }
 
     /// <summary>
-    /// THE KILL PROBE IS ONE SCRIPT WITH ITS CONTROL INSIDE: the cell's own process first, then the target, by Windows' own calls and never a cmdlet (a cell's PowerShell has no
-    /// module path) or the process list (a cell cannot see outside itself). No double quote: the script crosses a C-runtime command line unchanged.
+    /// THE PROBE'S CALLS (<c>U-cell-probe</c>, in place of the two PowerShell scripts): the listing names its workspace control first, then the forbidden folder,
+    /// each one argument whole (a quote in a path is no longer a script's quoting problem); the kill names its target alone, its own process being the probe's.
+    /// Their verdicts are <c>CellProbeTests</c>'.
     /// </summary>
     [Fact]
-    public void The_kill_probe_tries_its_own_process_first_and_asks_windows_directly()
+    public void The_probe_calls_name_the_control_first_and_carry_each_path_whole()
     {
-        var script = CellDenial.KillScript(4242);
-        Assert.DoesNotContain("\"", script, StringComparison.Ordinal);
-        Assert.True(script.IndexOf("'CTL-KILL'", StringComparison.Ordinal) < script.IndexOf("Hit 4242 'KILL'", StringComparison.Ordinal), script);
-        Assert.Contains("OpenProcess", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("GetProcessById", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("New-Object", script, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void The_listing_probe_tries_its_control_first_and_carries_a_quote_in_a_path()
-    {
-        var script = CellDenial.ListScript(@"C:\Users\O'Neil\ws", @"C:\state");
-        Assert.DoesNotContain("\"", script, StringComparison.Ordinal);
-        Assert.Contains(@"Hit 'C:\Users\O''Neil\ws' 'CTL-LIST'", script, StringComparison.Ordinal);
-        Assert.Contains(@"Hit 'C:\state' 'LIST'", script, StringComparison.Ordinal);
+        Assert.Equal(["list", @"C:\Users\O'Neil\ws", @"C:\state"], CellDenial.ListProbe(@"C:\Users\O'Neil\ws", @"C:\state"));
+        Assert.Equal(["kill", "4242"], CellDenial.KillProbe(4242));
+        Assert.Equal("cell-probe.exe", CellDenial.ProbeExe);
     }
 }

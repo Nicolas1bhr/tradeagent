@@ -124,6 +124,16 @@ if ($SkipPublish) {
     # uploaded as if it were a shipping file.
     Remove-Item $cliTemp -Recurse -Force
 
+    Write-Host '== publish the Windows cell probe (self-contained, trimmed single file) =='
+    # The program the Windows cell benchmark runs inside a cell at every start, in place of PowerShell 5.1 (U-cell-probe). Without it beside
+    # the app no cell proof is written, so no AI program runs in a cell on this machine.
+    $probeTemp = Join-Path $OutputDir 'cell-probe'
+    Invoke-Dotnet @(
+        'publish', 'src/TradeAgent.CellProbe/TradeAgent.CellProbe.csproj', '-c', $Configuration, '-r', $Runtime,
+        '--self-contained', 'true', '-p:PublishSingleFile=true', '-o', $probeTemp)
+    Copy-Item (Join-Path $probeTemp 'cell-probe.exe') $stage -Force
+    Remove-Item $probeTemp -Recurse -Force
+
     Write-Host '== publish headless gateway (diagnostics and support) =='
     $gwTemp = Join-Path $OutputDir 'gateway'
     Invoke-Dotnet @(
@@ -159,6 +169,7 @@ $expected = @(
     [pscustomobject]@{ Path = 'TradeAgent.exe';                   Min = 50KB; What = 'the desktop application' }
     [pscustomobject]@{ Path = 'trade.exe';                        Min = 1MB;  What = 'the CLI the AI calls; self-contained single file' }
     [pscustomobject]@{ Path = 'tradeagent-gateway.exe';           Min = 1MB;  What = 'the headless gateway used by diagnostics' }
+    [pscustomobject]@{ Path = 'cell-probe.exe';                   Min = 1MB;  What = 'the probe the Windows cell proof runs in a cell; self-contained single file' }
     [pscustomobject]@{ Path = 'TradeAgent.Provisioning.dll';      Min = 4KB;  What = 'installs Node and the AI tool per-user, with no terminal' }
     [pscustomobject]@{ Path = 'TradeAgent.AgentRuntime.dll';      Min = 4KB;  What = 'runs the AI and hosts the in-app conversation' }
     [pscustomobject]@{ Path = 'TradeAgent.Gateway.dll';           Min = 4KB;  What = 'the execution authority: risk, idempotency, reconciliation' }
