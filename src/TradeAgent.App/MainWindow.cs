@@ -75,10 +75,7 @@ public sealed class MainWindow : Window
     // Stretch plus MaxWidth centres the column: Avalonia arranges a stretched child that came out
     // narrower than its slot in the middle of it, so setup reads as a document rather than a band
     // of controls smeared across a 1180px window.
-    readonly ContentControl _setupSlot = new()
-    {
-        MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Stretch
-    };
+    readonly ContentControl _setupSlot = SetupSlot();
     readonly ScrollViewer _setupSurface;
     OnboardingView? _wizard;
 
@@ -182,10 +179,7 @@ public sealed class MainWindow : Window
         MinHeight = 680;
         Background = Tokens.Bg;
 
-        _setupSurface = new ScrollViewer
-        {
-            Content = new Border { Padding = new Thickness(Tokens.S8, Tokens.S10), Child = _setupSlot }
-        };
+        _setupSurface = SetupSurface(_setupSlot);
 
         Content = new Grid { Children = { _setupSurface, _shellSurface } };
     }
@@ -251,21 +245,36 @@ public sealed class MainWindow : Window
     void ShowOlderHome()
     {
         var older = _host.OlderHome!;
-        var problem = Ui.With(Ui.Body(_host.StartFreshProblem ?? ""), t => { t.Foreground = Tokens.Caution; t.IsVisible = _host.StartFreshProblem is not null; });
-        _setupSlot.Content = Ui.Col(Tokens.S4,
-            Ui.H1("This TradeAgent does not open your older folder"),
-            Ui.Body(older.Message),
-            problem,
-            Ui.Row(Tokens.S3,
-                Ui.Confirm("Start fresh", older.Policy is null ? OlderHome.ConfirmStartFresh : OlderHome.ConfirmStartFreshCarryingTape, async () =>
-                {
-                    if (await _host.StartFreshAsync()) { await AfterStartAsync(); return; }
-                    if (_host.OlderHome is not null) ShowOlderHome();
-                    else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
-                })));
+        _setupSlot.Content = OlderHomeScreen(older.Message, _host.StartFreshProblem,
+            older.Policy is null ? OlderHome.ConfirmStartFresh : OlderHome.ConfirmStartFreshCarryingTape, async () =>
+            {
+                if (await _host.StartFreshAsync()) { await AfterStartAsync(); return; }
+                if (_host.OlderHome is not null) ShowOlderHome();
+                else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
+            });
         _setupSurface.IsVisible = true;
         _shellSurface.IsVisible = false;
     }
+
+    /// <summary>The setup surface's column: at most 880 wide. The window's, and the one the render tests lay a setup screen in.</summary>
+    internal static ContentControl SetupSlot() => new() { MaxWidth = 880, HorizontalAlignment = HorizontalAlignment.Stretch };
+
+    /// <summary>The setup surface: <paramref name="slot"/>, padded, in a scroll viewer.</summary>
+    internal static ScrollViewer SetupSurface(Control slot) => new()
+    {
+        Content = new Border { Padding = new Thickness(Tokens.S8, Tokens.S10), Child = slot }
+    };
+
+    /// <summary>
+    /// THE OLDER HOME'S SCREEN (<c>U-windows-release</c>), its press in the column itself (<c>U-owner-words</c>): in a row, where nothing bounds
+    /// a button's width, the armed sentence did not wrap and was cut at the column's edge — the one press that says in full what it does.
+    /// </summary>
+    internal static Control OlderHomeScreen(string message, string? problem, string confirmLabel, Func<Task> startFresh) =>
+        Ui.Col(Tokens.S4,
+            Ui.H1("This TradeAgent does not open your older folder"),
+            Ui.Body(message),
+            Ui.With(Ui.Body(problem ?? ""), t => { t.Foreground = Tokens.Caution; t.IsVisible = problem is not null; }),
+            Ui.Confirm("Start fresh", confirmLabel, startFresh));
 
     /// <summary>
     /// A HOME WHOSE SAVED PLATFORM IS ATAS, REFUSED BY A BUILD WITHOUT THE ADAPTER, AND THE OWNER'S WAY ON (<c>U-atas-home-no-atas-build</c>):
@@ -273,25 +282,28 @@ public sealed class MainWindow : Window
     /// </summary>
     void ShowAtasNotInThisBuild()
     {
-        _setupSlot.Content = Ui.Col(Tokens.S4,
+        _setupSlot.Content = AtasNotInThisBuildScreen(_host.AtasRefusal!.Message, _host.AtasRefusal.SetupFinished, async () =>
+        {
+            if (await _host.RunOnPaperInsteadAsync()) { await AfterStartAsync(); return; }
+            if (_host.AtasRefusal is not null) ShowAtasNotInThisBuild();
+            else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
+        });
+        _setupSurface.IsVisible = true;
+        _shellSurface.IsVisible = false;
+    }
+
+    /// <summary>The no-ATAS screen, its press in the column for the same reason as <see cref="OlderHomeScreen"/>'s.</summary>
+    internal static Control AtasNotInThisBuildScreen(string message, bool setupFinished, Func<Task> runOnPaper) =>
+        Ui.Col(Tokens.S4,
             Ui.H1("This TradeAgent has no ATAS"),
-            Ui.Body(_host.AtasRefusal!.Message),
-            Ui.Body(_host.AtasRefusal.SetupFinished
+            Ui.Body(message),
+            Ui.Body(setupFinished
                 ? "You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
                   + "is kept, and a TradeAgent with ATAS goes back to it. Choose paper's account on the Settings page before it trades."
                 : "Your setup was not finished. You can finish it in this TradeAgent instead: it asks you to choose its platform again — "
                   + "its own paper venue or the practice simulator."),
-            Ui.Row(Tokens.S3,
-                Ui.Confirm(_host.AtasRefusal.SetupFinished ? "Run on TradeAgent paper" : "Finish setup without ATAS",
-                    _host.AtasRefusal.SetupFinished ? AtasHome.ConfirmPaper : AtasHome.ConfirmSetupAgain, async () =>
-                {
-                    if (await _host.RunOnPaperInsteadAsync()) { await AfterStartAsync(); return; }
-                    if (_host.AtasRefusal is not null) ShowAtasNotInThisBuild();
-                    else ShowFatal(_host.StartupProblem ?? "TradeAgent could not start.");
-                })));
-        _setupSurface.IsVisible = true;
-        _shellSurface.IsVisible = false;
-    }
+            Ui.Confirm(setupFinished ? "Run on TradeAgent paper" : "Finish setup without ATAS",
+                setupFinished ? AtasHome.ConfirmPaper : AtasHome.ConfirmSetupAgain, runOnPaper));
 
     void ShowFatal(string message)
     {
