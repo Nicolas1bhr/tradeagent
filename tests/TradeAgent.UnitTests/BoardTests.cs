@@ -204,6 +204,47 @@ public class BoardTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A LIVE POLICY IS NOT READ EVEN PAST THE STORE'S CHECKS (<c>U-live-witness</c>; the live-reachability audit's F2). The CHECKs above
+    /// are the schema's word, and a process writing the file as the app's user can switch them off. So the reader refuses on its own a
+    /// body in either real-money mode or with real money switched on: the row below, a board act's version right in every column, its
+    /// hash its body's own, written with the CHECKs off, is read as Watch only, in words, and a gateway started over it holds no live
+    /// mode and no real money. No path of this build writes such a row: the store refuses it before it is written, and the only live in
+    /// this build is the test host's in-memory seam, which never passes through the reader. RED at 1aa93e13: the row was the policy in
+    /// force.
+    /// </summary>
+    [Theory]
+    [InlineData(TradingMode.LIVE_CONFIRM, false)]
+    [InlineData(TradingMode.LIVE_AUTONOMOUS, true)]
+    [InlineData(TradingMode.PAPER, true)]
+    public async Task A_live_policy_row_written_past_the_checks_is_read_as_watch_only(TradingMode mode, bool live)
+    {
+        using var db = TestEnv.NewDb();
+        var body = BoardPolicyBody.Canonical(BoardFounding.V1 with { Mode = mode, LiveActivated = live });
+        Exec(db, "INSERT INTO board_act(id, kind, seat, attempt_id, intent, intent_sha256, policy_version, rationale, refs, evidence_class, expires_at, at) "
+                 + "VALUES('bact-forged', 'narrow', 'board-1', NULL, '[]', $sha, 1, 'a claim', '[]', NULL, NULL, '2026-10-24T00:00:00.0000000Z')",
+            ("$sha", Sha256Hex.Of("[]")));
+        Exec(db, "PRAGMA ignore_check_constraints = ON");
+        try
+        {
+            Exec(db, "INSERT INTO board_policy(version, decider, basis, act_id, written_at, mode, live_activated, body, body_sha256, supersedes) "
+                     + "VALUES(2, 'board', 'act', 'bact-forged', '2026-10-24T00:00:00.0000000Z', $mode, $live, $body, $sha, 1)",
+                ("$mode", mode.ToString()), ("$live", live ? 1 : 0), ("$body", body), ("$sha", BoardPolicyBody.Sha256(body)));
+        }
+        finally { Exec(db, "PRAGMA ignore_check_constraints = OFF"); }
+        Assert.Equal($"{mode}|{(live ? 1 : 0)}", Scalar(db, "SELECT mode || '|' || live_activated FROM board_policy WHERE version=2"));
+
+        var inForce = new BoardReader(db).InForce();
+        log.WriteLine($"{mode}/{live}: {inForce.Why}");
+        Assert.True(inForce.CouldNotBeRead);
+        Assert.Equal((TradingMode.OBSERVE, false), (inForce.Policy.Mode, inForce.Policy.LiveActivated));
+        Assert.Contains("real-money mode", inForce.Why, StringComparison.Ordinal);
+
+        await using var gw = new TradingGateway(db, new FakeConnector(), new HealthRegistry());
+        Assert.True(gw.Policy.CouldNotBeRead);
+        Assert.Equal((TradingMode.OBSERVE, false), (gw.Policy.Mode, gw.Policy.LiveActivated));
+    }
+
+    /// <summary>
     /// NO BOARD ROW IS REWRITTEN BY A REPLACE (fix pass 1 of <c>U-board-a1</c>, the review's finding on rung 49, then numbered 47): <c>INSERT OR REPLACE</c>
     /// deletes the row it collides with without firing a DELETE trigger while recursive triggers are off — every connection's default —
     /// so the update and delete seals alone let a seat's model class, a policy version or an event be rewritten. Each table refuses an
