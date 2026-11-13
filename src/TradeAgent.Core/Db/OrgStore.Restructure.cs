@@ -402,11 +402,14 @@ public sealed partial class OrgStore
         using (var c = db.Cmd("UPDATE org_position SET status = $active WHERE id = $p AND status = $dormant",
                    ("$active", OrgPositionStatus.Active), ("$p", positionId), ("$dormant", OrgPositionStatus.Dormant)))
             if (c.ExecuteNonQuery() != 1) throw Refused($"{positionId} changed while this activation was written.");
-        var activated = Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner, $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}");
         // AND IT WAKES THE POSITION AND ITS HIRER (U-org-autonomy item 2; gap 5) — never the chief, which instead takes the owner's words
-        // and material the chair had not taken yet (U-org-cards-3 item 3): the chair sleeps from now on.
-        if (!(unit.IsRoot && unit.HeadPositionId == positionId)) WakeActivated(positionId, HirerOf(positionId), activated, now);
-        else new MissionEventStore(db).HandTheChairsWordsTo(positionId);
+        // and material the chair had not taken yet (U-org-cards-3 item 3), the count on its event: the chair sleeps from now on.
+        var chief = unit.IsRoot && unit.HeadPositionId == positionId;
+        var handed = chief ? new MissionEventStore(db).HandTheChairsWordsTo(positionId) : 0;
+        var activated = Event(now, unit.Id, positionId, OrgEventKind.Activated, OrgDecider.Owner,
+            $"position={positionId} unit={unit.Id} was={OrgPositionStatus.Dormant}"
+            + (chief ? $" from_chair={handed.ToString(CultureInfo.InvariantCulture)}" : ""));
+        if (!chief) WakeActivated(positionId, HirerOf(positionId), activated, now);
         return Position(positionId)!;
     });
 

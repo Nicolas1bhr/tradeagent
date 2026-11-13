@@ -797,11 +797,7 @@ public sealed class MissionEventStore(Database db)
     /// the chair, <see cref="CouncilRoles.Operations"/>, as always. A chart that cannot be read answers the chair: the words are kept
     /// either way, and a recipient is never guessed beyond the two.
     /// </summary>
-    public string OwnerRecipient()
-    {
-        try { return new OrgStore(db).ActiveChief() ?? CouncilRoles.Operations; }
-        catch (Exception) { return CouncilRoles.Operations; }
-    }
+    public string OwnerRecipient() => ActiveChiefOrNull() ?? CouncilRoles.Operations;
 
     /// <summary>
     /// THE CHAIR'S UNTAKEN OWNER WORDS AND MATERIAL WAKES, HANDED TO THE CHIEF THE MOMENT IT IS ACTIVATED (<c>U-org-cards-3</c> item 3;
@@ -1602,8 +1598,18 @@ public sealed class MissionEventStore(Database db)
                 ("$delegated", MissionEventDisposition.Delegated));
             written += c.ExecuteNonQuery();
         }
+        // WORDS GIVEN BACK TO A SLEEPING CHAIR GO ON TO THE CHIEF (U-org-cards-3 item 3; the opus review): a chair launch that took the
+        // owner's words before the chief's activation and was then refused, cut or stopped gives them back addressed to operations,
+        // which no longer turns while the chief is active.
+        if (written > 0 && ActiveChiefOrNull() is { } chief) HandTheChairsWordsTo(chief);
         return written;
     });
+
+    string? ActiveChiefOrNull()
+    {
+        try { return new OrgStore(db).ActiveChief(); }
+        catch (Exception) { return null; }
+    }
 
     /// <summary>
     /// RECORDS WHAT A TURN MADE OF A WAKE. Only a CONSUMED row is written, because a disposition on

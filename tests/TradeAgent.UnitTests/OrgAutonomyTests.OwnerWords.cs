@@ -52,8 +52,9 @@ public partial class OrgAutonomyTests
     /// <summary>
     /// (4a') WORDS THE CHAIR HAD NOT TAKEN GO TO THE CHIEF THE MOMENT IT IS ACTIVATED (<c>U-org-cards-3</c> item 3): the owner typed before the
     /// chief was active, so his words and a material wake sat on <c>operations</c>, which sleeps from the activation on. The owner's
-    /// activation of the chief hands them to the chief, due as they were; a message a turn already settled, and the chair's other wakes,
-    /// stay where they are. RED at base: the untaken words still name <c>operations</c>.
+    /// activation of the chief hands them to the chief, due as they were, and its event says how many; a message a chair turn already
+    /// took stays with that turn until the turn gives it back, when it goes on to the chief too; the chair's other wakes stay where they
+    /// are. RED at base: the untaken words still name <c>operations</c>.
     /// </summary>
     [Fact]
     public void Words_the_chair_had_not_taken_go_to_the_chief_when_it_is_activated()
@@ -83,6 +84,17 @@ public partial class OrgAutonomyTests
         Assert.Equal(CouncilRoles.Operations, RoleOf(settled.Id));
         Assert.Equal(CouncilRoles.Operations, RoleOf(MissionEventIds.Self("the-chairs-own")));
         Assert.Contains(events.DueFor(ChiefId, DateTimeOffset.UtcNow), e => e.Id == untaken.Id);
+        Assert.EndsWith(" from_chair=2", db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT detail FROM org_event WHERE kind = $k AND position_id = $p", ("$k", OrgEventKind.Activated), ("$p", ChiefId));
+            return (string)c.ExecuteScalar()!;
+        }), StringComparison.Ordinal);
+
+        // THE CHAIR'S TURN THAT TOOK THEM GIVES THEM BACK (refused, cut or stopped; the opus review): they go on to the chief, never back to
+        // a chair that no longer turns.
+        Assert.Equal(1, events.Release([settled.Id], "turn-the-chairs"));
+        Assert.Equal(ChiefId, RoleOf(settled.Id));
+        Assert.Equal(CouncilRoles.Operations, RoleOf(MissionEventIds.Self("the-chairs-own")));
     }
 
     /// <summary>
