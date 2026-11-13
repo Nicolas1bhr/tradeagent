@@ -102,6 +102,9 @@ sealed class SettingsPage
     readonly Button _gdeltNews;
     bool _collecting;
 
+    /// <summary>The newest dataset's check, on a worker and once a minute rather than on this page's thread every tick (<c>U-perf-scan</c>).</summary>
+    DatasetLineCheck? _datasetCheck;
+
     /// <summary>
     /// THE PAIR'S INSTRUMENT CHECK, in the one sentence every surface says: "verified against … on …" with
     /// the venue's numbers, or "not verified: …" with the reason (<c>U-venue-verify</c>).
@@ -723,7 +726,13 @@ sealed class SettingsPage
             var newest = _host.Gateway.Datasets.All().FirstOrDefault();
             if (newest is null) { _dataValue.Text = "none yet"; return; }
 
-            var set = _host.Gateway.Datasets.Checked(newest);
+            // RE-HASHED ON A WORKER, NOT HERE (U-perf-scan): every raw month and the normalised file, which on this thread held the
+            // page for the length of the read on every five-second tick. The line shows the last check's answer meanwhile.
+            _datasetCheck ??= new DatasetLineCheck(_host.Gateway.Datasets.Checked, () => DateTimeOffset.UtcNow,
+                a => Dispatcher.UIThread.Post(a));
+            var answer = _datasetCheck.Read(newest, ApplyMarketData);
+            if (answer.Failed) { _dataValue.Text = "could not be read"; return; }
+            if (answer.Set is not { } set) { _dataValue.Text = $"{newest.Pair} {newest.Interval}: checking its files"; return; }
             _dataValue.Text = set.State == DatasetState.REJECTED
                 ? $"{set.Pair} {set.Interval} — REJECTED, collect it again"
                 : $"{set.Pair} {set.Interval}, {set.Bars:N0} bars, "
