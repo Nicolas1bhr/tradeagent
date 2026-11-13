@@ -557,7 +557,7 @@ public interface IMissionHost
     TurnRefusal? ActivationRefusal(string role) => CouncilRoles.IsKnown(role)
         ? null
         : new TurnRefusal(RefusalKind.Position,
-            $"'{role}' is not one of the legacy pair and this host has no activation seam to ask, so no conversation is "
+            $"'{role}' is neither the Operations Director and the Research Director and this host has no activation seam to ask, so no conversation is "
             + "opened for it and nothing is folded into this host's own.");
 
     /// <summary>

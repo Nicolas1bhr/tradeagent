@@ -232,7 +232,7 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         {
             var refused = Assert.Throws<TradeAgentException>(() => org.Activate(chief, _ => declared, 3, Now, Proven)).Message;
             log.WriteLine(refused);
-            Assert.Contains("no proven executor cell", refused, StringComparison.Ordinal);
+            Assert.Contains("no proven sealed workspace", refused, StringComparison.Ordinal);
         }
         Assert.Equal(before, Written(db));
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(chief)!.Status);
@@ -244,7 +244,7 @@ public partial class OrgChiefTests(ITestOutputHelper log)
         org.VacateChief(org.Chief(), Now);
         var next = org.AppointChief(Codex, Known, Now).Chief!;
         proofs.Revoke(proof, "the profile recomputed to another hash");
-        Assert.Contains("no proven executor cell", Assert.Throws<TradeAgentException>(() =>
+        Assert.Contains("no proven sealed workspace", Assert.Throws<TradeAgentException>(() =>
             org.Activate(next, _ => SeatClasses.Harness, 3, Now, Proven)).Message, StringComparison.Ordinal);
         Assert.Equal(OrgPositionStatus.Dormant, org.Position(next)!.Status);
 

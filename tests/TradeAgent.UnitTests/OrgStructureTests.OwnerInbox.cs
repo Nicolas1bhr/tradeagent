@@ -164,7 +164,7 @@ public partial class OrgStructureTests
             Assert.NotNull(host.ActivationRefusal(first));
             var standing = new OrgStore(db).Standing(first);
             foreach (var seat in new[] { SeatClasses.Broker, SeatClasses.Harness })
-                Assert.Contains("no proven executor cell recorded", PositionActivation.Decide(first, standing, new SeatFacts
+                Assert.Contains("no proven sealed workspace for the AI recorded", PositionActivation.Decide(first, standing, new SeatFacts
                 {
                     Standing = standing, DeclaredClass = seat, ProvenCell = false, UnconfinedActive = [], UnconfinedSeatSetting = 3
                 })!.Words, StringComparison.Ordinal);

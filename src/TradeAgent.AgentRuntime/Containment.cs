@@ -51,8 +51,8 @@ public static class Containment
     /// </summary>
     public static SandboxState Sandbox(string seatClass) => seatClass == TradeAgent.Core.Db.SeatClasses.Cell
         ? new(false, "NONE",
-            "the AI's shell, file and image actions run in a Linux cell, but the program that holds its sign-in — the codex harness — " +
-            "runs unconfined as the same user as TradeAgent and can read and write whatever that user can")
+            "the AI's shell, file and image actions run in a sealed workspace on Linux, but the program that holds its sign-in — the codex harness — " +
+            "runs outside it, as the same user as TradeAgent, and can read and write whatever that user can")
         : Sandbox();
 
     /// <summary>

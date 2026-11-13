@@ -33,7 +33,7 @@ public sealed partial class OrgStore
     public WakeAsked RequestWake(WakeRequest r, RewakeFloors policy, string? noRoom, DateTimeOffset now) => db.Write(_ =>
     {
         var position = Roster().FirstOrDefault(p => p.Id == r.Caller && !p.IsLegacy)
-                       ?? throw Forbidden($"'{r.Caller}' is no active position beyond the legacy pair: a wake is asked by the position whose launch asks it.");
+                       ?? throw Forbidden($"'{r.Caller}' is no active position other than the Operations Director and the Research Director: a wake is asked by the position whose launch asks it.");
         if (r.After <= TimeSpan.Zero)
             throw Refused("a wake is asked for a time after now: 'after_minutes' is a whole number of minutes above zero.");
 

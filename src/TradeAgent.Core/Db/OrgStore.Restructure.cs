@@ -393,8 +393,8 @@ public sealed partial class OrgStore
         {
             var declared = declaredClass(positionId);
             if ((declared is null || SeatClasses.RunsModel(declared)) && !(provenCell ?? (() => new CellProofStore(db).HoldsProof()))())
-                throw Refused($"the chief would run on a real-model seat ({declared ?? "undeclared"}), and this host has no proven "
-                              + "executor cell recorded: until it has one, no position beyond the legacy pair is activated on a real model. "
+                throw Refused($"the chief would run on a real-model seat ({declared ?? "undeclared"}), and this computer has no proven "
+                              + "sealed workspace for the AI recorded: until it has one, no position other than the Operations Director and the Research Director is activated on a real model. "
                               + "It stays dormant.");
         }
         if (UnconfinedSeatCeiling.Refusal(positionId, declaredClass(positionId), UnconfinedSeatsActive(declaredClass), seatSetting) is { } over)

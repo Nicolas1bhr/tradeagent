@@ -270,7 +270,7 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             return CheckResult.Warn(name, facts.Detail,
                 refusal + " “Watch only”, “Practice” and “Real, ask me first” are unaffected, and so is " +
                 "everything else the AI does — this withholds one configuration, the one where an " +
-                "unconfined program sits beside a switch that spends money.",
+                "program running outside a sealed workspace sits beside a switch that spends money.",
                 ErrorCode.CONTAINMENT_REQUIRED);
 
         if (!facts.Held)

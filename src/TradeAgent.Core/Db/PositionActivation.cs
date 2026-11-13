@@ -151,11 +151,11 @@ public static class UnconfinedSeatCeiling
         var ceiling = Effective(setting);
         if (others.Count < ceiling) return null;
         return new(RefusalKind.HostOrLaunch,
-            $"'{id}' would run a model on an unconfined {seatClass ?? "undeclared"} seat, one that can read the owner's AI login, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
-            + $"such position{(others.Count == 1 ? " is" : "s are")} active ({string.Join(", ", others.Select(o => $"'{o}'"))}) — the owner's "
-            + $"unconfined-seat ceiling is {ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} (his setting "
+            $"{PositionActivation.Who(id)} would run a model as you, outside a sealed workspace, on a {PositionActivation.SeatWords(seatClass)} seat that can read your AI login, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+            + $"such position{(others.Count == 1 ? " is" : "s are")} active ({PositionActivation.Titles(others)}) — the most seats you "
+            + $"let run outside a sealed workspace is {ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} (your setting "
             + $"{setting.ToString(System.Globalization.CultureInfo.InvariantCulture)}, never above {Ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
-            + "until containment is proven). Nothing is activated or started for it; its wakes are kept.");
+            + "until the sealed workspace is proven). Nothing is activated or started for it; its wakes are kept.");
     }
 }
 
@@ -332,20 +332,20 @@ public static class PositionActivation
 
         if (SeatClasses.AssuranceOf(seatClass) is not { } seat)
             return new(RefusalKind.HostOrLaunch,
-                $"'{id}' would run on a '{seatClass}' seat, a class this build does not know, "
+                $"{Who(id)} would run on a '{seatClass}' seat, a class this build does not know, "
                 + "so nothing is started for it. A seat's class is the app's own answer, never read from a file.");
 
         if (CapabilityPolicy.Binding(CapabilityPolicy.CapabilitiesOf(standing, seatClass!), seat) is { } missed)
             return new(RefusalKind.Position,
-                $"'{id}' cannot run on a {seatClass} seat: {Words(missed)} needs a {SeatClasses.Name(CapabilityPolicy.Minimum(missed))} "
-                + $"seat and a {seatClass} seat is {SeatClasses.Name(seat)}"
-                + (missed == Capability.Code ? " — its shell is code, and code needs a confined cell" : "")
+                $"{Who(id)} cannot run on a {SeatWords(seatClass)} seat: {Words(missed)} needs {Needs(CapabilityPolicy.Minimum(missed))}, "
+                + $"and a {SeatWords(seatClass)} seat {Is(seat)}"
+                + (missed == Capability.Code ? " — its shell is code, and code runs only in a sealed workspace" : "")
                 + ". Nothing is started for it.");
 
         if (SeatClasses.RunsModel(seatClass!) && !facts.ProvenCell)
             return new(RefusalKind.HostOrLaunch,
-                $"{Who(id)} is not activated on a real-model seat ({seatClass}): this host has no proven executor cell recorded, and until "
-                + "it has one no position beyond the legacy pair runs on a real model (your answer). "
+                $"{Who(id)} is not activated on a real-model seat ({SeatWords(seatClass)}): this computer has no proven sealed workspace for the AI recorded, and "
+                + $"until it has one no position other than {Directors} runs on a real model (your answer). "
                 + "Nothing is started; its wakes are kept.");
 
         // THE OWNER'S UNCONFINED-SEAT CEILING (U-org-verbs-d item 5): a model run unconfined counts, and three is the most.
@@ -353,8 +353,8 @@ public static class PositionActivation
 
         if (facts.OpenUnconfined.Count > 0)
             return new(RefusalKind.HostOrLaunch,
-                $"{Who(id)} is not started while an unconfined launch is open on this host ({Titles(facts.OpenUnconfined)}): no position "
-                + "beyond the legacy pair runs beside an unconfined neighbour. It is tried again when that turn has ended.");
+                $"{Who(id)} is not started while a turn outside a sealed workspace is open on this computer ({Titles(facts.OpenUnconfined)}): no "
+                + $"position other than {Directors} runs beside one. It is tried again when that turn has ended.");
 
         return null;
     }
@@ -372,7 +372,7 @@ public static class PositionActivation
             return $"nothing has told this host which seat {id} would run on, so it is not activated on a guess.";
         if (facts.DeclaredClass is not (SeatClasses.Broker or SeatClasses.Cell))
             return $"{id} would run on a {facts.DeclaredClass ?? "undeclared"} seat, and a hire activates itself only onto a broker or a "
-                   + "cell seat (mediated or confined).";
+                   + "sealed-workspace seat.";
         return Decide(id, standing with { Status = OrgPositionStatus.Active }, facts)?.Words;
     }
 
@@ -423,18 +423,19 @@ public static class PositionActivation
     // IN THE OWNER'S WORDS (U-owner-words-2; the real run of 2026-11-13, shot 70): the Dashboard read "'research' runs unconfined, and
     // 'pos-83d109e913fc' is active … (ORCHESTRATION § 2.3)". The role by its title, the neighbours by their number, no section mark.
     static TurnRefusal Neighboured(string id, IReadOnlyList<string> active) => new(RefusalKind.HostOrLaunch,
-        $"{Who(id)} runs unconfined, and {Positions(active)} beyond the legacy pair {Be(active)} active on this host: the legacy pair run "
-        + "confined too, or not there. Nothing is started. To run it, end or put to sleep those positions, "
-        + "or run the legacy pair in a cell.");
+        $"{Who(id)} runs as you, outside a sealed workspace, and {Positions(active)} other than {Directors} {Be(active)} active on this computer: "
+        + $"beside them, {Directors} run in a sealed workspace too, or not at all. Nothing is started. To run it, end or put to sleep "
+        + "those positions, or run the two directors in a sealed workspace.");
 
     static TurnRefusal UnsetNeighbours(string id) => new(RefusalKind.HostOrLaunch,
-        $"{Who(id)} runs unconfined, and nothing has told this host whether any position beyond the legacy pair is active (the "
-        + "activation gate's register is not set), so nothing is started: an unconfined launch is never passed beside a neighbour "
-        + "nobody could rule out. Its wakes are kept.");
+        $"{Who(id)} runs as you, outside a sealed workspace, and nothing has told this computer whether any position other than {Directors} "
+        + "is active (the activation gate's register is not set), so nothing is started: a turn outside a sealed workspace never runs "
+        + "beside a neighbour nobody could rule out. Its wakes are kept.");
 
     static TurnRefusal Unreadable(string id) => new(RefusalKind.HostOrLaunch,
-        $"{Who(id)} runs unconfined, and TradeAgent could not read whether any position beyond the legacy pair is active on this host, "
-        + "so nothing is started: an unconfined launch is never passed beside a neighbour nobody could rule out. Its wakes are kept.");
+        $"{Who(id)} runs as you, outside a sealed workspace, and TradeAgent could not read whether any position other than {Directors} is "
+        + "active on this computer, so nothing is started: a turn outside a sealed workspace never runs beside a neighbour nobody could "
+        + "rule out. Its wakes are kept.");
 
     /// <summary>
     /// THE CHART COULD NOT BE READ for <paramref name="id"/> — a refusal about the HOST, never about the position (review of
@@ -447,16 +448,51 @@ public static class PositionActivation
         + "it is tried again.");
 
     static TurnRefusal Unset(string id) => new(RefusalKind.HostOrLaunch,
-        $"'{id}' is a position beyond the legacy pair, and nothing has told this host which seat it would run on (the activation "
-        + "gate's register is not set), so nothing is started for it. Its wakes are kept.");
+        $"{Who(id)}, one other than {Directors}, has no seat this computer was told of (the activation gate's register is not set), so "
+        + "nothing is started for it. Its wakes are kept.");
 
     static string Be(IReadOnlyList<string> ids) => ids.Count == 1 ? "is" : "are";
 
+    /// <summary>
+    /// THE LEGACY PAIR IN THE OWNER'S WORDS (<c>U-owner-words-3</c> item 2): the two roles that ran before the chart, by their titles. "The legacy
+    /// pair", "unconfined" and "cell" were the build's words; the owner reads the directors, "as you, outside a sealed workspace" and "a sealed
+    /// workspace".
+    /// </summary>
+    internal static readonly string Directors =
+        $"the {CouncilRoles.Title(CouncilRoles.Operations)} and the {CouncilRoles.Title(CouncilRoles.Research)}";
+
     /// <summary>One of the legacy pair by its title; any other position as "this position" — its row on the page names it.</summary>
-    static string Who(string id) => CouncilRoles.IsKnown(id) ? CouncilRoles.Title(id) : "This position";
+    internal static string Who(string id) => CouncilRoles.IsKnown(id) ? CouncilRoles.Title(id) : "This position";
+
+    /// <summary>A seat class in the owner's words (<c>U-owner-words-3</c> item 2): "cell" was the build's word for the sealed workspace.</summary>
+    internal static string SeatWords(string? seatClass) => seatClass switch
+    {
+        null => "undeclared",
+        SeatClasses.Cli => "command-line",
+        SeatClasses.Cell => "sealed-workspace",
+        _ => seatClass
+    };
+
+    /// <summary>The seat a capability needs, in words.</summary>
+    static string Needs(SeatAssurance a) => a switch
+    {
+        SeatAssurance.Confined => "a seat in a sealed workspace",
+        SeatAssurance.Mediated => "at least a seat that reaches only what TradeAgent serves",
+        SeatAssurance.Brokered => "at least TradeAgent's own worker",
+        _ => "a seat that runs as you"
+    };
+
+    /// <summary>What a seat of an assurance is, in words.</summary>
+    static string Is(SeatAssurance a) => a switch
+    {
+        SeatAssurance.Confined => "runs in a sealed workspace",
+        SeatAssurance.Mediated => "reaches only what TradeAgent serves",
+        SeatAssurance.Brokered => "is TradeAgent's own worker",
+        _ => "runs as you, outside a sealed workspace"
+    };
 
     /// <summary>The legacy pair by their titles; any other position counted, never named by id.</summary>
-    static string Titles(IReadOnlyList<string> ids)
+    internal static string Titles(IReadOnlyList<string> ids)
     {
         var titled = ids.Where(CouncilRoles.IsKnown).Select(CouncilRoles.Title).ToList();
         var others = ids.Count - titled.Count;

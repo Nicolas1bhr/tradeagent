@@ -55,7 +55,7 @@ public partial class OrgChiefTests
 
         (ChiefWakeFacts Facts, string Words)[] refused =
         [
-            (Facts(proven: false), "no proven executor cell recorded"),
+            (Facts(proven: false), "no proven sealed workspace for the AI recorded"),
             (Facts(started: false, own: false), "Press \"Start the AI\" on the Dashboard first"),
             (Facts(own: false), "Press \"Let the AI work on its own\" on the Dashboard first"),
         ];
