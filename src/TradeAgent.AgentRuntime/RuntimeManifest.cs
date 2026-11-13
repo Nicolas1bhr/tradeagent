@@ -226,6 +226,15 @@ public sealed class SeatPlan
     /// <summary>Names that must NOT exist in the seat's working directory: a project config the CLI would load, or its skills.</summary>
     public string[] WorkspaceForbidden { get; set; } = [];
 
+    /// <summary>
+    /// PATHS UNDER THE OPERATING-SYSTEM ACCOUNT'S OWN PROFILE FOLDER THAT MUST HOLD NOTHING WHEN A SEAT STARTS, on a host where the CLI
+    /// takes that folder for its home whatever <c>HOME</c> says (<c>U-windows-cards</c>): Windows, where codex's home is the profile's
+    /// known folder (<see cref="SeatProfile.AccountProfile"/>) and the seat home's own <c>home/</c> check in <see cref="Forbidden"/> looks in a folder
+    /// codex never reads. Each is refused unless it is absent or a plain, empty folder; what is in it is never opened or named. Elsewhere
+    /// the CLI's home is <c>HOME</c>, the seat home's, and <see cref="Forbidden"/> covers it. Data: a vendor's skill roots.
+    /// </summary>
+    public string[] AccountForbidden { get; set; } = [];
+
     /// <summary>The CLI's own report of its features, run under the seat home with the deny set's keys. Empty for none.</summary>
     public string[] FeaturesArgs { get; set; } = [];
 
@@ -1195,6 +1204,14 @@ public static class RuntimeCatalog
                     "home/.agents", "home/.codex"
                 ],
                 WorkspaceForbidden = [".codex", ".agents"],
+                // THE OWNER'S OWN SKILLS ON WINDOWS (U-windows-cards; A5 F1): the pinned 0.160.1's user skill roots are `$CODEX_HOME/skills`
+                // and `home_dir()/.agents/skills` (vendor ext/skills/src/host_roots.rs:96-107), and on Windows `dirs::home_dir()` is the
+                // profile's known folder (dirs-sys 0.5.0: SHGetKnownFolderPath(FOLDERID_Profile)), never HOME or USERPROFILE — so the harness,
+                // unconfined and the owner's user, lists his own skills whatever the seat's environment says. Listing alone is not the whole
+                // of it: a skill named in a turn's input text (`$name`, or its path) has its SKILL.md read by the harness and put in the
+                // prompt with `skills.include_instructions` false too (ext/skills/src/extension.rs:420-477, the selection runs before and
+                // apart from the instructions block), so every class is exposed, not only the cell's. No key or variable moves that root.
+                AccountForbidden = [".agents/skills"],
                 // 0.04 s and 0.03 s on this Mac (survey § 4). Under the deny set's keys, RUN 2026-10-11 over an empty home, exactly
                 // these were on — the allowlist is that run's list, and anything else on is a release or a key that changed.
                 FeaturesArgs = ["features", "list"],
