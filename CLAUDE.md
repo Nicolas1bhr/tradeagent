@@ -203,26 +203,34 @@ The code-level statement is on `Versions` in `src/TradeAgent.Core/Versioning.cs`
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # ~2,520 tests in three projects; the latest gate line in BUILD-STATUS.md
-                                  # is the figure. Green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # ~4,700 tests in four test projects (Unit, Integration, Fault, Ui); the
+                                  # newest landing entry at the END of BUILD-STATUS.md is the figure. Green
+                                  # is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```
 
+How the tests run now: each unit runs the classes it touched locally, then branch CI runs the whole
+suite on all three platforms (`.github/workflows/build.yml`: `windows-latest`, `ubuntu-latest`,
+`macos-latest`), and a unit lands only on that green.
+
 Windows is where the claims get proven, and **when a real machine is available, the real run is the
-evidence** (the owner, 2026-10-05): a run one could have made and nobody made is NOT VERIFIED. Two
-machines, both set up in `tools/README.md`: the **ATAS box** (the default — ATAS, the bridge, the GUI;
-one leg at a time, by grant) and the **tests box** (`TA_WIN_BOX=tests` — the full suite on real
-Windows in ~22 min, durably, one run at a time):
+evidence** (the owner, 2026-10-05): a run one could have made and nobody made is NOT VERIFIED. The
+real machine is the **ATAS box**, the owner's Windows 11 desktop, set up in `tools/README.md`: ATAS,
+the bridge, the GUI, and the suite or the cell benchmark with ATAS closed; one leg at a time, by the
+orchestrator's grant. A suite there names the machine (`tools/win-test.sh` refuses an unnamed one, and
+`ready` refuses while ATAS is open):
 
 ```bash
-TA_WIN_BOX=tests tools/win-test.sh ready     # exit 0 = a run can start now; otherwise it says why not
-TA_WIN_BOX=tests tools/win-test.sh start     # this tree, uncommitted edits included; then `wait`
+TA_WIN_BOX=atas tools/win-test.sh ready     # reads ~/.tradeagent/win-atas.env; exit 0 = a run can start now
+TA_WIN_BOX=atas tools/win-test.sh start     # this tree, uncommitted edits included; then `wait`
 ```
 
-The tests box is a lent laptop with its owner's own TradeAgent and ATAS installed. Nothing of ours
-starts or touches them: the runner refuses while either is open and reports whether his files changed
-during a run. `tools/probe` is the harness behind the two headline claims, re-runnable on the ATAS box.
+The **tests box** (`TA_WIN_BOX=tests`) is a lent laptop with its owner's own TradeAgent and ATAS, and
+it is not a test machine of ours any more: nothing of ours runs on it or touches it. `tools/README.md`
+§ "It is somebody's machine" is the record of how it was once used.
+
+`tools/probe` is the harness behind the two headline claims, re-runnable on the ATAS box.
 
 ## Conventions
 
