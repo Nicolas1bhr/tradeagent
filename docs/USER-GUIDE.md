@@ -691,8 +691,9 @@ closing properly — a crash, a power cut — soon after it began, the AI waits 
 again: 10 minutes, twice as long for each such start in a row, never more than 2 hours, so a fault that
 keeps restarting TradeAgent cannot spend a turn each time. A single crash after a long run waits for
 nothing. Meanwhile no AI turn is taken; your positions stay managed and the market recording goes on.
-The card says *waiting until …* and why. Pressing **Let the AI work on its own** ends the wait at once,
-and a pause you pressed still stands when it ends.
+The card says *waiting until …* and why, and the button beside it offers **Pause the AI**, because your
+word is still that the AI works. To end the wait sooner, press **Pause the AI** and then **Let the AI
+work on its own**: that starts it at once. If you pause and leave it, it stays paused when the wait ends.
 
 **On Windows, TradeAgent keeps the PC awake while the AI works on its own.** The screen can still turn
 off; the PC does not go to sleep by itself. Closing the lid, pressing the power button, or running on
