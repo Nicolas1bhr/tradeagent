@@ -1851,12 +1851,24 @@ public sealed class AppHost : IAsyncDisposable
         AtasAdapterInThisBuild = AtasInThisBuild
     };
 
-    public async Task SwitchConnectorAsync(string id)
+    /// <summary>
+    /// THE PLATFORM SWITCH, OFF THE WINDOW'S THREAD (<c>U-owner-words-2</c>; the real run of 2026-11-13): pressed on setup's platform screen,
+    /// the switch ran on the UI thread — the pipe server's and the gateway's teardown, the new gateway's start, its first health pass — and the
+    /// window froze for about 53 seconds with no "Working." painted, while a press made in that time was queued for the next screen. Every
+    /// surface that switches (setup, Settings, the no-ATAS home) awaits this, and each keeps its own busy state and its own guard on a second press.
+    /// </summary>
+    public Task SwitchConnectorAsync(string id) => Task.Run(() => SwitchConnectorOffTheWindowAsync(id));
+
+    /// <summary>A test's step at the head of a switch's work: where it ran, and what a press beside it does (<c>U-owner-words-2</c>).</summary>
+    internal Action? SwitchStep { get; set; }
+
+    async Task SwitchConnectorOffTheWindowAsync(string id)
     {
         if (_db is null) return;
         // ATAS ONLY WHERE THIS BUILD CARRIES ITS ADAPTER (U-windows-release): a CI build's bridge has no ATAS half, so ATAS is refused
         // here, for every surface that offers it, in the words the installer used — before anything is written or torn down.
         if (id == Platforms.Connectors.Atas && !AtasInThisBuild) throw new InvalidOperationException(BuildContents.AtasNotInThisBuild);
+        SwitchStep?.Invoke();
         var current = _db.GetKv("connector") ?? "fake";
         _db.SetKv("connector", id);
         // AN EXPLICIT CHOICE ENDS THE PAPER STAND-IN FOR ATAS (U-atas-home-no-atas-build): the next no-ATAS build that finds ATAS saved asks again.
