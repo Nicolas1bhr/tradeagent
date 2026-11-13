@@ -144,6 +144,15 @@ class W:
     REFUSAL_OP, REFUSAL_CODE = "op", "code"
     # board_policy.body: BoardPolicyBody's canonical names
     BODY_PLAN_DAY_TOTAL, BODY_MODE = "plan_day_total", "mode"
+    # THE EVIDENCE'S EYES (U-digest-evidence-eyes; R31 D1 § 5). kv: a spent campaign's armed fresh holdout and the campaign opened over it
+    # (CampaignRenewal's two keys, the spent campaign's id after each), and what a campaign has spent, as CampaignRenewal.SpentOn words it
+    KV_FORWARD_HOLDOUT, KV_FORWARD_SUCCESSOR = "campaign_forward_holdout:", "campaign_forward_successor:"
+    SPENT_JUDGEMENTS, SPENT_TRIALS, SPENT_EXPLORATION = "final judgements", "research trials", "exploration trials"
+    # tool_call.refusal of a call the gateway refused: its code, this separator, then the app's words. A holdout window's own words
+    # (TapeHoldoutWindow): a fresh one's, and a dataset's
+    CODE_HOLDOUT_WITHHELD, REFUSAL_CODE_SEPARATOR = "HOLDOUT_WITHHELD", ": "
+    WITHHELD_FRESH = " has spent its attempts, and the campaign after it is held over FRESH market data from "
+    WITHHELD_DATASET = ") holds out every bar from "
 
 
 ADMISSIBLE = (W.VERDICT_PROMOTED, W.VERDICT_PAPER_ELIGIBLE)    # the two classes a version can be carried forward on
@@ -980,8 +989,69 @@ class Digest:
 
     # -- 12. R26 § 4 (3): how fast the run produces scorable signal
     def signal(self):
-        return {"forecasts": self.forecasts(), "campaigns": self.campaigns(), "candidates": self.candidates(), "ledger": self.ledger(),
+        holds = self.forward_holds()
+        return {"forecasts": self.forecasts(), "campaigns": self.campaigns(holds), "candidates": self.candidates(), "ledger": self.ledger(),
+                "forward_holds": holds, "withheld": self.withheld(holds),
                 "cannot_be_read": "whether a fresh session found a finding again from the ledger is not recorded anywhere"}
+
+    def kv_starting_with(self, prefix):
+        """Database.KvStartingWith: the rows whose key begins with the prefix, the rest of the key after it."""
+        return [(r[0][len(prefix):], r[1]) for r in self.app.execute(
+            "SELECT key, value FROM kv WHERE substr(key, 1, ?) = ? ORDER BY key", (len(prefix), prefix))]
+
+    def forward_holds(self):
+        """EVERY ARMED FRESH HOLDOUT, read as CampaignRenewal.All reads it: the kv row the rule writes once when a campaign is spent,
+        `cutoff|armed at|spent`, its pair through the spent campaign's dataset, and the campaign opened over it, if any. A row this build cannot
+        read is listed as unreadable, never skipped: the app holds it from the beginning of time and over every pair."""
+        pairs = {}
+        if self.has("strategy_campaign", "holdout_dataset_id"):
+            pairs = {r[0]: r[1] for r in self.app.execute("SELECT c.id, d.pair FROM strategy_campaign c JOIN dataset d ON d.id = c.holdout_dataset_id")}
+        number = lambda t: int(t) if re.fullmatch(r"[0-9]+", t or "") else None      # long.TryParse with NumberStyles.None
+        successors = {number(k): number(v) for k, v in self.kv_starting_with(W.KV_FORWARD_SUCCESSOR)}
+        holds = []
+        for key, value in self.kv_starting_with(W.KV_FORWARD_HOLDOUT):
+            campaign = number(key)
+            if campaign is None:
+                continue                                  # the app reads no campaign from such a key, and skips it
+            parts = (value or "").split("|")
+            cutoff, armed = (parse_ts(parts[0]), parse_ts(parts[1])) if len(parts) == 3 else (None, None)
+            successor = successors.get(campaign)
+            holds.append({"campaign": campaign, "pair": pairs.get(campaign) if cutoff else None, "unreadable": cutoff is None,
+                          "cutoff": stored(cutoff) if cutoff else None, "armed_at": stored(armed) if armed else None,
+                          "spent": parts[2] if len(parts) == 3 else None, "successor": successor, "holding": successor is None,
+                          "armed_since_t0": bool(armed and armed >= self.since), "value": None if cutoff else short(value, 80)})
+        return {"holds": holds, "holding": sum(1 for h in holds if h["holding"]),
+                "words": "a hold is armed once, when a campaign is spent: from its cutoff its pair's bars and tape are held back with no end until a "
+                         "campaign opens over them; unreadable = the app holds every pair from the beginning of time"}
+
+    def withheld(self, holds):
+        """THE REFUSALS A HOLDOUT WINDOW MADE SINCE T0 (R31 D1 § 5): the AI's tool results the gateway refused with HOLDOUT_WITHHELD, told
+        fresh from dataset by the window's own words (a refusal naming both counts in both; one whose words were cut before them is 'unread'),
+        and the pipe's read-loop frames refused by that code, which leave no words. By what was asked: the tool and op, as the row records them."""
+        head = W.CODE_HOLDOUT_WITHHELD + W.REFUSAL_CODE_SEPARATOR
+        seen = []
+        for r in self.app.execute("SELECT at, tool, argument, refusal FROM tool_call WHERE served = 0 AND at >= ? AND substr(refusal, 1, ?) = ?",
+                                  (self.since_s, len(head), head)):
+            words = r["refusal"] or ""
+            seen.append((r["at"], r["argument"] or r["tool"], W.WITHHELD_FRESH in words, W.WITHHELD_DATASET in words, False))
+        for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ?",
+                                  (W.LOG_IPC, W.LOG_OP_REFUSED, self.since_s)):
+            try:
+                meta = json.loads(r["metadata"]) if r["metadata"] else {}
+            except ValueError:
+                meta = {}
+            if isinstance(meta, dict) and meta.get(W.REFUSAL_CODE) == W.CODE_HOLDOUT_WITHHELD:
+                seen.append((r["at"], meta.get(W.REFUSAL_OP) or "-", False, False, True))
+        armed = sorted(h["armed_at"] for h in holds.get("holds", []) if h["armed_at"])
+        asked = {}
+        for x in seen:
+            asked[x[1]] = asked.get(x[1], 0) + 1
+        return {"total": len(seen), "fresh": sum(1 for x in seen if x[2]), "dataset": sum(1 for x in seen if x[3]),
+                "unread": sum(1 for x in seen if not (x[2] or x[3] or x[4])), "pipe_frames": sum(1 for x in seen if x[4]),
+                "first_armed_at": armed[0] if armed else None, "since_first_armed": sum(1 for x in seen if x[0] >= armed[0]) if armed else None,
+                "by_asked": [{"asked": k, "count": n} for k, n in sorted(asked.items(), key=lambda a: (-a[1], a[0]))],
+                "words": "each a paid turn that learned only the refusal; pipe frames carry no words, so no window; subject = the tool and op asked "
+                         "(a tape read's subject, news or macro or a pair, is not on the row)"}
 
     def forecasts(self):
         if not self.has("org_forecast", "forecaster", "scored", "at") or not self.has("org_forecast_resolution", "forecast_id", "outcome", "at"):
@@ -1004,7 +1074,7 @@ class Digest:
                         "days_to_50": 0 if not left else (round(left / rate, 1) if rate else None)})
         return {"managers": out, "words": "resolved = scored and not void; days to 50 at the rate since T0; none = nothing resolved yet"}
 
-    def campaigns(self):
+    def campaigns(self, holds=None):
         if not self.has("strategy_campaign", "trial_budget", "verdict_budget"):
             return {"absent": "strategy_campaign"}
         pots = self.has("strategy_campaign", "exploration_budget") and self.has("strategy_trial", "exploration", "charged_to")
@@ -1029,9 +1099,22 @@ class Digest:
             trials = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND {where}", ids).fetchone()[0] + len(slots)
             explore = self.app.execute(f"SELECT COUNT(DISTINCT run_id) FROM strategy_trial WHERE charged = 1 AND exploration = 1 AND {where}", ids).fetchone()[0] if pots else None
             verdicts = self.judgements_spent(c, chain, spans)
+            # WHAT IT HAS SPENT, AS CampaignRenewal.SpentOn WORDS IT, in its order, from the counts above (an open campaign only; a zero budget
+            # is the owner's "none", never spent). A full exploration pot is spent only when no parent can be promoted under it, which only the
+            # app can read: it is said as full, and as spent once the app's own armed row says so.
+            is_open, pot = c["closed_at"] is None, c["exploration_budget"] if pots else None
+            pot_full = bool(is_open and pot and pot > 0 and explore >= pot)
+            spent_on = None
+            if is_open and c["verdict_budget"] > 0 and verdicts >= c["verdict_budget"]:
+                spent_on = W.SPENT_JUDGEMENTS
+            elif is_open and c["trial_budget"] > 0 and trials >= c["trial_budget"]:
+                spent_on = W.SPENT_TRIALS
+            elif pot_full and any(h["campaign"] == c["id"] and h["spent"] == W.SPENT_EXPLORATION for h in (holds or {}).get("holds", [])):
+                spent_on = W.SPENT_EXPLORATION
             out.append({"id": c["id"], "pair": c["pair"], "name": c["name"], "closed": c["closed_at"] is not None, "renewed_from": c["renewed_from"],
-                        "trials": trials, "trial_budget": c["trial_budget"], "exploration": explore, "exploration_budget": c["exploration_budget"] if pots else None,
-                        "verdicts": verdicts, "verdict_budget": c["verdict_budget"], "holdout_from": c["holdout_from"]})
+                        "trials": trials, "trial_budget": c["trial_budget"], "exploration": explore, "exploration_budget": pot,
+                        "verdicts": verdicts, "verdict_budget": c["verdict_budget"], "holdout_from": c["holdout_from"],
+                        "spent_on": spent_on, "exploration_pot_full": pot_full})
         return {"campaigns": out}
 
     def judgement_spans(self):
@@ -1268,6 +1351,15 @@ def attention(d):
     notes = dep.get("notes") or {}
     if notes.get("unprotected_at_close_since"):
         flags.append(f"{notes['unprotected_at_close_since']} paper day note(s) since T0 say {W.UNPROTECTED_AT_CLOSE}, the last {stamp(notes['unprotected_at_close_last_at'])}")
+    sg = d.get("signal", {})
+    for h in sg.get("forward_holds", {}).get("holds", []):
+        if h["unreadable"]:
+            flags.append(f"forward hold of campaign {h['campaign']} UNREADABLE ('{h['value']}'): the app holds every pair's bars and tape from the beginning of time")
+        elif h["armed_since_t0"]:
+            w = sg.get("withheld", {})
+            flags.append(f"forward hold ARMED {stamp(h['armed_at'])}: campaign {h['campaign']} ({h['pair'] or 'every pair'}) spent its {h['spent']}; held back from "
+                         f"{h['cutoff'][:10]} {h['cutoff'][11:16]}Z with no end until a campaign opens over it"
+                         + ("" if not h["holding"] else f"; {w.get('since_first_armed') or 0} holdout refusal(s) since the first hold armed"))
     cp = d.get("cell_proof", {})
     if cp.get("current") is False:
         flags.append("cell proof is NOT current here: " + ", ".join(cp.get("differs") or ["no proof"]) + " differ")
@@ -1462,9 +1554,21 @@ def render(d, cap):
         if "absent" in cs:
             L.append(f"campaigns: {cs['absent']} is not on this home")
         else:
-            L.append(f"campaigns: {len(cs['campaigns'])} open or closed since T0" + ("" if cs["campaigns"] else "  (none)"))
+            # THE FORWARD HOLDS AND THE HOLDOUT'S REFUSALS RIDE THIS LINE (U-digest-evidence-eyes): a crowded home is at the 60-line cap
+            # already, and a new line would push the cell proof and the tape off its end. The holds themselves are listed below, capped.
+            fh, wh = s["forward_holds"], s["withheld"]
+            L.append(f"campaigns: {len(cs['campaigns'])} open or closed since T0" + ("" if cs["campaigns"] else "  (none)")
+                     + (f"; forward holds: {len(fh['holds'])} armed, {fh['holding']} holding" if fh["holds"] else "; forward holds: none armed")
+                     + f"; holdout refusals since T0: {wh['total']} (fresh window {wh['fresh']}, dataset window {wh['dataset']}, words not read {wh['unread']}, "
+                     f"pipe frames {wh['pipe_frames']}); " + (f"{wh['since_first_armed']} since the first hold armed" if wh["first_armed_at"] else "no hold armed")
+                     + ("; asked: " + ", ".join(f"{a['asked']} {a['count']}" for a in wh["by_asked"][:3]) if wh["by_asked"] else ""))
             add_list(cs["campaigns"], cap["campaigns"], lambda c: f"  {c['pair'] or '?'} #{c['id']}{' closed' if c['closed'] else ''}: trials {c['trials']}/{c['trial_budget']}"
-                     + (f", exploration {c['exploration']}/{c['exploration_budget']}" if c["exploration"] is not None else "") + f", verdicts {c['verdicts']}/{c['verdict_budget']}")
+                     + (f", exploration {c['exploration']}/{c['exploration_budget']}" if c["exploration"] is not None else "") + f", verdicts {c['verdicts']}/{c['verdict_budget']}"
+                     + (f"; SPENT its {c['spent_on']}" if c.get("spent_on") else "") + ("; exploration pot full" if c.get("exploration_pot_full") and not c.get("spent_on") else ""))
+            if cap["holds"]:      # at the tightest cap the line above counts them, and ATTENTION names one armed since T0 or unreadable
+                add_list(fh["holds"], cap["holds"], lambda h: f"  campaign #{h['campaign']}: UNREADABLE row '{h['value']}', held over every pair from the beginning of time"
+                         if h["unreadable"] else f"  {h['pair'] or 'every pair'} campaign #{h['campaign']}: spent its {h['spent']}; cutoff {h['cutoff'][:10]} "
+                         f"{h['cutoff'][11:16]}Z, armed {stamp(h['armed_at'])}" + ("; holding" if h["holding"] else f"; campaign #{h['successor']} opened over it"))
         ca, lg = s["candidates"], s["ledger"]
         L.append(f"admissible candidates: {ca['admissible_since']} since T0, {ca['admissible_total']} ever; ledger since T0: " +
                  (", ".join(f"{k} {v}" for k, v in sorted(lg.items()) if k != "absent") or "nothing"))
@@ -1522,10 +1626,10 @@ def render(d, cap):
 
 
 # THE LINE CAPS, widest first: the human digest takes the first that fits MAX_LINES. The ATTENTION flags are never capped (render).
-CAPS = [dict(positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, wakes=6, blocked=2),
-        dict(positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, wakes=3, blocked=1),
-        dict(positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, wakes=2, blocked=1),
-        dict(positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, wakes=1, blocked=1)]
+CAPS = [dict(positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, holds=4, wakes=6, blocked=2),
+        dict(positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, holds=2, wakes=3, blocked=1),
+        dict(positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, holds=1, wakes=2, blocked=1),
+        dict(positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, holds=0, wakes=1, blocked=1)]
 
 
 def human(d):
