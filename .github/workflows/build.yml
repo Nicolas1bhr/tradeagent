@@ -500,7 +500,7 @@ jobs:
         run: |
           shellcheck --version
           shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh packaging/linux/ci/crash-loop.sh tools/linux-host.sh
-          shellcheck packaging/linux/ci/tool-password-tests.sh packaging/linux/ci/door.sh
+          shellcheck packaging/linux/ci/tool-password-tests.sh packaging/linux/ci/door.sh packaging/linux/ci/late-address.sh
           shellcheck .github/ci/shard-filter.sh
 
       # THE WINDOW'S PASSWORD ON THE FLEET'S SIDE (U-window-door): tools/linux-host.sh against a fake ssh and scp. The password
@@ -769,6 +769,18 @@ jobs:
           rc=0
           OUT="$ev" KEY="$RUNNER_TEMP/ta-key" ADDRESS="$ADDRESS" TARBALL="$1" packaging/linux/ci/door.sh || rc=$?
           { echo '### the window door'; echo; echo '```'; grep -E 'PASS|FAIL|door:' "$ev/door.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      # A LATE ADDRESS AT BOOT (U-window-door; D10 F3): the window on an address that appears only after the units start, as a
+      # tailnet address can at boot. Runs even when the step above is red, so each verdict stands on its own.
+      - name: A late address at boot
+        if: ${{ !cancelled() }}
+        run: |
+          ev="$GITHUB_WORKSPACE/linux-host-evidence"
+          set -- linux-artifact/TradeAgent-*-linux-x64.tar.gz
+          rc=0
+          sudo env OUT="$ev" TARBALL="$1" packaging/linux/ci/late-address.sh || rc=$?
+          { echo '### a late address at boot'; echo; echo '```'; grep -E 'PASS|FAIL|NOTE|late-address:|as-shipped|control' "$ev/late-address.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       - uses: actions/upload-artifact@v7
