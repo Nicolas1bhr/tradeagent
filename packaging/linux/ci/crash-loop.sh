@@ -5,8 +5,8 @@
 #   - the unit's figures took effect (StartLimitBurst=6, StartLimitIntervalSec=10min);
 #   - with the AI set to work on its own, every start after a killed one says the last start did not close properly and that
 #     the AI waits, and none resumes it (the app's half);
-#   - the loop stops at the limit: after six starts systemd refuses the seventh, leaves the unit failed with
-#     Result=start-limit-hit, and nothing starts it again;
+#   - the loop stops at the limit: after six starts systemd refuses the seventh ("Start request repeated too quickly"),
+#     leaves the unit failed, and nothing starts it again;
 #   - a hand start works after `systemctl reset-failed` (what the kit and the fleet's tool run), and that start waits too;
 #   - a hand `systemctl restart` is an orderly quit, not a crash: the start after it does not wait;
 #   - the owner's pause survives a crash: a paused AI stays paused, and nothing waits.
@@ -51,7 +51,12 @@ wait_until() { local s=$1; shift; local end=$(( $(now) + s )); until "$@"; do [ 
 started_past() { [ "$(started)" -gt "$1" ] && [ "$(show MainPID)" -gt 0 ]; }
 waits_past() { [ "$(waits)" -gt "$1" ]; }
 noticed_past() { [ "$(noticed)" -gt "$1" ]; }
-limit_hit() { [ "$(show Result)" = start-limit-hit ]; }
+# THE LIMIT, as systemd 255 says it (run 43403426050): the refused start is logged "Start request repeated too quickly" and the unit is
+# left failed, its Result still the last run's ('signal'), not 'start-limit-hit'. So both are read: the state and that line since the loop began.
+limit_hit() {
+    [ "$(show ActiveState)" = failed ] \
+        && journalctl -u "$unit" --since "@$t0" --no-pager -q 2> /dev/null | grep -q 'Start request repeated too quickly'
+}
 started_or_limit() { started_past "$1" || limit_hit; }
 crash() { systemctl kill --signal=SIGKILL "$unit"; wait_until 20 gone "$1" || fail "the killed process $1 is still alive 20 s on"; }
 gone() { [ ! -e "/proc/$1" ]; }
@@ -61,13 +66,14 @@ note "StartLimitBurst=$(show StartLimitBurst) StartLimitIntervalUSec=$(show Star
 [ "$(show StartLimitBurst)" = 6 ] || fail "StartLimitBurst is $(show StartLimitBurst), not the unit's 6"
 [ "$(show StartLimitIntervalUSec)" = 10min ] || fail "StartLimitIntervalUSec is $(show StartLimitIntervalUSec), not the unit's 10min"
 systemctl is-active --quiet "$unit" && fail "the app is running: the step before should have stopped it"
-note "disk: $(df -h --output=avail,pcent "$home" | tail -n 1 | tr -s ' '); inodes: $(df -i --output=iavail,ipcent "$home" | tail -n 1 | tr -s ' ')"
+note "disk: $(df -h --output=avail,pcent "$home" | tail -n 1 | tr -s ' '); inodes: $(df -i "$home" | tail -n 1 | tr -s ' ')"
 
 # ---- 1. a crash loop with the AI set to work on its own --------------------------------------------------
 set_owners_word true
 systemctl reset-failed "$unit"
 s0="$(started)"; w0="$(waits)"; n0="$(noticed)"; d0="$(decided WaitAfterACrash)"; r0="$(decided Resume)"
 t0="$(now)"
+sleep 1   # the journal's --since is to the second: nothing before this start is read as its limit
 systemctl start "$unit"
 starts=0 kills=0 seen="$s0"
 while :; do
@@ -99,7 +105,7 @@ s_limit="$(started)"
 sleep 30
 [ "$(show ActiveState)" = failed ] || fail "30 s after the limit the unit is $(show ActiveState), not failed"
 [ "$(started)" = "$s_limit" ] || fail "something started the app after the limit"
-pass "a crash loop stopped at the limit: $starts starts in $(( t_limit - t0 )) s, the seventh refused (Result=start-limit-hit), nothing started since; each of the 5 starts after a crash said the AI waits"
+pass "a crash loop stopped at the limit: $starts starts in $(( t_limit - t0 )) s, the seventh refused ('Start request repeated too quickly', the unit failed), nothing started since; each of the 5 starts after a crash decided to wait and said so"
 
 # ---- 2. a hand restart -----------------------------------------------------------------------------------
 # A bare restart first, as an operator would type it; where systemd refuses it while the limit stands, reset-failed (what the

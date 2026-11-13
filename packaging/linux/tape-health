@@ -7,7 +7,7 @@
 #   tape-health [--account tradeagent] [--home /var/lib/tradeagent]
 #
 # One line per fact, fields separated by '|', so the fleet reads it by eye and packaging/linux/ci/prove.sh reads it by grep:
-#   service|<unit>|active=<state>|NRestarts=<n>|since=<when>|pid=<main pid>|result=<systemd's Result: start-limit-hit after a crash loop>
+#   service|<unit>|active=<state>|NRestarts=<n>|since=<when>|pid=<main pid>|result=<systemd's Result of the last run: failed with 'signal' or 'exit-code' after a crash>
 #   tape|<path>|<bytes>                        the tape's size on disk, WAL included
 #   fetch|<source>|<http status or none>|<count>|<newest received_at>       prove.sh's per-source counts
 #   delivery|<source>|age_s=<seconds>|<newest received_at>                 the newest PARSED delivery per source: an HTTP 200 whose

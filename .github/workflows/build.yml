@@ -741,7 +741,7 @@ jobs:
           sudo systemctl stop tradeagent.service
 
       # A CRASH LOOP STOPS AND CHARGES NOTHING (U-service-limits; R31 D12 § H): the unit's start limit (6 starts in 10 minutes) ends a loop
-      # of SIGKILLs with Result=start-limit-hit, every start after a crash says the AI waits rather than resuming it, a hand start works
+      # of SIGKILLs ("Start request repeated too quickly", the unit failed), every start after a crash says the AI waits rather than resuming it, a hand start works
       # after reset-failed, a hand restart is an orderly quit, and a paused AI stays paused. Its two systemd answers (a bare restart while
       # the limit stands; NRestarts after a hand restart) are written to the summary as ANSWER lines.
       - name: A crash loop
