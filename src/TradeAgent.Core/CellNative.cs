@@ -89,12 +89,13 @@ public static class CellNative
 
     /// <summary>
     /// THE REQUESTS THAT CHANGE AN INODE (<c>include/uapi/linux/fs.h</c>, <c>fsverity.h</c>, <c>fscrypt.h</c>, <c>btrfs.h</c>): <c>FS_IOC_SETFLAGS</c> and
-    /// <c>FS_IOC_SETVERSION</c> in both widths, <c>FS_IOC_FSSETXATTR</c>, <c>FS_IOC_ENABLE_VERITY</c>, <c>FS_IOC_SET_ENCRYPTION_POLICY</c>,
+    /// <c>FS_IOC_SETVERSION</c> in both widths, ext4's own <c>EXT4_IOC_SETVERSION</c> in both widths (<c>include/uapi/linux/ext4.h</c>; <c>U-cell-ceilings</c>,
+    /// A4 N1: it sets a file's generation through a read-only descriptor and moves its ctime to now), <c>FS_IOC_FSSETXATTR</c>, <c>FS_IOC_ENABLE_VERITY</c>, <c>FS_IOC_SET_ENCRYPTION_POLICY</c>,
     /// <c>BTRFS_IOC_SUBVOL_SETFLAGS</c>. A read-only descriptor and being the owner is all each asks, and <c>ioctl</c> carries its request in
     /// a 32-bit word, so the low word of the argument is what the kernel acts on. Device ioctls are Landlock's, and every other request is
     /// allowed: a filesystem's private setter outside this list is not closed.
     /// </summary>
-    internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A];
+    internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x40086604, 0x40046604, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A];
 
     /// <summary>
     /// THE REQUESTS THAT ALLOCATE A FILE'S BLOCKS (<c>include/uapi/linux/fs.h</c>; <c>fs/ioctl.c</c>'s <c>ioctl_preallocate</c>, which is the kernel's own
