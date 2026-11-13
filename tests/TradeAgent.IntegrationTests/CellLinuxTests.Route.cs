@@ -708,7 +708,7 @@ public partial class CellLinuxTests
         Deployed(true);
         using var db = TestEnv.NewDb();
         var held = await Bench(db, codex, rows.Cgroups);
-        foreach (var name in new[] { "state-unwritable", "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled" })
+        foreach (var name in new[] { "state-unwritable", "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled", "file-bound", "space-unallocated" })
             Assert.True(held.Rows.Any(r => r.Name == name && r.Held), $"the start benchmark holds no row '{name}':\n{Said(held)}");
         Assert.True(held.ProofId is not null, $"the benchmark wrote no proof:\n{Said(held)}");
     }

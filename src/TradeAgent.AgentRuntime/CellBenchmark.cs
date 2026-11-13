@@ -51,7 +51,7 @@ public static class CellBenchmark
         "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
         "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
         "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled",
-        "tmp-unchanged", "file-bound", "route-a-exec-server"
+        "tmp-unchanged", "file-bound", "space-unallocated", "route-a-exec-server"
     ];
 
     /// <summary>
@@ -121,6 +121,34 @@ public static class CellBenchmark
         fd = libc.syscall(425, 4, params)
         print("io_uring-open" if fd >= 0 else f"io_uring-denied errno={ctypes.get_errno()}")
         """;
+
+    /// <summary>
+    /// SPACE TAKEN WITHOUT WRITING IT, FROM INSIDE A CELL (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c> of 256 MiB, plain and keeping the size,
+    /// then the blocks the file holds, then glibc's <c>posix_fallocate</c> of 1 MiB, which writes the blocks itself once the call is unsupported.
+    /// </summary>
+    internal const string SpaceProbe = """
+        import ctypes, os, sys
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.fallocate.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int64, ctypes.c_int64]
+        path = sys.argv[1]
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            for name, mode in (("allocate", 0), ("keep-size", 1)):
+                rc = libc.fallocate(fd, mode, 0, 256 << 20)
+                print(name + ("-open" if rc == 0 else f"-refused errno={ctypes.get_errno()}"))
+            print(f"blocks={os.fstat(fd).st_blocks}")
+            try:
+                os.posix_fallocate(fd, 0, 1 << 20); print(f"posix-written size={os.fstat(fd).st_size}")
+            except OSError as e:
+                print(f"posix-failed errno={e.errno}")
+        finally:
+            os.close(fd); os.unlink(path)
+        """;
+
+    /// <summary>Whether <see cref="SpaceProbe"/>'s output shows the cell's <c>fallocate</c> unsupported, nothing allocated by it, and the fallback written.</summary>
+    internal static bool SpaceUnallocated(string output) =>
+        output.Contains("allocate-refused errno=95\n", StringComparison.Ordinal) && output.Contains("keep-size-refused errno=95\n", StringComparison.Ordinal) &&
+        output.Contains("blocks=0\n", StringComparison.Ordinal) && output.Contains("posix-written size=1048576", StringComparison.Ordinal);
 
     /// <summary>A double fork with <c>setsid</c> between: the grandchild leaves the session, writes its pid, and waits to be ended.</summary>
     const string DaemonProbe = """
@@ -562,6 +590,13 @@ public static class CellBenchmark
                 return (o.Contains("under=0", StringComparison.Ordinal) && o.Contains("over=", StringComparison.Ordinal) &&
                         !o.Contains("over=0", StringComparison.Ordinal) && o.Contains("raised=", StringComparison.Ordinal) &&
                         !o.Contains("raised=0", StringComparison.Ordinal) && !o.Contains("core dumped", StringComparison.Ordinal), o.Trim().Replace('\n', ' '));
+            });
+            // SPACE TAKEN WITHOUT WRITING IT (U-disk-guard-2): the per-file bound is per file, so a cell's fallocate would take the disk inside one of the guard's
+            // reads. Unsupported, and the fallback is real writes: the blocks the refused calls left are none.
+            await Row("space-unallocated", async () =>
+            {
+                var (_, o) = await Py(policy, "space", SpaceProbe, Path.Combine(ws, "space-probe"));
+                return (SpaceUnallocated(o), o.Trim().Replace('\n', ' '));
             });
             await Row("route-a-exec-server", async () =>
             {
