@@ -2814,9 +2814,10 @@ public sealed partial class AppHost : IAsyncDisposable
         // "waiting", which reads exactly like a button that did not work. Deliberately raised HERE
         // and not in MissionLoop.Start: a restart that resumes a mission the owner had already
         // started is not a new instruction — it takes the wakes that are already due and raises
-        // none of its own.
+        // none of its own. THE CHIEF'S WHILE ONE IS ACTIVE (U-chief-floor-held, R31 A1-3), as the owner's words and his material are: the
+        // chair is held beside an active chief, so a look raised for it woke nobody, and the press is also his resume after a disk pause.
         RaiseWake(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review,
-            Json.Write(new { because = "the owner set the AI to work on its own" }), CouncilRoles.Operations);
+            Json.Write(new { because = "the owner set the AI to work on its own" }), Wakes?.OwnerRecipient() ?? CouncilRoles.Operations);
         Changed?.Invoke();
         return null;
     }
