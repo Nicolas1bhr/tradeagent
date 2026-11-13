@@ -176,8 +176,11 @@ public class TurnBoundsTests : IDisposable
         }
 
         // AND THE NEXT TURN — the owner's press lifts the backoff here, so a test need not sit it out — answers them, told what happened.
+        // THE WAIT IS ON THE SECOND PROMPT'S FILE TOO (U-turn-cards-2 item 3, a test-rig fix and nothing in the product): the puppet bumps its turn count
+        // before it writes `.2.prompt`, so a wait on the count alone could read the prompt before it existed (ubuntu, CI 43343350264). Same patience.
         life.Host.Mission.SeatChanged(Ops);
-        await life.RunUntil(() => life.Turns(Ops) == 2 && life.Host.Wakes!.OfKind(MissionEventKind.Owner).Single().Consumed, "the next turn took the words");
+        await life.RunUntil(() => life.Turns(Ops) == 2 && life.Prompt(Ops, 2) is not null && life.Host.Wakes!.OfKind(MissionEventKind.Owner).Single().Consumed,
+            "the next turn took the words and its puppet wrote down its prompt");
         Assert.Contains(words, life.Prompt(Ops, 2));
         Assert.Contains(overLimit, life.Prompt(Ops, 2));
     }
