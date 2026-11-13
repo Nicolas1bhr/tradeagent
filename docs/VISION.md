@@ -487,24 +487,25 @@ context-cut unit (R13 D1), and each opens only by the earning rule.
 
 | Stage | What exists | What it proves | Status |
 |---|---|---|---|
-| 0 — today | Two positions (`operations`, `research`), the event-driven kernel, the org ledger (rung 28: a tree of any depth, read by nothing yet) | — | LANDED (`BUILD-STATUS.md`) |
-| 1 — through M-org1 | ORGANISATION § 15, re-sequenced 2026-10-08: the third position, rights, envelopes, wakes; M-org0; containment and the execution environment; assignments, packets, verbs, the watcher, the surface, the chief; M-org1 — the chief charters a team inside a department, and its team head issues typed assignments to two executors on confined seats: real checks, durable recovery, actual costs, the watcher | the mechanics on the stated build | READY and CARD |
-| 2 — M-org2 | the proving ground; a worker replaced from position memory; a seat shadowed; a cut-rule review; the flat-versus-headed paired run; at least 50 scored forecasts per manager | whether a manager layer pays on trading research | DESIGN |
-| 3 — earned growth | departments as sources come online (tape, features, perception); layers only by the earning rule; a watcher per department; the assurance council's model seats on a second vendor; the invariant registry and enforcement classes as data | the law in practice | DESIGN |
+| 0 — the start (2026-10-06) | Two positions (`operations`, `research`), the event-driven kernel, the org ledger (rung 28: a tree of any depth) | — | LANDED (`BUILD-STATUS.md`) |
+| 1 — through M-org1 | R25's MVP, built in R25 § 5's waves and gated by R30 § 3 (before them ORGANISATION § 15, re-sequenced 2026-10-08): the third position, rights, envelopes, wakes; M-org0; containment and the execution environment; assignments, packets, verbs, the watcher, the surface, the chief; M-org1 — MVP-L (R25 § 2): from a fresh home on paper, the chief charters, its heads hire executors that activate themselves inside the gate, they author and backtest in confined cells, verdicts are asked, an eligible version runs forward on paper and its fills come back, for 72 hours unattended inside the AI budget and across a restart: real checks, durable recovery, actual costs, the watcher | the mechanics on the stated build | LANDED (the mechanics; `BUILD-STATUS.md`); the proof runs: M-org1 sitting #1 on 2026-10-30, the first real chief turn; sitting #2, the 72-hour unattended run, from T0 2026-11-13T01:18:30Z to 2026-11-16T01:18:30Z — NOT shown until its record says so |
+| 2 — M-org2 | the proving ground; a worker replaced from position memory; a seat shadowed; a cut-rule review; the flat-versus-headed paired run; at least 50 scored forecasts per manager | whether a manager layer pays on trading research | IN PART: the proving ground (b, c) and the cut-rule review LANDED; the worker replacement waits on a branch (`u-worker-replace`); the seat shadow and the paired run come after the 72-hour run, ordered by what it measures (R30 § 5) |
+| 3 — earned growth | departments as sources come online (tape, features, perception); layers only by the earning rule; a watcher per department; the assurance council's model seats on a second vendor; the invariant registry and enforcement classes as data | the law in practice | IN PART: the tape is online (2026-10-23), the invariant registry and its enforcement classes are data (2026-11-01), the earning test gates growth; a watcher per department and a second vendor's seats are DESIGN |
 | 4 — the organs | the economy (α-wealth, the contribution ledger), the metabolism (tranches, retention), the mind (beliefs, case law) — each when a measured need appears | self-funding and self-knowledge | DESIGN |
 | Horizon | a firm of firms — two or three organisations with different constitutions and vendors competing for tranches, once one feeds itself; a cross-installation outcome network (EDGE § 3; legal first) | selection at the level of organisations | DESIGN |
 
-**Folded into units already planned — the only new units this file adds before M-org1 are § 6.7's three (`U-canon`, `U-research-ledger`,
-`U-reconcile-wakes`):**
-- `U-org-assignments` (CARD) shapes the assignment as the mandate (§ 6.1): one record for charters, assignments, envelopes, forecasts and kill rules —
+**Folded into units that have since landed (history; each is in `BUILD-STATUS.md`) — the only new units this file added before M-org1 were § 6.7's
+three (`U-canon`, `U-research-ledger`, `U-reconcile-wakes`):**
+- `U-org-assignments` (LANDED) shapes the assignment as the mandate (§ 6.1): one record for charters, assignments, envelopes, forecasts and kill rules —
   tasks and explorations, each with its latitude or the exact mark, deliveries naming their deviations, and lateral notes (ORGANISATION § 4, 2026-10-08).
-- `U-contain-seats` (CARD) keeps a confined seat's working freedom inside its cell — shell, code, packages, permitted network, the runtime's own helpers
+- `U-contain-seats` (LANDED, as R-containment and then `U-execution-environment`) keeps a confined seat's working freedom inside its cell — shell, code, packages, permitted network, the runtime's own helpers
   (§ 6.5; ORGANISATION § 15).
-- `U-org-verbs` (CARD) keeps depth, span and counts as policy data under the earning rule, never constants; its throttles stand.
-- `U-org-watcher` (CARD) scopes its detectors per unit from the start, so a department's watcher is a routing identity over the same detectors, and keeps
+- `U-org-verbs` (LANDED) keeps depth, span and counts as policy data under the earning rule, never constants; its throttles stand.
+- `U-org-watcher` (LANDED) scopes its detectors per unit from the start, so a department's watcher is a routing identity over the same detectors, and keeps
   its budget beside the organisation's.
 - Lineage: before the contribution ledger exists, check that every artifact records its author position and its inputs, what an attempt read included.
-- The invariant registry begins as § 6.3's table, with no code; it becomes data when the next unit touches a protection.
+- The invariant registry is data since 2026-11-01 (`src/TradeAgent.Core/InvariantRegistry.cs`): § 6.3's 16 protections, each with its enforcing code,
+  its tests and an enforcement class per seat type, shown read-only on the owner's Oversight page.
 
 ## 12. What it will not become
 A headcount target or floor · depth added because containment made it safe · a council that owns strategy · a watcher bureaucracy spending turns on quiet
