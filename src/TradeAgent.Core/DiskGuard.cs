@@ -17,7 +17,8 @@ public sealed record DiskSpace(long Free, long Total, long FilesFree = 0, long F
     ///
     /// <para><b>On Linux the files too</b>, by <c>statvfs</c> of the same path: <c>f_favail</c>, the files an unprivileged account may still make, and
     /// <c>f_files</c>. A cell can use up a filesystem's inodes with empty files while its bytes read plenty free, and ext4 keeps none back for root, so the
-    /// owner's other services cannot make a file either. A read whose files could not be had is no read: the guard must see both.</para>
+    /// owner's other services cannot make a file either. A read whose files could not be had is no read: the guard must see both.
+    /// <see cref="FilesOn"/> says what reads as no fixed count instead.</para>
     /// </summary>
     public static DiskSpace? Read(string path)
     {
@@ -35,7 +36,9 @@ public sealed record DiskSpace(long Free, long Total, long FilesFree = 0, long F
 
     /// <summary>
     /// <c>statvfs</c>'s <c>f_favail</c> and <c>f_files</c> on 64-bit Linux, where <c>struct statvfs</c> is eleven 8-byte words and six ints (glibc and musl
-    /// alike, x86-64 and arm64): <c>f_files</c> at 40, <c>f_favail</c> at 56. Null when the call failed or the figures make no sense.
+    /// alike, x86-64 and arm64): <c>f_files</c> at 40, <c>f_favail</c> at 56. Null when the call failed. Figures that make no sense as a fixed count (more
+    /// free than in all, or past what a signed word holds, as some network and FUSE filesystems report) are read as no fixed count, 0 and 0, as btrfs's
+    /// are: the bytes still count, and the guard is not blinded by a filesystem that does not keep the figure (opus review).
     /// </summary>
     static (long FilesFree, long Files)? FilesOn(string path)
     {
@@ -43,11 +46,13 @@ public sealed record DiskSpace(long Free, long Total, long FilesFree = 0, long F
         try
         {
             if (statvfs(path, buf) != 0) return null;
-            var (files, favail) = (Marshal.ReadInt64(buf, 40), Marshal.ReadInt64(buf, 56));
-            return files >= 0 && favail >= 0 && favail <= files ? (favail, files) : null;
+            return FixedCount(Marshal.ReadInt64(buf, 40), Marshal.ReadInt64(buf, 56));
         }
         finally { Marshal.FreeHGlobal(buf); }
     }
+
+    /// <summary><c>f_files</c> and <c>f_favail</c> as a fixed count, or 0 and 0 where they make no sense as one (see <see cref="FilesOn"/>).</summary>
+    internal static (long FilesFree, long Files) FixedCount(long files, long favail) => files > 0 && favail >= 0 && favail <= files ? (favail, files) : (0, 0);
 
     /// <summary>Room for <c>struct statvfs</c> (112 bytes on 64-bit Linux) with some to spare.</summary>
     const int StatvfsSize = 256;

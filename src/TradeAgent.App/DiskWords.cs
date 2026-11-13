@@ -22,12 +22,23 @@ static class DiskWords
             var room = now is { } seen ? $" ({Count(seen.FilesFree)} can be made now)" : "";
             return $"paused to protect this computer's disk: it had room for only {Count(pause.FilesFree)} new files, and the AI stops under {Count(pause.FilesFloor)}. " +
                    $"{StillRunning}. Remove some files, then press \"{DashboardPage.LetTheAiWork}\" once there is room for at least {Count(DiskFloor.FilesToResume(pause.Files))} " +
-                   $"new files{room}. It will not start again by itself";
+                   $"new files{room}{BytesShort(now)}. It will not start again by itself";
         }
         var free = now is { } read ? $" ({Size(read.Free)} is free now)" : "";
         return $"paused to protect this computer's disk: {Size(pause.Free)} was free, and the AI stops under {Size(pause.Floor)}. {StillRunning}. Free some space, " +
-               $"then press \"{DashboardPage.LetTheAiWork}\" once at least {Size(DiskFloor.ToResume(pause.Total))} is free{free}. It will not start again by itself";
+               $"then press \"{DashboardPage.LetTheAiWork}\" once at least {Size(DiskFloor.ToResume(pause.Total))} is free{free}{FilesShort(now)}. It will not start again by itself";
     }
+
+    /// <summary>
+    /// WHAT A PRESS ALSO NEEDS, from the read now, when the half that did not trip is short of what a resume needs too: the press is refused on either, so the
+    /// words name both (opus review). Empty when that half has its room, or nothing has been read.
+    /// </summary>
+    static string FilesShort(DiskSpace? now) =>
+        now is { Files: > 0 } r && r.FilesFree < DiskFloor.FilesToResume(r.Files)
+            ? $", and there is room for at least {Count(DiskFloor.FilesToResume(r.Files))} new files ({Count(r.FilesFree)} can be made now)" : "";
+
+    static string BytesShort(DiskSpace? now) =>
+        now is { } r && r.Free < DiskFloor.ToResume(r.Total) ? $", and at least {Size(DiskFloor.ToResume(r.Total))} is free ({Size(r.Free)} is free now)" : "";
 
     /// <summary>The activity log's line at a trip.</summary>
     public static string Tripped(DiskPause pause) => $"The AI was {Paused(pause, null)}.";
