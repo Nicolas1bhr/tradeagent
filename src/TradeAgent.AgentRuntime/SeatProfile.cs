@@ -1101,10 +1101,17 @@ public static class SeatProfile
     /// <c>SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DONT_VERIFY)</c>). The harness is this app's own child, under the same account,
     /// so the call answers it the same folder. Null where the call fails: then codex has no home either, and lists no skill from one.
     /// </summary>
-    public static string? AccountProfile()
+    public static string? AccountProfile() => AccountProfileFrom(AccountProfileUnderTest.Value, AccountProfileForEveryTest);
+
+    /// <summary>
+    /// THE LOOKUP ORDER OF <see cref="AccountProfile"/>, WITH ITS SEAMS AS PARAMETERS (<c>U-test-meaning</c>, A8-1): the test's folder, then
+    /// the test assembly's, then the real known folder. Every test assembly sets the second, so a test reaches the real call — the one line
+    /// production runs — only by calling this with both empty.
+    /// </summary>
+    internal static string? AccountProfileFrom(string? underTest, string? everyTest)
     {
-        if (AccountProfileUnderTest.Value is { } underTest) return underTest;
-        if (AccountProfileForEveryTest is { } everyTest) return everyTest;
+        if (underTest is not null) return underTest;
+        if (everyTest is not null) return everyTest;
         return KnownFolderProfile();
     }
 
@@ -1131,10 +1138,16 @@ public static class SeatProfile
     /// the vendor's own fallback, so the folder looked at is the one codex would read either way. See
     /// <see cref="SeatPlan.MachineForbidden"/>.
     /// </summary>
-    public static string? MachineFolder()
+    public static string? MachineFolder() => MachineFolderFrom(MachineFolderUnderTest.Value, MachineFolderForEveryTest);
+
+    /// <summary>
+    /// THE LOOKUP ORDER OF <see cref="MachineFolder"/>, WITH ITS SEAMS AS PARAMETERS (<c>U-test-meaning</c>, A8-1), as
+    /// <see cref="AccountProfileFrom"/> is: the test's folder, then the test assembly's, then the real known folder.
+    /// </summary>
+    internal static string? MachineFolderFrom(string? underTest, string? everyTest)
     {
-        if (MachineFolderUnderTest.Value is { } underTest) return underTest;
-        if (MachineFolderForEveryTest is { } everyTest) return everyTest;
+        if (underTest is not null) return underTest;
+        if (everyTest is not null) return everyTest;
         return KnownFolderProgramData();
     }
 
@@ -1231,9 +1244,15 @@ public static class SeatProfile
     internal static readonly AsyncLocal<Func<string, string?>?> MachineOwnerUnderTest = new();
 
     /// <summary>The owner's security id of the folder <paramref name="at"/>: Windows' own, or the test's; null off Windows.</summary>
-    static string? MachineOwnerOf(string at)
+    static string? MachineOwnerOf(string at) => MachineOwnerFrom(MachineOwnerUnderTest.Value, at);
+
+    /// <summary>
+    /// THE LOOKUP ORDER OF <see cref="MachineOwnerOf"/>, WITH ITS SEAM AS A PARAMETER (<c>U-test-meaning</c>, A8-1): the test's reader, then
+    /// Windows' own owner read; null off Windows. A test reaches the real read only by calling this with the seam empty.
+    /// </summary>
+    internal static string? MachineOwnerFrom(Func<string, string?>? underTest, string at)
     {
-        if (MachineOwnerUnderTest.Value is { } underTest) return underTest(at);
+        if (underTest is not null) return underTest(at);
         if (!OperatingSystem.IsWindows()) return null;
         return System.IO.FileSystemAclExtensions.GetAccessControl(new DirectoryInfo(at), System.Security.AccessControl.AccessControlSections.Owner)
             .GetOwner(typeof(System.Security.Principal.SecurityIdentifier))?.Value

@@ -618,6 +618,75 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// (c3c) THE LOOKUP ORDER, AND ITS LAST STEP REACHED WITH THE SEAMS EMPTY (<c>U-test-meaning</c>, A8-1). Every test assembly's module
+    /// initializer sets <see cref="SeatProfile.AccountProfileForEveryTest"/> and <see cref="SeatProfile.MachineFolderForEveryTest"/>, so
+    /// no seat test ever runs the real known-folder call — the one line production runs — and <c>return null;</c> in its place stayed green.
+    /// The order lives in one function with the seams as parameters; this runs it with each seam set, and then with both empty.
+    ///
+    /// <para><b>RED on the mutants</b>: <c>return KnownFolderProfile();</c> → <c>return null;</c> and <c>return KnownFolderProgramData();</c>
+    /// → <c>return null;</c> each red the Windows rows below.</para>
+    /// </summary>
+    [Fact]
+    public void The_seams_outrank_the_real_folders_in_order()
+    {
+        Assert.Equal("test", SeatProfile.AccountProfileFrom("test", "assembly"));
+        Assert.Equal("assembly", SeatProfile.AccountProfileFrom(null, "assembly"));
+        Assert.Equal("test", SeatProfile.MachineFolderFrom("test", "assembly"));
+        Assert.Equal("assembly", SeatProfile.MachineFolderFrom(null, "assembly"));
+        Assert.Equal("S-1-5-18", SeatProfile.MachineOwnerFrom(_ => "S-1-5-18", Path.GetTempPath()));
+    }
+
+    /// <summary>(c3c) On Windows, with no seam, the account profile is the real profile known folder.</summary>
+    [OnlyOnFact("the account profile is a Windows known folder", "windows")]
+    public void With_no_seam_on_windows_the_account_profile_is_the_real_known_folder()
+    {
+        var profile = SeatProfile.AccountProfileFrom(null, null);
+        Assert.NotNull(profile);
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), profile, ignoreCase: true);
+    }
+
+    /// <summary>(c3c) On Windows, with no seam, the machine folder is the real ProgramData known folder.</summary>
+    [OnlyOnFact("the machine folder is a Windows known folder", "windows")]
+    public void With_no_seam_on_windows_the_machine_folder_is_the_real_program_data_folder()
+    {
+        var machine = SeatProfile.MachineFolderFrom(null, null);
+        Assert.NotNull(machine);
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), machine, ignoreCase: true);
+    }
+
+    /// <summary>
+    /// (c3d) THE REAL OWNER READ (<c>U-test-meaning</c>, A8-1): the foreign-owner rows run only through
+    /// <see cref="SeatProfile.MachineOwnerUnderTest"/>, so <c>MachineOwnerOf</c>'s Windows ACL read replaced by <c>return null;</c> (a null
+    /// owner is accepted) stayed green. With the seam empty, a folder this test makes is owned by its token's owner — the account, or the
+    /// Administrators group when elevated, as CI's runner is — and the read names exactly that.
+    ///
+    /// <para><b>RED on the mutant</b>: the ACL read → <c>return null;</c>.</para>
+    /// </summary>
+    [OnlyOnFact("the owner is read from a Windows security descriptor", "windows")]
+    public void With_no_seam_on_windows_the_owner_read_names_the_folders_real_owner()
+    {
+        if (!OperatingSystem.IsWindows()) return;                            // the analyzer's mirror of the attribute
+        var at = Path.Combine(Path.GetTempPath(), "tradeagent-tests-machine-owner", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(at);
+        try
+        {
+            var owner = System.Security.Principal.WindowsIdentity.GetCurrent().Owner?.Value;
+            Assert.NotNull(owner);
+            Assert.Equal(owner, SeatProfile.MachineOwnerFrom(null, at));
+        }
+        finally { Directory.Delete(at); }
+    }
+
+    /// <summary>(c3c, c3d) Off Windows, with no seam, there is no account profile, no machine folder and no owner read.</summary>
+    [OnlyOnFact("off Windows codex takes HOME and reads no machine folder", "linux", "macos")]
+    public void With_no_seam_off_windows_there_is_no_profile_no_machine_folder_and_no_owner()
+    {
+        Assert.Null(SeatProfile.AccountProfileFrom(null, null));
+        Assert.Null(SeatProfile.MachineFolderFrom(null, null));
+        Assert.Null(SeatProfile.MachineOwnerFrom(null, Path.GetTempPath()));
+    }
+
+    /// <summary>
     /// (c1) THE POSITION'S HOME IS LOOKED AT WITHOUT FOLLOWING A LINK, AND THE CLI'S OWN REPORTS NEVER RUN IN IT (<c>U-execution-environment</c>
     /// fix pass 5, the fourth re-review's G2). An executor's cell writes its whole home, and the seat check runs in the UNCONFINED app: its
     /// look for <c>.codex</c> and <c>.agents</c> followed links, so a link the cell left pointing at nothing yet passed (its target can be
