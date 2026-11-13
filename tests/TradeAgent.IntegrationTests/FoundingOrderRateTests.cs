@@ -275,6 +275,12 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
     ///
     /// <para><b>Changed in the open.</b> This was <c>A_caller_that_is_not_a_run_is_still_refused_at_six_with_the_runs_orders_in_the_minute</c>, which held the one
     /// shared count: that count is the defect U-paper-t0 carded, and it is gone.</para>
+    ///
+    /// <para><b>Its caller changed in the open too</b> (<c>U-test-meaning</c>, A8): the old test's caller was an agent (<c>new AgentContext("a")</c>); the six
+    /// here are the owner's (<see cref="NotARun"/>), because on this account an agent's unattributed order is refused by the envelope's reservation, so an
+    /// agent cannot place six to count. Both callers take the same branch (the count keys on the run id alone). The agent's half is kept as its own row: with
+    /// the runs' minute full, an agent's order passes the rate and is refused by the reservation, never by the minute — and that refusal takes none of the
+    /// owner's six.</para>
     /// </summary>
     [Fact]
     public async Task A_caller_that_is_not_a_run_keeps_its_six_with_the_runs_orders_in_the_minute()
@@ -283,6 +289,11 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
         for (var m = 1; m <= 3; m++) await rig.Minute(m);
         Assert.Equal(5, rig.Gw.Deployments.All().Sum(d => rig.Gw.Deployments.OpsOf(d.Id).Count(o => o.Kind == DeploymentOpKind.Entry)));
         EveryRunIsProtected(rig, 5);
+
+        var agent = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            rig.Gw.PlaceAsync(new AgentContext("a"), "an-agents-not-a-run", TestEnv.Buy("BTCUSDT", 0.001m)));
+        log.WriteLine($"the agent: {agent.Code}: {agent.Message}");
+        Assert.Equal(ErrorCode.ENVELOPE_ACCOUNT_RESERVED, agent.Code);
 
         var said = new List<string?>();
         for (var n = 1; n <= 7; n++) said.Add(await NotARun(rig, n));
