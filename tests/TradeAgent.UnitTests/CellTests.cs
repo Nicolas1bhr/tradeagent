@@ -458,13 +458,19 @@ public class CellSeccompTests
     /// read as a permission. The calls numbered beside it are untouched.
     /// </summary>
     [Theory]
-    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 285u, new uint[] { 284, 286 })]
-    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 47u, new uint[] { 46, 48 })]
-    public void Space_allocated_without_a_write_is_unsupported_in_a_cell(System.Runtime.InteropServices.Architecture arch, uint audit, uint fallocate, uint[] beside)
+    [InlineData(System.Runtime.InteropServices.Architecture.X64, X64, 285u, 16u, new uint[] { 284, 286 })]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm64, Arm64, 47u, 29u, new uint[] { 46, 48 })]
+    public void Space_allocated_without_a_write_is_unsupported_in_a_cell(System.Runtime.InteropServices.Architecture arch, uint audit, uint fallocate, uint ioctl, uint[] beside)
     {
         foreach (var mode in new ulong[] { 0, 1 /* KEEP_SIZE */, 0x10 /* ZERO_RANGE */, 0x40 /* UNSHARE_RANGE */ })
             Assert.Equal(Eopnotsupp, Run(arch, audit, fallocate, 3, mode, 0, 1UL << 30));
         foreach (var nr in beside) Assert.Equal(Allow, Run(arch, audit, nr, 3, 0, 0));
+        // THE SAME ALLOCATION THROUGH ioctl (fs/ioctl.c's ioctl_preallocate): FS_IOC_RESVSP, FS_IOC_RESVSP64 and FS_IOC_ZERO_RANGE, by the low word as the kernel reads it.
+        foreach (var request in new ulong[] { 0x40305828, 0x4030582A, 0x40305839, 0xFFFFFFFF_4030582A })
+            Assert.Equal(Eopnotsupp, Run(arch, audit, ioctl, 3, request, 0));
+        // GIVING SPACE BACK IS NOT TAKING IT: FS_IOC_UNRESVSP and its 64-bit form stay the kernel's.
+        foreach (var request in new ulong[] { 0x40305829, 0x4030582B })
+            Assert.Equal(Allow, Run(arch, audit, ioctl, 3, request, 0));
     }
 
     /// <summary>
@@ -472,11 +478,12 @@ public class CellSeccompTests
     /// cell whose filter lets <c>fallocate</c> through (what a build before <c>U-disk-guard-2</c> printed) or one that refuses with EPERM does not hold it.
     /// </summary>
     [Theory]
-    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nblocks=0\nposix-written size=1048576\n", true)]
-    [InlineData("allocate-open\nkeep-size-open\nblocks=524288\nposix-written size=268435456\n", false)]
-    [InlineData("allocate-refused errno=1\nkeep-size-refused errno=1\nblocks=0\nposix-failed errno=1\n", false)]
-    [InlineData("allocate-refused errno=95\nkeep-size-open\nblocks=524288\nposix-written size=1048576\n", false)]
-    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nblocks=0\nposix-failed errno=27\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nresvsp-refused errno=95\nresvsp64-refused errno=95\nzero-range-refused errno=95\nblocks=0\nposix-written size=1048576\n", true)]
+    [InlineData("allocate-open\nkeep-size-open\nresvsp-open\nresvsp64-open\nzero-range-open\nblocks=524288\nposix-written size=268435456\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nresvsp-open\nresvsp64-open\nzero-range-open\nblocks=524288\nposix-written size=1048576\n", false)]
+    [InlineData("allocate-refused errno=1\nkeep-size-refused errno=1\nresvsp-refused errno=1\nresvsp64-refused errno=1\nzero-range-refused errno=1\nblocks=0\nposix-failed errno=1\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-open\nresvsp-refused errno=95\nresvsp64-refused errno=95\nzero-range-refused errno=95\nblocks=524288\nposix-written size=1048576\n", false)]
+    [InlineData("allocate-refused errno=95\nkeep-size-refused errno=95\nresvsp-refused errno=95\nresvsp64-refused errno=95\nzero-range-refused errno=95\nblocks=0\nposix-failed errno=27\n", false)]
     public void The_space_row_holds_only_on_an_unsupported_call_and_a_written_fallback(string output, bool held) =>
         Assert.Equal(held, TradeAgent.AgentRuntime.CellBenchmark.SpaceUnallocated(output));
 
