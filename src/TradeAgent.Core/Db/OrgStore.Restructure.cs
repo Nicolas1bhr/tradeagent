@@ -84,7 +84,7 @@ public sealed partial class OrgStore
                 : units.Contains(m.Unit) ? $"it was issued in {m.Unit}, which this closes"
                 : null;
             if (why is null || !IsOpen(m.Id)) continue;
-            var reason = $"{r.Act}: {why}, so the mandate is cancelled by the app (ORCHESTRATION § 2.9: a restructuring disposes every open mandate)";
+            var reason = $"{r.Act}: {why}, so the mandate is cancelled by the app (a restructuring disposes every open mandate)";
             AppendMandateEvent(m.Id, now, MandateEventKind.Cancelled, AppActor, null, reason, []);
             RecordMandateFence(m.Id, now);
             var wakes = new MissionEventStore(db);
@@ -380,7 +380,7 @@ public sealed partial class OrgStore
         Func<bool>? provenCell = null) => db.Write(_ =>
     {
         if (new Board.BoardReader(db).AnyActive)
-            throw Refused($"activating {positionId} is the security board's now that a board seat is active (R24): it is a board act on the "
+            throw Refused($"activating {positionId} is the security board's now that a board seat is active: it is a board act on the "
                           + "organisation's plan capacity, made by board seats — no longer yours in the app.");
         var row = Position(positionId) ?? throw Refused($"'{positionId}' is no position on the chart.");
         if (row.Status != OrgPositionStatus.Dormant) throw Refused($"{positionId} is {row.Status}: only a dormant position is activated.");
@@ -550,7 +550,7 @@ public sealed partial class OrgStore
         }
         throw Refused($"{OrgEnvelopes.NameOf(unit.Id)} was chartered {(now - unit.CreatedAt).TotalDays.ToString("0.#", CultureInfo.InvariantCulture)} "
                       + $"days ago, and a unit lives {OrgBounds.MinimumLife.TotalDays.ToString(CultureInfo.InvariantCulture)} days before it is "
-                      + $"{act} — or until the kill forecast its charter carried on it resolves, and that has not (ORGANISATION § 3).");
+                      + $"{act} — or until the kill forecast its charter carried on it resolves, and that has not.");
     }
 
     /// <summary>Each of <paramref name="positions"/> <c>ended</c> at <paramref name="now"/>, inside the caller's write.</summary>

@@ -90,7 +90,7 @@ public sealed partial class OrgStore
         if (!OrgCurrency.IsKnown(r.Currency))
             throw Refused($"'{r.Currency}' is no currency of a unit's envelope: {string.Join(" | ", OrgCurrency.All)} — one per tilt.");
         if (r.Currency == OrgCurrency.Ai && line.Count > 0 && line[0].IsRoot)
-            throw Refused($"the split of the organisation's AI day among its divisions is the security board's policy (R24 § 4.1), never a "
+            throw Refused($"the split of the organisation's AI day among its divisions is the security board's policy, never a "
                           + $"tilt: {OrgEnvelopes.NameOf(unit.Id)} hangs from the organisation itself. A tilt re-splits inside a division.");
         if (r.Share is < 0m or > 1m)
             throw Refused($"{r.Share.ToString(CultureInfo.InvariantCulture)} is no share: a fraction, at least 0 and at most 1.");
@@ -110,7 +110,7 @@ public sealed partial class OrgStore
         if (!delegation && moved + move > OrgBounds.TiltPerWeek)
             throw Refused($"{OrgEnvelopes.NameOf(unit.Id)}'s {r.Currency} share has moved {moved.ToString(CultureInfo.InvariantCulture)} in the "
                           + $"last seven days, and {move.ToString(CultureInfo.InvariantCulture)} more would move it past the "
-                          + $"{OrgBounds.TiltPerWeek.ToString(CultureInfo.InvariantCulture)} a tilt moves a share in a week (ORGANISATION § 8).");
+                          + $"{OrgBounds.TiltPerWeek.ToString(CultureInfo.InvariantCulture)} a tilt moves a share in a week.");
 
         if (SiblingsRefusal(r.Currency, unit.ParentId!, unit.Id, r.Share) is { } whole) throw Refused(whole);
         if (r.Currency == OrgCurrency.Ai)
@@ -251,7 +251,7 @@ public sealed partial class OrgStore
             : $"an AI share of {share.ToString(CultureInfo.InvariantCulture)} would leave {(unitId is null ? "the new unit" : OrgEnvelopes.NameOf(unitId))} "
               + $"below the exploration floor: {Pct(OrgBounds.ExplorationFloor)} of {OrgEnvelopes.NameOf(parentId)}'s envelope is split equally "
               + $"among its {n.ToString(CultureInfo.InvariantCulture)} active unit{(n == 1 ? "" : "s")}, new ones included — "
-              + $"{Words(floor)} each (ORGANISATION § 8), the organisation's protected allocation for work no measure can value yet. "
+              + $"{Words(floor)} each, the organisation's protected allocation for work no measure can value yet. "
               + $"Give it at least {Words(floor)}.";
     }
 

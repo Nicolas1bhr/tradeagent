@@ -141,14 +141,14 @@ public static class OrgRights
 
     static List<OrgRightsRow> Build()
     {
-        const string headOfParent = "the head of the parent unit restructures under it (ORGANISATION § 2)";
-        const string onlyParent = "only the parent unit's head charters, hires, appoints, retires, closes, merges or tilts (ORGANISATION § 2 :107)";
-        const string operations = "anything about `operations` — its seat, occupant and unit — is the security board's (R24 § 4.1; ORDER-001 keeps order permission bound to it in code)";
-        const string chief = "the chief's appointment and replacement are the security board's (R24 § 4.1)";
-        const string research = "the legacy `research` position is never retired or replaced by an agent (ORGANISATION § 3)";
-        const string divisionHead = "a division head is replaced only by an app trigger or a board act; the chief proposes (ORGANISATION § 2; R24 § 4.1)";
-        const string root = "the organisation itself is never closed, merged or tilted by a verb: the plan's day-total is the board's (R24 § 4.1)";
-        const string divResearch = "closing or merging `div-research` would end the legacy `research` position's unit, which no agent does (ORGANISATION § 3)";
+        const string headOfParent = "the head of the parent unit restructures under it";
+        const string onlyParent = "only the parent unit's head charters, hires, appoints, retires, closes, merges or tilts";
+        const string operations = "anything about 'operations' — its seat, occupant and unit — is the security board's, and its order permission stays bound to it in code";
+        const string chief = "the chief's appointment and replacement are the security board's";
+        const string research = "the Research Director's position, 'research', is never retired or replaced by an agent";
+        const string divisionHead = "a division head is replaced only by an app trigger or a board act; the chief proposes";
+        const string root = "the organisation itself is never closed, merged or tilted by a verb: the plan's day-total is the board's";
+        const string divResearch = "closing or merging 'div-research' would end the unit of the Research Director's position, which no agent does";
 
         var rows = new List<OrgRightsRow>();
         foreach (var op in OrgOperation.Structural)
@@ -175,7 +175,7 @@ public static class OrgRights
                 "the mandate row's decider or holder acts, and the store checks the row (O5a, O5b)"));
         foreach (var op in OrgOperation.Review)
             rows.Add(new(op, OrgReserved.None, OrgRelation.Any, OrgRightAnswer.ReviewEventDecides,
-                "the reviewer the app woke for the review event answers it, and the store checks the event (ORGANISATION § 8)"));
+                "the reviewer the app woke for the review event answers it, and the store checks the event"));
         return rows;
     }
 

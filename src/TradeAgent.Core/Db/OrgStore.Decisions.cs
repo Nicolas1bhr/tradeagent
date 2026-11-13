@@ -732,7 +732,7 @@ public sealed partial class OrgStore
             if (IsAppPrincipal(to))
                 throw Refused($"'{to}' is one of the app's own principals ({string.Join(", ", AppPrincipals.All)}): code, never a position, and it reads no note.");
             if (CouncilRoles.MayPlaceOrders(to))
-                throw Forbidden($"'{to}' may place orders, and what it trades is never shaped by a note (ORDER-001). Escalate through your chain instead.");
+                throw Forbidden($"'{to}' may place orders, and what it trades is never shaped by a note. Escalate through your chain instead.");
             if (Position(to) is not { } recipient)
                 throw Refused($"'{to}' is no position on the chart.");
             if (recipient.Status != OrgPositionStatus.Active)

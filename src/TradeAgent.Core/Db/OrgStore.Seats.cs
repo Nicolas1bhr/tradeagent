@@ -49,7 +49,7 @@ public sealed partial class OrgStore
         Func<string, bool> knownRuntime, DateTimeOffset at) => db.Write(_ =>
     {
         if (new Board.BoardReader(db).AnyActive)
-            throw Refused("switching a position's model is the security board's now that a board seat is active (R24 § 4.1).");
+            throw Refused("switching a position's model is the security board's now that a board seat is active.");
         if (Position(position) is not { } row) throw Refused($"the chart holds no position '{position}'.");
         if (row.EndedAt is not null || row.Status == OrgPositionStatus.Ended) throw Refused($"position '{position}' has ended; an ended position runs on no model.");
         if (CouncilRoles.IsKnown(position))

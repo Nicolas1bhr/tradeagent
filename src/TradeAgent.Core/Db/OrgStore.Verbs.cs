@@ -151,7 +151,7 @@ public sealed partial class OrgStore
         if (layer > OrgBounds.ManagerLayers)
             throw Refused($"a {r.Kind} under {OrgEnvelopes.NameOf(parent.Id)} would add manager layer {layer.ToString(CultureInfo.InvariantCulture)}, "
                           + $"and a layer past the {OrgBounds.ManagerLayers.ToString(CultureInfo.InvariantCulture)} the chart carries is earned "
-                          + "only by a bounded experiment's record showing it pays (VISION § 3: the proving ground, then a paired run) — the "
+                          + "only by a bounded experiment's record showing it pays (the proving ground, then a paired run) — the "
                           + "earning test — and this build holds no such record.");
         if (r.Kind == OrgUnitKind.Division
             && Units().Count(u => u.Kind == OrgUnitKind.Division && u.Status != OrgUnitStatus.Closed) >= OrgBounds.MaxDivisions)
@@ -231,7 +231,7 @@ public sealed partial class OrgStore
             throw Refused($"a charter carries at most {DecisionLimits.MaxForecasts.ToString(CultureInfo.InvariantCulture)} forecasts.");
         if (!r.Forecasts.Any(f => f.Predicate == ForecastVocabulary.UnitAdmissible && (f.Subject is null || f.Subject == id)))
             throw Refused($"a charter carries at least one '{ForecastVocabulary.UnitAdmissible}' forecast on the unit it charters (its subject "
-                          + "left empty): whether a version run under its funding is promoted or made paper-eligible by a date (ORGANISATION § 5).");
+                          + "left empty): whether a version run under its funding is promoted or made paper-eligible by a date.");
 
         // THE WRITE: the decision first (the unit names it), then the unit, its forecasts and its event.
         var choice = $"charter a {r.Kind} under {parent.Id} with AI share {r.AiShare.ToString(CultureInfo.InvariantCulture)}";
@@ -528,7 +528,7 @@ public sealed partial class OrgStore
     }
 
     static string EarningWords(string act, IReadOnlyList<string> subtree) =>
-        $"{act} must earn its place (VISION § 3; the earning test): cite current work of your subtree "
+        $"{act} must earn its place (the earning test): cite current work of your subtree "
         + $"({(subtree.Count == 0 ? "you head none" : string.Join(", ", subtree))}) — a run its launches funded, a promotion of a version "
         + $"such a run ran, or a delivery on one of its mandates, recorded in the last {OrgBounds.EarningWindow.TotalDays.ToString(CultureInfo.InvariantCulture)} "
         + "days — or charter it as a funded, bounded experiment with a collapse date. Nothing cited is current work of yours.";
