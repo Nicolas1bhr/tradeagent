@@ -213,6 +213,13 @@ public static class BoardPolicyBody
         }
         if (read is null) return (null, "its body is the JSON literal null");
         if (!Enum.IsDefined(read.Mode)) return (null, "its mode is not one this build knows");
+        // NO LIVE BODY IS READ, WHOEVER WROTE IT (U-live-witness; the live-reachability audit's F2). The store's CHECKs refuse such a
+        // row, but a process writing the file as the app's user can switch CHECKs off, and the hash is a consistency hash with no key,
+        // so the reader cannot tell a forged row from a genuine one. No path of this build writes one: the board's acts refuse it
+        // (BoardIntent, Applied), and the only live in this build is the test host's in-memory seam, which never comes through here.
+        // When the board's own live act is built (U-board-live), it changes this line openly, behind its own two-seat gate.
+        if (read.Mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS || read.LiveActivated)
+            return (null, "it selects a real-money mode or switches real money on, which no policy this build writes does");
         if (read.Risk.InstrumentAllowlist.Any(string.IsNullOrWhiteSpace))
             return (null, "its instrument allowlist names an empty instrument");
         // ONE PAIR'S TERMS UNDER ITS OWN NAME ONLY (U-evidence-breadth-paper): a key that is not a pair, or terms for another
