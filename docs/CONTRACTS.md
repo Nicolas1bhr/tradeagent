@@ -5473,8 +5473,18 @@ project's Mac and a statfs took about a microsecond, so half a minute let 75 GB 
 
 **The floor** is 10 % of the filesystem, at most 10 GiB, never under 2 GiB (`DiskFloor`). A press after a trip needs half as much again.
 
+**Files as well as bytes** (`U-disk-guard-2`). Empty files take no byte the read sees, and ext4 keeps no inode back for root, so a cell making them could leave every
+account on the filesystem unable to make a file while the bytes read plenty free. On 64-bit Linux the read takes `statvfs`'s `f_favail` and `f_files` beside the bytes, and a
+read without them is no read. The files floor is a tenth of the filesystem's files, never under 500,000 and never over a quarter of them (`DiskFloor.FilesFor`); a filesystem
+with no fixed count (macOS, Windows, btrfs) has none. Under it the trip, the words and the press go as for bytes, and the press needs half as much again in files.
+
+**Space a cell takes without writing it.** The per-file bound is per file, and `fallocate` allocates blocks at the speed of the filesystem's metadata: seventy calls would take
+the disk inside one read. In a cell `fallocate` is EOPNOTSUPP in every mode (`CellNative`), the errno glibc's `posix_fallocate` falls back from by writing; the proof's
+`space-unallocated` row shows it. Plain writes still go at the disk's speed, so what passes between two reads is bounded by that speed and not by a figure.
+
 **The trip is the owner's own pause** and nothing else: `PauseTheAiAsync`'s body, so running turns end with their trees, the launch closes and its reservation with it, and
-the wake is not spent. It adds no pipe op and no verb, and it can only take work away. `DiskPause` goes into the same settings write as `AiWorksOnItsOwn = false`, so a
+the wake is not spent. The kills go out before the record is written, which waits on the database's one lock: a trip while another thread held it used to leave the writer
+running until it let go. It adds no pipe op and no verb, and it can only take work away. `DiskPause` goes into the same settings write as `AiWorksOnItsOwn = false`, so a
 restart stays paused and says why. **A restart looks before it resumes.** Only the owner's press clears it, `LetTheAiWorkOnItsOwn`, and only with the room; a press the disk
 refuses starts nothing and leaves a pause standing, a new one when none stood, so the card says why. While it stands every launch is refused, the Chat page's included.
 

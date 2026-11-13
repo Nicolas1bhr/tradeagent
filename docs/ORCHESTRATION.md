@@ -317,8 +317,9 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
 - **The disk** (`U-disk-guard`): nothing bounds what a seat writes into its own home but two limits, both in the product, and no quota on the host. A
   per-file bound, `RLIMIT_FSIZE` of 1 GiB hard and soft (and no core dumps), taken by the launcher so every process of every launch on Linux and macOS inherits it, cells,
   route (a)'s harness and CLI seats alike; the proof's `file-bound` row shows it from inside a real cell. And the app's free-space guard, which pauses the AI
-  (`CONTRACTS.md`, "The free-space guard"). **Windows has no per-file limit:** there the guard stands alone. Neither stops a process writing many files for the
-  seconds between a read and the end of its turn.
+  (`CONTRACTS.md`, "The free-space guard"), which reads the filesystem's free files beside its bytes (`U-disk-guard-2`). In a cell `fallocate` is EOPNOTSUPP, so
+  space a cell takes is space it writes (the proof's `space-unallocated` row). **Windows has no per-file limit:** there the guard stands alone. Neither stops a process
+  writing at the disk's speed for the seconds between a read and the end of its turn.
 - **The split** (Law 2): the harness that holds the login stays outside the cell; model-directed shell, file, package and network actions run
   inside. Candidate routes: (a) codex 0.160.1's experimental `exec-server` inside the cell, the harness outside — shown viable on the dev Mac
   against a mock model (`R-exec-server`): every host-reaching model-directed action ran in the exec-server and the login never crossed its
