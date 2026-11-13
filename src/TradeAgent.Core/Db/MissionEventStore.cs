@@ -1714,20 +1714,41 @@ public sealed class MissionEventStore(Database db)
     /// </summary>
     public int Delegated(string attemptId, string publicationId) => db.Write(_ =>
     {
-        using var c = db.Cmd("""
+        using var c = db.Cmd($"""
             UPDATE mission_event SET disposition=$d, disposition_detail=$pub
              WHERE kind=$owner AND consumed_by=$attempt
                AND (disposition IS NULL OR disposition = $blocked)
-               AND EXISTS (SELECT 1 FROM ai_attempt a JOIN publication p ON p.id = $pub
-                            WHERE a.id = $attempt AND a.state = 'ENDED'
-                              AND p.attempt = a.id
-                              AND p.kind = $brief AND p.role = COALESCE(a.role, $chair))
+               AND EXISTS (SELECT 1 {BriefOfAnEndedLaunch} AND p.id = $pub)
             """,
             ("$d", MissionEventDisposition.Delegated), ("$pub", publicationId),
             ("$owner", MissionEventKind.Owner), ("$attempt", attemptId),
             ("$blocked", MissionEventDisposition.Blocked), ("$brief", MissionEventKind.Brief),
             ("$chair", CouncilRoles.Default));
         return c.ExecuteNonQuery();
+    });
+
+    /// <summary>
+    /// THE MEASUREMENT <see cref="Delegated"/> LINKS ON, AND <see cref="Briefed"/> ASKS: a brief by the launch's own role that the ledger attributes to
+    /// launch <c>$attempt</c>, a launch it holds ENDED. One clause, so the owner's words held in a row and those held in the loop's own list are finished
+    /// on the same record (<c>U-turn-cards-2</c>).
+    /// </summary>
+    const string BriefOfAnEndedLaunch = """
+        FROM ai_attempt a JOIN publication p ON p.attempt = a.id
+         WHERE a.id = $attempt AND a.state = 'ENDED'
+           AND p.kind = $brief AND p.role = COALESCE(a.role, $chair)
+        """;
+
+    /// <summary>
+    /// WHETHER LAUNCH <paramref name="attemptId"/> PUBLISHED A BRIEF ON RECORD (<c>U-turn-cards-2</c>): the record <see cref="Delegated"/> links the owner's
+    /// words in a row to, asked for the words no row holds — those the owner typed while the AI was working, held in the loop's own list where the queue
+    /// could not take them. The same measurement and nothing more: no text is read. A launch the ledger does not hold, or holds as anything but ENDED,
+    /// published nothing here.
+    /// </summary>
+    public bool Briefed(string attemptId) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT EXISTS (SELECT 1 {BriefOfAnEndedLaunch})",
+            ("$attempt", attemptId), ("$brief", MissionEventKind.Brief), ("$chair", CouncilRoles.Default));
+        return Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 1;
     });
 
     /// <summary>One event by id, or null.</summary>

@@ -3707,7 +3707,10 @@ public sealed class MissionLoop
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
             // (U-vendor-limit-wakes before any work; U-turn-cards after it), or one the loop's own stop ended (U-wake-fairness).
-            if (stopped || UnworkedRefusal(ended) is not null) lock (_gate) OweTyped(role, typed);
+            // UNLESS IT WORKED AND ITS BRIEF IS ON RECORD (U-turn-cards-2 item 1): a turn that worked and did not finish keeps what the records show
+            // finished, the owner's typed words as his words in a row, so the words its brief already carried are not handed to the next turn again.
+            if ((stopped || UnworkedRefusal(ended) is not null) && !(WorkedThenDidNotFinish(ended, stopped) && TypedFinishedOnRecord(events, consumer, typed)))
+                lock (_gate) OweTyped(role, typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
             // than after it, so a turn that threw its way out still settles the question — a turn
@@ -4920,7 +4923,7 @@ public sealed class MissionLoop
             try
             {
                 var owed = wake;
-                if (stopped || ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false } or { Limit.BeforeAnyWork: false })
+                if (WorkedThenDidNotFinish(ended, stopped))
                 {
                     var finished = wake.Where(e => FinishedOnRecord(events, e, consumer)).ToList();
                     foreach (var e in finished) events.Settle(e.Id, MissionEventDisposition.Answered, $"its work is on the record; then: {why}");
@@ -4996,6 +4999,28 @@ public sealed class MissionLoop
         : ended?.ModelRefused is { } refused ? refused.Message
         // AND A TURN ENDED AT ITS LIMIT (R28 W2): whatever it had done, nothing says it finished, so what it was woken for stays owed.
         : ended?.TimedOut;
+
+    /// <summary>
+    /// A TURN THAT WORKED AND THEN DID NOT FINISH, the turns <see cref="FinishedOnRecord"/> decides for: the loop's own stop ended it, it ended at its wall-clock
+    /// limit, or its model was refused or the vendor's usage limit met after work. Its wakes, and the owner's words typed into it, keep what the records show
+    /// finished and come back otherwise (<c>U-turn-bounds-2</c>, <c>U-turn-cards</c>, <c>U-turn-cards-2</c>). One predicate, so a path cannot be added to
+    /// one half and not the other. A refusal before any work is not one: it did nothing, so nothing of it is on record.
+    /// </summary>
+    static bool WorkedThenDidNotFinish(AgentTurnEnded? ended, bool stopped) =>
+        stopped || ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false } or { Limit.BeforeAnyWork: false };
+
+    /// <summary>
+    /// WHETHER THE OWNER'S WORDS TYPED INTO LAUNCH <paramref name="attempt"/> ARE FINISHED ON RECORD (<c>U-turn-cards-2</c> item 1): the rule
+    /// <see cref="FinishedOnRecord"/> applies to his words in a row — the brief that launch published (<see cref="MissionEventStore.Briefed"/>, the same
+    /// measurement <see cref="MissionEventStore.Delegated"/> links a row on) — for the words no row holds. A host with no ledger has no launch to have
+    /// published one, and a record that cannot be read says nothing: the words stay owed.
+    /// </summary>
+    static bool TypedFinishedOnRecord(MissionEventStore? events, string attempt, IReadOnlyList<string> typed)
+    {
+        if (typed.Count == 0 || events is null || attempt == Unrecorded) return false;
+        try { return events.Briefed(attempt); }
+        catch (Exception) { return false; }
+    }
 
     /// <summary>
     /// WHETHER THE WORK OF WAKE <paramref name="e"/> DEMONSTRABLY FINISHED IN LAUNCH <paramref name="attempt"/>, from records the app wrote and never from
