@@ -93,6 +93,34 @@ public static partial class Labels
             : null;
     }
 
+    /// <summary>
+    /// WHAT THE ONE-ORDER FIGURE MEANS, IN WORDS (<c>U-owner-words-3</c> item 4). Since <c>U-rate-limits</c> the figure is read two ways: one order
+    /// of the owner's or an agent's is at most that many units, while a paper experiment's opening order reads it as a share of its own allowance
+    /// on the pair — the figure over the founding figure (<see cref="Board.BoardFounding.V1"/>'s, 1), so 0.5 is half that allowance and 1 or more
+    /// is the whole of it and no more; its closes are never cut by it. A bare "0.5" said the first and hid the second. The figure is shown as the
+    /// policy holds it; one that is not a number is shown as it is.
+    /// </summary>
+    public static string MaxOrderQuantityWords(string value)
+    {
+        if (!decimal.TryParse(value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var figure))
+            return value;
+        if (figure <= 0m) return $"{value} — no order may open; a paper experiment may still close what it holds";
+        var founding = Board.BoardFounding.V1.Risk.MaxOrderQuantity;
+        var share = figure >= founding
+            ? "the whole of its allowance on the pair, and no more"
+            : figure / founding == 0.5m ? "half of its allowance on the pair"
+            : $"{(figure / founding * 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} % of its allowance on the pair";
+        return $"{value} {(figure == 1m ? "unit" : "units")} for one order of yours or an agent's; a paper experiment's opening order may use "
+               + $"{share} (its closes are never cut by this figure)";
+    }
+
+    /// <summary>What a board act's new figure means, where the figure alone would mislead: the one-order figure (<see cref="MaxOrderQuantityWords"/>).</summary>
+    public static string BoardActMeans(string field, string to) => field switch
+    {
+        "risk.max_order_quantity" => $"{MaxOrderQuantity}, as this act sets it: {MaxOrderQuantityWords(to)}.",
+        _ => ""
+    };
+
     /// <summary>A field of the policy in force that this version has no words for: named, and never shown as decided.</summary>
     public static string BoardFieldUnnamed(IEnumerable<string> paths) =>
         "The policy in force also holds " + string.Join(", ", paths.Select(p => $"“{p}”"))
