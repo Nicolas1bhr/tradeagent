@@ -184,7 +184,10 @@ public class MissionLoopTests
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) => Task.FromResult(Next);
 
-        public bool InboxChangedSinceLastPass => MissionInbox.HoldsUnrecorded(Root, _lastPassAt, _db);
+        public bool InboxChangedSinceLastPass => MissionInbox.HoldsUnrecorded(Root, _lastPassAt, _db, Reads);
+
+        /// <summary>The disk this host's passes read: the machine's own, or a test's that holds a read (<c>U-material-pass-2</c>).</summary>
+        public WorkspaceReads? Reads { get; init; }
 
         /// <summary>
         /// THE BOUNDARY, POSED RATHER THAN WAITED FOR: this host's record of when its last pass began,
@@ -206,7 +209,7 @@ public class MissionLoopTests
             // As the app records it: the yield reads only that a pass has run (MissionInbox).
             _lastPassAt = DateTimeOffset.UtcNow;
             Passes++;
-            new MaterialScanner(_db, Root, Presence.NoneSince).Scan(ct);
+            new MaterialScanner(_db, Root, Presence.NoneSince, reads: Reads).Scan(ct);
             return Task.CompletedTask;
         }
     }
@@ -282,6 +285,41 @@ public class MissionLoopTests
 
         var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
         Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// A LISTING THE DISK NEVER RETURNS HOLDS NO TURN (<c>U-material-pass-2</c>; U-perf-scan's card 1). The pass before a turn walks the
+    /// owner's inbox under the loop's one exclusion, and its listing ran on the pass's own thread: a disk that stopped answering held the
+    /// pass, the exclusion with it, and no turn was leased for as long as the disk did — and the question asked before every tick read the
+    /// same listing. Now the listing is left behind at its bound, the pass ends, and the turn is launched. RED at the base: the turn waits.
+    /// </summary>
+    [Fact]
+    public async Task A_listing_the_disk_never_returns_leaves_the_next_turn_launched()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var inbox = Path.GetFullPath(Path.Combine(root, MaterialScanner.InboxDir));
+        var real = WorkspaceReads.Under(root);
+        using var disk = new ManualResetEventSlim();
+        var listings = 0;
+        var reads = new WorkspaceReads(real.FolderIsThere, path =>
+        {
+            if (Path.GetFullPath(path) == inbox) { Interlocked.Increment(ref listings); disk.Wait(); }
+            return real.List(path);
+        }, real.Stat) { StallAfter = TimeSpan.FromSeconds(1) };
+        var presence = new AgentPresence();
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence)) { Reads = reads };
+        var loop = new MissionLoop(host);
+        try
+        {
+            var turns = Task.Run(async () => { await loop.TurnAsync(); await loop.TurnAsync(); });
+            Assert.True(await Task.WhenAny(turns, Task.Delay(TimeSpan.FromSeconds(30))) == turns,
+                "the turn waited on a listing the disk never returned");
+            await turns;
+            Assert.Equal(2, host.Opened.Count);
+            Assert.Equal(1, Volatile.Read(ref listings));   // one read left waiting, never one more per pass
+        }
+        finally { disk.Set(); }
     }
 
     /// <summary>

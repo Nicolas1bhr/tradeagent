@@ -154,17 +154,35 @@ public sealed record ScanResult(int Seen, int Added, int Hashed, int Removed, in
     public bool HashStalled { get; init; }
 
     /// <summary>
+    /// A READ OF THE WALK DID NOT COME BACK FROM THE DISK (<c>U-material-pass-2</c>) — a listing, the stat of a file or the app-origin
+    /// measure, this pass's or one an earlier pass left waiting. The pass looked nowhere past it: it recorded nothing of that place, marked
+    /// nothing missing there and moved no window, and let go of its exclusion so the AI's work goes on while the disk does not answer.
+    /// </summary>
+    public bool WalkStalled { get; init; }
+
+    /// <summary>
+    /// WHERE THE FILE BUDGET RAN OUT (<c>U-material-pass-2</c>; U-perf-scan's card 2), when it did: the tracked folder, relative to the
+    /// workspace, the walk was in. Null on a pass that did not run out. A pass cut there records no removals anywhere, and the owner is
+    /// told once (AppHost's cut line).
+    /// </summary>
+    public string? CutIn { get; init; }
+
+    /// <summary>The file budget this pass ran under (<see cref="MaterialScanner.FileLimit"/>), for the owner's line about a cut pass.</summary>
+    public int FileLimit { get; init; }
+
+    /// <summary>
     /// The pass looked everywhere: it did not run out of budget (<see cref="HashBudgetSpent"/>, which is
     /// the file budget's flag despite its name) and read every place it walked. Only a complete pass
     /// moves the window, and only a complete pass can say that a folder it once could not read is
     /// readable again — one that stopped early may never have reached it.
     /// </summary>
-    public bool Complete => !HashBudgetSpent && Unreadable == 0;
+    public bool Complete => !HashBudgetSpent && Unreadable == 0 && !WalkStalled;
 
     public bool Changed => Added > 0 || Removed > 0 || Hashed > 0;
     public override string ToString() =>
         $"seen={Seen} added={Added} hashed={Hashed} removed={Removed} skipped={Skipped}" +
         (Unreadable > 0 ? $" unreadable={Unreadable}" : "") +
         (HashDeferred > 0 ? $" hash-deferred={HashDeferred}" : "") +
+        (WalkStalled ? " walk-stalled" : "") +
         (HashBudgetSpent ? " (hash budget spent — more next pass)" : "");
 }

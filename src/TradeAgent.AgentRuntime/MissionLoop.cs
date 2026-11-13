@@ -1949,11 +1949,13 @@ public static class MissionInbox
     /// has run no pass answers yes, as it always has. Its value is compared with nothing.
     /// </param>
     /// <param name="ledger">The database the scanner records into — the one the next pass would write.</param>
-    public static bool HoldsUnrecorded(string workspaceRoot, DateTimeOffset? lastPassAt, Database ledger)
+    /// <param name="reads">The reads the host's passes make of the disk (<see cref="WorkspaceReads"/>): the machine's own in the product, so
+    /// this asks the disk exactly as the pass will; a test's disk that holds a read is held here too (<c>U-material-pass-2</c>).</param>
+    public static bool HoldsUnrecorded(string workspaceRoot, DateTimeOffset? lastPassAt, Database ledger, WorkspaceReads? reads = null)
     {
         if (lastPassAt is null) return true;
 
-        try { return new MaterialScanner(ledger, workspaceRoot).InboxHoldsUnrecorded(); }
+        try { return new MaterialScanner(ledger, workspaceRoot, reads: reads).InboxHoldsUnrecorded(); }
         catch (IOException) { return true; }
         catch (UnauthorizedAccessException) { return true; }
         // A ledger that cannot be read cannot say a file is recorded.

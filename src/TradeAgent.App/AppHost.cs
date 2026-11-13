@@ -2643,14 +2643,22 @@ public sealed partial class AppHost : IAsyncDisposable
         // A FILE LEFT UNHASHED BY THE PASS'S BYTE OR TIME BOUND (U-cards-2) is said once while it stands, never on every tick, and
         // never by name (a name in the workspace is chosen by whoever made it; the engineering line above carries them as data).
         // A DISK THAT STOPPED ANSWERING IS SAID AS THAT (U-perf-scan), not as files too large: the owner's one line names the real cause.
-        var deferredLine = result.HashStalled ? HashStalledLine : HashDeferredLine;
-        if (result.HashDeferred > 0 && _hashDeferredSaid != deferredLine)
+        var deferredLine = DeferredLine(result);
+        if (deferredLine is not null && _hashDeferredSaid != deferredLine.Value.Text)
         {
-            Gateway.Log.Activity(deferredLine, result.HashStalled ? "warn" : "info");
-            _hashDeferredSaid = deferredLine;
+            Gateway.Log.Activity(deferredLine.Value.Text, deferredLine.Value.Level);
+            _hashDeferredSaid = deferredLine.Value.Text;
         }
-        else if (result.HashDeferred == 0 && _hashDeferredSaid is not null)
+        else if (deferredLine is null && _hashDeferredSaid is not null)
             _hashDeferredSaid = null;
+
+        // A PASS CUT AT THE FILE BUDGET (U-material-pass-2; U-perf-scan's card 2) records no removals: said once per place it was cut in,
+        // and once when a pass looks everywhere again.
+        if (CutLine(_cutSaid, result) is { } cut)
+        {
+            Gateway.Log.Activity(cut.Text, cut.Level);
+            _cutSaid = cut.Standing;
+        }
 
         // WHAT THIS PASS COULD NOT READ, said where the owner looks — once when it starts, once when
         // what it names changes and once when it clears, never on every tick.
@@ -2677,6 +2685,45 @@ public sealed partial class AppHost : IAsyncDisposable
     string? _unreadableSaid;
 
     string? _hashDeferredSaid;
+
+    /// <summary>
+    /// THE LINE A PASS THAT LEFT SOMETHING UNREAD OWES WHILE IT STANDS, or none: a read of the walk the disk held (<c>U-material-pass-2</c>)
+    /// is said as that, in place of the hash line its held workspace also causes — one cause, one line; then a hash read the disk held;
+    /// then files too large for a round.
+    /// </summary>
+    internal static (string Text, string Level)? DeferredLine(ScanResult result) =>
+        result.WalkStalled ? (WalkStalledLine, "warn")
+        : result.HashDeferred == 0 ? null
+        : result.HashStalled ? (HashStalledLine, "warn")
+        : (HashDeferredLine, "info");
+
+    /// <summary>The cut line the activity log was last given, while it stands (<see cref="CutLine"/>); null when none does.</summary>
+    string? _cutSaid;
+
+    /// <summary>What the activity log says while a read of the walk waits on a disk that did not answer (<c>U-material-pass-2</c>).</summary>
+    internal const string WalkStalledLine = "TradeAgent could not look through your inbox and the AI's folders: the disk did not answer. "
+        + "The AI keeps working, and TradeAgent looks again on the next round; until then a file added or removed there is not noticed.";
+
+    /// <summary>The line that clears <see cref="CutLine"/>'s.</summary>
+    internal const string LooksEverywhereAgain = "TradeAgent can look through all of your inbox and the AI's folders again.";
+
+    /// <summary>
+    /// THE ONE ACTIVITY LINE A PASS CUT AT ITS FILE BUDGET OWES, or none (<c>U-material-pass-2</c>; U-perf-scan's card 2). A pass that
+    /// stops looking at 20,000 files marks nothing missing, so a file removed past that point stays listed — and nothing told the owner.
+    /// Said once per place it was cut in, in plain words: the owner's inbox, or the AI's folders; never a path, a count of rows or a word
+    /// of the build. Cleared, once, by a pass that looked everywhere.
+    /// </summary>
+    internal static (string Text, string Level, string? Standing)? CutLine(string? standing, ScanResult pass)
+    {
+        if (pass.CutIn is { } cut)
+        {
+            var where = MaterialScanner.IsInInbox(cut) ? "your inbox" : "the AI's folders";
+            var line = $"TradeAgent stopped looking after {pass.FileLimit:N0} files in {where}, so a file removed there is not noticed "
+                       + $"until it can look through all of them. Fewer files in {where} lets it look everywhere again.";
+            return line == standing ? null : (line, "warn", line);
+        }
+        return standing is not null && pass.Complete ? (LooksEverywhereAgain, "info", null) : null;
+    }
 
     /// <summary>What the activity log says while a pass leaves files unhashed for its byte or time bound.</summary>
     internal const string HashStalledLine = "A file in your inbox or the AI's folders could not be read: the disk did not answer. TradeAgent "
@@ -3360,7 +3407,7 @@ public sealed partial class AppHost : IAsyncDisposable
         public string HomeFor(string role) => host.HomeFor(role);
 
         public bool InboxChangedSinceLastPass =>
-            MissionInbox.HoldsUnrecorded(Paths.Workspace, host.LastScanAt, host._db!);
+            MissionInbox.HoldsUnrecorded(Paths.Workspace, host.LastScanAt, host._db!, host._reads);
 
         public AiSpendToday Spend => host.SpendToday;
 
