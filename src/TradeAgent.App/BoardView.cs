@@ -249,6 +249,7 @@ sealed class BoardPage
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = Avalonia.Media.FontWeight.SemiBold);
         var status = Ui.Body("");
         var intent = Ui.With(Ui.Mono(""), t => t.TextWrapping = Avalonia.Media.TextWrapping.Wrap);
+        var meaning = Ui.Micro("");
         var events = Ui.Micro("");
         var rationales = Ui.Body("");
         var evidence = Ui.Micro("");
@@ -261,7 +262,12 @@ sealed class BoardPage
             OrgText.Set(status, Labels.BoardActStatus(a.Status));
             OrgText.Set(intent, $"Bound to its exact intent (fingerprint {Short(row.IntentSha256)}): {row.Intent}");
             // A CHIEF ACT WRITES NO POLICY VERSION: its event's version is the one it was decided under (fix pass 1).
-            var chiefAct = BoardIntent.Parse(row.Intent).Intent?.Changes is [{ Field: BoardDirection.Chief }];
+            var changes = BoardIntent.Parse(row.Intent).Intent?.Changes ?? [];
+            var chiefAct = changes is [{ Field: BoardDirection.Chief }];
+            // WHAT A FIGURE THE RAW INTENT CANNOT SAY MEANS (U-owner-words-3 item 4): the one-order figure, read as a share by a paper experiment.
+            var means = changes.Where(c => c.Field == "risk.max_order_quantity").Select(c => Labels.BoardActMeans(c.Field, c.To)).ToList();
+            OrgText.Set(meaning, string.Join("\n", means));
+            meaning.IsVisible = means.Count > 0;
             OrgText.Set(events, string.Join("\n", a.Events.Select(e => Labels.BoardActEventLine(e.Kind, e.Seat, OrgText.When(e.At),
                 e.ProposerFamily, e.DeciderFamily, e.SameFamily, e.PolicyVersion, chiefAct, e.Detail))));
             OrgText.Set(rationales, string.Join("\n", a.Events.Where(e => e.Rationale is { Length: > 0 })
@@ -278,7 +284,7 @@ sealed class BoardPage
                                resolved is null ? null : OrgText.When(resolved.At), f.Scored, f.UnscoredWhy);
                 })));
         }
-        return (Ui.Col(Theme.S1, title, status, intent, events, rationales, evidence, forecasts, score), Fill);
+        return (Ui.Col(Theme.S1, title, status, intent, meaning, events, rationales, evidence, forecasts, score), Fill);
     }
 
     void ShowUnreadable(string? why)
@@ -324,6 +330,7 @@ sealed class BoardPage
     {
         "mode" => Enum.TryParse<TradingMode>(value, ignoreCase: false, out var m) && Enum.IsDefined(m) ? Ui.ModeLabel(m) : value,
         "live_activated" => value == "true" ? "on" : value == "false" ? "off — no real money" : value,
+        "risk.max_order_quantity" => Labels.MaxOrderQuantityWords(value),
         "risk.max_notional_per_order" or "risk.max_loss_per_trade" or "risk.max_daily_loss" =>
             value == "0" ? "0 — not enforced" : value,
         "risk.instrument_allowlist" => value == "none" ? "none — " + Labels.NoInstrumentAllowedHere : value,

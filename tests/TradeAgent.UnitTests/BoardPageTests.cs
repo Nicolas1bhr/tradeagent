@@ -280,4 +280,43 @@ public class BoardPageTests
         Assert.Contains(Labels.VenturesNone, AllText(page));
         Assert.Contains(Labels.Ventures.ToUpperInvariant(), AllText(page));
     }
+
+    /// <summary>
+    /// (U-owner-words-3 item 4) THE ONE-ORDER FIGURE SAYS HOW A PAPER EXPERIMENT READS IT: since U-rate-limits a run's opening order reads
+    /// <c>risk.max_order_quantity</c> as a share of its allowance on the pair (0.5 = half of it, 1 or more = all of it and no more), while one
+    /// order of the owner's or an agent's is at most that many units. The Board page's row and a board act's card that sets the figure both
+    /// say so; a bare "1" or "0.5" said only the second. RED at base: the row read "1", and the act's card had no line for the figure.
+    /// </summary>
+    [Fact]
+    public void The_one_order_figure_says_it_is_a_share_of_each_paper_experiments_allowance()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        var row = Rows(page).Single(r => r.Path == "risk.max_order_quantity");
+        Assert.Equal("1 unit for one order of yours or an agent's; a paper experiment's opening order may use the whole of its allowance on the "
+                     + "pair, and no more (its closes are never cut by this figure)", row.Value.Text);
+
+        Assert.Contains("half of its allowance on the pair", Labels.MaxOrderQuantityWords("0.5"), StringComparison.Ordinal);
+        Assert.Contains("0.5 units for one order of yours or an agent's", Labels.MaxOrderQuantityWords("0.5"), StringComparison.Ordinal);
+        Assert.Contains("25 % of its allowance on the pair", Labels.MaxOrderQuantityWords("0.25"), StringComparison.Ordinal);
+        Assert.Contains("the whole of its allowance on the pair, and no more", Labels.MaxOrderQuantityWords("3"), StringComparison.Ordinal);
+        Assert.StartsWith("0 — no order may open", Labels.MaxOrderQuantityWords("0"), StringComparison.Ordinal);
+
+        var board = new BoardStore(db);
+        board.SetSeatStateUnderTest("board-1", BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+        var act = board.Narrow(new BoardActRequest("board-1", "turn-test", Change("risk.max_order_quantity", 1, 0.5), "smaller openers while the run is young", [], []),
+            DateTimeOffset.UtcNow);
+        page.Update();
+        Assert.StartsWith("0.5 units for one order", Rows(page).Single(r => r.Path == "risk.max_order_quantity").Value.Text, StringComparison.Ordinal);
+        var card = string.Join("\n", page.Acts.CardOf(act.Act.Id)!.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text));
+        Assert.Contains($"{Labels.MaxOrderQuantity}, as this act sets it: 0.5 units for one order of yours or an agent's; a paper experiment's "
+                        + "opening order may use half of its allowance on the pair", card, StringComparison.Ordinal);
+
+        // AND AN ACT ON ANOTHER FIELD CARRIES NO SUCH LINE.
+        board.SetSeatStateUnderTest("board-2", BoardSeatStatus.Active, DateTimeOffset.UtcNow);
+        var other = board.Narrow(new BoardActRequest("board-2", "turn-test-2", Change("plan_day_total", 40, 30), "a smaller day", [], []), DateTimeOffset.UtcNow);
+        page.Update();
+        Assert.DoesNotContain("as this act sets it", string.Join("\n", page.Acts.CardOf(other.Act.Id)!.GetLogicalDescendants().OfType<TextBlock>()
+            .Where(t => t.IsVisible).Select(t => t.Text)), StringComparison.Ordinal);
+    }
 }
