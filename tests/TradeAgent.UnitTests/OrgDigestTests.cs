@@ -621,7 +621,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Equal(JsonValueKind.Null, bad.GetProperty("cutoff").ValueKind);
         Assert.Equal("a row a later build wrote", bad.GetProperty("value").GetString());
         Assert.True(bad.GetProperty("holding").GetBoolean());
-        Assert.Contains("forward hold of campaign 2 UNREADABLE ('a row a later build wrote')", Attention(Json(f)), StringComparison.Ordinal);
+        Assert.Contains("forward hold row(s) UNREADABLE, campaign 2 ('a row a later build wrote'): the app holds every pair's", Attention(Json(f)), StringComparison.Ordinal);
 
         // A campaign opened over the window: it no longer holds, and the digest names the campaign as the app reads it.
         using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
@@ -667,6 +667,30 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             }
             Assert.Equal("final judgements", renewal.SpentOn(store.ById(2)!));
         }
+
+        // A FULL EXPLORATION POT IS SAID AS FULL, NEVER AS SPENT: whether a parent can still be promoted under it is the app's to read, and a
+        // promotion changes it. #2 (ETHUSDT) given fifty charged explorations, its whole pot, on a home where it has its judgements left.
+        var g = Build();
+        using (var db = new Database(Path.Combine(g.State, "tradeagent.db")))
+        {
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            db.Exec(string.Concat(Enumerable.Range(0, 50).Select(i =>
+                $"INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at, charged_to, exploration) VALUES (2, 'v9', 'run-x{i}', 'research', 1, '2026-10-31T00:00:00.0000000Z', NULL, 1);")));
+            db.Exec("PRAGMA foreign_keys=ON;");
+        }
+        var two = Json(g).GetProperty("signal").GetProperty("campaigns").GetProperty("campaigns").EnumerateArray().Single(c => c.GetProperty("id").GetInt64() == 2);
+        using (var db = new Database(Path.Combine(g.State, "tradeagent.db")))
+        {
+            var store = new CampaignStore(db);
+            Assert.Equal(store.TrialsCharged(2, exploration: true), two.GetProperty("exploration").GetInt32());
+            Assert.Equal(50, two.GetProperty("exploration").GetInt32());
+            Assert.True(two.GetProperty("exploration_pot_full").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, two.GetProperty("spent_on").ValueKind);
+            Assert.Contains(new CampaignRenewal(db).SpentOn(store.ById(2)!), new[] { null, CampaignRenewal.ExplorationTrials });
+        }
+        var (exit, text, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(g));
+        Assert.True(exit == 0, err);
+        Assert.Contains("  ETHUSDT #2: trials 51/200, exploration 50/50, verdicts 1/3; exploration pot full", text, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -718,8 +742,12 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             var holdout = TapeHoldout.Pipe("pos-aaaaaa", datasets);
             var fresh = holdout.ForwardRefusal("BTCUSDT", At("2026-11-01T01:00:00Z"), At("2026-11-01T05:00:00Z"));
             var dataset = holdout.ForwardRefusal("ETHUSDT", At("2026-04-01T00:00:00Z"), At("2026-04-02T00:00:00Z"));   // reaches dataset 2's window alone
+            // A WHOLE READ OF BTCUSDT's bars reaches both: ETHUSDT's dataset window (it holds every pair's bars) and BTCUSDT's fresh one. The
+            // app names the dataset windows first, so the record's 300 characters end before the fresh window's words: the row cannot say.
+            var both = holdout.ForwardRefusal("BTCUSDT", null, null);
             Assert.NotNull(fresh);
             Assert.NotNull(dataset);
+            Assert.NotNull(both);
 
             var tools = new ToolCallStore(db);
             Withheld(tools, "2026-10-31T11:00:00Z", ErrorCode.HOLDOUT_WITHHELD, fresh!, Ops.DataBars);
@@ -727,6 +755,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             Withheld(tools, "2026-10-31T09:00:00Z", ErrorCode.HOLDOUT_WITHHELD, dataset!, Ops.DataBars);
             Withheld(tools, "2026-10-30T11:00:00Z", ErrorCode.HOLDOUT_WITHHELD, dataset!, Ops.DataBars);    // before T0
             Withheld(tools, "2026-10-31T11:10:00Z", ErrorCode.INVALID_REQUEST, "a 'to' before its 'from'", Ops.DataBars);   // another code
+            Withheld(tools, "2026-10-31T11:15:00Z", ErrorCode.HOLDOUT_WITHHELD, both!, Ops.DataBars);
+            var cut = tools.ForAttempt("a2").Single(r => r.At == At("2026-10-31T11:15:00Z")).Refusal!;
+            Assert.Equal(ToolCallStore.MaxArgumentChars, cut.Length);
+            Assert.DoesNotContain("FRESH", cut, StringComparison.Ordinal);
+            Assert.Contains("FRESH", both!, StringComparison.Ordinal);
             db.Exec("PRAGMA foreign_keys=OFF;");
             db.Exec($$"""
                 INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES
@@ -735,19 +768,21 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             db.Exec("PRAGMA foreign_keys=ON;");
         }
         var w = Json(f).GetProperty("signal").GetProperty("withheld");
-        Assert.Equal(4, w.GetProperty("total").GetInt32());                 // three tool results since T0 and one pipe frame
+        Assert.Equal(5, w.GetProperty("total").GetInt32());                 // four tool results since T0 and one pipe frame
         Assert.Equal(2, w.GetProperty("fresh").GetInt32());
-        Assert.Equal(1, w.GetProperty("dataset").GetInt32());
-        Assert.Equal(0, w.GetProperty("unread").GetInt32());
+        Assert.Equal(2, w.GetProperty("dataset").GetInt32());              // the dataset one, and the cut one, which names a dataset window
+        // Both dataset ones: a dataset window's words run past the record's 300 characters, so neither says whether a fresh window refused it too.
+        Assert.Equal(2, w.GetProperty("unread").GetInt32());
         Assert.Equal(1, w.GetProperty("pipe_frames").GetInt32());
-        Assert.Equal(3, w.GetProperty("since_first_armed").GetInt32());    // both fresh ones and the pipe's, all after 10:00; the dataset one at 09:00 was before
+        Assert.Equal(4, w.GetProperty("since_first_armed").GetInt32());    // both fresh ones, the cut one and the pipe's, after 10:00; the dataset one at 09:00 was before
+        // BY THE OP ASKED, one spelling whichever surface asked it (the tool's summary "data data-bars", a door verb, a pipe frame's op)
         var asked = w.GetProperty("by_asked").EnumerateArray().ToDictionary(a => a.GetProperty("asked").GetString()!, a => a.GetProperty("count").GetInt32());
-        Assert.Equal(3, asked[$"{GrantedWorkerTools.Data} {Ops.DataBars}"]);
+        Assert.Equal(4, asked[Ops.DataBars]);
         Assert.Equal(1, asked[Ops.DataTape]);
 
         var (exit, text, err) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), DigestArgs(f));
         Assert.True(exit == 0, err);
-        Assert.Contains("holdout refusals since T0: 4 (fresh window 2, dataset window 1, words not read 0, pipe frames 1); 3 since the first hold armed", text, StringComparison.Ordinal);
+        Assert.Contains("holdout refusals since T0: 5 (fresh window 2, dataset window 2, fresh unknown (words cut) 2, pipe frames 1); 4 since the first hold armed; asked: data-bars 4, data-tape 1", text, StringComparison.Ordinal);
     }
 
     [UnixFact]
@@ -1378,6 +1413,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("REFUSAL_CODE_SEPARATOR", "src/TradeAgent.AgentRuntime/GrantedWorkerTools.cs", "$\"{{error?.Code}}{0}{{error?.UserMessage}} ({{error?.Message}})\", Summary(tool, op));"),
         ("WITHHELD_FRESH", "src/TradeAgent.Core/Data/TapeHoldout.cs", "$\"campaign {{spent}}{0}{{From:u}} on, \""),
         ("WITHHELD_DATASET", "src/TradeAgent.Core/Data/TapeHoldout.cs", "$\"dataset {{DatasetId}} ({{Pair}} {{Interval}} {{Version}}{0}{{From:u}} onwards, so {{held}} held \""),
+        ("WITHHELD_WINDOWS_END", "src/TradeAgent.Core/Data/TapeHoldout.cs", "string.Join(\"; \", reached.Select(w => w.BarWords)) + $\"{0}{{asked}}, which reaches \""),
     ];
 
     /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>
