@@ -93,7 +93,7 @@ sealed record OversightWords(
             : read.Findings
                 .OrderBy(f => f.UnitPath, StringComparer.Ordinal).ThenByDescending(f => f.Seq)
                 .Select(f => new OversightFindingWords(
-                    f.Id, f.Severity, f.Detector, f.UnitPath, When(f.At),
+                    f.Id, f.Severity, DetectorWords(f.Detector), f.UnitPath, When(f.At),
                     string.Join(", ", f.Measured.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => $"{m.Key}={OversightText.Shown(m.Key, m.Value)}")),
                     string.Join(", ", f.Cites.Select(c => c.ToString())),
                     f.Blind,
@@ -118,13 +118,14 @@ sealed record OversightWords(
             SeatClassRows,
             "Advisory until containment: a CLI seat runs as your own user and could read the app's files, and the public repository names this line.",
             [
-                ("Sweep cadence", Seconds(OversightLine.Cadence)),
-                ("spend-no-accept: window", Days(OversightPolicy.SpendWindow)),
-                ("spend-no-accept: floor", OversightPolicy.SpendFloor.ToString(CultureInfo.InvariantCulture)),
-                ("stall: no accepted work for", Days(OversightPolicy.StallAfter)),
-                ("owner-words-late: deadline", Hours(OversightPolicy.OwnerWordsDeadline)),
-                ("material-unwoken: longest interval", Hours(OversightPolicy.MaterialMaxInterval)),
-                ("claim-without-evidence: grace", Hours(OversightPolicy.ClaimGrace)),
+                // IN PLAIN WORDS, NO DETECTOR'S ID (U-owner-words-4 item 2): each row read "owner-words-late: deadline" and the like.
+                ("How often the line looks", Seconds(OversightLine.Cadence)),
+                ("Spending with nothing accepted: looked at over", Days(OversightPolicy.SpendWindow)),
+                ("Spending with nothing accepted: from a spend of", OversightPolicy.SpendFloor.ToString(CultureInfo.InvariantCulture)),
+                ("A team with no accepted work for", Days(OversightPolicy.StallAfter)),
+                ("Your words not taken up within", Hours(OversightPolicy.OwnerWordsDeadline)),
+                ("Something new nobody woke for, after", Hours(OversightPolicy.MaterialMaxInterval)),
+                ("A claim waits for its evidence at most", Hours(OversightPolicy.ClaimGrace)),
                 ("Most records one finding cites", OversightPolicy.MaxCites.ToString(CultureInfo.InvariantCulture)),
             ],
             cap,
@@ -140,6 +141,24 @@ sealed record OversightWords(
         ("Thinking seat, broker-only", "mediated", "reaches only what the broker serves, and the broker serves nothing of the line"),
         ("Doing seat, in a sealed workspace", "hard", "TradeAgent's own records are refused to every sealed workspace"),
     ];
+
+    /// <summary>
+    /// WHAT A DETECTOR LOOKS FOR, IN THE OWNER'S WORDS (<c>U-owner-words-4</c> item 2): a finding's card named its detector by its id
+    /// ("owner-words-late"). One phrase per detector of <see cref="OversightDetector.All"/> (a test holds the two lists equal); a name this
+    /// build does not know — a finding an older or newer line wrote — reads as a check this version cannot name, never as the raw id.
+    /// </summary>
+    internal static string DetectorWords(string detector) => detector switch
+    {
+        "spend-no-accept" => "Spending with nothing accepted",
+        "stall" => "No accepted work",
+        "owner-words-late" => "Your words not taken up in time",
+        "material-unwoken" => "Something new nobody woke for",
+        "refusals" => "Refused requests",
+        "claim-without-evidence" => "A claim without its evidence",
+        "accepted-failed-check" => "Work accepted after a failed check",
+        "dead-version-rerun" => "A refused version run again",
+        _ => "A check this version of the app cannot name",
+    };
 
     /// <summary>An instant as the page prints it: UTC to the second.</summary>
     internal static string When(DateTimeOffset t) => t.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture);
