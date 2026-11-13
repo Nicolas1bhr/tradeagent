@@ -740,6 +740,29 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("   2x Gateway/loss_flatten_failed", human, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A DAY NOTE THAT SAYS A RUN STOOD UNPROTECTED AT THE CLOSE IS COUNTED AND RAISED (<c>U-digest-polish</c>), not only shown when it is the last note: a
+    /// later note of any other kind hid it. The live reading is <c>ForwardRunnerTests.The_digest_says_a_run_stands_unprotected_in_the_runs_own_words</c>.
+    /// <para>RED at base: the notes said only how many there were and the last one's words.</para>
+    /// </summary>
+    [UnixFact]
+    public void A_day_note_that_says_a_run_stood_unprotected_is_raised_whatever_came_after_it()
+    {
+        var f = Build();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+            db.Exec($"""
+                INSERT INTO publication(id, role, attempt, revision, kind, recipients, classification, created_at, content) VALUES
+                  ('pub-bare', '{TradingGateway.PaperAllocatorRole}', NULL, 3, '{PublicationKind.Note}', 'research', 'council', '2026-10-30T23:59:00.0000000Z',
+                   'Forward paper run dep-1, the day 2026-10-30: UNPROTECTED at that day''s close: it held 1 with no stop resting at the venue (the last answer: none yet)');
+                """);
+        var d = Json(f);
+        var notes = d.GetProperty("deployments").GetProperty("notes");
+        Assert.Equal(1, notes.GetProperty("unprotected_at_close_since").GetInt32());
+        Assert.StartsWith("Forward paper run dep-1: 3", notes.GetProperty("last").GetString(), StringComparison.Ordinal);     // a later note is the last one
+        Assert.Contains(d.GetProperty("attention").EnumerateArray(), a => a.GetString() == "1 paper day note(s) since T0 say UNPROTECTED at that day's close, the last 10-30 23:59");
+        Assert.Equal(0, Json(Build()).GetProperty("deployments").GetProperty("notes").GetProperty("unprotected_at_close_since").GetInt32());
+    }
+
     [UnixFact]
     public void Evidence_per_pair_and_the_paper_notes_are_read()
     {
@@ -910,6 +933,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ["TURN_STOPS"] = new[] { AgentTurnEnded.EndedTimedOut, ModelRefusal.Ended, VendorLimit.Ended },
         ["TITLE_OPERATIONS"] = CouncilRoles.Title(CouncilRoles.Operations), ["TITLE_RESEARCH"] = CouncilRoles.Title(CouncilRoles.Research),
         ["ROLE_RESEARCH"] = CouncilRoles.Research, ["WAKE_CHIEF_FLOOR"] = MissionEventStore.ChiefFloorWake,
+        // A RUN'S PROTECTION, read by TradingGateway.ProtectionMissing's rule (U-digest-polish): its operations, their settled state, the order states that are over
+        ["DEP_OP_ENTRY"] = DeploymentOpKind.Entry, ["DEP_OP_EXIT"] = DeploymentOpKind.Exit, ["DEP_OP_FLATTEN"] = DeploymentOpKind.Flatten,
+        ["DEP_OP_STOP"] = DeploymentOpKind.Stop, ["DEP_OP_TARGET"] = DeploymentOpKind.Target, ["DEPLOYMENT_OP_RESOLVED"] = DeploymentOpState.Resolved,
+        ["ORDER_TERMINAL"] = Enum.GetValues<ExecutionState>().Where(OrderStateMachine.IsTerminal).Select(e => e.ToString()).ToArray(),
+        ["ORDER_AWAITING_APPROVAL"] = ExecutionState.AWAITING_APPROVAL.ToString(), ["SIDE_BUY"] = TradeAgent.ConnectorSdk.OrderSide.Buy.ToString(),
     };
 
     /// <summary>
@@ -934,6 +962,16 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("REFUSAL_OP", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "JsonSerializer.Serialize(new {{ {0} = RefusalMark.OpName(op), code = "),
         ("REFUSAL_CODE", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "RefusalMark.OpName(op), {0} = code.ToString(), role = "),
         ("SEVERITY_ERROR", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"Ipc\", \"op_failed\", \"{0}\""),
+        // THE UNPROTECTED SENTENCE, piece by piece where the run's line and the day note write it. Whole, it is held by
+        // ForwardRunnerTests.The_digest_says_a_run_stands_unprotected_in_the_runs_own_words, over a home the real runner wrote.
+        ("UNPROTECTED_HOLDS", "src/TradeAgent.Gateway/TradingGateway.cs", "$\"{0}{{AllocationRow.Num(book.Held)}} with {{MissingWords(missing)}}"),
+        ("UNPROTECTED_ASKS_AGAIN", "src/TradeAgent.Gateway/TradingGateway.cs", "{{MissingWords(missing)}}{0}\""),
+        ("UNPROTECTED_NO_BOTH", "src/TradeAgent.Gateway/TradingGateway.cs", "missing.Count == 2 ? \"{0}\" : "),
+        ("UNPROTECTED_NO_STOP", "src/TradeAgent.Gateway/TradingGateway.cs", "DeploymentOpKind.Stop ? \"{0}\" : "),
+        ("UNPROTECTED_NO_TARGET", "src/TradeAgent.Gateway/TradingGateway.cs", "DeploymentOpKind.Stop ? \"no stop\" : \"{0}\";"),
+        ("UNPROTECTED_RESTING", "src/TradeAgent.Gateway/TradingGateway.cs", "{{what}}{0}{{missing[0].Latest.Answer ?? "),
+        ("UNPROTECTED_NONE_YET", "src/TradeAgent.Gateway/TradingGateway.cs", "missing[0].Latest.Answer ?? \"{0}\""),
+        ("UNPROTECTED_AT_CLOSE", "src/TradeAgent.Gateway/TradingGateway.cs", "$\"{0}: it held "),
     ];
 
     /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>

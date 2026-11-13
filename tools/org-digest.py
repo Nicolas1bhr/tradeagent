@@ -62,6 +62,18 @@ class W:
     # strategy_deployment.state, deployment_op.state, org_position.status
     DEPLOYMENT_ENDED = "ended"
     DEPLOYMENT_OP_REFUSED = "refused"
+    # A RUN'S POSITION AND ITS PROTECTION, read as TradingGateway.ProtectionMissing reads them: deployment_op.kind (DeploymentOpKind), the settled
+    # deployment_op.state, execution_request.execution_state's terminal states (OrderStateMachine) and the one a person's press can still send
+    DEP_OP_ENTRY, DEP_OP_EXIT, DEP_OP_FLATTEN, DEP_OP_STOP, DEP_OP_TARGET = "entry", "exit", "flatten", "stop", "target"
+    DEPLOYMENT_OP_RESOLVED = "resolved"
+    ORDER_TERMINAL = ("FILLED", "CANCELLED", "REJECTED")
+    ORDER_AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    SIDE_BUY = "Buy"
+    # ITS WORDS, as the run's line says them (DeploymentReadings) and as the day note says them at a day's close (UnprotectedAtTheClose)
+    UNPROTECTED_HOLDS, UNPROTECTED_RESTING, UNPROTECTED_NONE_YET = "UNPROTECTED: it holds ", " resting at the venue (the last answer: ", "none yet"
+    UNPROTECTED_NO_BOTH, UNPROTECTED_NO_STOP, UNPROTECTED_NO_TARGET = "no stop and no target", "no stop", "no target"
+    UNPROTECTED_ASKS_AGAIN = ". TradeAgent keeps asking for it by itself while the run is active."
+    UNPROTECTED_AT_CLOSE = "UNPROTECTED at that day's close"
     POSITION_ACTIVE = "active"
     # ai_attempt.state: spelled only in AiAttemptStore's SQL
     ATTEMPT_LAUNCHED, ATTEMPT_ENDED, ATTEMPT_LOST = "LAUNCHED", "ENDED", "LOST"
@@ -240,6 +252,12 @@ def dec(value):
         return None
 
 
+def num(d):
+    """A quantity as AllocationRow.Num writes it: no exponent and no trailing zero."""
+    text = format(d, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
 def money(d):
     return None if d is None else str(d.quantize(Decimal("0.0001")))
 
@@ -410,11 +428,86 @@ class Digest:
                 (r["account_id"], r["symbol"], r["id"], r["id"])).fetchall()
             listed.append({"id": r["id"][:12], "symbol": r["symbol"], "mode": r["mode"], "state": r["state"], "account": r["account_id"],
                            "started_at": r["started_at"], "end_reason": r["end_reason"], "suspended_reason": r["suspended_reason"],
-                           **self.pnl(fills, r["account_id"], r["symbol"])})
+                           **self.pnl(fills, r["account_id"], r["symbol"]),
+                           "unprotected": None if r["state"] == W.DEPLOYMENT_ENDED else self.unprotected(r["id"], r["started_at"])})
         return {"label": "SIMULATION: paper deployments, modelled fills; not money", "allocations": {
                     "total": allocs["n"], "open": allocs["open"] or 0, "new_since": allocs["new"] or 0, "stopped_since": stops},
                 "by_mode_state": [{"mode": m, "state": s, "count": n} for (m, s), n in sorted(by.items())],
                 "deployments": listed, "envelopes": self.envelopes(), "notes": self.paper_notes()}
+
+    def unprotected(self, deployment, started_at):
+        """THE RUN'S OWN UNPROTECTED SENTENCE, OR NONE: TradingGateway.DeploymentReadings' reading, by its rule, off the rows it reads. The run's book is its
+        fills under its own operations since it started, walked long or flat as RunBookWalk walks them; a position held with a stop or a target it declared
+        and that is not at the venue reads in the app's words. UNKNOWN, a row not yet answered and an order not yet over read as working, as in the app:
+        that direction never sells twice, and here it never cries wolf. A run that is still being placed is the app's to say; this reads only its rows."""
+        ops = [dict(o) for o in self.app.execute(
+            "SELECT request_id, kind, state, answer FROM deployment_op WHERE deployment_id = ? ORDER BY bar_open_time ASC, created_at ASC, request_id ASC",
+            (deployment,))]
+        requests = {r["request_id"]: dict(r) for r in self.app.execute(
+            "SELECT r.request_id, r.execution_state, r.dispatched_at, r.filled_quantity FROM execution_request r "
+            "WHERE r.request_id IN (SELECT request_id FROM deployment_op WHERE deployment_id = ?)", (deployment,))}
+        start = parse_ts(started_at)
+        held, average, odd_side, in_ledger = Decimal(0), Decimal(0), False, {}
+        for f in self.app.execute("SELECT request_id, at, side, quantity, price FROM fill WHERE request_id IN "
+                                  "(SELECT request_id FROM deployment_op WHERE deployment_id = ?) ORDER BY at, rowid", (deployment,)):
+            at = parse_ts(f["at"])
+            if start is not None and at is not None and at < start:
+                continue
+            q = dec(f["quantity"]) or Decimal(0)
+            in_ledger[f["request_id"]] = in_ledger.get(f["request_id"], Decimal(0)) + q
+            side = str(f["side"]).casefold()
+            odd_side = odd_side or side not in (W.SIDE_BUY.casefold(), W.SIDE_SELL.casefold())
+            if side == W.SIDE_BUY.casefold():
+                held += q
+            else:
+                held -= min(held, q)
+        complete = not odd_side and all(dec(requests[o["request_id"]]["filled_quantity"]) == in_ledger.get(o["request_id"], Decimal(0))
+                                        for o in ops if o["request_id"] in requests)
+        if held <= 0:
+            return None
+
+        def row(op):
+            return requests.get(op["request_id"])
+
+        def before_the_wire(op):
+            r = row(op)
+            return op["state"] == W.DEPLOYMENT_OP_REFUSED and (r is None or (not r["dispatched_at"] and r["execution_state"] != W.ORDER_AWAITING_APPROVAL))
+
+        def settled(op):
+            return op["state"] in (W.DEPLOYMENT_OP_RESOLVED, W.DEPLOYMENT_OP_REFUSED)
+
+        def fill_unbooked(op):
+            r = row(op)
+            return not complete and r is not None and (dec(r["filled_quantity"]) or Decimal(0)) > 0
+
+        def may_be_working(op):
+            if before_the_wire(op):
+                return False
+            r = row(op)
+            return not settled(op) if r is None else r["execution_state"] not in W.ORDER_TERMINAL
+
+        def on_its_way(op):
+            if before_the_wire(op):
+                return False
+            r = row(op)
+            return not settled(op) if r is None else (r["execution_state"] not in W.ORDER_TERMINAL or fill_unbooked(op))
+
+        moves = [o for o in ops if o["kind"] in (W.DEP_OP_ENTRY, W.DEP_OP_EXIT, W.DEP_OP_FLATTEN)]
+        if not moves or (moves[-1]["kind"] != W.DEP_OP_ENTRY and on_its_way(moves[-1])):
+            return None
+        entry = max((i for i, o in enumerate(ops) if o["kind"] == W.DEP_OP_ENTRY), default=-1)
+        if entry < 0:
+            return None
+        missing = []
+        for kind in (W.DEP_OP_STOP, W.DEP_OP_TARGET):
+            asked = [o for o in ops[entry + 1:] if o["kind"] == kind]
+            if asked and not any(o["kind"] == kind and may_be_working(o) for o in ops) and not fill_unbooked(asked[-1]):
+                missing.append(asked[-1])
+        if not missing:
+            return None
+        what = (W.UNPROTECTED_NO_BOTH if len(missing) == 2 else W.UNPROTECTED_NO_STOP if missing[0]["kind"] == W.DEP_OP_STOP else W.UNPROTECTED_NO_TARGET)
+        return (f"{W.UNPROTECTED_HOLDS}{num(held)} with {what}{W.UNPROTECTED_RESTING}{missing[0]['answer'] or W.UNPROTECTED_NONE_YET})"
+                f"{W.UNPROTECTED_ASKS_AGAIN}")
 
     def envelopes(self):
         """Evidence per pair: each pair's standing paper envelope and how many of its runs are open."""
@@ -431,7 +524,9 @@ class Digest:
         rows = self.app.execute(
             "SELECT content, created_at FROM publication WHERE role = ? AND kind = ? AND created_at >= ? ORDER BY created_at DESC, id",
             (W.PUBLICATION_ALLOCATOR, W.PUBLICATION_NOTE, self.since_s)).fetchall()
-        return {"since": len(rows), "last_at": rows[0]["created_at"] if rows else None, "last": short(rows[0]["content"], 150) if rows else None}
+        bare = [r for r in rows if W.UNPROTECTED_AT_CLOSE in (r["content"] or "")]
+        return {"since": len(rows), "last_at": rows[0]["created_at"] if rows else None, "last": short(rows[0]["content"], 150) if rows else None,
+                "unprotected_at_close_since": len(bare), "unprotected_at_close_last_at": bare[0]["created_at"] if bare else None}
 
     def pnl(self, fills, account, symbol):
         qty, avg, realised, fees, unknown_fees = Decimal(0), Decimal(0), Decimal(0), Decimal(0), 0
@@ -1040,6 +1135,12 @@ def attention(d):
     for g in dep.get("by_mode_state", []):
         if g["mode"] != W.MODE_PAPER and g["state"] != W.DEPLOYMENT_ENDED:
             flags.append(f"{g['count']} deployment(s) in mode '{g['mode']}' ({g['state']}): NOT paper")
+    for x in dep.get("deployments", []):
+        if x.get("unprotected"):
+            flags.append(f"paper run {x['id']} {x['symbol']} ({x['state']}): {x['unprotected']}")
+    notes = dep.get("notes") or {}
+    if notes.get("unprotected_at_close_since"):
+        flags.append(f"{notes['unprotected_at_close_since']} paper day note(s) since T0 say {W.UNPROTECTED_AT_CLOSE}, the last {stamp(notes['unprotected_at_close_last_at'])}")
     cp = d.get("cell_proof", {})
     if cp.get("current") is False:
         flags.append("cell proof is NOT current here: " + ", ".join(cp.get("differs") or ["no proof"]) + " differ")
@@ -1181,7 +1282,8 @@ def render(d, cap):
         a = s["allocations"]
         L.append(f"deployments (SIMULATION, paper fills; not money): {modes}; allocations {a['open']} open of {a['total']} ({a['new_since']} new)")
         add_list(s["deployments"], cap["deployments"], lambda x: f"  {x['id']} {x['symbol']} {x['mode']}/{x['state']}  fills {x['fills']}  realised {x['realised']}  "
-                 f"unrealised {x['unrealised'] if x['unrealised'] is not None else '?'}  fees {x['fees']}" + (f"(+{x['fees_unknown_fills']} unknown)" if x["fees_unknown_fills"] else ""))
+                 f"unrealised {x['unrealised'] if x['unrealised'] is not None else '?'}  fees {x['fees']}" + (f"(+{x['fees_unknown_fills']} unknown)" if x["fees_unknown_fills"] else "")
+                 + (f"  {x['unprotected']}" if x.get("unprotected") else ""))
         if s["envelopes"]:
             L.append("  envelopes (runs open/allowed): " + ", ".join(f"{e['symbol']} {e['open']}/{e['max_deployments']}" for e in s["envelopes"][:6]))
         if s["notes"]["since"]:
