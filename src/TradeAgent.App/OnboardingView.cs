@@ -515,8 +515,17 @@ public sealed class OnboardingView
             Ui.Primary("Finish", Act(() => Done(OnboardingStep.SETUP_COMPLETE)))),
     };
 
+    /// <summary>
+    /// THE FIRST WORDS NAME THE PLATFORM HE IS ON (<c>U-owner-words</c>): a fresh install starts on paper or the simulator, and its Welcome read
+    /// "your ATAS trading platform" to an owner who has none, in a build that may carry no ATAS at all. ATAS is named only while it is the platform running.
+    /// </summary>
+    internal const string WelcomeLead =
+        "TradeAgent gives an AI assistant a safe, supervised way to trade. It starts on the practice venues built into TradeAgent, which risk no money.";
+
+    internal const string WelcomeLeadAtas = "TradeAgent gives an AI assistant a safe, supervised way to work with your ATAS trading platform.";
+
     Screen Welcome() => new(
-        "TradeAgent gives an AI assistant a safe, supervised way to work with your ATAS trading platform.",
+        UsingAtas ? WelcomeLeadAtas : WelcomeLead,
         Ui.Card(Ui.Col(Theme.S4,
             Numbered(1, "Set up the AI",
                 "TradeAgent downloads and installs everything it needs, by itself. You will never be asked to type anything technical."),
