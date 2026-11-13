@@ -45,12 +45,18 @@ public class AtasHealthTests
     {
         // READY here would be a lie about a program that may not even be installed, and FAILED would
         // put a red row in front of somebody who has nothing to fix.
-        foreach (var d in new[] { Machine(), Machine(installed: false, running: false, bridge: false) })
-        {
-            Assert.Equal((HealthState.UNKNOWN, AtasHealth.NotInUse), AtasHealth.ProcessRow(false, d));
-            Assert.Equal((HealthState.UNKNOWN, AtasHealth.NotInUse),
-                AtasHealth.BridgeRow(false, d, HealthState.READY, null, null));
-        }
+        // EACH PLATFORM BY ITS OWN NAME (U-owner-words-2: the rows said "the practice simulator" on TradeAgent paper), the ids being the
+        // connectors' own.
+        foreach (var (platform, words) in new[]
+                 {
+                     (TradeAgent.Platforms.Connectors.Paper, "not in use — you are on TradeAgent paper"),
+                     (TradeAgent.Platforms.Connectors.Simulator, "not in use — you are on the practice simulator"),
+                 })
+            foreach (var d in new[] { Machine(), Machine(installed: false, running: false, bridge: false) })
+            {
+                Assert.Equal((HealthState.UNKNOWN, words), AtasHealth.ProcessRow(false, d, platform));
+                Assert.Equal((HealthState.UNKNOWN, words), AtasHealth.BridgeRow(false, d, HealthState.READY, null, null, platform));
+            }
     }
 
     [Fact]
