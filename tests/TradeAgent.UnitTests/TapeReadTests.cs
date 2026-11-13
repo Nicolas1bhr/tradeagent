@@ -47,7 +47,8 @@ public class TapeReadTests(ITestOutputHelper log)
         Assert.StartsWith("trade data tape --source S", spec.Cli, StringComparison.Ordinal);
         Assert.Contains(spec.Args, a => a.Name == "source" && a.Required);
         Assert.All(spec.Args.Where(a => a.Name != "source"), a => Assert.False(a.Required));
-        Assert.Equal(["as_of", "before", "from", "limit", "series", "source", "subject", "to"],
+        // U-tape-gdelt-2 adds max_bytes and payload_from (a bound on the whole answer and a part of one row), openly.
+        Assert.Equal(["as_of", "before", "from", "limit", "max_bytes", "payload_from", "series", "source", "subject", "to"],
             spec.Args.Select(a => a.Name).Order(StringComparer.Ordinal));
         Assert.Contains("5000", spec.Description, StringComparison.Ordinal);
         Assert.Contains("O-LIVE rows only are first-hand", spec.Description, StringComparison.Ordinal);
@@ -330,7 +331,8 @@ public class TapeReadTests(ITestOutputHelper log)
     /// GDELT served (200) and TradeAgent refused — "the file was not read" and "the tape refused the file" — that the tape holds no
     /// record of and whose label is past the window at the report's instant, with their labels' bounds and the newest refusal in words;
     /// and the tape's line says so. Not counted: a refused file later recorded, one still inside the window (the next start asks for it),
-    /// one GDELT did not answer or did not publish, and one the daily cap stopped (a bound the owner was told of then).
+    /// one GDELT did not answer, stopped answering mid-file or did not publish, and one the daily cap stopped (a bound the owner was
+    /// told of then).
     /// RED at 5f341109: the reader has no such read, and the line says nothing of the two files.
     /// </summary>
     [Fact]
@@ -358,6 +360,9 @@ public class TapeReadTests(ITestOutputHelper log)
         store.Append(GdeltAttempt(lost - TimeSpan.FromHours(4), "gkg-live", null, "GDELT did not answer within 120 s"));
         store.Append(GdeltAttempt(lost - TimeSpan.FromHours(5), "gkg-backfill", 404, "GDELT has not published the file"));
         store.Append(GdeltAttempt(lost - TimeSpan.FromHours(6), "gkg-live", 200, GdeltGkg.CapNotePrefix + "its kept rows pass the cap"));
+        // ANSWERED 200, THEN GDELT STOPPED ANSWERING MID-FILE: a failed transfer, not a file TradeAgent refused (the opus review).
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(7), "gkg-backfill", 200, GdeltGkg.TimeoutNotePrefix + "120 s"));
+        store.Append(GdeltAttempt(lost - TimeSpan.FromHours(8), "gkg-live", 200, GdeltGkg.UnreachableNotePrefix + "the connection was reset"));
         store.Append(GdeltAttempt(lost, "gkg-live", 200, tooBig));
         store.Append(GdeltAttempt(lost, "gkg-backfill", 200, tooBig));
 

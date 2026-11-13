@@ -115,6 +115,16 @@ public static class GdeltGkg
     public const string CapNotePrefix = "not stored: ";
 
     /// <summary>
+    /// HOW AN ATTEMPT'S NOTE BEGINS WHEN GDELT STOPPED ANSWERING (<c>U-tape-gdelt-2</c>): a timeout or a dropped connection, written
+    /// by the recorder — after the headers too, so on an attempt answered 200. Read back so a failed transfer is never named as a file
+    /// TradeAgent refused.
+    /// </summary>
+    public const string TimeoutNotePrefix = "GDELT did not answer within ";
+
+    /// <inheritdoc cref="TimeoutNotePrefix"/>
+    public const string UnreachableNotePrefix = "GDELT could not be reached: ";
+
+    /// <summary>
     /// GDELT'S DATA HOST, spelled in pieces so the test-tree scan that forbids a test naming a vendor host
     /// (<c>SuiteReachesNoVendorTests</c>) can look for it without finding this line.
     /// </summary>
