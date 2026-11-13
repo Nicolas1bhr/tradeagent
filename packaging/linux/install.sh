@@ -9,14 +9,17 @@
 #   install.sh --tarball <dir>/TradeAgent-<version>-linux-x64.tar.gz   (SHA256SUMS beside it)
 #              --address <the host's address on the owner's private network>
 #              --zone <the owner's IANA zone, e.g. Europe/Brussels>
-#              [--vnc-pass-file <file holding the VNC password, 6 to 8 characters>]
+#              [--vnc-pass-file <file holding the VNC password, 6 to 8 characters> | --vnc-pass-stdin]
 #              [--account tradeagent] [--home /var/lib/tradeagent] [--display 1] [--geometry 1280x800]
 #              [--no-start]
 #
 # IDEMPOTENT. A second run with the same arguments changes nothing and restarts nothing. A run with a new
 # tarball installs it beside the old one, moves the `current` link and restarts the app, which quits the
-# way the app always quits. The VNC password file is needed on the first run only; a later run without
-# it keeps the one already set.
+# way the app always quits. The VNC password is needed on the first run only; a later run without it
+# keeps the one already set. It is the owner's (U-window-door): tools/linux-host.sh asks him for it in a
+# dialog and hands it here on stdin (--vnc-pass-stdin), and it is held in memory and piped to TigerVNC's
+# password tool, never written down; only the tool's obfuscated ~/.vnc/vncauth is kept. This kit never
+# makes one up, and never deletes a --vnc-pass-file: that file is its caller's.
 #
 # GOING BACK NEEDS NO TARBALL. The release that was running stays installed beside the new one (two are kept, no
 # more), so a rollback is, as root:
@@ -45,10 +48,12 @@ set -euo pipefail
 kit="$(cd "$(dirname "$0")" && pwd)"
 root_dir=/opt/tradeagent
 
-tarball="" address="" zone="" vnc_pass_file=""
+tarball="" address="" zone="" vnc_pass_file="" vnc_pass_stdin=no
 account=tradeagent home=/var/lib/tradeagent display=1 geometry=1280x800 start=yes
 
 refuse() { echo "install.sh: $*" >&2; exit 1; }
+# shellcheck disable=SC2034 # LC_ALL is read by bash itself: [[:graph:]] in the C locale is printable ASCII without a space
+pass_ok() { local LC_ALL=C; [[ ${1:-} =~ ^[[:graph:]]{6,8}$ ]]; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -56,6 +61,7 @@ while [ $# -gt 0 ]; do
         --address) address="${2:?--address needs an address}"; shift 2 ;;
         --zone) zone="${2:?--zone needs an IANA zone}"; shift 2 ;;
         --vnc-pass-file) vnc_pass_file="${2:?--vnc-pass-file needs a file}"; shift 2 ;;
+        --vnc-pass-stdin) vnc_pass_stdin=yes; shift ;;
         --account) account="${2:?--account needs a name}"; shift 2 ;;
         --home) home="${2:?--home needs a folder}"; shift 2 ;;
         --display) display="${2:?--display needs a number}"; shift 2 ;;
@@ -119,15 +125,22 @@ case "$top" in
 esac
 case "$version" in [0-9]*.[0-9]*.[0-9]*) ;; *) refuse "'$version' is not a version" ;; esac
 
+vnc_pass="" have_pass=no
+if [ -n "$vnc_pass_file" ] && [ "$vnc_pass_stdin" = yes ]; then refuse "--vnc-pass-file and --vnc-pass-stdin: give one"; fi
 if [ -n "$vnc_pass_file" ]; then
     [ -r "$vnc_pass_file" ] || refuse "cannot read $vnc_pass_file"
-    vnc_pass="$(head -n 1 "$vnc_pass_file")"
+    vnc_pass="$(head -n 1 "$vnc_pass_file")"; have_pass=yes
+elif [ "$vnc_pass_stdin" = yes ]; then
+    IFS= read -r vnc_pass || true; have_pass=yes
+fi
+if [ "$have_pass" = yes ]; then
     # VNC's own authentication reads eight characters and ignores the rest, and TigerVNC refuses fewer
-    # than six: a longer one would be a password the owner types that is not the one that counts.
-    if [ "${#vnc_pass}" -lt 6 ] || [ "${#vnc_pass}" -gt 8 ]; then
-        refuse "the VNC password must be 6 to 8 characters (VNC authentication reads eight)"
+    # than six: a longer one would be a password the owner types that is not the one that counts. Printable
+    # ASCII without spaces, as the fleet's dialog takes it. The refusal never names what it read.
+    # (In this shell: a child's argument would put it in /proc/<pid>/cmdline.)
+    if ! pass_ok "$vnc_pass"; then
+        refuse "the VNC password must be 6 to 8 letters, digits or symbols, with no spaces (VNC authentication reads eight)"
     fi
-    unset vnc_pass
 elif [ ! -s "$home/.vnc/vncauth" ]; then
     refuse "--vnc-pass-file is required on the first run: the window is reachable with a password or not at all"
 fi
@@ -174,9 +187,11 @@ install -d -m 0700 -o "$account" -g "$account" "$home" "$home/tmp" "$home/.vnc"
 changed_display=no
 changed_app=no
 
-if [ -n "$vnc_pass_file" ]; then
+if [ "$have_pass" = yes ]; then
     new="$home/.vnc/vncauth.new"
-    (umask 077 && head -n 1 "$vnc_pass_file" | "$vncpasswd" -f > "$new")
+    (umask 077 && printf '%s
+' "$vnc_pass" | "$vncpasswd" -f > "$new")
+    vnc_pass=""
     chown "$account:$account" "$new"
     if cmp -s "$new" "$home/.vnc/vncauth"; then rm -f "$new"
     else mv -f "$new" "$home/.vnc/vncauth"; changed_display=yes
