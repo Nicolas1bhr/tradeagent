@@ -301,7 +301,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         var frames = RenderAll(db, "fixed", 1280, 800, host => host.Gateway.Reports.WriteNow(host.ReportInputs())).ToDictionary(f => f.Page);
         string All(string page) => string.Join("\n", frames[page].Texts);
 
-        var guidance = frames["dashboard"].Boxes.Single(b => b.Key.StartsWith("e.g. focus on ES", StringComparison.Ordinal)).Value;
+        var guidance = frames["dashboard"].Boxes.Single(b => b.Key.StartsWith("e.g. keep positions small", StringComparison.Ordinal)).Value;
         Assert.True(guidance > 400, $"the guidance box is {guidance:0} px wide in a 1280 px window");
         Assert.DoesNotContain("not money cannot stop it", All("dashboard"), StringComparison.Ordinal);
 
@@ -691,5 +691,43 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         output.WriteLine(string.Join(" | ", said));
         if (words is null) Assert.Empty(said);
         else Assert.Equal(["unknown — " + words, "unknown — " + words], said);
+    }
+
+    /// <summary>
+    /// THE CHAT SUGGESTS A PRICE OF SOMETHING THIS HOME TRADES (<c>U-owner-words-2</c>; the real run of 2026-11-13): "What is ES trading at?" on
+    /// a crypto paper account, an E-mini future fixed in the code. On each platform the price question names the first instrument the platform
+    /// in force lists — a pair on TradeAgent paper, the simulator's own on the simulator — and the Dashboard's guidance example names none.
+    /// RED at the base: "What is ES trading at?" on paper.
+    /// </summary>
+    [Theory]
+    [InlineData("paper")]
+    [InlineData("fake")]
+    public async Task The_chat_suggests_the_price_of_an_instrument_the_platform_in_force_lists(string platform)
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"suggest-{platform}-{Guid.NewGuid():n}.db"));
+        // Paper lists the catalogue's VERIFIED spot rows (an instrument check serves them); here every row of the shipped catalogue is taken as checked.
+        var catalogue = TradeAgent.Core.Data.VenueCatalog.Read();
+        foreach (var venue in catalogue.Venues) foreach (var row in venue.Instruments) row.Verified = true;
+        ITradingConnector connector = platform == "fake" ? new FakeConnector(new FakeBroker())
+            : new TradeAgent.Connectors.Paper.PaperConnector(new TradeAgent.Connectors.Paper.PaperConnectorOptions { Catalogue = catalogue });
+        var listed = await connector.GetInstrumentsAsync();
+        output.WriteLine(string.Join(", ", listed.Select(i => i.Symbol)));
+        Assert.NotEmpty(listed);
+        var host = AppHost.Composed(db, connector, new AgentPresence());
+        try
+        {
+            List<string> asked = [];
+            HeadlessUi.Run(() =>
+            {
+                var chat = new ChatView(host, () => Task.CompletedTask);
+                asked = [.. chat.EmptyState.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string ?? "").Where(t => t.EndsWith(" trading at?", StringComparison.Ordinal))];
+            });
+            output.WriteLine(string.Join(" | ", asked));
+            Assert.Equal([ChatView.PriceQuestion(listed[0].Symbol)], asked);
+            if (platform == "paper") Assert.DoesNotContain(listed, i => i.Symbol == "ES");
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+        var dashboard = RenderAll(db, $"suggest-{platform}", 1280, 800).Single(f => f.Page == "dashboard");
+        Assert.DoesNotContain(dashboard.Boxes.Keys, k => k.Contains(" ES ", StringComparison.Ordinal));
     }
 }
