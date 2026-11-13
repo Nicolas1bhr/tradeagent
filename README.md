@@ -10,11 +10,15 @@
 > Head-start kit, and nothing here depends on it. Agents: see [CLAUDE.md](CLAUDE.md), under "TradeAgent is
 > two repositories".
 
-An AI agent, safely wired to an ATAS trading account, for someone who does not use a terminal.
+An AI organisation — a chief, the departments it charters and the agents they hire — that researches,
+backtests and paper-trades inside limits its security board sets, for someone who does not use a
+terminal. It starts on TradeAgent paper (real prices, simulated fills, no money); ATAS is an optional
+platform.
 
-ATAS stays the trading screen. Everything else is TradeAgent's: it installs its own dependencies,
-hosts the conversation with the AI in its own window, runs the trading gateway, enforces the safety
-rules, and owns the emergency stop. The user never sees a console, and never installs a prerequisite.
+Where ATAS is used it stays the trading screen. Everything else is TradeAgent's: it installs its own
+dependencies, hosts the conversation with the AI in its own window, runs the trading gateway and its
+own paper venue, enforces the safety rules, and owns the emergency stop. The user never sees a
+console, and never installs a prerequisite.
 
 > **This software can place real orders in a real brokerage account.** It is provided as is, with no
 > warranty of any kind, and nothing here is financial advice. Trading futures involves a genuine risk
@@ -53,10 +57,10 @@ lists exactly what is verified, what is not, and what cannot trade yet.
 │  Trading Gateway                             │  authority · idempotency · reconciliation · risk
 └───────────────────────┬──────────────────────┘
                         │  ITradingConnector
-              ┌─────────┴─────────┐
-       ATAS Bridge          Simulator (built in)
-              │
-            ATAS ──► broker
+        ┌───────────────┼──────────────────┐
+   ATAS Bridge   TradeAgent paper   Simulator (built in)
+        │
+      ATAS ──► broker
 ```
 
 ## The rules the whole design serves
@@ -96,8 +100,9 @@ dotnet run --project src/TradeAgent.TradeCli -- status --json
 ```
 
 Type `fault drop-after 1` into the gateway's stdin, place an order, and watch it become `UNKNOWN`,
-pause trading, and reconcile. `help`-less by design: `mode`, `stop`, `enable`, `live on|off`,
-`reconcile`, `health`, `approve <id>`, `cancel-all`, `close-all`, `risk`, `fault`, `quit`.
+pause trading, and reconcile. `help`-less by design: `status`, `stop`, `enable`, `reconcile`,
+`health`, `approve <id>`, `cancel-all`, `close-all`, `fault`, `quit`. The mode and the limits are the
+security board's, so this console has neither.
 
 Package for Windows (on Windows):
 
@@ -140,15 +145,18 @@ The installer is per-user: `PrivilegesRequired=lowest`, no elevation, no PATH ed
 | `src/TradeAgent.ConnectorSdk` | `ITradingConnector`, DTOs, capability model, the rejection/transport distinction |
 | `src/TradeAgent.Connectors.Fake` | Deterministic simulator **and the fault-injection harness** |
 | `src/TradeAgent.Connectors.Atas` | ATAS connector, bridge protocol, install detection |
+| `src/TradeAgent.Connectors.Paper` | TradeAgent paper: real prices from the collected bars, fills simulated inside the app |
+| `src/TradeAgent.Platforms` | The one place that knows which trading platforms exist, so the gateway never names a concrete connector |
 | `src/TradeAgent.Gateway` | The execution authority: authorisation, risk, idempotency, reconciliation, pipe server |
 | `src/TradeAgent.TradeCli` | `trade` — the CLI every agent uses |
 | `src/TradeAgent.Provisioning` | Installs what the app needs, itself: portable Node into `%LOCALAPPDATA%`, the AI CLI from its vendor's release, ATAS handed to Windows' own elevation prompt. No admin, no PATH, no terminal |
 | `src/TradeAgent.AgentRuntime` | `IAgentRuntime`, manifest-driven CLI adapters, workspace generation, supervisor, and `IAgentConversation` — headless runs whose output becomes chat turns instead of a console |
-| `src/TradeAgent.AtasBridge` | Runs inside ATAS. `BridgeServer` is tested; `AtasStrategyAdapter` is the one unfinished file |
+| `src/TradeAgent.AtasBridge` | Runs inside ATAS. `BridgeServer` is tested; `AtasStrategyAdapter` implements every `IAtasAdapter` member and has placed, read back and cancelled orders on a simulated account |
 | `src/TradeAgent.Security` | IPC token, DPAPI secret storage, single-instance lock |
 | `src/TradeAgent.Diagnostics` | Doctor and the sanitised support package |
 | `src/TradeAgent.App` | The Avalonia desktop app: `Theme`/`Ui` design system, onboarding wizard, chat panel, dashboard, safety, activity, checks |
 | `src/TradeAgent.GatewayHost` | Headless gateway, for tests and diagnostics |
+| `src/TradeAgent.CellProbe` | `cell-probe.exe`, the compiled probe the Windows cell proof rows run inside a cell |
 | `tests/` | Unit, integration and fault suites; counts and where they last ran are in [BUILD-STATUS.md](BUILD-STATUS.md) |
 | `kit/` | The head-start kit a build carries: always the empty index. The owner's own kit is built in the private `tradeagent-moat` repository and installed from Settings |
 | `docs/` | [DECISIONS](docs/DECISIONS.md) · [RESEARCH-REQUIRED](docs/RESEARCH-REQUIRED.md) · [CONTRACTS](docs/CONTRACTS.md) · [USER-GUIDE](docs/USER-GUIDE.md) |
@@ -156,12 +164,14 @@ The installer is per-user: `PrivilegesRequired=lowest`, no elevation, no PATH ed
 ## Where things live at runtime
 
 ```
-%LOCALAPPDATA%\TradeAgent\
-  state\      tradeagent.db, ipc.token, gateway.lock
+%LOCALAPPDATA%\TradeAgent\        (~/.local/share/TradeAgent/ on Linux)
+  state\      tradeagent.db, tape.db (the market-context tape), ipc.token, gateway.lock, data\, reports\
   workspace\  AGENTS.md and the AI's own work
+  seat-home\  the one home every AI seat runs in, written by the app, never a copy of the owner's own
   tools\      Node.js and the AI CLI, installed here by TradeAgent.Provisioning
   bin\        trade.exe (this is what puts it on the agent's PATH)
   bridge\     the ATAS bridge assembly
+  updates\    a downloaded TradeAgent installer, waiting to be run
   logs\
   runtimes.json, atas.json    overrides for anything the vendors change
 ```
