@@ -1077,9 +1077,12 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>
     /// The background loop's last scheduled pass was refused under the loop's exclusion and is owed.
-    /// Read and written only by <see cref="BackgroundAsync"/>, on its one thread.
+    /// Written by the pass itself (<see cref="MaterialPass"/>), on its own task, and read by the loop: volatile for that.
     /// </summary>
-    bool _scanOwed;
+    volatile bool _scanOwed;
+
+    /// <summary>The background loop's material pass in flight (<see cref="MaterialPass"/>), at most one; awaited, bounded, at the quit.</summary>
+    Task? _materialPass;
 
     DateTimeOffset? LastScanAt =>
         Interlocked.Read(ref _lastScanAtTicks) is var t and not 0
@@ -2321,6 +2324,23 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>A test's write at the head of a background pass: what any pass does on a full disk (<c>DiskGuardTests</c>).</summary>
     internal Action? BeforeBackgroundPassUnderTest { get; set; }
 
+    /// <summary>
+    /// THE BACKGROUND LOOP'S MATERIAL PASS, OFF THE LOOP (<c>U-perf-scan</c>, R28 G2): every thirty seconds, and on the next tick while a
+    /// refused pass is owed, on a task of its own — never beside another of its own, and never holding the trading pass. A pass that
+    /// throws leaves what was owed owed, says so on the engineering log, and the next tick asks again. The task returned is the pass in
+    /// flight (or none), for the quit and for a test.
+    /// </summary>
+    internal Task MaterialPass(int pass, CancellationToken ct)
+    {
+        if (!(pass % 6 == 0 || _scanOwed) || _materialPass is { IsCompleted: false }) return _materialPass ?? Task.CompletedTask;
+        return _materialPass = Task.Run(() =>
+        {
+            try { _scanOwed = ScanMaterials(ct) is null; }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Gateway.Log.TryEngineering("Materials", "scan_failed", "warn", ex: ex); }
+        }, CancellationToken.None);
+    }
+
     internal async Task BackgroundAsync(CancellationToken ct)
     {
         var tick = 0;
@@ -2341,7 +2361,10 @@ public sealed class AppHost : IAsyncDisposable
                 // A PASS REFUSED because a role holds its turn lease (or another pass is measuring)
                 // is OWED, and asked for again on the next tick rather than in half a minute: never
                 // beside a launch, and no later than it has to be once the turn is over.
-                if (pass % 6 == 0 || _scanOwed) _scanOwed = ScanMaterials(ct) is null;
+                //
+                // OFF THIS LOOP (U-perf-scan, R28 G2): the walk and its hashing read the disk, and a slow or stalled disk held the trading
+                // pass behind them. The pass runs on its own task, one at a time; this loop only starts it.
+                _ = MaterialPass(pass, ct);
 
                 _ = SeatSignInPass(pass, ct);
                 _ = EvidencePass(pass, ct);
@@ -3678,6 +3701,12 @@ public sealed class AppHost : IAsyncDisposable
             if (_diskGuard is not null)
             {
                 try { await _diskGuard.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* the same */ }
+            }
+            // AND THE MATERIAL PASS, off the loop since U-perf-scan: cancelled at its next file, bounded like the others.
+            if (_materialPass is not null)
+            {
+                try { await _materialPass.WaitAsync(TimeSpan.FromSeconds(5)); }
                 catch (Exception) { /* the same */ }
             }
             if (_diskPauseUnsaved) SaveTheDiskPause();
