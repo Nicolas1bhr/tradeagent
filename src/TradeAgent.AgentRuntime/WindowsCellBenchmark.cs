@@ -78,7 +78,7 @@ public static class WindowsCellBenchmark
             string? probeMissing = null;
             var probeSource = probe ?? CellDenial.ProbeBesideTheApp;
             try { File.Copy(probeSource, probeExe); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
                 probeMissing = $"the cell probe {probeSource} could not be put in the bench's folder ({ex.Message}), so this row cannot be measured";
             }

@@ -10,14 +10,16 @@ namespace TradeAgent.CellProbe;
 /// THE WINDOWS CELL PROBE (<c>U-cell-probe</c>; R31 D5): a compiled program the Windows benchmark runs inside a cell, through the same stage, AppContainer token,
 /// job and private desktop as an agent's tools, and once outside any cell. It replaces the two PowerShell 5.1 scripts the <c>state-unreadable</c> and
 /// <c>processes-denied</c> rows ran: under an enforced App Control policy (Smart App Control On included) PowerShell runs ConstrainedLanguage, both scripts lose
-/// their .NET calls, and no proof can be written. A compiled program is judged by App Control as the app itself is, and depends on no execution policy,
-/// module path, profile, language mode or script scanner.
+/// their .NET calls, and no proof can be written. A compiled program depends on no execution policy, module path, profile, language mode or script scanner;
+/// App Control judges it as an executable, by signature and reputation as it judges the app (a copy outside the install folder keeps its signature, but a
+/// path rule would not cover it). NOT MEASURED under Smart App Control On: today the app and the probe are both unsigned, and SAC On blocks the app first.
 ///
 /// <para><b>One marker line per target</b>, read whole by <c>CellDenial.Judge</c>: <c>&lt;WORD&gt;-OPEN</c> when the call succeeded,
 /// <c>&lt;WORD&gt;-DENIED</c> ONLY when Windows answered error 5 (ERROR_ACCESS_DENIED), and <c>&lt;WORD&gt;-FAILED &lt;number&gt;</c> for anything else. Numbers,
 /// never words: Windows writes its words in the system's language. A FAILED is not a denial, so a row given one fails.</para>
 ///
-/// <para><b>Verbs:</b> <c>list &lt;control&gt; &lt;denied&gt;</c> — .NET's own directory listing, the very call the PowerShell script made, on the workspace
+/// <para><b>Verbs:</b> <c>list &lt;control&gt; &lt;denied&gt;</c> — .NET's own directory listing, the method the PowerShell script called (under 5.1's .NET
+/// Framework it lists with FindFirstFileW; .NET 10 opens the folder with CreateFileW for listing, then reads it: both need the right to list it), on the workspace
 /// folder (<c>CTL-LIST</c>) and on the forbidden one (<c>LIST</c>); <c>kill &lt;pid&gt;</c> — a process of its own started first and ended by
 /// <c>OpenProcess(PROCESS_TERMINATE)</c> and <c>TerminateProcess</c> (<c>CTL-KILL</c>: the calls work from where it runs), then the same two calls on the
 /// target (<c>KILL</c>). Anything else: no marker line, exit 2.</para>
@@ -65,7 +67,7 @@ public static class Probe
     }
 
     /// <summary>
-    /// <paramref name="folder"/> listed by <c>Directory.GetFileSystemEntries</c> (the PowerShell script's own call): null when it listed, else Windows' error.
+    /// <paramref name="folder"/> listed by <c>Directory.GetFileSystemEntries</c> (the method the PowerShell script called): null when it listed, else Windows' error.
     /// .NET carries it in the exception's HRESULT: ERROR_ACCESS_DENIED alone becomes <see cref="UnauthorizedAccessException"/> (0x80070005), every other
     /// Windows error HRESULT_FROM_WIN32 of its number; an HRESULT outside that facility is returned whole, negative, so it is never 5.
     /// </summary>
