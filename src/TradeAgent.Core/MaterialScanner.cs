@@ -140,8 +140,16 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         ".vbs", ".js", ".jar", ".py", ".sh", ".pl", ".rb", ".reg", ".lnk", ".dll", ".wsf"
     };
 
-    /// <summary>Files per pass. A drop larger than this is picked up over successive passes.</summary>
-    public int FileLimit { get; init; } = 5_000;
+    /// <summary>
+    /// FILES PER PASS. A pass that reaches it has not looked everywhere: it marks nothing missing and leaves the inbox's window where it
+    /// was, and — the walk taking folders in the same order every pass — the files past it are not recorded until the tree is smaller.
+    ///
+    /// <para><b>20,000, from 5,000</b> (<c>U-perf-scan</c>, R28 G2): past 5,000 every pass was one that ran out, so removals went
+    /// unrecorded and the window froze. The limit was set when each sighting was its own durable commit; with a pass's sightings in a
+    /// handful (<see cref="SightingsPerWrite"/>), a pass over 20,000 unchanged files measured 1.0 s on the build Mac (2026-11-13, other
+    /// builds running), off the loop that runs the trading pass.</para>
+    /// </summary>
+    public int FileLimit { get; init; } = 20_000;
 
     /// <summary>
     /// SIGHTINGS PER COMMIT (<c>U-perf-scan</c>): a pass records what it saw this many at a time, so 5,000 files are ten durable
