@@ -323,7 +323,9 @@ public class InvariantRegistryTests
         Assert.Contains("advisory — it says so (claimed enforced by code, shown advisory: no named test proves the property)", drawn);
         Assert.DoesNotContain("enforced by code — it says so", drawn);
         Assert.Contains("Proved by: no named test.", drawn);
-        Assert.Empty(section.GetLogicalDescendants().OfType<Button>());
+        // READ-ONLY: its one press opens and closes the reviewers' fold (U-owner-words-3 item 3, changed in the open: it held no button at
+        // all). No press here writes anything.
+        Assert.All(section.GetLogicalDescendants().OfType<Button>(), b => Assert.True(Ui.IsFold(b, out _), "a press on the protections section is not its fold"));
 
         // WHERE A TEST DOES NOT RUN, THE PAGE SAYS SO: a claim on that test reads advisory there, the same page elsewhere does not, and the
         // test is not counted among what proves the protection. (Windows here is the page as it reads there, on whatever runs this.)
