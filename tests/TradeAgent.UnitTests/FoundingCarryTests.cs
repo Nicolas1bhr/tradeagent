@@ -17,7 +17,8 @@ namespace TradeAgent.Tests.Unit;
 /// <c>paper_envelope</c> — as every home founded before <c>U-evidence-breadth-paper</c> does — is refused by the open in words naming
 /// both shapes, left exactly as it was found; one on which the board also decided is refused saying so. The owner's two-press Start
 /// fresh moves it aside whole, deletes nothing, and CARRIES the market-context tape into the new home when its own ladder version is
-/// this build's, byte for byte, so its rows stay true about what was observed. NOTHING HERE REACHES A MODEL, A VENUE OR A BROKER.
+/// this build's, byte for byte — or an older one this build's ladder climbs, climbed on the copy (<c>U-tape-gdelt-2</c>) — so its rows
+/// stay true about what was observed. NOTHING HERE REACHES A MODEL, A VENUE OR A BROKER.
 /// </summary>
 public class FoundingCarryTests(ITestOutputHelper log)
 {
@@ -284,16 +285,65 @@ public class FoundingCarryTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// ONLY A TAPE AT THIS BUILD'S OWN LADDER VERSION IS CARRIED: one at another layout version is left, whole, in the old home, the
-    /// words say which version and where it is kept, and the new home holds no tape and no half-made copy. RED with the version check
-    /// off: the older-layout tape was carried.
+    /// A TAPE AT AN OLDER LAYOUT THIS BUILD'S LADDER CLIMBS IS CARRIED, CLIMBED ON THE COPY (<c>U-tape-gdelt-2</c> item 1): the owner's
+    /// server holds a layout-3 tape (kit 5ca22a31, before rung 4), so after any rung a Start fresh used to leave his tape behind. The
+    /// copy is brought to this build's layout before the home moves, so the new home holds a tape at <see cref="TapeStore.Schema"/>
+    /// with every row it recorded, the words say from which layout, and the old home keeps its own, byte for byte, at layout 3.
+    /// RED at 5f341109: "The market-context tape was not carried into the new folder: its layout is version 3 and this version
+    /// reads 4 as it is".
     /// </summary>
     [Fact]
-    public void A_tape_at_another_layout_version_is_not_carried_and_stays_whole_in_the_old_home()
+    public void A_tape_at_an_older_layout_this_build_climbs_is_carried_climbed_with_every_row()
     {
         using var scratch = TestEnv.NewScratch("founding-carry");
         var home = OldShapeHome(scratch.Dir);
-        Raw(Path.Combine(home, "state", "tape.db"), "UPDATE tape_meta SET value='2' WHERE key='schema'");
+        var tape = Path.Combine(home, "state", "tape.db");
+        TapeArchiveRowBoundTests.AsAtLayoutThree(tape);
+        var rows = Rows(tape);
+        Assert.Contains("tape_meta|schema|3", rows);
+        Assert.Contains("listing 2", rows);
+        var before = Fingerprint(home);
+
+        var aside = OlderHome.SetAside(home, Noon, out var words);
+        log.WriteLine(words);
+
+        Assert.Equal(before, Fingerprint(aside));
+        Assert.Contains("tape_meta|schema|3", Rows(Path.Combine(aside, "state", "tape.db")));
+        Assert.Contains($"brought from layout version 3 to {TapeStore.Schema}", words);
+        Assert.DoesNotContain("not carried", words);
+        var carried = Path.Combine(home, "state", "tape.db");
+        Assert.Equal(["state/tape.db"], Directory.GetFiles(home, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(home, f).Replace('\\', '/')));
+        // CLIMBED BEFORE ANY OPEN OF THE NEW HOME: the file that took the tape's name already says this build's layout, and every
+        // row but that one is the old tape's.
+        var climbed = Rows(carried);
+        Assert.Contains($"tape_meta|schema|{TapeStore.Schema}", climbed);
+        Assert.Equal(Kept(rows), Kept(climbed));
+        Assert.Equal([], Directory.GetFileSystemEntries(scratch.Dir).Where(e => e.Contains("-tape-carrying-", StringComparison.Ordinal)));
+        using (var opened = new TapeStore(carried)) Assert.Equal(TapeStore.Schema, opened.Version);
+        Assert.Equal(Kept(rows), Kept(Rows(carried)));
+    }
+
+    /// <summary>
+    /// A TAPE THIS BUILD CANNOT CLIMB IS NOT CARRIED, AND STAYS WHOLE IN THE OLD HOME: one written by a newer build, and one at layout 3
+    /// whose table this build did not write (its bound on a row is not 65,536, so rung 4 refuses it). The words say which and where it
+    /// is kept; the new home holds no tape and no half-made copy, and no staging folder is left.
+    /// CHANGED OPENLY (<c>U-tape-gdelt-2</c> item 1): this was "A_tape_at_another_layout_version_is_not_carried_and_stays_whole_in_the_old_home",
+    /// a tape stamped 2 refused for its version alone. A tape the ladder climbs is now carried (the test above), so what is refused is
+    /// a tape the ladder cannot climb. RED with the climb on the copy taken out (any older layout carried as it is): the layout-3 tape
+    /// with the foreign bound took the tape's name in the new home.
+    /// </summary>
+    [Theory]
+    [InlineData("newer")]
+    [InlineData("foreign bound")]
+    public void A_tape_this_build_cannot_climb_is_not_carried_and_stays_whole_in_the_old_home(string which)
+    {
+        using var scratch = TestEnv.NewScratch("founding-carry");
+        var home = OldShapeHome(scratch.Dir);
+        var tape = Path.Combine(home, "state", "tape.db");
+        var newer = (TapeStore.Schema + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (which == "newer") Raw(tape, "UPDATE tape_meta SET value=$v WHERE key='schema'", ("$v", newer));
+        else TapeArchiveRowBoundTests.AsAtLayoutThree(tape, "65535");
         SqliteConnection.ClearAllPools();
         var before = Fingerprint(home);
 
@@ -301,11 +351,19 @@ public class FoundingCarryTests(ITestOutputHelper log)
         log.WriteLine(words);
 
         Assert.Contains("was not carried", words);
-        Assert.Contains($"its layout is version 2 and this version reads {TapeStore.Schema}", words);
+        Assert.Contains(which == "newer"
+            ? $"its layout is version {newer}, newer than this version's {TapeStore.Schema}"
+            : $"this version could not bring its layout 3 to {TapeStore.Schema}", words);
+        if (which != "newer") Assert.Contains("bound on a row is not one TradeAgent wrote", words);
         Assert.Contains(aside, words);
         Assert.Equal(before, Fingerprint(aside));
         Assert.Equal([], Directory.GetFiles(home, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(home, f)));
+        Assert.Equal([], Directory.GetFileSystemEntries(scratch.Dir).Where(e => e.Contains("-tape-carrying-", StringComparison.Ordinal)));
     }
+
+    /// <summary>A tape's rows without its layout row: what a climb must leave as it was.</summary>
+    static string Kept(string rows) =>
+        string.Join('\n', rows.Split('\n').Where(l => !l.StartsWith("tape_meta|schema|", StringComparison.Ordinal)));
 
     /// <summary>
     /// A PROVING GROUND'S TAPE IS NEVER CARRIED INTO A REAL HOME: one marked <c>proving</c> is left, whole, in the old home, and the new

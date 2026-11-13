@@ -153,8 +153,9 @@ version cannot read without guessing: an older founding policy, for example, wit
 pair. TradeAgent then shows what it found and offers **Start fresh**, which asks a second time. That moves the old folder aside whole, under a
 name beside the new one, and deletes nothing in it. You will set TradeAgent up again and sign in to the AI again. When it was the founding
 policy that stopped it, the market-context tape is copied into the new folder byte for byte, so what it recorded stays true, and the old
-folder keeps its own copy. If the tape cannot be copied, nothing moves and you can press again. If it is another layout, or damaged, the new
-folder starts without it and the page says where it is kept. If another TradeAgent is still running on that folder, nothing moves until
+folder keeps its own copy. A tape an older version wrote is copied and then brought up to this version's layout, on the copy only, with
+every recording kept as it was. If the tape cannot be copied, nothing moves and you can press again. If a newer version wrote it, if this
+version cannot bring it up, or if it is damaged, the new folder starts without it and the page says where it is kept. If another TradeAgent is still running on that folder, nothing moves until
 you close it.
 
 ## Setting it up
