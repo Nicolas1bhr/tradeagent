@@ -548,6 +548,35 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// SETUP'S WELCOME NAMES NO PLATFORM HE IS NOT ON (<c>U-owner-words</c>): a fresh install starts on the simulator, and its first words read
+    /// "your ATAS trading platform" — to an owner with no ATAS, in a build that may not carry it. RED at the base: the lead named ATAS.
+    /// </summary>
+    [Fact]
+    public async Task Setup_welcome_names_no_atas_on_a_platform_that_is_not_atas()
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"welcome-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            Assert.Equal(OnboardingStep.WELCOME, new OnboardingStore(db).Current());
+            List<string> texts = [];
+            HeadlessUi.Run(() =>
+            {
+                var screen = new OnboardingView(host, () => { }).Build();
+                var win = new Window { Width = 1280, Height = 800, Content = screen };
+                win.Show();
+                win.UpdateLayout();
+                texts = [.. screen.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)];
+                win.Close();
+            });
+            output.WriteLine(string.Join(" | ", texts));
+            Assert.Contains(OnboardingView.WelcomeLead, texts);
+            Assert.DoesNotContain(texts, t => t.Contains("ATAS", StringComparison.Ordinal));
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE SAME ON THE PAGES (<c>U-paper-t0</c> item 4): Settings says what the simulator is and puts the pill on paper, and the Owner page, whose envelopes stand on paper, says on
     /// the simulator that nothing they allow runs here. Every render here is on the simulator, the platform a fresh install starts on.
     /// </summary>
