@@ -120,17 +120,38 @@ public sealed record LensRegistration(LensRecord? Lens, bool New, string? Refusa
 /// answer resolves to exactly what was asked, about which item, for as long as the tape exists. This build's built-ins
 /// are registered at open under <see cref="BuiltInLenses.Proposer"/>, and one whose bytes differ from the tape's row
 /// of its id and version is REFUSED, the file untouched.</para>
+///
+/// <para><b>Rung 4 raises the bound on an archive file's row</b> (<c>U-tape-gdelt</c>): <c>tape_obs</c>'s own check on a row
+/// goes from 65,536 bytes to <see cref="MaxArchivePayloadBytes"/>. On the owner's server on 2026-11-12, 102 GDELT files were
+/// not read because one kept row of each passed 65,536 as the tape keeps it — the canonical JSON writes '&lt;', '&gt;', '&amp;'
+/// and every character past ASCII as a six-byte escape, and the largest reached 437,260. The new bound is the worst GKG row
+/// the reader accepts, with room: what a poller writes stays at <see cref="MaxPayloadBytes"/>, enforced here as before.</para>
 /// </summary>
 public sealed class TapeStore : IDisposable
 {
     /// <summary>The version of the layout below, written into the file it describes.</summary>
-    public const int Schema = 3;
+    public const int Schema = 4;
 
     /// <summary>The most lenses one proposer may register in one owner day. Built-ins are not counted.</summary>
     public const int MaxLensProposalsPerDay = 8;
 
-    /// <summary>The most one observation's canonical payload may hold, in UTF-8 bytes.</summary>
+    /// <summary>The most one observation's canonical payload may hold, in UTF-8 bytes — every row but an archive file's kept rows.</summary>
     public const int MaxPayloadBytes = 64 * 1024;
+
+    /// <summary>
+    /// THE MOST ONE KEPT ROW OF AN ARCHIVE FILE MAY HOLD, in UTF-8 bytes (<c>U-tape-gdelt</c>), and the bound the file itself
+    /// holds every row to since rung 4. The reason is arithmetic: a GKG row is read only up to <see cref="GdeltGkg.MaxRowBytes"/>
+    /// (1 MiB) as GDELT serves it, the canonical JSON grows a byte to at most six, and 27 field names add under a kilobyte — so
+    /// the worst row the reader accepts is under 6 MiB + 1 KB as the tape keeps it (measured: 6,290,577), and is kept whole.
+    /// The file's own record (<see cref="AppendArchive"/>) stays at <see cref="MaxPayloadBytes"/>.
+    /// </summary>
+    public const int MaxArchivePayloadBytes = 8 * 1024 * 1024;
+
+    // THE TABLE'S CHECK ON A ROW, as rung 1 wrote it and as rung 4 leaves it. Rung 4 finds the first once, or the second
+    // once (a rerun), or refuses the tape.
+    const string HeldRowCheck = "length(CAST(payload AS BLOB)) <= 65536)";
+    static readonly string RaisedRowCheck =
+        $"length(CAST(payload AS BLOB)) <= {MaxArchivePayloadBytes.ToString(CultureInfo.InvariantCulture)})";
 
     /// <summary>The columns <see cref="Obs"/> maps, in its order. Shared with <see cref="TapeReader"/>, which maps them the same way.</summary>
     internal const string ObsCols =
@@ -283,8 +304,8 @@ public sealed class TapeStore : IDisposable
     }
 
     /// <summary>
-    /// THE LADDER. Three rungs today — the tape itself, the decision models' answers (<c>U-decision-port</c>) and the
-    /// lenses they are asked under (<c>U-lenses</c>); every
+    /// THE LADDER. Four rungs today — the tape itself, the decision models' answers (<c>U-decision-port</c>), the
+    /// lenses they are asked under (<c>U-lenses</c>) and the raised bound on an archive file's row (<c>U-tape-gdelt</c>); every
     /// later one is an <c>if (have &lt; N)</c> below them, written by the unit that needs it and committed in one
     /// transaction with its own version row, so a crash mid-rung re-runs the rung rather than leaving a file that claims
     /// a layout it does not have.
@@ -390,7 +411,70 @@ public sealed class TapeStore : IDisposable
                 INSERT INTO tape_meta(key, value) VALUES('schema', '3')
                   ON CONFLICT(key) DO UPDATE SET value='3';
                 """);
+
+        if (have < 4) RaiseRowBound();
     }
+
+    /// <summary>
+    /// RUNG 4: <c>tape_obs</c>'s check on a row raised from 65,536 bytes to <see cref="MaxArchivePayloadBytes"/>, in one
+    /// transaction with its stamp (<c>U-tape-gdelt</c>).
+    ///
+    /// <para><b>By SQLite's own procedure for loosening a constraint, not by copying the table</b> (<c>lang_altertable.html</c>
+    /// § 7, "Making Other Kinds Of Table Schema Changes": removing a CHECK is done by editing the table's definition under
+    /// <c>writable_schema</c> and stepping <c>schema_version</c>). A raised bound is met by every row already held, so no stored
+    /// byte changes — and a copy would hold the whole tape twice on the owner's disk, in one transaction, at the app's start.</para>
+    ///
+    /// <para><b>Refuse, never guess.</b> The definition must hold the old check exactly once, or — a rerun after a crash before
+    /// the stamp — the new one exactly once. Anything else is a table this build did not write: the tape is refused in words,
+    /// and the transaction leaves the file as it was. The definition is read back after the edit, and the read is SQLite parsing
+    /// it again.</para>
+    /// </summary>
+    void RaiseRowBound() => Write(() =>
+    {
+        string Definition()
+        {
+            using var c = Cmd("SELECT sql FROM sqlite_master WHERE type='table' AND name='tape_obs'");
+            return Convert.ToString(c.ExecuteScalar(), CultureInfo.InvariantCulture) ?? "";
+        }
+
+        static int Count(string text, string part) => text.Split(part).Length - 1;
+
+        var table = Definition();
+        var (held, raised) = (Count(table, HeldRowCheck), Count(table, RaisedRowCheck));
+        if ((held, raised) == (1, 0))
+        {
+            long version;
+            using (var c = Cmd("PRAGMA schema_version")) version = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+            Exec("PRAGMA writable_schema=ON;");
+            try
+            {
+                using var edit = Cmd("UPDATE sqlite_master SET sql=$sql WHERE type='table' AND name='tape_obs'",
+                    ("$sql", table.Replace(HeldRowCheck, RaisedRowCheck, StringComparison.Ordinal)));
+                if (edit.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException($"the market-context tape at {File}: its table tape_obs could not be raised to its layout 4.");
+                Exec($"PRAGMA schema_version={(version + 1).ToString(CultureInfo.InvariantCulture)};");
+            }
+            finally
+            {
+                Exec("PRAGMA writable_schema=OFF;");
+            }
+
+            (held, raised) = (Count(Definition(), HeldRowCheck), Count(Definition(), RaisedRowCheck));
+        }
+
+        if ((held, raised) != (0, 1))
+            throw new InvalidOperationException(
+                $"the market-context tape at {File} holds a table tape_obs whose bound on a row is not one TradeAgent wrote "
+                + $"(it reads neither '<= 65536' nor '<= {MaxArchivePayloadBytes.ToString(CultureInfo.InvariantCulture)}' once), "
+                + "so its layout 4 was not written. Nothing has been changed in it.");
+
+        Exec("""
+            INSERT INTO tape_meta(key, value) VALUES('schema', '4')
+              ON CONFLICT(key) DO UPDATE SET value='4';
+            """);
+        return 0;
+    });
 
     void Rung(string sql) => Write(() =>
     {
@@ -471,7 +555,8 @@ public sealed class TapeStore : IDisposable
         if (string.IsNullOrWhiteSpace(batch.Filter))
             throw new ArgumentException("an archive file names the filter that kept its rows", nameof(batch));
 
-        var prepared = items.Select(Prepare).ToList();
+        // A KEPT ROW TO THE ARCHIVE BOUND, THE FILE'S OWN RECORD (below) TO THE POLLER'S.
+        var prepared = items.Select(i => Prepare(i, MaxArchivePayloadBytes, "an archive file's row")).ToList();
         if (prepared.FirstOrDefault(p => p.SourceTime != batch.Label) is { Subject: not null } off)
             throw new ArgumentException($"the row '{off.Subject}' is not at its file's label {batch.Label:O}", nameof(items));
         if (prepared.GroupBy(p => p.Key, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1) is { } twice)
@@ -672,7 +757,9 @@ public sealed class TapeStore : IDisposable
 
     readonly record struct Prepared(string Subject, DateTimeOffset SourceTime, string Key, string Payload, string Sha);
 
-    static Prepared Prepare(TapeItem item)
+    static Prepared Prepare(TapeItem item) => Prepare(item, MaxPayloadBytes, "an observation's payload");
+
+    static Prepared Prepare(TapeItem item, int maxBytes, string what)
     {
         ArgumentNullException.ThrowIfNull(item);
 
@@ -689,8 +776,8 @@ public sealed class TapeStore : IDisposable
         }
 
         var bytes = Encoding.UTF8.GetByteCount(payload);
-        if (bytes > MaxPayloadBytes)
-            throw new ArgumentException($"an observation's payload is {bytes} bytes and the tape holds at most {MaxPayloadBytes}", nameof(item));
+        if (bytes > maxBytes)
+            throw new ArgumentException($"{what} is {bytes} bytes and the tape holds at most {maxBytes}", nameof(item));
 
         return new Prepared(item.Subject, item.SourceTime, NaturalKey(item.Subject, item.SourceTime), payload,
             TapeJson.Sha256(payload));

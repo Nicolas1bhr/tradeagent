@@ -73,7 +73,9 @@ public sealed record GkgBatchRead
 ///
 /// <para><b>Raw bytes are never kept.</b> Nothing here writes a file. The zip is read once, as it arrives; a row
 /// the filter does not keep is dropped as soon as it is read; what is kept is the 27 codebook-named fields of
-/// each kept row, whole, as canonical JSON, at most 64 KB a row.</para>
+/// each kept row, whole, as canonical JSON. A row that grows past 64 KB as the tape keeps it — its XML and every character
+/// past ASCII escape to six bytes — is kept whole too, up to <see cref="TapeStore.MaxArchivePayloadBytes"/>, which every row
+/// this reader accepts fits (<c>U-tape-gdelt</c>).</para>
 /// </summary>
 public static class GdeltGkg
 {
@@ -119,7 +121,9 @@ public static class GdeltGkg
 
     /// <summary>
     /// The longest row read, in UTF-8 bytes. The longest of 979 rows measured on 2026-10-06 held 35,860; a line
-    /// past this is not a GKG row, and the file is refused rather than held in memory to find out.
+    /// past this is not a GKG row, and the file is refused rather than held in memory to find out. On the owner's server
+    /// on 2026-11-12 a kept row was 437,260 bytes as the tape keeps it, so at most that as GDELT serves it. Six times this,
+    /// with the field names, is inside <see cref="TapeStore.MaxArchivePayloadBytes"/>: a row read is a row the tape can keep.
     /// </summary>
     public const int MaxRowBytes = 1024 * 1024;
 
@@ -273,7 +277,8 @@ public static class GdeltGkg
     /// <para><b>Refused whole</b>, with the reason in words and nothing kept: a file over <paramref name="maxBytes"/>,
     /// one that is not that zip, one that will not inflate or inflates past <see cref="MaxInflatedBytes"/>; a row over
     /// <see cref="MaxRowBytes"/>, without the codebook's 27 fields, or whose GKGRECORDID or V2.1DATE is not its label's;
-    /// a GKGRECORDID named twice; a kept row that is not UTF-8 or whose payload passes 64 KB; and —
+    /// a GKGRECORDID named twice; a kept row that is not UTF-8 or whose payload passes
+    /// <see cref="TapeStore.MaxArchivePayloadBytes"/> (which no row under <see cref="MaxRowBytes"/> does); and —
     /// <see cref="GkgBatchRead.OverBudget"/> — kept rows passing <paramref name="keptBudget"/>.</para>
     ///
     /// <para>A failure of the stream itself — the socket, the leash — is not a refusal of the file: it propagates,
@@ -427,8 +432,8 @@ public static class GdeltGkg
 
             var payload = Payload(f);
             var size = Encoding.UTF8.GetByteCount(payload);
-            if (size > TapeStore.MaxPayloadBytes)
-                return Refusal($"the kept row {f[Id]} is {size} bytes as the tape keeps it, past the {TapeStore.MaxPayloadBytes} "
+            if (size > TapeStore.MaxArchivePayloadBytes)
+                return Refusal($"the kept row {f[Id]} is {size} bytes as the tape keeps it, past the {TapeStore.MaxArchivePayloadBytes} "
                                + "a row may hold, so the file is not stored in part");
 
             _keptBytes += size;

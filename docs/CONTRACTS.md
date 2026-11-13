@@ -3162,7 +3162,9 @@ reader that cannot write it (`U-tape-read`, **THE READ** below).
 **ITS OWN FILE, ITS OWN LADDER.** `state/tape.db` is not a rung of `tradeagent.db`, and
 `Versions.DatabaseSchemaVersion` does not move for it: its own connection, WAL, `synchronous=FULL`,
 `busy_timeout 5000`, a version row inside the file and an `if (have < N)` ladder from version 1
-(`U-decision-port` added rung 2, `decision_call`, and `U-lenses` rung 3, `lens`, both through `TapeStore`; `TapeStore.Schema` 3). The version is READ before anything is written, so a
+(`U-decision-port` added rung 2, `decision_call`, `U-lenses` rung 3, `lens`, and `U-tape-gdelt` rung 4, `tape_obs`'s bound on a
+row raised from 65,536 bytes to 8 MiB by SQLite's own procedure for loosening a CHECK — the definition edited under
+`writable_schema`, no row copied, a table holding neither bound once refused — all through `TapeStore`; `TapeStore.Schema` 4). The version is READ before anything is written, so a
 tape from a newer build is refused with the file exactly as found — no table added, journal mode untouched —
 and the refusal is an activity line ("TradeAgent is not recording market context: …"); the app comes up
 without the tape.
@@ -3175,7 +3177,8 @@ observation is a `tape_obs` row naming its fetch (a foreign key) with its subjec
 the instant it arrived, its natural key — `symbol|time` for the premium index and open interest,
 `symbol|timestamp` for the 5-minute series, `symbol|fundingTime` for funding, the vendor's time in
 milliseconds; `coin|Date` for Hyperliquid's contexts, which carry no time of their own — its revision, and its payload: the vendor's item, whole, as canonical JSON (keys in ordinal
-order, no whitespace, every decimal string and number exactly as served), at most 64 KB, with its SHA-256.
+order, no whitespace, every decimal string and number exactly as served), at most 64 KB — an archive file's kept row at
+most 8 MiB (`TapeStore.MaxArchivePayloadBytes`, `U-tape-gdelt`) — with its SHA-256.
 
 **CLAIMED — APPEND-ONLY, REVISIONS KEPT.** A re-reading whose payload matches the latest revision writes
 nothing — the fetch's `items` against the rows naming it is the count — and a differing one is a new row,
@@ -3233,8 +3236,10 @@ origin: the listed address is never fetched. A file is streamed once (≤ 16 MB,
 decompression on the way) through MD5, SHA-256 and `GdeltGkg`: its one deflated entry `<label>.gkg.csv`, every row's
 GKGRECORDID and V2.1DATE its label's or the file is refused; the filter `gkg-crypto-v1` keeps a row whose themes name
 `ECON_BITCOIN`, or whose names (`V1PERSONS`, `V1ORGANIZATIONS`, `V2.1ALLNAMES`) or page title name Bitcoin, Ethereum,
-Solana, Binance, BNB, XRP, Ripple or Dogecoin as a word; a kept row is its 27 codebook-named fields whole (≤ 64 KB, UTF-8
-throughout, or the file is refused), subject its GKGRECORDID, source time the label; a row the filter does not keep is
+Solana, Binance, BNB, XRP, Ripple or Dogecoin as a word; a kept row is its 27 codebook-named fields whole (UTF-8
+throughout, or the file is refused; ≤ 8 MiB as the tape keeps it, which every row under the reader's 1 MiB fits — the
+canonical JSON escapes a byte to at most six; on the owner's server on 2026-11-12, before `U-tape-gdelt`, 102 files were
+refused for a kept row past the old 64 KB, the largest 437,260 bytes), subject its GKGRECORDID, source time the label; a row the filter does not keep is
 read leniently and dropped. The file is appended only once its MD5 equals the one GDELT published — the listing's live,
 the storage's `x-goog-hash` on the backfill; otherwise its attempt is the only row. A 404 is "not published". **Backfill:**
 once a start, its own task, newest first, at most 96 files the tape holds no record of, none labelled more than 7 days
@@ -3487,7 +3492,7 @@ and an answer's is read up to `TypeSafeWire.MaxAnswerBytes` (4 MiB) under the re
 its HTTP status kept; the key
 comes from the decision models' own holder (`AppHost.PerceptionKey`, never `HarnessKey.Shared`) for the endpoint's
 origin, read at the send. Held in `LiveAttempts.Shared` while it flies. (4) RECORDED on the tape before it settles: one
-`decision_call` row per sent call (tape.db rung 2; the file is at `TapeStore.Schema` 3 since `U-lenses`), keyed by the attempt id — instrument, URL,
+`decision_call` row per sent call (tape.db rung 2; the file is at `TapeStore.Schema` 4 since `U-tape-gdelt`), keyed by the attempt id — instrument, URL,
 requested and answered id, host response id, schema id, version and sha, the state's sha and source references (the
 state's text is never written), the request and end instants, latency on a monotonic clock, HTTP status, status
 (`ANSWERED`, `FAILED`, `UNANSWERED`) and error class, input and output tokens, the estimated and the billed cost apart,
@@ -3590,7 +3595,7 @@ for the worst item, every character at six bytes) and the questions checked by `
 that parsed is one every built-in instrument takes. `Canonical` is the whole definition in one spelling (keys ordinal,
 fields by path); `lens_sha` = SHA-256 of it; `schema_sha` = the port's `SchemaRef.Sha` over the questions alone.
 
-**THE REGISTRY** (`lens`, tape.db rung 3, one transaction with its stamp; `TapeStore.Schema` 3): `id, version, lens_sha,
+**THE REGISTRY** (`lens`, tape.db rung 3, one transaction with its stamp; `TapeStore.Schema` 4 since `U-tape-gdelt`): `id, version, lens_sha,
 schema_sha, definition (canonical), target_source, target_series, proposer, attempt, registered_at, validator_version`,
 UNIQUE(id, version) and UNIQUE(lens_sha), insert only. `TapeStore.RegisterLens(definition, proposer, attempt)`: the same
 bytes (any spelling) are the existing row and write nothing; the same id with other bytes is `MAX(version) + 1`, the
