@@ -171,7 +171,19 @@ public class VendorLimitTests : IDisposable
 
         /// <summary>What the relay does when the turn commits: where a test publishes a turn's brief.</summary>
         public Action? Relayed { get; init; }
-        public void Relay(string role, string? attempt) => Relayed?.Invoke();
+
+        /// <summary>What the relay does for the launch whose turn commits, by its id: where a test publishes that launch's brief (<see cref="PublishBrief"/>).</summary>
+        public Action<string>? RelayedFor { get; init; }
+
+        public void Relay(string role, string? attempt)
+        {
+            Relayed?.Invoke();
+            if (attempt is not null) RelayedFor?.Invoke(attempt);
+        }
+
+        /// <summary>The turn's wall-clock limit (<see cref="IMissionHost.TurnLimit"/>); the vendor's when unset.</summary>
+        public TimeSpan? TurnLimitUnderTest { get; init; }
+        public TimeSpan TurnLimit(string role) => TurnLimitUnderTest ?? SeatSpec.VendorTurnLimit;
 
         public IAgentConversation? Conversation => conversation;
         public MissionEventStore? Events => events;
@@ -388,6 +400,21 @@ public class VendorLimitTests : IDisposable
     // ---- (d) the wakes a refused turn took (U-vendor-limit-wakes, item 1) ------------------------------
 
     /// <summary>A wake of one kind for the chair, due at <paramref name="at"/>; its id.</summary>
+    /// <summary>
+    /// THE BRIEF A LAUNCH PUBLISHED, AS THE PRODUCT'S RELAY LEAVES IT: the launch's row ENDED (the meter's close, which this test host has none of)
+    /// and a brief of the chair's the ledger attributes to that launch. The record the owner's words are finished on (<c>U-turn-cards-2</c>).
+    /// </summary>
+    internal static void PublishBrief(Database db, string attempt, DateTimeOffset at)
+    {
+        Assert.True(new AiAttemptStore(db).End(attempt, 1, at, null, null, null, null, null, null, null, null, null));
+        var text = $"Research: look into the opening range ({attempt}).";
+        new PublicationStore(db).Commit(new Publication
+        {
+            Id = Publication.IdOf(CouncilRoles.Operations, PublicationKind.Brief, text), Role = CouncilRoles.Operations, Attempt = attempt,
+            Kind = PublicationKind.Brief, Recipients = CouncilRoles.Research, Classification = PublicationClass.Council, CreatedAt = at, Content = text
+        }, at);
+    }
+
     static string Wake(MissionEventStore events, string kind, DateTimeOffset at)
     {
         var id = $"{kind}:{CouncilRoles.Operations}:{Guid.NewGuid():n}";
@@ -529,6 +556,110 @@ public class VendorLimitTests : IDisposable
         Assert.True(brief.Consumed, "words the turn already turned into a brief were owed again");
         Assert.Equal(MissionEventDisposition.Delegated, brief.Disposition);
         Assert.Equal(0, OwnerWakesWaiting(events, now));
+    }
+
+    // ---- U-turn-cards-2: what U-turn-cards carded -----------------------------------------------------------------------
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, RED FIRST: WORDS THE OWNER TYPED INTO A TURN THE LIMIT CUT AFTER WORK ARE NOT HANDED AGAIN ONCE THAT TURN'S BRIEF IS ON
+    /// RECORD. The words held in the loop's own list (no row of the queue holds them) were given back on every limit, whatever the turn finished, so the
+    /// next turn was told them again beside the brief they had already become: one question, two briefs. The finished-on-record rule a row of his words
+    /// is settled by (the brief the launch published) now decides them too. The look beside them has no record and still comes back.
+    /// RED on the base: the loop still owed the typed words.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_the_limit_cut_after_work_are_not_handed_again_once_its_brief_is_on_record()
+    {
+        const string typed = "and brief Research on the skew";
+        var name = nameof(Words_typed_into_a_turn_the_limit_cut_after_work_are_not_handed_again_once_its_brief_is_on_record);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var chat = Refusing(name, CutAfterWork);
+        var host = new Host(_db, events, chat, Home(name)) { Clock = () => now, RelayedFor = attempt => PublishBrief(_db, attempt, now) };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(typed);
+        var look = Wake(events, MissionEventKind.Brief, now);
+
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+        Assert.Contains(typed, host.Opened[0], StringComparison.Ordinal);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.True(loop.TypedOwedTo(CouncilRoles.Operations).Count == 0,
+            $"words the turn already turned into a brief were owed again: {string.Join(" | ", loop.TypedOwedTo(CouncilRoles.Operations))}");
+
+        // AND THE NEXT LAUNCH, once the hold lifts, takes the look and is not told the words a second time.
+        now = Retry;
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Opened.Count);
+        Assert.DoesNotContain(typed, host.Opened[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 1, THE GUARD: TYPED WORDS A CUT TURN LEFT NO BRIEF FOR ARE OWED AGAIN, and the next launch after the hold is told them. The rule
+    /// keeps what the records show finished and nothing else: a turn that only worked is no evidence his words were dealt with.
+    /// </summary>
+    [Fact]
+    public async Task Words_typed_into_a_turn_the_limit_cut_after_work_with_no_brief_on_record_are_owed_again()
+    {
+        const string typed = "and brief Research on the skew";
+        var name = nameof(Words_typed_into_a_turn_the_limit_cut_after_work_with_no_brief_on_record_are_owed_again);
+        var events = new MissionEventStore(_db);
+        var now = Today(12, 0);
+        var chat = Refusing(name, CutAfterWork);
+        var host = new Host(_db, events, chat, Home(name)) { Clock = () => now };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+
+        chat.Queue(typed);
+        var look = Wake(events, MissionEventKind.Brief, now);
+        await loop.TurnAsync();
+        Assert.Single(host.Opened);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.Equal([typed], loop.TypedOwedTo(CouncilRoles.Operations));
+
+        now = Retry;
+        await loop.TurnAsync();
+        Assert.Equal(2, host.Opened.Count);
+        Assert.Contains(typed, host.Opened[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The vendor's limit as the stream's first word, and then work: a command ran after it, and the turn read to its end (codex's <c>turn.failed</c>).
+    /// Derived from <see cref="CutAfterWork"/> with the command moved behind the refusal.
+    /// </summary>
+    const string LimitFirstThenWorked =
+        """
+        {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+        {"type":"turn.started"}
+        {"type":"error","message":"You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 10:30 PM."}
+        {"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"PLAN.md\n","exit_code":0,"status":"completed"}}
+        {"type":"turn.failed","error":{"message":"You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 10:30 PM."}}
+        """;
+
+    /// <summary>
+    /// U-TURN-CARDS-2 ITEM 2, RED FIRST: A TURN READ TO ITS END THAT WORKED AFTER THE VENDOR'S LIMIT KEEPS ITS RESERVATION AS ITS COST. The limit came
+    /// before any work and the read went on: the turn ran a command, measuring nothing. The cancelled read was judged again at its end (U-turn-cards'
+    /// review); this path carried the limit out as "before any work", so the meter charged it nothing, and unknown is never zero.
+    /// RED on the base: the limit said before any work, and the row cost nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_read_to_its_end_that_worked_after_the_limit_keeps_its_reservation_as_its_cost()
+    {
+        var meter = Meter();
+        var chat = Refusing(nameof(A_turn_read_to_its_end_that_worked_after_the_limit_keeps_its_reservation_as_its_cost), LimitFirstThenWorked);
+        using var metering = meter.Attach(chat, CouncilRoles.Operations);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
+
+        await chat.SendAsync("reply ok");
+
+        Assert.NotNull(ended?.Limit);
+        Assert.False(ended!.Limit!.BeforeAnyWork, "a turn that ran a command after the vendor's line was carried out as one that did nothing");
+        var row = OnlyRow();
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(Reservation, row.Cost);
+        Assert.Equal(AiAttemptStore.UnreportedReason, row.UnpricedReason);
+        Assert.Equal(VendorSaid, RefusedOn(row));
     }
 
     /// <summary>
