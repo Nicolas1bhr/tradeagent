@@ -570,7 +570,10 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // AND WAITED FOR, NOT MADE, HERE (U-perf-scan; U-cards-2's card): a read the operating system holds is not between
                     // reads, and no cancellation reaches it. The pass waits as long as its bound and a moment more, then leaves the read to
                     // finish on its own — its file and its bound closed only once it has, never under it — and goes on.
-                    var reading = Task.Run(() => Hasher(file, token));
+                    // ON A THREAD OF ITS OWN, not the pool's: a read queued behind a busy pool would wait out the bound unstarted and be
+                    // taken for one the disk holds (CI run 43350995349, ubuntu: a 20-byte file left unhashed beside the parallel suite).
+                    var reading = Task.Factory.StartNew(() => Hasher(file, token), CancellationToken.None,
+                        TaskCreationOptions.LongRunning, TaskScheduler.Default);
                     // A QUIT IS NOT HELD EITHER: the wait ends at the pass's own cancellation, the read is left as a stalled one is, and
                     // the cancellation goes on up.
                     bool back;
