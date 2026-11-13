@@ -499,7 +499,7 @@ jobs:
       - name: Lint the Linux scripts
         run: |
           shellcheck --version
-          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh tools/linux-host.sh
+          shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh packaging/linux/ci/crash-loop.sh tools/linux-host.sh
           shellcheck .github/ci/shard-filter.sh
 
       - name: Build the Linux artifact
@@ -539,7 +539,7 @@ jobs:
     needs: [dedupe-gate, package-linux]
     if: ${{ !cancelled() && needs.dedupe-gate.outputs.skip != 'true' && needs.package-linux.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 65   # 45 before the recording-only phase (U-host-recording), which adds about 15 minutes of its own
+    timeout-minutes: 75   # 45 before the recording-only phase (U-host-recording), which adds about 15 minutes of its own; the crash loop (U-service-limits) about 6
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -738,6 +738,15 @@ jobs:
           sleep 30
           [ "$(systemctl show -p MainPID --value tradeagent.service)" = "$pid" ] || { echo "the app restarted after the rollback"; sudo journalctl -u tradeagent.service -n 40 --no-pager; exit 1; }
           sudo systemctl stop tradeagent.service
+
+      # A CRASH LOOP STOPS AND CHARGES NOTHING (U-service-limits; R31 D12 § H): the unit's start limit (6 starts in 10 minutes) ends a loop
+      # of SIGKILLs with Result=start-limit-hit, every start after a crash says the AI waits rather than resuming it, a hand start works
+      # after reset-failed, a hand restart is an orderly quit, and a paused AI stays paused. Its two systemd answers (a bare restart while
+      # the limit stands; NRestarts after a hand restart) are written to the summary as ANSWER lines.
+      - name: A crash loop
+        run: |
+          sudo env OUT="$GITHUB_WORKSPACE/linux-host-evidence" packaging/linux/ci/crash-loop.sh
+          grep -E 'ANSWER|PASS|loop:' "$GITHUB_WORKSPACE/linux-host-evidence/crash-loop.txt" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
         if: always()
