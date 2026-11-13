@@ -92,6 +92,95 @@ public class DiskGuardTests
         Assert.True(DiskWatch.MayResume(null, null));
     }
 
+    // ---- the files a filesystem can still hold (U-disk-guard-2; A4-2) --------------------------------------------------------
+
+    // A 100 GiB disk with plenty of bytes and 6.5 M inodes (ext4's default of one per 16 KiB), and the same disk with only 400 000 of them left.
+    static readonly DiskSpace Roomy = new(60 * GiB, 100 * GiB, 6_000_000, 6_553_600), FewFiles = new(60 * GiB, 100 * GiB, 400_000, 6_553_600);
+
+    /// <summary>
+    /// THE FILES FLOOR: a tenth of the filesystem's files, never under 500 000, and never over a quarter of them, so a small filesystem is not held at all of its
+    /// files; none at all where the filesystem has no fixed count (macOS, Windows, btrfs read 0). A resume needs half as much again, as for bytes.
+    /// </summary>
+    [Theory]
+    [InlineData(122_093_568, 12_209_356, 18_314_034)]   // a 2 TB ext4: its tenth
+    [InlineData(30_523_392, 3_052_339, 4_578_507)]      // a 500 GB ext4, the owner's server's size: its tenth
+    [InlineData(4_194_304, 500_000, 750_000)]           // a 64 GB ext4: the least
+    [InlineData(1_000_000, 250_000, 375_000)]           // a 16 GB ext4: a quarter, not half of it
+    [InlineData(0, 0, 0)]                               // no fixed count: no files floor
+    public void The_files_floor_suits_every_filesystem_with_a_fixed_count(long files, long floor, long resume)
+    {
+        Assert.Equal(floor, DiskFloor.FilesFor(files));
+        Assert.Equal(resume, DiskFloor.FilesToResume(files));
+    }
+
+    /// <summary>
+    /// A DISK WITH ROOM FOR BYTES AND NONE FOR FILES TRIPS: empty files take no byte the guard reads, and ext4 keeps no inode back for root, so every account's
+    /// next file fails there. The pause carries the figures it saw, and the same disk with no fixed count is plenty.
+    /// </summary>
+    [Fact]
+    public void A_disk_out_of_files_trips_with_plenty_of_bytes_free()
+    {
+        var look = new DiskWatch().Look(FewFiles, Now, aiOn: true);
+        Assert.Equal(DiskVerdict.Low, look.Verdict);
+        Assert.Equal(new DiskPause { At = Now, Free = 60 * GiB, Total = 100 * GiB, Floor = 10 * GiB, FilesFree = 400_000, Files = 6_553_600, FilesFloor = 655_360 }, look.Trip);
+        Assert.Equal(DiskVerdict.Fine, new DiskWatch().Look(Roomy, Now, aiOn: true).Verdict);
+        Assert.Equal(DiskVerdict.Fine, new DiskWatch().Look(new DiskSpace(60 * GiB, 100 * GiB, 0, 0), Now, aiOn: true).Verdict);
+
+        // AND A PRESS NEEDS REAL ROOM FOR FILES TOO: half as much again as the files floor after a trip, the floor alone with nothing tripped.
+        Assert.False(DiskWatch.MayResume(look.Trip, new DiskSpace(60 * GiB, 100 * GiB, 983_039, 6_553_600)));
+        Assert.True(DiskWatch.MayResume(look.Trip, new DiskSpace(60 * GiB, 100 * GiB, 983_040, 6_553_600)));
+        Assert.False(DiskWatch.MayResume(null, FewFiles));
+        Assert.True(DiskWatch.MayResume(null, new DiskSpace(60 * GiB, 100 * GiB, 655_360, 6_553_600)));
+    }
+
+    /// <summary>On Linux the read has the filesystem's file counts beside its bytes; elsewhere none, and the files floor is not applied.</summary>
+    [Fact]
+    public void A_read_on_linux_has_the_filesystems_file_counts()
+    {
+        var here = DiskSpace.Read(Paths.Home)!;
+        if (OperatingSystem.IsLinux() && Environment.Is64BitProcess)
+        {
+            Assert.True(here.Files > 0, $"no file count read on Linux: {here}");
+            Assert.InRange(here.FilesFree, 0, here.Files);
+        }
+        else Assert.Equal((0L, 0L), (here.FilesFree, here.Files));
+    }
+
+    /// <summary>
+    /// THE FILES TRIP IS THE SAME PAUSE: a puppet mid-turn on a disk out of files, one pass, and the turn's tree is gone and the owner's flag off. The page says
+    /// what ran out and what to do in his words, and a press with bytes but still too few files is refused.
+    /// </summary>
+    [Fact]
+    public async Task A_trip_on_files_ends_the_turn_and_says_what_ran_out()
+    {
+        await using var life = await PuppetLife.Begin("disk-files", settings: s => s.AiWorksOnItsOwn = true);
+        life.Script(Chair, ["signal turning", "await never", "usage 10 0 5", "final Never reached."]);
+        var host = life.Host;
+        life.Wake(Chair);
+        await life.RunUntil(() => life.Reached("turning") && life.Presence.Live > 0, "the chair's puppet is mid-turn");
+
+        host.ReadDisk = () => FewFiles;
+        await host.DiskGuardPassAsync();
+
+        Assert.False(host.Mission.Running);
+        Assert.Equal(0, life.Presence.Live);
+        Assert.False(host.Gateway.Settings.AiWorksOnItsOwn);
+        Assert.Equal(400_000, host.Gateway.Settings.DiskPause?.FilesFree);
+        var said = DashboardPage.MissionSentence(host.Mission.Status, host.AiNotStarted, host.DiskPauseWords);
+        foreach (var word in new[] { "disk", "new files", "400,000", "655,360", "983,040", DashboardPage.LetTheAiWork, "by itself" })
+            Assert.Contains(word, said, StringComparison.Ordinal);
+        Assert.DoesNotContain("inode", said, StringComparison.OrdinalIgnoreCase);
+
+        host.ReadDisk = () => new DiskSpace(60 * GiB, 100 * GiB, 900_000, 6_553_600);
+        Assert.Contains("983,040", host.LetTheAiWorkOnItsOwn(), StringComparison.Ordinal);
+        Assert.False(host.Mission.Running);
+        host.ReadDisk = () => Roomy;
+        Assert.Null(host.LetTheAiWorkOnItsOwn());
+        Assert.True(host.Mission.Running);
+        Assert.Null(host.Gateway.Settings.DiskPause);
+        await host.PauseTheAiAsync();
+    }
+
     // ---- the pause, on a real turn -----------------------------------------------------------------------------------------
 
     /// <summary>
