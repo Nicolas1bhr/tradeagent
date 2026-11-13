@@ -4684,13 +4684,16 @@ unresolved operation or a close its END still owes, and section 4 of the owner's
 per deployment under *running forward on paper*, every line marked PAPER and no live authority.
 
 **The founding limit on one order, per pair (R30 D18).** `risk.max_order_quantity` stays 1 in the founding
-policy, and it binds every caller but one: a paper run's own order, in PAPER, while that field holds its founding
-value, is bound by the run's allocation row instead (`TradingGateway.MaxOrderQuantityFor`), which is the pair's
-envelope quantity over its deployments, rounded down. The row is read by the id the run started under, so an END
-can always close what the run holds, even after a narrowing or a stop ended the allocation. "Founding" is who set
-the field, not its value: a board that narrowed to 1 from 2 decided 1. A figure the board decides binds a run's
-openers; a run's exits, stops, targets and END stay at the allocation, so a narrowing never leaves it a position it
-cannot close. The allocation's quantity and value ceilings and the envelope's sum still bind as they did.
+policy, and it binds every caller but one: a paper run's own order, in PAPER, is bound by the run's allocation row
+instead (`TradingGateway.MaxOrderQuantityFor`), which is the pair's envelope quantity over its deployments, rounded
+down. The row is read by the id the run started under, so an END can always close what the run holds, even after a
+narrowing or a stop ended the allocation. A figure the board decides binds a run's openers PER PAIR, in the founding
+figure's unit (`U-rate-limits`): the founding 1 is one run's share, so 0.5 is half of every run's share (rounded down
+at the eighth place) and anything at or above 1 is the share and no more. One figure for every pair refused a normal
+XRP entry under about 830 whichever way the board moved it. The reading only grows with the figure and stops at the
+share, so settling back on 1 after 2 is no raise. A run's exits, stops, targets and END stay at the allocation, so a
+narrowing never leaves it a position it cannot close. To cut one pair alone, the board narrows its envelope. The
+allocation's quantity and value ceilings and the envelope's sum still bind as they did.
 
 **The founding order rate (PREFLIGHT-2 blocker 2; D20).** `risk.max_orders_per_minute` stays 6 in the founding
 policy, the row every mode shares, and it binds every caller but one: a paper run's own order, in PAPER, on one of

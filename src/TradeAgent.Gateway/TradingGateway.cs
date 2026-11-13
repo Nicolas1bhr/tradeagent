@@ -4444,19 +4444,21 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE MOST ONE ORDER MAY BE FOR THIS CALLER (R30 D18; R28 P2): <see cref="RiskPolicy.MaxOrderQuantity"/>, except for a paper run's own order
-    /// while the policy still holds that limit's founding value, where it is the run's allocation ceiling: the pair's envelope quantity divided
-    /// by its deployments, rounded down (<see cref="PaperEnvelopeRow.ShareOf"/>). A flat 1 sat below every envelope that is not BTC or ETH and
-    /// refused each normal entry on the other pairs; the envelopes are set so capital binds, and this is what lets it.
+    /// THE MOST ONE ORDER MAY BE FOR THIS CALLER (R30 D18; R28 P2): <see cref="RiskPolicy.MaxOrderQuantity"/>, except for a paper run's own order in PAPER,
+    /// which is bound by the run's allocation ceiling: the pair's envelope quantity divided by its deployments, rounded down
+    /// (<see cref="PaperEnvelopeRow.ShareOf"/>). A flat 1 sat below every envelope that is not BTC or ETH and refused each normal entry on the other pairs;
+    /// the envelopes are set so capital binds, and this is what lets it.
     ///
     /// <para><b>It is the ALLOCATION'S row, read by the id the run was started under</b>, not the policy's terms and not what stands now. A run
     /// holds at most that much (<see cref="AllocationCeilingOrThrow"/>), so its END can always send its close, even after a narrowing or a stop
     /// has ended the allocation: a limit read from what stands now would leave a position nobody could close.</para>
     ///
-    /// <para><b>A figure the board decides binds a run's opener, and never its close.</b> "Founding" is who set the field, not what it says
-    /// (<see cref="FoundingOrderLimitStands"/>): a board that narrowed to 1 from 2 decided 1, and reading that as the founding value would turn a
-    /// narrowing into a raise. A run's exit, stop, target and END carry <see cref="OrderIntent.Close"/> and stay at the allocation under any figure:
-    /// a limit narrowed below what a run holds must not leave it a position it can never close.</para>
+    /// <para><b>A figure the board decides binds a run's opener PER PAIR, and never its close</b> (U-rate-limits; <see cref="OpenerShare"/>). The founding 1 is
+    /// one run's share of its pair (D18), so a figure is read in that unit: 0.5 is half of every run's share, and anything at or above 1 is the share and no
+    /// more. One figure for every pair refused a normal XRP entry under about 830, whichever way the board had moved it. The reading only grows with the
+    /// figure and stops at the share, so settling on a figure is never a raise over the one before it. A run's exit, stop, target and END carry
+    /// <see cref="OrderIntent.Close"/> and stay at the allocation under any figure: a limit narrowed below what a run holds must not leave it a position it
+    /// can never close.</para>
     ///
     /// <para><b>It reaches nothing else.</b> PAPER only, on a paper row, for the deployment identity, which is refused outright in a live mode:
     /// the owner's press, an agent's order and every other caller are bound by the flat figure as before. Capital still binds either way: the
@@ -4467,21 +4469,24 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         var flat = Policy.Risk.MaxOrderQuantity;
         if (run is not { Length: > 0 } || Policy.Mode != TradingMode.PAPER) return flat;
-        if (intent.Intent is not OrderIntent.Close && !FoundingOrderLimitStands) return flat;
+        if (_deployments.ById(run) is not { } deployment
+            || _allocations.ById(deployment.AllocationId) is not { IsPaper: true, IsStop: false } allocation) return flat;
 
-        return _deployments.ById(run) is { } deployment
-               && _allocations.ById(deployment.AllocationId) is { IsPaper: true, IsStop: false } allocation
-            ? allocation.MaxQuantity
-            : flat;
+        return intent.Intent is OrderIntent.Close ? allocation.MaxQuantity : OpenerShare(allocation.MaxQuantity, flat);
     }
 
     /// <summary>
-    /// WHETHER THE ONE-ORDER LIMIT IN FORCE IS STILL THE FOUNDING RECORD'S, by who set the field: the app, and no act since. Equal in value and set by
-    /// the board is not it. Asked of the record the gateway holds, so a record that could not be read is not founding. The figure is read too, for the
-    /// test seam that moves it in memory (<see cref="UpdateRiskUnderTest"/>) and any policy moved without a version.
+    /// A RUN'S OPENER UNDER THE ONE-ORDER FIGURE IN FORCE, read per pair (U-rate-limits): <paramref name="share"/> times the figure over the founding figure,
+    /// at most the share, rounded down at the eighth decimal place as the share itself is; zero or less is zero, which refuses every opener as a zero figure
+    /// refuses every other caller's order.
     /// </summary>
-    bool FoundingOrderLimitStands =>
-        Policy.Risk.MaxOrderQuantity == BoardFounding.V1.Risk.MaxOrderQuantity && SetByTheFounding(OrderLimitField);
+    internal static decimal OpenerShare(decimal share, decimal figure)
+    {
+        var founding = BoardFounding.V1.Risk.MaxOrderQuantity;
+        if (figure >= founding) return share;
+        if (figure <= 0m) return 0m;
+        return decimal.Round(share * figure / founding, 8, MidpointRounding.ToZero);
+    }
 
     /// <summary>
     /// WHETHER <paramref name="field"/> OF THE RECORD THE GATEWAY HOLDS IS STILL THE FOUNDING RECORD'S, by who set it: the app, and no act since. Asked of the
@@ -4493,9 +4498,6 @@ public sealed partial class TradingGateway : IAsyncDisposable
         && (set.SetByVersion == held.Version
             ? held.Decider
             : _board.History().FirstOrDefault(v => v.Version == set.SetByVersion)?.Decider) == BoardDecider.App;
-
-    /// <summary>The policy's one-order limit, as its body and its acts name it.</summary>
-    const string OrderLimitField = "risk.max_order_quantity";
 
     /// <summary>
     /// THE MOST ORDERS A MINUTE FOR THIS CALLER (PREFLIGHT-2 blocker 2; D20), R30 D18's shape: <see cref="RiskPolicy.MaxOrdersPerMinute"/>, except for a paper run's
