@@ -1187,4 +1187,29 @@ public class TurnBoundsTests : IDisposable
         Assert.False(ended.Limit.BeforeAnyWork);
         Assert.NotNull(ended.Limit.RetryAt);
     }
+
+    const string LimitFirstThenWorkedThenHung = """
+        {"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000000"}
+        {"type":"turn.started"}
+        {"type":"error","message":"You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 10:30 PM."}
+        {"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"PLAN.md\n","exit_code":0,"status":"completed"}}
+        {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Working."}}
+        """;
+
+    /// <summary>
+    /// U-TURN-CARDS, THE OPUS REVIEW'S ITEM 1: A CUT TURN THAT WORKED AFTER THE VENDOR'S LIMIT KEEPS ITS RESERVATION AS ITS COST. The limit came before any
+    /// work, but the read went on and the turn ran a command before it was cut, measuring nothing; carried out as "before any work", the meter would charge
+    /// it zero, and unknown is never zero. RED without the re-judgment at the end of the read: the limit said before any work, and the row cost nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_read_that_worked_after_the_limit_is_not_charged_as_nothing()
+    {
+        var (ended, row) = await CutAtTheRead(nameof(A_cancelled_read_that_worked_after_the_limit_is_not_charged_as_nothing), LimitFirstThenWorkedThenHung);
+
+        Assert.NotNull(ended.Limit);
+        Assert.False(ended.Limit!.BeforeAnyWork, "a turn that ran a command after the vendor's line was carried out as one that did nothing");
+        Assert.Null(ended.Usage);
+        Assert.True(row.Cost > 0m, "unknown was charged as zero");
+        Assert.Equal(row.ReservedCost, row.Cost);
+    }
 }

@@ -1259,8 +1259,10 @@ public sealed class AgentSession(
         {
             // AND WHAT IT MEASURED (U-turn-bounds-2): a turn cancelled after its usage arrived keeps the figures, as it keeps a warning.
             _usage = state.Usage;
-            // AND THE VENDOR'S LIMIT (U-turn-cards item 3): a limit read before a cancel is not lost on that path.
-            _limit = state.Limit;
+            // AND THE VENDOR'S LIMIT (U-turn-cards item 3): a limit read before a cancel is not lost on that path. Whether work came before it is judged
+            // again at the end of what was read (the opus review): a cut turn that worked after the vendor's line was no turn that did nothing, and a
+            // limit before any work is what lets the meter charge nothing; unknown is never zero.
+            _limit = state.Limit is { BeforeAnyWork: true } early && state.Worked ? early with { BeforeAnyWork = false } : state.Limit;
             _warnings = state.Warnings.Count > 0 ? [.. state.Warnings] : null;
             _errors = state.Errors.Count > 0 ? [.. state.Errors] : null;
             if (state.ToolsDead is { } vendorSaid) _toolsDead = SeatMarks.Set(manifest, seat.Profile, launchModel, SeatTrouble.ToolsUnavailable, vendorSaid);

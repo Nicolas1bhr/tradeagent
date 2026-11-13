@@ -3700,7 +3700,7 @@ public sealed class MissionLoop
 
             // A LAUNCH THE GATE REFUSED AT ITS LAST CHECK ANSWERED NOTHING: the words the owner typed into it stay owed, as they do
             // for a launch refused at admission (review of U-thinking-seats-a, item 1). Nor did one the vendor refused for its limit
-            // before any work (U-vendor-limit-wakes), or one the loop's own stop ended (U-wake-fairness).
+            // (U-vendor-limit-wakes before any work; U-turn-cards after it), or one the loop's own stop ended (U-wake-fairness).
             if (stopped || UnworkedRefusal(ended) is not null) lock (_gate) OweTyped(role, typed);
 
             // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
@@ -4417,8 +4417,8 @@ public sealed class MissionLoop
             // session (its process never started, or a harness turn handed no request over — part a's record), a harness turn whose
             // requests no provider accepted (none connected, or each was answered outside 2xx — fix pass 2), one the gate refused at
             // its last check and one its vendor refused before any work never put the packet in front of a model, so nothing is
-            // recorded and what it was shown is shown again (at-least-once, stated). So does a model refused mid-turn or a turn past its limit: its
-            // wakes come back, and a wake told again must find its note in the packet. A crash before this commit records nothing too, and
+            // recorded and what it was shown is shown again (at-least-once, stated). So does a model refused mid-turn, a vendor limit met
+            // after work (U-turn-cards) or a turn past its limit: its wakes come back, and a wake told again must find its note in the packet. A crash before this commit records nothing too, and
             // nor does a turn the loop's own stop ended, whose wakes go back with what they showed (U-wake-fairness).
             _host.CommitTurn(role, attempt, () =>
             {
