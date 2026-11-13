@@ -458,7 +458,9 @@ contiguous (R17 #23).
 | `U-execution-environment` · `U-capability-broker-sandbox` · `U-creative-api-worker` | contained code execution for executors, brokered app tools, a confined coding worker (factory plan phase 4) | `U-contain-seats` | `U-execution-environment` LANDED (2026-10-22; record `05dfda7d`) — route (a): an executor on the `cell` class, its own home as workspace, egress `web` by default (the owner's c5 answer, § 16), refused, never degraded, without a counted proof; `U-capability-broker-sandbox` (DRAFT) and `U-creative-api-worker` (route (c), a key) come AFTER M-org1 (surveyed 2026-10-21, `fleet/tmp/A-org/execution-environment/`) |
 | `U-org-router` · `U-seat-shadow` · `U-org-templates` | System One in shadow; seats evolving with models; templates | per § 8, § 11 | CARD |
 
-**The current order — the only copy (2026-10-11: the owner's priority, the in-app orchestration first — `docs/ORCHESTRATION.md`; before it R21's order, corrected by R22).** Each seat works its queue in this order inside its builder
+**History since 2026-10-30: the order of work is R25 § 5 (`docs/research/2026-10-30/R25-fast-lane-mvp.md`), then since 2026-11-06 R30 § 5 (`docs/research/2026-11-06/R30-the-72-hour-gate.md`); the block below is the ceremony-era order and binds nothing where they differ.**
+
+**The current order until 2026-10-30 — then the only copy (2026-10-11: the owner's priority, the in-app orchestration first — `docs/ORCHESTRATION.md`; before it R21's order, corrected by R22).** Each seat works its queue in this order inside its builder
 allotment, and a unit whose dependencies have landed may run beside the one ahead of it. A seat's manager may reorder its own lane on its own judgement: it
 writes the new order into its row here (a docs commit) before the dispatch that depends on it, and tells the orchestrator; the order across seats is the
 orchestrator's. A brief is dispatched only when its Depends line, seat and status agree with this block (`docs/HOW-WE-BUILD.md`). Every other statement of
