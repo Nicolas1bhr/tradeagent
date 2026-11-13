@@ -26,8 +26,10 @@ public class InvariantProofTests
     /// <c>MaterialStore.cs</c> (its schema's <c>ALTER TABLE</c> in <c>Database.cs</c> aside); the methods holding them are the ledger's
     /// writers. (2) Across every shipped assembly, the only code that calls a writer is <see cref="MaterialScanner"/>'s own. (3) The
     /// scanner's methods that reach a writer are called from the app's own process alone (<c>TradeAgent.App</c>): no pipe op, door verb,
-    /// <c>trade</c> verb or agent runtime reaches one. Watched red with the pipe server's <c>material-note</c> handler calling
-    /// <see cref="MaterialStore.SetHash"/>.
+    /// <c>trade</c> verb or agent runtime reaches one. A writer's call written inside a lambda the store hands its own write (the
+    /// scanner's batched <see cref="MaterialStore.ObserveAll"/>, <c>U-perf-scan</c>) is read where it is written, so the batch is a writer
+    /// too. Watched red (2026-11-13) with the pipe server's <c>material-note</c> handler calling <see cref="MaterialStore.ObserveAll"/>, and
+    /// again calling <see cref="MaterialStore.SetHash"/>; the first stayed green before the lambda was read as the store's.
     /// </summary>
     [Fact]
     public void Only_the_material_scanner_writes_the_material_ledger()
@@ -59,7 +61,7 @@ public class InvariantProofTests
         do
         {
             grew = false;
-            foreach (var c in calls.Where(c => IsStore(c.Target) && writers.Contains(c.Target.Name) && c.Type == typeof(MaterialStore)))
+            foreach (var c in calls.Where(c => IsStore(c.Target) && writers.Contains(c.Target.Name) && Il.Outer(c.Type) == typeof(MaterialStore)))
                 grew |= writers.Add(Il.Site(c.Type, c.Method).Split('.')[^1]);
         } while (grew);
         var outside = calls.Where(c => IsStore(c.Target) && writers.Contains(c.Target.Name) && Il.Outer(c.Type) != typeof(MaterialStore)).ToList();
