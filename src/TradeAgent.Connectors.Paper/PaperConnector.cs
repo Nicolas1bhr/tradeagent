@@ -192,7 +192,10 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
         return Task.CompletedTask;
     }
 
-    string BookFile() => _opt.BookFile ?? Path.Combine(Paths.State, $"paper-{Safe(_opt.AccountId)}.db");
+    string BookFile() => _opt.BookFile ?? DefaultBookFile(_opt.AccountId);
+
+    /// <summary>Where a connector built with no book file of its own keeps the book of <paramref name="accountId"/>.</summary>
+    public static string DefaultBookFile(string accountId) => Path.Combine(Paths.State, $"paper-{Safe(accountId)}.db");
 
     /// <summary>An account id is a declared constant here, but a file name is still not the place to trust one.</summary>
     static string Safe(string id) =>
