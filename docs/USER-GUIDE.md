@@ -595,6 +595,22 @@ would and with the same checks, so nothing needs pressing — and if it cannot s
 trading is switched on, for example), the card says why after the word **stopped**, and so does the
 **Activity** log. If you had paused it, it is still paused — a pause is never undone for you.
 
+**On Windows, TradeAgent keeps the PC awake while the AI works on its own.** The screen can still turn
+off; the PC does not go to sleep by itself. Closing the lid, pressing the power button, or running on
+battery can still put a laptop to sleep, and while it sleeps the AI does nothing — so keep it plugged in
+with the lid open. The card under the button says whether this is happening. **Let this PC sleep** turns
+it off and **Keep this PC awake while the AI works** turns it back on, one press each. TradeAgent changes
+none of Windows' own power settings: it asks while the AI works and stops asking when you pause the AI
+or close TradeAgent.
+
+**TradeAgent can open itself when you sign in to Windows.** It is off until you turn it on, on your page
+under **When you sign in to Windows**: **Open TradeAgent when I sign in to Windows**, then the confirm
+press. After that, a restart (a Windows update overnight, say) opens TradeAgent again as soon as you sign
+in, as it was when it closed — the AI back at work if it was working, still paused if you had paused it.
+Windows has to be signed in first; TradeAgent does not sign in for you. One press turns it off, and
+uninstalling TradeAgent removes it. If you switch TradeAgent off in Windows' own list of startup apps,
+the page says so and offers to open that list.
+
 ### What it costs you, and the daily limit
 
 The AI is not free to run. Every turn it takes is one run of the AI assistant you signed in with, and
