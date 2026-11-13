@@ -543,7 +543,7 @@ public partial class CellLinuxTests
 
     /// <summary>
     /// SPACE TAKEN WITHOUT WRITING IT (<c>U-disk-guard-2</c>; A4-1): outside a cell <c>fallocate</c> takes 256 MiB of blocks at once on this
-    /// filesystem; inside one it is EOPNOTSUPP in both modes, the file holds no block, and glibc's <c>posix_fallocate</c> still succeeds by
+    /// filesystem; inside one it is EOPNOTSUPP in both modes and through the three <c>ioctl</c> requests that reach it, the file holds no block, and glibc's <c>posix_fallocate</c> still succeeds by
     /// writing. The benchmark's <c>space-unallocated</c> row reads the same probe the same way.
     /// </summary>
     [LinuxFact]
@@ -553,11 +553,12 @@ public partial class CellLinuxTests
         var w = new World("space");
         var probe = w.Script("space.py", CellBenchmark.SpaceProbe);
         var control = await Outside("/usr/bin/python3", "-I", probe, Path.Combine(w.Root, "space-outside"));
-        Require(control.Out.Contains("allocate-open") && !control.Out.Contains("blocks=0\n"),
+        Require(control.Out.Contains("allocate-open") && control.Out.Contains("resvsp64-open") && !control.Out.Contains("blocks=0\n"),
             $"fallocate outside the cell, so its refusal inside means the filter (a filesystem without it?): {control.Out}{control.Err}");
 
         var ran = await InCell(w.Policy(), "/usr/bin/python3", "-I", probe, Path.Combine(w.Ws, "space-inside"));
-        Says(ran, "allocate-refused errno=95", "keep-size-refused errno=95", "blocks=0", "posix-written size=1048576");
+        Says(ran, "allocate-refused errno=95", "keep-size-refused errno=95", "resvsp-refused errno=95", "resvsp64-refused errno=95", "zero-range-refused errno=95",
+            "blocks=0", "posix-written size=1048576");
         Assert.True(CellBenchmark.SpaceUnallocated(ran.Out), ran.Out);
     }
 

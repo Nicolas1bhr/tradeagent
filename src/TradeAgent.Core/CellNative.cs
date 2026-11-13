@@ -96,6 +96,13 @@ public static class CellNative
     /// </summary>
     internal static readonly uint[] AttributeIoctls = [0x40086602, 0x40046602, 0x40087602, 0x40047602, 0x401C5820, 0x40806685, 0x800C6613, 0x4008941A];
 
+    /// <summary>
+    /// THE REQUESTS THAT ALLOCATE A FILE'S BLOCKS (<c>include/uapi/linux/fs.h</c>; <c>fs/ioctl.c</c>'s <c>ioctl_preallocate</c>, which is the kernel's own
+    /// fallocate): <c>FS_IOC_RESVSP</c>, <c>FS_IOC_RESVSP64</c> and <c>FS_IOC_ZERO_RANGE</c>, each carrying a 48-byte <c>struct space_resv</c> and so one number on
+    /// x86-64 and arm64 alike. EOPNOTSUPP, as <c>fallocate</c> is (<c>U-disk-guard-2</c>). The requests that give space back stay the kernel's.
+    /// </summary>
+    internal static readonly uint[] PreallocateIoctls = [0x40305828, 0x4030582A, 0x40305839];
+
     internal static Table? TableFor(Architecture arch) => arch switch
     {
         Architecture.X64 => new(AuditArchX64, 41, 53, 50, 44, 46, 307, 16, 317, 285,
@@ -456,7 +463,8 @@ public static class CellNative
     /// <c>utimes</c>, <c>futimesat</c>, <c>utimensat</c>, which is <c>futimens</c> too): a user notification, because the tools a cell
     /// runs do need those in the workspace and the filter cannot read a path. <see cref="CellMediator"/> answers them.</para>
     ///
-    /// <para><b>Space taken without writing it</b> (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c>, in every mode — EOPNOTSUPP. It
+    /// <para><b>Space taken without writing it</b> (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c>, in every mode, and the <c>ioctl</c> requests that
+    /// reach the same allocation (<see cref="PreallocateIoctls"/>) — EOPNOTSUPP. It
     /// allocates a file's blocks at the speed of the filesystem's metadata, and the per-file bound is per FILE, so seventy calls would take
     /// the disk inside one of the free-space guard's reads. EOPNOTSUPP, not EPERM, because it is the answer programs already fall back
     /// from (glibc's <c>posix_fallocate</c> writes the blocks itself), so a tool's preallocation becomes real writes the guard can see.
@@ -497,6 +505,7 @@ public static class CellNative
         b.Ld(24).And(~(SOCK_NONBLOCK | SOCK_CLOEXEC)).Jeq(SOCK_STREAM, "allow", null).Jeq(SOCK_SEQPACKET, "allow", "eacces");
         b.Label("ioctl").Ld(24);
         foreach (var request in AttributeIoctls) b.Jeq(request, "eperm", null);
+        foreach (var request in PreallocateIoctls) b.Jeq(request, "eopnotsupp", null);
         b.Label("allow").Ret(SeccompRetAllow);
         b.Label("eacces").Ret(SeccompRetErrno | EACCES);
         b.Label("eperm").Ret(SeccompRetErrno | EPERM);

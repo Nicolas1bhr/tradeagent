@@ -123,7 +123,8 @@ public static class CellBenchmark
         """;
 
     /// <summary>
-    /// SPACE TAKEN WITHOUT WRITING IT, FROM INSIDE A CELL (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c> of 256 MiB, plain and keeping the size,
+    /// SPACE TAKEN WITHOUT WRITING IT, FROM INSIDE A CELL (<c>U-disk-guard-2</c>; A4-1): <c>fallocate</c> of 256 MiB, plain and keeping the size, the
+    /// same through the three <c>ioctl</c> requests the kernel hands to its fallocate (<c>FS_IOC_RESVSP</c>, <c>FS_IOC_RESVSP64</c>, <c>FS_IOC_ZERO_RANGE</c>),
     /// then the blocks the file holds, then glibc's <c>posix_fallocate</c> of 1 MiB, which writes the blocks itself once the call is unsupported.
     /// </summary>
     internal const string SpaceProbe = """
@@ -136,6 +137,13 @@ public static class CellBenchmark
             for name, mode in (("allocate", 0), ("keep-size", 1)):
                 rc = libc.fallocate(fd, mode, 0, 256 << 20)
                 print(name + ("-open" if rc == 0 else f"-refused errno={ctypes.get_errno()}"))
+            # struct space_resv: l_type, l_whence, then l_start and l_len (8-aligned), l_sysid, l_pid, l_pad[4]: 48 bytes
+            libc.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+            resv = ctypes.create_string_buffer(48)
+            ctypes.c_int64.from_buffer(resv, 16).value = 256 << 20
+            for name, request in (("resvsp", 0x40305828), ("resvsp64", 0x4030582A), ("zero-range", 0x40305839)):
+                rc = libc.ioctl(fd, request, resv)
+                print(name + ("-open" if rc == 0 else f"-refused errno={ctypes.get_errno()}"))
             print(f"blocks={os.fstat(fd).st_blocks}")
             try:
                 os.posix_fallocate(fd, 0, 1 << 20); print(f"posix-written size={os.fstat(fd).st_size}")
@@ -147,7 +155,7 @@ public static class CellBenchmark
 
     /// <summary>Whether <see cref="SpaceProbe"/>'s output shows the cell's <c>fallocate</c> unsupported, nothing allocated by it, and the fallback written.</summary>
     internal static bool SpaceUnallocated(string output) =>
-        output.Contains("allocate-refused errno=95\n", StringComparison.Ordinal) && output.Contains("keep-size-refused errno=95\n", StringComparison.Ordinal) &&
+        new[] { "allocate", "keep-size", "resvsp", "resvsp64", "zero-range" }.All(n => output.Contains(n + "-refused errno=95\n", StringComparison.Ordinal)) &&
         output.Contains("blocks=0\n", StringComparison.Ordinal) && output.Contains("posix-written size=1048576", StringComparison.Ordinal);
 
     /// <summary>A double fork with <c>setsid</c> between: the grandchild leaves the session, writes its pid, and waits to be ended.</summary>
