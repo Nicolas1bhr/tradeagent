@@ -5476,10 +5476,11 @@ project's Mac and a statfs took about a microsecond, so half a minute let 75 GB 
 **Files as well as bytes** (`U-disk-guard-2`). Empty files take no byte the read sees, and ext4 keeps no inode back for root, so a cell making them could leave every
 account on the filesystem unable to make a file while the bytes read plenty free. On 64-bit Linux the read takes `statvfs`'s `f_favail` and `f_files` beside the bytes, and a
 read without them is no read. The files floor is a tenth of the filesystem's files, never under 500,000 and never over a quarter of them (`DiskFloor.FilesFor`); a filesystem
-with no fixed count (macOS, Windows, btrfs) has none. Under it the trip, the words and the press go as for bytes, and the press needs half as much again in files.
+with no fixed count (macOS, Windows, btrfs, or figures that make no sense as one) has none. Under it the trip, the words and the press go as for bytes, and the press needs half as much again in files.
 
 **Space a cell takes without writing it.** The per-file bound is per file, and `fallocate` allocates blocks at the speed of the filesystem's metadata: seventy calls would take
-the disk inside one read. In a cell `fallocate` is EOPNOTSUPP in every mode (`CellNative`), the errno glibc's `posix_fallocate` falls back from by writing; the proof's
+the disk inside one read. In a cell `fallocate` is EOPNOTSUPP in every mode, and so are the three `ioctl` requests the kernel hands to it (`FS_IOC_RESVSP`, its 64-bit
+form, `FS_IOC_ZERO_RANGE`; `CellNative`): the errno glibc's `posix_fallocate` falls back from by writing (musl's does not, so a musl host holds no proof); the proof's
 `space-unallocated` row shows it. Plain writes still go at the disk's speed, so what passes between two reads is bounded by that speed and not by a figure.
 
 **The trip is the owner's own pause** and nothing else: `PauseTheAiAsync`'s body, so running turns end with their trees, the launch closes and its reservation with it, and
