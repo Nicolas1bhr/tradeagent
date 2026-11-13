@@ -362,4 +362,21 @@ public partial class CouncilLoopTests
         Assert.NotNull(dir);
         return dir.FullName;
     }
+    /// <summary>
+    /// EVERY WAKE IS SAID IN WORDS, NEVER BY ITS KIND (<c>U-owner-words</c>): a head woken at its ceiling read "Why you are awake: ceiling",
+    /// and the owner's card read the same word, because the phrase table's last arm answered the bare kind. Every kind the queue holds —
+    /// each constant of <see cref="MissionEventKind"/> — has its sentence.
+    ///
+    /// <para>RED at base 5ca22a31: "ceiling", "board", "challenge" and "output" answered themselves.</para>
+    /// </summary>
+    [Fact]
+    public void Every_wake_kind_is_said_in_words_and_never_by_its_bare_kind()
+    {
+        var kinds = typeof(MissionEventKind).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string)).Select(f => (string)f.GetRawConstantValue()!).Distinct().ToList();
+        Assert.Contains(MissionEventKind.Ceiling, kinds);
+        var bare = kinds.Where(k => MissionLoop.Reason(k) == k || MissionLoop.Reason(k).Length < 12).ToList();
+        Assert.True(bare.Count == 0, $"kinds said by their bare word: {string.Join(", ", bare)}");
+        Assert.Contains("woke you at your ceiling", MissionLoop.Reason(MissionEventKind.Ceiling), StringComparison.Ordinal);
+    }
 }

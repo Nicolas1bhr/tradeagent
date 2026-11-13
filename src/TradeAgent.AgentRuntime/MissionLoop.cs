@@ -4815,7 +4815,12 @@ public sealed class MissionLoop
     static readonly string PaperRunNote = MissionEventIds.PaperRun("", "")[..^1];
     static readonly string PaperAllocationNote = MissionEventIds.PaperAllocation("");
 
-    static string Reason(string kind, PacketVerb? spell = null) => kind switch
+    /// <summary>
+    /// THE PHRASE FOR ONE KIND, and never the kind's own word (<c>U-owner-words</c>): a plain ceiling read "Why you are awake: ceiling" to the
+    /// head and on the owner's card, and the board's and a challenge's wakes read "board" and "challenge" — the switch's last arm answered the
+    /// bare kind for every kind it did not know. A kind the queue holds has its sentence here; the last arm stays for a kind no table knows.
+    /// </summary>
+    internal static string Reason(string kind, PacketVerb? spell = null) => kind switch
     {
         MissionEventKind.Owner => "your owner typed something",
         // The card's words for an inbox wake (Waiting); a turn is told its own path by Reason(MissionEvent) above.
@@ -4854,6 +4859,10 @@ public sealed class MissionLoop
                                       + (spell is null ? "(next.json or `trade org wake`), " : "")
                                       + "when work reaches you, at your level's floor while no work is moving, or at your ceiling",
         PublicationKind.Note => "a note from TradeAgent arrived in `in/`",
+        MissionEventKind.Challenge => "the other director's challenge arrived in `in/`",
+        MissionEventKind.Ceiling => "the longest your level goes without a turn has passed, so TradeAgent woke you at your ceiling",
+        MissionEventKind.Board => "a proposal before the security board waits on your seat's decision",
+        MissionEventKind.Output => "TradeAgent held what you staged in `out/`",
         _ => kind
     };
 
