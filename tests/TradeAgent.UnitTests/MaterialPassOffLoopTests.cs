@@ -9,7 +9,12 @@ namespace TradeAgent.Tests.Unit;
 /// THE MATERIAL PASS RUNS BESIDE THE APP'S BACKGROUND LOOP, NOT IN IT (<c>U-perf-scan</c>, R28 G2). The loop that runs the trading pass —
 /// the reconciler, the paper deployments, the forward runs — also walked the workspace inline every thirty seconds, so a disk that was slow
 /// or stopped answering held protection behind a record-keeping pass. Now the pass runs on a task of its own, one at a time.
+///
+/// <para><b>Apart from every other class</b> (the collection DiskGuardTests runs in): the loop's first pass writes the owed daily reports into
+/// the assembly's shared report folder, which left <c>DailyReportTests</c> with no day owed when the two ran together (CI run 43347227622,
+/// ubuntu: "Expected: 3 Actual: 0").</para>
 /// </summary>
+[Collection(VendorOverrideFiles.Name)]
 public class MaterialPassOffLoopTests
 {
     [Fact]
