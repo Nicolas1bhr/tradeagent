@@ -106,7 +106,13 @@ public sealed class OnboardingView
         var body = Ui.Col(Theme.S5);
         body.Margin = new Thickness(0, Theme.S8, 0, Theme.S6);
         body.VerticalAlignment = VerticalAlignment.Top;
-        if (screen.Body is not null) body.Children.Add(screen.Body);
+        if (screen.Body is not null)
+        {
+            // A SCREEN AT WORK TAKES NO PRESS (U-owner-words-2): its choices stay in view, greyed, while a press's work runs, so a second press
+            // is never queued for whatever screen comes next.
+            screen.Body.IsEnabled = !_busy;
+            body.Children.Add(screen.Body);
+        }
         // Busy and the problem note are mutually exclusive on purpose: an old failure sitting next to
         // a live spinner reads as a screen that has failed and is pretending otherwise.
         if (_busy) body.Children.Add(Ui.Busy("Working."));
@@ -302,6 +308,8 @@ public sealed class OnboardingView
     /// </summary>
     Func<Task> Act(Func<Task> action) => async () =>
     {
+        // ONE PRESS AT A TIME (U-owner-words-2; the real run of 2026-11-13): a press made while another's work runs does nothing.
+        if (_busy) return;
         _busy = true;
         _note = "";
         _rerender();

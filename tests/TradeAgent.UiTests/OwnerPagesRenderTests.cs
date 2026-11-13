@@ -730,4 +730,70 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         var dashboard = RenderAll(db, $"suggest-{platform}", 1280, 800).Single(f => f.Page == "dashboard");
         Assert.DoesNotContain(dashboard.Boxes.Keys, k => k.Contains(" ES ", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// THE PLATFORM PRESS LEAVES THE WINDOW ALIVE AND TAKES ONE PRESS (<c>U-owner-words-2</c>; the real run of 2026-11-13, shots 39–41): pressing
+    /// "TradeAgent paper" froze the window for ~53 s with no "Working." painted — the switch ran on the window's thread — and the owner's second
+    /// press, made in the freeze, was queued for the next screen. Timing-free: a step at the head of the switch's work records the thread it ran
+    /// on and holds the work open; while it is held the screen says "Working.", its choices are greyed, and a press on the simulator does
+    /// nothing. Released, the platform is paper and the work ran once. RED at the base: "the switch's work ran on the window's thread".
+    /// </summary>
+    [Fact]
+    public async Task The_platform_press_runs_its_work_off_the_window_and_a_second_press_does_nothing()
+    {
+        using var db = new Database(Path.Combine(UiTestHome.Home, $"press-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var runs = 0;
+        var onWindow = false;
+        host.SwitchStep = () =>
+        {
+            Interlocked.Increment(ref runs);
+            onWindow = Avalonia.Threading.Dispatcher.UIThread.CheckAccess();
+            entered.Set();
+            if (!onWindow) release.Wait();   // held only off the window's thread: held on it, the window could not be pressed at all
+        };
+        try
+        {
+            var onboarding = new OnboardingStore(db);
+            foreach (var step in OnboardingSteps.Order.TakeWhile(s => s != OnboardingStep.TRADING_PLATFORM_SELECTED)) onboarding.Complete(step);
+            HeadlessUi.Run(() =>
+            {
+                var win = new Window { Width = 1280, Height = 800 };
+                OnboardingView? view = null;
+                view = new OnboardingView(host, () => { win.Content = view!.Build(); win.UpdateLayout(); });
+                win.Content = view.Build();
+                win.Show();
+                win.UpdateLayout();
+                Button Card(string title) => ((Control)win.Content!).GetVisualDescendants().OfType<Button>()
+                    .Single(b => b.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text == title));
+
+                Card("TradeAgent paper").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                Assert.True(entered.Wait(TimeSpan.FromSeconds(30)), "the switch's work never started");
+                Assert.False(onWindow, "the switch's work ran on the window's thread");
+
+                win.UpdateLayout();
+                var texts = ((Control)win.Content!).GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
+                Assert.Contains("Working.", texts);
+                var simulator = Card("Practice simulator");
+                Assert.False(simulator.IsEffectivelyEnabled, "a choice stays pressable while a press's work runs");
+                simulator.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+                release.Set();
+                var deadline = DateTime.UtcNow.AddSeconds(30);   // a guard against a hang, never a wait the test passes by
+                while (host.Onboarding.Current() == OnboardingStep.TRADING_PLATFORM_SELECTED && DateTime.UtcNow < deadline)
+                    Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                win.Close();
+            });
+            Assert.Equal(1, Volatile.Read(ref runs));
+            Assert.Equal(TradeAgent.Platforms.Connectors.Paper, host.Connector.Id);
+            Assert.NotEqual(OnboardingStep.TRADING_PLATFORM_SELECTED, host.Onboarding.Current());
+        }
+        finally
+        {
+            release.Set();
+            await host.Gateway.DisposeAsync();
+        }
+    }
 }
