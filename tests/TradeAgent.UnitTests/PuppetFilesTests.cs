@@ -58,14 +58,19 @@ public class PuppetFilesTests(ITestOutputHelper output)
         return failures;
     }
 
-    /// <summary>THE COUNTER: <c>&lt;key&gt;.turns</c>, read the way <c>PuppetLife.Turns</c> reads it, while the puppet's writer rewrites it.</summary>
+    /// <summary>
+    /// THE COUNTER: <c>&lt;key&gt;.turns</c>, read the way <c>PuppetLife.Turns</c> reads it, while the puppet's writer bumps it. CHANGED IN THE OPEN
+    /// (<c>U-turn-cards-2</c> item 4): the writer the puppet ships is now <see cref="PuppetFiles.Bump"/>, an append, where it was a rewrite renamed
+    /// over the file (<see cref="PuppetFiles.Write"/>), so the race drives that writer; the reader, its flags and the zero-failure bar are unchanged,
+    /// and the count must end at every bump.
+    /// </summary>
     [Fact]
     public void The_turn_counter_is_never_read_empty_while_the_puppet_rewrites_it()
     {
         var counter = Path.Combine(Folder(), "chair.turns");
-        PuppetFiles.Write(counter, "0");
-        var torn = Race(i => PuppetFiles.Write(counter, i.ToString()), () => PuppetFiles.ReadCount(counter), output);
+        var torn = Race(_ => PuppetFiles.Bump(counter), () => PuppetFiles.ReadCount(counter), output);
         Assert.True(torn.Count == 0, $"a reader met a torn counter {torn.Count} time(s); first: {torn.FirstOrDefault()}");
+        Assert.Equal(Rewrites, PuppetFiles.ReadCount(counter));
     }
 
     /// <summary>THE LOG: <c>&lt;key&gt;.n.log</c> grows one JSON line per step; a reader parses every line it sees and none is half a line.</summary>
