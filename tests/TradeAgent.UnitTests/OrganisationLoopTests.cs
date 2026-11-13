@@ -182,7 +182,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         Assert.StartsWith("You appointed the chief", appointed, StringComparison.Ordinal);
         var chief = org.Chief()!;
         var activated = life.Host.ActivateChief(chief);
-        Assert.StartsWith($"You activated the chief {chief}", activated, StringComparison.Ordinal);
+        Assert.StartsWith("You activated the chief.", activated, StringComparison.Ordinal);
         Assert.Equal(OrgPositionStatus.Active, org.Position(chief)!.Status);
         var chiefActivationWake = life.Host.Wakes!.OfKind(MissionEventKind.Activated).Any(w => w.Role == chief);
 
@@ -204,7 +204,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
             await life.RunUntil(() => Ended(life, chief) >= 1, "the chief's activation turn ended");
         var preview = life.Host.PreviewChiefWake();
         var woke = life.Host.WakeChiefOnce(preview);
-        Assert.StartsWith($"You woke the chief {chief} once", woke, StringComparison.Ordinal);
+        Assert.StartsWith("You woke the chief once", woke, StringComparison.Ordinal);
         var chiefWorkTurn = chiefActivationWake ? 2 : 1;
 
         // ONE LANE: while the chief's turn waits, nothing else turns — so the head's script is written before its activation wake is taken.

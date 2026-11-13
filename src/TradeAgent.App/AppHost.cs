@@ -1986,16 +1986,17 @@ public sealed class AppHost : IAsyncDisposable
                $"{(was is null ? "" : $", in place of {was}")}. Its next turn runs on it, after its offered tools are checked for that model.";
     });
 
+    // THE CHIEF'S PRESSES SAY WHAT WAS DONE IN THE OWNER'S WORDS (U-owner-words-2): no position id; the chief's row on the page names it.
     internal string AppointChief(ChiefSeat seat) => ChiefPress(org =>
     {
         var done = org.AppointChief(seat, KnownRuntime, DateTimeOffset.UtcNow);
-        return $"You appointed the chief {done.Chief} on {seat.Runtime} with model {seat.Model}. It is dormant until you activate it.";
+        return $"You appointed the chief on {seat.Runtime} with model {seat.Model}. It is dormant until you activate it.";
     });
 
     internal string ReplaceChief(string? chief, ChiefSeat seat) => ChiefPress(org =>
     {
         var done = org.ReplaceChief(chief, seat, KnownRuntime, DateTimeOffset.UtcNow);
-        return $"You replaced the chief {done.Was} with {done.Chief} on {seat.Runtime} with model {seat.Model}: {done.Was} has ended and "
+        return $"You replaced the chief with a new one on {seat.Runtime} with model {seat.Model}: the one it replaced has ended and "
                + $"{done.Cancelled.Count} of its open mandates were cancelled. The new chief is dormant until you activate it.";
     });
 
@@ -2004,15 +2005,15 @@ public sealed class AppHost : IAsyncDisposable
         var sitting = org.Chief() ?? throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "No chief is appointed, so there is none to activate.");
         if (sitting != chief)
             throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
-                $"{sitting} is the chief now, not {chief ?? "no chief"}: the press was armed for a chief who no longer sits, so nothing was activated.");
+                "Another chief sits now: the press was armed for a chief who no longer sits, so nothing was activated.");
         org.Activate(sitting, DeclaredSeatClass, Gateway.Settings.UnconfinedSeats, DateTimeOffset.UtcNow, () => CellProofHeld);
-        return $"You activated the chief {chief}. Every launch of it still passes the activation gate.";
+        return "You activated the chief. Every launch of it still passes the activation gate.";
     });
 
     internal string RemoveChief(string? chief) => ChiefPress(org =>
     {
         var done = org.VacateChief(chief, DateTimeOffset.UtcNow);
-        return $"You removed the chief {done.Was}: it has ended, {done.Cancelled.Count} of its open mandates were cancelled, and the "
+        return $"You removed the chief: it has ended, {done.Cancelled.Count} of its open mandates were cancelled, and the "
                + "organisation's head is vacant. No one was restored in its place.";
     });
 
@@ -2059,7 +2060,7 @@ public sealed class AppHost : IAsyncDisposable
     {
         var woken = org.WakeChiefOnce(asShown, WakeFacts(), DateTimeOffset.UtcNow);
         Mission?.Wake();
-        return $"You woke the chief {woken.Chief} once: one turn now, on {asShown.Seat}. {asShown.After}";
+        return $"You woke the chief once: one turn now, on {asShown.Seat}. {asShown.After}";
     });
 
     /// <summary>One press over the chief: its words, logged as his in the Activity log — or the refusal's words, nothing written.</summary>

@@ -101,6 +101,9 @@ sealed class OwnerInboxPage
     internal readonly LiveList<VetoableEvent> StructureVetoes;
     internal readonly LiveList<OrgPositionRow> Dormant;
 
+    /// <summary>The chart's readable names, read with the dormant list on each pass.</summary>
+    OrgNames _names = OrgNames.None;
+
     public Control Root { get; }
 
     public OwnerInboxPage(OwnerInboxSources sources)
@@ -194,9 +197,12 @@ sealed class OwnerInboxPage
         if (org is not null && _sources.Activate is not null)
             Read(() =>
             {
-                var chief = org.Units().FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
-                var open = org.Units().Where(u => u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-                Dormant.Update([.. org.Positions().Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.Contains(p.UnitId))]);
+                var units = org.Units();
+                var positions = org.Positions();
+                _names = OrgNames.Of(units, positions);
+                var chief = units.FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
+                var open = units.Where(u => u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
+                Dormant.Update([.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.Contains(p.UnitId))]);
             }, failures);
 
         _unreadable.IsVisible = failures.Count > 0;
@@ -326,7 +332,8 @@ sealed class OwnerInboxPage
         var press = Ui.Confirm(Labels.ActivatePositionPress, Labels.ActivatePositionConfirm,
             () => Pressed(_activateNote, () => _sources.Activate!(positionId)));
         press.HorizontalAlignment = HorizontalAlignment.Left;
-        void Fill(OrgPositionRow p) => OrgText.Set(title, Labels.DormantPosition(p.Id, OrgEnvelopes.NameOf(p.UnitId)));
+        // IN THE CHART'S NAMES (U-owner-words-2): the card read "pos-…, dormant in unit team-…".
+        void Fill(OrgPositionRow p) => OrgText.Set(title, Labels.DormantPosition(_names.Position(p.Id), _names.Unit(p.UnitId)));
         return (Ui.Col(Theme.S1, title, press), Fill);
     }
 

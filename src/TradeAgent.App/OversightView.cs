@@ -138,7 +138,7 @@ sealed record OversightWords(
         ("Legacy pair, CLI, unconfined", "advisory", "runs as your own user; the line's file is readable there"),
         ("Thinking seat, API harness", "hard on app paths", "no tool of the harness names the line or its file"),
         ("Thinking seat, broker-only", "mediated", "reaches only what the broker serves, and the broker serves nothing of the line"),
-        ("Doing seat, confined cell", "hard", "state/ is refused to every cell grant"),
+        ("Doing seat, confined cell", "hard", "TradeAgent's own records are refused to every cell grant"),
     ];
 
     /// <summary>An instant as the page prints it: UTC to the second.</summary>

@@ -81,7 +81,7 @@ public class ChiefWakeHostFactsTests : IDisposable
         host.Gateway.Update(s => s.AiWorksOnItsOwn = true);
         var again = host.PreviewChiefWake();
         Assert.Null(again.Refusal);
-        Assert.Contains($"You woke the chief {chief} once", host.WakeChiefOnce(again), StringComparison.Ordinal);
+        Assert.Contains("You woke the chief once", host.WakeChiefOnce(again), StringComparison.Ordinal);
         Assert.Equal(before + 1, Wakes());
     }
 }

@@ -344,8 +344,8 @@ public static class PositionActivation
 
         if (SeatClasses.RunsModel(seatClass!) && !facts.ProvenCell)
             return new(RefusalKind.HostOrLaunch,
-                $"'{id}' is not activated on a real-model seat ({seatClass}): this host has no proven executor cell recorded, and until "
-                + "it has one no position beyond the legacy pair runs on a real model (the owner's answer, ORCHESTRATION § 2.3). "
+                $"{Who(id)} is not activated on a real-model seat ({seatClass}): this host has no proven executor cell recorded, and until "
+                + "it has one no position beyond the legacy pair runs on a real model (your answer). "
                 + "Nothing is started; its wakes are kept.");
 
         // THE OWNER'S UNCONFINED-SEAT CEILING (U-org-verbs-d item 5): a model run unconfined counts, and three is the most.
@@ -353,7 +353,7 @@ public static class PositionActivation
 
         if (facts.OpenUnconfined.Count > 0)
             return new(RefusalKind.HostOrLaunch,
-                $"'{id}' is not started while an unconfined launch is open on this host ({Names(facts.OpenUnconfined)}): no position "
+                $"{Who(id)} is not started while an unconfined launch is open on this host ({Titles(facts.OpenUnconfined)}): no position "
                 + "beyond the legacy pair runs beside an unconfined neighbour. It is tried again when that turn has ended.");
 
         return null;
@@ -420,18 +420,20 @@ public static class PositionActivation
     static bool Unconfined(string? seatClass) =>
         (SeatClasses.AssuranceOf(seatClass) ?? SeatAssurance.Unconfined) == SeatAssurance.Unconfined;
 
+    // IN THE OWNER'S WORDS (U-owner-words-2; the real run of 2026-11-13, shot 70): the Dashboard read "'research' runs unconfined, and
+    // 'pos-83d109e913fc' is active … (ORCHESTRATION § 2.3)". The role by its title, the neighbours by their number, no section mark.
     static TurnRefusal Neighboured(string id, IReadOnlyList<string> active) => new(RefusalKind.HostOrLaunch,
-        $"'{id}' runs unconfined, and {Names(active)} {Be(active)} active beyond the legacy pair on this host: the legacy pair run "
-        + "confined too, or not there (ORCHESTRATION § 2.3). Nothing is started. To run it, end or put to sleep the positions named, "
+        $"{Who(id)} runs unconfined, and {Positions(active)} beyond the legacy pair {Be(active)} active on this host: the legacy pair run "
+        + "confined too, or not there. Nothing is started. To run it, end or put to sleep those positions, "
         + "or run the legacy pair in a cell.");
 
     static TurnRefusal UnsetNeighbours(string id) => new(RefusalKind.HostOrLaunch,
-        $"'{id}' runs unconfined, and nothing has told this host whether any position beyond the legacy pair is active (the "
+        $"{Who(id)} runs unconfined, and nothing has told this host whether any position beyond the legacy pair is active (the "
         + "activation gate's register is not set), so nothing is started: an unconfined launch is never passed beside a neighbour "
         + "nobody could rule out. Its wakes are kept.");
 
     static TurnRefusal Unreadable(string id) => new(RefusalKind.HostOrLaunch,
-        $"'{id}' runs unconfined, and TradeAgent could not read whether any position beyond the legacy pair is active on this host, "
+        $"{Who(id)} runs unconfined, and TradeAgent could not read whether any position beyond the legacy pair is active on this host, "
         + "so nothing is started: an unconfined launch is never passed beside a neighbour nobody could rule out. Its wakes are kept.");
 
     /// <summary>
@@ -448,9 +450,22 @@ public static class PositionActivation
         $"'{id}' is a position beyond the legacy pair, and nothing has told this host which seat it would run on (the activation "
         + "gate's register is not set), so nothing is started for it. Its wakes are kept.");
 
-    static string Names(IReadOnlyList<string> ids) => string.Join(", ", ids.Select(i => $"'{i}'"));
-
     static string Be(IReadOnlyList<string> ids) => ids.Count == 1 ? "is" : "are";
+
+    /// <summary>One of the legacy pair by its title; any other position as "this position" — its row on the page names it.</summary>
+    static string Who(string id) => CouncilRoles.IsKnown(id) ? CouncilRoles.Title(id) : "This position";
+
+    /// <summary>The legacy pair by their titles; any other position counted, never named by id.</summary>
+    static string Titles(IReadOnlyList<string> ids)
+    {
+        var titled = ids.Where(CouncilRoles.IsKnown).Select(CouncilRoles.Title).ToList();
+        var others = ids.Count - titled.Count;
+        if (others > 0) titled.Add(others == 1 ? "one other position" : $"{others} other positions");
+        return string.Join(", ", titled);
+    }
+
+    /// <summary>Positions by their number, never their ids.</summary>
+    static string Positions(IReadOnlyList<string> ids) => ids.Count == 1 ? "one position" : $"{ids.Count} positions";
 
     static string Words(Capability c) => c switch
     {

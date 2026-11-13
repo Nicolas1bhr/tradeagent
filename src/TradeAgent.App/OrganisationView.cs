@@ -528,7 +528,7 @@ sealed class ChiefCard
         try { board = _presses.BoardActive(); }
         catch (Exception) { board = true; }
         var chief = root.HeadId is { } id ? root.Positions.FirstOrDefault(p => p.Id == id) : null;
-        OrgText.Set(_sitting, chief is null ? Labels.ChiefNone : $"{chief.Name} ({chief.Id}), {chief.Status}. {chief.Seat}");
+        OrgText.Set(_sitting, chief is null ? Labels.ChiefNone : $"{chief.Name}, {chief.Status}. {chief.Seat}");
         OrgText.Set(_whose, board ? Labels.ChiefIsTheBoards : Labels.ChiefYoursUntilBoard);
         Seats();
         Show(_seatRow, !board);
