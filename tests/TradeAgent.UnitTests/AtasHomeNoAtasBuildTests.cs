@@ -235,6 +235,40 @@ public class AtasHomeNoAtasBuildTests
     }
 
     /// <summary>
+    /// THE OWNER'S ANSWER ON AN ATAS PRESS CLOSE IS NOT JUDGED BY THE STAND-IN'S HISTORY (<c>U-windows-cards</c>): an emergency close sent to
+    /// ATAS that ATAS answered and never finished is answered on the card "It is no longer working at your platform". The stand-in's history
+    /// is no evidence about it — the platform it was sent to is not the one connected — so nothing is asked of it: his answer stands, as it
+    /// does where no history can be asked, and the row says the connected platform was not asked.
+    ///
+    /// <para><b>RED on the base</b> (the card's live-order veto asks whichever platform is connected): the stand-in's book lists an order
+    /// under the same client id as working, and his answer about the ATAS close is refused over it.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_owners_answer_on_an_ATAS_press_close_is_not_judged_by_the_stand_in_history()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new ExecutionRequestStore(db);
+        var at = DateTimeOffset.UtcNow;
+        var row = OnAtas($"{TradingGateway.ClosePress}-n2-0", at);
+        store.TryCreate(row);
+        store.Transition(row.RequestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition(row.RequestId, ExecutionState.DISPATCHING, ExecutionState.WORKING, connectorOrderId: "ATAS-91");
+        var broker = new FakeBroker();
+        await using var gw = await OnTheStandIn(db, new FakeConnector(broker));
+        broker.Accept(new PlaceOrderCommand(row.ClientOrderId, "SIM-001", "ES", OrderSide.Sell, OrderType.Market, 1m, null, null,
+            TimeInForce.Day, null), FillBehaviour.LeaveWorking);
+        Assert.True(gw.Connector.Capabilities.ReconciliationProvable);
+
+        var answered = await gw.AnswerFromTheCardAsync(row.RequestId, ExecutionState.CANCELLED, "checked in ATAS: it is gone (test)");
+
+        Assert.Equal(ExecutionState.CANCELLED, answered.State);
+        Assert.False(answered.NeedsReconciliation);
+        Assert.Contains("checked in ATAS: it is gone (test)", answered.LastError ?? "", StringComparison.Ordinal);
+        Assert.Contains("sent to atas", answered.LastError ?? "", StringComparison.Ordinal);
+        Assert.DoesNotContain("order history held it", answered.LastError ?? "", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// THE ATAS ACCOUNT IS HELD ASIDE ON THE STAND-IN AND HANDED BACK TO ATAS (Codex review, P2): an ATAS account id names nothing on
     /// paper, so the stand-in starts with none chosen (the owner chooses paper's on the Settings page) and a build with ATAS gets it back.
     /// </summary>

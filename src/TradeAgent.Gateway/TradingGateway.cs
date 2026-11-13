@@ -7988,9 +7988,13 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <para><b>ON THIS PLATFORM ONLY</b> (<c>U-atas-home-no-atas-build</c>, Codex re-review): an unconfirmed order sent to another
     /// platform — ATAS's, while the paper venue stands in for it — cannot move this platform's position, so it refuses nothing here;
     /// and this platform's book is no evidence about it, so the press never settles it from here.</para>
-    List<ExecutionRequest> UnresolvedReducersOn(string instrument, OrderSide side) =>
-        _requests.Query("connector_id = $c AND instrument = $i AND intent = 'PLACE' AND execution_state = 'UNKNOWN'",
-                ("$c", Connector.Id), ("$i", instrument))
+    ///
+    /// <para><b>AND ON THIS ACCOUNT ONLY</b> (<c>U-windows-cards</c>), as <see cref="ClosesInFlightOn"/> already was: an unconfirmed order
+    /// another account of this platform holds moves none of this account's position, so it refuses none of its closes — and the press,
+    /// which reads the order back under its own account, would otherwise refuse this account's leg over a record of another's.</para>
+    List<ExecutionRequest> UnresolvedReducersOn(string accountId, string instrument, OrderSide side) =>
+        _requests.Query("connector_id = $c AND account_id = $a AND instrument = $i AND intent = 'PLACE' AND execution_state = 'UNKNOWN'",
+                ("$c", Connector.Id), ("$a", accountId), ("$i", instrument))
             .Where(r => CouldMoveThePositionLike(r, side))
             .ToList();
 
@@ -8351,7 +8355,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// </summary>
     void RefuseAnUnresolvedReducerOrThrow(string requestId, string accountId, string symbol, OrderSide side)
     {
-        if (UnresolvedReducersOn(symbol, side).FirstOrDefault() is { } blocker)
+        if (UnresolvedReducersOn(accountId, symbol, side).FirstOrDefault() is { } blocker)
             throw new GatewayDeniedException(ErrorCode.CLOSE_UNRESOLVED,
                 $"{blocker.RequestId} is an earlier order on {symbol} that TradeAgent could not confirm, and it " +
                 $"would move the position the same way this one would, so this one is not sent: sized from the " +
@@ -10107,7 +10111,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE PRESS SETTLES BEFORE IT SENDS. For one instrument: every record on it this gateway cannot
+    /// THE PRESS SETTLES BEFORE IT SENDS. For one instrument of one account: every record on it this gateway cannot
     /// account for and that would offset the same way this leg is about to, read back from the
     /// platform and given an outcome — or, when it cannot be, the sentence that refuses this leg.
     ///
@@ -10143,9 +10147,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// nothing else may take that from them — so an unresolved press record on the instrument refuses
     /// this leg rather than being read back and written off.
     /// </summary>
-    async Task<string?> SettleAnUnresolvedReducerOrRefuse(string symbol, OrderSide side, CancellationToken ct)
+    async Task<string?> SettleAnUnresolvedReducerOrRefuse(string accountId, string symbol, OrderSide side, CancellationToken ct)
     {
-        foreach (var req in UnresolvedReducersOn(symbol, side))
+        foreach (var req in UnresolvedReducersOn(accountId, symbol, side))
         {
             if (IsPressRecord(req.RequestId))
                 return $"{symbol} is waiting on {req.RequestId}, which only you can resolve";
@@ -13091,7 +13095,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             // the drift re-read below is then the honest look at what is actually there; one that
             // turns out to be resting is cancelled here, so the close this press sends is the only
             // one on the instrument. See SettleAnUnresolvedReducerOrRefuse.
-            if (await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct) is { } stuck)
+            if (await SettleAnUnresolvedReducerOrRefuse(accountId, symbol, closingSide, ct) is { } stuck)
             {
                 // REFUSED, AND THE ROW IS ITS ACCOUNT. Nothing is sent for this instrument and the
                 // position may still be open, so the leg leaves a flagged record naming it rather
@@ -14235,6 +14239,9 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// to him — so without these answers a close whose platform update was lost held every Close all for good
     /// (<c>U-press-close-once</c>'s residual). Every other row's answer goes to <see cref="ForceResolve"/> as before.</para>
     ///
+    /// <para><b>A press's own close sent to another platform</b> (<c>U-windows-cards</c>) is never put under the connected one's veto: that
+    /// platform's history says nothing about it, so his answer stands alone, noted with both platforms' names.</para>
+    ///
     /// <para><b>In-process only.</b> The card is its one caller; no pipe op, <c>trade</c> verb or GatewayHost console
     /// verb reaches it, so an agent that wants a record settled has nowhere to ask. A refusal is thrown in the owner's
     /// own words, and nothing is written.</para>
@@ -14242,8 +14249,17 @@ public sealed partial class TradingGateway : IAsyncDisposable
     public async Task<ExecutionRequest> AnswerFromTheCardAsync(string requestId, ExecutionState outcome, string note,
         CancellationToken ct = default)
     {
-        if (_requests.Get(requestId) is { } row && IsPressRecord(row.RequestId) && AnsweredAndUnfinished(row.State)
-            && outcome != row.State)
+        var asked = _requests.Get(requestId);
+        if (asked is not null && IsPressRecord(asked.RequestId) && AnsweredAndUnfinished(asked.State) && outcome != asked.State
+            && !string.Equals(asked.ConnectorId, Connector.Id, StringComparison.Ordinal))
+        {
+            // SENT TO ANOTHER PLATFORM (U-windows-cards): the connected platform's history is no evidence about it — an account id is
+            // unique only within a platform, and the paper venue standing in for ATAS lists its own book under any — so nothing is
+            // asked of it, and his answer stands alone, as it does where no history can be asked. The row says which was connected.
+            note = $"{note} (it was sent to {asked.ConnectorId}; TradeAgent was connected to {Connector.Id}, whose order history says "
+                   + "nothing about it, so it was not asked)";
+        }
+        else if (asked is { } row && IsPressRecord(row.RequestId) && AnsweredAndUnfinished(row.State) && outcome != row.State)
         {
             var said = $"You answered that {Described(row)} " + outcome switch
             {
