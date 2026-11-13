@@ -1160,6 +1160,9 @@ in force, who decided it and since when. Until a board seat is active it is the 
 | **Real, ask me first** | The AI proposes each order; nothing is sent on its own word. |
 | **Real, fully automatic** | The AI trades on its own, inside the limits in force. |
 
+The two real modes are named for a later decision of the board. In this version no policy can select
+either — the board's acts refuse one, and TradeAgent refuses to read one — so neither is ever in force.
+
 What stays yours keeps the rule that runs through all of TradeAgent: giving the AI room asks twice,
 taking it away happens at once, because a screen that argues with someone trying to stop is a screen
 that gets people hurt.
@@ -1173,7 +1176,11 @@ founding policy (Practice, no real money) governs from then on.
 
 ### While real money is switched on, TradeAgent will not start the AI at all
 
-**This is deliberate and it is new.** Nothing on a Windows PC confines the AI assistant's own program:
+In this version real money cannot be switched on at all, so you will not meet this refusal; it is kept
+for when the board's real-money decision is built.
+
+**This is deliberate.** Nothing on a Windows PC confines the program of the Operations Director and the
+Research Director (the positions a chief hires work in sealed workspaces instead):
 it is a separate program TradeAgent starts, it runs as you, and it can read and write whatever you
 can — including TradeAgent's own files. TradeAgent does hold it in a job that dies with the app, does
 hand it a short list of environment variables rather than a copy of its own, and does check which
@@ -1197,7 +1204,7 @@ sandbox exists, this refusal lifts on its own and nothing else changes.
 Earlier versions raised an amber bar — *"The AI is asking permission"* — and showed an **Approve** and a
 **Decline** button on the Dashboard for each order the AI proposed in *Real, ask me first*. Both are gone:
 whether real money is used is the security board's decision, and a press per real order cannot be one of
-its decisions. Until a board seat is active no real-money mode is in force, so nothing is waiting for
+its decisions. In this version no real-money mode can be in force at all, so nothing is waiting for
 anyone to approve it.
 
 ## The three emergency buttons
@@ -1465,9 +1472,11 @@ very large amount on paper while needing much less to actually trade. A value li
 would block every ordinary order. The number of contracts is the limit that means something for
 futures.
 
-*Note on instruments:* an empty box allows **nothing**, not everything. Until you name at least one
-instrument, every order is refused, and the box says so. That is on purpose: "I have not said which
-ones yet" and "any of them" are different sentences, and only one of them is a decision you made.
+*Note on instruments:* an empty allowlist allows **nothing**, not everything. Until the policy in force
+names at least one instrument, every order is refused. That is on purpose: "nobody has said which ones
+yet" and "any of them" are different sentences, and only one of them is a decision. The founding policy
+names BTCUSDT, and on TradeAgent's own paper venue and the practice simulator it allows every instrument
+they list.
 
 ## Letting TradeAgent run its own paper experiments
 
@@ -1614,7 +1623,7 @@ So, concretely:
   one is deliberately gentler than the other two, because it only prices work that has already
   happened and stopping the AI over it would be the wrong trade. What it does mean is that your daily
   spending limit cannot be applied, and the AI card says exactly that — in words, *"TradeAgent's price
-  list for the AI could not be read"*, since no page names a file (U-ui-glance). Note that a file which cannot
+  list for the AI could not be read"*, since no page names a file. Note that a file which cannot
   be read is **not** the same as no file: with no file at all, the prices TradeAgent ships with
   apply and the limit works normally. A broken one is you having said something TradeAgent cannot
   make out, so it stops pricing rather than guessing which half you meant.
@@ -1711,28 +1720,33 @@ down" is not a state this can end up in.
 - **Fully automatic trading is not available on ATAS**, and the Checks page says so in those words.
   It needs two things proven — that your order reference survives the round trip, and that order
   history reaches far enough back to answer "what happened to this one". Until a platform confirms
-  both, **Real, fully automatic** is withheld and the other three modes work normally.
-- **The AI assistant's program is not sandboxed by the operating system.** It is held in a job that
+  both, **Real, fully automatic** is withheld on ATAS; and in this version neither real-money mode can
+  be in force on any platform (see *The four modes*).
+- **The program of the Operations Director and the Research Director is not sandboxed by the operating
+  system.** It is held in a job that
   dies with TradeAgent and given a short list of environment variables rather than a copy of the app's
   own, and the connection it trades over now knows which of the AI's roles is calling — but it still
   runs as you and can read and write what you can. While real-money trading is switched on TradeAgent
   will not start it at all; see *While real money is switched on, TradeAgent will not start the AI at
-  all*.
+  all*. The positions a chief hires run in sealed workspaces instead, and none of them starts on a
+  computer where TradeAgent has not proven that the seal holds.
 - **The blue "Windows protected your PC" screen has not been walked.** Nobody has yet installed this
   from a browser download on a machine that treats it as downloaded.
 - **Rolling an update back has never been tried**, nor has an update interrupted halfway.
 - **The installer has not been tried on a brand-new computer** — only on machines that already had
   developer tools on them.
-- **A strategy can now be marked "paper-eligible" but nothing yet runs one forward on paper.** When
-  TradeAgent judges a strategy favourably over months it was never shown, and those months are not
-  *later* than the day the strategy was frozen, the result is history the strategy may already have been
-  written around — so TradeAgent records it as eligible for paper practice only, never as promoted, and
-  it will not let you put money behind it.
+- **A strategy marked "paper-eligible" runs forward on paper, never with money.** When TradeAgent
+  judges a strategy favourably over months it was never shown, and those months are not *later* than
+  the day the strategy was frozen, the result is history the strategy may already have been written
+  around — so TradeAgent records it as eligible for paper only, never as promoted. It may run forward on
+  TradeAgent paper under the envelope (see *Letting TradeAgent run its own paper experiments*), and
+  nobody can put money behind it.
 - One of the two AI assistants has never been tested at all; only the other one has.
 - **The daily spending limit is enforced against the supplier's published list prices, not against
   your bill.** Nobody has reconciled a day of TradeAgent's figures with an invoice from OpenAI. The
   prices were read from the supplier's page on 2026-10-02 and go stale on their schedule; a turn
-  whose model the assistant did not name is charged at the dearest one and labelled as an estimate.
+  whose model the assistant did not name is charged at the model TradeAgent asked for (the dearest one
+  only where TradeAgent cannot choose the model), and labelled as an estimate.
   If you know your real rate, the two boxes on the Owner page beat all of it. See *What it costs
   you, and the daily limit*.
 
@@ -1762,8 +1776,9 @@ Activity page.
 4. Press **Create support package** on the Checks page and send the file to whoever helps you. It
    contains logs only — no passwords, no keys — and **Show the file** opens the folder it went to.
 
-If it is your *positions* you are unsure about rather than the software, ATAS is the answer, not
-this window. Whatever ATAS shows is what is true.
+If it is your *positions* you are unsure about rather than the software, your trading platform is
+the answer: on ATAS, whatever ATAS shows is what is true; on TradeAgent paper, the platform is
+TradeAgent's own paper book, shown on the Dashboard.
 
 ## Your records, and uninstalling
 
