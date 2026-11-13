@@ -10,7 +10,7 @@ so). Manager rulings taken: `FrameTimeout` 30 s whole-frame ceiling (worst-case 
 (bounds gate + write + reply; still 2 s). F5/F6/F8-gateway are OPEN BY DECISION with U2c-1 — confirm they were not
 touched, do not re-find them.
 
-Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r5`, detached at
+Worktree: `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r5`, detached at
 `0909ada`; first command `git checkout -b u2a-verify-r5-probes`; cherry-pick from `u2a-verify-r4-probes` as useful.
 Work ONLY there. Box OFFLINE for you (the builder's Windows figures are claims you read).
 
@@ -33,6 +33,6 @@ Work ONLY there. Box OFFLINE for you (the builder's Windows figures are claims y
    SIGABRT-134 case; the ordering test observes ordering. Mutants for the two you consider weakest.
 7. **Regression:** 421 green once; your round-4 T1/T4 probes (seven spellings with STOP; U2b re-check M15/M16) still bite.
 
-Record: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a-verify-r5.md` (MAIN
+Record: `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a-verify-r5.md` (MAIN
 worktree path; no git there), checkpoint per target, `VERDICT: PASS | PASS WITH LOW | FAIL — nH/nM/nL` last. NOT verified
 by name (Windows for you; ATAS acceptance of ids). Do not fix; do not push; full suite at most twice.

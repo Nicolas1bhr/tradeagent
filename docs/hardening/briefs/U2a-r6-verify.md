@@ -12,7 +12,7 @@ reads have their own wording; two tests (F11's only through-the-gateway test and
 deleted by a text slice and restored verbatim; a Windows-only fixture race (cancel + dispose racing an overlapped
 write) crashed the Windows test host and was fixed. F-A stays with U2c-1.
 
-Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r6`, detached at
+Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r6`, detached at
 `ffa1a3d`; first command `git checkout -b u2a-verify-r6-probes`; cherry-pick from `u2a-verify-r5-probes` as useful.
 Work ONLY there; the box is not yours.
 

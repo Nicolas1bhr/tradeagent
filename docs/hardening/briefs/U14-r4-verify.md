@@ -6,15 +6,15 @@ uncertain. The previous verifier (whose round 3 PASSED with three real processes
 Leg [3] (Codex) runs concurrently on the same sha in another worktree.
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md`.
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md` (rule 1 is the whole point of this unit).
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` — the unit record incl.
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md`.
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md` (rule 1 is the whole point of this unit).
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14.md` — the unit record incl.
    the builder's "Round 4 — item 6" section.
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u14-coid-witness-rewrite.md`.
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u14-coid-witness-rewrite.md`.
 
 ## Where you work
 
-- Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r4`, detached at the sha
+- Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r4`, detached at the sha
   named in your dispatch message. First command: `git checkout -b u14-verify-r4-probes` so your probe commits stay
   reachable. Work ONLY there.
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`. No `timeout`; tool calls cap at 10 min;
@@ -49,7 +49,7 @@ Leg [3] (Codex) runs concurrently on the same sha in another worktree.
 
 ## Record (checkpoint as you go)
 
-Write `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14-verify-r4.md` (MAIN
+Write `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14-verify-r4.md` (MAIN
 worktree path; no git there). Sha under test · per target: refutation executed (command + output tail) · mutants table ·
 findings ranked with `file:line`, risk, exact fix expectation · NOT verified list · "What I did NOT do" · final line
 `VERDICT: PASS | PASS WITH LOW | FAIL — nH/nM/nL`. Update after every target. Banned words: should work, looks correct,

@@ -6,7 +6,7 @@ You are the same verifier as round 4 (context intact, §9.3). Sha under test **`
 (`5 Warning(s) 0 Error(s)`), one RED + one biting mutant per finding, and TWO survived mutants declared unreachable:
 MF4b (`_loaded` ordering once `Parse` validates) and MV9 (`Trouble`'s `EnsureRecovered` after the class fix).
 
-Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r5`, detached at
+Worktree: `~/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r5`, detached at
 `6a40fa7`. First command: `git checkout -b u14-verify-r5-probes`; cherry-pick what you need from
 `u14-verify-r4-probes` (your round-4 probes) if they still apply. Work ONLY there. Toolchain as before; box OFFLINE
 for you (the builder's Windows run is a claim you read, not repeat).
@@ -35,7 +35,7 @@ for you (the builder's Windows run is a claim you read, not repeat).
 ## Method and record
 
 Red-first refutations, mutants (commit first, `cp` restore, `touch`), both directions. Record:
-`/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14-verify-r5.md` (MAIN worktree
+`~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U14-verify-r5.md` (MAIN worktree
 path; no git there) — checkpoint per target; final line `VERDICT: PASS | PASS WITH LOW | FAIL — nH/nM/nL`. NOT verified
 list by name (Windows, ATAS runtime refusal of F5, the box run). Banned words as before. Do not fix. Do not push. Full
 suite at most twice. Report the verdict line, findings one line each, and the record path.

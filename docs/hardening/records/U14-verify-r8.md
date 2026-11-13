@@ -448,8 +448,8 @@ round 8**, which would need a second on-box build at `4de7c25` and I had one run
 ```
 $ cd C:\ta\repo\tools\atas-gate && dotnet run -c Release -p:AtasBridgeBuild=true \
       -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"
-TRADEAGENT_HOME = C:\Users\Nicolas\AppData\Local\Temp\ta-atas-gate-1f3e35c5
-bridge dir      = C:\Users\Nicolas\AppData\Local\Temp\ta-atas-gate-1f3e35c5\bridge
+TRADEAGENT_HOME = %USERPROFILE%\AppData\Local\Temp\ta-atas-gate-1f3e35c5
+bridge dir      = %USERPROFILE%\AppData\Local\Temp\ta-atas-gate-1f3e35c5\bridge
   [PASS] ITradingManager.ClosePosition was never called — calls = 0
   [PASS] the refusal says nothing was submitted — the write-ahead record for TA-CLOSE-REFUSED could not
          be written to …\coid-witness.json; nothing was submitted. ERROR claim=TA-CLOSE-REFUSED another

@@ -53,7 +53,7 @@ now carries them) and are recorded as HIGH-open-with-owner at U2a's integration.
 ## Process
 
 Commit per finding; no `Co-Authored-By`; commit before mutants, `cp` restore, `touch`. Append `## Round 5 (build record,
-<date>)` to `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` AS YOU GO — a
+<date>)` to `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` AS YOU GO — a
 table `finding · real/refuted · RED · GREEN · mutant · commit`, plus the on-box run. Targeted gates per finding;
 `dotnet build TradeAgent.sln` + FULL suite once at the end, counts pasted (Mac) and the Windows class results. §9.9: for
 F2, answer whether a test could catch "a derived bound whose inputs changed" generically. Report: tip sha; the table one

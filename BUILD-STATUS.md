@@ -151,7 +151,7 @@ path that places real orders is precisely the thing that keeps working until a v
 installer: 117461626 bytes
 exit: 0
 == where did it land ==
-  FOUND C:\Users\Nicolas\AppData\Local\Programs\TradeAgent  (291 files, 409.8 MB)
+  FOUND %USERPROFILE%\AppData\Local\Programs\TradeAgent  (291 files, 409.8 MB)
 == uninstall entry ==
   TradeAgent 0.1.0  [HKCU]
 == elevation used? ==
@@ -266,7 +266,7 @@ ATAS RUNTIME TFM      : net10.0
                         framework is not rejected with an error — ATAS simply never lists it.
 ATAS RUNNING          : YES
 LAYOUT VERIFIED       : YES
-STRATEGY FOLDER       : C:\Users\Nicolas\AppData\Roaming\ATAS\Strategies
+STRATEGY FOLDER       : %USERPROFILE%\AppData\Roaming\ATAS\Strategies
 ```
 
 That settles **A1 question 2** in `docs/RESEARCH-REQUIRED.md`, which had stood unverified with a
@@ -2262,7 +2262,7 @@ twice:
 
 ```
 WITH /relaunch=1 : 1 process(es) started by Setup
-                   pid 20448  session=1  C:\Users\Nicolas\AppData\Local\TradeAgentRelaunchTest\TradeAgent.exe
+                   pid 20448  session=1  %USERPROFILE%\AppData\Local\TradeAgentRelaunchTest\TradeAgent.exe
 WITHOUT /relaunch : 0 process(es) started by Setup
 run entries in the two logs:
   with    /relaunch=1 : 1
@@ -2711,7 +2711,7 @@ Rewritten 2026-09-01. The first three of the previous four are done — `LIVE_CO
 | The AI opens in its own window | **A chat page inside the app** | That window was a console, and the console was the product's chat interface. It is the single thing this session existed to delete. |
 | Install AI runtimes from code | **Install commands are overridable data** | These vendors change their CLIs on their own schedule. A wrong command is a one-line fix in `runtimes.json`, not a rebuild. |
 | Notional cap as a core risk limit | **Opt-in, default off** | One ES future is a six-figure notional on a four-figure margin; any naive cap refuses every legitimate futures order. Contract count is the limit that means something. |
-| — | **Added: risk limits, borrowed from venture-agent's `policy.yaml`** | The brief had modes and a kill switch but no bound on size. |
+| — | **Added: risk limits, borrowed from a sibling agent project's `policy.yaml`** | The brief had modes and a kill switch but no bound on size. |
 | — | **Added: a fresh price is required for every order** | An agent sizing a market order from a stale quote was reachable. |
 | — | **Added: autonomous live trading refused on unprovable backends** | If a connector cannot round-trip a client order id and serve order history, post-disconnect state is unknowable. |
 | Operator control over IPC | **Operator authority is in-process only** | Mode, kill switch, live activation and approvals are not reachable from the agent-facing pipe, so an agent wanting more permission has nowhere to ask. |
@@ -6847,7 +6847,7 @@ No schema rung. MONEY PATH: the gateway pipe's authentication of a launch grant.
 **Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the code tip `22b424d` (on `516376c`), Release `--no-incremental`: 0
 warnings, 0 errors; Unit 1189 + Fault 399 + Integration 699 = 2287 passed, 0 failed, 1 skipped (11 m 6 s); `LaunchGrantTests` 3× 10/10, `PeerImageRuleTests` 3×
 8/8. RED on the base (macOS) `Failed: 4, Passed: 6`: admission `(exit 1): IPC_UNAUTHENTICATED: this connection presented a launch grant, and the operating system
-would not say which program is holding this connection, so the caller could not be identified at all`; identity `Expected: "/Users/nicolasbeeckman/.dotnet/
+would not say which program is holding this connection, so the caller could not be identified at all`; identity `Expected: "~/.dotnet/
 dotnet" Actual: null`. Mutant (`if (!OperatingSystem.IsWindows()) return null;` put back): the admission test red with the same refusal; restored. Draft PR #24
 (closed unmerged): run 36891262990 at `22b424d` — attempt 1 ubuntu red on `CouncilLoopTests.A_file_dropped_between_turns…` (`Actual: InboxUnattested`, not
 this unit's code, first sighting), attempt 2 green on all three; the new tests passed in all six trx. Manager's gate at `bedd218` (the reported tip, 0 behind `main` `516376c`; `src`/`tests` identical to the code tip `22b424d`), Release: build `--no-incremental` → 0 warnings, 0 errors; Unit 1189/1189 (26 s), Fault 399/399 (1 m 29 s), Integration 699/700, 1 skipped (11 m 7 s, its normal length) → 0 failed. Names vs `main` (git objects): sets

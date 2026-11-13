@@ -17,7 +17,7 @@ public enum RequestIntent { PLACE, MODIFY, CANCEL, CANCEL_ALL, CLOSE, CLOSE_ALL 
 
 /// <summary>
 /// Limits the gateway enforces before anything reaches a broker. Borrowed in spirit from
-/// venture-agent's policy file: the agent's autonomy inside its own environment is broad,
+/// a sibling agent project's policy file: the agent's autonomy inside its own environment is broad,
 /// but authority that leaves the machine is bounded by numbers a human set.
 /// </summary>
 public sealed class RiskPolicy

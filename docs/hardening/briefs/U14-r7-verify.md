@@ -9,7 +9,7 @@ RED); a real flake fixed (`Redial` — a bridge dialling while the single pipe i
 Round 7b (manager's rule): a refused mismatch survives ANY later disconnect until a COMPATIBLE hello, as
 `_unauthenticated` is kept.
 
-Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r7`, detached at the
+Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u14-verify-r7`, detached at the
 sha; first command `git checkout -b u14-verify-r7-probes`; cherry-pick from `u14-verify-r6-probes` as useful. Work ONLY
 there; the box is not yours.
 

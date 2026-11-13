@@ -8,17 +8,17 @@ content (below); do not re-open those decisions, implement them, and report wher
 with the code.
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md` (the four safety rules; two-press; operator
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md` (the four safety rules; two-press; operator
    authority in-process only).
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2c1.md` — the unit record,
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2c1.md` — the unit record,
    including "Codex round 3 (the open list)" F1–F14 and "Round-4 brief (decided)". Original records lost; branch = truth.
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2c1-dispatch-recovery.md`.
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2c1-dispatch-recovery.md`.
 5. `docs/CONTRACTS.md` in your worktree (the written rule for the unconfirmed set lives there or must).
 
 ## Where you work
 
-- Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2c1-build`, branch
+- Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u2c1-build`, branch
   `u2c1-dispatch-recovery` @ `1e10660` (28 commits on the OLD U2b tip `cb2ce2f`, which is not on `main`).
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`. No `timeout` binary; tool calls cap at
   10 min; the full suite ≈ 2–3 min — output to a file, read the tail. The Windows box is OFFLINE.
@@ -136,7 +136,7 @@ item needs more, STOP that item and report.
 ## Rules
 
 No `Co-Authored-By` trailers; one-sentence commit messages. Commit after every item. Checkpoint AS YOU GO by appending
-`## Round 4 (build record, <date>)` to `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2c1.md`
+`## Round 4 (build record, <date>)` to `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2c1.md`
 (MAIN worktree path; no git there — the manager commits it), with the mutants table growing item by item. Honesty
 contract (§6); banned words: should work, looks correct, probably, I believe, minor, trivial, static-verified, basically.
 §9.9: answer for class A whether a test class could catch "concluded on non-definite evidence" generically. §9.10: if

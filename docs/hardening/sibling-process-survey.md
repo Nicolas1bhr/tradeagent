@@ -1,11 +1,11 @@
 # Sibling-process survey — what TradeAgent's hardening process is ported from (2026-09-02, re-materialised 2026-09-03)
 
-Read-only survey over `/Users/nicolasbeeckman/Projects/innovision-os` and `/Users/nicolasbeeckman/Projects/venture-agent`.
-Paths are absolute so briefs can point at them.
+Read-only survey over two of the owner's private sibling repositories, named here by role: `<standard-sibling>` (the
+orchestration standard) and `<agent-sibling>` (an unattended agent). Paths are relative to each sibling's root.
 
-## innovision-os — the standard
+## The standard sibling — the standard
 
-`innovision-os/docs/ORCHESTRATION-STANDARD.md` (336 lines), a mandatory read-gate before any delegated build/verify work.
+`<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (336 lines), a mandatory read-gate before any delegated build/verify work.
 §0 failure-mode ledger L1→L6 → rules R1 (no self-grading) R2 (scope integrity — a diff smaller than the acceptance is
 RED) R3 (adjacent-regression sweep) R4 (gates pasted, not claimed) R5 (green ≠ safe) R6 (honest reporting). §3 the
 verification triad: builder self-gate → adversarial verify by a DIFFERENT Claude told to refute, default-to-fails → Codex
@@ -23,15 +23,15 @@ self-gate, targeted on bounces, full once more at Integrate. §9.6 escalation co
 §9.9 every real finding: "can a script/gate catch this class next time?" §9.10 ≥2 findings with one root cause → name the
 CLASS and the structural fix. §2.6 concurrency ≤ 2 Claude agents (usage limits).
 
-Records `innovision-os/docs/hardening/records/` (template by example `H-20-build-record.md`: verdict · diff · proof
+Records `<standard-sibling>/docs/hardening/records/` (template by example `H-20-build-record.md`: verdict · diff · proof
 matrix with an executed mutant at every layer · gates · raw output · adjacent sweep · gaps ✅ only when closed by RUNNING
 something · "What I did NOT do"). Mutation-proving the gate ("a tooth is only a tooth once you have watched it bite").
-Positive controls (`PS-N8N-record.md:247`). Claims expire when the code under them changes (`HF-A1.5-record.md:2848`).
+Positive controls (a `PS-*` record). Claims expire when the code under them changes (`HF-A1.5-record.md:2848`).
 Re-derive load-bearing quantities from the PRIMARY measurement (`H-20-prod-cardinality-2026-08-31.md`). Anti-drift CI
 gate `scripts/check-ci-gate-parity.mjs`; roll-call by name, never exit code. Deploy: preflight, dry-run, verify against
 the LIVE system after deploy, skip layers with zero changes.
 
-## venture-agent — the unattended doctrine
+## The agent sibling — the unattended doctrine
 
 `docs/ARCHITECTURE.md:65` three hard boundaries ("maximum freedom inside a boundary it cannot argue its way out of"):
 money enforced in the database grant (the agent may INSERT a request, never UPDATE it out of pending; a spend row is
@@ -51,7 +51,7 @@ windows, overdue = unproven; anything unattended is at least tier 2; §4 what ma
 
 ## Shared conventions
 
-`venture-agent/CLAUDE.md:36` points at innovision's standard by absolute path and restates the non-negotiables; two
+`<agent-sibling>/CLAUDE.md:36` points at the standard sibling's standard by absolute path and restates the non-negotiables; two
 audiences, two documents (`CLAUDE.md` for the orchestrator, `BUILD-STANDARD.md`/`AGENTS.md` for the agent); records end
 with "What I did NOT do"; `FITNESS-INTEGRITY-HANDOFF.md` shape (what · read order · decisions settled · done · next ·
 open · gotchas · process rules that paid); one unit ≈ one session; read the state back from the live system; suspect the

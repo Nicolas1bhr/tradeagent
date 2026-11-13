@@ -50,7 +50,7 @@ history, and a grace window has passed since dispatch. Otherwise the request sta
 trading stays paused — the safe direction to fail. A human can override, and that override is
 recorded as theirs.
 
-**Risk limits, taken from venture-agent's `policy.yaml` shape.**
+**Risk limits, taken from a sibling agent project's `policy.yaml` shape.**
 The brief bounded *permission* (modes, activation) but not *size*. Five limits are enforced before
 anything leaves the machine: order quantity, order value (opt-in), open positions, orders per minute,
 instrument allowlist. Defaults are deliberately small. There is no command an agent can use to raise

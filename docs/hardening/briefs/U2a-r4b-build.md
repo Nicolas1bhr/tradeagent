@@ -6,21 +6,21 @@ unit's guarantee, prove the fix bites. Leg [2] (Opus adversarial verifier) and l
 your final sha, each in its own worktree. **Round cap: 2.**
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` — especially "Round 4"
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (mandatory read-gate).
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` — especially "Round 4"
    (the progress-aware emergency-gate expiry: a busy gate-holder yields `Busy` with "the bridge is busy" and the
    connection is KEPT; a stalled one is dropped with "not responding") and "Round 2" (Sent / PeerStalled / Busy).
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2b.md` — what `main` gained
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2b.md` — what `main` gained
    in `GatewayTypes.cs` / `TradingGateway.cs` / `Stores.cs` / `Errors.cs` (approval re-authorization, one clock).
-5. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2a-pipe-hardening.md`.
+5. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2a-pipe-hardening.md`.
 
 ## Where you work
 
-- Worktree `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-rebase-probe`, branch
+- Worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-rebase-probe`, branch
   `u2a-rebase-probe` @ **`e91293e`** (= `u2a-pipe-hardening` `5c716aa` rebased onto `main` `9fd5eb7`). Commit your fix
   on THIS branch; the manager moves `u2a-pipe-hardening` to your tip afterwards. Do not touch that branch ref yourself.
-- Comparison worktree, read-only: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-orig`
+- Comparison worktree, read-only: `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-orig`
   detached at `5c716aa` (the pre-rebase tip). Build and run tests there to compare; never edit there.
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`. No `timeout` binary; tool calls cap at
   10 min; the full suite takes ≈2 min 10 s — run it with output to a file and read the tail.
@@ -64,7 +64,7 @@ shifted — if one flakes, name it, do not re-run it into green silently.
 - Commit on the branch BEFORE any mutant run; restore mutants from a `cp` copy, never `git checkout --`; `touch` after
   restore. No `Co-Authored-By` trailers. One-sentence commit messages saying what changed and why.
 - Checkpoint as you go: append `## Round 4b — post-rebase fix (build record, 2026-09-03)` to
-  `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` (MAIN worktree path;
+  `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` (MAIN worktree path;
   do not run git there — the manager commits it). Update it after step 0, after the fix, after the mutant.
 - Honesty contract (§6): "verified by running X → output" or "NOT verified: why". Banned words: should work, looks
   correct, probably, I believe, minor, trivial, static-verified, basically.

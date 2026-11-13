@@ -5,16 +5,16 @@ to "fails" when uncertain. The previous verifier for this unit is gone (process 
 (Codex, read-only) runs concurrently on the same sha in a different worktree — you will not see each other.
 
 **FIRST, in this session, read in full:**
-1. `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md` (mandatory; §0, §3, §6, §9).
-2. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
-3. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` — the unit record: what
+1. `<standard-sibling>/docs/ORCHESTRATION-STANDARD.md` (mandatory; §0, §3, §6, §9).
+2. `~/Projects/ai-trading-software-for-mihael/CLAUDE.md`.
+3. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a.md` — the unit record: what
    each round fixed, the verdict history, and "Open at handoff" (your target list). Reconstructed; the branch is the truth.
-4. `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2a-pipe-hardening.md`.
+4. `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/commits-u2a-pipe-hardening.md`.
 5. `docs/CONTRACTS.md` and `AGENTS.md` in your worktree (the replay contract and the id restriction are release facts).
 
 ## Where you work
 
-- Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r4`, detached at
+- Worktree: `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r4`, detached at
   **`d25dbb4`** = `u2a-pipe-hardening` (21 commits) rebased onto `main` `9fd5eb7` (which carries U2b, approval
   re-authorization, in `GatewayTypes.cs`/`TradingGateway.cs`) + round 4b (3 commits, test-only). The rebase was
   textually clean; the rebased tip had ONE red test, `An_emergency_behind_a_busy_but_healthy_bridge_says_busy_and_does_not_drop_it`,
@@ -62,7 +62,7 @@ to "fails" when uncertain. The previous verifier for this unit is gone (process 
 
 ## Record (checkpoint as you go — a result held only in context dies with the connection)
 
-Write `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a-verify-r4.md` (the MAIN
+Write `~/Projects/ai-trading-software-for-mihael/docs/hardening/records/U2a-verify-r4.md` (the MAIN
 worktree path; do not run git there — the manager commits it). Structure: sha under test · per-target: refutation
 executed (command + output tail) · mutants table (mutant · test · bit? · restored sha) · findings ranked HIGH/MED/LOW
 with `file:line`, the concrete risk and the exact fix expectation · **NOT verified** list (macOS limits, box-only items)

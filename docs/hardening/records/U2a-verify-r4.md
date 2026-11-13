@@ -1,7 +1,7 @@
 # U2a — ADVERSARIAL-VERIFY record · round 4 (leg [2], Opus, targeted)
 
 **Sha under test:** `d25dbb4` (`u2a-pipe-hardening` 21 commits rebased onto `main` `9fd5eb7` + 3 round-4b test-only commits).
-**Verify worktree:** `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r4`, branch
+**Verify worktree:** `~/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r4`, branch
 `u2a-verify-r4-probes` (created from detached `d25dbb4`). Nothing pushed. No product fix applied.
 **Toolchain:** `PATH="$HOME/.dotnet:$PATH"`, dotnet 10.0.400, macOS 25.5.0 (Darwin), Apple silicon.
 
