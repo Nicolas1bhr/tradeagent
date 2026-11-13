@@ -3,6 +3,7 @@
     <Project Path="src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
     <Project Path="src/TradeAgent.App/TradeAgent.App.csproj" />
     <Project Path="src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
+    <Project Path="src/TradeAgent.CellProbe/TradeAgent.CellProbe.csproj" />
     <Project Path="src/TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
     <Project Path="src/TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
     <Project Path="src/TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" />
