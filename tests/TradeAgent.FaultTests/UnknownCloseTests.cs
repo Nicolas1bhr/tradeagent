@@ -543,6 +543,48 @@ public class AgentCloseOverAnUnknownCloseTests(ITestOutputHelper Out)
         await gw.DisposeAsync();
     }
 
+    /// <summary>
+    /// (U-windows-cards) AN UNCONFIRMED SELL ON ANOTHER ACCOUNT OF THIS PLATFORM REFUSES NOTHING HERE, AND THE PRESS LEAVES IT ALONE.
+    /// An <c>UNKNOWN</c> market sell another account holds — the owner confirmed it on the card without an outcome, so it pauses
+    /// nothing — moves no position of this account, and its account's book is not this one's: the agent's close of this account's
+    /// long goes out, and so does the owner's Close all, and the other account's record stays exactly as it was.
+    ///
+    /// <para><b>RED on the base</b> (<c>UnresolvedReducersOn</c> filters platform and instrument, never the account): the agent's
+    /// close is refused <c>CLOSE_UNRESOLVED</c> over the other account's order, and the press asks THIS account's history about
+    /// it, finds nothing, refuses the leg and leaves the long open.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_sell_on_another_account_refuses_nothing_here_and_the_press_closes_this_one()
+    {
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        using var dbh = db;
+        var ai = new AgentContext("ai");
+        await gw.PlaceAsync(ai, "uca-open", TestEnv.Buy("ES", 2m));
+
+        var store = new ExecutionRequestStore(db);
+        var other = AWorkingMarketSell("uca-other-account", c.Id, "SIM-002");
+        other.State = ExecutionState.UNKNOWN;
+        Assert.True(store.TryCreate(other).Created);
+        Assert.True(gw.TryAuthorizeExecution(ai, out _));     // unflagged: it pauses nothing
+
+        var closed = await Refusal(() => gw.CloseAsync(ai, "uca-close", "ES"));
+        Out.WriteLine($"agent close beside it   : {closed?.Code.ToString() ?? "ok"} — {closed?.Message}");
+        Assert.Null(closed);
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest("uca-close")!.State);
+        Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
+
+        await gw.PlaceAsync(ai, "uca-open-2", TestEnv.Buy("ES", 2m));
+        var press = await gw.OperatorCloseAllAsync();
+        Out.WriteLine($"press beside it         : {press.Summary}");
+        Out.WriteLine($"position at the end     : {await Unresolved.Pos(c)}");
+        Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
+
+        var after = gw.GetRequest(other.RequestId)!;
+        Assert.Equal(ExecutionState.UNKNOWN, after.State);
+        Assert.Equal("SIM-002", after.AccountId);
+        await gw.DisposeAsync();
+    }
+
     static ExecutionRequest AWorkingMarketSell(string id, string connector, string account) => new()
     {
         RequestId = id, ConnectorId = connector, AccountId = account, Instrument = "ES",
