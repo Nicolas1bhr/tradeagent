@@ -78,7 +78,7 @@ public sealed class GdeltRecorder : IAsyncDisposable
     public const int BackfillBatches = 96;
 
     /// <summary>How far back the backfill reaches: a file labelled earlier than this is never asked for.</summary>
-    public static readonly TimeSpan BackfillWindow = TimeSpan.FromDays(7);
+    public static readonly TimeSpan BackfillWindow = GdeltGkg.BackfillWindow;
 
     /// <summary>The most the backfill asks for in one UTC day: 500 MB.</summary>
     public const long BackfillBytesPerDay = 500L * 1024 * 1024;
@@ -90,10 +90,10 @@ public sealed class GdeltRecorder : IAsyncDisposable
     public const string ListingSeries = "lastupdate";
 
     /// <summary>The series of a live look's fetch of a GKG file.</summary>
-    public const string LiveSeries = "gkg-live";
+    public const string LiveSeries = GdeltGkg.LiveSeries;
 
     /// <summary>The series of a backfill's fetch of a GKG file — counted against <see cref="BackfillBytesPerDay"/>.</summary>
-    public const string BackfillSeries = "gkg-backfill";
+    public const string BackfillSeries = GdeltGkg.BackfillSeries;
 
     // ONE CLIENT: NO TIMEOUT OF ITS OWN (the leash is per request), NO REDIRECTS AND NO DECOMPRESSION — see the summary.
     // THROUGH THE APP'S TLS POLICY (U-tls-denylist).

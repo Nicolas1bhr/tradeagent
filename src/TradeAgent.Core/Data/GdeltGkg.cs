@@ -91,6 +91,19 @@ public static class GdeltGkg
     /// <summary>The subject of every per-file record.</summary>
     public const string BatchSubject = "gdelt";
 
+    /// <summary>The series of a live look's fetch of a GKG file (the recorder's, <c>GdeltRecorder.LiveSeries</c>).</summary>
+    public const string LiveSeries = "gkg-live";
+
+    /// <summary>The series of a backfill's fetch of a GKG file (the recorder's, <c>GdeltRecorder.BackfillSeries</c>).</summary>
+    public const string BackfillSeries = "gkg-backfill";
+
+    /// <summary>
+    /// How far back a start's backfill reaches (the recorder's, <c>GdeltRecorder.BackfillWindow</c>): a file labelled earlier than
+    /// this is never asked for — so one refused when it was read, and older than this, is never read again, and the tape's report
+    /// says so (<see cref="Db.TapeReader.RefusedPastBackfill"/>).
+    /// </summary>
+    public static readonly TimeSpan BackfillWindow = TimeSpan.FromDays(7);
+
     /// <summary>The filter's name and version, written into every record it kept rows for. A change to it is a new name.</summary>
     public const string Filter = "gkg-crypto-v1";
 

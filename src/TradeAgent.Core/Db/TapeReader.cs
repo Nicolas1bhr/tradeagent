@@ -77,6 +77,17 @@ public sealed record TapeSourceRecording(
     DateTimeOffset? LastErrorAt);
 
 /// <summary>
+/// GDELT'S FILES THE TAPE WILL NEVER HOLD (<c>U-tape-gdelt-2</c> item 3): the files GDELT served that TradeAgent refused when it read
+/// them, that the tape holds no record of, labelled before the backfill's window at the read's instant — how many, the oldest and
+/// newest labels (null while there are none), and the newest refusal in words.
+/// </summary>
+public sealed record TapeRefusedFiles(int Files, DateTimeOffset? Oldest, DateTimeOffset? Newest, string? NewestReason)
+{
+    /// <summary>None.</summary>
+    public static TapeRefusedFiles None { get; } = new(0, null, null, null);
+}
+
+/// <summary>
 /// ONE DAY OF THE TAPE, for the owner's report (<c>U-tape-read</c>; what it did not record, <c>U-tape-gaps</c>): the rows
 /// that arrived in the day's elapsed part, the attempts and the failed ones, the newest failure in words, how many of the
 /// rows are GDELT's — whose credit then travels with the line — and every catalogue source's share of the day with its
@@ -575,6 +586,51 @@ public sealed class TapeReader
     /// since before" the date it stopped at — its gap is still counted, and a seek through months of failures is not made.
     /// </summary>
     public static readonly TimeSpan GapLookBack = TimeSpan.FromDays(8);
+
+    /// <summary>
+    /// GDELT'S FILES REFUSED WHEN READ AND NOW PAST THE BACKFILL (<c>U-tape-gdelt-2</c> item 3), as the tape stands at
+    /// <paramref name="asOf"/>. A start's backfill asks again for any file labelled inside <see cref="GdeltGkg.BackfillWindow"/> that
+    /// the tape holds no record of, so a refused file is read again while it is young — and never once its label is older. This
+    /// names those: an attempt GDELT answered 200 whose note says TradeAgent kept nothing (the daily cap's notes aside: that bound
+    /// was said when it stopped the file), at a label older than the window, with no record of the file on the tape.
+    ///
+    /// <para>Off the tape's own rows, by its indexes alone: GDELT's two file series on the attempts' index and the file records on
+    /// the observations'. Counts and labels only — never a row's value — so, like the day's read, it takes no holdout.</para>
+    /// </summary>
+    public TapeRefusedFiles RefusedPastBackfill(DateTimeOffset asOf)
+    {
+        var before = asOf - GdeltGkg.BackfillWindow;
+        using var c = Open();
+        using var snapshot = c.BeginTransaction(deferred: true);
+
+        var held = new HashSet<DateTimeOffset>();
+        using (var cmd = Cmd(c, """
+                   SELECT source_time FROM tape_obs WHERE source=$src AND series=$ser AND subject=$subj AND source_time < $before
+                   """, ("$src", GdeltGkg.Source), ("$ser", GdeltGkg.BatchSeries), ("$subj", GdeltGkg.BatchSubject), ("$before", Sql.T(before))))
+        using (var r = cmd.ExecuteReader())
+            while (r.Read()) held.Add(Sql.Time(r.GetString(0)));
+
+        var refused = new Dictionary<DateTimeOffset, (long Id, string Note)>();
+        foreach (var series in new[] { GdeltGkg.LiveSeries, GdeltGkg.BackfillSeries })
+        {
+            using var cmd = Cmd(c, """
+                SELECT id, url, note FROM tape_fetch INDEXED BY ix_tape_fetch_series
+                WHERE source=$src AND series=$ser AND http_status=200 AND note IS NOT NULL ORDER BY id
+                """, ("$src", GdeltGkg.Source), ("$ser", series));
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var note = r.GetString(2);
+                if (note.StartsWith(GdeltGkg.CapNotePrefix, StringComparison.Ordinal)) continue;
+                if (GdeltGkg.LabelOf(r.GetString(1)) is not { } label || label >= before || held.Contains(label)) continue;
+                var id = r.GetInt64(0);
+                if (!refused.TryGetValue(label, out var seen) || seen.Id < id) refused[label] = (id, note);
+            }
+        }
+
+        if (refused.Count == 0) return TapeRefusedFiles.None;
+        return new TapeRefusedFiles(refused.Count, refused.Keys.Min(), refused.Keys.Max(), refused.Values.MaxBy(v => v.Id).Note);
+    }
 
     /// <summary>
     /// ONE LOCAL DAY OF THE TAPE, for the owner's report, AS IT STOOD AT <paramref name="asOf"/> — the report's instant.
