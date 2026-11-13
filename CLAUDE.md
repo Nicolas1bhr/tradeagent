@@ -59,7 +59,7 @@ agent organisation inside the product. `manager-prompt.md` at the root is the fl
 **`docs/EDGE-FACTORY.md` is the target architecture and its units** (2026-10-02, the owner's "too stiff, no moat"
 direction): the tape, perception, features, strategy language v2, the evidence cascade, selection, and the re-sequenced factory
 floor, with the protections each one touches and how they are kept. Ready briefs wait in `docs/queue/`; the research behind it,
-dated and sourced, is in `docs/research/2026-10-02/`. The order of work is `docs/ORGANISATION.md` § 15's current order (R22).
+dated and sourced, is in `docs/research/2026-10-02/`. The order of work is the newest direction record: since 2026-11-06 R30 § 5 (`docs/research/2026-11-06/R30-the-72-hour-gate.md`), after R25 § 5; `docs/ORGANISATION.md` § 15's order is its history.
 
 **`docs/ORGANISATION.md` is the agent organisation** (2026-10-02, the owner's hierarchical direction: one chief, top-level managers heading
 divisions, team heads who decide, executors who own the path inside their mandate and never the mandate, an audit line, and an invisible watcher that reports
@@ -71,7 +71,7 @@ mandates, money, evidence and authority — never how an agent reasons inside it
 **`docs/ORCHESTRATION.md` is the in-app orchestration's architecture** (2026-10-11, the owner: the organisation is "a priority over all the
 others", built out as far as it can be and "right from the get go"): one kernel in which the organisation is data — row, rule, reading — authority exercised
 through the broker and code run only in confined cells, turns spent as capital, the proving ground built with the kernel. It is the product's runtime, NOT the build fleet
-(`docs/FLEET.md`); it decides how the kernel is built, ORGANISATION § 15 alone decides the order, and it outranks no protection.
+(`docs/FLEET.md`); it decides how the kernel is built, R30 § 5 decides the order today (after R25 § 5), and it outranks no protection.
 
 **`docs/VISION.md` is the end state the organisation grows toward** (2026-10-06, the owner's synthesis): unbounded in what TradeAgent can represent,
 deliberately bounded in what it activates — every active seat, department and management layer exists because current work requires it or a bounded
@@ -79,8 +79,9 @@ experiment is testing it; one chief with a strategy council that assesses and ne
 accountability line; the authority lattice, invariant registry, enforcement classes, simulation boundaries and a proving ground in the kernel. It changes no
 unit before M-org1 but one — **§ 6.7, the three layers of truth** (canon, operational prompts and sources of truth; the observed, believed and desired
 worlds — the owner's direction of 2026-10-08 from the AI Concierge canon), built first on the two roles that run today (`docs/research/2026-10-08/R21-three-layers-of-truth.md`,
-which also makes **the switch-on** — the loop unattended 24/7 on paper, not yet shown on Linux — the build's target; R22 corrected § 6.7's promotion rule
-and keeps the order of work in ORGANISATION § 15 alone) — and it outranks no protection.
+which also makes **the switch-on** — the loop unattended on paper — the build's target: its first 72-hour run (M-org1 sitting #2) runs on the owner's Linux
+server from T0 2026-11-13T01:18:30Z to 2026-11-16T01:18:30Z and is NOT shown until its record says so; R22 corrected § 6.7's promotion rule, and the
+order of work has since moved to R25 § 5 and then R30 § 5) — and it outranks no protection.
 
 **`docs/RESUME-HERE.md` is the resume point.** It says what to do next, what is still open, and which
 traps have already been paid for. Read it before planning anything.
@@ -95,18 +96,18 @@ or explicitly marked not verified. **Keep it that way.** If you cannot quote the
 **`docs/HOW-WE-BUILD.md` is the process, and it is short on purpose.** A fresh builder builds a unit in one pass, the
 manager lands it in one pass, the money path is reviewed once per milestone, and a builder that cannot fix an item is
 replaced by a fresh one rather than asked again. It deliberately does not import the sibling projects' round-based
-triad; `docs/hardening/` is the frozen record of the three days that did. Work in flight is whatever is in `docs/briefs/`.
+triad; `docs/hardening/` is the frozen record of the three days that did. Work in flight is what the fleet's `FAST-STATE.md` lists; its briefs are files under the fleet's `tmp/FAST/`, never committed here.
 **From 2026-10-02 the build runs as a fleet** — an orchestrator, top-level manager seats and their builders, each leg's model and effort named per
 `fleet/SPEED-MODE.md` since 2026-10-11 (`docs/FLEET.md` § "Speed mode") — under `docs/FLEET.md`.
 **Since 2026-10-06 the orchestrator holds the owner's own seat over the build — the standard** (`docs/FLEET.md` § "The orchestrator"): up to two
 top-level manager seats, each with full authority over its lane, decisions above the seats on his behalf, and a heartbeat that carries the
 fleet across usage stops;
-live seats are on `fleet/BOARD.md` (`~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`).
-**Since 2026-10-30 the build runs on the fast lane** — the fleet's `FAST-LANE.md` (same fleet folder) under `docs/research/2026-10-30/R25-fast-lane-mvp.md`, on the
+live legs are in the fleet's `FAST-STATE.md` (`~/Projects/ai-trading-software-for-mihael-worktrees/fleet/`) since 2026-10-30; `fleet/BOARD.md` is the ceremony-era record.
+**Since 2026-10-30 the build runs on the fast lane** — the fleet's `FAST-LANE.md` (same fleet folder) under `docs/research/2026-10-30/R25-fast-lane-mvp.md`, and since 2026-11-06 under R30's gate and order, on the
 owner's words that the orchestration standards are "a mere suggestion": `docs/FLEET.md`, `docs/HOW-WE-BUILD.md`, `fleet/SPEED-MODE.md` and the charters are suggestions for
 this build, not law, and the orchestrator dispatches builders directly in bigger units. **The protections are unchanged** — "The safety rules that outrank making it
 compile" below, `docs/PRINCIPLES.md`, the public-repo scan before every push, red-first plus a watched mutant on the money, evidence, authority, credential, containment and
-agent-boundary classes. Resume from `docs/RESUME-HERE.md`'s newest block and the fleet's `FAST-STATE.md`.
+agent-boundary classes. Resume from the fleet's `FAST-STATE.md` top block; `docs/RESUME-HERE.md`'s top block points there.
 
 ## The product rule that overrides convenience
 
@@ -116,8 +117,9 @@ several features:
 
 - The agent CLI is never launched with a visible console. `CreateNoWindow = true`, always. The
   conversation is hosted *inside the app* over the CLI's non-interactive mode.
-- Sign-in runs headless: capture the login command's output, pull the URL out, open the browser from
-  the app. Where a runtime has no headless sign-in at all, the app takes a pasted key in its own
+- Sign-in runs headless: capture the login command's output and pull the URL out; open the browser from
+  the app, or — on a host with no browser behind the window (Linux), and on any seat card — show the
+  address and the one-time code in the app's own window, to be typed on the owner's phone. Where a runtime has no headless sign-in at all, the app takes a pasted key in its own
   window rather than printing an instruction that means "open a terminal".
 - Dependencies install themselves. A "here is the download page" fallback whose instructions are
   `npm install -g ...` breaks the promise exactly as badly as a console window does.
@@ -144,8 +146,9 @@ connections, his word on any paid API spend, his private line (the watcher), his
 the app itself** — is in-process only and is not reachable from the agent-facing pipe or from any verb,
 the board's included. **Limit and capital authority** — every limit and allowance, paper and live
 mode, live activation, capital allocation, venture and instrument approval — belongs since 2026-10-23
-to the organisation's security board (the owner's decision; `docs/research/2026-10-23/R24-security-board.md`).
-It is exercised only through recorded broker acts of board positions, bound to their exact intent;
+to the organisation's security board (the owner's decision; `docs/research/2026-10-23/R24-security-board.md`);
+in this build its live path is closed in code: the board's acts refuse a live mode and the policy reader
+refuses a live body (`BoardPolicy`), until the board's own live act is built. It is exercised only through recorded broker acts of board positions, bound to their exact intent;
 anything that moves real money or widens a limit takes two independent board seats; and the gateway
 enforces whatever is currently decided. An agent that wants more permission can only propose it to
 the board; no position outside the board can act on it; the board cannot widen its own power; and
