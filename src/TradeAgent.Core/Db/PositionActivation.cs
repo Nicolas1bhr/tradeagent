@@ -151,9 +151,9 @@ public static class UnconfinedSeatCeiling
         var ceiling = Effective(setting);
         if (others.Count < ceiling) return null;
         return new(RefusalKind.HostOrLaunch,
-            $"{PositionActivation.Who(id)} would run a model as you, outside a sealed workspace, on a {PositionActivation.SeatWords(seatClass)} seat that can read your AI login, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
-            + $"such position{(others.Count == 1 ? " is" : "s are")} active ({PositionActivation.Titles(others)}) — the most seats you "
-            + $"let run outside a sealed workspace is {ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} (your setting "
+            $"{PositionActivation.Who(id)} would run a model as the owner, outside a sealed workspace, on a {PositionActivation.SeatWords(seatClass)} seat that can read his AI login, and {others.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+            + $"such position{(others.Count == 1 ? " is" : "s are")} active ({PositionActivation.Titles(others)}) — the most seats the owner "
+            + $"lets run outside a sealed workspace is {ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} (his setting "
             + $"{setting.ToString(System.Globalization.CultureInfo.InvariantCulture)}, never above {Ceiling.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
             + "until the sealed workspace is proven). Nothing is activated or started for it; its wakes are kept.");
     }

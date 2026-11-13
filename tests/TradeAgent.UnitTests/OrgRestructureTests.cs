@@ -510,10 +510,10 @@ public partial class OrgStructureTests
             Assert.NotNull(refused);
             Assert.Equal(RefusalKind.HostOrLaunch, refused!.Kind);
             Assert.Contains("3 such positions are active", refused.Words, StringComparison.Ordinal);
-            Assert.Contains("let run outside a sealed workspace is 3", refused.Words, StringComparison.Ordinal);
+            Assert.Contains("lets run outside a sealed workspace is 3", refused.Words, StringComparison.Ordinal);
             Assert.NotNull(PositionActivation.Decide(Member, org.Standing(Member), Facts(setting, SeatClasses.Cli, three)));
         }
-        Assert.Contains("let run outside a sealed workspace is 2", UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, [CouncilRoles.Operations, CouncilRoles.Research], 2)!.Words,
+        Assert.Contains("lets run outside a sealed workspace is 2", UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, [CouncilRoles.Operations, CouncilRoles.Research], 2)!.Words,
             StringComparison.Ordinal);
         Assert.Null(UnconfinedSeatCeiling.Refusal(Member, SeatClasses.Cli, [CouncilRoles.Operations, CouncilRoles.Research], 3));
         Assert.Null(PositionActivation.Decide(Member, org.Standing(Member), Facts(3, SeatClasses.Puppet, three)));
@@ -525,7 +525,7 @@ public partial class OrgStructureTests
         var hired = org.Hire(new HireRequest(Head, "turn-test", Old, false, "a member for the team", ["hire"], [CurrentRun(db)], [Admissible()]), Now);
         var before = Written(db);
         var words = Assert.Throws<TradeAgentException>(() => org.Activate(hired.Position.Id, Cli, 99, Now)).Message;
-        Assert.Contains("let run outside a sealed workspace is 3 (your setting 99", words, StringComparison.Ordinal);
+        Assert.Contains("lets run outside a sealed workspace is 3 (his setting 99", words, StringComparison.Ordinal);
         Assert.Equal(before, Written(db));
         string? OnlyThePairUnconfined(string id) => CouncilRoles.IsKnown(id) || id == hired.Position.Id ? SeatClasses.Cli : SeatClasses.Puppet;
         Assert.Equal(OrgPositionStatus.Active, org.Activate(hired.Position.Id, OnlyThePairUnconfined, 3, Now).Status);
