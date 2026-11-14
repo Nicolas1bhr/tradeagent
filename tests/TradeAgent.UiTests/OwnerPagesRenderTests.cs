@@ -937,6 +937,14 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         // AND THE CHIEF'S WAKE CARD, beside its press and in its armed sentence (shot 63): what wakes it after its one turn.
         var after = OrgStore.ChiefWakeAfter(TimeSpan.FromHours(24), TimeSpan.FromHours(4));
         hits.AddRange(OwnerWordShapes.Of(after).Select(shape => $"chief-wake: {shape} in \"{Cut(after)}\""));
+        // AND THE CHAT'S SENTENCE UNDER HIS WORDS WHILE A CHIEF RUNS (U-owner-words-4, a card of U-user-guide-chief): the chat names the chief
+        // as the host names it. RED before: "Sent to the chief (pos-…), as your words".
+        using (var chat = new Database(Path.Combine(UiTestHome.Home, $"words-chat-{Guid.NewGuid():n}.db")))
+        {
+            var routed = new RoutedChat(new SilentChief(), _ => true, AppHost.ChiefChatName(new OrgStore(chat).Chief()!)).Routed;
+            output.WriteLine(routed);
+            hits.AddRange(OwnerWordShapes.Of(routed).Select(shape => $"chief-chat: {shape} in \"{Cut(routed)}\""));
+        }
 
         // AND THE WORDS THE DASHBOARD SHOWS FOR A HELD DIRECTOR (shot 70), from the activation gate itself: Research, unconfined, beside the
         // active chief, and the chief's own activation refused before a proven workspace.
@@ -1004,6 +1012,26 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         foreach (var h in hits.Distinct()) output.WriteLine(h);
         Assert.True(hits.Count == 0, $"{hits.Distinct().Count()} owner words carry a file, section mark, command or id: {string.Join(" | ", hits.Distinct().Take(6))}");
     }
+}
+
+/// <summary>A chief's conversation that never runs: the chat's routing sentence is read off it, and nothing is sent.</summary>
+sealed class SilentChief : IAgentConversation
+{
+    public bool Busy => false;
+    public IReadOnlyList<ChatTurn> History => [];
+#pragma warning disable CS0067 // never raised: nothing runs
+    public event Action<ChatTurn>? TurnAdded;
+    public event Action<string>? Delta;
+    public event Action? StateChanged;
+    public event Action<AgentTurnEnded>? TurnEnded;
+#pragma warning restore CS0067
+    public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public Task SendAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
+    public Task SendMissionAsync(string message, CancellationToken ct = default) => Task.CompletedTask;
+    public void Queue(string message) { }
+    public IReadOnlyList<string> TakeTyped() => [];
+    public Task CancelAsync() => Task.CompletedTask;
+    public Task StopAsync() => Task.CompletedTask;
 }
 
 /// <summary>The shapes an owner's page never carries in its own words (<c>U-owner-words-2</c>): one reader, so every test asks the same question.</summary>

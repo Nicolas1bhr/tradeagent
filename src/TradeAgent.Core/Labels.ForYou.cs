@@ -131,13 +131,17 @@ public static partial class Labels
 
     /// <summary>
     /// ITS TEAM'S ENVELOPE, as the activation card shows it: the unit's own share of what the unit above it may spend on the AI each day,
-    /// and its shares of a campaign's trials and verdicts, as the chart records them — or that it has none of its own.
+    /// and its shares of a campaign's trials and verdicts, as the chart records them — or, with none recorded, the legacy director's share
+    /// a legacy division spends, or that it has none of its own.
     /// </summary>
-    public static string DormantEnvelope(string unit, string? share, string? trials, string? verdicts)
+    public static string DormantEnvelope(string unit, string? share, string? trials, string? verdicts, string? legacyRole = null)
     {
+        // A LEGACY DIVISION WITH NO SHARE RECORDED SPENDS ITS DIRECTOR'S SHARE OF THE DAY (OrgEnvelopes.Resolve), never "none of its own".
         var day = share is { } s
             ? $"{Cap(unit)} may spend {s} of what the unit above it may spend on the AI each day"
-            : $"{Cap(unit)} has no share of its own of the AI's day: it spends from the unit above it";
+            : legacyRole is { } role
+                ? $"{Cap(unit)} spends the {CouncilRoles.Title(role)}'s share of the AI's day"
+                : $"{Cap(unit)} has no share of its own of the AI's day: it spends from the unit above it";
         var campaign = (trials, verdicts) switch
         {
             (null, null) => "",
