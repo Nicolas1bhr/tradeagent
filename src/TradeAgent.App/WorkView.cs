@@ -94,7 +94,7 @@ sealed record WorkWords(
             string.Join("\n", refused))
         {
             Slow = Labels.WorkSlowCalls([.. read.Slow.Select(c => (
-                    c.Role is { Length: > 0 } role ? read.Names.Position(role) : "An unnamed launch", c.Tool, c.Duration ?? TimeSpan.Zero,
+                    c.Role is { Length: > 0 } role ? read.Names.Position(role) : "an unnamed launch", c.Tool, c.Duration ?? TimeSpan.Zero,
                     c.Served ? "answered" : "refused"))],
                 AgentRuntime.BrokerSeat.DoorToolTimeout)
         };
