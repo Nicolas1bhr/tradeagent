@@ -35,12 +35,40 @@ public partial class CellLinuxTests
 
     /// <summary>
     /// Before and after a cell ran: the cell's HOME in full detail, everything beside its workspace in the world, and <c>/tmp</c>
-    /// outside the test homes (where every world, and so the workspace, lives).
+    /// outside the driving test process's own temp folder (<see cref="HostTemp"/>, where the test homes, every world and so the
+    /// workspace live).
     /// </summary>
     sealed record Outside_(SortedSet<string> Home, SortedSet<string> Beside, SortedSet<string> Tmp);
 
     static Outside_ Snapshot(World w) =>
-        new(Listing(w.Home, detail: true), Listing(w.Root, detail: true, w.Ws), Listing("/tmp", detail: false, TestEnv.Root));
+        new(Listing(w.Home, detail: true), Listing(w.Root, detail: true, w.Ws), Listing("/tmp", detail: false, HostTemp()));
+
+    /// <summary>
+    /// THE DRIVING TEST PROCESS'S OWN TEMP FOLDER, A FOLDER OF ITS OWN UNDER <c>/tmp</c> (<c>U-ci-precheck</c> item 2). The <c>dotnet test</c>
+    /// that runs these rows writes into its temp folder while they run: MSBuild's node pipes and temp files (<c>/tmp/MSBuild2373</c>,
+    /// <c>/tmp/MSBuildTemp…</c>), the red of row (g) on land-founding-carry's first attempt, which had nothing to do with the cell. CI's cell
+    /// step gives it <c>TMPDIR=/tmp/ta-cell-host</c>, so what the host writes lands there and the rest of <c>/tmp</c> is the cell's to change
+    /// or not. The cell never learns that folder: the stage's environment is built from scratch and a package row's policy gives the
+    /// program <c>TMPDIR</c> = its workspace. A test process whose temp folder IS <c>/tmp</c> cannot tell its own files from the cell's, and
+    /// fails here as a missing prerequisite, never a guess.
+    /// </summary>
+    static string HostTemp()
+    {
+        var own = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
+        Require(own != "/tmp" && CellPolicy.Within(own, "/tmp"),
+            $"the test process's own TMPDIR, a folder under /tmp, as CI's cell step gives it (/tmp/ta-cell-host): it is {own}");
+        return own;
+    }
+
+    /// <summary>
+    /// The snapshot after the cell ran, taken once the HOST has written into its own temp folder as MSBuild does while the rows run: the
+    /// row sees that write set aside on every run, not only on the runs where MSBuild's timing happened to meet it.
+    /// </summary>
+    static Outside_ SnapshotAfterTheHostWrote(World w)
+    {
+        File.WriteAllText(Path.Combine(HostTemp(), $"MSBuildTemp-witness-{Guid.NewGuid():n}.txt"), "the driving dotnet test's own file");
+        return Snapshot(w);
+    }
 
     void Unchanged(Outside_ before, Outside_ after, string cellPid)
     {
@@ -93,7 +121,7 @@ public partial class CellLinuxTests
         Says(ran, "pip-rc=0", "imported-from-the-loopback-index");
         Assert.True(File.Exists(Path.Combine(site, "ta_cell_pkg", "__init__.py")));
         Assert.Contains("/files/ta_cell_pkg-1.0-py3-none-any.whl", index.Requests);
-        Unchanged(before, Snapshot(w), CellPid(ran));
+        Unchanged(before, SnapshotAfterTheHostWrote(w), CellPid(ran));
     }
 
     /// <summary>
@@ -123,7 +151,7 @@ public partial class CellLinuxTests
         Assert.True(File.Exists(Path.Combine(app, "node_modules", "ta-cell-pkg", "index.js")));
         Assert.True(Directory.Exists(Path.Combine(w.Ws, ".cache", "npm")), "npm's cache, in the workspace");
         Assert.Contains("/ta-cell-pkg/-/ta-cell-pkg-1.0.0.tgz", index.Requests);
-        Unchanged(before, Snapshot(w), CellPid(ran));
+        Unchanged(before, SnapshotAfterTheHostWrote(w), CellPid(ran));
     }
 
     /// <summary>An npm package tarball: <c>package/package.json</c> and <c>package/index.js</c>, gzipped, as <c>npm pack</c> lays it out.</summary>

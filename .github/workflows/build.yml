@@ -271,8 +271,12 @@ jobs:
           sudo loginctl enable-linger "$user"
           for _ in $(seq 1 30); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
           [ -S "/run/user/$uid/bus" ] || { echo "::error::no user manager bus at /run/user/$uid/bus after enable-linger"; exit 1; }
+          # THE DRIVING dotnet test GETS A TEMP FOLDER OF ITS OWN under /tmp (U-ci-precheck item 2): MSBuild writes its node pipes and temp
+          # files into the temp folder while the rows run, and the package rows compare /tmp before and after a cell outside that folder
+          # (CellLinuxTests.HostTemp, which fails as a missing prerequisite without it).
+          mkdir -p /tmp/ta-cell-host
           sudo systemd-run --wait --pipe --quiet -p User="$user" -p Delegate=yes -p WorkingDirectory="$GITHUB_WORKSPACE" \
-            -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" \
+            -E PATH="$PATH" -E HOME="$HOME" -E DOTNET_ROOT="${DOTNET_ROOT:-}" -E XDG_RUNTIME_DIR="/run/user/$uid" -E TMPDIR=/tmp/ta-cell-host \
             -E DOTNET_NOLOGO=1 -E DOTNET_CLI_TELEMETRY_OPTOUT=1 -E TA_CELL_CODEX="${TA_CELL_CODEX:-}" \
             bash -c 'set -uo pipefail
               svc="/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup)"
