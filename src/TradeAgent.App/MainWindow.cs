@@ -671,6 +671,7 @@ public sealed class MainWindow : Window
         _oversightBanner?.Update();
         RefreshUpdateBanner(status);
         UpdateRailHealth();
+        Title = WindowTitle(OperatingSystem.IsWindows(), _host.SeatSignIn.State().State);
 
         // THE PAGE THE OWNER IS LOOKING AT, NOT ALL FOURTEEN (U-perf-scan, R28 G3): every tick rebuilt every page's read — the scorecards
         // among them — on this thread, for pages nobody could see. A page is brought up to date when it is shown (Select) and on every
@@ -689,6 +690,14 @@ public sealed class MainWindow : Window
     /// THE PAGES ONE TICK UPDATES WHILE <paramref name="shown"/> IS SHOWN (<c>U-perf-scan</c>): that page, and the Settings page with the
     /// owner's page, whose connection, evidence and update sections are the Settings page's own controls (<c>U-settings-shed</c>).
     /// </summary>
+    /// <summary>
+    /// THE TASKBAR SAYS WHEN THE AI NEEDS HIM (<c>U-window-door</c> item 8; R31 D10 § 4): on Windows the app runs unattended behind other
+    /// windows (U-windows-awake), and a lapsed sign-in showed only inside it. While the seat home is signed out the title — and so the
+    /// taskbar and Alt-Tab — says so. Not while nobody can tell (a status read that failed is not news for the taskbar); no tray, no toast.
+    /// </summary>
+    internal static string WindowTitle(bool windows, TradeAgent.AgentRuntime.SeatSignInState state) =>
+        windows && state is TradeAgent.AgentRuntime.SeatSignInState.SignedOut ? "TradeAgent — sign in needed" : "TradeAgent";
+
     internal static IReadOnlyList<Page> PagesToUpdate(Page shown) => shown == Page.Owner ? [Page.Owner, Page.Settings] : [shown];
 
     void UpdatePage(Page page, GatewayStatus status)
