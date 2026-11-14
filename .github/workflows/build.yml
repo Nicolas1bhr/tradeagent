@@ -258,7 +258,9 @@ jobs:
       # gives the account a user systemd manager, so the `systemd-run --user` escape row is a real attempt against a real manager.
       # THE SERVICE'S CGROUP IS THE ROWS' DELEGATED ROOT (U-cell-linux-b): the shell moves itself into <service>/runner before it
       # execs the tests, because a cgroup holding processes cannot hand controllers down, and enables +pids +memory below the
-      # service; each row then opens a root of its own, <service>/rows-<guid>, as the app opens its service's. Printed first.
+      # service (and +io where the service is offered it, as the app enables it below its own: U-cell-ceilings' write rate; where it is
+      # not, the write row is a GAP and says so); each row then opens a root of its own, <service>/rows-<guid>, as the app opens its
+      # service's. Printed first.
       # $BASHPID, never $$: systemd-run reads its command line as ExecStart= does, where "$$" is an escaped "$" (run 38968581131
       # wrote "$" to cgroup.procs and was refused with EINVAL).
       - name: Test the Linux cell rows
@@ -281,6 +283,7 @@ jobs:
               mkdir "$svc/runner" || { echo "::error::mkdir $svc/runner failed"; exit 1; }
               echo "$BASHPID" > "$svc/runner/cgroup.procs" || { state "move refused"; echo "::error::moving the shell into $svc/runner failed"; exit 1; }
               echo "+pids +memory" > "$svc/cgroup.subtree_control" || { state "enable refused"; echo "::error::enabling +pids +memory below $svc failed"; exit 1; }
+              case " $(cat "$svc/cgroup.controllers") " in *" io "*) echo "+io" > "$svc/cgroup.subtree_control" || echo "io offered and not enabled below $svc" ;; *) echo "io not offered to $svc" ;; esac
               state after
               exec dotnet test TradeAgent.sln -c Release --no-build --filter "Category=Cell&CellScope!=EveryOs&CellScope!=Windows" \
                 --logger "trx;LogFileName=results-cell.trx" --logger "console;verbosity=normal"'

@@ -75,7 +75,7 @@ first_start_done() { [ -f "$db" ] && [ "$(activity_count 'TradeAgent started')" 
 # supervisor/, +pids +memory are enabled below the unit, and no attempt-* is left. Asked of the kernel, not the app.
 unit_cgroup() { echo "/sys/fs/cgroup$(systemctl show -p ControlGroup --value tradeagent.service)"; }
 main_in_supervisor() { [ "$(sed -n 's/^0:://p' "/proc/$(main_pid)/cgroup" 2> /dev/null)" = "$(systemctl show -p ControlGroup --value tradeagent.service)/supervisor" ]; }
-no_attempts() { [ -z "$(find "$(unit_cgroup)" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*')" ]; }
+no_attempts() { [ -z "$(find "$(unit_cgroup)" -mindepth 1 -maxdepth 2 -type d -name 'attempt-*')" ]; }
 
 assert_cgroup() {
     local when="$1" dir owner control
@@ -92,8 +92,20 @@ assert_cgroup() {
     # removed when its row ends: a leftover is one that is STILL there after 30 s, which a cell row never is and a crash's leftover
     # that the sweep missed always is.
     wait_until 30 no_attempts \
-        || fail "$when: attempt cgroups are left under $dir: $(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'attempt-*' | tr '\n' ' ')"
-    pass "$when: the unit's cgroup $dir is $account's, the app's main process $(main_pid) is in supervisor/, subtree_control '$control', no attempt-* left"
+        || fail "$when: attempt cgroups are left under $dir: $(find "$dir" -mindepth 1 -maxdepth 2 -type d -name 'attempt-*' | tr '\n' ' ')"
+    # THE ONE PARENT OF ALL ATTEMPTS (U-cell-ceilings): its own memory.max and pids.max bound their sum; swap 0 where the kernel accounts it, and a
+    # write rate where io is delegated. Asked of the kernel; the app's start line says which of the two optional ones it could not write.
+    local parent="$dir/attempts" sum
+    [ -d "$parent" ] || fail "$when: no attempts/ parent under $dir: the sum of the attempts is unbounded"
+    [ "$(cat "$parent/memory.max")" != max ] || fail "$when: $parent/memory.max is max: the sum of the attempts' memory is unbounded"
+    [ "$(cat "$parent/pids.max")" != max ] || fail "$when: $parent/pids.max is max: the sum of the attempts' tasks is unbounded"
+    sum="memory.max $(cat "$parent/memory.max"), memory.high $(cat "$parent/memory.high"), pids.max $(cat "$parent/pids.max")"
+    if [ -f "$parent/memory.swap.max" ]; then
+        [ "$(cat "$parent/memory.swap.max")" = 0 ] || fail "$when: $parent/memory.swap.max is $(cat "$parent/memory.swap.max"), not 0"
+        sum="$sum, memory.swap.max 0"
+    else sum="$sum, no swap accounting (GAP)"; fi
+    if [ -f "$parent/io.max" ] && [ -n "$(cat "$parent/io.max")" ]; then sum="$sum, io.max $(cat "$parent/io.max")"; else sum="$sum, no write rate (GAP: io $(case " $control " in *" io "*) echo enabled ;; *) echo 'not enabled' ;; esac))"; fi
+    pass "$when: the unit's cgroup $dir is $account's, the app's main process $(main_pid) is in supervisor/, subtree_control '$control', no attempt-* left; all attempts: $sum"
 }
 loopback_row_after() { [ "$(loopback_max_id)" -gt "$1" ]; }
 
@@ -240,6 +252,17 @@ systemctl start tradeagent.service
 wait_until 120 loopback_row_after "$before_seed" || fail "no loopback tape row within 120 s of the seeded start"
 pass "a loopback tape row $(( $(now) - t_start )) s after the seeded start"
 assert_cgroup "after the seeded start"
+
+# THE CEILING ROWS OF THE APP'S OWN START BENCHMARK (U-cell-ceilings): whatever else this host's benchmark lacks (it may have no pinned codex), the
+# three ceiling rows ran in a real cell under the real unit and none of them failed. A GAP is said in the line, never as a failure.
+bench_line() { read_db "$db" "SELECT text FROM activity WHERE text LIKE 'Cell benchmark:%' ORDER BY id DESC LIMIT 1;" 2> /dev/null; }
+bench_said() { [ -n "$(bench_line)" ]; }
+wait_until 180 bench_said || fail "the app's start benchmark wrote no 'Cell benchmark:' line within 180 s"
+bench="$(bench_line)"
+for row in memory-ceilings attempts-bounded-together writes-bounded; do
+    case "$bench" in *"$row did not hold"*) fail "the start benchmark's $row row did not hold: $bench" ;; esac
+done
+pass "the start benchmark's ceiling rows held: $bench"
 
 # The tape's size and the app's memory, every 15 s, to the end.
 (

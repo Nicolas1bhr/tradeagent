@@ -51,6 +51,7 @@ public static class CellBenchmark
         "env-is-the-policys", "state-unreadable", "state-unwritable", "login-unreadable", "inbox-uncreatable", "no-egress",
         "web-443-granted", "web-nothing-else", "gap-web-loopback-443", "gap-web-lan-443",
         "ipc-denied", "signals-environ-denied", "io-uring-denied", "attributes-denied", "attributes-workspace", "cgroup-escape-denied", "descendants-cancelled",
+        "memory-ceilings", "attempts-bounded-together", "writes-bounded",
         "tmp-unchanged", "file-bound", "space-unallocated", "route-a-exec-server"
     ];
 
@@ -228,6 +229,13 @@ public static class CellBenchmark
                 .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
         }
         catch (System.Net.NetworkInformation.NetworkInformationException) { return null; }
+    }
+
+    /// <summary>A cgroup file as the kernel reads it back, trimmed, or null where it is not there or cannot be read.</summary>
+    static string? Kernel(string path)
+    {
+        try { return File.ReadAllText(path).Trim(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>A file's mode and write time, as the app reads them from outside the cell.</summary>
@@ -579,6 +587,61 @@ public static class CellBenchmark
                     $"a daemon that {(leftSession ? "left" : "did NOT leave")} the cell's session {(gone ? "was ended" : "OUTLIVED")} the attempt's cancel " +
                     $"({(held.Ended is { } end ? end.Ended ? "the teardown ended everything" : end.Sentence : "no teardown said anything")})");
             });
+
+            // THE CEILINGS (U-cell-ceilings): a cell says which cgroup it is in, and while it still runs the app reads what the kernel holds that cgroup and
+            // its parent to. A cell cannot read beneath /sys/fs/cgroup itself, and a cgroup file read back is what the kernel enforces. One launch for the three rows.
+            Dictionary<string, string?>? ceilings = null;
+            async Task<Dictionary<string, string?>> Ceilings()
+            {
+                if (ceilings is not null) return ceilings;
+                var psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var a in new[] { "-c", "sed -n 's/^0:://p' /proc/self/cgroup; read held" }) psi.ArgumentList.Add(a);
+                using var held = ProcessContainment.Start(psi, policy, launcher, cgroups: cgroups);
+                var line = await held.Process.StandardOutput.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(60), ct) ?? "";
+                var own = AttemptCgroups.Mount + line.Trim();
+                var parent = Path.GetDirectoryName(own) ?? "";
+                var read = new Dictionary<string, string?> { ["cgroup"] = own, ["parent"] = parent };
+                foreach (var f in new[] { "memory.max", "memory.high", "memory.swap.max", "pids.max", "io.max" })
+                {
+                    read["attempt " + f] = Kernel(Path.Combine(own, f));
+                    read["parent " + f] = Kernel(Path.Combine(parent, f));
+                }
+                held.Process.StandardInput.Close();
+                await held.Process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(60), ct);
+                return ceilings = read;
+            }
+            static string N(long n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            await Row("memory-ceilings", async () =>
+            {
+                var c = await Ceilings();
+                var (max, high, swap) = (c["attempt memory.max"], c["attempt memory.high"], c["attempt memory.swap.max"]);
+                var bounded = Path.GetFileName(c["cgroup"]!).StartsWith(AttemptCgroups.AttemptPrefix, StringComparison.Ordinal)
+                              && max == N(AttemptCgroups.MemoryMax) && AttemptCgroups.MemoryMax <= AttemptCgroups.MemoryCap
+                              && high == N(AttemptCgroups.MemoryHigh) && AttemptCgroups.MemoryHigh < AttemptCgroups.MemoryMax;
+                var seen = $"{Path.GetFileName(c["cgroup"])}: memory.max {max ?? "unread"}, memory.high {high ?? "unread"}, memory.swap.max {swap ?? "none"}";
+                return cgroups.SwapGap is null ? (bounded && swap == "0", seen) : (bounded && swap is null, $"GAP: {cgroups.SwapGap}; {seen}");
+            }, gap: cgroups.SwapGap is not null);
+            await Row("attempts-bounded-together", async () =>
+            {
+                var c = await Ceilings();
+                var beneath = c["parent"] == cgroups.Attempts;
+                var held = beneath && c["parent memory.max"] == N(AttemptCgroups.SumMemoryMax) && c["parent pids.max"] == N(AttemptCgroups.SumPidsMax)
+                           && c["attempt pids.max"] == N(AttemptCgroups.PidsMax) && (cgroups.SwapGap is not null || c["parent memory.swap.max"] == "0");
+                return (held, $"{(beneath ? "beneath" : "NOT beneath")} {cgroups.Attempts} (it is in {c["parent"]}): all attempts' memory.max " +
+                              $"{c["parent memory.max"] ?? "unread"}, pids.max {c["parent pids.max"] ?? "unread"}, memory.swap.max {c["parent memory.swap.max"] ?? "none"}; " +
+                              $"this one's pids.max {c["attempt pids.max"] ?? "unread"}");
+            });
+            await Row("writes-bounded", async () =>
+            {
+                var c = await Ceilings();
+                var (own, all) = (c["attempt io.max"], c["parent io.max"]);
+                if (cgroups.Io is { } disk)
+                    return (AttemptCgroups.ReadsBack(own, disk) && AttemptCgroups.ReadsBack(all, disk), $"io.max {own ?? "unread"}; all attempts' {all ?? "unread"}");
+                // THE GAP AS STATED: no write rate is bounded, and the kernel says so too.
+                var unbounded = !(own ?? "").Split(' ').Any(k => k.StartsWith("wbps=", StringComparison.Ordinal) && k != "wbps=max");
+                return (unbounded, $"GAP: a cell's writes are not bounded here: {cgroups.IoGap} (io.max {own ?? "none"})");
+            }, gap: cgroups.Io is null);
 
             await Row("tmp-unchanged", () =>
             {
