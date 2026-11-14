@@ -252,6 +252,46 @@ public class OrgEvidenceSharesTests
     }
 
     /// <summary>
+    /// OVER THE REAL BACKTEST PATH: A REUSE'S CHARGE UNDER A NEW CAMPAIGN IS READ OFF THE CALLER'S OWN ROW (the opus review's F4: the store
+    /// tests above pass the caller's row by hand, so nothing held <c>Backtests.Record</c> passing it). Research measures a program over A,
+    /// charged to campaign X. A second download B of the same minutes opens campaign Y. The team head, a tenth of Y's 10 trials, spends its
+    /// one trial of Y on a program of its own, then runs Research's identical request over A: a reuse, whose first charge under Y must be
+    /// refused in the team's words with Y charged nothing more. The watched mutant (<c>Backtests.Record</c> passing the computation's id,
+    /// <c>result.RunId</c>, for the caller's row) reads Research's chain, which holds no share, and the run is recorded.
+    /// </summary>
+    [Fact]
+    public async Task A_reuse_over_the_backtest_path_is_charged_to_the_callers_share_under_a_new_campaign()
+    {
+        var (gw, db, a, x) = await Campaigning(verdicts: 2);
+        await using var _gw = gw;
+        using var _db = db;
+        HeadTheTeam(db);
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("UPDATE org_unit SET trial_share='0.1' WHERE id=$id", ("$id", Team));
+            return c.ExecuteNonQuery();
+        });
+
+        var research = LaunchOf(db, CouncilRoles.Research);
+        var version = Measured(gw, a, CouncilRoles.Research, research);
+        var computation = Assert.Single(gw.Campaigns.Trials(x.Id)).RunId;
+
+        var b = gw.Datasets.ById(gw.Datasets.Record(a with { Id = 0, Version = "v2", HoldoutFrom = null }))!;
+        var (pressed, y) = gw.SetHoldout(b.Id, Bar0.AddMinutes(HoldoutAtBar), EvaluationClass.Research);
+        Assert.True(pressed.Ok, pressed.Why);
+
+        var team = LaunchOf(db, TeamHead);
+        Measured(gw, b, TeamHead, team, ProgramText.Replace("close < 97", "close < 96", StringComparison.Ordinal));
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(y!.Id));
+
+        var refused = Assert.Throws<GatewayDeniedException>(() => Measured(gw, a, TeamHead, team));
+        foreach (var words in new[] { Team, "0.1", $"campaign {y.Id}'s" })
+            Assert.Contains(words, refused.Message, StringComparison.Ordinal);
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(y.Id));
+        Assert.False(gw.Campaigns.Registered(y.Id, version, computation));
+    }
+
+    /// <summary>
     /// FIX PASS (the Codex review's P1 on <c>ChargeVerdict</c>): A UNIT'S VERDICTS ARE COUNTED AS THE CAMPAIGN COUNTS ITS OWN — every
     /// judgement over the same held-back months, any campaign's — so switching campaigns never replenishes a delegated count. Two
     /// campaigns over the same months, 4 judgements each, the team a quarter: one judgement under A, and the second under B is refused.
