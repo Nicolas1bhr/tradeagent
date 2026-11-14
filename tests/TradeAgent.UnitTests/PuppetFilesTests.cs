@@ -87,4 +87,48 @@ public class PuppetFilesTests(ITestOutputHelper output)
             output, LogLines);
         Assert.True(torn.Count == 0, $"a reader met a torn log {torn.Count} time(s); first: {torn.FirstOrDefault()}");
     }
+
+    /// <summary>
+    /// THE LOG IS ADDED TO IN PLACE, NEVER RENAMED OVER (<c>U-ci-precheck</c> item 3). A reader that opened the log before a step's line was added
+    /// reads that line through the handle it already holds: the file it opened is the file that grew. A rewrite renamed over the log left that
+    /// handle on the old file, unlinked, without the line, on every platform; and on Windows the rename is what refused a reader whose open landed
+    /// while the old file was being deleted (the counter's red, which <see cref="PuppetFiles.Bump"/> closed the same way).
+    /// </summary>
+    [Fact]
+    public void A_steps_line_reaches_a_reader_that_opened_the_log_before_it()
+    {
+        var log = Path.Combine(Folder(), "chair.1.log");
+        PuppetFiles.AppendLine(log, """{"step":"prompt"}""");
+        using var held = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        PuppetFiles.AppendLine(log, """{"step":"write"}""");
+
+        using var reader = new StreamReader(held);
+        Assert.Equal("{\"step\":\"prompt\"}\n{\"step\":\"write\"}\n", reader.ReadToEnd());
+    }
+
+    /// <summary>
+    /// NO STEP'S LINE CROSSES A PAGE (<see cref="PuppetFiles.Page"/>): a line that would is moved to the next page by newlines, so a reader on Linux,
+    /// where an appended write becomes visible a page at a time, sees each line whole or not at all; and the readers, which drop empty lines, read
+    /// every line and nothing else.
+    /// </summary>
+    [Fact]
+    public void No_steps_line_crosses_a_page_and_the_readers_see_every_line()
+    {
+        var log = Path.Combine(Folder(), "chair.1.log");
+        var lines = Enumerable.Range(1, 40).Select(n => new JsonObject { ["step"] = "write", ["n"] = n, ["pad"] = new string('x', 100 + n * 37 % 900) }.ToJsonString()).ToList();
+        foreach (var line in lines) PuppetFiles.AppendLine(log, line);
+
+        var bytes = File.ReadAllBytes(log);
+        var start = 0;
+        var crossed = new List<string>();
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            if (bytes[i] != (byte)'\n') continue;
+            if (i > start && start / PuppetFiles.Page != i / PuppetFiles.Page) crossed.Add($"bytes {start}..{i}");
+            start = i + 1;
+        }
+        Assert.True(crossed.Count == 0, "a step's line crosses a page: " + string.Join(", ", crossed));
+        Assert.Equal(lines, PuppetFiles.ReadAllText(log).Split('\n').Where(l => l.Length > 0));
+    }
 }
