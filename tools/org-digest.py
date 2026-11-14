@@ -837,6 +837,23 @@ class Digest:
                 why[pos] = {"at": r["started_at"], "ended": ctx.get(W.CTX_ENDED), "words": short(ctx.get(W.CTX_REFUSED) or "")}
             elif r["state"] == W.ATTEMPT_ENDED and r["exit_code"] == 0:
                 why.pop(pos, None)
+        # A CAUSE TOLD BEFORE THE WINDOW (R31 D12 § 1): the loop tells a cause once, so a hold told before --since is never told again while it holds.
+        # The newest line before the window stands for a position with none since, unless a clean turn of its own came after it; marked as told then.
+        before = {}
+        for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at < ? ORDER BY id",
+                                  (W.LOG_MISSION, W.LOG_TURN_REFUSED, self.since_s)):
+            line = turn_context(r["metadata"]).get(W.LOG_WHY)
+            if isinstance(line, str) and ": " in line:
+                title, words = line.split(": ", 1)
+                before[titles.get(title, title)] = {"at": r["at"], "ended": None, "words": short(words), "before_window": True}
+        before = {p: w for p, w in before.items() if p not in why}
+        if before:
+            oldest = min(w["at"] for w in before.values())
+            for r in self.app.execute("SELECT role, started_at FROM ai_attempt WHERE started_at > ? AND state = ? AND exit_code = 0", (oldest, W.ATTEMPT_ENDED)):
+                w = before.get(position_of(r["role"]))
+                if w is not None and r["started_at"] > w["at"]:
+                    before.pop(position_of(r["role"]))
+            why.update(before)
         return why
 
     # -- 9b. THE TURNS THE LOOP DID NOT START (U-digest-polish-2): every `turn_refused` line since T0, by position and by the shape of its words.
@@ -1598,6 +1615,8 @@ def why_line(wake):
     why = wake.get("why")
     if not why:
         return f"{wake['position']}: no reason on record"
+    if why.get("before_window"):
+        return f"{wake['position']} told at {stamp(why['at'])}, before the window: " + short(why["words"], 90)
     return f"{wake['position']} at {stamp(why['at'])}: " + (f"{why['ended']} " if why["ended"] else "") + short(why["words"], 90)
 
 

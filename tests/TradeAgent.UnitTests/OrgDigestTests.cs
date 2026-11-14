@@ -1498,6 +1498,48 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("vendor limits 4\n", human, StringComparison.Ordinal);    // the pace line keeps its rows
     }
 
+    /// <summary>
+    /// A HELD WAKE'S CAUSE TOLD BEFORE THE WINDOW (U-digest-watch-3 item 4; R31 D12 § 1). The loop tells a cause once, so a hold whose line was written
+    /// before --since is never told again while it holds, and the overdue line read "no reason on record". The newest cause before the window now stands
+    /// for a position with none since, marked as told then; a clean turn of the position's own after it means it explains nothing now.
+    ///
+    /// <para>RED at base: "operations: no reason on record", the run's own baseline (the legacy pair's hold was told 44 s before T0).</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void A_held_wakes_cause_told_before_the_window_is_carried_and_marked()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var wakes = new MissionEventStore(db);
+            Assert.True(wakes.RaiseDue("h1", MissionEventKind.Self, At("2026-10-30T11:00:00Z"), At("2026-10-30T12:30:00Z")));
+            Assert.True(wakes.RaiseDue("h2", MissionEventKind.Self, At("2026-10-30T11:00:00Z"), At("2026-10-30T12:30:00Z"), role: CouncilRoles.Research));
+            string Refused(string at, string role, string words) =>
+                $"('{at}', 'Mission', 'turn_refused', 'info', '{TradeAgent.Core.Json.Write(new { why = $"{CouncilRoles.Title(role)}: {words}" }).Replace("'", "''")}')";
+            db.Exec("INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES "
+                    + string.Join(", ", Refused("2026-10-30T11:00:00.0000000Z", CouncilRoles.Operations, "an older cause"),
+                        Refused("2026-10-30T11:59:16.0000000Z", CouncilRoles.Operations, "'operations' runs unconfined, and 'pos-x' is active beyond the legacy pair"),
+                        Refused("2026-10-30T11:59:17.0000000Z", CouncilRoles.Research, "'research' runs unconfined, and 'pos-x' is active beyond the legacy pair")) + ";");
+            // research turned cleanly after its line (before T0): its old cause explains nothing now.
+            Attempt(new AiAttemptStore(db), "r1", CouncilRoles.Research, "2026-10-30T11:59:30Z", BillingClasses.Plan, "gpt-6-luna", 1m, 0.1m, 0);
+        }
+        var (json, human) = Both(f);
+        var overdue = Attention(json);
+        Assert.Contains("overdue wake(s): operations, research (2 positions); operations told at 10-30 11:59, before the window: 'operations' runs unconfined", overdue, StringComparison.Ordinal);
+        Assert.Contains("research: no reason on record", overdue, StringComparison.Ordinal);
+        Assert.DoesNotContain("an older cause", overdue, StringComparison.Ordinal);
+        Assert.Contains("  operations told at 10-30 11:59, before the window:", human, StringComparison.Ordinal);
+        var ops = json.GetProperty("wakes").GetProperty("active_positions").EnumerateArray().Single(w => w.GetProperty("position").GetString() == CouncilRoles.Operations);
+        Assert.True(ops.GetProperty("why").GetProperty("before_window").GetBoolean());
+        // A CAUSE TOLD SINCE T0 IS NOT MARKED: the same line inside the window reads as it always did.
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+            db.Exec($"INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES('2026-10-31T09:00:00.0000000Z', 'Mission', 'turn_refused', 'info', "
+                    + $"'{TradeAgent.Core.Json.Write(new { why = $"{CouncilRoles.Title(CouncilRoles.Operations)}: a cause since T0" })}');");
+        var since = Attention(Both(f).Json);
+        Assert.Contains("operations at 10-31 09:00: a cause since T0", since, StringComparison.Ordinal);
+        Assert.DoesNotContain("before the window", since, StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
