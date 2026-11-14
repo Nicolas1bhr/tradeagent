@@ -516,8 +516,8 @@ public static class Versions
     ///
     /// <para><b>59 — a tool call's duration</b> (<c>U-door-bounds</c>, rung <see cref="ToolCallDurationRung"/>, after <c>U-board-alive</c>'s 58): the column
     /// <c>tool_call.duration_ms</c>, the app's own wall time from the call's arrival to its answer, written in each row's insert by the
-    /// harness's surface and the door's verbs. NULL on every row before the rung, never backfilled; no row moves. A home that climbed it cannot
-    /// be opened by a build of 58 or below without the install's backup.</para>
+    /// harness's surface and the door's verbs, and the index <c>ix_tool_call_at</c> the Work page reads the day by. NULL on every row before
+    /// the rung, never backfilled; no row moves. A home that climbed it cannot be opened by a build of 58 or below without the install's backup.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = ToolCallDurationRung;
 
