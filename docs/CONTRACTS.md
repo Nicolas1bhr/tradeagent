@@ -4106,7 +4106,17 @@ concurrent callers can exceed by one is not the campaign-wide limit `docs/COUNCI
 refusal there **rolls the run back and its figures are never served**: the compute is spent either way,
 and the alternative is a run over the held-back data standing in the ledger charged to nobody. A trial
 already registered answers Ok even over a full budget — the same question asked again is the row that is
-already there, and refusing it would make a restart look like an overrun.
+already there, and refusing it would make a restart look like an overrun. **The look reads the lineage the gate will read**
+(`U-evidence-counts` item 1; A2-2): the version is recorded only inside the run's write, so `TrialRefusal` takes the request's
+declared parent and `IsExploration` / `ChargedCampaignFor` read a version not yet recorded through it — a recorded version's
+stored parent always stands. Before, a new child read parentless at the look: a child of a promoted parent was refused as
+exploration spent though the gate would charge refinement, and a new child of a spent home ran in full to be refused at the gate.
+**Charged trials count TradeAgent's backtests only**: a position that exported research months (`data-export`) may have searched
+more than its charged trials, and the report says so (research evidence, below). **A reused computation is the caller's
+charge** (`U-evidence-counts` item 3): the trial stays keyed by the computation, and a unit's trial share is read off the
+CALLER's own row of it (`RegisterTrial`'s `launch`, `Backtests.Record`'s own row), never the first recorder's; a unit's use
+counts every charged trial of a computation a row of its launches held when the trial was registered — the computation's own
+row or a reuse row recorded by then — so it only adds to a use.
 
 **THE TRIAL CHARGE: research over a campaign's months is charged to it through any dataset of its pair**
 (`U-holdout-campaign`, rule 1; seat A's decision of 2026-10-09; narrowed to the pair by `U-evidence-breadth`, the
@@ -4286,6 +4296,15 @@ written by `Record` from this build's `Referee.EvaluatorVersion` and never a cal
 evaluator is measured and sealed under its own; every reader — `Of`, `Withheld`'s row, `SealedOf`, the remembered flag, the
 queue's rank, the α-wealth history and the report's line — reads this build's evaluator's rows only, another's or one from
 before the rung (rebuilt with every row kept, NULL = unknown) read as absent. Not here: E2's ±20% neighbours (`U-referee-neighbours`) and enforcing any gate.
+**M is a lower bound once a position exports** (`U-evidence-counts` item 2; A2-3). M counts the lineage's charged trials, which are
+TradeAgent's own backtests only: `data-export` writes research months into a position's own folder, and variants its code searches
+there are charged nothing and counted nowhere. So every report line that shows M says "M counts charged trials, which are
+TradeAgent's own backtests only: a position that exported research months may have searched more"
+(`ResearchEvidence.ChargedOnly`), and a verdict whose version's author had been served an export of the verdict's pair's research
+months before it first submitted the version (`ResearchEvidence.AuthorExported`: a served `data-export` row in `tool_call` by the
+version's own `role`, of that pair, at or before the version's row) says so beside its figures. The paper queue's rank is that DSR
+and is shown nowhere else. Words only: counting an export as a look would move M and every rank, and is not done here
+(`U-export-looks`, after the run).
 
 **One INCONCLUSIVE path into paper** (`U-referee-v2b`, EDGE § 4.5). A refusal is inconclusive when it says nothing about the
 version's edge (`Strategy.Inconclusive.Of`, a closed vocabulary): a standing `refused` — never invalidated — whose reason is

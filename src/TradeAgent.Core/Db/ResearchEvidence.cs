@@ -135,6 +135,36 @@ public sealed class ResearchEvidence(Database db)
     /// </summary>
     public const string OtherSemantics = "measured under other evaluation semantics";
 
+    /// <summary>
+    /// WHAT M COUNTS, IN THE WORDS EVERY SURFACE OF IT SAYS (<c>U-evidence-counts</c> item 2; A2-3). M is the lineage's CHARGED trials, and a
+    /// trial is a backtest TradeAgent ran: <c>data-export</c> writes research months into a position's own folder, and a variant searched
+    /// there by its own code is charged nothing and counted nowhere. So M, and the DSR deflated by it, are a lower bound on the search
+    /// once a position has exported. Words only: counting an export as a look would move M, and is not done here.
+    /// </summary>
+    public const string ChargedOnly =
+        "M counts charged trials, which are TradeAgent's own backtests only: a position that exported research months may have searched more";
+
+    /// <summary>
+    /// WHETHER THE POSITION THAT WROTE <paramref name="versionId"/> HAD BEEN SERVED AN EXPORT OF <paramref name="pair"/>'S RESEARCH MONTHS BY
+    /// THE TIME IT FIRST SUBMITTED THE VERSION (<c>U-evidence-counts</c> item 2): a served <c>data-export</c> in the observed-deliveries
+    /// ledger (<c>tool_call</c>), by the version's own author (<c>strategy_version.role</c>, the position every export is recorded under),
+    /// of a dataset of that pair (the pair as the app wrote it into the call's argument), at or before the version's row. An export made
+    /// after the version was submitted cannot have shaped it, and another position's, or another pair's, is not this author's search. A
+    /// read; nothing here reaches M.
+    /// </summary>
+    public bool AuthorExported(string versionId, string pair) => db.Read(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(versionId);
+        ArgumentNullException.ThrowIfNull(pair);
+        using var c = db.Cmd("""
+            SELECT 1 FROM strategy_version v JOIN tool_call t ON t.role = v.role
+             WHERE v.id = $v AND t.tool = $tool AND t.served = 1 AND t.at <= v.created_at
+               AND t.argument LIKE 'dataset % ' || $pair || ' %'
+             LIMIT 1
+            """, ("$v", versionId), ("$tool", Ops.DataExport), ("$pair", pair));
+        return c.ExecuteScalar() is not null;
+    });
+
     readonly StrategyStore _strategies = new(db);
     readonly DatasetStore _datasets = new(db);
 
