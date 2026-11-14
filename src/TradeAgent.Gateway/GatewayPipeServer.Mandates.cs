@@ -70,8 +70,29 @@ public sealed partial class GatewayPipeServer
         var row = Gateway.Org.Assign(new MandateIssue(
             decider, ctx.AttemptId, Require(req, "holder"), Require(req, "kind"), Require(req, "goal"), req.Str("scope"),
             req.Str("shape"), NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow,
-            ForecastClaims(req, "forecasts"));
+            ForecastClaims(req, "forecasts"), HeldNow);
         return MandateReply(row);
+    }
+
+    /// <summary>
+    /// WHY <paramref name="holder"/> CANNOT TAKE A TURN ON THIS COMPUTER NOW, or null (<c>U-wake-leftovers</c> item 2, R31 A1-2): the activation
+    /// gate's one rule (<see cref="PositionActivation.Decide"/>) over the facts the host reads for every launch (<see cref="TradingGateway.SeatFactsOf"/>),
+    /// on the holder's declared seat — the gate the loop asks before it serves the holder's mandate wake. <c>research</c> and <c>operations</c> run
+    /// unconfined and are held for as long as a position beyond them is active, so a mandate to either would be written and never served.
+    /// <para><b>A turn open outside a sealed workspace is left out</b> (<see cref="SeatFacts.OpenUnconfined"/>): it holds a launch only until it
+    /// ends — the deciding turn itself may be one — so it says nothing about whether the holder can take its mandate.</para>
+    /// <para><b>Facts nobody could read ask nothing</b>: this refusal only spares a mandate that could not be served, never stands in for the gate,
+    /// which still refuses at the launch, so a read that failed leaves the assignment as it was.</para>
+    /// </summary>
+    string? HeldNow(string holder)
+    {
+        try
+        {
+            return Gateway.SeatFactsOf?.Invoke(holder) is { Standing: { } standing } facts && standing.Id == holder
+                ? PositionActivation.Decide(holder, standing, facts with { OpenUnconfined = [] })?.Words
+                : null;
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>CANCELS AN OPEN MANDATE THE CALLER DECIDES, with a reason (<see cref="OrgStore.Cancel"/>).</summary>
@@ -101,7 +122,7 @@ public sealed partial class GatewayPipeServer
                 "'allocation' is required: the most AI spend, over the successor's whole life, its holder's launches may commit. Nothing was written.");
         var (_, successor) = Gateway.Org.Rescope(Require(req, "mandate"), decider, ctx.AttemptId, Require(req, "why"),
             new MandateTerms(Require(req, "kind"), Require(req, "goal"), req.Str("scope"), req.Str("shape"),
-                NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow);
+                NamedFlag(req, "exact", whenAbsent: false), Due(req), allocation, retries), DateTimeOffset.UtcNow, HeldNow);
         // THE RE-SCOPE IS THE FENCE on the old mandate's running launch (U-org-verbs-b), committed above.
         Gateway.Fenced();
         return MandateReply(successor);
