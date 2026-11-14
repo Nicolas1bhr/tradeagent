@@ -1706,6 +1706,54 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.DoesNotContain("not recorded anywhere", json.GetProperty("signal").GetProperty("cannot_be_read").GetString()!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// THE WATCH'S LINES, AS THE RUNNING WATCH READS THEM (U-digest-watch-3): the digest of this file's fixture as the script at aa126ada wrote it is
+    /// recorded beside this test, and every line of it still stands, in order, as a line of today's digest or the start of one, and every JSON value it
+    /// held still stands at its path. Only the changes the unit names openly differ. The watch reads the digest every three hours from main: a line it
+    /// reads must not move, and this is the record that says it did not. A wall-clock instant the fixture's stores stamp, and the tape's size in bytes,
+    /// are masked on both sides.
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void Every_line_and_value_of_the_recorded_digest_still_stands()
+    {
+        var f = Build();
+        var disk = Path.Combine(f.Root, "disk.json");
+        File.WriteAllText(disk, "[42949672960, 107374182400, 5000000, 6553600]");
+        var (json, human) = Both(f, "--disk-file", disk);
+        var recorded = Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "OrgDigestRecorded");
+        static string Mask(string s) => System.Text.RegularExpressions.Regex.Replace(
+            System.Text.RegularExpressions.Regex.Replace(s, @"\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?", m => m.Value.StartsWith("2026-10-", StringComparison.Ordinal) ? m.Value : "<wall clock>"),
+            @"\b\d+ KiB\b", "<n> KiB");
+
+        // THE CHANGES NAMED OPENLY, each in the landing entry: the verdicts line's waiting (item 5).
+        var declared = new (string Old, string New)[] { ("waiting 1, given", "waiting 1 since T0 (1 ever), given") };
+        var now = Mask(human).TrimEnd('\n').Split('\n');
+        var at = 0;
+        foreach (var raw in File.ReadAllText(Path.Combine(recorded, "aa126ada.txt")).TrimEnd('\n').Split('\n'))
+        {
+            var line = declared.Aggregate(raw, (l, d) => l.Replace(d.Old, d.New, StringComparison.Ordinal));
+            var found = Array.FindIndex(now, at, l => l.StartsWith(line, StringComparison.Ordinal));
+            Assert.True(found >= 0, $"the recorded line no longer stands (in order) in today's digest:\n{raw}\n--- today:\n{string.Join("\n", now)}");
+            at = found + 1;
+        }
+
+        // EVERY RECORDED VALUE AT ITS PATH. The changes named openly: the signal's statement of what cannot be read (D13-5: half stale).
+        static IEnumerable<(string Path, string Value)> Leaves(JsonElement e, string path) => e.ValueKind switch
+        {
+            JsonValueKind.Object => e.EnumerateObject().SelectMany(p => Leaves(p.Value, path.Length == 0 ? p.Name : path + "." + p.Name)),
+            JsonValueKind.Array => e.GetArrayLength() == 0 ? [(path, "[]")] : e.EnumerateArray().SelectMany((v, i) => Leaves(v, $"{path}[{i}]")),
+            _ => [(path, Mask(e.ToString()))],
+        };
+        var today = Leaves(json, "").Where(l => l.Path != "tape_health.bytes").ToDictionary(l => l.Path, l => l.Value);
+        var changed = new[] { "signal.cannot_be_read" };
+        using var was = JsonDocument.Parse(File.ReadAllText(Path.Combine(recorded, "aa126ada.json")));
+        foreach (var (path, value) in Leaves(was.RootElement, "").Where(l => l.Path != "tape_health.bytes" && !changed.Contains(l.Path)))
+        {
+            Assert.True(today.ContainsKey(path), $"the recorded JSON value at {path} is gone");
+            Assert.True(today[path] == value, $"the recorded JSON value at {path} was '{value}' and is '{today[path]}'");
+        }
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------

@@ -1568,7 +1568,7 @@ def read_disk(state, disk_file):
             v = os.statvfs(state)
             free, total = v.f_bavail * v.f_frsize, v.f_blocks * v.f_frsize
             ifree, itotal = v.f_favail, v.f_files
-    except (OSError, ValueError, TypeError) as ex:
+    except (OSError, ValueError, TypeError, AttributeError) as ex:     # AttributeError: a platform with no statvfs says so, never a zero
         return {"unreadable": str(ex)}
     floor = max(DISK_FLOOR_LEAST, min(total // DISK_FLOOR_SHARE, DISK_FLOOR_MOST))
     out = {"free": free, "total": total, "floor": floor, "below_floor": free < floor,
@@ -1776,7 +1776,7 @@ def render(d, cap):
         shown = [a for a in s["arrows"] if a["count"] or a["refused"]]
         add_list(shown, cap["arrows"], lambda a: f"  {a['arrow']:<16} x{a['count']:<4} first {stamp(a['first_at'])}" + (
             f"  refused x{a['refused']}, first {stamp(a['first_refused_at'])}: {short(a['first_refusal'], 80)}" if a["refused"] else ""))
-        if s.get("not_reached_called") or s.get("not_reached_never_called"):
+        if cap["extras"] and (s.get("not_reached_called") or s.get("not_reached_never_called")):
             # THE ARROWS NOT REACHED THAT HAVE AN OP OF THEIR OWN, by whether it was called (D13 R1: BROKEN or NOT-TRIED); the others have none.
             c, n = s.get("not_reached_called") or [], s.get("not_reached_never_called") or []
             L.append("  not reached, by their own op since T0: " + ("called " + ", ".join(
@@ -1786,7 +1786,7 @@ def render(d, cap):
             f = s["first_refusal"]
             L.append(f"  first refusal of the run {stamp(f['at'])} {f['what']}: {short(f['words'], 90)}")
         g = s.get("door_gaps") or {}
-        if g.get("count"):
+        if cap["extras"] and g.get("count"):
             # A NOTE, NEVER ATTENTION, and only where one was seen.
             L.append(f"  NOTE door calls followed by {g['gap_s']} s or more before the same launch's next call: {g['count']}; longest "
                      + ", ".join(f"{x['op']} {age(x['gap_s'])} at {stamp(x['at'])}" for x in g["longest"][:2]) + " (near the vendor's tool timeout?)")
@@ -1836,10 +1836,11 @@ def render(d, cap):
             f = s["first_vendor_limit"]
             L.append(f"  first vendor limit {stamp(f['at'])} {f['position']}: {short(f['words'], 90)}")
         ce, vw = s.get("credit_equivalents") or {}, s.get("vendor_limit_windows") or {}
-        L.append("  credit-equivalents if luna at Standard speed (list-price x 25, plan and unknown launches): "
-                 + ("; ".join(f"{p['pool']} last 5 h {p['last_5h']}, last 7 d {p['last_7d']}" for p in ce.get("pools", [])) or "none in the last 7 d")
-                 + f"; vendor limits as windows: {vw.get('windows', 0)} (5-h {vw.get('five_hour', 0)}, weekly {vw.get('weekly', 0)}) from {vw.get('rows', 0)} row(s)"
-                 + (f", {vw['rows_no_reset']} naming no reset" if vw.get("rows_no_reset") else ""))
+        if cap["extras"]:
+            L.append("  credit-equivalents if luna at Standard speed (list-price x 25, plan and unknown launches): "
+                     + ("; ".join(f"{p['pool']} last 5 h {p['last_5h']}, last 7 d {p['last_7d']}" for p in ce.get("pools", [])) or "none in the last 7 d")
+                     + f"; vendor limits as windows: {vw.get('windows', 0)} (5-h {vw.get('five_hour', 0)}, weekly {vw.get('weekly', 0)}) from {vw.get('rows', 0)} row(s)"
+                     + (f", {vw['rows_no_reset']} naming no reset" if vw.get("rows_no_reset") else ""))
 
     s = d["signal"]
     if not unread("signal", s):
@@ -1912,7 +1913,7 @@ def render(d, cap):
         if s["causes"]:
             c = s["causes"][0]
             L.append(f"  most often x{c['count']} ({','.join(c['positions'])}): {short(c['shape'], 100)}")
-        if s.get("lane_by_class"):
+        if cap["extras"] and s.get("lane_by_class"):
             L.append("  at the lane, by what refused them: " + ", ".join(f"{k} {v}" for k, v in sorted(s["lane_by_class"].items(), key=lambda kv: (-kv[1], kv[0]))))
 
     s = d["cell_proof"]
@@ -1944,10 +1945,12 @@ def render(d, cap):
 
 
 # THE LINE CAPS, widest first: the human digest takes the first that fits MAX_LINES. The ATTENTION flags are never capped (render).
-CAPS = [dict(positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, holds=4, wakes=6, blocked=2),
-        dict(positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, holds=2, wakes=3, blocked=1),
-        dict(positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, holds=1, wakes=2, blocked=1),
-        dict(positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, holds=0, wakes=1, blocked=1)]
+# `extras`: the sub-lines U-digest-watch-3 added (an arrow's op called or not, a door call's gap, the credit-equivalents, the lane's causes) give way
+# at the tightest cap, so a crowded home's digest keeps every line it had before them, the cell proof and the tape included; --json holds them all.
+CAPS = [dict(positions=5, turns=7, events=4, arrows=17, deployments=4, refusals=5, errors=4, forecasts=4, campaigns=6, holds=4, wakes=6, blocked=2, extras=1),
+        dict(positions=3, turns=4, events=3, arrows=12, deployments=3, refusals=3, errors=3, forecasts=3, campaigns=4, holds=2, wakes=3, blocked=1, extras=1),
+        dict(positions=2, turns=2, events=2, arrows=8, deployments=1, refusals=2, errors=2, forecasts=2, campaigns=3, holds=1, wakes=2, blocked=1, extras=1),
+        dict(positions=1, turns=1, events=1, arrows=4, deployments=0, refusals=1, errors=1, forecasts=1, campaigns=2, holds=0, wakes=1, blocked=1, extras=0)]
 
 
 def human(d):

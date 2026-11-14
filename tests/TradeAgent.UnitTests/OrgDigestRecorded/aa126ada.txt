@@ -1,0 +1,57 @@
+ORG DIGEST (read-only)  now 2026-10-31T14:00:00Z  since T0 2026-10-30T12:00:00Z  app-db present schema 57  tape-db present  AI on its own ?
+ATTENTION
+  ! 1 deployment(s) in mode 'LIVE_CONFIRM' (suspended): NOT paper
+  ! wakes: 1 on failed turns, 1 on lost turns, 1 raised again
+  ! 1 AI launch(es) LOST since T0
+  ! 3 of 8 AI launches failed or reported a vendor error since T0
+  ! overdue wake(s): pos-aaaaaa (1 position); pos-aaaaaa: no reason on record
+  ! tape: beta last delivered 4h ago
+  ! tape: 1 parse failure(s) since T0
+disk: 40.0 GiB free of 100.0 GiB  guard floor 10.0 GiB; inodes 5,000,000 free of 6,553,600 (76.3%), floor 655,360
+positions: 5  active/(owner's setting) x2
+  models run since T0: gpt-5.6-sol 8
+turns/cost (list-price equiv., not a bill)  today 7 / 5.7000   since T0 8 / 8.7000
+  operations     today   3 / 2.3000    since   4 / 5.3000  3.69/day, 1.3250/turn, idle 0/2, wait 30m/60m
+  (+2 more)
+org events since T0: 11
+  seeded                5  last <wall clock>  by app
+  (+4 more)
+  mandate events: delivered 1, issued 1, rejected 1
+arrows reached since T0: 16 of 17; not yet: accepted
+  charter          x1    first 10-30 13:03  refused x1, first 10-30 12:30: two structural changes this week
+  hire             x2    first 10-30 13:00  refused x2, first 10-31 09:40: refused at the pipe: INVALID_REQUEST
+  self-activation  x1    first 10-30 13:02
+  mandate          x1    first 10-31 09:05
+  (+12 more)
+  first refusal of the run 10-30 12:30 org_charter: two structural changes this week
+verdicts: asked 3 since T0, waiting 1, given 2 [paper-eligible:meets-the-paper-policy-on-historical-evidence 1, refused:no-trade-on-the-holdout 1]; inconclusive: referee 1, no-trade refusals 1
+deployments (SIMULATION, paper fills; not money): LIVE_CONFIRM/suspended 1, PAPER/active 1, PAPER/ended 1; allocations 1 open of 2 (1 new)
+  (+2 more)
+  envelopes (runs open/allowed): BTCUSDT 2/3, ETHUSDT 0/3
+  paper notes since T0: 1; last 10-31 09:00: Forward paper run dep-1: 3 simulated fills.
+refusals since T0: 10 in 7 group(s)
+     3x [tool] place_order: no order verb is offered to this seat
+  (+6 more)
+AI launches since T0: 8, failed/vendor-error 3; exit codes 0x4, 1x2
+    2x ENDED exit 1 pos-aaaaaa: ERROR 429: the model refused this request [offered 2 tools]
+  (+1 more)
+app errors logged since T0: 0  (none)
+pace over 1.08 days: 7.38 turns/day, 1.0875/turn, idle 1 of 4 clean turns (25.0%), wake wait median 6m max 60m, vendor limits 2
+  first vendor limit 10-31 10:00 pos-aaaaaa: ERROR 429: the model refused this request
+forecasts: 1 manager(s) wrote or resolved since T0
+  pos-aaaaaa     written 3 (2.77/day), resolved 1 (0.92/day), total 2, days to 50: 52.0
+campaigns: 3 open or closed since T0; forward holds: none armed; holdout refusals since T0: 0 (fresh window 0, dataset window 0, fresh unknown (words cut) 0, pipe frames 0); no hold armed
+  BTCUSDT #1: trials 4/200, exploration 1/50, verdicts 5/3; SPENT its final judgements
+  ETHUSDT #2: trials 1/200, exploration 0/50, verdicts 1/3
+  (+1 more)
+admissible candidates: 1 since T0, 1 ever; ledger since T0: decision 1, finding 1, kill 1
+AI day-total: used plan 4.9500 + unknown 0.0000 (key 0.7500) vs board plan day-total 40.0000 (12.4%, policy v1 PAPER)
+  board seats spent 0.4000 of their 4.0000 ceiling (share 0.10)
+next wake per active position:
+  pos-aaaaaa     self in -60m (1 pending)  last woken 2026-10-31T10:00:00  pos-aaaaaa: no reason on record
+  (+2 more)
+  wakes taken since T0: answered 1, failed 2, released 1, superseded 1; on failed turns 1, on lost turns 1, raised again 1
+  blocked x1 (pos-bbbbbb): the seat is out of its envelope
+turns not started since T0: 0 (0 at the lane: the loop retries them; 0 by a gate)
+cell proof: CURRENT; 1 unrevoked (1 revoked), newest codex <wall clock>, gap rows 1
+tape: 3 sources, <n> KiB; newest delivery 10m (alpha), stalest 4h00m (beta); since T0 5 fetches, 1 non-200, 1 parse-failed
