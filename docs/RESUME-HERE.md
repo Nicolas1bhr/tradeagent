@@ -95,6 +95,9 @@ heartbeat first; in a meeting, arm nothing), then the newest checkpoint right be
 and `fleet/handoff/ORCHESTRATOR.md` for the state; speed mode: `docs/FLEET.md` § "Speed mode" and `fleet/SPEED-MODE.md`. The order of work is `docs/ORGANISATION.md` § 15's current order — the only copy (R22): every dated block
 below is a record, and its NEXT yields to § 15 wherever they differ.**
 
+*(The tests box, since 2026-11-13:)* the lent tests box is no longer used: nothing of ours runs on it or touches it, and Windows suites run on the ATAS box
+(`CLAUDE.md` § "Building and verifying"). The history blocks below that describe it as a live machine, 2026-10-21 and earlier, are kept as written.
+
 *(History from here:)* **2026-10-23 09:5x — RESUMED ON THE OWNER'S WORD; the security board (R24) is the direction — resume from `fleet/handoff/ORCHESTRATOR.md`'s RESUMED
 block, then the seats' handoffs.** The owner, 2026-10-23 ~00:0x, verbatim: "okay let's resume with our same momentum i'd like you to continue what was going on
 and update everything that should be after the world wode php exploit. i noticed that the app is a not only a bad reflection of the current software but also
@@ -446,8 +449,8 @@ paused.** What this session added: the owner's organisation direction and answer
    scored forecasts; budget by judgement until measurement can; two lanes) and the factory it works (tape, perception, features, language, evidence, selection,
    capital; Belgium in § 4.8). Then `docs/PRINCIPLES.md` (amended twice on 2026-10-02), `CLAUDE.md`, `docs/HOW-WE-BUILD.md`, `manager-prompt.md` §§ 1, 6, 7,
    and the nineteen briefs in `docs/queue/`. Research: `docs/research/2026-10-02/` (its README indexes R01–R18). The owner's factory plan (cited
-   throughout, outside the repo, read-only): `/Users/nicolasbeeckman/Library/Mobile Documents/com~apple~CloudDocs/Personal Workspace/TradeAgent Consulting/
-   TRADEAGENT_AUTONOMOUS_FACTORY_PLAN_2026-09-27.md`; his Jev paper sits beside it.
+   throughout, outside the repo, read-only, in the owner's private notes):
+   `TRADEAGENT_AUTONOMOUS_FACTORY_PLAN_2026-09-27.md`; his Jev paper sits beside it.
 2. **Two lanes, two heavy builders and a light third — `docs/ORGANISATION.md` § 15's waves table is the only copy.** In short: **W0 first —
    `U-fix-resume-on-start`** (a fresh fixer; `main`'s Windows CI is red on one test in five of six runs, so every landing would read red); W1 `U-key-host-pin` ∥
    `U-cost-model` (27) · light `R-containment` (the Windows spike, factory plan § 9.3), `U-price-rows` (serialise the three builders' gates on this Mac); W2–W4b

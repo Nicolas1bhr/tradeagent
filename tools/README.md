@@ -28,7 +28,7 @@ Prerequisites on the Mac: `sshpass` (only if you use a password rather than a ke
 is pointed at it by name:
 
 ```bash
-TA_WIN_BOX=tests tools/win-state.sh         # reads ~/.tradeagent/win-tests.env instead of win.env
+TA_WIN_BOX=atas tools/win-state.sh          # reads ~/.tradeagent/win-atas.env instead of win.env
 ```
 
 A name with no file behind it is refused (exit 2), never quietly answered by the default machine:
@@ -52,15 +52,16 @@ MagicDNS's short name does not resolve for a shared machine; use its full `*.ts.
 
 ## win-test.sh — the suite on Windows, without holding a connection open
 
-The test box (`TA_WIN_BOX=tests`) exists to answer "is it green on Windows" without waiting 40–50
-minutes for `windows-latest`, and without spending this Mac's swap on a local suite. **When it is
-available, it is used** — the owner's rule (2026-10-05), and every unit's gate since
-(`docs/HOW-WE-BUILD.md`): a Windows claim the box could have settled by running, and nobody ran, is
-NOT VERIFIED.
+`win-test.sh` answers "is it green on Windows" without waiting 40–50 minutes for `windows-latest`. It
+runs on the **ATAS box** (`TA_WIN_BOX=atas`), with ATAS closed, one leg at a time and by the
+orchestrator's grant (`CLAUDE.md` § "Building and verifying"); a Windows claim that box could have
+settled by running, and nobody ran, is NOT VERIFIED. **The lent tests box is not ours to use any
+more:** nothing of ours runs on it or touches it, and the two subsections below are the record of
+how it was once used.
 
 ```bash
-export TA_WIN_BOX=tests
-tools/win-test.sh ready     # 0 can start · 1 does not answer · 4 a run in progress · 5 his own apps open
+export TA_WIN_BOX=atas
+tools/win-test.sh ready     # 0 can start · 1 does not answer · 4 a run in progress · 5 ATAS or a TradeAgent open
 tools/win-test.sh start                          # this checkout as it is, uncommitted edits included
 tools/win-test.sh start --src <worktree>         # a builder's tree
 tools/win-test.sh start --filter "FullyQualifiedName~LossBudget"
@@ -95,7 +96,8 @@ says `DIED`, never "still running".
 
 ### It is somebody's machine, with his own TradeAgent and ATAS on it
 
-The tests box is a lent laptop. **ATAS (installed 2026-06-23) and TradeAgent v0.1.0 (installed
+History: the tests box is no longer used, and nothing of ours runs on it. What follows is how it was
+used while it was. The tests box is a lent laptop. **ATAS (installed 2026-06-23) and TradeAgent v0.1.0 (installed
 2026-09-01, with its own home and database) are its owner's**, and the suite's runs have to leave them
 exactly as they were. What keeps that true, and how a reader can tell:
 
