@@ -109,6 +109,16 @@ def retry_at(sentence, said_at):
     return at + dt.timedelta(minutes=1)
 
 
+def lane_class(words):
+    """Which of the lane's sentences refused a turn: the digest's own short name for each, and 'other' for words it has not heard of."""
+    for word, name in ((W.LANE_ALL_TURNING, "lane count"), (W.LANE_UNCONFINED, "unconfined ceiling"), (W.LANE_POOL, "quota pool"),
+                       (W.LANE_CELL_CLASS, "cell class"), (W.LANE_ROLE_TURNING, "this role already turning"), (W.LANE_MATERIAL_PASS, "material pass"),
+                       (W.LANE_INBOX_QUIET, "inbox check")):
+        if word in words:
+            return name
+    return "other"
+
+
 def files_floor(files):
     """DiskFloor.FilesFor: the files floor of a filesystem of `files` inodes, 0 where it counts none."""
     return 0 if not files or files <= 0 else min(max(files // FILES_FLOOR_SHARE, FILES_FLOOR_LEAST), files // FILES_FLOOR_MOST_SHARE)
@@ -181,6 +191,13 @@ class W:
     # ...and how the lane's own refusal ends (MissionLoop's Lease: a turn already running for the role, a material pass, the lanes full):
     # the loop working as designed, retried at its next look. Every other line is a gate's (a seat stepped aside, a mandate refused).
     LANE_NOT_STARTED = ", so this turn was not started."
+    # ...and WHICH of the lane's sentences refused it (R31 D13 § 3 R3), as MissionLoop's Lease and LanePolicy.Refuses word them
+    LANE_ALL_TURNING = " the AI may use at once is turning"
+    LANE_UNCONFINED = "another position is turning on a seat nothing confines"
+    LANE_POOL, LANE_CELL_CLASS = "its AI account's quota pool (", "its cell class '"
+    LANE_ROLE_TURNING = "a turn is already running for this role"
+    LANE_MATERIAL_PASS = "a material pass is measuring the window a launch would walk into"
+    LANE_INBOX_QUIET = "the AI's running turns to end, so TradeAgent can check your inbox with nothing running beside it"
     # engineering_log.severity of a line the app wrote because something of its own failed (a sweep, a record, a handler)
     SEVERITY_ERROR = "error"
     TITLE_OPERATIONS, TITLE_RESEARCH = "Operations Director", "Research Director"
@@ -876,7 +893,7 @@ class Digest:
                     launched[pos] = at
             if r["open"]:
                 running.add(pos)
-        positions, causes, lane = {}, {}, 0
+        positions, causes, lane, classes = {}, {}, 0, {}
         for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
                                   (W.LOG_MISSION, W.LOG_TURN_REFUSED, self.since_s)):
             line = turn_context(r["metadata"]).get(W.LOG_WHY)
@@ -885,6 +902,9 @@ class Digest:
             pos = titles.get(title, title)
             at_lane = words.endswith(W.LANE_NOT_STARTED)
             lane += at_lane
+            if at_lane:
+                k = lane_class(words)
+                classes[k] = classes.get(k, 0) + 1
             p = positions.setdefault(pos, {"position": pos, "count": 0, "lane": 0, "gate": 0, "gate_since_launch": 0, "last_at": None, "last_words": None,
                                            "last_launch_at": stored(launched[pos]) if pos in launched else None, "running": pos in running})
             p["count"] += 1
@@ -900,7 +920,7 @@ class Digest:
         for c in causes.values():
             c["positions"] = sorted(c["positions"])[:4]
         rows = sorted(positions.values(), key=lambda p: (-p["count"], p["position"]))
-        return {"total": sum(p["count"] for p in rows), "lane": lane, "gate": sum(p["gate"] for p in rows), "positions": rows,
+        return {"total": sum(p["count"] for p in rows), "lane": lane, "lane_by_class": classes, "gate": sum(p["gate"] for p in rows), "positions": rows,
                 "causes": sorted(causes.values(), key=lambda c: (-c["count"], c["shape"])),
                 "stuck": [p["position"] for p in rows if p["gate_since_launch"] >= REPEATED_REFUSAL and not p["running"]]}
 
@@ -1857,6 +1877,8 @@ def render(d, cap):
         if s["causes"]:
             c = s["causes"][0]
             L.append(f"  most often x{c['count']} ({','.join(c['positions'])}): {short(c['shape'], 100)}")
+        if s.get("lane_by_class"):
+            L.append("  at the lane, by what refused them: " + ", ".join(f"{k} {v}" for k, v in sorted(s["lane_by_class"].items(), key=lambda kv: (-kv[1], kv[0]))))
 
     s = d["cell_proof"]
     if not unread("cell proof", s):
