@@ -1662,6 +1662,50 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             human, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// RE-FOUND FINDINGS (U-digest-watch-3; R31 D13-5, § 5 ACT NOW 3; R26 § 4 (3)): what a FRESH session since T0 was SHOWN of the ledger's findings written
+    /// before it started (its packet's inputs), and the fresh sessions that READ the ledger at its door. Both are measurements; whether a session used them
+    /// is a claim, and the JSON says so instead of "not recorded anywhere", which was half stale.
+    ///
+    /// <para>RED at base: nothing counted it, and the digest said it was recorded nowhere.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void What_a_fresh_session_was_shown_or_read_of_the_ledgers_findings_is_counted()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var attempts = new AiAttemptStore(db);
+            string Session(TurnSession s) => TradeAgent.Core.Json.Write(new TurnContext { Session = s.State });
+            foreach (var (id, at, session) in new[] { ("s1", "2026-10-31T10:00:00Z", TurnSession.FreshBecause(SessionWhy.First)), ("s2", "2026-10-31T11:00:00Z", TurnSession.Resumed),
+                                                      ("s3", "2026-10-31T12:00:00Z", TurnSession.FreshBecause(SessionWhy.Turns)) })
+            {
+                Attempt(attempts, id, null, at, BillingClasses.Plan, "gpt-6-luna", 1m, 0.1m, 0);
+                db.Exec($"UPDATE ai_attempt SET context = '{Session(session)}' WHERE id = '{id}';");
+            }
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            db.Exec($"""
+                INSERT INTO ledger_entry(id, kind, author, created_at) VALUES (1, '{LedgerKind.Finding}', 'operations', '2026-10-30T09:00:00.0000000Z'),
+                  (2, '{LedgerKind.Finding}', 'operations', '2026-10-31T12:30:00.0000000Z'), (3, '{LedgerKind.Hypothesis}', 'operations', '2026-10-30T09:00:00.0000000Z');
+                INSERT INTO ai_attempt_input(attempt_id, kind, ref_id) VALUES ('s1', '{PacketInputKind.Ledger}', '1'), ('s1', '{PacketInputKind.Ledger}', '3'),
+                  ('s1', '{PacketInputKind.Ledger}', '2'), ('s2', '{PacketInputKind.Ledger}', '1'), ('s3', '{PacketInputKind.Ledger}', '2');
+                """);
+            db.Exec("PRAGMA foreign_keys=ON;");
+            var tools = new ToolCallStore(db);
+            tools.Record(new ToolCallRow { At = At("2026-10-31T12:01:00Z"), Attempt = "s3", Role = "operations", Tool = BrokerDoor.VerbName(Ops.LedgerList), Served = true });
+            tools.Record(new ToolCallRow { At = At("2026-10-31T11:01:00Z"), Attempt = "s2", Role = "operations", Tool = BrokerDoor.VerbName(Ops.LedgerShow), Served = true });   // resumed: not counted
+        }
+        var (json, human) = Both(f);
+        var rf = json.GetProperty("signal").GetProperty("refound");
+        Assert.Equal(2, rf.GetProperty("fresh_sessions_since").GetInt32());
+        // s1 was shown finding 1 (3 is no finding); finding 2 was written after s1 and s3 started, so neither re-found it; s2 resumed.
+        Assert.Equal(1, rf.GetProperty("sessions_shown_findings").GetInt32());
+        Assert.Equal(1, rf.GetProperty("findings_shown").GetInt32());
+        Assert.Equal(1, rf.GetProperty("sessions_read_ledger").GetInt32());
+        Assert.Contains("; re-found: 1 earlier finding(s) shown to 1 of 2 fresh session(s), the ledger read by 1", human, StringComparison.Ordinal);
+        Assert.DoesNotContain("not recorded anywhere", json.GetProperty("signal").GetProperty("cannot_be_read").GetString()!, StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
@@ -1703,6 +1747,9 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         // THE EVIDENCE'S EYES (U-digest-evidence-eyes): the forward hold's kv keys, what a campaign spent, and the code of a holdout's refusal
         ["KV_FORWARD_HOLDOUT"] = CampaignRenewal.ArmedKey, ["KV_FORWARD_SUCCESSOR"] = CampaignRenewal.SuccessorKey,
         ["SPENT_EXPLORATION"] = CampaignRenewal.ExplorationTrials, ["CODE_HOLDOUT_WITHHELD"] = ErrorCode.HOLDOUT_WITHHELD.ToString(),
+        // RE-FOUND FINDINGS (U-digest-watch-3; R31 D13-5): a finding, a packet's ledger input, a fresh session's mark, the ledger's two read verbs
+        ["LEDGER_FINDING"] = LedgerKind.Finding, ["INPUT_LEDGER"] = PacketInputKind.Ledger, ["SESSION_FRESH"] = TurnSession.FreshBecause(SessionWhy.First).State,
+        ["OP_LEDGER_LIST"] = Ops.LedgerList, ["OP_LEDGER_SHOW"] = Ops.LedgerShow,
         // WHAT A START DECIDED (U-digest-watch-3; U-service-limits): the decision a start that waits after a crash records
         ["START_WAIT_AFTER_A_CRASH"] = AppHost.MissionOnStart.WaitAfterACrash.ToString(),
     };
@@ -1765,7 +1812,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
     ];
 
     /// <summary>The JSON keys the app's own serialisers spell: <c>ai_attempt.context</c> (<see cref="TurnContext"/>) and <c>board_policy.body</c>.</summary>
-    static readonly string[] SerialisedKeys = ["CTX_ENDED", "CTX_REFUSED", "BODY_PLAN_DAY_TOTAL", "BODY_MODE"];
+    static readonly string[] SerialisedKeys = ["CTX_ENDED", "CTX_REFUSED", "CTX_SESSION", "BODY_PLAN_DAY_TOTAL", "BODY_MODE"];
 
     [OnlyOnFact("the script runs on the Linux host; the table it is held to compiles here regardless", "linux", "macos")]
     public void Every_word_the_digest_compares_is_the_one_the_app_writes()
@@ -1801,6 +1848,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         var context = TradeAgent.Core.Json.Write(new TurnContext { Ended = "an-end", Refused = "the words" });
         Assert.Contains($"\"{Word("CTX_ENDED")}\":\"an-end\"", context, StringComparison.Ordinal);
         Assert.Contains($"\"{Word("CTX_REFUSED")}\":\"the words\"", context, StringComparison.Ordinal);
+        Assert.Contains($"\"{Word("CTX_SESSION")}\":\"a-session\"", TradeAgent.Core.Json.Write(new TurnContext { Session = "a-session" }), StringComparison.Ordinal);
         var body = JsonDocument.Parse(BoardPolicyBody.Canonical(BoardFounding.V1)).RootElement;
         Assert.Equal(BoardFounding.V1.PlanDayTotal, body.GetProperty(Word("BODY_PLAN_DAY_TOTAL")).GetDecimal());
         Assert.Equal(BoardFounding.V1.Mode.ToString(), body.GetProperty(Word("BODY_MODE")).GetString());
