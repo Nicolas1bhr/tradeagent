@@ -494,7 +494,7 @@ public class InvariantRegistryTests
     /// quote — says whether it is verbatim and how many braces open a hole; a hole is read as code to its closing brace, any string or
     /// char literal inside it skipped by the same rules.
     /// </summary>
-    static int StringEnd(string t, int i)
+    internal static int StringEnd(string t, int i)
     {
         var start = i;
         var quotes = 0;

@@ -16,7 +16,7 @@ namespace TradeAgent.Tests.Unit;
 /// The compiled checks read every shipped assembly's IL opcode by opcode (<see cref="Il"/>), so a call written in a lambda, a local
 /// function or an async state machine is read where it is written; the source checks read the code with comments blanked.
 /// </summary>
-public class InvariantProofTests
+public partial class InvariantProofTests
 {
     // ---- EVID-001: only the scanner writes `material` -------------------------------------------------------------------------------
 
@@ -87,9 +87,10 @@ public class InvariantProofTests
 
     // ---- ORDER-005: no UI automation on the order side -------------------------------------------------------------------------------
 
-    /// <summary>The bridge, the connectors and the gateway that dispatches to them: everything an order passes through on its way out.</summary>
+    /// <summary>The bridge, the connectors, the factory that builds them and the gateway that dispatches to them: everything an order passes through on its way out.</summary>
     static readonly string[] OrderSide =
-        ["TradeAgent.AtasBridge", "TradeAgent.ConnectorSdk", "TradeAgent.Connectors.Atas", "TradeAgent.Connectors.Fake", "TradeAgent.Connectors.Paper", "TradeAgent.Gateway"];
+        ["TradeAgent.AtasBridge", "TradeAgent.ConnectorSdk", "TradeAgent.Connectors.Atas", "TradeAgent.Connectors.Fake", "TradeAgent.Connectors.Paper",
+         "TradeAgent.Gateway", "TradeAgent.Platforms"];
 
     /// <summary>Assemblies and packages that drive another program's interface: UI Automation, MSAA wrappers, input synthesis, browser drivers.</summary>
     static readonly string[] UiAutomationAssemblies =
@@ -162,16 +163,18 @@ public class InvariantProofTests
 
     /// <summary>
     /// The owner's in-process authority as code: the kill switch (stop, resume, cancel-all, flatten; the AI loop's pause and start, and
-    /// the settings that hold them), his credentials (a runtime's sign-in and pasted key), his account connections (the connector and
-    /// account chosen) and updates (the app's own and a runtime's install and update).
+    /// the settings that hold them, the free-space guard's pause among them, and the press that sets an earlier armed row aside), his
+    /// credentials (a runtime's sign-in and pasted key), his account connections (the connector and account chosen) and updates (the
+    /// app's own and a runtime's install and update).
     /// </summary>
     static IReadOnlyList<MethodBase> Authority()
     {
         var gateway = new[] { nameof(TradingGateway.StopAiTrading), nameof(TradingGateway.EnableAiTrading),
-                              nameof(TradingGateway.OperatorCancelAllAsync), nameof(TradingGateway.OperatorCloseAllAsync) };
+                              nameof(TradingGateway.OperatorCancelAllAsync), nameof(TradingGateway.OperatorCloseAllAsync),
+                              nameof(TradingGateway.SetAsideEarlierLiveSetting) };
         var settings = new[] { nameof(TradeAgentSettings.AiTradingStopped), nameof(TradeAgentSettings.AiWorksOnItsOwn),
                                nameof(TradeAgentSettings.ResumeAiOnStart), nameof(TradeAgentSettings.SelectedConnectorId),
-                               nameof(TradeAgentSettings.SelectedAccountId) };
+                               nameof(TradeAgentSettings.SelectedAccountId), nameof(TradeAgentSettings.DiskPause) };
         var runtime = new[] { nameof(IAgentRuntime.SignInWithApiKeyAsync), nameof(IAgentRuntime.BeginAuthenticationAsync),
                               nameof(IAgentRuntime.InstallAsync), nameof(IAgentRuntime.UpdateAsync) };
         var update = new[] { nameof(UpdateService.CheckAsync), nameof(UpdateService.InstallAsync), nameof(UpdateService.Dismiss) };
@@ -199,6 +202,9 @@ public class InvariantProofTests
             && target.Name == "set_" + nameof(TradeAgentSettings.AiTradingStopped)) return true;
         if (outer == typeof(TradeAgentSettings)) return true;
         if (typeof(IAgentRuntime).IsAssignableFrom(outer) && target.DeclaringType is { } d && (d == outer || d == typeof(IAgentRuntime))) return true;
+        // The headless gateway's stdin console (stop, enable, cancel-all, close-all): the operator's own surface, typed at the process he
+        // started, never a pipe op. The only listener in that process is the pipe server, whose handlers are the gateway's code, read here.
+        if (type.Assembly == Il.GatewayHost && outer.Name == "Program") return true;
         return outer == typeof(SeatSignIn);
     }
 
@@ -210,8 +216,10 @@ public class InvariantProofTests
     /// sign-in, a connection, an account choice, an install or an update; the one op with "stop" in it is <c>deployment-stop</c>, a
     /// deployment's own stop. (2) Compiled: outside the owner's own process (<c>TradeAgent.App</c>, which holds no listener — asserted),
     /// no shipped assembly — the gateway's pipe server and every op handler in it, the broker door, the <c>trade</c> command, the board's
-    /// verbs, the agent runtimes — calls, constructs a delegate to, or sets any of them, but the named conduits; and the one conduit that
-    /// is a whole type, <see cref="SeatSignIn"/>, is built by the app alone. Watched red with the pipe server's <c>status</c> op calling
+    /// verbs, the agent runtimes, the headless gateway — calls, constructs a delegate to, or sets any of them, but the named conduits;
+    /// and the one conduit that is a whole type, <see cref="SeatSignIn"/>, is built by the app alone. The boundary is the assembly's: a
+    /// delegate or interface the app hands other code (a gateway callback, the mission host) is app code wherever it runs, and its body
+    /// is not followed here. Watched red with the pipe server's <c>status</c> op calling
     /// <see cref="TradingGateway.EnableAiTrading"/>.
     /// </summary>
     [Fact]
@@ -234,9 +242,8 @@ public class InvariantProofTests
             foreach (var w in Tokens(s.Cli).Where(words.Contains)) spoken.Add($"{s.Op} as '{s.Cli}': {w}");
             foreach (var a in s.Args) foreach (var w in Tokens(a.Name).Where(words.Contains)) spoken.Add($"{s.Op} argument {a.Name}: {w}");
         }
-        // "connectors" is the read-only list of what is installed — a reading, never a choice: its op takes no argument.
-        spoken.RemoveAll(x => x == $"op {Ops.Connectors}: connector");
         Assert.True(spoken.Count == 0, "an op or verb speaks of the owner's authority: " + string.Join("; ", spoken));
+        // "connectors" is the read-only list of what is installed — a reading, never a choice: its op takes no argument.
         if (specs.SingleOrDefault(s => s.Op == Ops.Connectors) is { } list) Assert.Empty(list.Args);
         Assert.Equal([Ops.DeploymentStop], names.Where(n => Tokens(n).Contains("stop")));
 
@@ -252,8 +259,9 @@ public class InvariantProofTests
             .Select(c => Il.Describe(c)).ToList();
         Assert.True(signIn.Count == 0, "the sign-in card's engine is built outside the app: " + string.Join("; ", signIn));
 
-        // The app is the owner's process only while it serves nothing: no listener of any kind is opened in it.
-        var listening = Il.Calls(Il.App).Where(c => c.Target.DeclaringType is { } d
+        // The app is the owner's process only while it serves nothing: no listener of any kind is opened in it. The headless gateway
+        // opens none of its own either: its one listener is the pipe server it starts.
+        var listening = Il.Calls(Il.App).Concat(Il.Calls(Il.GatewayHost)).Where(c => c.Target.DeclaringType is { } d
                 && (d.Name is "NamedPipeServerStream" or "TcpListener" or "HttpListener" or "Socket" or "WebSocket" or "HttpListenerContext"))
             .Select(c => Il.Describe(c)).Distinct().ToList();
         Assert.True(listening.Count == 0, "the app opens a listener of its own: " + string.Join("; ", listening));
@@ -292,14 +300,52 @@ public class InvariantProofTests
         /// <summary>The owner's own process: the desktop app.</summary>
         public static Assembly App => typeof(TradeAgent.App.AppHost).Assembly;
 
-        /// <summary>Every TradeAgent assembly beside this test (the app and the <c>trade</c> command included), the tests themselves aside.</summary>
-        public static IReadOnlyList<Assembly> Shipped() =>
-        [
-            .. Directory.GetFiles(AppContext.BaseDirectory, "*.dll")
-                .Where(f => Path.GetFileName(f) is var n && (n.StartsWith("TradeAgent", StringComparison.Ordinal) || n == "trade.dll")
-                            && !n.Contains("Tests", StringComparison.Ordinal))
-                .Select(f => Assembly.Load(AssemblyName.GetAssemblyName(f)))
-        ];
+        /// <summary>The headless gateway (<c>tradeagent-gateway</c>), shipped in both packages beside the app.</summary>
+        public static Assembly GatewayHost => Shipped().Single(a => a.GetName().Name == "tradeagent-gateway");
+
+        /// <summary>
+        /// EVERY ASSEMBLY THE PACKAGES SHIP, read from the packages' own scripts (<c>packaging/build-linux.sh</c>, <c>packaging/build.ps1</c>):
+        /// each project they publish and every project it references, by the assembly name its project file gives. A shipped project
+        /// whose assembly is not beside this test fails the read — unless its project references no project of ours, so its code cannot
+        /// call any of ours (the Windows cell probe: no references by design), and that one is listed in <see cref="Unread"/>.
+        /// </summary>
+        public static IReadOnlyList<Assembly> Shipped() => manifest.Value.Read;
+
+        /// <summary>The shipped projects whose assemblies are not read, each referencing no project of ours.</summary>
+        public static IReadOnlyList<string> Unread => manifest.Value.Unread;
+
+        static readonly Lazy<(IReadOnlyList<Assembly> Read, IReadOnlyList<string> Unread)> manifest = new(Manifest);
+
+        static (IReadOnlyList<Assembly>, IReadOnlyList<string>) Manifest()
+        {
+            var root = DayOnePrograms.RepoRoot();
+            var published = new[] { "packaging/build-linux.sh", "packaging/build.ps1" }
+                .SelectMany(p => Regex.Matches(File.ReadAllText(Path.Combine(root, p)), @"src/(TradeAgent\.[\w.]+)/\1\.csproj").Select(m => m.Groups[1].Value))
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.Superset(new HashSet<string>(["TradeAgent.App", "TradeAgent.TradeCli", "TradeAgent.GatewayHost"]), published);
+            var projects = new SortedSet<string>(StringComparer.Ordinal);
+            var todo = new Queue<string>(published);
+            while (todo.TryDequeue(out var p))
+            {
+                if (!projects.Add(p)) continue;
+                foreach (Match r in Regex.Matches(ProjectFile(root, p), @"<ProjectReference\s+Include=""\.\.[/\\](TradeAgent\.[\w.]+)[/\\]\1\.csproj"""))
+                    todo.Enqueue(r.Groups[1].Value);
+            }
+            var read = new List<Assembly>();
+            var skipped = new List<string>();
+            foreach (var p in projects)
+            {
+                var csproj = ProjectFile(root, p);
+                var name = Regex.Match(csproj, @"<AssemblyName>([^<]+)</AssemblyName>") is { Success: true } m ? m.Groups[1].Value : p;
+                var dll = Path.Combine(AppContext.BaseDirectory, name + ".dll");
+                if (File.Exists(dll)) read.Add(Assembly.Load(AssemblyName.GetAssemblyName(dll)));
+                else if (!csproj.Contains("<ProjectReference", StringComparison.Ordinal)) skipped.Add(p);
+                else Assert.Fail($"{p} ships ({name}) and references our projects, but its assembly is not here to be read");
+            }
+            return (read, skipped);
+        }
+
+        static string ProjectFile(string root, string project) => File.ReadAllText(Path.Combine(root, "src", project, project + ".csproj"));
 
         public static IEnumerable<(Type Type, MethodBase Method, MethodBase Target)> ShippedCalls()
         {
@@ -307,6 +353,8 @@ public class InvariantProofTests
             Assert.Contains(App, shipped);
             Assert.Contains(typeof(GatewayPipeServer).Assembly, shipped);
             Assert.Contains(shipped, a => a.GetName().Name == "trade");
+            Assert.Contains(shipped, a => a.GetName().Name == "tradeagent-gateway");
+            Assert.Equal(["TradeAgent.CellProbe"], Unread);
             return shipped.SelectMany(Calls);
         }
 
