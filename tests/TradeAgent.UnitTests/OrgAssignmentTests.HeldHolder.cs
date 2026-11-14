@@ -17,7 +17,9 @@ public partial class OrgAssignmentTests
     /// A chief on the chart, active, heading the root (so <c>research</c>'s division and the test's team are in its subtree), and the host's facts
     /// as the app reads them: the legacy pair declared unconfined, every other position on a mediated seat, a proven cell.
     /// </summary>
-    static async Task<(TradingGateway Gw, Database Db, GatewayPipeServer Server, string Chief)> ChiefPipe(bool facts = true)
+    /// <para><paramref name="chiefOpen"/> puts the chief's own turn among the turns open outside a sealed workspace, as the meter reads it when the
+    /// deciding chief runs on a CLI seat.</para>
+    static async Task<(TradingGateway Gw, Database Db, GatewayPipeServer Server, string Chief)> ChiefPipe(bool facts = true, bool chiefOpen = false)
     {
         var (gw, db, server) = await Pipe();
         var org = new OrgStore(db);
@@ -30,7 +32,8 @@ public partial class OrgAssignmentTests
                 Standing = new OrgStore(db).Standing(id),
                 DeclaredClass = CouncilRoles.IsKnown(id) ? SeatClasses.Cli : SeatClasses.Puppet,
                 ProvenCell = true,
-                ActiveBeyondLegacy = new OrgStore(db).ActivePositionsBeyondLegacy()
+                ActiveBeyondLegacy = new OrgStore(db).ActivePositionsBeyondLegacy(),
+                OpenUnconfined = chiefOpen && id != chief ? [chief] : []
             };
         return (gw, db, server, chief);
     }
@@ -57,6 +60,9 @@ public partial class OrgAssignmentTests
             StringComparison.Ordinal);
         Assert.Contains("give it to a position that can", refused.Error.Message, StringComparison.Ordinal);
         Assert.Contains("Nothing was written.", refused.Error.Message, StringComparison.Ordinal);
+        // THE DECIDER'S WORDS, NOT THE OWNER'S (the opus review): nothing of the gate's sentence to him reaches an agent.
+        Assert.DoesNotContain("runs as you", refused.Error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("put to sleep", refused.Error.Message, StringComparison.Ordinal);
         Assert.Equal(0L, MandatesTo(db, CouncilRoles.Research));
         Assert.Equal(0, MandateWakesTo(db, CouncilRoles.Research));
 
@@ -69,13 +75,14 @@ public partial class OrgAssignmentTests
     }
 
     /// <summary>
-    /// THE GUARD'S OTHER SIDE: a mandate to an active position the gate admits is written as before, one wake to it — the deciding turn's own
-    /// open seat counts for nothing — and a host that reads no facts asks nobody, so a mandate to <c>research</c> is written as it was.
+    /// THE GUARD'S OTHER SIDE: a mandate to an active position the gate admits is written as before, one wake to it — the deciding chief's own
+    /// turn open outside a sealed workspace counts for nothing (it ends with that turn) — and a host that reads no facts asks nobody, so a mandate
+    /// to <c>research</c> is written as it was.
     /// </summary>
     [Fact]
     public async Task A_mandate_to_a_holder_the_gate_admits_is_unchanged()
     {
-        var (_, db, server, chief) = await ChiefPipe();
+        var (_, db, server, chief) = await ChiefPipe(chiefOpen: true);
 
         var reply = await server.CallAsync(AssignFrame(Member), chief, Launch(db, chief, SeatClasses.Puppet));
         Assert.True(reply.Ok, Json.Write(reply.Error));

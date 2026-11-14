@@ -380,12 +380,11 @@ public sealed partial class OrgStore
     }
 
     /// <summary>
-    /// THE WORDS FOR A HOLDER THE ACTIVATION GATE REFUSES NOW (<c>U-wake-leftovers</c> item 2): to the decider, who chooses another holder —
-    /// what the gate says of the holder after them, as data.
+    /// THE WORDS FOR A HOLDER THE ACTIVATION GATE REFUSES NOW (<c>U-wake-leftovers</c> item 2): to the decider, who chooses another holder,
+    /// with the caller's reason in words written for an agent.
     /// </summary>
-    static string HeldHolder(string holder, string gate) =>
-        $"'{holder}' cannot take a turn on this computer now, so it can hold no mandate: give it to a position that can. "
-        + $"What TradeAgent says of '{holder}': {gate.Trim()}";
+    static string HeldHolder(string holder, string why) =>
+        $"'{holder}' cannot take a turn on this computer now, so it can hold no mandate ({why.Trim().TrimEnd('.')}): give it to a position that can.";
 
     /// <summary>
     /// ISSUES A MANDATE: the row, its <c>issued</c> event and ONE <c>mandate</c> wake to its holder, in one write — or, refused in

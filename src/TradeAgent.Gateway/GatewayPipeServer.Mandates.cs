@@ -81,6 +81,7 @@ public sealed partial class GatewayPipeServer
     /// unconfined and are held for as long as a position beyond them is active, so a mandate to either would be written and never served.
     /// <para><b>A turn open outside a sealed workspace is left out</b> (<see cref="SeatFacts.OpenUnconfined"/>): it holds a launch only until it
     /// ends — the deciding turn itself may be one — so it says nothing about whether the holder can take its mandate.</para>
+    /// <para><b>The answer is the decider's words, not the gate's</b>: why the holder cannot turn, said to an agent.</para>
     /// <para><b>Facts nobody could read ask nothing</b>: this refusal only spares a mandate that could not be served, never stands in for the gate,
     /// which still refuses at the launch, so a read that failed leaves the assignment as it was.</para>
     /// </summary>
@@ -88,9 +89,13 @@ public sealed partial class GatewayPipeServer
     {
         try
         {
-            return Gateway.SeatFactsOf?.Invoke(holder) is { Standing: { } standing } facts && standing.Id == holder
-                ? PositionActivation.Decide(holder, standing, facts with { OpenUnconfined = [] })?.Words
-                : null;
+            if (Gateway.SeatFactsOf?.Invoke(holder) is not { Standing: { } standing } facts || standing.Id != holder) return null;
+            if (PositionActivation.Decide(holder, standing, facts with { OpenUnconfined = [] }) is null) return null;
+            // THE DECIDER'S OWN WORDS, NEVER THE GATE'S (the opus review): the gate's sentence is written to the owner — "runs as you", his
+            // remedy of ending or sleeping positions — and the decider is an agent, possibly one of those positions.
+            return standing.IsLegacy
+                ? $"it runs outside a sealed workspace, and neither '{CouncilRoles.Research}' nor '{CouncilRoles.Operations}' takes a turn while a position beyond them is active"
+                : "TradeAgent does not admit a launch of it on the seat it is declared on";
         }
         catch (Exception) { return null; }
     }
