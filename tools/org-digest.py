@@ -17,6 +17,7 @@ home's codex folder or anything holding the owner's sign-in, never names the hos
   --vocabulary   (tests) print every word this file compares a column to, as JSON, and stop.
   --machine-id-file / --boot-id-file / --osrelease-file   (tests) where the cell proof's host identity is read from.
   --disk-file   (tests) a JSON [free, total] or [free, total, free inodes, total inodes] read instead of asking the filesystem.
+  --systemd-file   (tests) `systemctl show`'s KEY=VALUE lines for the unit, read instead of asking systemd.
 
 Every figure is a MEASUREMENT the app wrote (ai_attempt, org_event, mission_event, tool_call, engineering_log, strategy_*, fill, cell_proof,
 tape_fetch). A deployment's profit and loss is a SIMULATION (paper): a book of fills at modelled prices, never money. A cost is the
@@ -53,6 +54,22 @@ DISK_FLOOR_SHARE, DISK_FLOOR_MOST, DISK_FLOOR_LEAST = 10, 10 * GIB, 2 * GIB    #
 # free, and ext4 keeps none back for root, so the guard pauses the AI on files too: under a tenth of the filesystem's files, never under 500,000 and
 # never over a quarter of them; none on a filesystem that counts none. The same figures as the app's (held to it by OrgDigestTests).
 FILES_FLOOR_SHARE, FILES_FLOOR_LEAST, FILES_FLOOR_MOST_SHARE = 10, 500_000, 4
+# THE WAIT AFTER A CRASH (U-service-limits, CrashWait.WaitFor): ten minutes for the first start in a row that did not close properly, doubled for each
+# one before it, at most two hours. Held to the app's constants by OrgDigestTests.
+CRASH_WAIT_CLEAN_S, CRASH_WAIT_LONGEST_S = 600, 7200
+# SYSTEMD'S WORDS, not the app's: a unit's ActiveState once it stopped on a failure, and the Result of one its start limit refused (a systemd that
+# says so; 255 keeps the last run's Result, so a failed unit systemd had restarted is read as stopped at its limit too: it restarts always).
+SYSTEMD_FAILED, SYSTEMD_START_LIMIT_HIT = "failed", "start-limit-hit"
+
+
+def crash_wait_s(in_a_row):
+    """CrashWait.WaitFor at the app's own Clean: the seconds the in_a_row-th start in a row that did not close properly waits before the AI works."""
+    if not isinstance(in_a_row, int) or in_a_row <= 0:
+        return 0
+    wait, i = CRASH_WAIT_CLEAN_S, 1
+    while i < in_a_row and wait < CRASH_WAIT_LONGEST_S:
+        wait, i = wait + wait, i + 1
+    return CRASH_WAIT_LONGEST_S if wait > CRASH_WAIT_LONGEST_S and CRASH_WAIT_CLEAN_S < CRASH_WAIT_LONGEST_S else wait
 
 
 def files_floor(files):
@@ -130,6 +147,9 @@ class W:
     # engineering_log.severity of a line the app wrote because something of its own failed (a sweep, a record, a handler)
     SEVERITY_ERROR = "error"
     TITLE_OPERATIONS, TITLE_RESEARCH = "Operations Director", "Research Director"
+    # engineering_log: what each start decided about the AI (AppHost.ResumeOnStartAsync, U-service-limits), its two keys, and the wait after a crash
+    LOG_APP, LOG_START_DECIDED, START_DECISION, START_IN_A_ROW = "App", "start_decided", "decision", "in_a_row"
+    START_WAIT_AFTER_A_CRASH = "WaitAfterACrash"
     # mission_event.payload of a chief's ceiling moved short: nothing is moving, so it wakes at its floor (R30 D21)
     WAKE_CHIEF_FLOOR = "chief-floor"
     # the rest of what is matched: the legacy chair a launch with no role belongs to, a board seat's prefix, an order's, a fill's side
@@ -1262,22 +1282,60 @@ class Digest:
         return out
 
     def service(self):
+        if self.opts.get("systemd_file"):
+            try:
+                with open(self.opts["systemd_file"], encoding="utf-8") as f:
+                    return service_facts(f.read())
+            except OSError:
+                return None
         if self.opts["no_systemd"]:
             return None
         try:
-            done = subprocess.run(["systemctl", "show", "-p", "ActiveState", "-p", "NRestarts", "-p", "ActiveEnterTimestamp", "tradeagent.service"],
+            done = subprocess.run(["systemctl", "show", "-p", "ActiveState", "-p", "NRestarts", "-p", "ActiveEnterTimestamp", "-p", "Result", "tradeagent.service"],
                                   capture_output=True, text=True, timeout=5, check=False)
         except (OSError, subprocess.SubprocessError):
             return None
-        facts = dict(line.split("=", 1) for line in done.stdout.splitlines() if "=" in line)
-        return {"active": facts.get("ActiveState"), "restarts": facts.get("NRestarts"), "since": facts.get("ActiveEnterTimestamp") or None} if facts else None
+        return service_facts(done.stdout)
+
+    # -- 15. WHAT EACH START DECIDED (U-service-limits): the app's `start_decided` line since T0, and the starts that waited after a crash, until when.
+    #        A home whose kit writes no such line reads none, which is said as none, never as a start that resumed.
+    def starts(self):
+        rows = []
+        for r in self.app.execute("SELECT at, metadata FROM engineering_log WHERE component = ? AND event = ? AND at >= ? ORDER BY id",
+                                  (W.LOG_APP, W.LOG_START_DECIDED, self.since_s)):
+            meta = turn_context(r["metadata"])
+            rows.append({"at": r["at"], "decision": meta.get(W.START_DECISION), "in_a_row": meta.get(W.START_IN_A_ROW)})
+        by = {}
+        for x in rows:
+            by[str(x["decision"])] = by.get(str(x["decision"]), 0) + 1
+        waits = []
+        for x in rows:
+            if x["decision"] == W.START_WAIT_AFTER_A_CRASH:
+                at = parse_ts(x["at"])
+                until = at + dt.timedelta(seconds=crash_wait_s(x["in_a_row"])) if at else None
+                waits.append({"at": x["at"], "in_a_row": x["in_a_row"], "until": stored(until) if until else None,
+                              "waiting_now": bool(until and until > self.now)})
+        return {"total": len(rows), "by_decision": by, "waits_after_a_crash": waits,
+                "words": "each start's own record of what it decided about the AI; a wait after a crash lasts CrashWait's figure from its start"}
+
+
+def service_facts(text):
+    """`systemctl show`'s KEY=VALUE lines, as the digest reads them, or None where it said nothing. A unit left FAILED after systemd restarted it is one
+    its start limit stopped (it restarts always, so nothing else leaves it failed after a restart), whatever its Result says (systemd 255 keeps the last run's)."""
+    facts = dict(line.split("=", 1) for line in (text or "").splitlines() if "=" in line)
+    if not facts:
+        return None
+    active, restarts, result = facts.get("ActiveState"), facts.get("NRestarts"), facts.get("Result") or None
+    restarted = (restarts or "0").isdigit() and int(restarts or "0") > 0
+    return {"active": active, "restarts": restarts, "since": facts.get("ActiveEnterTimestamp") or None, "result": result,
+            "at_start_limit": active == SYSTEMD_FAILED and (result == SYSTEMD_START_LIMIT_HIT or restarted)}
 
 
 SECTIONS = (("app", "app_state"), ("positions", "positions"), ("turns", "turns"), ("org_events", "org_events"), ("arrows", "arrows"),
             ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("app_errors", "app_errors"),
             ("pace", "pace"),
             ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("not_started", "not_started"), ("cell_proof", "cell_proof"),
-            ("tape_health", "tape_health"))
+            ("tape_health", "tape_health"), ("starts", "starts"))
 
 
 def build(app_path, tape_path, state, now, since, opts):
@@ -1435,6 +1493,9 @@ def attention(d):
     svc = t.get("service") or {}
     if svc and svc.get("active") not in (None, "active"):
         flags.append(f"tradeagent.service is {svc['active']}")
+    if svc.get("at_start_limit"):
+        flags.append(f"tradeagent.service is FAILED AT ITS START LIMIT: systemd restarted it {svc.get('restarts') or 0} time(s), then stopped (Result {svc.get('result') or '?'}); "
+                     "nothing starts it again until someone does")
     if svc and svc.get("restarts") not in (None, "0"):
         flags.append(f"systemd restarted tradeagent.service {svc['restarts']} time(s) since it was last started by hand")
     bp = d.get("day_total", {}).get("board_policy", {})
@@ -1660,7 +1721,17 @@ def render(d, cap):
         svc = s.get("service")
         L.append(f"tape: {s['source_count']} sources, {s['bytes'] // 1024} KiB; newest delivery {age(n['age_s']) if n else '-'} ({n['source'] if n else '-'}), "
                  f"stalest {age(st['age_s']) if st else '-'} ({st['source'] if st else '-'}); since T0 {s['fetches_since']} fetches, {s['non_200_since']} non-200, "
-                 f"{s['parse_failed_since']} parse-failed" + (f"; service {svc.get('active')} restarts {svc.get('restarts')}" if svc else ""))
+                 f"{s['parse_failed_since']} parse-failed" + (f"; service {svc.get('active')} restarts {svc.get('restarts')}" if svc else "")
+                 + (f" result {svc['result']}" if svc and svc.get("result") else ""))
+
+    s = d.get("starts", {})
+    if s.get("total"):
+        # ONLY WHERE A START WAS RECORDED SINCE T0 (a kit before U-service-limits writes none): what each decided, and every wait after a crash.
+        w = s["waits_after_a_crash"]
+        L.append(f"  starts since T0: {s['total']} (" + ", ".join(f"{k} {v}" for k, v in sorted(s["by_decision"].items())) + ")"
+                 + ("; waited after a crash: " + ", ".join(f"{stamp(x['at'])} ({x['in_a_row']} in a row) until {stamp(x['until'])}"
+                                                           + (" (still waiting)" if x["waiting_now"] else "") for x in w[-3:])
+                    + (f" (+{len(w) - 3} earlier)" if len(w) > 3 else "") if w else ""))
     return L
 
 
@@ -1692,6 +1763,7 @@ def main(argv):
     ap.add_argument("--boot-id-file", default="/proc/sys/kernel/random/boot_id")
     ap.add_argument("--osrelease-file", default="/proc/sys/kernel/osrelease")
     ap.add_argument("--disk-file")
+    ap.add_argument("--systemd-file")
     ap.add_argument("--vocabulary", action="store_true")
     a = ap.parse_args(argv)
     if a.vocabulary:
@@ -1707,7 +1779,7 @@ def main(argv):
         return 2
     state = a.state or os.path.join(a.home, STATE_UNDER_HOME)
     opts = {"no_systemd": a.no_systemd, "machine_id_file": a.machine_id_file, "boot_id_file": a.boot_id_file, "osrelease_file": a.osrelease_file,
-            "disk_file": a.disk_file}
+            "disk_file": a.disk_file, "systemd_file": a.systemd_file}
     result = build(os.path.join(state, "tradeagent.db"), os.path.join(state, "tape.db"), state, now, since, opts)
     if a.json:
         print(json.dumps(result, indent=2, sort_keys=True, default=str))

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Board;
 using TradeAgent.Core.Data;
@@ -1349,6 +1350,78 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             Assert.InRange(real.GetProperty("inodes_free").GetInt64(), 0, real.GetProperty("inodes_total").GetInt64());
     }
 
+    /// <summary>
+    /// A UNIT STOPPED AT ITS START LIMIT, AND THE STARTS THAT WAITED AFTER A CRASH (U-digest-watch-3 item 2; U-service-limits). The unit restarts always
+    /// and stops at its start limit (6 starts in 10 minutes), and systemd 255 then leaves it failed with the last run's Result, not
+    /// <c>start-limit-hit</c>: so a failed unit systemd had restarted is raised as stopped at its limit, and so is one whose Result says so. The service
+    /// part of the tape line adds the Result. Each start's own record of what it decided (the app's <c>start_decided</c> line) is counted since T0,
+    /// and a start that waited after a crash is named with the minute its wait ends, as <see cref="CrashWait.WaitFor"/> sizes it.
+    ///
+    /// <para>RED at base: the digest asked systemd for no Result and read no <c>start_decided</c> line, so a unit failed at its start limit read only
+    /// "is failed" and a start that waited after a crash showed nowhere.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void A_unit_stopped_at_its_start_limit_is_raised_and_a_start_that_waited_after_a_crash_says_until_when()
+    {
+        var f = Build();
+        var unit = Path.Combine(f.Root, "systemctl-show.txt");
+        (JsonElement Json, string Human) Digest(string show)
+        {
+            File.WriteAllText(unit, show);
+            var args = DigestArgs(f, "--systemd-file", unit);
+            var (exit, o, e) = Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), [.. args, "--json"]);
+            Assert.True(exit == 0, e);
+            return (JsonDocument.Parse(o).RootElement.Clone(), Run(Path.Combine(RepoRoot(), "tools", "org-digest.py"), args).Out);
+        }
+        static string Attention(JsonElement d) => string.Join("\n", d.GetProperty("attention").EnumerateArray().Select(a => a.GetString()));
+
+        // RUNNING: the Result on the tape line, nothing raised.
+        var (ok, okHuman) = Digest("ActiveState=active\nNRestarts=0\nActiveEnterTimestamp=Sat 2026-10-31 09:00:00 UTC\nResult=success\n");
+        Assert.DoesNotContain("tradeagent.service", Attention(ok), StringComparison.Ordinal);
+        Assert.Contains("; service active restarts 0 result success", okHuman, StringComparison.Ordinal);
+
+        // FAILED AT THE LIMIT, AS SYSTEMD 255 SAYS IT: failed, restarted five times, the last run's Result.
+        var limit = Attention(Digest("ActiveState=failed\nNRestarts=5\nActiveEnterTimestamp=\nResult=signal\n").Json);
+        Assert.Contains("tradeagent.service is failed", limit, StringComparison.Ordinal);
+        Assert.Contains("tradeagent.service is FAILED AT ITS START LIMIT: systemd restarted it 5 time(s), then stopped (Result signal)", limit, StringComparison.Ordinal);
+        // ...and as a systemd that names it: Result=start-limit-hit.
+        Assert.Contains("FAILED AT ITS START LIMIT", Attention(Digest("ActiveState=failed\nNRestarts=0\nResult=start-limit-hit\n").Json), StringComparison.Ordinal);
+        // A unit failed with no restart behind it is failed, not at its limit; one stopped by hand is neither.
+        var once = Attention(Digest("ActiveState=failed\nNRestarts=0\nResult=exit-code\n").Json);
+        Assert.Contains("tradeagent.service is failed", once, StringComparison.Ordinal);
+        Assert.DoesNotContain("START LIMIT", once, StringComparison.Ordinal);
+        Assert.DoesNotContain("START LIMIT", Attention(Digest("ActiveState=inactive\nNRestarts=0\nResult=success\n").Json), StringComparison.Ordinal);
+
+        // NO START RECORDED (a kit before U-service-limits): no line, and the section says none.
+        Assert.Equal(0, ok.GetProperty("starts").GetProperty("total").GetInt32());
+        Assert.DoesNotContain("starts since T0", okHuman, StringComparison.Ordinal);
+
+        // THE STARTS SINCE T0, as AppHost.ResumeOnStartAsync writes them: one resumed, then two that waited after a crash (the 1st and 3rd in a row),
+        // and one before T0 that counts for nothing. 10 and 40 minutes (CrashWait at its own Clean: 10, doubled twice).
+        string Decided(string at, AppHost.MissionOnStart decision, int inARow) =>
+            $"('{at}', 'App', 'start_decided', 'info', '{TradeAgent.Core.Json.Write(new { decision = decision.ToString(), in_a_row = inARow })}')";
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+            db.Exec("INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES "
+                    + string.Join(", ", Decided("2026-10-29T08:00:00.0000000Z", AppHost.MissionOnStart.WaitAfterACrash, 1),
+                        Decided("2026-10-30T13:00:00.0000000Z", AppHost.MissionOnStart.Resume, 0),
+                        Decided("2026-10-31T09:00:00.0000000Z", AppHost.MissionOnStart.WaitAfterACrash, 1),
+                        Decided("2026-10-31T13:30:00.0000000Z", AppHost.MissionOnStart.WaitAfterACrash, 3)) + ";");
+        Assert.Equal(CrashWait.WaitFor(3, CrashWait.Clean), TimeSpan.FromMinutes(40));
+        var (started, startedHuman) = Digest("ActiveState=active\nNRestarts=0\nResult=success\n");
+        var starts = started.GetProperty("starts");
+        Assert.Equal(3, starts.GetProperty("total").GetInt32());
+        Assert.Contains("\n  starts since T0: 3 (Resume 1, WaitAfterACrash 2); waited after a crash: 10-31 09:00 (1 in a row) until 10-31 09:10, "
+                        + "10-31 13:30 (3 in a row) until 10-31 14:10 (still waiting)", startedHuman, StringComparison.Ordinal);
+        // THE WAIT IS THE APP'S on every start in a row it is stated for, up to the longest.
+        for (var n = 1; n <= 6; n++)
+        {
+            using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+                db.Exec($"INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES {Decided("2026-10-31T13:59:00.0000000Z", AppHost.MissionOnStart.WaitAfterACrash, n)};");
+            var last = Digest("ActiveState=active\n").Json.GetProperty("starts").GetProperty("waits_after_a_crash").EnumerateArray().Last();
+            Assert.Equal(At("2026-10-31T13:59:00Z") + CrashWait.WaitFor(n, CrashWait.Clean), At(last.GetProperty("until").GetString()!));
+        }
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
@@ -1389,6 +1462,8 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         // THE EVIDENCE'S EYES (U-digest-evidence-eyes): the forward hold's kv keys, what a campaign spent, and the code of a holdout's refusal
         ["KV_FORWARD_HOLDOUT"] = CampaignRenewal.ArmedKey, ["KV_FORWARD_SUCCESSOR"] = CampaignRenewal.SuccessorKey,
         ["SPENT_EXPLORATION"] = CampaignRenewal.ExplorationTrials, ["CODE_HOLDOUT_WITHHELD"] = ErrorCode.HOLDOUT_WITHHELD.ToString(),
+        // WHAT A START DECIDED (U-digest-watch-3; U-service-limits): the decision a start that waits after a crash records
+        ["START_WAIT_AFTER_A_CRASH"] = AppHost.MissionOnStart.WaitAfterACrash.ToString(),
     };
 
     /// <summary>
@@ -1406,6 +1481,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("LOG_IPC", "src/TradeAgent.Gateway/GatewayPipeServer.cs", "Log.Engineering(\"{0}\", \"protocol_rejected\""),
         ("LOG_MISSION", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"{0}\", \"turn_refused\", \"info\""),
         ("LOG_TURN_REFUSED", "src/TradeAgent.App/AppHost.cs", "Log.Engineering(\"Mission\", \"{0}\", \"info\""),
+        // each start's record of what it decided, and its two keys (U-digest-watch-3; U-service-limits)
+        ("LOG_APP", "src/TradeAgent.App/AppHost.cs", "Log.TryEngineering(\"{0}\", \"start_decided\", \"info\""),
+        ("LOG_START_DECIDED", "src/TradeAgent.App/AppHost.cs", "Log.TryEngineering(\"App\", \"{0}\", \"info\""),
+        ("START_DECISION", "src/TradeAgent.App/AppHost.cs", "Json.Write(new {{ {0} = decided.ToString(), in_a_row = DidNotCloseInARow }})"),
+        ("START_IN_A_ROW", "src/TradeAgent.App/AppHost.cs", "Json.Write(new {{ decision = decided.ToString(), {0} = DidNotCloseInARow }})"),
         // the lane's own refusal, as the loop words it where a lease is refused (U-digest-polish-2)
         ("LANE_NOT_STARTED", "src/TradeAgent.AgentRuntime/MissionLoop.cs", "Refused?.Invoke($\"{{CouncilRoles.Title(role)}}: {{leaseRefused}}{0}\");"),
         ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
