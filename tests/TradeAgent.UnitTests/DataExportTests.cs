@@ -158,7 +158,7 @@ public class DataExportTests
     /// A LINK PLANTED AT THE EXPORT'S NAME IS REPLACED, NEVER FOLLOWED: the file lands in the caller's folder and what the link pointed at
     /// is untouched — the gateway writes into a folder an executor's cell can write.
     /// </summary>
-    [OnlyOnFact("plants a symbolic link, which a Windows account may not make; no junction test stands in for it yet", "linux", "macos")]
+    [OnlyOnFact("plants a symbolic link, which a Windows account may not make; the two junction rows below stand in for it there", "linux", "macos")]
     public async Task A_link_planted_at_the_name_is_never_followed()
     {
         await using var rig = await Ready();
@@ -173,6 +173,71 @@ public class DataExportTests
         Assert.True(done.Ok, done.Error?.Message);
         Assert.Equal("not the gateway's to write", File.ReadAllText(victim));
         Assert.Null(new FileInfo(Path.Combine(rig.Home, relative)).LinkTarget);
+    }
+
+    /// <summary>
+    /// ON WINDOWS, A JUNCTION PLANTED AT THE EXPORT'S FOLDER IS NEVER WRITTEN THROUGH (<c>U-windows-cards-3</c>; R29 F-E2, the
+    /// U-registry-honest card): the writer opens each folder from the one above it, never following a reparse point, and refuses the name a
+    /// junction stands at — the folder it leads to stays empty.
+    ///
+    /// <para><b>The mutant</b> that drops the walk's reparse-point check writes the export into the junction's target, and this fails on it.</para>
+    /// </summary>
+    [OnlyOnFact("a junction is Windows'", "windows")]
+    public async Task On_windows_a_junction_planted_at_the_export_folder_is_never_written_through()
+    {
+        await using var rig = await Ready();
+        var relative = DataExports.FileName(rig.Set, Start, Cutoff.AddMinutes(-1));
+        var outside = Path.Combine(TestEnv.Home, $"outside-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(outside);
+        var folder = Path.Combine(rig.Home, DataExports.Folder);
+        Assert.True(SeatHomeTests.Link(folder, outside, folder: true));
+        try
+        {
+            Assert.Throws<HomeLinkRefused>(() => HomeFiles.Write(rig.Home, relative, "a,b"u8));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(outside));
+        }
+        finally { Directory.Delete(folder); }
+    }
+
+    /// <summary>
+    /// ON WINDOWS, A JUNCTION SWAPPED IN BETWEEN THE WALK AND THE FILE'S CREATION LEADS NOWHERE (<c>U-windows-cards-3</c>; R29 F-E2): the
+    /// export's folder is real when the writer reaches it, then — in the instant before the file is made — it is moved away and a junction to
+    /// a folder outside the home takes its name. The file is created inside the folder the writer holds open, never by its path, so it lands
+    /// in the real folder wherever it went, and nothing reaches the folder outside.
+    ///
+    /// <para><b>RED on the base</b>: the file was created by its path, through the junction, in the folder outside the home.</para>
+    /// </summary>
+    [OnlyOnFact("a junction, and creating a file inside an open folder's handle, are Windows'", "windows")]
+    public async Task On_windows_a_junction_swapped_in_before_the_export_is_created_leads_nowhere()
+    {
+        await using var rig = await Ready();
+        var to = Cutoff.AddMinutes(-1);
+        var relative = DataExports.FileName(rig.Set, Start, to);
+        var outside = Path.Combine(TestEnv.Home, $"outside-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(outside);
+        var folder = Path.Combine(rig.Home, DataExports.Folder);
+        var real = folder + "-real";
+        Directory.CreateDirectory(folder);
+        var full = Path.Combine(rig.Home, relative.Replace('/', Path.DirectorySeparatorChar));
+        HomeFiles.BeforeOpen = p =>
+        {
+            if (p != full) return;
+            Directory.Move(folder, real);
+            Assert.True(SeatHomeTests.Link(folder, outside, folder: true));
+        };
+        try
+        {
+            var done = await rig.ExportAsync(("dataset", rig.Set.Id.ToString(CultureInfo.InvariantCulture)), ("to", Iso(to)));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(outside));
+            Assert.True(done.Ok, done.Error?.Message);
+            Assert.Single(Directory.EnumerateFiles(real));
+        }
+        finally
+        {
+            HomeFiles.BeforeOpen = null;
+            if (Directory.Exists(folder) && (File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) Directory.Delete(folder);
+            TestEnv.DeleteQuietly(real);
+        }
     }
 
     /// <summary>What the ledger says this position was already written, as an earlier export's row: the app's record, which a cell cannot touch.</summary>

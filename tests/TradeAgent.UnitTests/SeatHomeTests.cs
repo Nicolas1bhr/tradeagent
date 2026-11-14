@@ -577,6 +577,57 @@ public class SeatHomeTests
     }
 
     /// <summary>
+    /// (c2c) A MACHINE FOLDER MADE AFTER THE SEAT CHECK'S FIRST LOOK REFUSES THE START (<c>U-windows-cards-3</c>; U-windows-cards-2 card (2)):
+    /// an absent <c>OpenAI\Codex</c> passes the look, and any local account may create it and put settings in it while the launch is still
+    /// reading the CLI's own reports. Here the folder appears during that read — after the look — and the launch looks again at its last
+    /// check, as the activation gate does: nothing starts, and the turn says which folder.
+    ///
+    /// <para><b>RED on the base</b>: the look ran once, before the CLI's reports, so the seat started over the settings file planted after it.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_machine_folder_made_after_the_first_look_refuses_the_start_at_the_last_check()
+    {
+        var (codex, exe, dump) = Seat(nameof(A_machine_folder_made_after_the_first_look_refuses_the_start_at_the_last_check));
+        var workspace = Path.Combine(Path.GetDirectoryName(exe)!, "role-home");
+        Directory.CreateDirectory(workspace);
+        var machine = Path.Combine(Path.GetDirectoryName(exe)!, "the-machines-program-data");
+        var folder = Path.Combine(machine, "OpenAI", "Codex");
+        Directory.CreateDirectory(machine);
+        SeatProfile.MachineFolderUnderTest.Value = machine;
+        try
+        {
+            var probe = new PlantingProbe(new FakeProbe(), () =>
+            {
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "config.toml"), "[mcp_servers.planted]\ncommand = \"planted-server\"\n");
+            });
+            var session = Session(codex, exe, workspace, probe);
+
+            var ended = await Turn(session);
+
+            Assert.Equal(1, probe.Planted);
+            Assert.Contains(folder, ended.Raw, StringComparison.Ordinal);
+            Assert.DoesNotContain("planted", ended.Raw, StringComparison.Ordinal);
+            Assert.DoesNotContain(Argv(dump), line => line.StartsWith("exec", StringComparison.Ordinal));
+        }
+        finally { SeatProfile.MachineFolderUnderTest.Value = null; }
+    }
+
+    /// <summary>A probe that plants something once, as its first read of the CLI's reports begins — after the seat check's look.</summary>
+    sealed class PlantingProbe(FakeProbe inner, Action plant) : ISeatProbe
+    {
+        public int Planted;
+
+        public Task<SeatReading> ReadAsync(RuntimeManifest manifest, string exe, string workingDirectory, CancellationToken ct)
+        {
+            if (Interlocked.CompareExchange(ref Planted, 1, 0) == 0) plant();
+            return inner.ReadAsync(manifest, exe, workingDirectory, ct);
+        }
+
+        public Task<ToolRun> ToolsAsync(SurfaceAsk ask, CancellationToken ct) => inner.ToolsAsync(ask, ct);
+    }
+
+    /// <summary>
     /// (c3b) THE REAL MACHINE READER (<c>U-windows-cards-2</c>): on Windows the ProgramData known folder, as codex reads it; on Linux and
     /// macOS none (codex's system layer there is <c>/etc/codex</c>, root's). The codex seat plan forbids its OpenAI\Codex folder there.
     /// </summary>

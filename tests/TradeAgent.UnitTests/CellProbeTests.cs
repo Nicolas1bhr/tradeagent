@@ -71,6 +71,46 @@ public class CellProbeTests : IDisposable
         finally { File.SetUnixFileMode(shut, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
     }
 
+    /// <summary>
+    /// A SOURCE BUILD LAYS THE PROBE BESIDE THE APP (<c>U-windows-cards-3</c>; the U-cell-probe card (1)): the app built from this tree on
+    /// Windows finds <c>cell-probe.exe</c> where the installed app does, beside itself, so it writes its Windows proof and runs its cells as
+    /// the installed app would. The file is copied ALONE into a folder of its own and run there, as the benchmark copies it into its bench —
+    /// so it is the self-contained single file the installer ships, never a launcher that needs files beside it.
+    ///
+    /// <para><b>RED on the base</b>: no build step put it there, and the app run from source wrote no Windows proof.</para>
+    /// </summary>
+    [OnlyOnFact("the probe is a Windows program, laid beside the app only by a Windows build", "windows")]
+    public void A_source_build_lays_a_probe_that_runs_alone_beside_the_app()
+    {
+        var beside = Path.Combine(AppOutput(), CellDenial.ProbeExe);
+        Assert.True(File.Exists(beside), $"no {CellDenial.ProbeExe} beside the app this tree built ({beside})");
+
+        var alone = Directory.CreateDirectory(Path.Combine(_root, "bench")).FullName;
+        var copy = Path.Combine(alone, CellDenial.ProbeExe);
+        File.Copy(beside, copy);
+        var psi = new ProcessStartInfo(copy) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "list", _root, Path.Combine(_root, "not-there") }) psi.ArgumentList.Add(a);
+        psi.Environment.Remove("DOTNET_ROOT");
+        using var run = Process.Start(psi)!;
+        var output = run.StandardOutput.ReadToEndAsync();
+        var errors = run.StandardError.ReadToEndAsync();
+        Assert.True(run.WaitForExit(60_000), "the probe did not end within a minute");
+        Assert.True(run.ExitCode == 0, $"the probe copied alone exited {run.ExitCode}: {errors.Result}");
+        Assert.Equal(["CTL-LIST-OPEN", "LIST-FAILED 3"], output.Result.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')));
+    }
+
+    /// <summary>The app's own build output for this tree, configuration and framework as this test assembly's: <c>src/TradeAgent.App/bin/&lt;c&gt;/&lt;tfm&gt;</c>.</summary>
+    static string AppOutput()
+    {
+        var here = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+        var tfm = here.Name;
+        var configuration = here.Parent!.Name;
+        var root = here;
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TradeAgent.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        return Path.Combine(root.FullName, "src", "TradeAgent.App", "bin", configuration, tfm);
+    }
+
     /// <summary>Linux and macOS, not as root (root lists a folder of mode 000): skipped elsewhere, with the reason.</summary>
     sealed class UnixNotAsRootFactAttribute : FactAttribute
     {
