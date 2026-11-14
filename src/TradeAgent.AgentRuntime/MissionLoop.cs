@@ -5002,12 +5002,14 @@ public sealed class MissionLoop
 
     /// <summary>
     /// A TURN THAT WORKED AND THEN DID NOT FINISH, the turns <see cref="FinishedOnRecord"/> decides for: the loop's own stop ended it, it ended at its wall-clock
-    /// limit, or its model was refused or the vendor's usage limit met after work. Its wakes, and the owner's words typed into it, keep what the records show
-    /// finished and come back otherwise (<c>U-turn-bounds-2</c>, <c>U-turn-cards</c>, <c>U-turn-cards-2</c>). One predicate, so a path cannot be added to
-    /// one half and not the other. A refusal before any work is not one: it did nothing, so nothing of it is on record.
+    /// limit, its model was refused or the vendor's usage limit met after work, or the activation gate refused a request at its last check after an earlier
+    /// one had run (<c>U-wake-leftovers</c> item 1). Its wakes, and the owner's words typed into it, keep what the records show finished and come back
+    /// otherwise (<c>U-turn-bounds-2</c>, <c>U-turn-cards</c>, <c>U-turn-cards-2</c>). One predicate, so a path cannot be added to one half and not the
+    /// other. A refusal before any work is not one: it did nothing, so nothing of it is on record.
     /// </summary>
     static bool WorkedThenDidNotFinish(AgentTurnEnded? ended, bool stopped) =>
-        stopped || ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false } or { Limit.BeforeAnyWork: false };
+        stopped || ended is { TimedOut: not null } or { ModelRefused.BeforeAnyWork: false } or { Limit.BeforeAnyWork: false }
+            or { GateRefused.BeforeAnyWork: false };
 
     /// <summary>
     /// WHETHER THE OWNER'S WORDS TYPED INTO LAUNCH <paramref name="attempt"/> ARE FINISHED ON RECORD (<c>U-turn-cards-2</c> item 1): the rule

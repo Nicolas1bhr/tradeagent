@@ -362,17 +362,23 @@ public class ThinkingSeatsTests : IDisposable
             db.Write(_ => { meter.CommitStaged(role); dispositions(); return 0; });
     }
 
-    // ---- (p) re-review item 6: a refused turn gives the owner's words back ------------------------------------------------
+    // ---- (p) re-review item 6: a refused turn gives back what it did not finish ---------------------------------------------
 
     /// <summary>
-    /// (p) A TURN THE GATE REFUSED MID-WAY GIVES THE OWNER'S WORDS BACK (fix pass 2, item 6, the wake release; ORCHESTRATION § 2.5,
-    /// the owner's words are never settled by a refusal): the chair on the harness stages an agenda in its first request, its seat
-    /// changes, and its second request is refused at the last check. Through the real relay's committed transition, every wake the
-    /// launch took is due again and the owner's words stay open, shown undelivered with the refusal's sentence. (The hold of the
-    /// staged output was reverted by decision A; this keeps the release.)
+    /// (p) A TURN THE GATE REFUSED MID-WAY GIVES BACK WHAT IT DID NOT FINISH, AND NOT WHAT IT DID (fix pass 2, item 6, the wake release;
+    /// ORCHESTRATION § 2.5, the owner's words are never settled by a refusal): the chair on the harness stages an agenda in its first
+    /// request, its seat changes, and its second request is refused at the last check. The real relay's committed transition publishes
+    /// the staged agenda, the brief the owner's words became, and that record — never the refusal — settles them.
+    ///
+    /// <para><b>ITS MEANING CHANGED OPENLY (<c>U-wake-leftovers</c> item 1).</b> It was named
+    /// <c>A_turn_the_gate_refused_mid_way_gives_the_owners_words_back</c> and held the words open and Blocked although the same commit
+    /// published the brief they became, so Research was briefed AND the chair was handed the same words again. A refusal after work now
+    /// follows the rule a time limit and a vendor's limit after work follow: what the records show finished stays settled. Words no record
+    /// speaks for still come back, shown undelivered with the refusal's sentence
+    /// (<see cref="A_turn_the_gate_refused_after_work_with_no_brief_owes_the_typed_words_once"/>).</para>
     /// </summary>
     [Fact]
-    public async Task A_turn_the_gate_refused_mid_way_gives_the_owners_words_back()
+    public async Task A_turn_the_gate_refused_mid_way_keeps_the_owners_words_its_published_brief_delegated()
     {
         using var db = TestEnv.NewDb();
         var events = new MissionEventStore(db);
@@ -424,10 +430,108 @@ public class ThinkingSeatsTests : IDisposable
         Assert.True(File.Exists(staged), "the refused turn's staged agenda was not kept on disk");
 
         var words = events.Get(owner)!;
-        Assert.False(words.Consumed || words.Disposition == MissionEventDisposition.Delegated,
-            $"the owner's words were taken by a turn the gate refused: consumed {words.Consumed}, {words.Disposition} {words.DispositionDetail}");
+        Assert.True(words.Consumed && words.Disposition == MissionEventDisposition.Delegated,
+            $"the owner's words its published brief delegated were handed back to be briefed again: consumed {words.Consumed}, {words.Disposition} {words.DispositionDetail}");
+        Assert.DoesNotContain(events.Due(DateTimeOffset.UtcNow.AddMinutes(1)), e => e.Kind == MissionEventKind.Owner);
+    }
+
+    // ---- U-wake-leftovers item 1: the gate's late refusal after work keeps what the records show finished ---------------
+
+    const string TypedIntoTheRefusedTurn = "and brief Research on the skew";
+
+    /// <summary>
+    /// A chair on the harness whose FIRST request is answered with one tool call, after which its seat changes, so the gate refuses its SECOND request
+    /// at the last check: the activation gate's refusal after work (<see cref="LateRefusal.BeforeAnyWork"/> false), driven through the loop over the
+    /// records' host. <paramref name="briefOnRecord"/> publishes that launch's brief when the turn commits; a delivery the decider judged in that launch
+    /// is held finished by the host, and a look beside it is not.
+    /// </summary>
+    static async Task<(MissionEventStore Events, MissionLoop Loop, VendorLimitTests.Host Host, string Judged, string Look, string Owner, AgentTurnEnded? Ended,
+        int Requests)>
+        RefusedAfterOneToolCall(Database db, bool briefOnRecord)
+    {
+        var events = new MissionEventStore(db);
+        var now = DateTimeOffset.UtcNow;
+        var ops = CouncilRoles.Operations;
+        var judged = MissionEventIds.ForRole("delivery-wake", ops);
+        var look = MissionEventIds.ForRole(MissionEventIds.Review(now), ops);
+        Assert.True(events.Raise(look, MissionEventKind.Review, now, role: ops));
+        Assert.True(events.Raise(judged, MissionEventKind.Delivery, now, payload: "man-judged", role: ops));
+        Assert.True(events.RecordOwnerMessage("how is the book?", now.AddMinutes(-1)));
+        var owner = Assert.Single(events.Due(now), e => e.Kind == MissionEventKind.Owner).Id;
+
+        var home = Path.Combine(TestEnv.Home, $"gate-late-{Guid.NewGuid():n}");
+        Directory.CreateDirectory(Path.Combine(home, WorkspaceBuilder.OutDir));
+        var declared = SeatClasses.Harness;
+        var register = new SeatRegister { Facts = id => Facts(db, declared, id), Neighbours = () => new OrgStore(db).ActivePositionsBeyondLegacy() };
+        using var provider = new FakeProvider();
+        var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+        manifest.BaseUrl = provider.BaseUrl;
+        using var runtime = new ApiAgentRuntime(manifest, provider.Holding("not-a-real-credential"),
+            tools: role => new GrantedWorkerTools(role, home: () => home, attempt: () => null),
+            allowance: _ => TurnAllowance.Default, requestTimeout: TimeSpan.FromSeconds(10), seats: register);
+        var chat = runtime.OpenConversation(ops, () => AppCanon.Keep(home, ops), () => new Dictionary<string, string>(), () => null);
+        AgentTurnEnded? ended = null;
+        chat.TurnEnded += e => ended = e;
+        provider.Arriving = () =>
+        {
+            if (provider.Requests.Count != 1) return;
+            provider.Answer(FakeProvider.ToolCall(GrantedWorkerTools.WriteFile, new { path = $"{WorkspaceBuilder.OutDir}/note.md", content = "the skew, read" }));
+            declared = SeatClasses.Cli;
+        };
+
+        var host = new VendorLimitTests.Host(db, events, chat, home)
+        {
+            Clock = () => now,
+            Finished = (wake, _) => wake.Id == judged,
+            RelayedFor = briefOnRecord ? attempt => VendorLimitTests.PublishBrief(db, attempt, now) : null
+        };
+        var loop = new MissionLoop(host, new MissionOptions { ReviewEvery = TimeSpan.Zero }, now: () => now);
+        chat.Queue(TypedIntoTheRefusedTurn);
+        await loop.TurnAsync();
+        return (events, loop, host, judged, look, owner, ended, provider.Requests.Count);
+    }
+
+    /// <summary>
+    /// U-WAKE-LEFTOVERS ITEM 1, RED FIRST: A TURN THE GATE REFUSED AFTER WORK KEEPS WHAT IT FINISHED. The late refusal was not one of the paths that worked
+    /// and did not finish, so the delivery its decider judged in that launch came back to be judged again, and the words typed into it were handed to the
+    /// next turn although its brief was on record. Now, as for a time limit or a vendor's limit after work, the judged delivery stays settled, the look nothing
+    /// speaks for comes back, and the typed words are not owed again.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_gate_refused_after_work_keeps_what_the_records_show_finished()
+    {
+        using var db = TestEnv.NewDb();
+        var (events, loop, host, judged, look, _, ended, requests) = await RefusedAfterOneToolCall(db, briefOnRecord: true);
+
+        Assert.Equal(1, requests);
+        Assert.Equal((RefusalKind.HostOrLaunch, false), (ended?.GateRefused?.Refusal.Kind, ended?.GateRefused?.BeforeAnyWork));
+        Assert.Contains(TypedIntoTheRefusedTurn, Assert.Single(host.Opened), StringComparison.Ordinal);
+        var finished = events.Get(judged)!;
+        Assert.True(finished.Consumed && finished.Disposition == MissionEventDisposition.Answered,
+            $"a delivery judged in the refused launch was given back to be judged again: consumed {finished.Consumed}, {finished.Disposition}");
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.True(loop.TypedOwedTo(CouncilRoles.Operations).Count == 0,
+            $"words the refused turn already turned into a brief were owed again: {string.Join(" | ", loop.TypedOwedTo(CouncilRoles.Operations))}");
+    }
+
+    /// <summary>
+    /// U-WAKE-LEFTOVERS ITEM 1, THE GUARD ON THE SAME PATH: a turn the gate refused after work that left no brief owes the typed words again, once.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_gate_refused_after_work_with_no_brief_owes_the_typed_words_once()
+    {
+        using var db = TestEnv.NewDb();
+        var (events, loop, _, judged, look, owner, ended, _) = await RefusedAfterOneToolCall(db, briefOnRecord: false);
+
+        Assert.True(ended?.GateRefused is { BeforeAnyWork: false }, "the gate's refusal did not come after work");
+        Assert.True(events.Get(judged)!.Consumed);
+        Assert.False(events.Get(look)!.Consumed, "a look nothing speaks for was spent");
+        Assert.Equal([TypedIntoTheRefusedTurn], loop.TypedOwedTo(CouncilRoles.Operations));
+        // THE OWNER'S WORDS NO RECORD SPEAKS FOR come back, shown undelivered with the refusal's sentence, as (p) held before its meaning changed.
+        var words = events.Get(owner)!;
+        Assert.False(words.Consumed, $"the owner's words were spent on a refused turn: {words.Disposition} {words.DispositionDetail}");
         Assert.Equal(MissionEventDisposition.Blocked, words.Disposition);
-        Assert.False(events.Get(owner)!.Consumed);
+        Assert.Contains(ended!.GateRefused!.Refusal.Words, words.DispositionDetail, StringComparison.Ordinal);
     }
 
     /// <summary>A host whose committed transition is the real relay's, as the app wires it: close, land, snapshot, dispositions.</summary>
