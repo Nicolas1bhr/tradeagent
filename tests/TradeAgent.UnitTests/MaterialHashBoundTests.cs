@@ -26,6 +26,72 @@ public class MaterialHashBoundTests
 
     static string Inbox(string root, string name) => Path.Combine(root, MaterialScanner.InboxDir, name);
 
+    /// <summary>
+    /// THE PASS'S ONE CLOCK, ADVANCED BY THE TEST ALONE (U-ci-precheck's card; U-material-pass-2): a one-second hash budget on the machine's
+    /// clock was spent by a loaded runner before a 40-byte file was read (macOS run 43486481966, "Expected: 1 Actual: 0"). Here time moves
+    /// only when a read of a file larger than a gigabyte starts — two seconds, past the budget and short of the wait for a held read — so
+    /// the small files are never out of time and the large one always is.
+    /// </summary>
+    sealed class PassClock : TimeProvider
+    {
+        readonly Lock _gate = new();
+        readonly List<Due> _timers = [];
+        long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new Due(this, callback, state);
+            timer.Change(dueTime, period);
+            return timer;
+        }
+
+        public void Advance(TimeSpan by)
+        {
+            List<Due> fire;
+            lock (_gate)
+            {
+                _ticks += by.Ticks;
+                fire = [.. _timers.Where(t => t.At <= _ticks)];
+                foreach (var t in fire) _timers.Remove(t);
+            }
+            foreach (var t in fire) t.Fire();
+        }
+
+        /// <summary>Whether a read of this length moves the clock past the budget: the sparse files here, never the small ones.</summary>
+        public string Hash(Stream s, CancellationToken ct)
+        {
+            if (s.Length > 1L << 30) Advance(TimeSpan.FromSeconds(2));
+            return Sha256Hex.Of(s, ct);
+        }
+
+        sealed class Due(PassClock clock, TimerCallback callback, object? state) : ITimer
+        {
+            public long At { get; private set; }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                lock (clock._gate)
+                {
+                    clock._timers.Remove(this);
+                    if (dueTime == Timeout.InfiniteTimeSpan) return true;
+                    At = clock._ticks + dueTime.Ticks;
+                    clock._timers.Add(this);
+                }
+                if (dueTime == TimeSpan.Zero) clock.Advance(TimeSpan.Zero);
+                return true;
+            }
+
+            public void Fire() => callback(state);
+            public void Dispose() { lock (clock._gate) clock._timers.Remove(this); }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
+
     static async Task<ScanResult> Bounded(Func<ScanResult> pass)
     {
         var task = Task.Run(pass);
@@ -50,7 +116,11 @@ public class MaterialHashBoundTests
         File.WriteAllText(Inbox(root, "a.txt"), "the first small file");
         File.WriteAllText(Inbox(root, "b.txt"), "the second small file");
         Sparse(Inbox(root, "huge.bin"), 1L << 40);
-        var scanner = new MaterialScanner(db, root, at => true) { HashBytesPerPass = 1 << 20, HashTimePerPass = TimeSpan.FromSeconds(1) };
+        var clock = new PassClock();
+        var scanner = new MaterialScanner(db, root, at => true)
+        {
+            HashBytesPerPass = 1 << 20, HashTimePerPass = TimeSpan.FromSeconds(1), PassClock = clock, Hasher = clock.Hash
+        };
 
         var first = await Bounded(() => scanner.Scan());
         Assert.Equal(2, first.Hashed);
@@ -104,7 +174,11 @@ public class MaterialHashBoundTests
         var (db, root) = Workspace();
         using var _ = db;
         Sparse(Inbox(root, "huge.bin"), 1L << 40);
-        var scanner = new MaterialScanner(db, root, at => true) { HashesPerPass = 1, HashTimePerPass = TimeSpan.FromSeconds(1) };
+        var clock = new PassClock();
+        var scanner = new MaterialScanner(db, root, at => true)
+        {
+            HashesPerPass = 1, HashTimePerPass = TimeSpan.FromSeconds(1), PassClock = clock, Hasher = clock.Hash
+        };
 
         var first = await Bounded(() => scanner.Scan());
         Assert.Equal((0, 1), (first.Hashed, first.HashDeferred));
@@ -128,7 +202,11 @@ public class MaterialHashBoundTests
         using var _ = db;
         Sparse(Inbox(root, "first.bin"), 1L << 40);
         Sparse(Inbox(root, "second.bin"), 1L << 41);
-        var scanner = new MaterialScanner(db, root, at => true) { HashesPerPass = 1, HashTimePerPass = TimeSpan.FromSeconds(1) };
+        var clock = new PassClock();
+        var scanner = new MaterialScanner(db, root, at => true)
+        {
+            HashesPerPass = 1, HashTimePerPass = TimeSpan.FromSeconds(1), PassClock = clock, Hasher = clock.Hash
+        };
 
         var pass = await Bounded(() => scanner.Scan());
 

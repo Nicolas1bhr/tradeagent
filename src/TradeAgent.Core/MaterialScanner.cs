@@ -189,6 +189,13 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     internal Func<Stream, CancellationToken, string> Hasher { get; init; } = Sha256Hex.Of;
 
     /// <summary>
+    /// THE CLOCK A PASS'S HASHING IS TIMED ON — its time budget, each read's cut-off and the wait for a read the disk may hold: the
+    /// machine's in the product. A test passes one it advances itself (U-ci-precheck's card, macOS run 43486481966), so a one-second budget
+    /// spent by a loaded runner is never read as a file too large to finish.
+    /// </summary>
+    internal TimeProvider PassClock { get; init; } = TimeProvider.System;
+
+    /// <summary>
     /// HOW MUCH LONGER THAN ITS BOUND A HASH READ IS WAITED FOR (<c>U-perf-scan</c>): the bound is checked between reads, so a read that
     /// is merely slow returns within one more block; past this it is a read the disk is holding.
     /// </summary>
@@ -686,7 +693,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // not held behind its large one, a file no pass can finish never holds a batch's places against the files behind it, and the
         // large one is first in a pass once the smaller are done. Whatever this pass does not reach or finish is DEFERRED, counted and
         // said in words, and read again next pass.
-        var clock = Stopwatch.StartNew();
+        var started = PassClock.GetTimestamp();
         long spent = 0;
         var deferred = 0;
         var deferrals = new List<string>();
@@ -715,7 +722,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 continue;
             }
 
-            var left = HashTimePerPass - clock.Elapsed;
+            var left = HashTimePerPass - PassClock.GetElapsedTime(started);
             if (left <= TimeSpan.Zero)
             {
                 Defer(m, $"this pass's {HashTimePerPass.TotalSeconds:0.#} s for hashing was spent.");
@@ -736,7 +743,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 var fs = IsInInbox(m.RelPath)
                     ? File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)
                     : new FileStream(HomeFiles.OpenRead(_root, m.RelPath, oneName: false), FileAccess.Read);
-                CancellationTokenSource? bound = null;
+                CancellationTokenSource? bound = null, timer = null;
                 var leftReading = false;
                 try
                 {
@@ -745,8 +752,9 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // CANCELLABLE BETWEEN READS (U-exec-env-fix item 1): a cell can leave a sparse terabyte at any name in its home, and a
                     // pass that is asked to stop stops here too rather than at the end of the file. The same cut-off is the pass's wall time.
                     spent += m.SizeBytes;
-                    bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    bound.CancelAfter(left);
+                    // ON THE PASS'S CLOCK (PassClock): the machine's in the product.
+                    timer = new CancellationTokenSource(left, PassClock);
+                    bound = CancellationTokenSource.CreateLinkedTokenSource(ct, timer.Token);
                     var (file, token) = (fs, bound.Token);
 
                     // AND WAITED FOR, NOT MADE, HERE (U-perf-scan; U-cards-2's card): a read the operating system holds is not between
@@ -759,19 +767,20 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                     // A QUIT IS NOT HELD EITHER: the wait ends at the pass's own cancellation, the read is left as a stalled one is, and
                     // the cancellation goes on up.
                     bool back;
-                    try { back = reading.Wait(left + StallGrace, ct); }
-                    catch (AggregateException) { back = true; }
-                    catch (OperationCanceledException)
+                    try { reading.WaitAsync(left + StallGrace, PassClock, ct).GetAwaiter().GetResult(); back = true; }
+                    catch (TimeoutException) when (!reading.IsCompleted) { back = false; }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
                         if (reading.IsCompleted) throw;
                         leftReading = true;
-                        LeaveReading(reading, file, bound);
+                        LeaveReading(reading, file, bound, timer);
                         throw;
                     }
+                    catch (Exception) when (reading.IsCompleted) { back = true; }   // the read's own end, read below
                     if (!back)
                     {
                         leftReading = true;
-                        LeaveReading(reading, file, bound);
+                        LeaveReading(reading, file, bound, timer);
                         held = true;
                         Defer(m, $"a read of it did not come back from the disk within the {HashTimePerPass.TotalSeconds:0.#} s a pass has "
                                  + "for hashing; it is left to finish, and nothing here is read until it has.");
@@ -792,7 +801,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 }
                 finally
                 {
-                    if (!leftReading) { fs.Dispose(); bound?.Dispose(); }
+                    if (!leftReading) { fs.Dispose(); bound?.Dispose(); timer?.Dispose(); }
                 }
             }
             catch (IOException) { }                 // still being written, or gone — the next pass retries
@@ -816,8 +825,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     }
 
     /// <summary>A read that did not come back, left to finish on its own: its file and its bound are closed once it has, never under it.</summary>
-    void LeaveReading(Task reading, FileStream file, CancellationTokenSource bound) =>
-        Hold(HashKey, reading.ContinueWith(_ => { file.Dispose(); bound.Dispose(); },
+    void LeaveReading(Task reading, FileStream file, CancellationTokenSource bound, CancellationTokenSource timer) =>
+        Hold(HashKey, reading.ContinueWith(_ => { file.Dispose(); bound.Dispose(); timer.Dispose(); },
             CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default));
 
     /// <summary>Is the open file still the one this row was written about?</summary>
