@@ -127,7 +127,10 @@ public sealed class CellWindowsProbeTests : IDisposable
         Require(p.WaitForExit(60_000), $"{program} ended within 60 s");
         var text = (await so) + (await se);
         _out.WriteLine($"> {Path.GetFileName(program)} {string.Join(' ', args)}  [caps {(caps is { Count: > 0 } ? string.Join(',', caps) : "none")}; desktop {(ownDesktop ? p.Desktop : "the caller's")}]");
-        Assert.True(ownDesktop == p.Desktop.StartsWith("TradeAgent-cell-", StringComparison.Ordinal), $"the cell's desktop: '{p.Desktop}'");
+        // THE CELL'S OWN DESKTOP, on a station that is not the caller's: "<the logon session's station>\TradeAgent-cell-<hex>".
+        var named = p.Desktop.Split('\\');
+        Assert.True(ownDesktop == (named.Length == 2 && named[1].StartsWith("TradeAgent-cell-", StringComparison.Ordinal)
+            && !named[0].Equals("WinSta0", StringComparison.OrdinalIgnoreCase)), $"the cell's desktop: '{p.Desktop}'");
         _out.WriteLine($"  exit {p.ExitCode} (0x{p.ExitCode:X8}): {text.Trim().Replace("\r", "").Replace('\n', ' ')}");
         return (p.ExitCode, text);
     }
@@ -244,8 +247,8 @@ public sealed class CellWindowsProbeTests : IDisposable
 
     /// <summary>
     /// THE WINDOW STATION (the survey's open question): with no ACE on the owner's window station or desktop, the pinned codex dies
-    /// 0xC0000142 where cmd and curl start (measured on Windows 11 26200) — so every cell runs on a window station and desktop of its
-    /// own (<see cref="PrivateDesktop"/>), and the owner's are never granted. Here codex, cmd and curl start there; cmd prints what its
+    /// 0xC0000142 where cmd and curl start (measured on Windows 11 26200) — so every cell runs on a desktop of its own, on the logon session's
+    /// window station (<see cref="PrivateDesktop"/>), and the owner's are never granted. Here codex, cmd and curl start there; cmd prints what its
     /// environment became.
     /// </summary>
     [WindowsFact]
@@ -257,7 +260,7 @@ public sealed class CellWindowsProbeTests : IDisposable
         // that starts below is on its own, and the owner's station and desktop are not the container's.
         // THE CONTROL IS PRINTED, NOT ASSERTED: whether the caller's station admits an AppContainer is the HOST's — closed on the tests
         // box (0xC0000142, 26200), open on CI's runner session (exit 0, run 41116396083). The cell never depends on it: it is always
-        // started on a station of its own, which the line below asserts by name.
+        // started on a desktop of its own, on a station that is not the caller's, which Run asserts by name.
         var (control, _) = await Run(codex, ["--version"], ownDesktop: false);
         _out.WriteLine(control == unchecked((int)0xC0000142)
             ? "the caller's window station is closed to an AppContainer on this host"
@@ -269,6 +272,36 @@ public sealed class CellWindowsProbeTests : IDisposable
         Assert.Contains("0.160.1", codexOut, StringComparison.Ordinal);
         Assert.Equal(0, cmdCode);
         Assert.Equal(0, curlCode);
+    }
+
+    /// <summary>
+    /// THE CELL'S WINDOW STATION IS ONE AN UNELEVATED ACCOUNT MAY OPEN (<c>U-cell-winsta</c>). <c>CreateWindowStation</c>'s documentation:
+    /// "Only members of the Administrators group are allowed to specify a name." Elevated CI and the tests box's batch logon could name a
+    /// station, so 32 rows passed while, from the owner's desktop unelevated, no cell could start (error 5, W0-BOX 2026-11-14). This row
+    /// holds the property on any host: it names the session it runs in; the station is the one Windows forms from the logon session
+    /// (<c>Service-0x…-…$</c>), never a name of ours and never WinSta0; and a desktop is made too while the thread wears this account's
+    /// token with Administrators made deny-only — what UAC gives the owner's unelevated session — so an elevated runner meets the rule.
+    /// </summary>
+    [WindowsFact]
+    public void The_cells_station_is_the_logon_sessions_own_so_an_unelevated_account_can_start_a_cell()
+    {
+        _out.WriteLine("[host] " + HostSession.Describe());
+        using (var desktop = PrivateDesktop.Create(_sid))
+        {
+            _out.WriteLine($"the cell's desktop: {desktop.Name}");
+            Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
+            Assert.StartsWith(desktop.Station + "\\TradeAgent-cell-", desktop.Name, StringComparison.Ordinal);
+        }
+        using var filtered = HostSession.WithoutAdministrators();
+        WindowsIdentity.RunImpersonated(filtered, () =>
+        {
+            _out.WriteLine("[impersonating] " + HostSession.Describe());
+            using (var me = WindowsIdentity.GetCurrent())
+                Assert.False(new WindowsPrincipal(me).IsInRole(WindowsBuiltInRole.Administrator), "the filtered token is no administrator");
+            using var desktop = PrivateDesktop.Create(_sid);
+            _out.WriteLine($"the cell's desktop, as an account that is no administrator: {desktop.Name}");
+            Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
+        });
     }
 
     /// <summary>
@@ -486,4 +519,73 @@ public sealed class CellWindowsProbeTests : IDisposable
         Assert.Equal(0, left);
         Assert.True(p.WaitForExit(5_000), "the shell itself ended within 5 s of the cancel");
     }
+}
+
+/// <summary>
+/// THE SESSION A WINDOWS ROW RAN IN, named so a run cannot pass in a service or batch session and be read as the owner's desktop
+/// (<c>U-cell-winsta</c>: elevated CI and an S4U batch task passed with a defect only the owner's unelevated interactive session meets).
+/// </summary>
+[SupportedOSPlatform("windows")]
+static class HostSession
+{
+    /// <summary>"session 1, interactive, unelevated, window station WinSta0": the logon kind read from the token's well-known groups.</summary>
+    public static string Describe()
+    {
+        using var id = WindowsIdentity.GetCurrent();
+        var groups = id.Groups?.Select(g => g.Value).ToHashSet() ?? [];
+        var kind = string.Join('+', new[] { ("S-1-5-4", "interactive"), ("S-1-5-6", "service"), ("S-1-5-3", "batch"), ("S-1-5-2", "network") }
+            .Where(k => groups.Contains(k.Item1)).Select(k => k.Item2).DefaultIfEmpty("no logon-kind group"));
+        var elevated = new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator) ? "elevated (an administrator)" : "unelevated";
+        ProcessIdToSessionId((uint)Environment.ProcessId, out var session);
+        return $"session {session}, {kind}, {elevated}, window station {StationName(GetProcessWindowStation())}";
+    }
+
+    /// <summary>This process's token with BUILTIN\Administrators made deny-only: the token UAC gives an administrator who did not elevate.</summary>
+    public static Microsoft.Win32.SafeHandles.SafeAccessTokenHandle WithoutAdministrators()
+    {
+        if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0001 | 0x0002 | 0x0004 | 0x0008 /* ASSIGN_PRIMARY|DUPLICATE|IMPERSONATE|QUERY */, out var mine))
+            throw new System.ComponentModel.Win32Exception();
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var bytes = new byte[admins.BinaryLength];
+        admins.GetBinaryForm(bytes, 0);
+        var sid = System.Runtime.InteropServices.Marshal.AllocHGlobal(bytes.Length);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(bytes, 0, sid, bytes.Length);
+            var disable = new SidAndAttributes { Sid = sid, Attributes = 0 };
+            if (!CreateRestrictedToken(mine, 0, 1, [disable], 0, IntPtr.Zero, 0, IntPtr.Zero, out var filtered))
+                throw new System.ComponentModel.Win32Exception();
+            return filtered;
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(sid);
+            mine.Dispose();
+        }
+    }
+
+    static string StationName(IntPtr station)
+    {
+        var buffer = new char[256];
+        return GetUserObjectInformation(station, 2 /* UOI_NAME */, buffer, buffer.Length * 2, out _) ? new string(buffer).TrimEnd('\0') : "(unread)";
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern bool ProcessIdToSessionId(uint pid, out uint session);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    static extern IntPtr GetProcessWindowStation();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true, EntryPoint = "GetUserObjectInformationW")]
+    static extern bool GetUserObjectInformation(IntPtr handle, int index, [System.Runtime.InteropServices.Out] char[] info, int length, out int needed);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool OpenProcessToken(IntPtr process, uint access, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool CreateRestrictedToken(Microsoft.Win32.SafeHandles.SafeAccessTokenHandle existing, uint flags, uint disableCount,
+        SidAndAttributes[] disable, uint deleteCount, IntPtr delete, uint restrictCount, IntPtr restrict, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle created);
 }
