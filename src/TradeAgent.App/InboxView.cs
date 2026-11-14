@@ -169,6 +169,8 @@ sealed class InboxPage
         _status.Foreground = failed == 0 ? Theme.Positive : Theme.Caution;
         if (copied > 0) _host.Gateway.Log.Activity($"You handed the AI {copied} file{(copied == 1 ? "" : "s")}");
         if (result is null) { if (copied > 0) _status.Text += " They will be listed on TradeAgent's next look."; }
+        // A LOOK THE DISK HELD (U-material-pass-2, the opus review) listed nothing new: said, so the drop does not look as if it failed.
+        else if (result.WalkStalled) { if (copied > 0) _status.Text += " The disk did not answer in time; they will be listed once it does."; }
         else if (result.HashBudgetSpent) _status.Text += " Still reading some of them.";
 
         Update();

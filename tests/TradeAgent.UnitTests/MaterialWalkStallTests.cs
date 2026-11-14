@@ -109,6 +109,43 @@ public class MaterialWalkStallTests
     }
 
     /// <summary>
+    /// A HELD LISTING OF THE OWNER'S INBOX (the opus review: every other case holds the AI's folders, walked after the inbox): the file
+    /// dropped meanwhile is not recorded, the file already recorded is not marked removed, the AI's folders are not walked either, and the
+    /// window stays where it was.
+    /// </summary>
+    [Fact]
+    public async Task A_held_listing_of_the_inbox_records_nothing_of_it_and_marks_nothing_missing()
+    {
+        var root = Path.Combine(TestEnv.Home, $"walk-stall-inbox-{Guid.NewGuid():n}");
+        var inbox = Path.Combine(root, MaterialScanner.InboxDir);
+        var data = Path.Combine(root, CouncilRoles.HomeDir(CouncilRoles.Operations), "data");
+        Directory.CreateDirectory(inbox);
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(inbox, "a.txt"), "the owner's");
+        using var db = TestEnv.NewDb();
+        using var disk = new ManualResetEventSlim();
+        var hold = false;
+        var reads = Holding(root, "list", inbox, () => hold, disk, () => { });
+        var scanner = new MaterialScanner(db, root, _ => true, reads: reads);
+        Assert.True((await Within(() => scanner.Scan())).Complete);
+        var window = db.GetKv("material_scan_at");
+
+        try
+        {
+            hold = true;
+            File.WriteAllText(Path.Combine(inbox, "b.txt"), "dropped while the disk stalls");
+            File.WriteAllText(Path.Combine(data, "prices.csv"), "the AI's, written while the disk stalls");
+            var stalled = await Within(() => scanner.Scan());
+            Assert.True(stalled.WalkStalled);
+            Assert.Equal((0, 0), (stalled.Added, stalled.Removed));
+            var rows = new MaterialStore(db).Present().Select(m => m.Name).ToList();
+            Assert.Equal(["a.txt"], rows);
+            Assert.Equal(window, db.GetKv("material_scan_at"));
+        }
+        finally { hold = false; disk.Set(); }
+    }
+
+    /// <summary>
     /// THE APP-ORIGIN MEASURE IS A READ OF THE DISK TOO: a home's file the app names is read to tell the app's bytes from the AI's, and a
     /// read the disk holds there ends the walk as a held listing does. Nothing is written of it — above all not the weaker word in place of
     /// a measurement that never finished.
@@ -200,8 +237,9 @@ public class MaterialWalkStallTests
             Assert.True(host.ScanMaterials()!.Complete);
             Assert.True(host.ScanMaterials()!.Complete);
 
-            var expected = $"TradeAgent stopped looking after {20_000:N0} files in your inbox, so a file removed there is not noticed "
-                           + $"until it can look through all of them. Fewer files in your inbox lets it look everywhere again.";
+            var expected = $"TradeAgent stopped looking after {20_000:N0} files in your inbox, so a file removed from your inbox or "
+                           + "the AI's folders is not noticed until it can look through all of them. Fewer files in your inbox lets it look "
+                           + "everywhere again.";
             var said = host.Gateway.Log.RecentActivity()
                 .Where(a => a.Text.StartsWith("TradeAgent stopped looking", StringComparison.Ordinal) || a.Text == AppHost.LooksEverywhereAgain)
                 .ToList();
