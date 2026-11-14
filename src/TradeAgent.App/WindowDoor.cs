@@ -30,7 +30,8 @@ sealed record WindowDoor(string Address, int Port, string PasswordFile, string P
         if (!linux) return null;
         var (address, port, file, tool) = (env(AddressVariable), env(PortVariable), env(FileVariable), env(ToolVariable));
         if (string.IsNullOrWhiteSpace(address) || !int.TryParse(port, out var p) || p is < 1 or > 65535) return null;
-        if (file is null || !Path.IsPathFullyQualified(file) || tool is null || !Path.IsPathFullyQualified(tool)) return null;
+        // Linux paths, read as Linux reads them (the same check on every OS, so the reading is testable anywhere).
+        if (file is null || !file.StartsWith('/') || tool is null || !tool.StartsWith('/')) return null;
         return new WindowDoor(address.Trim(), p, file, tool);
     }
 

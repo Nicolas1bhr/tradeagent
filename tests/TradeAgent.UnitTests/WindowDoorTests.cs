@@ -88,10 +88,9 @@ public class WindowDoorTests : IDisposable
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(PasswordFile));
     }
 
-    [Fact]
+    [LinuxKitFact]   // a rename over an open file is POSIX's: the owner's host is Linux
     public void The_file_is_renamed_over_never_written_into()
     {
-        if (OperatingSystem.IsWindows()) return;   // a rename over an open file is POSIX's: the owner's host is Linux
         File.WriteAllBytes(PasswordFile, [1, 2, 3, 4, 5, 6, 7, 8]);
         using var before = new FileStream(PasswordFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var (done, words) = Door().ChangePassword("Ab3$xY9z", "Ab3$xY9z");
@@ -153,7 +152,7 @@ public class WindowDoorTests : IDisposable
         var tool = FakeTool();
         var card = new WindowDoorCard(Door(tool));
         var words = string.Join(" | ", Words(card.Root));
-        Assert.Contains("Reaching this window", words);
+        Assert.Contains("REACHING THIS WINDOW", words.ToUpperInvariant());   // the section eyebrow is set in capitals
         Assert.Contains("on a Mac, Screen Sharing — at 198.51.100.9, port 5901, and the password you chose", words);
         Assert.Contains("TradeAgent never shows it, never logs it and never puts it in the activity line", words);
         var (first, second) = card.Fields;
@@ -198,9 +197,14 @@ public class WindowDoorTests : IDisposable
         Assert.Null(CellPolicy.Guarded.Of(home, PasswordFile).Refuses(Path.GetFullPath(Path.Combine(_dir, "acct", "elsewhere"))));
         // Without the kit's line there is no door, and nothing is guarded for it.
         Assert.Null(CellPolicy.Guarded.Of(home, null).Refuses(Path.GetFullPath(vnc)));
+    }
 
-        if (OperatingSystem.IsWindows()) return;   // a symbolic link made in a test is POSIX's here
-        // THE DOOR NAMED THROUGH A LINK is guarded where it really is.
+    [LinuxKitFact]   // a symbolic link made by a test is a real one on Linux and macOS
+    public void The_windows_password_folder_named_through_a_link_is_guarded_where_it_really_is()
+    {
+        var home = Path.Combine(_dir, "acct", ".local", "share", "TradeAgent");
+        Directory.CreateDirectory(home);
+        var vnc = Path.GetDirectoryName(PasswordFile)!;
         var alias = Path.Combine(_dir, "alias");
         Directory.CreateSymbolicLink(alias, Path.Combine(_dir, "acct"));
         var throughLink = CellPolicy.Guarded.Of(home, Path.Combine(alias, ".vnc", "vncauth"));

@@ -53,9 +53,9 @@ public class SignInCodeWordsTests
         var codex = Codex(HostOs.Windows);
         using var service = new SeatSignIn(() => codex);
         var card = new SeatSignInCard(new SeatSignInSources { Service = service, Open = _ => { }, Activity = _ => { }, Ui = a => a() });
-        var words = VisibleWords(card.Root);
         Assert.Contains(SeatSignInCard.Code, card.Root.GetLogicalDescendants().OfType<Button>().Where(b => b.IsVisible).Select(b => b.Content as string));
-        Assert.Contains($"For a code: {Needs}", words);
+        // The card itself is hidden until a status read says signed out; its line is set and shown with the code button.
+        Assert.Contains(card.Root.GetLogicalDescendants().OfType<TextBlock>(), t => t.IsVisible && t.Text == $"For a code: {Needs}");
     }
 
     [Fact]
