@@ -499,6 +499,9 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-chief-moves (R30 D21): ChiefFloor and ChiefFloorEvery — the interval the loop wakes the chief at while nothing moves. Reads,
         // called by the app's host alone, the one write being the loop's own ceiling; no op, verb or board act reaches them.
         mandate = [.. mandate, "ChiefFloor", "ChiefFloorEvery"];
+        // REVISITED, OUT LOUD, BY U-door-bounds: SlowCallsSince — the Work page's read of the last day's slow tool calls, the app's own measure
+        // (ToolCallStore.SlowSince's one query). A read of tool_call, no org table; no op, door verb or trade verb reaches it.
+        mandate = [.. mandate, "SlowCallsSince"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

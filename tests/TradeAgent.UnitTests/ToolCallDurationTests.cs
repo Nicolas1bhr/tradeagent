@@ -19,6 +19,9 @@ public class ToolCallDurationTests
     static readonly DateTimeOffset Now = new(2026, 11, 13, 12, 0, 0, TimeSpan.Zero);
     static readonly TimeSpan Delay = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>The timer's own grain (about 15.6 ms on Windows) and the row's whole milliseconds: a delay may end that much early by the stopwatch.</summary>
+    static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(20);
+
     /// <summary>The gateway's refusal of a verdict it stopped, as the pipe answers one: unavailable, in its words.</summary>
     const string Stopped = "TradeAgent stopped this verdict before it answered";
 
@@ -66,7 +69,7 @@ public class ToolCallDurationTests
         Assert.Contains(Stopped, stopped.Refusal);
         Assert.Contains(Ops.Verdict, stopped.Argument);
         foreach (var (what, row) in new[] { ("served", served), ("refused", refused), ("stopped", stopped) })
-            Assert.True(row.Duration >= Delay && row.Duration < Delay * 40, $"the {what} call recorded {row.Duration}");
+            Assert.True(row.Duration >= Delay - Tick && row.Duration < Delay * 40, $"the {what} call recorded {row.Duration}");
 
         // A CALL THE SURFACE ANSWERS ITSELF IS TIMED TOO: a tool this launch was not granted.
         Assert.False((await tools.InvokeAsync(new ToolRequest("5", "shell", "{}"))).Served);

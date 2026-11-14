@@ -3382,6 +3382,8 @@ public sealed class Database : IDisposable
             // when a call ran long. Written in the row's own insert; NULL on every row before the rung, never backfilled. The column added only
             // where missing and the stamp last, so a crash between them runs this again as a no-op.
             AddColumnIfMissing("tool_call", "duration_ms", "INTEGER");
+            // AND THE WORK PAGE'S READ OF THE LAST DAY, INDEXED (the opus review): every refresh asks for the day's slow calls by time.
+            Exec("CREATE INDEX IF NOT EXISTS ix_tool_call_at ON tool_call(at);");
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{toolCallDurationRung}') ON CONFLICT(key) DO UPDATE SET value='{toolCallDurationRung}';");
         }
 

@@ -1124,7 +1124,7 @@ public class BrokerDoorTests
 
         var answered = Assert.Single(ledger.ForAttempt("attempt-timed-served"));
         Assert.True(answered.Served);
-        Assert.True(answered.Duration >= took, $"the served verb recorded {answered.Duration}");
+        Assert.True(answered.Duration >= took - TimeSpan.FromMilliseconds(20), $"the served verb recorded {answered.Duration}");
         var gated = Assert.Single(ledger.ForAttempt("attempt-timed-refused"));
         Assert.False(gated.Served);
         Assert.True(gated.Duration is { } d && d < took, $"the refused verb recorded {gated.Duration}, though it never ran");
