@@ -330,11 +330,21 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
     /// AND THE OTHER WAY ROUND: another caller's six do not come out of the runs' forty-five. Six orders of a caller that is not a run, then forty-five of the
     /// fifteen runs' own at the same instant, three each, and every one goes out; the forty-sixth is refused at the runs' figure, so the forty-five still
     /// binds the runs. RED at the base, one count for both: the fortieth run order refused, <c>45 orders per minute is the limit</c>, with thirty-nine sent.
+    ///
+    /// <para><b>Its precondition changed in the open</b> (<c>U-paper-risk-words</c>, the orchestrator's ruling that the open-position limit counts each paper
+    /// run's holding as one): the owner's six buys give the account a BTC holding of its own, which is a sixteenth position beside the fifteen runs, so under the
+    /// founding fifteen the fifteenth run's order was refused by the position limit, not by the minute. The board here allows sixteen open positions and names the
+    /// five pairs, and nothing else (the rate stays the founding record's, so its two counts stand), and the test still measures only the minute.</para>
     /// </summary>
     [Fact]
     public async Task Another_callers_six_do_not_come_out_of_the_runs_minute()
     {
-        await using var rig = await Founded(runsPerPair: 3);
+        await using var rig = await Founded(runsPerPair: 3, board: db => BoardDecides(db, risk =>
+        {
+            risk.MaxOpenPositions = 16;
+            // A decided policy is no longer the founding list's, so the pairs are named, as every decided figure in this class names them.
+            risk.InstrumentAllowlist = [.. Pairs.Select(p => p.Pair)];
+        }));
         var runs = rig.Gw.Deployments.All();
         Assert.Equal(15, runs.Count);
         var said = new List<string>();
