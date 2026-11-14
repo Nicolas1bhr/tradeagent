@@ -778,14 +778,18 @@ public sealed class PrivateDesktop : IDisposable
     public static PrivateDesktop Create(string containerSid)
     {
         var user = WindowsIdentity.GetCurrent().User!.Value;
-        var sddl = $"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})S:(ML;;NW;;;LW)";
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out var sd, IntPtr.Zero))
-            throw Fail("describe the cell's desktop");
+        // THE DESKTOP: the account and this cell's container alone, nothing inherited from the station (P), labelled Low so the container may use it.
+        var desktopSd = Describe($"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})S:(ML;;NW;;;LW)", "the cell's desktop");
+        // THE STATION, used only if this call is the one that makes it (Windows ignores it when the station exists, which it does whenever
+        // the logon session made it first): the descriptor Windows itself gives that station (read 2026-11-14), the account in place of
+        // its logon SID. It names NO container: the station is the logon session's, every cell's and other programs' alike, so no one
+        // cell's container may hold rights on it that another cell lacks (the opus review of U-cell-winsta).
+        var stationSd = Describe($"D:(A;;0xf037f;;;{user})(A;OICIIO;GA;;;{user})(A;;0xf037f;;;SY)(A;OICIIO;GA;;;SY)(A;;0xf037f;;;RC)(A;OICIIO;GA;;;RC)" +
+            "(A;;0x20327;;;AC)(A;OICIIO;GXGR;;;AC)(A;;0x20327;;;S-1-15-2-2)(A;OICIIO;GXGR;;;S-1-15-2-2)", "the cell's window station");
         try
         {
-            var sa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = sd, bInheritHandle = 0 };
-            // NULL: the logon session's station, which Windows names and an unelevated account may open; the descriptor applies only
-            // if this call is the one that makes it.
+            var sa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = stationSd, bInheritHandle = 0 };
+            // NULL: the logon session's station, which Windows names and an unelevated account may open.
             var ws = CreateWindowStation(null, 0, 0x37F /* WINSTA_ALL_ACCESS */, ref sa);
             if (ws == IntPtr.Zero) throw Fail("open the cell's window station");
             string stationName;
@@ -801,7 +805,9 @@ public sealed class PrivateDesktop : IDisposable
                 throw;
             }
             var desktopName = "TradeAgent-cell-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
+            var dsa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = desktopSd, bInheritHandle = 0 };
             IntPtr dt;
+            int made = 0, back = 0;
             lock (Swap)
             {
                 var mine = GetProcessWindowStation();
@@ -811,19 +817,35 @@ public sealed class PrivateDesktop : IDisposable
                     CloseWindowStation(ws);
                     throw e;
                 }
-                try { dt = CreateDesktop(desktopName, IntPtr.Zero, IntPtr.Zero, 0, 0x10000000 /* GENERIC_ALL */, ref sa); }
-                finally { SetProcessWindowStation(mine); }
+                try
+                {
+                    dt = CreateDesktop(desktopName, IntPtr.Zero, IntPtr.Zero, 0, 0x10000000 /* GENERIC_ALL */, ref dsa);
+                    if (dt == IntPtr.Zero) made = Marshal.GetLastWin32Error();
+                }
+                finally
+                {
+                    // READ BEFORE THE RESTORE CAN OVERWRITE IT; and a restore that fails leaves this process on the cell's station, which
+                    // is refused rather than carried on with.
+                    if (!SetProcessWindowStation(mine)) back = Marshal.GetLastWin32Error();
+                }
             }
-            if (dt == IntPtr.Zero)
+            if (dt == IntPtr.Zero || back != 0)
             {
-                var e = Fail("make the cell's desktop");
+                if (dt != IntPtr.Zero) CloseDesktop(dt);
                 CloseWindowStation(ws);
-                throw e;
+                throw back != 0 ? Fail("return this process to its own window station", back) : Fail("make the cell's desktop", made);
             }
             return new PrivateDesktop(ws, dt, stationName, desktopName);
         }
-        finally { LocalFree(sd); }
+        finally
+        {
+            LocalFree(desktopSd);
+            LocalFree(stationSd);
+        }
     }
+
+    static IntPtr Describe(string sddl, string what) =>
+        ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out var sd, IntPtr.Zero) ? sd : throw Fail("describe " + what);
 
     static string ObjectName(IntPtr handle)
     {
@@ -840,11 +862,10 @@ public sealed class PrivateDesktop : IDisposable
         if (_name != IntPtr.Zero) { Marshal.FreeHGlobal(_name); _name = IntPtr.Zero; }
     }
 
-    static TradeAgentException Fail(string what)
-    {
-        var err = Marshal.GetLastWin32Error();
-        return new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, $"Windows would not {what} (error {err}: {new Win32Exception(err).Message})");
-    }
+    static TradeAgentException Fail(string what) => Fail(what, Marshal.GetLastWin32Error());
+
+    static TradeAgentException Fail(string what, int err) =>
+        new(ErrorCode.CELL_UNAVAILABLE, $"Windows would not {what} (error {err}: {new Win32Exception(err).Message})");
 
     [StructLayout(LayoutKind.Sequential)] struct Sa { public int nLength; public IntPtr lpSecurityDescriptor; public int bInheritHandle; }
 

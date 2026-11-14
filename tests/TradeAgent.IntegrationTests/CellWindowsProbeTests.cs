@@ -280,7 +280,8 @@ public sealed class CellWindowsProbeTests : IDisposable
     /// station, so 32 rows passed while, from the owner's desktop unelevated, no cell could start (error 5, W0-BOX 2026-11-14). This row
     /// holds the property on any host: it names the session it runs in; the station is the one Windows forms from the logon session
     /// (<c>Service-0x…-…$</c>), never a name of ours and never WinSta0; and a desktop is made too while the thread wears this account's
-    /// token with Administrators made deny-only — what UAC gives the owner's unelevated session — so an elevated runner meets the rule.
+    /// token filtered as UAC filters the owner's unelevated session (Administrators deny-only, its privileges stripped, Medium integrity), so an
+    /// elevated runner meets the rule — whether win32k reads that from the thread's token is CI's to show (the mutant branch).
     /// </summary>
     [WindowsFact]
     public void The_cells_station_is_the_logon_sessions_own_so_an_unelevated_account_can_start_a_cell()
@@ -303,6 +304,32 @@ public sealed class CellWindowsProbeTests : IDisposable
             Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
             Assert.StartsWith(desktop.Station + "\\TradeAgent-cell-", desktop.Name, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// WHAT THE SHARED STATION LEAVES OPEN, CLOSED (<c>U-cell-winsta</c>): every cell's desktop is on the logon session's window station, whose own
+    /// DACL lets every AppContainer read it and use its clipboard. So the boundaries a station of the cell's own gave are held here by the rest:
+    /// another cell's desktop, on the same station, is refused by its DACL (the account and ITS container alone) while the cell opens its own by
+    /// name; and the station's clipboard is refused by the cell job's UI restrictions. <c>cell-probe desk</c> runs in the cell; it is never run
+    /// outside one, where the clipboard it writes would be the owner's.
+    /// </summary>
+    [WindowsFact]
+    public async Task A_cell_opens_no_other_cells_desktop_and_writes_no_clipboard_on_the_shared_station()
+    {
+        var probe = Path.Combine(_ro, "cell-probe.exe");
+        File.Copy(CellWindowsProofTests.CellProbe(), probe);
+        var otherProfile = "TradeAgent.Probe." + Guid.NewGuid().ToString("n")[..12];
+        var otherSid = AppContainerCell.Profile(otherProfile, "TradeAgent cell probe, the second cell (a test; deleted when it ends)");
+        try
+        {
+            using var other = PrivateDesktop.Create(otherSid);
+            var (code, o) = await Run(probe, ["desk", other.Name.Split('\\')[1]]);
+            Assert.Equal(0, code);
+            Assert.Contains("CTL-DESK-OPEN", o, StringComparison.Ordinal);
+            Assert.Contains("\nDESK-DENIED", "\n" + o.Replace("\r", ""), StringComparison.Ordinal);
+            Assert.Matches(@"(?m)^CLIP-WRITE-(DENIED|FAILED [0-9]+)\r?$", o);
+        }
+        finally { _out.WriteLine($"profile {otherProfile} deleted: {AppContainerCell.DeleteProfile(otherProfile)}"); }
     }
 
     /// <summary>
@@ -541,10 +568,14 @@ static class HostSession
         return $"session {session}, {kind}, {elevated}, window station {StationName(GetProcessWindowStation())}";
     }
 
-    /// <summary>This process's token with BUILTIN\Administrators made deny-only: the token UAC gives an administrator who did not elevate.</summary>
+    /// <summary>
+    /// This process's token as UAC filters an administrator who did not elevate: BUILTIN\Administrators deny-only, the privileges UAC strips removed
+    /// (<c>LUA_TOKEN</c>), Medium integrity. Unelevated, it equals the token the process already has.
+    /// </summary>
     public static Microsoft.Win32.SafeHandles.SafeAccessTokenHandle WithoutAdministrators()
     {
-        if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0001 | 0x0002 | 0x0004 | 0x0008 /* ASSIGN_PRIMARY|DUPLICATE|IMPERSONATE|QUERY */, out var mine))
+        using var self = Process.GetCurrentProcess();
+        if (!OpenProcessToken(self.Handle, 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0080 /* ASSIGN_PRIMARY|DUPLICATE|IMPERSONATE|QUERY|ADJUST_DEFAULT: the restricted token takes these rights, and its label needs the last */, out var mine))
             throw new System.ComponentModel.Win32Exception();
         var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var bytes = new byte[admins.BinaryLength];
@@ -554,8 +585,17 @@ static class HostSession
         {
             System.Runtime.InteropServices.Marshal.Copy(bytes, 0, sid, bytes.Length);
             var disable = new SidAndAttributes { Sid = sid, Attributes = 0 };
-            if (!CreateRestrictedToken(mine, 0, 1, [disable], 0, IntPtr.Zero, 0, IntPtr.Zero, out var filtered))
+            if (!CreateRestrictedToken(mine, 0x4 /* LUA_TOKEN */, 1, [disable], 0, IntPtr.Zero, 0, IntPtr.Zero, out var filtered))
                 throw new System.ComponentModel.Win32Exception();
+            if (!ConvertStringSidToSid("S-1-16-8192" /* Medium */, out var medium)) throw new System.ComponentModel.Win32Exception();
+            try
+            {
+                var label = new TokenMandatoryLabel { Sid = medium, Attributes = 0x20 /* SE_GROUP_INTEGRITY */ };
+                if (!SetTokenInformation(filtered, 25 /* TokenIntegrityLevel */, ref label,
+                        System.Runtime.InteropServices.Marshal.SizeOf<TokenMandatoryLabel>() + GetLengthSid(medium)))
+                    throw new System.ComponentModel.Win32Exception();
+            }
+            finally { LocalFree(medium); }
             return filtered;
         }
         finally
@@ -573,6 +613,21 @@ static class HostSession
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct TokenMandatoryLabel { public IntPtr Sid; public uint Attributes; }
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true, EntryPoint = "ConvertStringSidToSidW")]
+    static extern bool ConvertStringSidToSid(string sid, out IntPtr binary);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll")]
+    static extern int GetLengthSid(IntPtr sid);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern IntPtr LocalFree(IntPtr p);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool SetTokenInformation(Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token, int infoClass, ref TokenMandatoryLabel info, int length);
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]
     static extern bool ProcessIdToSessionId(uint pid, out uint session);

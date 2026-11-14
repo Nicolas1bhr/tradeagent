@@ -117,6 +117,8 @@ public class CellProbeTests : IDisposable
     [InlineData("kill", "x")]
     [InlineData("kill", "-1")]
     [InlineData("read", "a", "b")]
+    [InlineData("desk")]
+    [InlineData("desk", "a", "b")]
     public void A_call_it_does_not_know_prints_no_verdict_and_exits_2(params string[] args)
     {
         var o = new StringWriter();

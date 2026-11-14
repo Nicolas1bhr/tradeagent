@@ -22,7 +22,9 @@ namespace TradeAgent.CellProbe;
 /// Framework it lists with FindFirstFileW; .NET 10 opens the folder with CreateFileW for listing, then reads it: both need the right to list it), on the workspace
 /// folder (<c>CTL-LIST</c>) and on the forbidden one (<c>LIST</c>); <c>kill &lt;pid&gt;</c> — a process of its own started first and ended by
 /// <c>OpenProcess(PROCESS_TERMINATE)</c> and <c>TerminateProcess</c> (<c>CTL-KILL</c>: the calls work from where it runs), then the same two calls on the
-/// target (<c>KILL</c>). Anything else: no marker line, exit 2.</para>
+/// target (<c>KILL</c>); <c>desk &lt;desktop&gt;</c> (<c>U-cell-winsta</c>: cells share the logon session's window station, each on a desktop of its own) — the
+/// probe's own desktop opened by its name (<c>CTL-DESK</c>), the named desktop of the same station (<c>DESK</c>), and the station's clipboard written
+/// (<c>CLIP-WRITE</c>; run only inside a cell, whose station is never the owner's). Anything else: no marker line, exit 2.</para>
 /// </summary>
 public static class Probe
 {
@@ -60,8 +62,17 @@ public static class Probe
                 Kill(pid, o);
                 o.Flush();
                 return 0;
+            case ["desk", var other]:
+                if (!OperatingSystem.IsWindows())
+                {
+                    o.WriteLine("cell-probe: desk asks Windows itself, so it runs on Windows only");
+                    return 2;
+                }
+                Desk(other, o);
+                o.Flush();
+                return 0;
             default:
-                o.WriteLine("usage: cell-probe list <control-folder> <denied-folder> | cell-probe kill <pid>");
+                o.WriteLine("usage: cell-probe list <control-folder> <denied-folder> | cell-probe kill <pid> | cell-probe desk <desktop>");
                 return 2;
         }
     }
@@ -127,6 +138,77 @@ public static class Probe
         }
         finally { CloseHandle(handle); }
     }
+
+    /// <summary>
+    /// The desktops of this probe's window station: its own, by the name Windows reports for it (the control: opening a desktop by name works from here),
+    /// then <paramref name="other"/>; and the station's clipboard written with one line of text.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    static void Desk(string other, TextWriter o)
+    {
+        var mine = GetThreadDesktop(GetCurrentThreadId());
+        var name = new char[256];
+        o.WriteLine(mine == IntPtr.Zero || !GetUserObjectInformation(mine, 2 /* UOI_NAME */, name, name.Length * 2, out _)
+            ? Line("CTL-DESK", Marshal.GetLastPInvokeError())
+            : Opened("CTL-DESK", new string(name).TrimEnd('\0')));
+        o.WriteLine(Opened("DESK", other));
+        o.WriteLine(Line("CLIP-WRITE", ClipboardWrite()));
+    }
+
+    [SupportedOSPlatform("windows")]
+    static string Opened(string word, string desktop)
+    {
+        var handle = OpenDesktop(desktop, 0, false, 0x0001 | 0x0040 /* DESKTOP_READOBJECTS | DESKTOP_ENUMERATE */);
+        if (handle == IntPtr.Zero) return Line(word, Marshal.GetLastPInvokeError());
+        CloseDesktop(handle);
+        return Line(word, null);
+    }
+
+    /// <summary>The clipboard opened, emptied and given one line of text: null when every call worked, else the first call's Windows error.</summary>
+    [SupportedOSPlatform("windows")]
+    static int? ClipboardWrite()
+    {
+        if (!OpenClipboard(IntPtr.Zero)) return Marshal.GetLastPInvokeError();
+        try
+        {
+            if (!EmptyClipboard()) return Marshal.GetLastPInvokeError();
+            var text = Marshal.StringToHGlobalUni("cell-probe");
+            if (SetClipboardData(13 /* CF_UNICODETEXT */, text) != IntPtr.Zero) return null;
+            var e = Marshal.GetLastPInvokeError();
+            Marshal.FreeHGlobal(text);
+            return e;
+        }
+        finally { CloseClipboard(); }
+    }
+
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetThreadDesktop(uint thread);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetUserObjectInformationW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetUserObjectInformation(IntPtr handle, int index, [Out] char[] info, int length, out int needed);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "OpenDesktopW")]
+    static extern IntPtr OpenDesktop(string name, uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint access);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseDesktop(IntPtr desktop);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool OpenClipboard(IntPtr owner);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool EmptyClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetClipboardData(uint format, IntPtr data);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseClipboard();
 
     const uint ProcessTerminate = 0x0001;
 
