@@ -330,8 +330,12 @@ public sealed partial class OrgStore
     /// position as holder (fix pass 3), <c>operations</c> named as a holder (RULING Q4), a decider that heads no unit, a holder outside
     /// the subtree it heads — rather than what the issue
     /// says. Only the first kind is marked (<see cref="RefusalMark"/>), so only it leaves a refusal row at the pipe.
+    /// <para><paramref name="heldNow"/> is the activation gate's answer NOW for a holder, passed in by the caller (<c>U-wake-leftovers</c> item 2,
+    /// R31 A1-2), as <see cref="ChiefFloor"/> is handed it: why that holder cannot take a turn on this computer now, or null where it can or
+    /// nobody asked. A holder the gate refuses is refused here in words, not on rights — the decider asked nothing it may not, and a mandate to
+    /// it would be written, its wake kept and never served, until its deadline expired it. A mandate already written stays as it is.</para>
     /// </summary>
-    (string? Why, bool Rights) AssignVerdict(MandateIssue issue, DateTimeOffset now)
+    (string? Why, bool Rights) AssignVerdict(MandateIssue issue, DateTimeOffset now, Func<string, string?>? heldNow = null)
     {
         if (issue.Holder == issue.Decider)
             return ($"'{issue.Holder}' is your own position: a mandate is given to someone in the subtree you head, never to yourself.", true);
@@ -353,6 +357,8 @@ public sealed partial class OrgStore
             return ($"'{issue.Decider}' heads no unit, so there is no subtree it may assign into.", true);
         if (!subtree.Any(u => u.Id == holder.UnitId))
             return ($"'{issue.Holder}' is not in the subtree you head ({string.Join(", ", subtree.Select(u => u.Id))}): a mandate goes only into your own subtree.", true);
+        if (heldNow?.Invoke(issue.Holder) is { } held)
+            return (HeldHolder(issue.Holder, held), false);
 
         if (!MandateKind.IsKnown(issue.Kind))
             return ($"'{issue.Kind}' is no mandate kind: {string.Join(" | ", MandateKind.All)}.", false);
@@ -374,15 +380,26 @@ public sealed partial class OrgStore
     }
 
     /// <summary>
+    /// THE WORDS FOR A HOLDER THE ACTIVATION GATE REFUSES NOW (<c>U-wake-leftovers</c> item 2): to the decider, who chooses another holder —
+    /// what the gate says of the holder after them, as data.
+    /// </summary>
+    static string HeldHolder(string holder, string gate) =>
+        $"'{holder}' cannot take a turn on this computer now, so it can hold no mandate: give it to a position that can. "
+        + $"What TradeAgent says of '{holder}': {gate.Trim()}";
+
+    /// <summary>
     /// ISSUES A MANDATE: the row, its <c>issued</c> event and ONE <c>mandate</c> wake to its holder, in one write — or, refused in
     /// words (<see cref="AssignRefusal"/>), nothing. The id is the app's (<see cref="MintMandate"/>).
     /// </summary>
     /// <exception cref="TradeAgentException">The issue is refused; nothing was written.</exception>
     /// <param name="forecasts">The issuer's forecasts on this mandate (RULING Q5: optional), each attached to it in this same write
     /// (<c>U-org-decisions</c>) — a forecast on its own mandate's state is recorded, never scored: its decider controls it.</param>
-    public MandateRow Assign(MandateIssue issue, DateTimeOffset now, IReadOnlyList<ForecastClaim>? forecasts = null) => db.Write(_ =>
+    /// <param name="heldNow">The activation gate's answer now for the holder (<see cref="AssignVerdict"/>): why it cannot take a turn, or null. Null
+    /// asks nobody, as before.</param>
+    public MandateRow Assign(MandateIssue issue, DateTimeOffset now, IReadOnlyList<ForecastClaim>? forecasts = null,
+        Func<string, string?>? heldNow = null) => db.Write(_ =>
     {
-        if (AssignVerdict(issue, now) is { Why: { } refused, Rights: var rights })
+        if (AssignVerdict(issue, now, heldNow) is { Why: { } refused, Rights: var rights })
             throw rights ? Forbidden(refused) : Refused(refused);
 
         var row = InsertMandate(issue, now);
@@ -453,8 +470,10 @@ public sealed partial class OrgStore
     /// own (BUDGET-001): nothing is moved, and the successor's retries start fresh.
     /// </summary>
     /// <exception cref="TradeAgentException">Not the decider, not open, no reason, or terms an assignment refuses; nothing was written.</exception>
+    /// <param name="heldNow">The activation gate's answer now for the holder, as <see cref="Assign"/> takes it: a successor to a holder that cannot
+    /// take a turn is refused, and the old mandate stays open for its decider to cancel.</param>
     public (MandateEventRow Rescoped, MandateRow Successor) Rescope(string mandateId, string caller, string? attempt, string why,
-        MandateTerms terms, DateTimeOffset now) => db.Write(_ =>
+        MandateTerms terms, DateTimeOffset now, Func<string, string?>? heldNow = null) => db.Write(_ =>
     {
         var m = DecidedBy(mandateId, caller);
         if (string.IsNullOrWhiteSpace(why) || why.Length > MandateLimits.MaxClaimChars)
@@ -464,7 +483,7 @@ public sealed partial class OrgStore
             terms.Exact, terms.Deadline, terms.Allocation, terms.RetryLimit);
         // THE DECIDER'S AUTHORITY OVER THE SUCCESSOR IS MARKED AS ASSIGN MARKS IT (U-org-watcher-b): a holder that left the subtree it
         // heads, or a decider that heads no unit now, is a refusal of rights; a bad term is what was sent, and is not.
-        if (AssignVerdict(issue, now) is { Why: { } refused, Rights: var rights }) throw rights ? Forbidden(refused) : Refused(refused);
+        if (AssignVerdict(issue, now, heldNow) is { Why: { } refused, Rights: var rights }) throw rights ? Forbidden(refused) : Refused(refused);
 
         var successor = InsertMandate(issue, now);
         var rescoped = AppendMandateEvent(m.Id, now, MandateEventKind.Rescoped, caller, attempt, why, [successor.Id]);
