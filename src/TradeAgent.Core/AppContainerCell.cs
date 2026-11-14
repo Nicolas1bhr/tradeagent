@@ -786,7 +786,7 @@ public sealed class PrivateDesktop : IDisposable
             var sa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = sd, bInheritHandle = 0 };
             // NULL: the logon session's station, which Windows names and an unelevated account may open; the descriptor applies only
             // if this call is the one that makes it.
-            var ws = CreateWindowStation(null, 0, 0x37F /* WINSTA_ALL_ACCESS */, ref sa);
+            var ws = CreateWindowStation("TradeAgent-cell-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant(), 1, 0x37F /* MUTANT: a named station, as before U-cell-winsta */, ref sa);
             if (ws == IntPtr.Zero) throw Fail("open the cell's window station");
             string stationName;
             try
