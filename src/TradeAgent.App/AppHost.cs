@@ -764,7 +764,12 @@ public sealed partial class AppHost : IAsyncDisposable
         if (_db is not { } db) throw new TradeAgentException(ErrorCode.INVALID_REQUEST, "TradeAgent has no database open yet. Nothing was written.");
         // ITS HOME FIRST (the review's P2, the re-review's P2): the last prepare built homes for the seats active then, so this one's board
         // canon is written before it is made active — and a folder that cannot be built refuses the activation, nothing written.
-        if (BoardSeats.IsBoardId(seat) && new BoardStore(db).Seat(seat) is { Status: BoardSeatStatus.Dormant })
+        string? HostRefusal(BoardSeat s) =>
+            BoardSeatGate.ActivationRefusal(s.Id, s, SeatClassItWouldStartOn(s.Id), TestHostPuppet(s.Id), new CellProofStore(db).HoldsProof(),
+                BrokerSeat.VendorFamilyOf(RuntimeIdItWouldStartOn(s.Id)));
+        // ONLY FOR A SEAT THIS HOST WOULD ADMIT (the opus review): a refused activation writes nothing, its folder included — the store
+        // refuses it below in the same words.
+        if (BoardSeats.IsBoardId(seat) && new BoardStore(db).Seat(seat) is { Status: BoardSeatStatus.Dormant } dormant && HostRefusal(dormant) is null)
         {
             try { WorkspaceBuilder.BuildBoardHome(seat, Path.GetDirectoryName(Path.GetDirectoryName(HomeFor(seat)))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -774,9 +779,7 @@ public sealed partial class AppHost : IAsyncDisposable
                     + "board's instructions in its own folder. Nothing was written.");
             }
         }
-        var row = Gateway.ActivateBoardSeat(seat, s =>
-            BoardSeatGate.ActivationRefusal(s.Id, s, SeatClassItWouldStartOn(s.Id), TestHostPuppet(s.Id), new CellProofStore(db).HoldsProof(),
-                BrokerSeat.VendorFamilyOf(RuntimeIdItWouldStartOn(s.Id))));
+        var row = Gateway.ActivateBoardSeat(seat, HostRefusal);
         Changed?.Invoke();
         return $"You activated {row.Id}. It acts only when a proposal or a position's request wakes it. Appointing and replacing the chief "
                + "are the board's now; every other press you have stays yours.";

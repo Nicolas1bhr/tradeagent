@@ -73,8 +73,8 @@ public static partial class Labels
 
     /// <summary>In their place once a board seat is active.</summary>
     public const string ChiefIsTheBoards =
-        "The security board appoints and replaces the chief now, by a two-seat act under your veto. Activating a dormant chief and "
-        + "removing the chief stay yours.";
+        "The security board appoints and replaces the chief now, by a two-seat act under your veto — so while only one board seat is "
+        + "active, no one can. Activating a dormant chief and removing the chief stay yours.";
 
     public const string ChiefNone = "No chief is appointed: the organisation's head is vacant, so it is yours.";
 

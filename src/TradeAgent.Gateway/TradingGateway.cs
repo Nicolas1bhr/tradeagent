@@ -608,7 +608,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
             _log.Activity($"{by} lets TradeAgent run paper experiments "
                           + $"on its own practice account {account.Id} in {terms.Instrument}, up to "
                           + $"{AllocationRow.Num(terms.MaxQuantity)} at a time and worth at most {Labels.Money(terms.MaxNotional, account.Currency)}"
-                          + (terms.Days is { } d ? $", for {d} days" : ", with no end date while no board seat is active")
+                          + (terms.Days is { } d ? $", for {d} days" : ", with no end date")
                           + ". No capital and no live authority came with it.");
         }
         catch (Exception ex) { _log.TryEngineering("Gateway", "policy_envelope_failed", "error", ex: ex); }

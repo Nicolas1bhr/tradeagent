@@ -58,8 +58,8 @@ public class BoardActivationTests(ITestOutputHelper log)
             Assert.True(refusal is { Length: > 0 }, $"a seat was activated with {why}");
         }
         Assert.Contains("no sealed workspace for the AI proven yet", refusals[0].Refusal, StringComparison.Ordinal);
-        Assert.Contains("founded on a broker seat and this host would start it on a cli seat", refusals[1].Refusal, StringComparison.Ordinal);
-        Assert.Contains("only the app's door", refusals[3].Refusal, StringComparison.Ordinal);
+        Assert.Contains("founded as a seat that reaches TradeAgent only through its own verbs, with no shell, and this computer would start it as one that runs as you, outside a sealed workspace", refusals[1].Refusal, StringComparison.Ordinal);
+        Assert.Contains("on the worker it would sit with nothing it could do", refusals[3].Refusal, StringComparison.Ordinal);
         Assert.Contains("founded with the maker 'anthropic', and this computer would start it on an AI tool made by 'openai'", refusals[7].Refusal,
             StringComparison.Ordinal);
     }
@@ -110,6 +110,8 @@ public class BoardActivationTests(ITestOutputHelper log)
             var other = host.Gateway.FoundBoardSeat(SeatClasses.Broker, BoardModelClass.Strong, "anthropic");
             Assert.Contains("founded with the maker 'anthropic'", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat(other.Id)).Message,
                 StringComparison.Ordinal);
+            // A REFUSED ACTIVATION WRITES NOTHING, ITS FOLDER INCLUDED (U-board-alive-2, the opus review): no board canon for a seat refused.
+            Assert.False(File.Exists(Path.Combine(host.HomeFor(other.Id), "AGENTS.md")), "a refused activation built the seat's folder");
 
             Assert.Contains("is active: only a dormant seat is activated", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1")).Message,
                 StringComparison.Ordinal);

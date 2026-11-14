@@ -189,7 +189,8 @@ public static partial class Labels
     public const string ActivateBoardSeatWhat =
         "Activating this seat lets it act whenever a proposal or a position's request wakes it, and its turns are paid from the board's "
         + "share of your plan's day. What changes: an active seat may tighten a limit or an allowance on its own, and loosening one takes "
-        + "two active seats; appointing and replacing the chief become the board's, by two seats. What stays as it is: real money stays "
+        + "two active seats; appointing and replacing the chief become the board's, by two seats — so while only this one seat is active, no "
+        + "one appoints or replaces the chief. What stays as it is: real money stays "
         + "closed; you keep your veto, the board's seats and share, removing the chief, activating a dormant position or the chief, what "
         + "each seat runs on, and reopening a held paper scope. The way back is retiring the seat, which is refused while the seats left "
         + "would stand on fewer than two model classes.";

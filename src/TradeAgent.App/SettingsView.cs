@@ -445,7 +445,7 @@ sealed class SettingsPage
                      "an order or closes a position."),
             Ui.Divider(),
             Ui.Muted("Whether real money is used at all is the security board's decision, shown on the " + Labels.BoardPage + " page. "
-                     + "Until a board seat is active, no real money is put to work.")));
+                     + "In this version no real money is put to work, whether or not a board seat is active.")));
 
         // Always here, whatever the bridge row currently says. The Checks page shows this same card
         // only when the row calls for it, and that is the right rule for a page about what is wrong —
