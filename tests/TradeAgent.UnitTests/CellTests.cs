@@ -767,7 +767,9 @@ public class CellLaunchTests
         Assert.Equal(ErrorCode.CELL_UNAVAILABLE, refused.Code);
         Assert.Contains("would not start", refused.Message);
         Assert.Equal("/bin/sh", psi.FileName);        // the caller's command, put back as it was written
-        Assert.Empty(Directory.GetDirectories(root));
+        // THE ONE PARENT OF ALL ATTEMPTS STAYS (U-cell-ceilings item 2); the attempt made beneath it for this launch is gone.
+        Assert.Equal([Path.Combine(root, AttemptCgroups.AttemptsLeaf)], Directory.GetDirectories(root));
+        Assert.Empty(Directory.GetDirectories(Path.Combine(root, AttemptCgroups.AttemptsLeaf)));
         await AssertNeverRan(marker);
 
         using var bare = TradeAgent.AgentRuntime.ProcessContainment.Start(psi, [notExecutable]);

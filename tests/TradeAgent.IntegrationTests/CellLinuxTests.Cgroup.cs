@@ -256,6 +256,8 @@ public partial class CellLinuxTests
                 Assert.False(Alive(pid, start), $"sleep {pid}, left running in {cgroup}, outlived the restart's sweep: {report.Sentence}");
                 Assert.False(Directory.Exists(cgroup), $"the leftover attempt {cgroup} was not removed: {report.Sentence}");
             }
+            // BENEATH THE ONE PARENT OF ALL ATTEMPTS, where they are made since U-cell-ceilings (the meaning is unchanged: none is left).
+            Assert.Empty(Directory.GetDirectories(rows.Cgroups.Attempts!, AttemptCgroups.AttemptPrefix + "*"));
             Assert.Empty(Directory.GetDirectories(rows.Dir, AttemptCgroups.AttemptPrefix + "*"));
             Assert.False(File.Exists(stale), $"the cell policy file {stale}, from before the start, outlived the sweep: {report.Sentence}");
             Assert.True(File.Exists(fresh), "the sweep discarded a policy file written since the start");
@@ -316,11 +318,71 @@ public partial class CellLinuxTests
         Assert.NotNull(held.Cgroup);
         Assert.Equal(AttemptCgroups.PidsMax.ToString(CultureInfo.InvariantCulture), File.ReadAllText(Path.Combine(held.Cgroup!.Dir, "pids.max")).Trim());
         Assert.Equal(AttemptCgroups.MemoryMax.ToString(CultureInfo.InvariantCulture), File.ReadAllText(Path.Combine(held.Cgroup.Dir, "memory.max")).Trim());
+        Assert.Equal(AttemptCgroups.MemoryHigh.ToString(CultureInfo.InvariantCulture), File.ReadAllText(Path.Combine(held.Cgroup.Dir, "memory.high")).Trim());
         var ran = await Finish(held);
         var threads = int.Parse(ran.Out.Split('\n').First(l => l.StartsWith("threads=", StringComparison.Ordinal))[8..], CultureInfo.InvariantCulture);
         Assert.True(threads < AttemptCgroups.PidsMax, $"an attempt started {threads} threads under a ceiling of {AttemptCgroups.PidsMax}: {ran.Out} {ran.Err}");
         Says(ran, "fork-refused");
         Assert.Contains($"pids.max {AttemptCgroups.PidsMax}", held.Mechanism);
+    }
+
+    /// <summary>
+    /// (e2) THE SUM OF THE ATTEMPTS (<c>U-cell-ceilings</c> item 2): two attempts beneath the one parent, each starting more threads than its own ceiling,
+    /// hold fewer than the parent's <see cref="AttemptCgroups.SumPidsMax"/> between them while both run — the second meets the sum's ceiling, not its own.
+    /// The kernel's own read-back of the parent's and each attempt's memory, swap and write ceilings is said beside it.
+    /// </summary>
+    [LinuxFact]
+    public async Task Two_attempts_together_cannot_pass_the_parents_pids_ceiling()
+    {
+        PlatformIsACells();
+        using var rows = Rows();
+        var over = (AttemptCgroups.PidsMax + 64).ToString(CultureInfo.InvariantCulture);
+        var dir = Scratch("sum");
+        // EACH HOLDS ITS THREADS UNTIL THE OTHER HAS COUNTED: a file the row writes once both have printed.
+        const string HoldPy = """
+            import os, sys, threading, time
+            threading.stack_size(256 * 1024)
+            stop = threading.Event()
+            n = 0
+            try:
+                while n < int(sys.argv[1]):
+                    threading.Thread(target=stop.wait, daemon=True).start()
+                    n += 1
+            except RuntimeError:
+                pass
+            print(f"threads={n}", flush=True)
+            for _ in range(600):
+                if os.path.exists(sys.argv[2]): break
+                time.sleep(0.1)
+            os._exit(0)
+            """;
+        var release = Path.Combine(dir, "release");
+        using var a = ProcessContainment.Start(Plain("/usr/bin/python3", "-I", "-c", HoldPy, over, release), Launcher(),
+            requireHeld: true, attemptId: "sum-a", cgroups: rows.Cgroups);
+        var first = await a.Process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(90));
+        using var b = ProcessContainment.Start(Plain("/usr/bin/python3", "-I", "-c", HoldPy, over, release), Launcher(),
+            requireHeld: true, attemptId: "sum-b", cgroups: rows.Cgroups);
+        var second = await b.Process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(90));
+        string Said(string d) => string.Join(", ", new[] { "memory.max", "memory.high", "memory.swap.max", "pids.max", "io.max" }
+            .Select(f => $"{f} {(File.Exists(Path.Combine(d, f)) ? File.ReadAllText(Path.Combine(d, f)).Trim() : "none")}"));
+        _output.WriteLine($"parent {rows.Cgroups.Attempts}: {Said(rows.Cgroups.Attempts!)}\nattempt {a.Cgroup!.Dir}: {Said(a.Cgroup.Dir)}\n" +
+                          $"{a.Mechanism}\nfirst {first}, second {second}");
+        File.WriteAllText(release, "go");
+        await Finish(a);
+        await Finish(b);
+        Assert.Equal(rows.Cgroups.Attempts, Path.GetDirectoryName(a.Cgroup.Dir));
+        Assert.Equal(rows.Cgroups.Attempts, Path.GetDirectoryName(b.Cgroup!.Dir));
+        Assert.Equal(AttemptCgroups.SumPidsMax.ToString(CultureInfo.InvariantCulture), File.ReadAllText(Path.Combine(rows.Cgroups.Attempts!, "pids.max")).Trim());
+        Assert.Equal(AttemptCgroups.SumMemoryMax.ToString(CultureInfo.InvariantCulture), File.ReadAllText(Path.Combine(rows.Cgroups.Attempts!, "memory.max")).Trim());
+        static int Count(string? line) => line is null ? -1 : int.Parse(line[(line.IndexOf('=') + 1)..], CultureInfo.InvariantCulture);
+        var (n1, n2) = (Count(first), Count(second));
+        Assert.True(n1 + n2 < AttemptCgroups.SumPidsMax, $"two attempts held {n1} + {n2} threads under a sum ceiling of {AttemptCgroups.SumPidsMax}");
+        Assert.True(n2 < AttemptCgroups.PidsMax - 64, $"the second attempt held {n2} threads: it met its own ceiling ({AttemptCgroups.PidsMax}), not the sum's");
+        if (rows.Cgroups.SwapGap is null)
+            Assert.Equal("0", File.ReadAllText(Path.Combine(a.Cgroup.Dir, "memory.swap.max")).Trim());
+        if (rows.Cgroups.Io is { } disk)
+            Assert.True(AttemptCgroups.ReadsBack(File.ReadAllText(Path.Combine(a.Cgroup.Dir, "io.max")), disk), Said(a.Cgroup.Dir));
+        else Assert.Contains("writes not bounded", a.Mechanism, StringComparison.Ordinal);
     }
 
     // ---- refusal ------------------------------------------------------------------------------------------------

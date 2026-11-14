@@ -24,8 +24,16 @@ namespace TradeAgent.Core;
 /// guessed: a cell is then refused naming <c>Delegate=yes</c>, and a launch that is not a cell keeps the session alone, saying so
 /// on its Mechanism line.</para>
 ///
-/// <para><b>The ceilings</b> are named constants, said on the Mechanism line: <see cref="PidsMax"/> tasks and half of this
-/// computer's memory per attempt.</para>
+/// <para><b>The ceilings</b> are named constants, said on the Mechanism line (<see cref="Ceilings"/>). PER ATTEMPT: <see cref="PidsMax"/> tasks;
+/// <c>memory.max</c> half of this computer's memory or <see cref="MemoryCap"/>, the less; <c>memory.high</c> at four fifths of it, where the kernel
+/// reclaims and slows the attempt before its OOM; <c>memory.swap.max</c> 0, so a cell at its ceiling is ended rather than pushed into swap, which
+/// the owner's other services would pay for first; and <c>io.max</c> writes of <see cref="WriteBps"/> on the home's disk, so a cell's plain writes
+/// cannot outrun the free-space guard at the device's own rate. ALL ATTEMPTS TOGETHER (<c>U-cell-ceilings</c>; A4 § 5): every attempt is made
+/// beneath one parent, <c>attempts/</c>, whose own <c>memory.max</c> (half of this computer's memory), <c>pids.max</c> (<see cref="SumPidsMax"/>),
+/// <c>memory.swap.max</c> and <c>io.max</c> bound their sum, not only each. Where this kernel accounts no swap per cgroup, or the io controller
+/// is not delegated, or the home is on no one block device, that ceiling is not written and the line says so (<see cref="SwapGap"/>,
+/// <see cref="IoGap"/>): cells still run there as before, because the memory and task ceilings hold, and the cell proof records it as a GAP
+/// row, never as a pass.</para>
 /// </summary>
 public sealed class AttemptCgroups
 {
@@ -37,6 +45,12 @@ public sealed class AttemptCgroups
 
     /// <summary>The leaf the app moves itself into, so its root may enable controllers for the attempts.</summary>
     public const string SupervisorLeaf = "supervisor";
+
+    /// <summary>
+    /// THE ONE PARENT EVERY ATTEMPT IS MADE BENEATH (<c>U-cell-ceilings</c> item 2): its own ceilings bound the SUM of the attempts. It holds no process
+    /// (it hands controllers down), and it is never removed: a restart finds it and writes its ceilings again.
+    /// </summary>
+    public const string AttemptsLeaf = "attempts";
 
     /// <summary>
     /// ROUTE (a)'S TWO LEAVES OF ONE ATTEMPT (<c>U-cell-linux-c</c> item 3): <c>harness/</c>, where the codex harness that holds the login
@@ -51,11 +65,48 @@ public sealed class AttemptCgroups
     /// <summary>The most tasks — processes and threads — one attempt may hold at once (<c>pids.max</c>).</summary>
     public const int PidsMax = 2048;
 
-    /// <summary>One attempt may use at most MemTotal divided by this (<c>memory.max</c>): half of this computer's memory.</summary>
+    /// <summary>
+    /// ALL ATTEMPTS TOGETHER may hold at most this many tasks (the parent's <c>pids.max</c>): one runaway attempt at its own ceiling leaves the others
+    /// half as much again between them, and the lanes' few attempts at once use a small part of it.
+    /// </summary>
+    public const int SumPidsMax = PidsMax / 2 * 3;
+
+    /// <summary>All attempts together use at most MemTotal divided by this (the parent's <c>memory.max</c>): half of this computer's memory.</summary>
     public const int MemoryShare = 2;
 
-    /// <summary>The controllers enabled below the root, in <c>cgroup.subtree_control</c>'s own words.</summary>
+    /// <summary>
+    /// THE MOST ONE ATTEMPT MAY USE, whatever this computer's memory (<c>U-cell-ceilings</c> item 1): 8 GiB. What runs in a cell is a coding agent's harness
+    /// and the tools it starts — a shell, Python, a compiler, a script over a dataset — never the app's own backtests or tape, which run outside any cell.
+    /// 8 GiB is a large Python process's worth with room to spare; a computer of 16 GB is held at half its memory as before, and a server of 64 GB keeps
+    /// 56 GB for the owner's other services while one attempt runs.
+    /// </summary>
+    public const long MemoryCap = 8L << 30;
+
+    /// <summary>
+    /// <c>memory.high</c> is <c>memory.max</c> times this over five (four fifths): above it the kernel reclaims the attempt's own pages and slows it, so it
+    /// meets its ceiling slowly, and the reclaim is its own rather than the owner's services'.
+    /// </summary>
+    public const int HighFifths = 4;
+
+    /// <summary>
+    /// <c>memory.swap.max</c>, per attempt and for all of them: 0. An attempt at its ceiling is ended by the kernel's OOM within its own cgroup, never paged
+    /// out to swap, whose I/O and reclaim the owner's other services would pay for first (A4 § 5).
+    /// </summary>
+    public const long SwapMax = 0;
+
+    /// <summary>
+    /// <c>io.max</c>'s write rate on the home's disk, per attempt and for all of them: 200 MiB/s (<c>U-cell-ceilings</c> item 3; A4-1(b)). The free-space
+    /// guard reads every two seconds, so about 400 MiB of written blocks get through between two reads (plus what the kernel lets a cgroup dirty in
+    /// memory before its writeback is throttled), against a floor of up to 10 GiB — where an NVMe disk unbounded takes 5 GB or more. It leaves most of
+    /// a modern disk's rate to the owner's other services, and is more than a coding agent's tools write.
+    /// </summary>
+    public const long WriteBps = 200L << 20;
+
+    /// <summary>The controllers enabled below the root and below <see cref="AttemptsLeaf"/>, in <c>cgroup.subtree_control</c>'s own words: required.</summary>
     public static readonly IReadOnlyList<string> Controllers = ["pids", "memory"];
+
+    /// <summary>The io controller, enabled beside <see cref="Controllers"/> where it is delegated: optional, and said when it is not (<see cref="IoGap"/>).</summary>
+    public const string IoController = "io";
 
     static AttemptCgroups _current = Unavailable("TradeAgent has not yet looked for the cgroup its service delegates to it");
 
@@ -67,15 +118,34 @@ public sealed class AttemptCgroups
 
     readonly bool _standIn;
 
-    AttemptCgroups(string? root, string? refusal, bool standIn = false)
+    AttemptCgroups(string? root, string? refusal, bool standIn = false, Bounds? bounds = null)
     {
         Root = root;
         Refusal = refusal;
         _standIn = standIn;
+        Attempts = root is null ? null : Path.Combine(root, AttemptsLeaf);
+        Io = bounds?.Io;
+        IoGap = root is null ? null : bounds is null ? "no write ceiling was looked for" : bounds.IoGap;
+        SwapGap = bounds?.SwapGap;
     }
 
-    /// <summary>The delegated root the attempts are made in, or null when there is none (<see cref="Refusal"/> says why).</summary>
+    /// <summary>The delegated root, or null when there is none (<see cref="Refusal"/> says why).</summary>
     public string? Root { get; }
+
+    /// <summary>The parent every attempt is made beneath (<see cref="AttemptsLeaf"/> under <see cref="Root"/>), or null with no root.</summary>
+    public string? Attempts { get; }
+
+    /// <summary>The home's disk as <c>io.max</c> names it (<c>major:minor</c>), when the write rate is bounded; null otherwise (<see cref="IoGap"/>).</summary>
+    public string? Io { get; }
+
+    /// <summary>Why no attempt's write rate is bounded here — the io controller not delegated, or the home on no one block device — or null when it is.</summary>
+    public string? IoGap { get; }
+
+    /// <summary>Why no attempt's swap is bounded here (this kernel accounts none per cgroup: no <c>memory.swap.max</c>), or null when it is.</summary>
+    public string? SwapGap { get; }
+
+    /// <summary>What the parent's set-up found: the disk <c>io.max</c> names, or why none; why swap is not bounded, or null.</summary>
+    internal sealed record Bounds(string? Io, string? IoGap, string? SwapGap);
 
     /// <summary>Why this process holds no delegated root, in words that name <c>Delegate=yes</c> — or null when it holds one.</summary>
     public string? Refusal { get; }
@@ -92,10 +162,16 @@ public sealed class AttemptCgroups
     /// A PLAIN DIRECTORY STANDING IN FOR A ROOT, for a unit test that must reach the start of a launch on a computer with no
     /// delegated cgroup. The launcher refuses its attempts (they are not under <see cref="Mount"/>), so nothing ever runs in one.
     /// </summary>
-    internal static AttemptCgroups StandIn(string directory)
+    internal static AttemptCgroups StandIn(string directory, string? io = null, bool swap = true)
     {
         Directory.CreateDirectory(directory);
-        return new AttemptCgroups(Path.GetFullPath(directory), null, standIn: true);
+        var full = Path.GetFullPath(directory);
+        var attempts = Path.Combine(full, AttemptsLeaf);
+        Directory.CreateDirectory(attempts);
+        foreach (var (file, value) in ParentCeilings(swap, io))
+            File.WriteAllText(Path.Combine(attempts, file), value);
+        return new AttemptCgroups(full, null, standIn: true,
+            new Bounds(io, io is null ? "the stand-in names no disk" : null, swap ? null : NoSwapAccounting));
     }
 
     /// <summary>
@@ -147,7 +223,7 @@ public sealed class AttemptCgroups
         }
         if (OwnCgroup() != supervisor) return Unavailable($"TradeAgent wrote itself into {supervisor} and the kernel still places it elsewhere");
 
-        return Enable(root) is { } why ? Unavailable(why) : new AttemptCgroups(root, null);
+        return Bound(root);
     }
 
     /// <summary>
@@ -168,8 +244,89 @@ public sealed class AttemptCgroups
         }
         if (Prove(full) is { } notDelegated) return Unavailable(notDelegated);
         if (Procs(full) is not { Count: 0 }) return Unavailable($"the cgroup {full} holds processes, so it cannot hand controllers down");
-        return Enable(full) is { } why ? Unavailable(why) : new AttemptCgroups(full, null);
+        return Bound(full);
     }
+
+    /// <summary>
+    /// THE ROOT'S CONTROLLERS ENABLED AND THE ONE PARENT OF ALL ATTEMPTS MADE WITH ITS CEILINGS (<c>U-cell-ceilings</c> item 2): <c>+pids +memory</c> (and
+    /// <c>+io</c> where it is delegated) below the root, then <see cref="AttemptsLeaf"/> with its <c>memory.max</c>, <c>memory.high</c>, <c>pids.max</c>,
+    /// <c>memory.swap.max</c> and <c>io.max</c>, and the same controllers below it. A ceiling the kernel will not take is an <see cref="Unavailable"/> naming
+    /// it — except swap where this kernel accounts none, and writes where io is not delegated or the home is on no one block device: those are gaps, said.
+    /// </summary>
+    static AttemptCgroups Bound(string root)
+    {
+        if (Enable(root, out var io, out var ioGap) is { } why) return Unavailable(why);
+        var attempts = Path.Combine(root, AttemptsLeaf);
+        try
+        {
+            Directory.CreateDirectory(attempts);
+            if (Procs(attempts) is not { Count: 0 })
+                return Unavailable($"the cgroup {attempts} holds processes, so it cannot hand controllers down to the attempts");
+            var swap = File.Exists(Path.Combine(attempts, "memory.swap.max"));
+            if (io is not null)
+            {
+                var line = IoLine(io);
+                try
+                {
+                    Write(Path.Combine(attempts, "io.max"), line);
+                    if (!ReadsBack(Read(Path.Combine(attempts, "io.max")), io)) (io, ioGap) = (null, $"{attempts}/io.max does not read back {line}");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    (io, ioGap) = (null, $"the kernel would not bound writes ({line}) ({ex.Message})");
+                }
+            }
+            foreach (var (file, value) in ParentCeilings(swap, io))
+                if (file != "io.max") Write(Path.Combine(attempts, file), value);
+            if (Read(Path.Combine(attempts, "pids.max")) != SumPidsMax.ToString(CultureInfo.InvariantCulture))
+                return Unavailable($"{attempts}/pids.max does not read back {SumPidsMax}");
+            if (Read(Path.Combine(attempts, "memory.max")) != SumMemoryMax.ToString(CultureInfo.InvariantCulture))
+                return Unavailable($"{attempts}/memory.max does not read back {SumMemoryMax}");
+            if (swap && Read(Path.Combine(attempts, "memory.swap.max")) != SwapMax.ToString(CultureInfo.InvariantCulture))
+                return Unavailable($"{attempts}/memory.swap.max does not read back {SwapMax}");
+            var below = Controllers.Concat(io is null ? [] : [IoController]).ToList();
+            Write(Path.Combine(attempts, "cgroup.subtree_control"), string.Join(' ', below.Select(c => "+" + c)));
+            var enabled = (Read(Path.Combine(attempts, "cgroup.subtree_control")) ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (below.FirstOrDefault(c => !enabled.Contains(c)) is { } missing)
+                return Unavailable($"the cgroup {attempts} enabled {string.Join(" ", enabled)} and not {missing} for the attempts");
+            return new AttemptCgroups(root, null, bounds: new Bounds(io, ioGap, swap ? null : NoSwapAccounting));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Unavailable($"TradeAgent could not make the cgroup {attempts}, the one parent of every attempt, with its ceilings ({ex.Message})");
+        }
+    }
+
+    const string NoSwapAccounting =
+        "this kernel accounts no swap per cgroup (no memory.swap.max), so an attempt's pages may still be swapped out at its memory.max";
+
+    /// <summary>The parent's ceilings, file by file, as <see cref="Bound"/> writes them: the SUM of all attempts.</summary>
+    internal static IEnumerable<(string File, string Value)> ParentCeilings(bool swap, string? io)
+    {
+        yield return ("memory.max", SumMemoryMax.ToString(CultureInfo.InvariantCulture));
+        yield return ("memory.high", HighOf(SumMemoryMax).ToString(CultureInfo.InvariantCulture));
+        yield return ("pids.max", SumPidsMax.ToString(CultureInfo.InvariantCulture));
+        if (swap) yield return ("memory.swap.max", SwapMax.ToString(CultureInfo.InvariantCulture));
+        if (io is not null) yield return ("io.max", IoLine(io));
+    }
+
+    /// <summary>One attempt's ceilings, file by file, as <see cref="Create"/> writes them.</summary>
+    internal IEnumerable<(string File, string Value)> AttemptCeilings()
+    {
+        yield return ("pids.max", PidsMax.ToString(CultureInfo.InvariantCulture));
+        yield return ("memory.max", MemoryMax.ToString(CultureInfo.InvariantCulture));
+        yield return ("memory.high", MemoryHigh.ToString(CultureInfo.InvariantCulture));
+        if (SwapGap is null) yield return ("memory.swap.max", SwapMax.ToString(CultureInfo.InvariantCulture));
+        if (Io is not null) yield return ("io.max", IoLine(Io));
+    }
+
+    /// <summary>What <c>io.max</c> is told for the disk <paramref name="device"/>: its write rate, the rest left at the kernel's <c>max</c>.</summary>
+    internal static string IoLine(string device) => $"{device} wbps={WriteBps.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>Whether an <c>io.max</c> read back names <paramref name="device"/> with the write rate (the kernel prints every key, <c>max</c> for the rest).</summary>
+    public static bool ReadsBack(string? ioMax, string device) =>
+        (ioMax ?? "").Split('\n').Any(l => l.StartsWith(device + " ", StringComparison.Ordinal) &&
+                                            l.Split(' ').Contains("wbps=" + WriteBps.ToString(CultureInfo.InvariantCulture)));
 
     /// <summary>
     /// A NEW ATTEMPT'S CGROUP, empty, with its ceilings written: <c>attempt-&lt;id&gt;-&lt;8 hex&gt;</c> under the root (the
@@ -179,21 +336,21 @@ public sealed class AttemptCgroups
     public AttemptCgroup Create(string? attemptId)
     {
         if (Root is null) throw new InvalidOperationException("no delegated cgroup is held: " + Refusal);
-        var dir = Path.Combine(Root, AttemptPrefix + Safe(attemptId) + "-" + Guid.NewGuid().ToString("n")[..8]);
+        var dir = Path.Combine(Attempts!, AttemptPrefix + Safe(attemptId) + "-" + Guid.NewGuid().ToString("n")[..8]);
         try
         {
             Directory.CreateDirectory(dir);
-            var made = new AttemptCgroup(dir, _standIn);
-            if (_standIn)
-            {
-                File.WriteAllText(Path.Combine(dir, "pids.max"), PidsMax.ToString(CultureInfo.InvariantCulture));
-                File.WriteAllText(Path.Combine(dir, "memory.max"), MemoryMax.ToString(CultureInfo.InvariantCulture));
-                return made;
-            }
-            Write(Path.Combine(dir, "pids.max"), PidsMax.ToString(CultureInfo.InvariantCulture));
-            Write(Path.Combine(dir, "memory.max"), MemoryMax.ToString(CultureInfo.InvariantCulture));
+            var made = new AttemptCgroup(dir, _standIn) { Ceilings = Ceilings };
+            foreach (var (file, value) in AttemptCeilings())
+                if (_standIn) File.WriteAllText(Path.Combine(dir, file), value);
+                else Write(Path.Combine(dir, file), value);
+            if (_standIn) return made;
             if (Read(Path.Combine(dir, "pids.max")) != PidsMax.ToString(CultureInfo.InvariantCulture))
                 throw new IOException($"{dir}/pids.max does not read back {PidsMax}");
+            if (SwapGap is null && Read(Path.Combine(dir, "memory.swap.max")) != SwapMax.ToString(CultureInfo.InvariantCulture))
+                throw new IOException($"{dir}/memory.swap.max does not read back {SwapMax}");
+            if (Io is not null && !ReadsBack(Read(Path.Combine(dir, "io.max")), Io))
+                throw new IOException($"{dir}/io.max does not read back {IoLine(Io)}");
             return made;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -219,8 +376,8 @@ public sealed class AttemptCgroups
         if (Root is not null)
         {
             IEnumerable<string> attempts;
-            try { attempts = Directory.EnumerateDirectories(Root, AttemptPrefix + "*").ToList(); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { attempts = []; left.Add($"{Root} ({ex.Message})"); }
+            try { attempts = Directory.EnumerateDirectories(Attempts!, AttemptPrefix + "*").ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { attempts = []; left.Add($"{Attempts} ({ex.Message})"); }
             foreach (var dir in attempts)
             {
                 var attempt = new AttemptCgroup(dir, _standIn);
@@ -266,14 +423,34 @@ public sealed class AttemptCgroups
                                    "holds no process" : "");
     }
 
-    /// <summary>One line for a Mechanism row: the cgroup and its ceilings.</summary>
-    public static string Ceilings => $"pids.max {PidsMax}, memory.max {MemoryMax / (1024 * 1024)} MiB (half of this computer's memory)";
+    /// <summary>One line for a Mechanism row: an attempt's ceilings, all attempts' together, and what is not bounded here and why.</summary>
+    public string Ceilings =>
+        $"pids.max {PidsMax}, memory.max {MemoryMax / (1024 * 1024)} MiB (half of this computer's memory or {MemoryCap >> 30} GiB, the less), " +
+        $"memory.high {MemoryHigh / (1024 * 1024)} MiB, " +
+        (SwapGap is null ? "memory.swap.max 0, " : $"swap not bounded ({SwapGap}), ") +
+        (Io is not null ? $"io.max writes {WriteBps >> 20} MiB/s on the home's disk {Io}; " : $"writes not bounded ({IoGap}); ") +
+        $"all attempts together pids.max {SumPidsMax} and memory.max {SumMemoryMax / (1024 * 1024)} MiB (half of this computer's memory)";
 
     /// <summary>
-    /// Half of MemTotal in bytes, in whole pages — the kernel keeps <c>memory.max</c> in pages and reads back a byte count rounded
-    /// down to one (run 38970487186) — or, where MemTotal cannot be read, 1 GiB, which the Mechanism line then names.
+    /// ONE ATTEMPT'S <c>memory.max</c>: half of MemTotal or <see cref="MemoryCap"/>, the less, in whole pages — the kernel keeps <c>memory.max</c> in pages
+    /// and reads back a byte count rounded down to one (run 38970487186) — or, where MemTotal cannot be read, 1 GiB, which the Mechanism line then names.
     /// </summary>
-    public static long MemoryMax { get; } = ReadMemoryMax();
+    public static long MemoryMax { get; } = Pages(Math.Min(ReadMemoryMax(), MemoryCap));
+
+    /// <summary>One attempt's <c>memory.high</c>: four fifths of <see cref="MemoryMax"/>, in whole pages.</summary>
+    public static long MemoryHigh { get; } = HighOf(MemoryMax);
+
+    /// <summary>ALL ATTEMPTS' <c>memory.max</c> together (the parent's): half of MemTotal in whole pages, or 1 GiB where it cannot be read.</summary>
+    public static long SumMemoryMax { get; } = ReadMemoryMax();
+
+    /// <summary>Four fifths of <paramref name="max"/>, in whole pages: a <c>memory.high</c>.</summary>
+    internal static long HighOf(long max) => Pages(max / 5 * HighFifths);
+
+    static long Pages(long bytes)
+    {
+        var page = Math.Max(Environment.SystemPageSize, 1);
+        return bytes / page * page;
+    }
 
     static long ReadMemoryMax()
     {
@@ -346,8 +523,39 @@ public sealed class AttemptCgroups
         return null;
     }
 
-    /// <summary>Writes <c>+pids +memory</c> to the root's <c>subtree_control</c> and reads both back; why not, or null.</summary>
-    static string? Enable(string root)
+    /// <summary>
+    /// Writes <c>+pids +memory</c> to the root's <c>subtree_control</c> and reads both back; why not, or null. Then <c>+io</c> on its own, where the root
+    /// is offered it and the home is on one block device: <paramref name="io"/> is that disk when it took, and <paramref name="ioGap"/> says why not
+    /// otherwise — never a refusal.
+    /// </summary>
+    static string? Enable(string root, out string? io, out string? ioGap)
+    {
+        (io, ioGap) = (null, null);
+        if (EnableRequired(root) is { } why) return why;
+        var control = Path.Combine(root, "cgroup.subtree_control");
+        var offered = (Read(Path.Combine(root, "cgroup.controllers")) ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (!offered.Contains(IoController))
+        {
+            ioGap = $"the io controller is not delegated to {root} (offered: {string.Join(" ", offered)})";
+            return null;
+        }
+        if (BlockDevice.Of(Paths.Home, out var notOne) is not { } device)
+        {
+            ioGap = notOne;
+            return null;
+        }
+        try { Write(control, "+" + IoController); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ioGap = $"the cgroup {root} would not enable io for its attempts ({ex.Message})";
+            return null;
+        }
+        if (!(Read(control) ?? "").Split(' ').Contains(IoController)) ioGap = $"the cgroup {root} did not enable io for its attempts";
+        else io = device;
+        return null;
+    }
+
+    static string? EnableRequired(string root)
     {
         var control = Path.Combine(root, "cgroup.subtree_control");
         try
@@ -422,8 +630,11 @@ public sealed class AttemptCgroup
         _standIn = standIn;
     }
 
-    /// <summary>The attempt's directory under the delegated root.</summary>
+    /// <summary>The attempt's directory, beneath the delegated root's parent of attempts.</summary>
     public string Dir { get; }
+
+    /// <summary>What its ceilings are, for its Mechanism line (<see cref="AttemptCgroups.Ceilings"/> when it was made).</summary>
+    public string Ceilings { get; init; } = "";
 
     /// <summary>Route (a)'s harness leaf, <c>&lt;attempt&gt;/harness</c> (made by <see cref="MakeLeaves"/>).</summary>
     public string Harness => Path.Combine(Dir, AttemptCgroups.HarnessLeaf);
@@ -546,5 +757,88 @@ public sealed class AttemptCgroup
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return !Directory.Exists(Dir); }
+    }
+}
+
+/// <summary>
+/// THE DISK A PATH'S FILESYSTEM LIVES ON, as <c>io.max</c> names it (<c>U-cell-ceilings</c> item 3): the <c>major:minor</c> of the whole block device, read
+/// from <c>/proc/self/mountinfo</c> (the mount holding the path, by whole components) and <c>/sys/dev/block</c> (a partition's disk is its parent: the
+/// kernel bounds a disk, never a partition). Null, and why, for a filesystem on no one block device — btrfs, overlay, tmpfs and network filesystems
+/// report a device numbered 0 — or one sysfs does not list.
+/// </summary>
+public static class BlockDevice
+{
+    /// <summary>The whole disk under <paramref name="path"/>, or null with <paramref name="why"/>. Never throws.</summary>
+    public static string? Of(string path, out string why)
+    {
+        why = "";
+        try
+        {
+            var real = CellNative.RealPath(path) ?? Path.GetFullPath(path);
+            if (Mount(File.ReadLines("/proc/self/mountinfo"), real) is not { } m)
+            {
+                why = $"no mount of /proc/self/mountinfo holds {real}";
+                return null;
+            }
+            if (m.Device.StartsWith("0:", StringComparison.Ordinal))
+            {
+                why = $"the home's filesystem at {m.Point} is {m.Type} on no one block device ({m.Device}), so no disk's write rate can be bounded for it";
+                return null;
+            }
+            var sys = "/sys/dev/block/" + m.Device;
+            if (!Directory.Exists(sys))
+            {
+                why = $"the home's filesystem at {m.Point} ({m.Type}) is on device {m.Device}, which /sys/dev/block does not list";
+                return null;
+            }
+            if (!File.Exists(Path.Combine(sys, "partition"))) return m.Device;
+            var disk = Path.GetDirectoryName(CellNative.RealPath(sys) ?? sys);
+            if (disk is not null && File.Exists(Path.Combine(disk, "dev")) && File.ReadAllText(Path.Combine(disk, "dev")).Trim() is { Length: > 0 } dev)
+                return dev;
+            why = $"the home's filesystem at {m.Point} is on partition {m.Device}, whose disk could not be read";
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            why = $"the home's disk could not be read ({ex.Message})";
+            return null;
+        }
+    }
+
+    /// <summary>One mount: its point, its filesystem's type and its device's <c>major:minor</c>.</summary>
+    public sealed record Mounted(string Point, string Type, string Device);
+
+    /// <summary>
+    /// THE MOUNT HOLDING <paramref name="path"/> in <c>mountinfo</c>'s lines: the deepest mount point that is <paramref name="path"/> or one of its parents by
+    /// whole components, the last such line where a point is mounted over (the kernel lists a later mount after the one it hides). Fields: id, parent,
+    /// <c>major:minor</c>, root, point (octal escapes), options, optional fields to a lone <c>-</c>, then the type.
+    /// </summary>
+    public static Mounted? Mount(IEnumerable<string> mountinfo, string path)
+    {
+        Mounted? best = null;
+        foreach (var line in mountinfo)
+        {
+            var f = line.Split(' ');
+            var dash = Array.IndexOf(f, "-");
+            if (f.Length < 7 || dash < 6 || dash + 1 >= f.Length) continue;
+            var point = Unescape(f[4]);
+            var under = point == "/" || path == point || path.StartsWith(point + "/", StringComparison.Ordinal);
+            if (under && (best is null || point.Length >= best.Point.Length)) best = new Mounted(point, f[dash + 1], f[2]);
+        }
+        return best;
+    }
+
+    /// <summary>mountinfo's octal escapes (<c>\040</c> for a space, <c>\011</c>, <c>\012</c>, <c>\134</c>) read back.</summary>
+    static string Unescape(string field)
+    {
+        var b = new System.Text.StringBuilder(field.Length);
+        for (var i = 0; i < field.Length; i++)
+            if (field[i] == '\\' && i + 3 < field.Length && field.Substring(i + 1, 3).All(c => c is >= '0' and <= '7'))
+            {
+                b.Append((char)Convert.ToInt32(field.Substring(i + 1, 3), 8));
+                i += 3;
+            }
+            else b.Append(field[i]);
+        return b.ToString();
     }
 }

@@ -1477,7 +1477,7 @@ public sealed partial class AppHost : IAsyncDisposable
                                      + "and a TradeAgent with ATAS goes back to it. Orders sent to ATAS stay as recorded until then.", "warn");
             if (OperatingSystem.IsLinux())
                 Gateway.Log.Activity(cgroups.Held
-                    ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Root} ({AttemptCgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
+                    ? $"The AI's launches are each held in a cgroup of their own under {cgroups.Attempts} ({cgroups.Ceilings}); at start TradeAgent {swept.Sentence}."
                     : $"The AI's launches are held by their session only, and no sealed workspace for the AI can start: {cgroups.Refusal}.",
                     cgroups.Held && swept.Left.Count == 0 ? "info" : "warn");
 
