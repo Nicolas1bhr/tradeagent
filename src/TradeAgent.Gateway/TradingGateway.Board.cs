@@ -91,8 +91,16 @@ public sealed partial class TradingGateway
     /// REAL MONEY STAYS CLOSED (<c>U-board-alive</c> item 4; R24 §§ 0.6, 4.5, SIGNAL-001): an intent that reaches for a real-money mode or
     /// real money's switch is refused HERE, before any store is asked, in words that say why from the facts now — which venue is connected,
     /// and whether it is a practice platform — whoever asks: one seat, two seats, or a position's petition. No act of this build selects a
-    /// live mode or switches real money on; the frozen runner has no live path. The store's strict read and the policy's CHECK refuse both
-    /// as well; this is the sentence the owner and the seat read.
+    /// live mode or switches real money on; the frozen runner has no live path. This check runs FIRST, so its sentence is the one the owner
+    /// and the seat read. Behind it, as main has them (<c>U-board-alive-2</c>, re-read at aa126ada), each refuses on its own:
+    /// <list type="number">
+    /// <item><see cref="BoardIntent"/>'s strict read refuses an intent naming <c>live_activated</c> or a live <c>mode</c>;</item>
+    /// <item><see cref="BoardPolicyBody.Read"/> refuses a policy body that selects a real-money mode or switches real money on, whoever
+    /// wrote it (<c>U-live-witness</c>) — so an act's next body is refused at the store's read;</item>
+    /// <item>the store's second guard in <c>BoardStore</c>'s apply refuses the same in an act's own words, should the reader's line ever
+    /// change for the board's live act;</item>
+    /// <item><c>board_policy</c>'s CHECKs (<c>mode IN ('OBSERVE','PAPER')</c>, and no activation) refuse the row.</item>
+    /// </list>
     /// </summary>
     /// <exception cref="TradeAgentException">Always, for such an intent; nothing was written.</exception>
     void RealMoneyStaysClosed(string intent)
