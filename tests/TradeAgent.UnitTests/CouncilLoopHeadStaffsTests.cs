@@ -71,8 +71,8 @@ public partial class CouncilLoopTests
         Assert.Empty(OfKind(db, otherHead, "unit-unstaffed"));
 
         // A MEMBER HIRED WITHOUT THE HEAD FLAG DOES NOT STAFF A DIVISION (review 1): its head is still vacant, and it stays the chief's open work.
-        var member = org.Hire(new HireRequest(chief, "turn-member", unit, false, "a member, not its head", ["hire"], [], [ChartForecast]), now).Position.Id;
-        Assert.Equal(unit, org.Position(member)!.UnitId);
+        var hand = org.Hire(new HireRequest(chief, "turn-member", unit, false, "a member, not its head", ["hire"], [], [ChartForecast]), now).Position.Id;
+        Assert.Equal(unit, org.Position(hand)!.UnitId);
         Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
 
         // THE HIRE WITH ITS HEAD FLAG CLOSES IT.
