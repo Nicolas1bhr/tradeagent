@@ -244,7 +244,17 @@ public sealed record CellPolicy
         /// <summary>Every spelling of the tools folder in <see cref="Owned"/>.</summary>
         public IReadOnlyList<string> ToolsForms { get; init; } = [];
 
-        public static Guarded Of(string? appHome = null)
+        /// <summary>
+        /// The variable the Linux kit's unit names the window's password file by (<c>TA_WINDOW_PASSWORD_FILE</c>, <c>U-window-door</c>).
+        /// Its folder — <c>~/.vnc</c> of the app's account, a SIBLING of the app's home and so not "above" it — is the key to the owner's
+        /// only door to this app on a host (VNC's file is a fixed-key obfuscation, reversible): no grant may be, lie inside or hold it.
+        /// </summary>
+        public const string WindowPasswordFileVariable = "TA_WINDOW_PASSWORD_FILE";
+
+        public static Guarded Of(string? appHome = null) => Of(appHome, System.Environment.GetEnvironmentVariable(WindowPasswordFileVariable));
+
+        /// <summary><see cref="Of(string?)"/> with the window's password file named, for a test: the product reads it from its unit.</summary>
+        internal static Guarded Of(string? appHome, string? windowPasswordFile)
         {
             var home = appHome ?? Paths.Home;
             var homes = Forms(home).Distinct(StringComparer.Ordinal).ToList();
@@ -262,6 +272,9 @@ public sealed record CellPolicy
                     .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, f.Path)))).Concat(Forms(f.Path))
                     .Select(p => (p, f.What)))
                 .Distinct().ToList();
+            if (windowPasswordFile is { Length: > 0 } door && Path.IsPathFullyQualified(door) && Path.GetDirectoryName(door) is { Length: > 0 } doorDir)
+                owned.AddRange(Forms(doorDir).Distinct(StringComparer.Ordinal)
+                    .Select(p => (p, "the folder of the window's password, the key to the owner's door to this app,")));
             var tools = homes.Select(h => Path.Combine(h, Path.GetRelativePath(Paths.Home, Paths.Tools)))
                 .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, Paths.Tools)))).Concat(Forms(Paths.Tools))
                 .Distinct(StringComparer.Ordinal).ToList();

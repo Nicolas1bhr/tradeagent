@@ -46,6 +46,9 @@ sealed class SettingsPage
     /// <summary>The owner's head-start kit card (<c>U-kit-socket</c>).</summary>
     readonly KitCard _kit;
 
+    /// <summary>"Reaching this window" (U-window-door), or null where the kit named no door: Windows, macOS, a Linux without the kit.</summary>
+    internal WindowDoorCard? Door { get; }
+
     // ---- platform ----
     readonly TextBlock _platformValue = Ui.Mono("—");
     readonly TextBlock _platformNote = Ui.Muted("");
@@ -468,9 +471,13 @@ sealed class SettingsPage
 
         // THE OWNER'S HEAD-START KIT (U-kit-socket): under the market data, the other thing the owner hands the AI to research with.
         _kit = new KitCard(host);
+        // THE WINDOW'S OWN DOOR (U-window-door): on a Linux host whose kit named it, and nowhere else.
+        Door = WindowDoor.Current() is { } door ? new WindowDoorCard(door) : null;
+        var cards = Ui.Col(Theme.S6, marketData, _kit.Root);
+        if (Door is not null) cards.Children.Add(Door.Root);
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header("Settings", "The market data TradeAgent collects for research, and your head-start kit."),
-            Ui.Col(Theme.S6, marketData, _kit.Root)));
+            cards));
 
         EnsureAccounts();
         ApplyPaperFriction();

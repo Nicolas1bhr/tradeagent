@@ -280,7 +280,7 @@ mv -f "$root_dir/kit/tape-health.new" "$root_dir/kit/tape-health"
 render() {
     sed -e "s|@ACCOUNT@|$account|g" -e "s|@HOME@|$home|g" -e "s|@DISPLAY@|$display|g" \
         -e "s|@GEOMETRY@|$geometry|g" -e "s|@ADDRESS@|$address|g" -e "s|@PORT@|$port|g" \
-        -e "s|@ZONE@|$zone|g" -e "s|@XVNC@|$xvnc|g" -e "s|@KIT@|$root_dir/kit|g" -e "s|@ROOT@|$root_dir|g" "$1"
+        -e "s|@ZONE@|$zone|g" -e "s|@XVNC@|$xvnc|g" -e "s|@VNCPASSWD@|$vncpasswd|g" -e "s|@KIT@|$root_dir/kit|g" -e "s|@ROOT@|$root_dir|g" "$1"
 }
 
 place_unit() {   # place_unit <template>: installs the rendered unit; exit 0 when it changed, 1 when not

@@ -36,6 +36,21 @@ using TradeAgent.Tests.PuppetIo;
 // step that has a result). <dir>/launches.log gains a line before anything else, on every start but the version probe.
 
 var argv = args.ToList();
+// A FAKE PASSWORD TOOL (U-window-door): a copy of this program whose file name starts with "fake-vncpasswd" stands where
+// `tigervncpasswd -f` stands — chosen by its NAME, never by an environment variable, so no other test's puppet can turn into it.
+// It reads the password on stdin, keeps what it read and its own arguments beside itself (<name>.stdin, <name>.argv) for the test
+// to read back, and writes eight bytes (a stand-in for VNC's obfuscated form) on stdout; a name holding "-fails" exits 1 instead.
+if (Path.GetFileName(Environment.ProcessPath ?? "").StartsWith("fake-vncpasswd", StringComparison.Ordinal))
+{
+    var self = Environment.ProcessPath!;
+    var input = Console.In.ReadToEnd();
+    File.WriteAllText(self + ".stdin", input);
+    File.WriteAllLines(self + ".argv", args);
+    if (Path.GetFileName(self).Contains("-fails", StringComparison.Ordinal)) return 1;
+    using var stdout = Console.OpenStandardOutput();
+    stdout.Write(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(input))[..8]);
+    return 0;
+}
 if (argv.Contains("--version"))
 {
     Console.WriteLine("tradeagent-puppet 1.0.0");

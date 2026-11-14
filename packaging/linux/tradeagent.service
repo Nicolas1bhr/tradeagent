@@ -47,6 +47,13 @@ Environment=DISPLAY=:@DISPLAY@
 Environment=XAUTHORITY=@HOME@/.Xauthority
 Environment=TZ=@ZONE@
 Environment=TMPDIR=@HOME@/tmp
+# THE WINDOW KNOWS ITS OWN DOOR (U-window-door): where the owner's devices reach it, the file its password is kept in (TigerVNC's
+# obfuscated form, the account's, 0600), and the password tool the kit found. Settings shows the first and changes the password
+# on the owner's two presses with the last; no pipe op, verb or setting reaches either. No secret is in these lines.
+Environment=TA_WINDOW_ADDRESS=@ADDRESS@
+Environment=TA_WINDOW_PORT=@PORT@
+Environment=TA_WINDOW_PASSWORD_FILE=@HOME@/.vnc/vncauth
+Environment=TA_WINDOW_PASSWORD_TOOL=@VNCPASSWD@
 ExecStart=@ROOT@/current/TradeAgent
 Restart=always
 RestartSec=10

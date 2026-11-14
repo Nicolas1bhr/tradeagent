@@ -83,6 +83,14 @@ done
 check "the kit wrote $home/.vnc/vncauth" "no $home/.vnc/vncauth after the first install" sudo test -s "$home/.vnc/vncauth"
 check "vncauth is the account's, 0600" "vncauth is $(sudo stat -c '%U %a' "$home/.vnc/vncauth" 2> /dev/null)" [ "$(sudo stat -c '%U %a' "$home/.vnc/vncauth" 2> /dev/null)" = "tradeagent 600" ]
 check "the app runs after the first install" "the app is not running after the first install" systemctl is-active --quiet tradeagent.service
+# THE WINDOW KNOWS ITS DOOR: the kit rendered it into the app's unit, and the running app was started with it.
+unit_env="$(systemctl show -p Environment --value tradeagent.service)"
+tool_line="$(printf '%s\n' "$unit_env" | tr ' ' '\n' | sed -n 's/^TA_WINDOW_PASSWORD_TOOL=//p')"
+check "the app's unit names its door: TA_WINDOW_ADDRESS=$address TA_WINDOW_PORT=$port TA_WINDOW_PASSWORD_FILE=$home/.vnc/vncauth" \
+    "the app's unit does not name its door: $unit_env" \
+    grep -q "TA_WINDOW_ADDRESS=$address .*TA_WINDOW_PORT=$port .*TA_WINDOW_PASSWORD_FILE=$home/.vnc/vncauth" <<< "$unit_env"
+check "the unit's password tool $tool_line is an absolute path to a program" "the unit's password tool '$tool_line' is not a program" \
+    test -x "$tool_line"
 sleep 3
 check "a real VNC login with the password the seam gave is accepted" "the password the seam gave does not log in" login "$pw_a" accepted
 check "a real VNC login with another password is refused" "another password was not refused" login "$wrong" refused
@@ -118,10 +126,13 @@ check "after the kit's change its password logs in" "after the kit's change its 
 
 # ---- 4. no plaintext anywhere -------------------------------------------------------------------------------------
 note "4. none of the passwords is written down on the host"
-hits="$(sudo grep -rlaF -D skip --exclude-dir=proc --exclude-dir=sys -e "$pw_a" -e "$pw_b" -e "$pw_c" \
+# The patterns go to grep on its stdin (-f -), never as arguments: sudo logs its command line to auth.log and the journal, so
+# a scan with the passwords in its arguments wrote them there itself (run 43530435382, this step's first run).
+hits="$(printf '%s\n' "$pw_a" "$pw_b" "$pw_c" | sudo grep -rlaF -D skip --exclude-dir=proc --exclude-dir=sys -f - \
     /root /tmp /var/tmp /var/lib/tradeagent /var/backups /var/log /opt/tradeagent /etc /home /dev/shm /run "$out" 2> /dev/null || true)"
 check "no file under /root /tmp /var/tmp the app's home /var/backups /var/log /opt/tradeagent /etc /home /dev/shm /run or the evidence holds one" "a file holds a password in plaintext: $hits" [ -z "$hits" ]
-if sudo journalctl --no-pager -o cat --since "-60min" 2> /dev/null | grep -qaF -e "$pw_a" -e "$pw_b" -e "$pw_c"; then fail "the journal holds a password"; else pass "the journal holds none of them"; fi
+patterns="$(printf '%s\n' "$pw_a" "$pw_b" "$pw_c")"
+if sudo journalctl --no-pager -o cat --since "-60min" 2> /dev/null | grep -qaF -f <(printf '%s\n' "$patterns"); then fail "the journal holds a password"; else pass "the journal holds none of them"; fi
 
 rm -f ~/.tradeagent/linux.env "$seam"
 sudo systemctl stop tradeagent.service
