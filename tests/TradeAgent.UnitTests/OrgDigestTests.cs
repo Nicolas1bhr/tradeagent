@@ -1599,6 +1599,38 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.DoesNotContain("door call", Attention(json), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AN ARROW NEVER REACHED, BY WHETHER ITS OWN OP WAS CALLED (U-digest-watch-3; R31 D13 § 3 R1, § 5 ACT NOW 3): BROKEN if it was (served or refused,
+    /// at the tool or at the pipe), NOT-TRIED if it was not. Only the arrows with an op of their own are named; the line says both lists.
+    ///
+    /// <para>RED at base: "not yet: hire, ..." could not tell a hire the chief tried and the app refused from one it never tried.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void An_arrow_not_reached_says_whether_its_op_was_called()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var tools = new ToolCallStore(db);
+            tools.Record(new ToolCallRow { At = At("2026-10-31T10:00:00Z"), Attempt = "h1", Role = "operations", Tool = BrokerDoor.VerbName(Ops.OrgHire), Served = false, Refusal = "INVALID_REQUEST: no" });
+            tools.Record(new ToolCallRow { At = At("2026-10-31T10:01:00Z"), Attempt = "h1", Role = "operations", Tool = BrokerDoor.VerbName(Ops.OrgHire), Served = true });
+            tools.Record(new ToolCallRow { At = At("2026-10-29T10:01:00Z"), Attempt = "h0", Role = "operations", Tool = BrokerDoor.VerbName(Ops.MandateAssign), Served = true });   // before T0
+            db.Exec($"""INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES('2026-10-31T10:02:00.0000000Z', 'Ipc', '{RefusalMark.Event}', 'warn', '{"{"}"op":"{Ops.MandateDeliver}","code":"INVALID_REQUEST"{"}"}');""");
+        }
+        var (json, human) = Both(f);
+        var arrows = json.GetProperty("arrows");
+        Assert.Equal(2, arrows.GetProperty("arrows").EnumerateArray().Single(a => a.GetProperty("arrow").GetString() == "hire").GetProperty("called").GetInt32());
+        var never = arrows.GetProperty("not_reached_never_called").EnumerateArray().Select(a => a.GetString()).ToList();
+        Assert.Contains("mandate", never);
+        Assert.Contains("charter", never);
+        Assert.DoesNotContain("hire", never);
+        Assert.DoesNotContain("delivery", never);
+        Assert.DoesNotContain("verdict given", never);                 // an arrow with no op of its own is in neither list
+        Assert.Contains("\n  not reached, by their own op since T0: called hire x2, delivery x0 (+1 at the pipe); never called: charter, mandate, accepted, rejected, backtest, verdict asked\n",
+            human, StringComparison.Ordinal);
+        Assert.Contains("arrows reached since T0: 0 of 17; not yet: charter, hire,", human, StringComparison.Ordinal);   // the line the watch reads, as it was
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------

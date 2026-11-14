@@ -1009,9 +1009,18 @@ class Digest:
                 item = {"at": r["at"], "what": op, "words": f"refused at the pipe: {meta.get(W.REFUSAL_CODE) or '-'}"}
                 first_any = first_any if first_any and first_any["at"] <= item["at"] else item
                 refused.setdefault(op.replace("_", "-"), []).append(item)
+        # EVERY CALL OF AN ARROW'S OWN OP SINCE T0, served or refused (R31 D13 § 3 R1): an arrow never reached whose op was called is BROKEN, one whose op
+        # was never called is NOT-TRIED. A call refused at the pipe counts as called too.
+        called = {}
+        for r in self.app.execute("SELECT tool, argument FROM tool_call WHERE at >= ?", (self.since_s,)):
+            op = op_asked(r["tool"], r["argument"])
+            called[op] = called.get(op, 0) + 1
+        piped = {op: len([i for i in items if i["words"].startswith("refused at the pipe")]) for op, items in refused.items()}
         rows = []
         for name, (table, sql, args), tools in self.arrow_specs():
-            row = {"arrow": name, "first_at": None, "count": 0, "refused": 0, "first_refused_at": None, "first_refusal": None}
+            row = {"arrow": name, "first_at": None, "count": 0, "refused": 0, "first_refused_at": None, "first_refusal": None,
+                   "op": list(tools), "called": sum(called.get(t, 0) for t in tools) if tools else None,
+                   "refused_at_the_pipe": sum(piped.get(t, 0) for t in tools) if tools else None}
             if self.has(table):
                 first, count = self.app.execute(sql, args).fetchone()
                 row.update(first_at=first, count=count)
@@ -1023,6 +1032,9 @@ class Digest:
             rows.append(row)
         return {"arrows": rows, "reached": sum(1 for r in rows if r["count"]), "of": len(rows), "door_gaps": self.door_gaps(),
                 "not_reached": [r["arrow"] for r in rows if not r["count"]], "first_refusal": first_any,
+                "not_reached_called": [{"arrow": r["arrow"], "called": r["called"], "refused_at_the_pipe": r["refused_at_the_pipe"]}
+                                       for r in rows if not r["count"] and r["op"] and (r["called"] or r["refused_at_the_pipe"])],
+                "not_reached_never_called": [r["arrow"] for r in rows if not r["count"] and r["op"] and not r["called"] and not r["refused_at_the_pipe"]],
                 "cannot_be_read": "a keep has no record of its own: a kill is the author's ledger entry, an iterate a new version after a run's note"}
 
     # -- 10b. A DOOR CALL NEAR THE VENDOR'S TOOL TIMEOUT (R31 D12 row D): the door sets no tool timeout, so the vendor's own applies (60 s from memory,
@@ -1713,6 +1725,12 @@ def render(d, cap):
         shown = [a for a in s["arrows"] if a["count"] or a["refused"]]
         add_list(shown, cap["arrows"], lambda a: f"  {a['arrow']:<16} x{a['count']:<4} first {stamp(a['first_at'])}" + (
             f"  refused x{a['refused']}, first {stamp(a['first_refused_at'])}: {short(a['first_refusal'], 80)}" if a["refused"] else ""))
+        if s.get("not_reached_called") or s.get("not_reached_never_called"):
+            # THE ARROWS NOT REACHED THAT HAVE AN OP OF THEIR OWN, by whether it was called (D13 R1: BROKEN or NOT-TRIED); the others have none.
+            c, n = s.get("not_reached_called") or [], s.get("not_reached_never_called") or []
+            L.append("  not reached, by their own op since T0: " + ("called " + ", ".join(
+                f"{a['arrow']} x{a['called']}" + (f" (+{a['refused_at_the_pipe']} at the pipe)" if a["refused_at_the_pipe"] else "") for a in c) if c else "none called")
+                     + ("; never called: " + ", ".join(n) if n else ""))
         if s["first_refusal"]:
             f = s["first_refusal"]
             L.append(f"  first refusal of the run {stamp(f['at'])} {f['what']}: {short(f['words'], 90)}")
