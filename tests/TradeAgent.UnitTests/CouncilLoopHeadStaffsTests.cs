@@ -31,7 +31,8 @@ public partial class CouncilLoopTests
     /// <summary>
     /// (a) A UNIT UNDER YOURS THAT STANDS EMPTY IS YOUR OPEN WORK, until you appoint its head. A chief that chartered a division holds exactly one
     /// <c>unit-unstaffed</c> naming it; after the hire with its head flag it holds none. The root, the legacy divisions (headed), a closed unit, a
-    /// headless team that has a member, and an empty unit under ANOTHER head open none for the chief — the last is that head's.
+    /// headless team that has a member (led by the head above it), and an empty unit under ANOTHER head open none for the chief — the last is
+    /// that head's; a division with a member hired without the head flag stays open.
     ///
     /// <para>RED at base: "Assert.Single() Failure: The collection was empty" — no kind for a vacant head (RoleObjectives v4). Mutants, each watched red:
     /// the kind left out of a head's kinds; the parent filter dropped (the chief then owns the team under the other head too); closed units not
@@ -57,7 +58,7 @@ public partial class CouncilLoopTests
         Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
         Assert.Equal([team], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
 
-        // A UNIT WITH NO HEAD BUT A MEMBER IS STAFFED: a team's members are hired, and led, by the head above it.
+        // A TEAM WITH NO HEAD BUT A MEMBER IS STAFFED: a team's members are hired, and led, by the head above it.
         const string led = "unit-7ea4c0ffee02", member = "pos-7ea4c0ffee03";
         Chart(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($u,$p,'team',NULL,'active',$at)",
             ("$u", led), ("$p", other), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
@@ -68,6 +69,11 @@ public partial class CouncilLoopTests
         // A CLOSED UNIT OPENS NONE.
         Chart(db, "UPDATE org_unit SET status='closed', closed_at=$at WHERE id=$u", ("$u", team), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Assert.Empty(OfKind(db, otherHead, "unit-unstaffed"));
+
+        // A MEMBER HIRED WITHOUT THE HEAD FLAG DOES NOT STAFF A DIVISION (review 1): its head is still vacant, and it stays the chief's open work.
+        var member = org.Hire(new HireRequest(chief, "turn-member", unit, false, "a member, not its head", ["hire"], [], [ChartForecast]), now).Position.Id;
+        Assert.Equal(unit, org.Position(member)!.UnitId);
+        Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
 
         // THE HIRE WITH ITS HEAD FLAG CLOSES IT.
         org.Hire(new HireRequest(chief, "turn-hire", unit, true, "its first head", ["appoint"], [], [ChartForecast]), now);

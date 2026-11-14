@@ -19,15 +19,17 @@ public sealed partial class OrgStore
     }
 
     /// <summary>
-    /// EVERY UNIT UNDER <paramref name="head"/>'S OWN THAT STANDS EMPTY: its head vacant and no position in it that has not ended. Its parent's head
-    /// is the one the rights matrix lets appoint its head, so the empty unit is that head's open work until it staffs it. A unit with no head but
-    /// a member is staffed — a team's members are hired, and led, by the head above it — and a staff unit has no head by design; the legacy
-    /// divisions are headed. Rows only: the chart the app's own verbs wrote.
+    /// EVERY UNIT UNDER <paramref name="head"/>'S OWN WHOSE HEAD IS VACANT: its parent's head is the one the rights matrix lets appoint it, so the
+    /// vacancy is that head's open work until it does. One exception, by the chart's own design: a TEAM with a member is led by the head above
+    /// it, who hired that member (a team's members are hired by its parent's head), so it is not unstaffed. A division or subdivision is never
+    /// led from above: a member hired into one without the head flag leaves its head vacant, and it stays open (review 1). A staff unit has no
+    /// head by design; the legacy divisions are headed. Rows only: the chart the app's own verbs wrote.
     /// </summary>
     public IReadOnlyList<OrgUnitRow> UnstaffedUnder(string head) => db.Read(_ =>
     {
         var staffed = Positions().Where(p => p.Status != OrgPositionStatus.Ended).Select(p => p.UnitId).ToHashSet(StringComparer.Ordinal);
-        return (IReadOnlyList<OrgUnitRow>)[.. UnitsUnder(head).Where(u => u.HeadPositionId is null && u.Kind != OrgUnitKind.Staff && !staffed.Contains(u.Id))];
+        return (IReadOnlyList<OrgUnitRow>)[.. UnitsUnder(head).Where(u => u.HeadPositionId is null && u.Kind != OrgUnitKind.Staff
+                                                                   && !(u.Kind == OrgUnitKind.Team && staffed.Contains(u.Id)))];
     });
 
     /// <summary>
