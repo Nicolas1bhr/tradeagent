@@ -1262,6 +1262,13 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains(lines, l => l.StartsWith("  ! DISK GUARD TRIPPED", StringComparison.Ordinal));
         Assert.True(lines.Length <= 60);
 
+        // A TRIP FOR FILES (U-disk-guard-2; U-digest-watch-3): the bytes above their floor, so the line says the files that ran out, not bytes.
+        var files = Attention(Digest(40 * gib, 100 * gib, new DiskPause { At = at, Free = 40 * gib, Total = 100 * gib, Floor = 10 * gib,
+            FilesFree = 300_000, Files = 6_553_600, FilesFloor = DiskFloor.FilesFor(6_553_600) }));
+        Assert.Contains("DISK GUARD TRIPPED 10-31 13:30: 300,000 files could still be made of 6,553,600, files floor 655,360 (40.0 GiB free); "
+            + "the AI is paused until the owner resumes it", files, StringComparison.Ordinal);
+        Assert.DoesNotContain("40.0 GiB free of 100.0 GiB, floor", files, StringComparison.Ordinal);
+
         // THE GUARD THAT LOST ITS SIGHT says that, and no figure it never read.
         var blind = Attention(Digest(40 * gib, 100 * gib, new DiskPause { At = at, Unreadable = true }));
         Assert.Contains("could not read the free space", blind, StringComparison.Ordinal);
@@ -1274,11 +1281,15 @@ public partial class OrgDigestTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// FREE INODES BESIDE FREE BYTES, AND ATTENTION WHEN THEY RUN OUT (R31 A4, U-digest-polish-2). The app's guard reads bytes only: millions of empty
-    /// files can use up the filesystem's inodes while it reads plenty free, and ext4 keeps none back for root, so the host's other services stop too.
-    /// The watch raises free inodes under the larger of a tenth and 500,000, naming the figures and the bytes free; plenty of both raises nothing.
+    /// FREE INODES BESIDE FREE BYTES, AND ATTENTION WHEN THEY RUN OUT (R31 A4, U-digest-polish-2). Millions of empty files can use up the filesystem's
+    /// inodes while it reads plenty free, and ext4 keeps none back for root, so the host's other services stop too. Since U-disk-guard-2 the app's guard
+    /// pauses on files as well, under <see cref="DiskFloor.FilesFor"/>, and the watch raises free inodes under THE SAME FLOOR (U-digest-watch-3), naming
+    /// the figures and the bytes free; plenty of both raises nothing.
     ///
     /// <para>RED at base: a four-figure reading was unreadable ("disk: UNREADABLE"), so no inode figure and no flag reached the watch.</para>
+    /// <para>CHANGED OPENLY by U-digest-watch-3 (its brief's item 1): the watch's own floor was the larger of a tenth and 500,000, uncapped, so a
+    /// filesystem of 1,000,000 inodes at 45 % free was raised. The app's floor is capped at a quarter (250,000 there), so it no longer is, and the words
+    /// no longer say the guard reads bytes only, which has been false on the owner's server since U-disk-guard-2 reached it.</para>
     /// </summary>
     [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
     public void The_digest_shows_free_inodes_and_raises_them_running_out_while_the_bytes_are_plenty()
@@ -1298,11 +1309,20 @@ public partial class OrgDigestTests(ITestOutputHelper log)
 
         // PLENTY OF BYTES, FEW INODES: raised, with the figures, the floor and the bytes free.
         var (few, fewHuman) = Digest($"[{40 * gib}, {100 * gib}, 300000, 6553600]");
-        Assert.Contains("free inodes 300,000 of 6,553,600 (4.6%) are UNDER 655,360 (the larger of 10% and 500,000), with 40.0 GiB free", Attention(few), StringComparison.Ordinal);
+        Assert.Contains("free inodes 300,000 of 6,553,600 (4.6%) are UNDER 655,360 (the app's files floor: 10%, never under 500,000 nor over a quarter), "
+            + "with 40.0 GiB free and no pause is recorded", Attention(few), StringComparison.Ordinal);
         Assert.Contains("\n  ! free inodes 300,000 of 6,553,600", fewHuman, StringComparison.Ordinal);
         Assert.DoesNotContain("guard's floor", Attention(few), StringComparison.Ordinal);
-        // A small filesystem: 45 % free, but under 500,000.
-        Assert.Contains("free inodes 450,000 of 1,000,000 (45.0%) are UNDER 500,000", Attention(Digest($"[{40 * gib}, {100 * gib}, 450000, 1000000]").Json), StringComparison.Ordinal);
+        Assert.DoesNotContain("reads bytes only", Attention(few), StringComparison.Ordinal);
+        // A SMALL FILESYSTEM is held to a quarter of its files, as the app holds it: 400,000 inodes at 30 % free is NOT raised (the watch's old floor
+        // of 500,000 raised every filesystem this small, always); at 20 % free it is under the app's 100,000.
+        Assert.DoesNotContain("inodes", Attention(Digest($"[{40 * gib}, {100 * gib}, 120000, 400000]").Json), StringComparison.Ordinal);
+        Assert.DoesNotContain("inodes", Attention(Digest($"[{40 * gib}, {100 * gib}, 450000, 1000000]").Json), StringComparison.Ordinal);
+        Assert.Contains("free inodes 80,000 of 400,000 (20.0%) are UNDER 100,000", Attention(Digest($"[{40 * gib}, {100 * gib}, 80000, 400000]").Json), StringComparison.Ordinal);
+        // THE FLOOR IS THE APP'S on every size it is stated for: below the least, at it, capped by a quarter, and the owner's server's.
+        foreach (var files in new long[] { 1_000, 400_000, 2_000_000, 5_000_000, 6_553_600, 7_749_632, 100_000_000 })
+            Assert.Equal(DiskFloor.FilesFor(files), Digest($"[{40 * gib}, {100 * gib}, {files}, {files}]").Json.GetProperty("disk").GetProperty("inodes_floor").GetInt64());
+        Assert.Contains($"never under {DiskFloor.FilesLeast.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} nor", Attention(few), StringComparison.Ordinal);
 
         // PLENTY OF BOTH: shown, never raised. At the floor exactly is not under it.
         var (plenty, plentyHuman) = Digest($"[{40 * gib}, {100 * gib}, 5000000, 6553600]");
@@ -1329,7 +1349,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             Assert.InRange(real.GetProperty("inodes_free").GetInt64(), 0, real.GetProperty("inodes_total").GetInt64());
     }
 
-    static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE"];
+    static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
     /// <summary>

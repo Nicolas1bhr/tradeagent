@@ -49,9 +49,15 @@ STATE_UNDER_HOME = ".local/share/TradeAgent/state"
 MAX_LINES = 60
 GIB = 1 << 30
 DISK_FLOOR_SHARE, DISK_FLOOR_MOST, DISK_FLOOR_LEAST = 10, 10 * GIB, 2 * GIB    # DiskFloor.For: a tenth of the disk, at most 10 GiB, never under 2 (held to it by OrgDigestTests)
-# THE WATCH'S OWN INODE FLOOR (R31 A4): the app's guard reads free bytes only, and millions of small files can use up the filesystem's inodes while it
-# reads plenty free; ext4 keeps none back for root, so the host's other services would stop too. Raised under the larger of a tenth and 500,000.
-INODE_FLOOR_SHARE, INODE_FLOOR_LEAST = 10, 500_000
+# THE APP'S FILES FLOOR (U-disk-guard-2, DiskFloor.FilesFor; R31 A4): millions of small files can use up the filesystem's inodes while it reads plenty
+# free, and ext4 keeps none back for root, so the guard pauses the AI on files too: under a tenth of the filesystem's files, never under 500,000 and
+# never over a quarter of them; none on a filesystem that counts none. The same figures as the app's (held to it by OrgDigestTests).
+FILES_FLOOR_SHARE, FILES_FLOOR_LEAST, FILES_FLOOR_MOST_SHARE = 10, 500_000, 4
+
+
+def files_floor(files):
+    """DiskFloor.FilesFor: the files floor of a filesystem of `files` inodes, 0 where it counts none."""
+    return 0 if not files or files <= 0 else min(max(files // FILES_FLOOR_SHARE, FILES_FLOOR_LEAST), files // FILES_FLOOR_MOST_SHARE)
 
 
 class W:
@@ -136,6 +142,8 @@ class W:
     META_SCHEMA_VERSION, KV_SETTINGS, SETTING_WORKS_ON_ITS_OWN = "schema_version", "settings", "ai_works_on_its_own"
     # the free-space guard's pause in the settings: DiskPause's serialised names
     SETTING_DISK_PAUSE, PAUSE_AT, PAUSE_FREE, PAUSE_TOTAL, PAUSE_FLOOR, PAUSE_UNREADABLE = "disk_pause", "at", "free", "total", "floor", "unreadable"
+    # ...and its files (U-disk-guard-2): what could still be made, the filesystem's whole count and the files floor, all 0 where it counts none
+    PAUSE_FILES_FREE, PAUSE_FILES, PAUSE_FILES_FLOOR = "files_free", "files", "files_floor"
     # THE KEYS READ OUT OF JSON THE APP WROTE: a key respelled in the app reads None here, which looks like a turn with no reason, so each is
     # held to its serialiser or writer like the words above. ai_attempt.context (TurnContext): how the turn ended and the words that stopped it
     CTX_ENDED, CTX_REFUSED = "ended", "refused"
@@ -396,7 +404,11 @@ class Digest:
                 if isinstance(settings, dict) and isinstance(settings.get(W.SETTING_DISK_PAUSE), dict):
                     p = settings[W.SETTING_DISK_PAUSE]
                     pause = {"at": p.get(W.PAUSE_AT), "free": p.get(W.PAUSE_FREE), "total": p.get(W.PAUSE_TOTAL), "floor": p.get(W.PAUSE_FLOOR),
-                             "unreadable": bool(p.get(W.PAUSE_UNREADABLE))}
+                             "unreadable": bool(p.get(W.PAUSE_UNREADABLE)), "files_free": p.get(W.PAUSE_FILES_FREE), "files": p.get(W.PAUSE_FILES),
+                             "files_floor": p.get(W.PAUSE_FILES_FLOOR)}
+                    # DiskPause.ForFiles: a trip for files, with the bytes above their floor, says what ran out
+                    pause["for_files"] = (not pause["unreadable"] and (pause["free"] or 0) >= (pause["floor"] or 0) and (pause["files_floor"] or 0) > 0
+                                          and (pause["files_free"] or 0) < pause["files_floor"])
             except ValueError:
                 pass
         return {"schema": schema[0] if schema else None, "ai_works_on_its_own": working, "disk_pause": pause}
@@ -1298,8 +1310,8 @@ def build(app_path, tape_path, state, now, since, opts):
 def read_disk(state, disk_file):
     """FREE SPACE ON THE FILESYSTEM HOLDING THE STATE FOLDER, on every run, as this host answers now: a statvfs, which writes nothing. It is what the app's
     free-space guard reads, and this file's floor is the guard's: free is what the app's own account can use. A read that fails says so; it is never a zero.
-    And THE INODES beside them (R31 A4), which the guard does not read: f_favail of f_files, what the app's own account can still create. A filesystem
-    that counts none (f_files 0: it makes them as it goes) says so, and is never flagged."""
+    And THE INODES beside them (R31 A4), which the guard reads too since U-disk-guard-2: f_favail of f_files, what the app's own account can still create,
+    against the app's own files floor. A filesystem that counts none (f_files 0: it makes them as it goes) says so, and is never flagged."""
     try:
         ifree = itotal = None
         if disk_file:
@@ -1320,7 +1332,7 @@ def read_disk(state, disk_file):
     out = {"free": free, "total": total, "floor": floor, "below_floor": free < floor,
            "inodes_free": ifree, "inodes_total": itotal, "inodes_free_pct": None, "inodes_floor": None, "inodes_below_floor": None}
     if itotal:
-        ifloor = max(itotal // INODE_FLOOR_SHARE, INODE_FLOOR_LEAST)
+        ifloor = files_floor(itotal)
         out.update(inodes_free_pct=round(ifree * 100 / itotal, 1), inodes_floor=ifloor, inodes_below_floor=ifree < ifloor)
     return out
 
@@ -1339,6 +1351,9 @@ def attention(d):
     pause = d.get("app", {}).get("disk_pause")
     if pause and pause["unreadable"]:
         flags.append(f"DISK GUARD TRIPPED {stamp(pause['at'])}: it could not read the free space, so the AI is paused until the owner resumes it")
+    elif pause and pause.get("for_files"):
+        flags.append(f"DISK GUARD TRIPPED {stamp(pause['at'])}: {pause['files_free']:,} files could still be made of {pause['files']:,}, files floor "
+                     f"{pause['files_floor']:,} ({gib(pause['free'])} free); the AI is paused until the owner resumes it")
     elif pause:
         flags.append(f"DISK GUARD TRIPPED {stamp(pause['at'])}: {gib(pause['free'])} free of {gib(pause['total'])}, floor {gib(pause['floor'])}; "
                      "the AI is paused until the owner resumes it")
@@ -1347,7 +1362,8 @@ def attention(d):
         flags.append(f"free space {gib(disk['free'])} is UNDER the guard's floor {gib(disk['floor'])} and no pause is recorded")
     if disk.get("inodes_below_floor"):
         flags.append(f"free inodes {disk['inodes_free']:,} of {disk['inodes_total']:,} ({disk['inodes_free_pct']}%) are UNDER {disk['inodes_floor']:,} "
-                     f"(the larger of {100 // INODE_FLOOR_SHARE}% and {INODE_FLOOR_LEAST:,}), with {gib(disk['free'])} free: the app's guard reads bytes only, so nothing pauses")
+                     f"(the app's files floor: {100 // FILES_FLOOR_SHARE}%, never under {FILES_FLOOR_LEAST:,} nor over a quarter), with {gib(disk['free'])} free"
+                     + ("" if pause else " and no pause is recorded"))
     if d.get("app", {}).get("ai_works_on_its_own") is False:
         flags.append("the AI is NOT set to work on its own: nothing turns")
     dt_ = d.get("day_total", {})
