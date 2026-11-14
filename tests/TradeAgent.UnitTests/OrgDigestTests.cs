@@ -1540,6 +1540,33 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.DoesNotContain("before the window", since, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// "WAITING" COUNTS THE RUN'S OWN, BESIDE EVERY ONE EVER (U-digest-watch-3 item 5; U-digest-evidence-eyes card 2). A verdict asked before T0 and never
+    /// given is not this run's: the line says how many asked since T0 wait, and how many wait in all.
+    ///
+    /// <para>RED at base: "waiting 3" over every unanswered verdict ever; only the JSON's words said "(ever)".</para>
+    /// <para>CHANGED OPENLY: the verdicts line's "waiting W," reads "waiting N since T0 (W ever),"; its JSON keeps waiting_now (ever) and adds waiting_since.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void Waiting_verdicts_are_counted_since_T0_and_ever()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            db.Exec("PRAGMA foreign_keys=OFF;");
+            db.Exec("""
+                INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from) VALUES
+                  (1, 'v-old', '2026-10-20T10:00:00.0000000Z', '2026-09-01T00:00:00.0000000Z'), (1, 'v-old2', '2026-10-21T10:00:00.0000000Z', '2026-09-01T00:00:00.0000000Z'),
+                  (1, 'v-new', '2026-10-31T10:00:00.0000000Z', '2026-09-01T00:00:00.0000000Z');
+                """);
+            db.Exec("PRAGMA foreign_keys=ON;");
+        }
+        var (json, human) = Both(f);
+        Assert.Equal(1, json.GetProperty("verdicts").GetProperty("waiting_since").GetInt32());
+        Assert.Equal(3, json.GetProperty("verdicts").GetProperty("waiting_now").GetInt32());
+        Assert.Contains("verdicts: asked 1 since T0, waiting 1 since T0 (3 ever), given 0 [none]", human, StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
