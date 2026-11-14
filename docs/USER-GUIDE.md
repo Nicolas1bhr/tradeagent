@@ -64,6 +64,23 @@ opens the app.
 Windows 11 is required. Nothing else is — no .NET, no Node, no developer tools. TradeAgent brings
 what it needs.
 
+### If TradeAgent runs on your own server
+
+Someone sets TradeAgent up on a server of yours that stays on. You never need a terminal for it. You reach its window from
+your own computer:
+
+- **Your password for the window is yours.** When TradeAgent is first installed there, a small window opens on the
+  installer's screen and asks you to choose it, twice: 6 to 8 letters, digits or symbols, no spaces. Nobody else is shown
+  it, and it is kept only on your server.
+- **To open the window**, use Screen Sharing on a Mac, or any VNC viewer elsewhere. Connect to the address that TradeAgent's
+  Settings page shows under "Reaching this window", and type the password you chose. Let the viewer remember it (Screen
+  Sharing offers to keep it in your keychain).
+- **To change it**, go to Settings → "Reaching this window". Type the new password twice and press "Change this window's
+  password" twice. Nothing restarts: your next connection uses the new password, and if you are connected now you stay
+  connected.
+- **If you forget it**, ask whoever installed TradeAgent on your server to set a new one with you. The same small window
+  opens, you type the new password in it, and they never see it.
+
 ### What you will be asked to do
 
 At most twice, and each time it is **a Yes on a Windows permission prompt.** That is the whole of it.

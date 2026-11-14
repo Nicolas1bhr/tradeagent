@@ -229,6 +229,7 @@ tools/linux-host.sh org-digest [--since <T0>] [--json]   # read-only: the AI org
 tools/linux-host.sh limits                       # read-only: Yama's ptrace_scope, core_pattern, the Max core file size line of the running tradeagent.service
 tools/linux-host.sh install <tarball> "<word>"   # stop -> back up state/tape.db* and tradeagent.db* -> the kit -> health
 tools/linux-host.sh stop "<word>"                # systemctl stop; the data stays
+tools/linux-host.sh window-password "<word>"     # the owner types a new password for his window in a dialog here; restarts nothing
 ```
 
 **`install` and `stop` run only on the owner's dated word**, passed as the last argument — a date, then his words:
@@ -236,9 +237,25 @@ tools/linux-host.sh stop "<word>"                # systemctl stop; the data stay
 (`TA_LINUX_ZONE`, default Europe/Brussels), not the Mac's — the script refuses before it reaches the host. The word is kept beside what it allowed, in the backup folder (`/var/backups/tradeagent/<UTC stamp>/WORD.txt`).
 `install` writes the kit, a backup and nothing of the app's own data: it **never seeds the home** (a seeded AI_AUTHENTICATED
 would be a false record in what becomes the organisation's home). Each deploy is a gap in the tape, so deploy rarely, and
-never from a build that refuses older homes before `U-older-layout-refusal` has landed. On a first install the VNC
-password is made on the host, kept in `/root/tradeagent-vnc-pass` (root-only, never printed) to be handed to the owner
-once and then deleted.
+never from a build that refuses older homes before `U-older-layout-refusal` has landed.
+
+**The window's password is the owner's (U-window-door).** Nothing generates it, and nothing hands it over:
+
+- On a first install (the host's window has no password yet), the tool asks the owner to choose it in a dialog on the
+  screen of the machine it runs on: osascript's hidden-answer dialog on macOS, or a Windows Forms dialog with two masked
+  fields in Git Bash on Windows. With no screen to ask on, it refuses and sends nothing.
+- It goes to the host on ssh's stdin only, and the root shell pipes it to TigerVNC's password tool. It is never in an
+  argument, the output, a log, an environment variable or a file, on either machine.
+- `tools/linux-host.sh window-password "<word>"` sets a new one the same way, on his dated word, while he is locked out of
+  the window. It restarts nothing, and it removes a `/root/tradeagent-vnc-pass` that an older tool left, unread.
+- While he is in, he changes it himself in Settings → "Reaching this window", with two presses.
+- `install` also says what `TA_LINUX_ADDRESS` means for him: loopback is reachable only through an administrator's ssh tunnel.
+  The private network's address is reachable from his devices with a VNC viewer, and only an encrypting network such as the
+  tailnet may carry VNC.
+- `TA_WINDOW_PASSWORD_FROM` names a program that prints the password, for CI only, and the output says when it was used.
+
+`recon` ends by reading fail2ban: whether the sshd jail is on, its bans, and whether the address the tool comes from is
+exempt. It writes nothing. Exempting an address is the owner's security choice, and no verb here makes it.
 
 CI exercises all four verbs over a real ssh to its own `linux-host` runner (`.github/workflows/build.yml`, "The fleet's
 tool, against this host"); it has never been pointed at the owner's machines.

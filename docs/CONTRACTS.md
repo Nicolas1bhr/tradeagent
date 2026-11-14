@@ -1983,6 +1983,26 @@ approval — which is why the Dashboard row states the time it stops being appro
 replaying that request id gets whatever the record now says, and proposes again with a new id if it
 comes back `CANCELLED` and it still wants the order.
 
+## The owner's door to his window — `tools/linux-host.sh`, `packaging/linux/`, `src/TradeAgent.App/WindowDoor.cs`
+
+From U-window-door (2026-11-13; R31 D10). On 2026-11-07 the owner was locked out of his own app. The password to its window had
+been minted root-only and never handed over, and the only route to it was an administrator's ssh. Two contracts follow:
+
+- **The window's password is the owner's.** He chooses it himself. It is never generated for him, and never shown, logged or
+  relayed. It changes only by his two presses in Settings ("Reaching this window") or by his own dialog, through
+  `tools/linux-host.sh install` on a first install or `window-password` on his dated word. It reaches the host on stdin only, and
+  only TigerVNC's obfuscated `~/.vnc/vncauth` is kept, replaced whole by a rename. No pipe op, verb, door call or setting reaches
+  the change. No cell grant may be, lie inside or hold the folder that file is in (`CellPolicy.Guarded`).
+- **On every platform, no step of install, update or recovery makes a secret the owner must be handed later.** Every door to
+  his app opens from his window or his own device. On Windows the window is his own desktop session, and the app listens on
+  loopback only. On Linux it is his VNC viewer, with the password he chose. Nobody's remote access (ssh, RDP, a viewer to
+  someone else's machine) is part of his path, or of any user's.
+
+A password-only change restarts nothing, because Xvnc reads its `-PasswordFile` at each login. CI's linux-host job logs in for
+real to show it: the old password is refused and the new one accepted, with both units' MainPID unchanged. The display waits
+for its address before Xvnc starts (`display-prepare address`, at most 90 s). A tailnet address that appears late at boot
+therefore brings the display up and then the app, instead of leaving the app down.
+
 ## Health and errors
 
 `HealthState`: `UNKNOWN · STARTING · READY · DEGRADED · FAILED · PAUSED`, per component.
