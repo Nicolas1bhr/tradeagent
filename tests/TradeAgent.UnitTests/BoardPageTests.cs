@@ -293,9 +293,9 @@ public class BoardPageTests
         var page = new BoardPage(new BoardReader(db));
         var row = Rows(page).Single(r => r.Path == "risk.max_open_positions");
         Assert.Equal("15", row.Value.Text);
-        Assert.EndsWith("\nCounted in positions, not pairs: in paper each paper run's holding is one, and so is whatever the account holds in a pair "
-                        + "beyond its runs' own, an opening order on its way included; with real money each instrument held, or with an opening order "
-                        + "on its way, is one.", row.Source.Text, StringComparison.Ordinal);
+        Assert.EndsWith("\nCounted in positions, not pairs: in paper each run's holding is one, and so is whatever the account holds in a pair "
+                        + "beyond its runs' own; with real money each instrument held is one; an opening order on its way counts as the position it "
+                        + "opens.", row.Source.Text, StringComparison.Ordinal);
     }
 
     /// <summary>

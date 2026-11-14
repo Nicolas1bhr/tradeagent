@@ -1100,10 +1100,10 @@ public static partial class Labels
     /// positions, not pairs. Each paper run keeps its own holding, so each is one position; the refusal, the Board page and the contract say this.
     /// </summary>
     public const string OpenPositionsCountedPaper =
-        "each paper run's holding is one, and so is whatever the account holds in a pair beyond its runs' own, an opening order on its way included";
+        "each paper run's holding is one, and so is whatever the account holds in a pair beyond its runs' own; an opening order on its way counts as the position it opens";
 
     /// <summary>What the open-position limit counts outside paper, where the account is the only holder: an instrument held or being opened is one.</summary>
-    public const string OpenPositionsCounted = "each instrument held, or with an opening order on its way, is one";
+    public const string OpenPositionsCounted = "each instrument held is one; an opening order on its way counts as the position it opens";
 
     /// <summary>
     /// WHAT THE PRACTICE SIMULATOR IS, PLAINLY (<c>U-paper-t0</c> item 4): it was offered as the recommended place to start and allocated nothing, without a word, because the
