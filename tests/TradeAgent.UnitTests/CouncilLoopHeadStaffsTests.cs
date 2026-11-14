@@ -26,9 +26,9 @@ public partial class CouncilLoopTests
         [.. RoleObjectives.Open(db, position, null).Where(o => o.Kind == kind)];
 
     /// <summary>
-    /// (a) A UNIT UNDER YOURS WITH NO HEAD IS YOUR OPEN WORK, until you appoint one. A chief that chartered a division holds exactly one
-    /// <c>unit-unstaffed</c> naming it; after the hire with its head flag it holds none. The root, the legacy divisions (headed), a closed unit and a
-    /// vacant unit under ANOTHER head open none for the chief — the last is that head's.
+    /// (a) A UNIT UNDER YOURS THAT STANDS EMPTY IS YOUR OPEN WORK, until you appoint its head. A chief that chartered a division holds exactly one
+    /// <c>unit-unstaffed</c> naming it; after the hire with its head flag it holds none. The root, the legacy divisions (headed), a closed unit, a
+    /// headless team that has a member, and an empty unit under ANOTHER head open none for the chief — the last is that head's.
     ///
     /// <para>RED at base: "Assert.Single() Failure: The collection was empty" — no kind for a vacant head (RoleObjectives v4). Mutants, each watched red:
     /// the kind left out of a head's kinds; the parent filter dropped (the chief then owns the team under the other head too); closed units not
@@ -52,6 +52,14 @@ public partial class CouncilLoopTests
         Chart(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($u,$p,'team',NULL,'active',$at)",
             ("$u", team), ("$p", other), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
+        Assert.Equal([team], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
+
+        // A UNIT WITH NO HEAD BUT A MEMBER IS STAFFED: a team's members are hired, and led, by the head above it.
+        const string led = "unit-7ea4c0ffee02", member = "pos-7ea4c0ffee03";
+        Chart(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($u,$p,'team',NULL,'active',$at)",
+            ("$u", led), ("$p", other), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+        Chart(db, "INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'dormant',$at)",
+            ("$id", member), ("$u", led), ("$h", $"org/{member}"), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Assert.Equal([team], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
 
         // A CLOSED UNIT OPENS NONE.
