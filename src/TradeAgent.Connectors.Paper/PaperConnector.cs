@@ -567,8 +567,13 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
                     // order's own time (Apply: `bar.OpenTime > o.At`), so every bar up to the earliest order of this symbol that is not
                     // cancelled or refused — filled ones included, as Apply asks them too — has none, and settling those only moves the
                     // watermark and the close, which a hint and one transaction carry for the last of them as well as for each.
+                    //
+                    // AND NO LATER THAN THIS CONNECTOR'S CLOCK NOW (the opus review): an order placed while this page settles is not in
+                    // the snapshot, but its own time is at least this instant, so a bar opened by now cannot be its candidate either.
+                    var now = _opt.Clock();
                     var first = FirstFillable(s);
-                    var idle = first is { } at ? ordered.TakeWhile(b => b.OpenTime <= at).Count() : ordered.Count;
+                    var through = first is { } at && at < now ? at : now;
+                    var idle = ordered.TakeWhile(b => b.OpenTime <= through).Count();
                     if (idle > 0) Book.MarkSettled(s, ordered[idle - 1].OpenTime, ordered[idle - 1].Close);
                     foreach (var bar in ordered.Skip(idle)) Apply(s, bar);
                     if (Book.SettledThrough(s) <= from) break;
