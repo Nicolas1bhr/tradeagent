@@ -499,6 +499,11 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-chief-moves (R30 D21): ChiefFloor and ChiefFloorEvery — the interval the loop wakes the chief at while nothing moves. Reads,
         // called by the app's host alone, the one write being the loop's own ceiling; no op, verb or board act reaches them.
         mandate = [.. mandate, "ChiefFloor", "ChiefFloorEvery"];
+        // REVISITED, OUT LOUD, BY U-head-staffs (D13-hire): UnstaffedUnder and UnmandatedUnder — a head's units under its own that stand empty, and
+        // their active heads holding no mandate from it (RoleObjectives v5) — and Children, PositionsNotEnded and CollapseBy, org-show's `below`.
+        // Reads of the chart and the mandate ledger (OrgStore.Staffing.cs holds no INSERT, UPDATE or DELETE); no op, door verb or trade verb
+        // writes through them.
+        mandate = [.. mandate, "Children", "CollapseBy", "PositionsNotEnded", "UnmandatedUnder", "UnstaffedUnder"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }
