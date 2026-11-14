@@ -228,7 +228,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         var kind = EvaluationClass.Or(set?.EvaluationClass);
         IReadOnlyList<CampaignCharge> charges = set is null ? [] : _campaigns.ChargedBy(set, ask.From, ask.To);
         foreach (var charge in charges)
-            if (_campaigns.TrialRefusal(charge.Campaign.Id, program.StrategyId, kind, charge.Through) is { } spent)
+            // WITH THE DECLARED PARENT (U-evidence-counts item 1): the version is recorded only in the run's write, so the look reads the
+            // lineage the gate will read there rather than a parentless new version.
+            if (_campaigns.TrialRefusal(charge.Campaign.Id, program.StrategyId, kind, charge.Through, parent) is { } spent)
                 throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
 
         // A WINDOW THAT CANNOT FIT THE RUN'S CAP IS REFUSED HERE, BEFORE ANY EVALUATION STARTS, AND CHARGES NOTHING (U-backtest-cap): it used to
