@@ -401,6 +401,12 @@ public sealed class DeviceCodePlan
 
     /// <summary>Regex with one capture group: how many MINUTES the code lives, as the vendor prints it.</summary>
     public string ExpiryPattern { get; set; } = "";
+
+    /// <summary>
+    /// WHAT A CODE NEEDS BEFORE IT CAN WORK, in the vendor's terms (U-window-door): said once, wherever a one-time code is offered,
+    /// before the press — the Linux onboarding and the Dashboard's sign-in card on every platform. Empty when it needs nothing.
+    /// </summary>
+    public string Needs { get; set; } = "";
 }
 
 /// <summary>
@@ -1262,8 +1268,7 @@ public static class RuntimeCatalog
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = on.Os == HostOs.Linux
                 ? "Codex signs in with your ChatGPT account on another device: open the address below on your phone " +
-                  "or another computer, sign in there and type the one-time code shown here. Device code login has " +
-                  "to be switched on in ChatGPT's security settings first."
+                  "or another computer, sign in there and type the one-time code shown here."
                 : "A browser window will open so you can sign in with your ChatGPT account.",
             Recommended = true,
             ApiKey = new ApiKeyPlan
@@ -1331,7 +1336,11 @@ public static class RuntimeCatalog
                 Args = ["login", "--device-auth"],
                 UrlPattern = @"(https://(?!localhost|127\.0\.0\.1)[^\s""'<>\)\]]+)",
                 CodePattern = @"\b([A-Z0-9]{4}-[A-Z0-9]{5})\b",
-                ExpiryPattern = @"expires in (\d+) minutes?"
+                ExpiryPattern = @"expires in (\d+) minutes?",
+                // The vendor's own prerequisite (learn.chatgpt.com/docs/auth, read 2026-10-08: "Enable device code login in your
+                // ChatGPT security settings"). Before U-window-door only the Linux onboarding said it; the card offers the code on
+                // every platform, where a code refused at the vendor's page left nothing in the window saying why.
+                Needs = "Device code login has to be switched on in ChatGPT's security settings first."
             },
             // RUN 2026-10-11, codex-cli 0.160.1 on macOS, a throwaway CODEX_HOME and HOME, a FAKE key: `logout` after a key sign-in
             // printed "Successfully logged out", exit 0, and `login status` then "Not logged in", exit 1; on an empty home it

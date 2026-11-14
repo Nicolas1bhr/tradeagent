@@ -570,7 +570,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             var message = string.IsNullOrWhiteSpace(manifest.SignInDescription)
                 ? "Finish signing in in the browser window that just opened, then come back here."
                 : manifest.SignInDescription;
-            return new AuthChallenge(url, codeFound.Task.IsCompletedSuccessfully ? codeFound.Task.Result : ExtractCode(text), message);
+            var shown = codeFound.Task.IsCompletedSuccessfully ? codeFound.Task.Result : ExtractCode(text);
+            return new AuthChallenge(url, shown, message, shown is { Length: > 0 } ? CodeExpiry(text, DateTimeOffset.Now) : null);
         }
 
         if (exited.IsCompleted)
@@ -669,6 +670,23 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     }
 
     static string Group(Match m) => m.Groups.Count > 1 ? m.Groups[1].Value : m.Value;
+
+    /// <summary>
+    /// WHEN A CODE SHOWN BY THE ORDINARY SIGN-IN LAPSES (U-window-door): the manifest's <see cref="DeviceCodePlan.ExpiryPattern"/>
+    /// over what the program printed, counted from <paramref name="readAt"/> — the same reading and the same clock as
+    /// <see cref="BeginDeviceCodeAsync"/>'s <see cref="DeviceChallenge"/>. Null when the program printed no lifetime, or the
+    /// pattern cannot be read: the screen then claims none.
+    /// </summary>
+    internal DateTimeOffset? CodeExpiry(string printed, DateTimeOffset readAt)
+    {
+        if (manifest.DeviceCode is not { ExpiryPattern.Length: > 0 } plan) return null;
+        try
+        {
+            var m = Regex.Match(printed, plan.ExpiryPattern);
+            return m.Success && int.TryParse(Group(m), out var minutes) && minutes > 0 ? readAt + TimeSpan.FromMinutes(minutes) : null;
+        }
+        catch (ArgumentException) { return null; }
+    }
 
     /// <summary>Every line a stream prints, colour codes off, into the transcript — and the caller told after each.</summary>
     static async Task LinesAsync(StreamReader reader, StringBuilder transcript, Action after)

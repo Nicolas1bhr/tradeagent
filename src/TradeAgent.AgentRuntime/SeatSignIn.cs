@@ -217,6 +217,9 @@ public sealed class SeatSignIn(Func<RuntimeManifest?> manifest, AgentPresence? p
             m.ApiKey is { StdinArgs.Length: > 0 } or { File.Length: > 0 });
     }
 
+    /// <summary>What the one-time code needs switched on first, in the vendor's terms (<see cref="DeviceCodePlan.Needs"/>), or null.</summary>
+    public string? CodeNeeds() => Manifest()?.DeviceCode?.Needs is { Length: > 0 } needs ? needs : null;
+
     /// <summary>The words the seat profile gives a signed-out seat home, or a plain sentence where it has none.</summary>
     public string SignedOutWords() =>
         Manifest()?.Seat?.SignedOut is { Length: > 0 } words ? words : "TradeAgent keeps its own AI sign-in. Sign in again.";

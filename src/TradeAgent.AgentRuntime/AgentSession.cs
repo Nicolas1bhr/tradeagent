@@ -87,8 +87,13 @@ public interface IAgentConversation
 /// What the user has to do to finish signing in, produced by running the runtime's own login command
 /// headless and reading the URL out of its output. TradeAgent opens the URL; the user never sees a
 /// console and is never asked for a key.
+///
+/// <para><paramref name="ExpiresAt"/> (U-window-door): when a one-time code is shown, the moment it lapses, read the way the
+/// Dashboard card reads its <see cref="DeviceChallenge"/> — the vendor's printed minutes from the manifest's
+/// <see cref="DeviceCodePlan.ExpiryPattern"/>, counted from when the runtime read them (<see cref="DeviceChallenge.ReadAt"/>'s
+/// clock). Null when no code, or the program printed no lifetime: then nothing claims one.</para>
 /// </summary>
-public sealed record AuthChallenge(string? Url, string? Code, string Message);
+public sealed record AuthChallenge(string? Url, string? Code, string Message, DateTimeOffset? ExpiresAt = null);
 
 /// <summary>
 /// Strips terminal colour codes.

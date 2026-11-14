@@ -773,11 +773,13 @@ public sealed class OnboardingView
             if (!browser && key is not null)
                 return new Screen(lede, KeyEntry(key), _keyButton, [], HideBack: false);
 
+            // A CODE'S PREREQUISITE, ONCE, BEFORE THE PRESS (U-window-door): the vendor's own words, from the manifest.
+            var codeNeeds = manifest is { AuthCodePattern.Length: > 0, DeviceCode.Needs.Length: > 0 } ? " " + manifest.DeviceCode.Needs : "";
             var intro = Ui.Col(Theme.S5,
                 Note(manifest is { AuthCodePattern.Length: > 0 }
                     ? "Press Sign in. TradeAgent shows a web address and a one-time code: open the address on your " +
                       "phone or another computer, sign in there and type the code. This screen continues on its own " +
-                      "as soon as you are signed in."
+                      "as soon as you are signed in." + codeNeeds
                     : "Press Sign in. TradeAgent opens the sign-in page in your web browser, and this screen " +
                       "continues on its own as soon as you are signed in.", Theme.Info));
             if (key is not null) intro.Children.Add(KeyEntry(key, alternative: true));
@@ -792,12 +794,13 @@ public sealed class OnboardingView
         if (!string.IsNullOrWhiteSpace(_auth.Message)) body.Children.Add(Ui.Body(_auth.Message));
         // The vendor's own order: first the address, then the code typed there.
         if (!string.IsNullOrWhiteSpace(_auth.Url)) body.Children.Add(LinkWell(_auth.Url!, elsewhere));
-        if (elsewhere) body.Children.Add(CodeWell(_auth.Code!));
+        if (elsewhere) body.Children.Add(CodeWell(_auth.Code!, _auth.ExpiresAt, DateTimeOffset.Now));
         body.Children.Add(Ui.Busy("Waiting for you to finish signing in."));
 
+        // A NEW CODE IS WHAT THE OWNER GETS, in the Dashboard card's words (U-window-door).
         var primary = _auth.Url is { } url && !elsewhere
             ? Ui.Primary("Open the sign-in page again", () => MainWindow.OpenPath(url, ShowProblem))
-            : Ui.Primary("Start sign-in again", Act(BeginSignInAsync));
+            : Ui.Primary(elsewhere ? SeatSignInCard.Retry : "Start sign-in again", Act(BeginSignInAsync));
 
         return new Screen(lede, Ui.Card(body), primary,
             [Ui.Ghost("I have signed in", Act(() => Done(OnboardingStep.AI_AUTHENTICATED)))]);
@@ -854,17 +857,32 @@ public sealed class OnboardingView
             MainWindow.OpenPath(_auth.Url!, ShowProblem);
     }
 
-    /// <summary>A device code, sized to be read off the screen and typed into a phone.</summary>
-    internal static Control CodeWell(string code) => Ui.Col(Theme.S2,
-        Ui.Eyebrow("Enter this code on the sign-in page"),
-        new Border
+    /// <summary>A device code, sized to be read off the screen and typed into a phone, and — when the program printed how long it
+    /// lives — when it lapses, as the Dashboard card says it (U-window-door): <see cref="AuthChallenge.ExpiresAt"/>, read on the
+    /// runtime's clock when the code was printed, compared with <paramref name="now"/> at this render.</summary>
+    internal static Control CodeWell(string code, DateTimeOffset? expiresAt = null, DateTimeOffset? now = null)
+    {
+        var well = Ui.Col(Theme.S2,
+            Ui.Eyebrow("Enter this code on the sign-in page"),
+            new Border
+            {
+                Background = Theme.BgSunken,
+                CornerRadius = Theme.RadiusSm,
+                Padding = new Thickness(Theme.S5, Theme.S4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Child = Ui.Code(code)
+            });
+        if (expiresAt is { } at)
         {
-            Background = Theme.BgSunken,
-            CornerRadius = Theme.RadiusSm,
-            Padding = new Thickness(Theme.S5, Theme.S4),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Child = Ui.Code(code)
-        });
+            var lapsed = (now ?? DateTimeOffset.Now) >= at;
+            var line = Ui.Micro(lapsed
+                ? $"This code expired at {at.ToLocalTime():HH:mm}. {SeatSignInCard.Retry} to try again."
+                : $"This code expires at {at.ToLocalTime():HH:mm}.");
+            line.Foreground = lapsed ? Theme.Caution : Theme.TextMuted;
+            well.Children.Add(line);
+        }
+        return well;
+    }
 
     /// <summary>
     /// The address, in full: for the case where the browser did not open by itself, or — for a sign-in

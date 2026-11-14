@@ -70,6 +70,8 @@ sealed class SeatSignInCard
     readonly TextBlock _codeUrl = Ui.Mono("");
     readonly TextBlock _codeText;
     readonly TextBlock _codeExpiry = Ui.Micro("");
+    /// <summary>What the code needs switched on first, said before the press (U-window-door): the code route on every platform.</summary>
+    readonly TextBlock _codeNeeds = Ui.Micro("");
     readonly Button _retry;
     readonly Control _working;
 
@@ -133,6 +135,7 @@ sealed class SeatSignInCard
         _note.IsVisible = false;
         _note.TextWrapping = TextWrapping.Wrap;
         _headline.TextWrapping = TextWrapping.Wrap;
+        _codeNeeds.TextWrapping = TextWrapping.Wrap;
 
         Root = new Border
         {
@@ -146,6 +149,7 @@ sealed class SeatSignInCard
                 Ui.With(Ui.Eyebrow("AI sign-in"), t => t.Foreground = Theme.Caution),
                 _headline,
                 Ui.Row(Theme.S2, _browser, _code),
+                _codeNeeds,
                 _browserWell,
                 _codeWell,
                 _working,
@@ -195,6 +199,9 @@ sealed class SeatSignInCard
 
         _browser.IsVisible = browser;
         _code.IsVisible = code && _challenge is null;
+        var needs = _sources.Service.CodeNeeds();
+        _codeNeeds.Text = needs is null ? "" : $"For a code: {needs}";
+        _codeNeeds.IsVisible = code && _challenge is null && needs is not null;
         _keyRow.IsVisible = key;
         _browser.IsEnabled = _code.IsEnabled = _retry.IsEnabled = _keyButton.IsEnabled = !_busy;
         _working.IsVisible = _busy;
