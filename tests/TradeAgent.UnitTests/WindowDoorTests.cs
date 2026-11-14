@@ -211,4 +211,26 @@ public class WindowDoorTests : IDisposable
         Assert.Contains("the window's password", throughLink.Refuses(Path.GetFullPath(vnc)) ?? "(granted)", StringComparison.Ordinal);
         Assert.Contains("the window's password", throughLink.Refuses(Path.Combine(alias, ".vnc")) ?? "(granted)", StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// THE X COOKIE TOO (U-window-door, the orchestrator's XAUTH ruling of 2026-11-14): <c>~/.Xauthority</c>, wherever XAUTHORITY points,
+    /// is the key that lets a client press the app's window, and like <c>~/.vnc</c> it is a sibling of the app's home, not above it.
+    /// No grant may be it, its lock files (xauth's <c>-c</c>, <c>-l</c>, <c>-n</c>, which display-prepare clears) or anything holding them.
+    /// Defence in depth: R31 XAUTH.md found no reachable path today (Landlock, seccomp, -nolisten tcp).
+    /// </summary>
+    [Fact]
+    public void No_cell_grant_may_be_or_hold_the_windows_X_cookie_or_its_lock_files()
+    {
+        var home = Path.Combine(_dir, "acct", ".local", "share", "TradeAgent");
+        Directory.CreateDirectory(home);
+        var cookie = Path.Combine(_dir, "acct", ".Xauthority");
+        File.WriteAllText(cookie, "");
+        var guarded = CellPolicy.Guarded.Of(home, null, cookie);
+        foreach (var form in new[] { cookie, cookie + "-c", cookie + "-l", cookie + "-n" })
+            Assert.Contains("the window's X cookie", guarded.Refuses(Path.GetFullPath(form)) ?? "(granted)", StringComparison.Ordinal);
+        // Beside it, in the account's home, is the policy's to judge: this guard names the cookie and its locks only.
+        Assert.Null(guarded.Refuses(Path.GetFullPath(Path.Combine(_dir, "acct", ".Xauthority-backup"))));
+        // No XAUTHORITY, nothing guarded for it.
+        Assert.Null(CellPolicy.Guarded.Of(home, null, null).Refuses(Path.GetFullPath(cookie)));
+    }
 }

@@ -251,10 +251,26 @@ public sealed record CellPolicy
         /// </summary>
         public const string WindowPasswordFileVariable = "TA_WINDOW_PASSWORD_FILE";
 
-        public static Guarded Of(string? appHome = null) => Of(appHome, System.Environment.GetEnvironmentVariable(WindowPasswordFileVariable));
+        /// <summary>
+        /// The window's X cookie (the orchestrator's XAUTH ruling, 2026-11-14): the file XAUTHORITY names (the kit's unit sets
+        /// <c>~/.Xauthority</c>, a sibling of the app's home), and its lock files. With the cookie a client can press the app's window, so
+        /// no grant may be, lie inside or hold any of them. Read on Linux only, where the kit sets it and where cells run on Landlock: a
+        /// developer's own XAUTHORITY elsewhere (XQuartz's, under /private/tmp) is no door to this app. Defence in depth: R31 XAUTH.md
+        /// found no reachable path today.
+        /// </summary>
+        static string? Xauthority() => OperatingSystem.IsLinux() ? System.Environment.GetEnvironmentVariable("XAUTHORITY") : null;
+
+        /// <summary>The lock files xauth makes beside a cookie file (display-prepare clears the same three).</summary>
+        static readonly string[] XauthLocks = ["-c", "-l", "-n"];
+
+        public static Guarded Of(string? appHome = null) =>
+            Of(appHome, System.Environment.GetEnvironmentVariable(WindowPasswordFileVariable), Xauthority());
 
         /// <summary><see cref="Of(string?)"/> with the window's password file named, for a test: the product reads it from its unit.</summary>
-        internal static Guarded Of(string? appHome, string? windowPasswordFile)
+        internal static Guarded Of(string? appHome, string? windowPasswordFile) => Of(appHome, windowPasswordFile, Xauthority());
+
+        /// <summary><see cref="Of(string?)"/> with the window's password file and X cookie named, for a test.</summary>
+        internal static Guarded Of(string? appHome, string? windowPasswordFile, string? xauthority)
         {
             var home = appHome ?? Paths.Home;
             var homes = Forms(home).Distinct(StringComparer.Ordinal).ToList();
@@ -275,6 +291,9 @@ public sealed record CellPolicy
             if (windowPasswordFile is { Length: > 0 } door && Path.IsPathFullyQualified(door) && Path.GetDirectoryName(door) is { Length: > 0 } doorDir)
                 owned.AddRange(Forms(doorDir).Distinct(StringComparer.Ordinal)
                     .Select(p => (p, "the folder of the window's password, the key to the owner's door to this app,")));
+            if (xauthority is { Length: > 0 } cookie && Path.IsPathFullyQualified(cookie))
+                owned.AddRange(XauthLocks.Prepend("").SelectMany(suffix => Forms(cookie + suffix)).Distinct(StringComparer.Ordinal)
+                    .Select(p => (p, "the window's X cookie, with which a program could press the app's window,")));
             var tools = homes.Select(h => Path.Combine(h, Path.GetRelativePath(Paths.Home, Paths.Tools)))
                 .Concat(Forms(Path.Combine(home, Path.GetRelativePath(Paths.Home, Paths.Tools)))).Concat(Forms(Paths.Tools))
                 .Distinct(StringComparer.Ordinal).ToList();
