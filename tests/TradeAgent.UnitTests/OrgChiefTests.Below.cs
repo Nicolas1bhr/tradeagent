@@ -51,9 +51,9 @@ public partial class OrgChiefTests
         Assert.Equal(0, mine.GetProperty("positions").GetInt32());
         Assert.Equal(collapse.UtcDateTime, mine.GetProperty("collapse_by").GetDateTimeOffset().UtcDateTime, TimeSpan.FromSeconds(1));
         Assert.Equal(CouncilRoles.Research, below[1].GetProperty("head").GetString());
-        Assert.Equal(JsonValueKind.Null, below[1].GetProperty("collapse_by").ValueKind);
+        Assert.False(below[1].TryGetProperty("collapse_by", out _), "a unit chartered on no experiment was shown a collapse date");
         Assert.Equal(3, view.GetProperty("below_total").GetInt32());
-        Assert.Equal(JsonValueKind.Null, view.GetProperty("below_cut").ValueKind);
+        Assert.False(view.TryGetProperty("below_cut", out _), "a below that fit whole was said to be cut");
         var text = view.GetRawText();
         Assert.DoesNotContain("probability", text, StringComparison.Ordinal);
         Assert.DoesNotContain(ForecastVocabulary.UnitAdmissible, text, StringComparison.Ordinal);

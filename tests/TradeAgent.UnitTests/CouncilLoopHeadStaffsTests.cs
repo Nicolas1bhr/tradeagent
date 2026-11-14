@@ -122,7 +122,7 @@ public partial class CouncilLoopTests
         var turns = await Run(loop, host, chief, t => now = t, start, 5);
 
         Assert.Equal([start.AddHours(4)], turns);
-        Assert.DoesNotContain(host.Events.OfKind(MissionEventKind.Review), e => e.Role == chief);
+        Assert.DoesNotContain(host.Events!.OfKind(MissionEventKind.Review), e => e.Role == chief);
         var sent = Assert.Single(host.Conversations[chief].Sent);
         Assert.Contains("no work is moving in the organisation", sent, StringComparison.Ordinal);
         Assert.Contains("- What is wanted", sent, StringComparison.Ordinal);
