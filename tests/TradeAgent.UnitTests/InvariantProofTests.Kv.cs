@@ -45,7 +45,8 @@ public partial class InvariantProofTests
     /// every caller. A key the reader cannot follow to a fixed beginning fails the test — a key a caller names (an op's argument) is
     /// exactly that. A key that is, or may begin as, an authority row is allowed only in <see cref="AuthorityWriters"/>; every other key
     /// must begin with text no authority key begins with. No other SQL statement writes <c>kv</c> but <see cref="KvStatements"/>, and
-    /// no method group of either write is handed anywhere.
+    /// no method group of either write is handed anywhere. Watched red (2026-11-14) with the gateway's status read writing kv
+    /// <c>connector</c>, and with it writing a key named by the connector's id (unreadable).
     /// </summary>
     [Fact]
     public void No_pipe_op_or_verb_writes_the_owners_authority_where_it_is_kept()

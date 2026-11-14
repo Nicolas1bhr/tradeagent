@@ -194,6 +194,7 @@ public static class InvariantRegistry
                 "OrgDecisionTests.No_decision_forecast_escalation_or_lateral_op_is_mutating_or_reaches_operator_authority",
                 "OwnerPageTests.The_owners_page_holds_exactly_the_owners_presses",
                 "InvariantProofTests.No_pipe_op_or_verb_reaches_the_owners_pause_flatten_credentials_connections_or_updates",
+                "InvariantProofTests.No_pipe_op_or_verb_writes_the_owners_authority_where_it_is_kept",
             ],
             AtTheApp()),
 
