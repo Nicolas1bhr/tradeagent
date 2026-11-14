@@ -242,10 +242,17 @@ public sealed partial class AppHost : IAsyncDisposable
             if (chief is null || Agent?.Current is null) return Conversation;
             if (ConversationFor(chief) is not { } own) return Conversation;
             if (_chiefChat is not { } held || !ReferenceEquals(held.Chief, own))
-                _chiefChat = new RoutedChat(own, RecordOwnerMessage, $"the chief ({chief})");
+                _chiefChat = new RoutedChat(own, RecordOwnerMessage, ChiefChatName(chief));
             return _chiefChat;
         }
     }
+
+    /// <summary>
+    /// HOW THE CHAT NAMES THE CHIEF IT ROUTES HIS WORDS TO (<c>U-owner-words-4</c>, a card of <c>U-user-guide-chief</c>): "the chief" —
+    /// the sentence under his words read "Sent to the chief (pos-…)", an internal id in the owner's words. There is one chief, so the
+    /// id names nothing he needs; the engineering log keeps the row's recipient.
+    /// </summary>
+    internal static string ChiefChatName(string chiefPositionId) => "the chief";
 
     RoutedChat? _chiefChat;
 

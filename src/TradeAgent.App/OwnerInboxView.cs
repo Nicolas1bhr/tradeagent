@@ -205,7 +205,7 @@ sealed class OwnerInboxPage
                 var chief = units.FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
                 var open = units.Where(u => u.Status != OrgUnitStatus.Closed).ToDictionary(u => u.Id, StringComparer.Ordinal);
                 Dormant.Update([.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.ContainsKey(p.UnitId))
-                    .Select(p => new DormantSubject(p, _sources.SeatClassOf(p.Id), open[p.UnitId]))]);
+                    .Select(p => new DormantSubject(p, _sources.SeatClassOf(p.Id), DormantSubject.LineOf(p.UnitId, units)))]);
             }, failures);
 
         _unreadable.IsVisible = failures.Count > 0;
@@ -357,7 +357,8 @@ sealed class OwnerInboxPage
             // IN THE CHART'S NAMES (U-owner-words-2): the card read "pos-…, dormant in unit team-…".
             OrgText.Set(title, Labels.DormantPosition(_names.Position(d.Position.Id), _names.Unit(d.Position.UnitId)));
             OrgText.Set(seat, Labels.DormantSeat(d.SeatClass));
-            OrgText.Set(envelope, Labels.DormantEnvelope(_names.Unit(d.Unit.Id), d.Unit.EnvelopeShare, d.Unit.TrialShare, d.Unit.VerdictShare));
+            OrgText.Set(envelope, Labels.DormantEnvelope(_names.Unit(d.Unit.Id), d.Unit.EnvelopeShare, d.Unit.TrialShare, d.Unit.VerdictShare,
+                OrgEnvelopes.LegacyRoleOf(d.Unit.Id)));
         }
         return (Ui.Col(Theme.S1, title, seat, envelope, press), Fill);
     }
@@ -366,8 +367,9 @@ sealed class OwnerInboxPage
     DormantSubject? DormantNow(string positionId)
     {
         if (_sources.Org() is not { } org || org.Position(positionId) is not { Status: OrgPositionStatus.Dormant } p) return null;
-        return org.Units().FirstOrDefault(u => u.Id == p.UnitId) is { Status: not OrgUnitStatus.Closed } unit
-            ? new DormantSubject(p, _sources.SeatClassOf(p.Id), unit)
+        var units = org.Units();
+        return units.FirstOrDefault(u => u.Id == p.UnitId) is { Status: not OrgUnitStatus.Closed }
+            ? new DormantSubject(p, _sources.SeatClassOf(p.Id), DormantSubject.LineOf(p.UnitId, units))
             : null;
     }
 
@@ -390,13 +392,30 @@ sealed class OwnerInboxPage
 /// <summary>
 /// WHAT A DORMANT POSITION'S ACTIVATION CARD SHOWS (<c>U-owner-words-4</c> item 4): the position, the seat class this computer declares for
 /// it, and its unit as the chart holds it — whose envelope (its share of the day, of a campaign's trials and of its verdicts) the card says.
+/// <para><b>The envelope is the whole line's</b> (opus review): a unit's share is a fraction of its parent's, so <see cref="Line"/> holds
+/// the unit and every unit above it to the root, and a move anywhere on it — a parent's tilt, a merge that re-parents the unit — is a
+/// move of what was shown. The legacy split the two legacy divisions read is a setting, not a row, and is not part of it.</para>
 /// </summary>
-sealed record DormantSubject(OrgPositionRow Position, string? SeatClass, OrgUnitRow Unit)
+sealed record DormantSubject(OrgPositionRow Position, string? SeatClass, IReadOnlyList<OrgUnitRow> Line)
 {
+    /// <summary>The position's own unit: the line's first.</summary>
+    public OrgUnitRow Unit => Line[0];
+
+    /// <summary>The unit <paramref name="unitId"/> and each parent above it, nearest first, stopping at a loop or a missing parent.</summary>
+    public static IReadOnlyList<OrgUnitRow> LineOf(string unitId, IReadOnlyList<OrgUnitRow> units)
+    {
+        var byId = units.ToDictionary(u => u.Id, StringComparer.Ordinal);
+        var line = new List<OrgUnitRow>();
+        for (var id = unitId; id is not null && byId.TryGetValue(id, out var u) && !line.Contains(u); id = u.ParentId) line.Add(u);
+        return line;
+    }
+
+    static string Shape(IReadOnlyList<OrgUnitRow> line) =>
+        string.Join("|", line.Select(u => $"{u.Id}:{u.EnvelopeShare}:{u.TrialShare}:{u.VerdictShare}"));
+
     /// <summary>What moved between this subject and <paramref name="now"/>, in words, or null when the seat and the envelope are as shown.</summary>
     public string? WhatMoved(DormantSubject now) =>
         !string.Equals(SeatClass, now.SeatClass, StringComparison.Ordinal) ? "the seat it would run on"
-        : (Unit.Id, Unit.EnvelopeShare, Unit.TrialShare, Unit.VerdictShare) != (now.Unit.Id, now.Unit.EnvelopeShare, now.Unit.TrialShare, now.Unit.VerdictShare)
-            ? "its team's envelope"
-            : null;
+        : !string.Equals(Shape(Line), Shape(now.Line), StringComparison.Ordinal) ? "its team's envelope"
+        : null;
 }

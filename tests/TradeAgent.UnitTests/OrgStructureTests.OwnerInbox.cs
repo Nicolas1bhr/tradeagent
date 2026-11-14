@@ -226,6 +226,15 @@ public partial class OrgStructureTests
             Assert.Equal(before, Written(db));
             Assert.Equal(OrgPositionStatus.Dormant, new OrgStore(db).Position(member)!.Status);
 
+            // THE ENVELOPE IS THE WHOLE LINE'S (opus review): the team's half is a half of its division's, so the division's own share
+            // moving, the team's row untouched, disarms the press too (armed again by the press above).
+            Assert.True(Ui.IsArmed(press));
+            Exec(db, "UPDATE org_unit SET envelope_share = '0.6' WHERE id = $d", ("$d", OrgIds.Research));
+            page.Update();
+            Assert.False(Ui.IsArmed(press), "a tick whose parent's envelope moved left the press armed over the old one");
+            Press(press);
+            Assert.Equal(OrgPositionStatus.Dormant, new OrgStore(db).Position(member)!.Status);
+
             // ARMED OVER WHAT THE CARD SHOWS NOW, a tick that moved nothing keeps it armed, and press two activates.
             page.Update();
             Assert.True(Ui.IsArmed(press));
@@ -268,6 +277,10 @@ public partial class OrgStructureTests
             Assert.False(Ui.IsArmed(press));
             Assert.Contains(Labels.DormantSeat(null), Texts(card), StringComparison.Ordinal);
             Assert.Contains("runs as you, outside a sealed workspace", Labels.DormantSeat(null), StringComparison.Ordinal);
+            // A LEGACY DIVISION WITH NO SHARE RECORDED spends its director's share of the day (opus review), never "none of its own".
+            Assert.Contains("spends the Research Director's share of the AI's day",
+                Labels.DormantEnvelope("the Research division", null, null, null, OrgEnvelopes.LegacyRoleOf(OrgIds.Research)), StringComparison.Ordinal);
+            Assert.Contains("has no share of its own", Labels.DormantEnvelope("team x", null, null, null, OrgEnvelopes.LegacyRoleOf(team)), StringComparison.Ordinal);
         }
         finally { await host.Gateway.DisposeAsync(); }
     }

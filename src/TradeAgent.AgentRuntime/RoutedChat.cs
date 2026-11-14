@@ -20,7 +20,7 @@ public sealed class RoutedChat : IAgentConversation
 
     /// <param name="chief">The chief's own conversation, the one the loop runs its turns on.</param>
     /// <param name="record">Writes the owner's words to the chief's queue; true when the row went in.</param>
-    /// <param name="name">How the chat names the recipient, e.g. "the chief (pos-…)".</param>
+    /// <param name="name">How the chat names the recipient, in the owner's words: "the chief", never its position id.</param>
     public RoutedChat(IAgentConversation chief, Func<string, bool> record, string name)
     {
         _chief = chief;
