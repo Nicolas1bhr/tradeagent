@@ -59,14 +59,34 @@ internal static class PuppetFiles
         }
     }
 
+    /// <summary>The span a step's line never crosses: the smallest page the three platforms cache a file in (Apple silicon's 16 KiB holds four).</summary>
+    public const int Page = 4096;
+
     /// <summary>
-    /// Adds <paramref name="line"/> to <paramref name="path"/>. One writer per file (a turn's own log), so the whole file is written
-    /// again, atomically, with the line on its end; the file is never seen with half a line.
+    /// ADDS <paramref name="line"/> TO <paramref name="path"/>, IN PLACE: one write of the line and its newline on the file's end. Never a rewrite,
+    /// so never a rename over it (<c>U-ci-precheck</c> item 3, as <see cref="Bump"/> did for the counter in <c>U-turn-cards-2</c>): a rename takes
+    /// the old file through delete-pending under its name on Windows, and a reader whose open lands then is refused
+    /// (<see cref="UnauthorizedAccessException"/>, the counter's red on windows shard 5). A file only ever appended to is never unlinked.
+    ///
+    /// <para>NO READER SEES HALF A LINE, and the readers are unchanged (<c>PuppetLife.Log</c> splits on newlines and drops empty lines). One writer
+    /// per file (a turn's own log). On Linux a buffered write makes its bytes visible page by page (the file's size moves after each page is
+    /// copied), so a line that fits inside one page is seen whole or not at all; one that would cross a <see cref="Page"/> boundary is moved to the
+    /// next page by newlines first, which every reader drops. On Windows an extending write and a read of the same file are serialised by the file
+    /// system, and the one write keeps the line whole there. A line longer than a page starts on a page of its own; the puppet's lines are a few
+    /// hundred bytes.</para>
     /// </summary>
     public static void AppendLine(string path, string line)
     {
-        var before = File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : "";
-        Write(path, before + line + "\n");
+        var bytes = new UTF8Encoding(false).GetBytes(line + "\n");
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, bufferSize: 0);
+        var into = (int)(stream.Length % Page);
+        if (into != 0 && into + bytes.Length > Page)
+        {
+            var pad = new byte[Page - into];
+            Array.Fill(pad, (byte)'\n');
+            stream.Write(pad);
+        }
+        stream.Write(bytes);
     }
 
     /// <summary>
