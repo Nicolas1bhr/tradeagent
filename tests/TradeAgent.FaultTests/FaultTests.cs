@@ -646,6 +646,57 @@ public class PolicyGateTests
         Assert.Equal(4000m, Assert.Single(conn.Inner.Broker.Orders).LimitPrice);
     }
 
+    /// <summary>
+    /// A RECORD THAT NAMES ANOTHER PLATFORM IS NOT SENT TO THIS ONE (<c>U-paper-risk-words</c>; U-live-witness-2's card 1). An account id is
+    /// unique only within a platform, and the re-check before the wire asked the account and the mode but never compared the record's platform
+    /// with the connected one — the approval path does. Today a record reaches the wire with another platform's name only when idempotency is
+    /// off (the duplicate-order fault's own seam, used here as that way in): the row under the id was written for another platform, and the
+    /// placement or the change under that id is dispatched from it. In PAPER it must be refused in words before the wire, and the platform not
+    /// touched. RED at aa126ada: the placement went out (`conn.Places` 1) and the change reached the platform.
+    /// </summary>
+    [Theory]
+    [InlineData("place")]
+    [InlineData("modify")]
+    public async Task Paper_mode_refuses_at_the_wire_a_record_that_names_another_platform(string verb)
+    {
+        var (gw, conn, db) = await PaperOn(new RecordingConnector(new FakeConnector(new FakeBroker { IsSimulated = true })) { PlatformIsPaper = true },
+            new GatewayOptions { IdempotencyEnabled = false });
+        using var dbh = db;
+        await using var _ = gw;
+
+        string? target = null;
+        if (verb == "modify")
+        {
+            conn.Faults.Fill = FillBehaviour.LeaveWorking;
+            var resting = await gw.PlaceAsync(new AgentContext("a"), "other-platform-rest",
+                new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+            Assert.Equal(ExecutionState.WORKING, resting.State);
+            target = resting.ConnectorOrderId!;
+        }
+
+        var id = $"other-platform-{verb}";
+        var (created, _) = gw.Requests.TryCreate(new ExecutionRequest
+        {
+            RequestId = id, AgentSessionId = "a", ConnectorId = "another-platform", AccountId = conn.Inner.Broker.AccountId,
+            Instrument = "ES", Intent = verb == "place" ? RequestIntent.PLACE : RequestIntent.MODIFY,
+            ParametersJson = verb == "place" ? Json.Write(TestEnv.Buy()) : Json.Write(new { order = target, limitPrice = 4001m }),
+            ClientOrderId = TradingGateway.ClientOrderIdFor(id), CreatedAt = DateTimeOffset.UtcNow, State = ExecutionState.CREATED,
+            Mode = TradingMode.PAPER
+        });
+        Assert.True(created);
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => verb == "place"
+            ? gw.PlaceAsync(new AgentContext("a"), id, TestEnv.Buy())
+            : gw.ModifyAsync(new AgentContext("a"), id, target!, null, 4001m, null));
+        Assert.Equal(ErrorCode.ACCOUNT_NOT_FOUND, denied.Code);
+        Assert.Contains("another-platform", denied.Message, StringComparison.Ordinal);
+        Assert.Contains("nothing was sent", denied.Message, StringComparison.Ordinal);
+        Assert.Equal(verb == "place" ? 0 : 1, conn.Places);
+        Assert.Equal(0, conn.Modifies);
+        if (verb == "modify") Assert.Equal(4000m, Assert.Single(conn.Inner.Broker.Orders).LimitPrice);
+        else Assert.Empty(conn.Inner.Broker.Orders);
+    }
+
     /// <summary>One witness moved, as a chart rebound on ATAS moves it: see the rows above.</summary>
     static void Rebind(RecordingConnector conn, string which)
     {
@@ -658,10 +709,10 @@ public class PolicyGateTests
     }
 
     /// <summary>A gateway in PAPER on <paramref name="conn"/>, its account selected and the instrument allowed: every other gate open.</summary>
-    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> PaperOn(RecordingConnector conn)
+    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> PaperOn(RecordingConnector conn, GatewayOptions? options = null)
     {
         var db = TestEnv.NewDb();
-        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
         gw.Update(s => s.SelectedAccountId = conn.Inner.Broker.AccountId);
         gw.UpdateRiskUnderTest(r =>
         { r.InstrumentAllowlist = [.. TestEnv.Instruments]; r.MaxNotionalPerOrder = 10_000_000m; });
