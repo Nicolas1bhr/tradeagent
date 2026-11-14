@@ -179,6 +179,7 @@ public static class HeldFolders
                     said.Add($"{from} was not moved: {link} is a link now, and TradeAgent never moves anything through a link. Nothing was changed.");
                     continue;
                 }
+                RaceUnderTest.Value?.Invoke(from);
                 Rename(from, step.To);
                 moved.Add(step);
                 said.Add($"TradeAgent moved {step.Held.Count} from {from} to {step.To}. Nothing was deleted, and nothing in it was opened. " +
@@ -200,6 +201,13 @@ public static class HeldFolders
             : $"The AI still cannot start: {string.Join("; ", still.Select(h => $"{h.Path} {h.Holds}"))}.");
         return new SetAside(still.Count == 0, string.Join(" ", said), moved);
     }
+
+    /// <summary>
+    /// A TEST'S SEAM (<c>U-windows-cards-3</c>): called with the name about to move in the instant after the last look by path and before
+    /// the rename, so a test can make the link the look could not see. Nothing in the product sets it, and no file, setting or pipe op
+    /// reaches it.
+    /// </summary>
+    internal static readonly AsyncLocal<Action<string>?> RaceUnderTest = new();
 
     /// <summary>The first folder below <paramref name="root"/> and above <paramref name="move"/> that is a link now; null where none is.</summary>
     static string? LinkAbove(string root, string move)

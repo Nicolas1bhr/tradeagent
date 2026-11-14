@@ -154,4 +154,66 @@ public class HeldFoldersTests : IDisposable
         Assert.True(changed.Cleared);
         Assert.Null(HeldFolders.Plan(Find()));
     }
+    /// <summary>
+    /// A LINK MADE IN THE INSTANT BETWEEN THE LAST LOOK AND THE RENAME MOVES NOTHING THROUGH IT (<c>U-windows-cards-3</c>, the
+    /// U-windows-cards-2 card (1), A6-N2): <c>.agents</c> is a real folder at both presses and at the last look by path, then — before the
+    /// rename — it is moved away and a junction to a folder elsewhere takes its name. The press opens each name from the profile down by
+    /// handle, never following one, so it finds the junction and moves nothing: the folder elsewhere keeps its <c>skills</c>, and the
+    /// owner's own is where it went, untouched.
+    ///
+    /// <para><b>RED on the base</b>: the rename by path went through the junction and renamed the folder elsewhere's <c>skills</c>.</para>
+    /// </summary>
+    [OnlyOnFact("a junction, and the rename by handle, are Windows'", "windows")]
+    public void A_junction_made_between_the_last_look_and_the_rename_moves_nothing_through_it()
+    {
+        var agents = Path.Combine(_profile, ".agents");
+        var skills = Path.Combine(agents, "skills");
+        Directory.CreateDirectory(Path.Combine(skills, "his-skill"));
+        var elsewhere = Path.Combine(_root, "somewhere-else");
+        Directory.CreateDirectory(Path.Combine(elsewhere, "skills", "theirs"));
+        var realAgents = Path.Combine(_profile, ".agents-real");
+
+        var plan = HeldFolders.Plan(Find())!;
+        Assert.Equal(skills, Assert.Single(plan.Steps).Held.Move);
+
+        HeldFolders.RaceUnderTest.Value = _ =>
+        {
+            Directory.Move(agents, realAgents);
+            Assert.True(SeatHomeTests.Link(agents, elsewhere, folder: true));
+        };
+        SetAside done;
+        try { done = HeldFolders.Carry(plan, Find); }
+        finally { HeldFolders.RaceUnderTest.Value = null; }
+
+        Assert.True(Directory.Exists(Path.Combine(elsewhere, "skills", "theirs")), "the junction's target was moved: " + done.Words);
+        Assert.False(Directory.Exists(Path.Combine(elsewhere, $"skills ({HeldFolders.AsideMark})")), done.Words);
+        Assert.True(Directory.Exists(Path.Combine(realAgents, "skills", "his-skill")), done.Words);
+        Assert.Empty(done.Moved);
+        Assert.Contains("is a link now", done.Words, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A FOLDER PUT IN THE PLACE OF THE ONE THE FIRST PRESS SHOWED — the same name, the same number of items — IS NOT MOVED
+    /// (<c>U-windows-cards-3</c>): the press moves the very folder its sentence named, known by Windows' own id for it, or nothing.
+    ///
+    /// <para><b>RED on the base</b>: the look compared only the name and the count, and the second press moved the new folder.</para>
+    /// </summary>
+    [OnlyOnFact("the folder's id is Windows' own, read by handle", "windows")]
+    public void A_folder_swapped_for_another_of_the_same_name_and_count_between_the_presses_is_left_as_it_is()
+    {
+        var skills = Path.Combine(_profile, ".agents", "skills");
+        Directory.CreateDirectory(Path.Combine(skills, "his-skill"));
+        var plan = HeldFolders.Plan(Find())!;
+
+        var shown = Path.Combine(_profile, ".agents", "the-one-shown");
+        Directory.Move(skills, shown);
+        Directory.CreateDirectory(Path.Combine(skills, "another"));
+
+        var done = HeldFolders.Carry(plan, Find);
+
+        Assert.Empty(done.Moved);
+        Assert.Contains("changed after you pressed", done.Words, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Path.Combine(skills, "another")), done.Words);
+        Assert.True(Directory.Exists(Path.Combine(shown, "his-skill")), done.Words);
+    }
 }
