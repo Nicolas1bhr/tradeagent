@@ -590,6 +590,8 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// </summary>
     async Task<Dictionary<string, object>> Verb(AgentGrant grant, DoorVerb verb, string arguments, CancellationToken ct)
     {
+        // THE CALL'S OWN WALL TIME (U-door-bounds), the gate's question included, as the harness's surface times its tools.
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         ToolAnswer answer;
         if (VerbGate(grant) is { } refused)
             answer = ToolAnswer.Refused($"'{verb.Spec.Name}' is an organisation verb, and {refused}.", verb.Spec.Name);
@@ -601,17 +603,24 @@ public sealed class BrokerDoor : IAsyncDisposable
         }
         // THE ROW MEASURES WHAT THE CALLER RECEIVES (fix pass 1, R3): the cut first, then the record.
         var delivered = Bounded(answer.Content);
+        Record(grant, verb.Spec.Name, answer, delivered, started);
+        return ToolResult(delivered, answer.Served);
+    }
+
+    /// <summary>One verb's row: what was <paramref name="delivered"/>, and the call's own wall time since <paramref name="started"/>.</summary>
+    void Record(AgentGrant grant, string verb, ToolAnswer answer, string delivered, long started)
+    {
         try
         {
             Ledger?.Record(new Core.Db.ToolCallRow
             {
-                At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = verb.Spec.Name,
-                Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(delivered), Served = answer.Served,
-                Refusal = answer.Served ? null : delivered
+                At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = verb,
+                Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(delivered),
+                Served = answer.Served, Refusal = answer.Served ? null : delivered,
+                Duration = System.Diagnostics.Stopwatch.GetElapsedTime(started)
             });
         }
         catch (Exception) { /* a row that could not be written does not turn a refusal into a call */ }
-        return ToolResult(delivered, answer.Served);
     }
 
     /// <summary>

@@ -507,8 +507,16 @@ public static class Versions
     /// <para><b>57 — the scorecards' two reads, indexed</b> (<c>U-perf-scan</c>, rung <see cref="ScorecardIndexRung"/>, after 56; R28 G3):
     /// <c>ix_forecast_forecaster</c> on <c>org_forecast(forecaster, at)</c> and <c>ix_mandate_event_kind</c> on
     /// <c>org_mandate_event(kind, at)</c>, the shapes a scorecard reads on every refresh. Indexes and nothing else: no row moves.</para>
+    ///
+    /// <para><b>58 — a tool call's duration</b> (<c>U-door-bounds</c>, rung <see cref="ToolCallDurationRung"/>, after 57): the column
+    /// <c>tool_call.duration_ms</c>, the app's own wall time from the call's arrival to its answer, written in each row's insert by the
+    /// harness's surface and the door's verbs. NULL on every row before the rung, never backfilled; no row moves. A home that climbed it cannot
+    /// be opened by a build of 57 or below without the install's backup.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = ScorecardIndexRung;
+    public const int DatabaseSchemaVersion = ToolCallDurationRung;
+
+    /// <summary>The tool-call duration rung, spelled once (<c>U-door-bounds</c>); a unit overtaken renumbers it here.</summary>
+    public const int ToolCallDurationRung = 58;
 
     /// <summary>The scorecard indexes' rung, spelled once (<c>U-perf-scan</c>); a unit overtaken renumbers it here.</summary>
     public const int ScorecardIndexRung = 57;

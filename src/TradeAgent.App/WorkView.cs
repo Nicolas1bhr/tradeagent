@@ -23,10 +23,23 @@ sealed record WorkRead(
     /// <summary>The chart's readable names (<c>U-ui-glance</c>), read with the work; none where nothing read the chart.</summary>
     public OrgNames Names { get; init; } = OrgNames.None;
 
+    /// <summary>How far back the slow calls go (<c>U-door-bounds</c>).</summary>
+    public static readonly TimeSpan SlowWindow = TimeSpan.FromDays(1);
+
+    /// <summary>A call is slow from a quarter of the time the AI's tool waits for one (<see cref="AgentRuntime.BrokerSeat.DoorToolTimeout"/>).</summary>
+    public static TimeSpan SlowFrom => AgentRuntime.BrokerSeat.DoorToolTimeout / 4;
+
+    /// <summary>The most slow calls the page names.</summary>
+    public const int SlowLimit = 3;
+
+    /// <summary>The tool calls of the last day that took <see cref="SlowFrom"/> or more, slowest first: the app's own measure of each.</summary>
+    public IReadOnlyList<ToolCallRow> Slow { get; init; } = [];
+
     public static WorkRead From(OrgStore org, DateTimeOffset now, string currency) =>
         new(org.MandatesOpen(), org.DeliveriesAwaiting(), org.DecisionsSince(now - DecisionWindow, DecisionLimit), now, currency)
         {
-            Names = OrgNames.Of(org.Units(), org.Positions())
+            Names = OrgNames.Of(org.Units(), org.Positions()),
+            Slow = org.SlowCallsSince(now - SlowWindow, SlowFrom, SlowLimit)
         };
 }
 
@@ -64,6 +77,9 @@ sealed record WorkWords(
     IReadOnlyList<DecisionWords> Decisions,
     string Unreadable)
 {
+    /// <summary>The slow calls of the last day in words (<c>U-door-bounds</c>), the app's measure; empty when none was slow.</summary>
+    public string Slow { get; init; } = "";
+
     public static WorkWords Of(WorkRead? read, string? unreadable)
     {
         if (read is null)
@@ -75,7 +91,13 @@ sealed record WorkWords(
             [.. read.Open.Rows.Select(o => Mandate(o, read))],
             [.. read.Deliveries.Rows.Select(d => Delivery(d, read.Names))],
             [.. read.Decisions.Rows.Select(d => Decision(d, read.Names))],
-            string.Join("\n", refused));
+            string.Join("\n", refused))
+        {
+            Slow = Labels.WorkSlowCalls([.. read.Slow.Select(c => (
+                    c.Role is { Length: > 0 } role ? read.Names.Position(role) : "An unnamed launch", c.Tool, c.Duration ?? TimeSpan.Zero,
+                    c.Served ? "answered" : "refused"))],
+                AgentRuntime.BrokerSeat.DoorToolTimeout)
+        };
     }
 
     static MandateWords Mandate(OpenMandate o, WorkRead read)
@@ -178,6 +200,7 @@ sealed class WorkPage
     readonly OrgSurfaceSources _src;
     readonly TextBlock _status = Ui.Muted("");
     readonly TextBlock _unreadable = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
+    readonly TextBlock _slow = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.Foreground = Theme.Caution; });
     readonly StackPanel _mandates = new() { Spacing = Theme.S3 };
     readonly StackPanel _deliveries = new() { Spacing = Theme.S3 };
     readonly StackPanel _decisions = new() { Spacing = Theme.S3 };
@@ -197,12 +220,15 @@ sealed class WorkPage
 
     internal TextBlock UnreadableText => _unreadable;
 
+    internal TextBlock SlowText => _slow;
+
     public WorkPage(OrgSurfaceSources sources)
     {
         _src = sources;
         _status.FontSize = Theme.Small;
         _status.Text = Labels.SurfaceNotRead;
         _unreadable.IsVisible = false;
+        _slow.IsVisible = false;
         _mandateList = new LiveList<MandateWords>(_mandates, Ui.Muted(Labels.WorkNoMandates), m => m.Id, MakeMandate);
         _deliveryList = new LiveList<DeliveryWords>(_deliveries, Ui.Muted(Labels.WorkNoDeliveries), d => d.Id, MakeDelivery);
         _decisionList = new LiveList<DecisionWords>(_decisions, Ui.Muted(Labels.WorkNoDecisions), d => d.Id, MakeDecision);
@@ -210,6 +236,7 @@ sealed class WorkPage
         var body = Ui.Col(Theme.S6,
             _status,
             _unreadable,
+            _slow,
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkMandatesHeading), _mandates),
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkDeliveriesHeading), _deliveries),
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkDecisionsHeading), Ui.Micro(Labels.WorkForecastNote), _decisions));
@@ -250,6 +277,8 @@ sealed class WorkPage
         OrgText.Set(_unreadable, words.Unreadable);
         _unreadable.IsVisible = words.Unreadable.Length > 0;
         if (!read) return;   // the status above says nothing below is current
+        OrgText.Set(_slow, words.Slow);
+        _slow.IsVisible = words.Slow.Length > 0;
         _mandateList.Update(words.Mandates);
         _deliveryList.Update(words.Deliveries);
         _decisionList.Update(words.Decisions);
