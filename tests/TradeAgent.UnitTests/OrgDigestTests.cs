@@ -1567,6 +1567,38 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("verdicts: asked 1 since T0, waiting 1 since T0 (3 ever), given 0 [none]", human, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A DOOR CALL NEAR THE VENDOR'S TOOL TIMEOUT (U-digest-watch-3 item 6; R31 D12 row D). The door sets no tool timeout and tool_call records no
+    /// duration, so the proxy is a call followed by 60 s or more before the same launch's next call: a NOTE with the op and the gap, never ATTENTION.
+    ///
+    /// <para>RED at base: no signal at all for a long door call.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void A_door_call_followed_by_a_long_gap_is_a_note_never_an_alarm()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var tools = new ToolCallStore(db);
+            void Call(string attempt, string at, string tool, string? argument = null) =>
+                tools.Record(new ToolCallRow { At = At(at), Attempt = attempt, Role = "operations", Tool = tool, Argument = argument, Served = true });
+            Call("d1", "2026-10-31T10:00:00Z", GrantedWorkerTools.Trade, "trade backtest");
+            Call("d1", "2026-10-31T10:03:00Z", "read");                      // 3 minutes after the backtest: one gap
+            Call("d1", "2026-10-31T10:03:59Z", "read");                      // 59 s: none
+            Call("d2", "2026-10-31T10:05:00Z", BrokerDoor.VerbName(Ops.Verdict));
+            Call("d3", "2026-10-31T10:06:10Z", "read");                      // another launch: never a gap across launches
+            Call("d2", "2026-10-31T10:06:00Z", "read");                      // 60 s exactly: a gap
+        }
+        var (json, human) = Both(f);
+        var gaps = json.GetProperty("arrows").GetProperty("door_gaps");
+        Assert.Equal(2, gaps.GetProperty("count").GetInt32());
+        Assert.Equal("backtest", gaps.GetProperty("longest")[0].GetProperty("op").GetString());
+        Assert.Equal(180, gaps.GetProperty("longest")[0].GetProperty("gap_s").GetInt32());
+        Assert.Contains("\n  NOTE door calls followed by 60 s or more before the same launch's next call: 2; longest backtest 3m at 10-31 10:00, verdict 60s at 10-31 10:05",
+            human, StringComparison.Ordinal);
+        Assert.DoesNotContain("door call", Attention(json), StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
