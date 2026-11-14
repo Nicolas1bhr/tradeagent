@@ -2749,9 +2749,12 @@ public sealed partial class AppHost : IAsyncDisposable
     {
         if (pass.CutIn is { } cut)
         {
-            var where = MaterialScanner.IsInInbox(cut) ? "your inbox" : "the AI's folders";
-            var line = $"TradeAgent stopped looking after {pass.FileLimit:N0} files in {where}, so a file removed there is not noticed "
-                       + $"until it can look through all of them. Fewer files in {where} lets it look everywhere again.";
+            // THE BUDGET SPANS BOTH PLACES, inbox first (the opus review): a cut in the AI's folders may be the inbox's files' doing, so it
+            // names both; a cut in the inbox leaves the AI's folders unlooked-at too, so what goes unnoticed is said of both.
+            var where = MaterialScanner.IsInInbox(cut) ? "your inbox" : "your inbox and the AI's folders";
+            var line = $"TradeAgent stopped looking after {pass.FileLimit:N0} files in {where}, so a file removed from your inbox or "
+                       + $"the AI's folders is not noticed until it can look through all of them. Fewer files in {where} lets it look "
+                       + "everywhere again.";
             return line == standing ? null : (line, "warn", line);
         }
         return standing is not null && pass.Complete ? (LooksEverywhereAgain, "info", null) : null;

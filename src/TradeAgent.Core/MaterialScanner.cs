@@ -201,20 +201,37 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     internal Func<Stream, long, CancellationToken, string?> Measurer { get; init; } = Sha256Hex.OfAtMost;
 
     /// <summary>
-    /// EACH WORKSPACE'S READ THAT DID NOT COME BACK, by workspace root, process-wide because the disk is: the read left to finish on its
-    /// own (and its file closed when it does). A hash read since <c>U-perf-scan</c>; a listing, the stat of a file and the app-origin measure
-    /// since <c>U-material-pass-2</c> (<see cref="Bounded{T}"/>). While one waits, no pass reads anything more of that workspace: it walks
-    /// nothing, hashes nothing, says why, and lets go of its exclusion — a stalled disk costs one waiting read, never one more per pass.
+    /// EACH WORKSPACE'S READS THAT DID NOT COME BACK, by workspace root and kind, process-wide because the disk is: each read left to finish
+    /// on its own (and its file closed when it does). A hash read since <c>U-perf-scan</c> holds the hashing of that workspace; a listing, the
+    /// stat of a file or the app-origin measure since <c>U-material-pass-2</c> (<see cref="Bounded{T}"/>) holds its walk, and the walk alone
+    /// — one file whose bytes never come back must not stop new drops being recorded (the opus review). While one waits, no pass makes
+    /// another read of that kind there: it says why and lets go of its exclusion, so a stalled disk costs a waiting read of each kind, never
+    /// one more per pass.
     /// </summary>
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> Stalled = new(StringComparer.Ordinal);
 
-    /// <summary>Whether a read of this workspace an earlier pass left behind is still waiting on the disk; a finished one is forgotten.</summary>
-    bool StillHeld()
+    string HashKey => _root;
+    string WalkKey => _root + "|walk";
+
+    /// <summary>Whether a read of this kind an earlier pass left behind is still waiting on the disk; a finished one is forgotten.</summary>
+    bool StillHeld(string key)
     {
-        if (!Stalled.TryGetValue(_root, out var waiting)) return false;
+        if (!Stalled.TryGetValue(key, out var waiting)) return false;
         if (!waiting.IsCompleted) return true;
-        Stalled.TryRemove(new KeyValuePair<string, Task>(_root, waiting));
+        Stalled.TryRemove(new KeyValuePair<string, Task>(key, waiting));
         return false;
+    }
+
+    /// <summary>
+    /// A READ LEFT WAITING, KEPT BESIDE ANY OTHER STILL WAITING (the opus review): a pass and the loop's inbox question can each leave one,
+    /// and the second must not replace the first, or the hold would end while a read is still stuck. Its fault, a cancellation included, is
+    /// observed here, so a read that ends by throwing is never reported later as an error the owner sees.
+    /// </summary>
+    static void Hold(string key, Task waiting)
+    {
+        var observed = waiting.ContinueWith(t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        Stalled.AddOrUpdate(key, observed, (_, before) => before.IsCompleted ? observed : Task.WhenAll(before, observed));
     }
 
     /// <summary>
@@ -249,6 +266,10 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
     {
         var watch = new ReadWatch();
         var worker = Task.Factory.StartNew(() => read(watch), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        // A WORKER THAT ENDS BY THROWING WHILE NOBODY WAITS (a quit's cancellation, read at its next look) is observed, never left to
+        // surface later as an unobserved exception (the opus review).
+        _ = worker.ContinueWith(t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         long before = 0;
         try
         {
@@ -258,7 +279,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
                 if (now == before)
                 {
                     watch.Leave();
-                    Stalled[_root] = worker;
+                    Hold(WalkKey, worker);
                     return null;
                 }
                 before = now;
@@ -267,7 +288,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         catch (OperationCanceledException)
         {
             // A QUIT IS NOT HELD EITHER: the wait ends at the pass's own cancellation, a worker still reading is left as a stalled one is.
-            if (!worker.IsCompleted) { watch.Leave(); Stalled[_root] = worker; }
+            if (!worker.IsCompleted) { watch.Leave(); Hold(WalkKey, worker); }
             throw;
         }
         catch (AggregateException e) when (e.InnerExceptions.Count == 1)
@@ -360,7 +381,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // stopped looking (ScanResult.CutIn). And whether a read of the disk did not come back, this pass's or one an earlier pass
         // left waiting: then this pass looks nowhere more, marks nothing missing and moves no window (Bounded).
         string? cutIn = null;
-        var walkStalled = StillHeld();
+        var walkStalled = StillHeld(WalkKey);
 
         // EVERY FOLDER THIS PASS COULD NOT READ IN FULL, relative to the workspace: a tracked folder the
         // disk would not say is there, a folder it would not list, or the folder of a listed file it would
@@ -423,7 +444,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
             // THE GROUP'S READS OF THE DISK, ON A WORKER AND BOUNDED (U-material-pass-2): every place's look, its walk and the stat of
             // each listed file. A read the disk holds past the bound ends the walk here — this group and every one after it are places
             // this pass did not look, and the workspace is held until that read comes back (Bounded).
-            var looked = walkStalled ? null
+            // ASKED AGAIN FOR EACH GROUP: the loop's inbox question may have left a read waiting since this pass began (the opus review).
+            var looked = walkStalled || StillHeld(WalkKey) ? null
                 : Bounded(watch => ReadGroup(paths, isInbox, unsealedHomes, seen, watch, ct), ct);
             if (looked is null) { walkStalled = true; break; }
 
@@ -677,7 +699,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
         // A READ AN EARLIER PASS LEFT WAITING ON THE DISK (U-perf-scan) holds every read of this workspace until it has come back: a disk
         // that stopped answering would otherwise take one more waiting read, and one more thread, every pass.
-        var held = StillHeld();
+        var held = StillHeld(HashKey);
 
         var batch = _store.NeedingHash(HashesPerPass);
         foreach (var m in batch)
@@ -795,8 +817,8 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
 
     /// <summary>A read that did not come back, left to finish on its own: its file and its bound are closed once it has, never under it.</summary>
     void LeaveReading(Task reading, FileStream file, CancellationTokenSource bound) =>
-        Stalled[_root] = reading.ContinueWith(_ => { file.Dispose(); bound.Dispose(); },
-            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        Hold(HashKey, reading.ContinueWith(_ => { file.Dispose(); bound.Dispose(); },
+            CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default));
 
     /// <summary>Is the open file still the one this row was written about?</summary>
     static bool IsStill(FileStream fs, Material m) =>
@@ -838,7 +860,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null,
         // A READ OF THIS WORKSPACE THE DISK HAS NOT RETURNED (U-material-pass-2) answers yes without another: the loop asks this before
         // every tick, and a listing held here held the dispatcher — no lane was leased while the disk stalled. Yes costs one pass, which
         // the same hold turns into a pass that reads nothing and lets go at once.
-        if (StillHeld()) return true;
+        if (StillHeld(WalkKey)) return true;
 
         var recorded = _store.Live([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested]);
         var inbox = Path.Combine(_root, InboxDir);
