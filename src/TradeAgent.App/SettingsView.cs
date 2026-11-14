@@ -46,6 +46,9 @@ sealed class SettingsPage
     /// <summary>The owner's head-start kit card (<c>U-kit-socket</c>).</summary>
     readonly KitCard _kit;
 
+    /// <summary>The "Free space" card (<c>U-free-space</c>): always here, so the press is found when no pause stands.</summary>
+    internal FreeSpaceCard FreeSpace { get; }
+
     // ---- platform ----
     readonly TextBlock _platformValue = Ui.Mono("—");
     readonly TextBlock _platformNote = Ui.Muted("");
@@ -468,9 +471,10 @@ sealed class SettingsPage
 
         // THE OWNER'S HEAD-START KIT (U-kit-socket): under the market data, the other thing the owner hands the AI to research with.
         _kit = new KitCard(host);
+        FreeSpace = new FreeSpaceCard(host.FreeSpaceSources(() => true, calm: true));
         Root = Pages.Scroll(Ui.Col(0,
-            Pages.Header("Settings", "The market data TradeAgent collects for research, and your head-start kit."),
-            Ui.Col(Theme.S6, marketData, _kit.Root)));
+            Pages.Header("Settings", "The market data TradeAgent collects for research, your head-start kit, and the room TradeAgent takes on this disk."),
+            Ui.Col(Theme.S6, marketData, _kit.Root, FreeSpace.Root)));
 
         EnsureAccounts();
         ApplyPaperFriction();
@@ -1098,6 +1102,7 @@ sealed class SettingsPage
         ApplyHoldoutValue();
         ApplyUpdates();
         _kit.Update();
+        FreeSpace.Update();
     }
 
     void ApplyPlatform(string? id, string label)
