@@ -222,7 +222,9 @@ forecasts, kill rules, retry policy, status. A transition is an append-only even
   pressed wake stays served once. What a lost or failed turn took is told again once. The owner's retried words go to his recipient now: the active chief, never a sleeping chair.
 - **Objectives per position kind** (extending `RoleObjectives`): a wake is a divergence between the observed and the desired world. A head owns its
   deliveries to judge, escalations, mandates past their deadline, kill rules triggered and the owner's words addressed to it; an executor owns its
-  open mandate and its own requested wakes, never an app timer or heartbeat. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
+  open mandate and its own requested wakes, never an app timer or heartbeat. A head also owns each unit directly under its own whose head is vacant, and each
+  active head under its own that holds no mandate from it (`U-head-staffs`, objectives v5, after the first 72-hour run's chief chartered and never hired):
+  they change its packet's "what is wanted", never its clock. **Timescale ceilings** (VISION § 7.5) are policy data — a maximum interval per level, a floor and
   never a heartbeat.
   **The one exception (R30 D21):** the active chief, while no work is moving and nothing is chartered or it asked for no wake, has that one wake at its level's floor in force
   (never under the 4 h shipped) instead of its ceiling, counted from its last turn, so a chief that does nothing costs at most 6 turns a day; the first open mandate someone else

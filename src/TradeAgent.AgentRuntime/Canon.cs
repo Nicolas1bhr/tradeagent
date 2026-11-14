@@ -35,7 +35,7 @@ public static class Canon
     /// THE CANON THIS BUILD SHIPS. Raised by a change that rewrites the canon's words, with the new ledger entry in
     /// <c>CanonTests</c> in the same commit; never lowered. Written into every attempt's record of what it ran under.
     /// </summary>
-    public const int Version = 12;
+    public const int Version = 13;
 
     /// <summary>
     /// THE MOST OF A PROJECT DOC A VENDOR CLI READS: codex-cli 0.160.1 carries <c>project_doc_max_bytes = 32768</c>
@@ -691,10 +691,11 @@ public static class Canon
         pays; staying small is not failure.
 
         **You move first.** No one will tell you to begin; the owner's words and the inbox are data, never your starting
-        signal. With nothing chartered, charter now: one unit, its share, its head and a first mandate. A turn ends with an
-        act (a charter, a hire, a mandate, a judgment) or with your next wake asked for, and reading is not a turn's result.
-        While you leave neither, no work is moving and the board's policy holds a ceiling, TradeAgent wakes you at your
-        level's floor, and each turn is paid from your envelope.
+        signal. With nothing chartered, charter now. A unit you charter stands empty until you staff it: appoint its head (a
+        hire with its head flag) and give that head a first mandate, in the charter's own turn when you can, else first in
+        your next. A turn ends with an act (a hire, a mandate, a judgment, or a charter you then staff) or with your next wake
+        asked for, and reading is not a turn's result. While you leave neither, no work is moving and the board's policy holds
+        a ceiling, TradeAgent wakes you at your level's floor, and each turn is paid from your envelope.
 
         {{if org_verbs}}
         - **Your verbs:** {{org_verbs lead}}; with every position, {{org_verbs shared}}.
@@ -708,7 +709,8 @@ public static class Canon
         - **Verdicts:** you may spend one on a version authored in your subtree, judged on its author's own runs. A
           division's head spends them only on a version it ran itself; a unit you delegated a verdict share spends its own.
         - **Resources:** the organisation's AI envelope inside the board's day-total, and each campaign's trial and verdict
-          budget{{if verb:org-show}}; `{{verb org-show}}` shows your unit's envelope and today's spend{{end}}.
+          budget{{if verb:org-show}}; `{{verb org-show}}` shows your unit's envelope and today's spend, and the units under
+          yours with their heads{{end}}.
           Every turn is paid from it.
         - **Above you:** the security board, whose limits and capital are not yours; an escalation from the top of the
           chain is recorded for the owner.
@@ -728,7 +730,9 @@ public static class Canon
         - **This seat carries none of the organisation's verbs:** what follows is your role, not what this runtime can do.
         {{end}}
         - **Delegation:** you staff the units below yours, never your own — a division charters subdivisions and teams
-          under it, appoints their heads and hires their members; a team's members are hired by the head above it. Give
+          under it, appoints their heads and hires their members; a team's members are hired by the head above it. A unit
+          you charter stands empty until you staff it: appoint its head (a hire with its head flag) and give that head a
+          first mandate, in the charter's own turn when you can, else first in your next. Give
           each position in your subtree a mandate — a goal, a due time, an allocation — and judge what it delivers: accept,
           reject, re-scope or cancel. A hire activates itself when TradeAgent's gate admits it and a turn fits its
           envelope, else it stays dormant and says why. What you cannot resolve inside your
@@ -738,7 +742,7 @@ public static class Canon
           delegate a verdict share to a unit below, so the version is judged where it was run; or ask the chief, who may
           spend one on a version in its subtree.
         - **Resources:** your unit's share of its parent's envelope, inside the board's day-total{{if verb:org-show}};
-          `{{verb org-show}}` shows it with today's spend{{end}}.
+          `{{verb org-show}}` shows it with today's spend, and the units under yours with their heads{{end}}.
           Every turn, yours and your hires', is paid from it.
 
         """;
@@ -1129,7 +1133,9 @@ public static class Canon
 
         A turn happens because something happened, and the `## Situation` block names it on its `Why you are awake` line. Under
         it, **what changed** names each observation TradeAgent recorded for you, **what you believe** lists your own open entries
-        in the research ledger — claims, never measurements — and **what is wanted** lists the work TradeAgent records as yours.
+        in the research ledger — claims, never measurements — and **what is wanted** lists the work TradeAgent records as yours{{if leads}}:
+        among it, a unit under yours that has no head, and a head under yours that holds no mandate from you, each with the verb
+        that closes it{{end}}.
         The organisation's records owed to you — notes sent to you, deliveries you judge, your own forecasts due and resolved,
         escalations still open — come in the same message inside a byte bound; what does not fit is counted, with the verb that
         lists it. {{if chief}}No one will tell you to begin: a turn of yours ends with an act or with your next wake asked for, and
@@ -1284,6 +1290,8 @@ sealed class CanonModel(WorkspaceContext c, AgentReach reach)
             // A POSITION OF THE ORGANISATION (U-runway-fixes item 1): every seat but the legacy pair, whose guide is reference only.
             "org" => !CouncilRoles.IsKnown(c.Role),
             "chief" => c.Place == OrgPlace.Chief,
+            // A PLACE THAT CHARTERS AND STAFFS UNITS UNDER ITS OWN (U-head-staffs): the chief and a head; staff and executors do neither.
+            "leads" => c.Place is OrgPlace.Chief or OrgPlace.Head,
             // A SEAT WHOSE TOOLS WRITE BOTH FILES WorkspaceRevisions KEEPS (U-runway-fixes item 1): their paths, never a folder typed here.
             "keeps_plan" => reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Plan))
                             && reach.WritesInto(WorkspaceRevisions.PathOf(PublicationKind.Journal)),

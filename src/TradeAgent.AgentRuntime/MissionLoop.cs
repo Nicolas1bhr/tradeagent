@@ -1190,6 +1190,12 @@ public sealed record MissionSituation
     /// </summary>
     public IReadOnlyList<RoleObjective>? Wanted { get; init; }
 
+    /// <summary>
+    /// HOW THE SEAT READING THIS SITUATION CALLS A VERB (<see cref="IMissionHost.VerbsFor"/>), for the lines of <see cref="Wanted"/> that name
+    /// the verb which closes them (<c>U-head-staffs</c>); null keeps the command line's words.
+    /// </summary>
+    public PacketVerb? Spell { get; init; }
+
     /// <summary>The most open entries one Situation shows.</summary>
     public const int BeliefLimit = 10;
 
@@ -1411,7 +1417,7 @@ public sealed record MissionSituation
         if (Wanted is { Count: > 0 } wanted)
         {
             b.AppendLine($"- What is wanted — the work TradeAgent records as yours (objectives v{RoleObjectives.Version}):");
-            foreach (var o in wanted.Take(WantedLimit)) b.AppendLine($"  - {Want(o)}");
+            foreach (var o in wanted.Take(WantedLimit)) b.AppendLine($"  - {Want(o, Spell)}");
             if (wanted.Count > WantedLimit) b.AppendLine($"  - and {wanted.Count - WantedLimit} more of the same kinds.");
         }
         foreach (var line in Boundaries) b.AppendLine($"- {line}");
@@ -1633,9 +1639,23 @@ public sealed record MissionSituation
         return text[..n];
     }
 
-    /// <summary>ONE OBJECTIVE INSTANCE IN WORDS, with its entity — what is wanted, never how.</summary>
-    static string Want(RoleObjective o) => o.Kind switch
+    /// <summary>An instant a want line names, to the minute, in UTC.</summary>
+    static string Stamp(DateTimeOffset at) => at.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " UTC";
+
+    /// <summary>
+    /// ONE OBJECTIVE INSTANCE IN WORDS, with its entity — what is wanted, never how. A unit's staffing (<c>U-head-staffs</c>) also names the one
+    /// verb that closes it as <paramref name="spell"/> calls it, or says this seat has none: the app's words and rows, never an agent's.
+    /// </summary>
+    static string Want(RoleObjective o, PacketVerb? spell = null) => o.Kind switch
     {
+        RoleObjectives.UnitUnstaffed when o.Unit is { } u =>
+            $"the {u.Kind} `{u.Id}` under yours, chartered {Stamp(u.Since)}, has no head: it stands empty until you appoint one"
+            + (MissionLoop.Verb(spell, Ops.OrgHire, $"{u.Id} <rationale> --forecasts JSON --head true", $"trade org hire {u.Id} <rationale> --forecasts JSON --head true") is { } hire
+                ? $" — `{hire}`" : " — no tool of this seat appoints one"),
+        RoleObjectives.HeadUnmandated when o.Unit is { } u =>
+            $"`{o.Entity}`, head of the {u.Kind} `{u.Id}` under yours since {Stamp(u.Since)}, holds no open mandate from you"
+            + (MissionLoop.Verb(spell, Ops.MandateAssign, $"{o.Entity} <goal> --kind K --due T --allocation A", $"trade mandate assign {o.Entity} <goal> --kind K --due T --allocation A") is { } assign
+                ? $" — `{assign}` gives it one" : " — no tool of this seat gives it one"),
         RoleObjectives.OwnerAnswered => $"an answer to your owner's message `{o.Entity}`",
         RoleObjectives.RequestFinal => $"request `{o.Entity}` in a final state",
         RoleObjectives.PositionWatched => o.Entity == RoleObjectives.UnreadBook
@@ -3455,6 +3475,7 @@ public sealed class MissionLoop
                 WhatChanged = Observations(wake, windows ?? [], spell),
                 Believed = believed,
                 Wanted = OpenObjectives(role),
+                Spell = spell,
                 SpentCampaigns = SpentCampaigns()
             };
             prompt = situation.Text(out packet);
@@ -4792,7 +4813,7 @@ public sealed class MissionLoop
     /// line's words as they always read (<paramref name="cli"/>); with one, the seat's own form of <paramref name="op"/>, or null where it
     /// cannot call it — and the line then names no verb.
     /// </summary>
-    static string? Verb(PacketVerb? spell, string op, string args, string cli)
+    internal static string? Verb(PacketVerb? spell, string op, string args, string cli)
     {
         if (spell is null) return cli;
         try { return spell(op, args); }
