@@ -64,6 +64,7 @@ SYSTEMD_FAILED, SYSTEMD_START_LIMIT_HIT = "failed", "start-limit-hit"
 # prices (luna, sol) one list-price dollar is 25 credits on every column, at Standard speed. A substitution or Fast mode would draw more, unrecorded.
 CREDITS_PER_LIST_DOLLAR = 25
 CREDIT_WINDOW_S, CREDIT_WEEK_S = 5 * 3600, 7 * 86400
+DOOR_GAP_S = 60                          # R31 D12 row D: the vendor's MCP tool timeout, from memory (60 s), unverified
 # THE VENDOR'S RESET, as its usage-limit sentence names it (RuntimeManifest's UsageLimitPlan for codex: "try again at 10:30 PM", or dated,
 # "Oct 7th, 2026 1:10 AM"), read as the app reads it: the END of the minute named, a time with no date on the local date it was said.
 RETRY_AT = re.compile(r"try again at (?P<at>.+?)\.?\s*$")
@@ -1020,9 +1021,25 @@ class Digest:
             if hits:
                 row.update(refused=len(hits), first_refused_at=hits[0]["at"], first_refusal=hits[0]["words"])
             rows.append(row)
-        return {"arrows": rows, "reached": sum(1 for r in rows if r["count"]), "of": len(rows),
+        return {"arrows": rows, "reached": sum(1 for r in rows if r["count"]), "of": len(rows), "door_gaps": self.door_gaps(),
                 "not_reached": [r["arrow"] for r in rows if not r["count"]], "first_refusal": first_any,
                 "cannot_be_read": "a keep has no record of its own: a kill is the author's ledger entry, an iterate a new version after a run's note"}
+
+    # -- 10b. A DOOR CALL NEAR THE VENDOR'S TOOL TIMEOUT (R31 D12 row D): the door sets no tool timeout, so the vendor's own applies (60 s from memory,
+    #         unverified), and tool_call records no duration. The proxy: a call followed by a gap of 60 s or more before the same launch's next call.
+    #         A NOTE, never an alarm: a long backtest the app finished is the app working.
+    def door_gaps(self):
+        gaps, last = [], {}
+        for r in self.app.execute("SELECT attempt, at, tool, argument FROM tool_call WHERE at >= ? AND attempt IS NOT NULL ORDER BY attempt, at, id", (self.since_s,)):
+            prev = last.get(r["attempt"])
+            if prev is not None:
+                a, b = parse_ts(prev["at"]), parse_ts(r["at"])
+                if a and b and (b - a).total_seconds() >= DOOR_GAP_S:
+                    gaps.append({"attempt": r["attempt"], "at": prev["at"], "op": op_asked(prev["tool"], prev["argument"]), "gap_s": int((b - a).total_seconds())})
+            last[r["attempt"]] = r
+        gaps.sort(key=lambda g: -g["gap_s"])
+        return {"count": len(gaps), "longest": gaps[:5], "gap_s": DOOR_GAP_S,
+                "words": "a door call followed by this gap or more before the same launch's next call: the proxy for a call near the vendor's tool timeout"}
 
     # -- 11. R26 § 4 (2): what a turn costs and how fast turns come
     def acted(self):
@@ -1699,6 +1716,11 @@ def render(d, cap):
         if s["first_refusal"]:
             f = s["first_refusal"]
             L.append(f"  first refusal of the run {stamp(f['at'])} {f['what']}: {short(f['words'], 90)}")
+        g = s.get("door_gaps") or {}
+        if g.get("count"):
+            # A NOTE, NEVER ATTENTION, and only where one was seen.
+            L.append(f"  NOTE door calls followed by {g['gap_s']} s or more before the same launch's next call: {g['count']}; longest "
+                     + ", ".join(f"{x['op']} {age(x['gap_s'])} at {stamp(x['at'])}" for x in g["longest"][:2]) + " (near the vendor's tool timeout?)")
 
     s = d["verdicts"]
     if not unread("verdicts", s):
