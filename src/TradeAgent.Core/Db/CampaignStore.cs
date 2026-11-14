@@ -1110,9 +1110,14 @@ public sealed class CampaignStore(Database db)
     /// (<see cref="ChargedBy"/>), <paramref name="through"/> naming them for a campaign that is not the run's own
     /// dataset's. Each row is its own trial of its own campaign, and the count reads RUNS, so the second row of one run
     /// costs a campaign that already counted it nothing: the gate's counts leave this run out.</para>
+    ///
+    /// <para><paramref name="launch"/> is the CALLER'S OWN run row when it is not <paramref name="runId"/> (<c>U-evidence-counts</c> item 3):
+    /// a position that reuses a computation another recorded first holds its own row naming it (<c>U-backtest-dedupe-role</c>), and a
+    /// trial its request charges is held to the share of the chain THAT row was admitted under — never the first recorder's. The trial
+    /// itself stays keyed by the computation (EVID-001).</para>
     /// </summary>
     public TrialRegistered RegisterTrial(long campaignId, string versionId, string runId, string kind,
-        DateTimeOffset at, string? through = null) => db.Write(_ =>
+        DateTimeOffset at, string? through = null, string? launch = null) => db.Write(_ =>
     {
         if (ById(campaignId) is not { } campaign)
             return new TrialRegistered(false, $"there is no campaign {campaignId}.", false, 0, 0);
@@ -1150,7 +1155,7 @@ public sealed class CampaignStore(Database db)
         // charged to as well — so a run over another dataset never spends a unit's share of the home past it.
         if (charged)
             foreach (var each in rule.HomeCampaign is { } home && home.Id != campaign.Id ? [campaign, home] : new[] { campaign })
-                if (UnitShareRefusal(ShareKind.Trials, each, runId, versionId) is { } unit)
+                if (UnitShareRefusal(ShareKind.Trials, each, launch ?? runId, versionId, runId) is { } unit)
                     return new TrialRegistered(false, unit, false, spent.Run, campaign.TrialBudget);
 
         using var c = db.Cmd("""
@@ -1184,8 +1189,15 @@ public sealed class CampaignStore(Database db)
     /// holds a unit merged into it (<c>U-merge-evidence-shares</c>; <see cref="OrgStore.CarriedBy"/>); one more must fit inside its
     /// share of the campaign's budget. Read inside the caller's write, so the count and the row are one
     /// transaction. A share that is not a fraction is damage, refused (<see cref="OrgEnvelopes"/>), never guessed.
+    ///
+    /// <para><b>A reused computation is the caller's charge</b> (<c>U-evidence-counts</c> item 3). For trials, <paramref name="launch"/> is
+    /// the caller's own run row and <paramref name="computation"/> the run the trial is keyed by — one id unless the caller reuses another
+    /// position's computation. The shares are read off the caller's row. And a unit's use counts every charged trial of a computation a
+    /// row of its launches held when the trial was registered: the computation's own row, or a reuse row recorded by then. Before, a
+    /// charge made through a reuse was read against the first recorder's chain and counted against it alone, so a position reusing others'
+    /// computations under a new campaign spent none of its own share. It only ADDS to a use: the first recorder's count is as it was.</para>
     /// </summary>
-    string? UnitShareRefusal(ShareKind kind, CampaignRow campaign, string launch, string versionId)
+    string? UnitShareRefusal(ShareKind kind, CampaignRow campaign, string launch, string versionId, string? computation = null)
     {
         var trials = kind == ShareKind.Trials;
         var shares = new List<(string Unit, string Share)>();
@@ -1220,13 +1232,20 @@ public sealed class CampaignStore(Database db)
             var carried = OrgStore.CarriedSet(db, unit);
             if (trials)
             {
+                // EVERY ROW OF THE COMPUTATION ITS LAUNCHES HELD WHEN THE TRIAL WAS REGISTERED (item 3): the computation's own row, as before,
+                // or a reuse row recorded by then — the row whose request may have made the charge. Never looser than the computation's row
+                // alone; the run being registered is left out, as the campaign's own count leaves it. The unit's rows are read once (its
+                // launches by the funding index), not per trial: `reuses_run` has no index of its own.
                 using var u = db.Cmd("""
                     SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
-                      JOIN strategy_run r ON r.id = t.run_id
-                     WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $launch
-                       AND EXISTS (SELECT 1 FROM ai_attempt_funding f
-                                    WHERE f.attempt_id = r.attempt AND f.unit_id IN (SELECT value FROM json_each($carried)))
-                    """, ("$carried", carried), ("$id", campaign.Id), ("$launch", launch));
+                      JOIN (SELECT COALESCE(r.reuses_run, r.id) AS computation, r.reuses_run IS NULL AS own, r.created_at AS at
+                              FROM strategy_run r
+                             WHERE r.attempt IN (SELECT f.attempt_id FROM ai_attempt_funding f
+                                                  WHERE f.unit_id IN (SELECT value FROM json_each($carried)))) h
+                        ON h.computation = t.run_id
+                     WHERE t.charged = 1 AND (t.campaign_id = $id OR t.charged_to = $id) AND t.run_id <> $computation
+                       AND (h.own OR h.at <= t.registered_at)
+                    """, ("$carried", carried), ("$id", campaign.Id), ("$computation", computation ?? launch));
                 used = Convert.ToInt32(u.ExecuteScalar(), CultureInfo.InvariantCulture);
             }
             else
