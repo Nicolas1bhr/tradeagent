@@ -532,8 +532,9 @@ class Digest:
     def verdicts(self):
         one = lambda sql, *a: self.app.execute(sql, a).fetchone()[0]
         asked = one("SELECT COUNT(*) FROM strategy_verdict WHERE requested_at >= ?", self.since_s)
-        waiting = one("SELECT COUNT(*) FROM strategy_verdict v WHERE NOT EXISTS (SELECT 1 FROM strategy_promotion p "
-                      "WHERE p.campaign_id = v.campaign_id AND p.version_id = v.version_id)")
+        unanswered = ("NOT EXISTS (SELECT 1 FROM strategy_promotion p WHERE p.campaign_id = v.campaign_id AND p.version_id = v.version_id)")
+        waiting = one("SELECT COUNT(*) FROM strategy_verdict v WHERE " + unanswered)
+        waiting_since = one("SELECT COUNT(*) FROM strategy_verdict v WHERE v.requested_at >= ? AND " + unanswered, self.since_s)
         given = [{"verdict": r["verdict"], "reason": r["reason"], "count": r["n"]} for r in self.app.execute(
             "SELECT verdict, reason, COUNT(*) AS n FROM strategy_promotion WHERE at >= ? GROUP BY verdict, reason ORDER BY n DESC, verdict, reason",
             (self.since_s,))]
@@ -542,10 +543,11 @@ class Digest:
             inconclusive = one("SELECT COUNT(*) FROM referee_holdout WHERE addis_status = ? AND at >= ?", W.ADDIS_INCONCLUSIVE, self.since_s)
         except sqlite3.Error:
             pass
-        return {"asked_since": asked, "waiting_now": waiting, "given_since": given, "given_total": sum(g["count"] for g in given),
+        return {"asked_since": asked, "waiting_now": waiting, "waiting_since": waiting_since, "given_since": given, "given_total": sum(g["count"] for g in given),
                 "no_trade_refusals_since": sum(g["count"] for g in given if g["reason"] == W.REASON_NO_TRADE),
                 "referee_inconclusive_since": inconclusive,
-                "words": "asked = strategy_verdict rows requested since T0; given = promotion rows written since T0; waiting = asked, not yet given (ever)"}
+                "words": "asked = strategy_verdict rows requested since T0; given = promotion rows written since T0; waiting = asked, not yet given (ever)",
+                "words_since": "waiting_since = asked since T0, not yet given"}
 
     # -- 5. paper deployments and their P&L (a simulation)
     def deployments(self):
@@ -1701,7 +1703,7 @@ def render(d, cap):
     s = d["verdicts"]
     if not unread("verdicts", s):
         given = ", ".join(f"{g['verdict']}:{g['reason']} {g['count']}" for g in s["given_since"][:3]) or "none"
-        L.append(f"verdicts: asked {s['asked_since']} since T0, waiting {s['waiting_now']}, given {s['given_total']} [{given}]; "
+        L.append(f"verdicts: asked {s['asked_since']} since T0, waiting {s['waiting_since']} since T0 ({s['waiting_now']} ever), given {s['given_total']} [{given}]; "
                  f"inconclusive: referee {s['referee_inconclusive_since']}, no-trade refusals {s['no_trade_refusals_since']}")
 
     s = d["deployments"]
