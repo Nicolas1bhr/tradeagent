@@ -179,6 +179,22 @@ public class FreeSpaceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(Installed, "TradeAgent-Setup-0.2.0.exe")));
     }
 
+    /// <summary>An older home a TradeAgent is running on (its instance lock held): press two leaves it whole.</summary>
+    [Fact]
+    public void An_older_home_a_running_app_holds_is_skipped_and_kept()
+    {
+        Fixture();
+        var lockFile = Write(Path.Combine(OlderHome, "state", "gateway.lock"), "");
+        var plan = FreeSpace.Inventory(Roots(), _now);
+        Assert.Contains(plan.Items, i => i.Path == OlderHome);
+        using (new FileStream(lockFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var done = FreeSpace.Remove(plan, Roots(), _now);
+            Assert.Contains(done.Skipped, s => s.Item.Path == OlderHome && s.Why == LetGoSkip.InUse);
+        }
+        Assert.True(File.Exists(Path.Combine(OlderHome, "state", "tradeagent.db")));
+    }
+
     /// <summary>
     /// THE ESCAPE GUARD: a folder that is a link, or holds one, is never listed — a link to the owner's own folder outside the home
     /// would otherwise be walked and its files listed as TradeAgent's — and press two over a plan that names one leaves its target whole.
