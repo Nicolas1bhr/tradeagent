@@ -1760,7 +1760,7 @@ def render(d, cap):
                     else "; inodes: this filesystem counts none" if s.get("inodes_total") == 0 else ""))
 
     s = d.get("material", {})
-    if s and "unreadable" not in s:
+    if s and "unreadable" not in s and (cap["extras"] or s.get("tell")):     # at the tightest cap only once it is to be told
         # A LINE OF ITS OWN (R31 D17 G2), under the disk: the files the material pass walks each pass.
         L.append(f"material: {s['absent']} is not on this home" if "absent" in s else
                  f"material: {s['tracked']:,} files tracked" + ("; TELL THE ORCHESTRATOR (1,500 or more)" if s["tell"] and not s["act"] else "")
