@@ -157,7 +157,7 @@ public partial class BoardActTests
     /// (<see cref="PowerRows"/>: the board's, the organisation's, the capital's, the holdout, the owner's kv rows), the gateway's settings
     /// and the policy in force are exactly as they were. In code, nothing applies one: the table is written by the
     /// proposal's one insert and read by its one select, and outside the owner's own process (<c>TradeAgent.App</c>, his inbox) nothing
-    /// calls that read. Watched red with a kernel proposal that also wrote a board event.
+    /// calls that read. Watched red (2026-11-14) with a kernel proposal that also wrote a board event (the earlier-setting set-aside's).
     /// </summary>
     [Fact]
     public async Task A_kernel_change_proposal_changes_nothing_until_the_owner_acts()

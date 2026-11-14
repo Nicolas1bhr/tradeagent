@@ -116,8 +116,9 @@ public partial class InvariantProofTests
     /// driving a user interface. Programmatic API only."). Compiled: no order-side assembly references a UI-automation assembly, imports a
     /// function from an input, window or accessibility library, or calls into <c>System.Windows.Automation</c>, <c>System.Windows.Forms</c>
     /// or a <c>SendKeys</c>. Source: no file of those projects — the ATAS adapter that is compiled only on a box with ATAS included —
-    /// and no project file names one. Watched red with a <c>user32</c> <c>SendInput</c> import added to the loopback adapter, and with
-    /// one written into <c>AtasStrategyAdapter.cs</c> alone (the compiled half cannot see it; the source half does).
+    /// and no project file names one. Watched red (2026-11-14) with a <c>user32</c> <c>SendInput</c> import added to the loopback adapter
+    /// (the import and its words both named), and with one written into <c>AtasStrategyAdapter.cs</c> alone (named by the source half:
+    /// that file is not compiled here).
     /// </summary>
     [Fact]
     public void The_bridge_and_the_connectors_use_no_ui_automation()
@@ -219,7 +220,7 @@ public partial class InvariantProofTests
     /// verbs, the agent runtimes, the headless gateway — calls, constructs a delegate to, or sets any of them, but the named conduits;
     /// and the one conduit that is a whole type, <see cref="SeatSignIn"/>, is built by the app alone. The boundary is the assembly's: a
     /// delegate or interface the app hands other code (a gateway callback, the mission host) is app code wherever it runs, and its body
-    /// is not followed here. Watched red with the pipe server's <c>status</c> op calling
+    /// is not followed here. Watched red (2026-11-14) with the pipe server's <c>material-note</c> handler calling
     /// <see cref="TradingGateway.EnableAiTrading"/>.
     /// </summary>
     [Fact]
