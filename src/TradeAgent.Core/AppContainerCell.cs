@@ -130,7 +130,7 @@ public static class AppContainerCell
     /// STARTS <paramref name="program"/> in the AppContainer <paramref name="containerSid"/> with <paramref name="capabilities"/> (none:
     /// no network at all), in a kill-on-close job without breakaway: created suspended, assigned, resumed. Its standard streams are
     /// pipes the caller holds, or the handles <paramref name="stdio"/> names (the cell stage's own, passed through); its environment is
-    /// <paramref name="environment"/> and nothing else; its window station and desktop its own (<see cref="PrivateDesktop"/>) —
+    /// <paramref name="environment"/> and nothing else; its desktop its own, on the logon session's window station, never the owner's (<see cref="PrivateDesktop"/>) —
     /// <paramref name="ownDesktop"/> false is the probe's control alone, the station the caller runs on, which no ACE grants the container. Throws <see cref="TradeAgentException"/> (<see cref="ErrorCode.CELL_UNAVAILABLE"/>)
     /// naming the step that failed; a process that was created and could not be put in its job is killed before the throw.
     /// </summary>
@@ -729,11 +729,24 @@ public sealed class AppContainerProcess : IDisposable
 }
 
 /// <summary>
-/// A CELL'S OWN WINDOW STATION AND DESKTOP (<c>U-cell-windows</c> item 1, measured on Windows 11 26200: the pinned codex dies 0xC0000142
-/// in an AppContainer that can open no window station, where cmd and curl start). Created for one cell, ACL'd to the account and the
-/// container SID alone, labelled Low so the container may use it — so the cell's programs start without the container ever being
-/// granted the OWNER'S window station or desktop: nothing of his screen, windows or clipboard is on the cell's desktop. The handles
-/// live as long as the cell; Windows destroys both when the last handle closes.
+/// A CELL'S OWN DESKTOP, ON A WINDOW STATION THAT IS NOT THE OWNER'S (<c>U-cell-windows</c> item 1, measured on Windows 11 26200: the
+/// pinned codex dies 0xC0000142 in an AppContainer that can open no window station, where cmd and curl start; <c>U-cell-winsta</c>: the
+/// station is the one Windows names after the caller's logon session). The desktop is made for one cell, ACL'd to the account and the
+/// container SID alone, protected from inheritance, labelled Low so the container may use it — so the cell's programs start without the
+/// container ever being granted the OWNER'S window station (WinSta0) or desktop: nothing of his screen, windows or clipboard is reachable.
+/// <para>
+/// WHY NOT A STATION OF OUR OWN NAME: <c>CreateWindowStation</c>'s documentation, on <c>lpwinsta</c>: "Only members of the Administrators
+/// group are allowed to specify a name. If lpwinsta is NULL or an empty string, the system forms a window station name using the logon
+/// session identifier for the calling process." From the owner's desktop, unelevated (Administrators deny-only under UAC), a named station
+/// is refused with error 5 (W0-BOX, 2026-11-14), so no cell started there, while elevated CI could name one. The system-named station
+/// (<c>Service-0x…$</c>) already exists and is shared by the logon session; Windows ignores the descriptor passed when it opens an existing
+/// one, and its own DACL grants ALL APPLICATION PACKAGES enumerate, read, clipboard and atom access (read 2026-11-14). What a cell could
+/// reach through that is closed by its job, not by the station: the cell job's UI restrictions (<c>JobObjectBasicUiRestrictions</c> 0xFF
+/// in <see cref="AppContainerCell"/>) deny it the clipboard, the global atom table, USER handles of processes outside the job, and
+/// switching desktops. Hooks and window messages are per desktop, and the desktop is the cell's alone. This class never edits the shared
+/// station's DACL.
+/// </para>
+/// The handles live as long as the cell; Windows destroys the desktop when its last handle closes.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class PrivateDesktop : IDisposable
@@ -741,35 +754,53 @@ public sealed class PrivateDesktop : IDisposable
     static readonly object Swap = new();
     IntPtr _station, _desktop, _name;
 
-    PrivateDesktop(IntPtr station, IntPtr desktop, string name)
+    PrivateDesktop(IntPtr station, IntPtr desktop, string stationName, string desktopName)
     {
         _station = station;
         _desktop = desktop;
-        Name = name;
-        _name = Marshal.StringToHGlobalUni(name);
+        Station = stationName;
+        Name = stationName + "\\" + desktopName;
+        _name = Marshal.StringToHGlobalUni(Name);
     }
 
     /// <summary><c>station\desktop</c>, as <c>STARTUPINFO.lpDesktop</c> names it.</summary>
     public string Name { get; }
 
+    /// <summary>The window station's name, as Windows formed it from the logon session: never WinSta0, never a name of ours.</summary>
+    public string Station { get; }
+
     internal IntPtr NamePointer => _name;
 
     /// <summary>
-    /// Makes the pair for <paramref name="containerSid"/>. The desktop is made on the new station by switching this process's window
-    /// station to it for the one call and back (<c>CreateDesktop</c> has no station argument), under a lock.
+    /// Makes the desktop for <paramref name="containerSid"/> on the logon session's own window station. The desktop is made by switching
+    /// this process's window station to that one for the one call and back (<c>CreateDesktop</c> has no station argument), under a lock.
     /// </summary>
     public static PrivateDesktop Create(string containerSid)
     {
         var user = WindowsIdentity.GetCurrent().User!.Value;
         var sddl = $"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})S:(ML;;NW;;;LW)";
         if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out var sd, IntPtr.Zero))
-            throw Fail("describe the cell's window station");
+            throw Fail("describe the cell's desktop");
         try
         {
             var sa = new Sa { nLength = Marshal.SizeOf<Sa>(), lpSecurityDescriptor = sd, bInheritHandle = 0 };
-            var station = "TradeAgent-cell-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
-            var ws = CreateWindowStation(station, 1 /* CWF_CREATE_ONLY */, 0x37F /* WINSTA_ALL_ACCESS */, ref sa);
-            if (ws == IntPtr.Zero) throw Fail("make the cell's window station");
+            // NULL: the logon session's station, which Windows names and an unelevated account may open; the descriptor applies only
+            // if this call is the one that makes it.
+            var ws = CreateWindowStation(null, 0, 0x37F /* WINSTA_ALL_ACCESS */, ref sa);
+            if (ws == IntPtr.Zero) throw Fail("open the cell's window station");
+            string stationName;
+            try
+            {
+                stationName = ObjectName(ws);
+                if (stationName.Equals("WinSta0", StringComparison.OrdinalIgnoreCase))
+                    throw new TradeAgentException(ErrorCode.CELL_UNAVAILABLE, "Windows gave the cell the owner's window station (WinSta0); a cell never starts there");
+            }
+            catch
+            {
+                CloseWindowStation(ws);
+                throw;
+            }
+            var desktopName = "TradeAgent-cell-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
             IntPtr dt;
             lock (Swap)
             {
@@ -780,7 +811,7 @@ public sealed class PrivateDesktop : IDisposable
                     CloseWindowStation(ws);
                     throw e;
                 }
-                try { dt = CreateDesktop("cell", IntPtr.Zero, IntPtr.Zero, 0, 0x10000000 /* GENERIC_ALL */, ref sa); }
+                try { dt = CreateDesktop(desktopName, IntPtr.Zero, IntPtr.Zero, 0, 0x10000000 /* GENERIC_ALL */, ref sa); }
                 finally { SetProcessWindowStation(mine); }
             }
             if (dt == IntPtr.Zero)
@@ -789,9 +820,17 @@ public sealed class PrivateDesktop : IDisposable
                 CloseWindowStation(ws);
                 throw e;
             }
-            return new PrivateDesktop(ws, dt, station + "\\cell");
+            return new PrivateDesktop(ws, dt, stationName, desktopName);
         }
         finally { LocalFree(sd); }
+    }
+
+    static string ObjectName(IntPtr handle)
+    {
+        GetUserObjectInformation(handle, 2 /* UOI_NAME */, null, 0, out var needed);
+        var buffer = new char[Math.Max(needed / 2, 1)];
+        if (!GetUserObjectInformation(handle, 2, buffer, buffer.Length * 2, out _)) throw Fail("read the cell's window station's name");
+        return new string(buffer).TrimEnd('\0');
     }
 
     public void Dispose()
@@ -816,7 +855,11 @@ public sealed class PrivateDesktop : IDisposable
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateWindowStationW")]
-    static extern IntPtr CreateWindowStation(string name, uint flags, uint access, ref Sa sa);
+    static extern IntPtr CreateWindowStation(string? name, uint flags, uint access, ref Sa sa);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetUserObjectInformationW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetUserObjectInformation(IntPtr handle, int index, [Out] char[]? info, int length, out int needed);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateDesktopW")]
     static extern IntPtr CreateDesktop(string name, IntPtr device, IntPtr mode, uint flags, uint access, ref Sa sa);
