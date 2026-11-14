@@ -286,22 +286,23 @@ public sealed class CellWindowsProbeTests : IDisposable
     public void The_cells_station_is_the_logon_sessions_own_so_an_unelevated_account_can_start_a_cell()
     {
         _out.WriteLine("[host] " + HostSession.Describe());
+        // FIRST AS THE UNELEVATED OWNER: an elevated runner then meets the refusal his session meets, before anything else can pass.
+        using (var filtered = HostSession.WithoutAdministrators())
+            WindowsIdentity.RunImpersonated(filtered, () =>
+            {
+                _out.WriteLine("[impersonating] " + HostSession.Describe());
+                using (var me = WindowsIdentity.GetCurrent())
+                    Assert.False(new WindowsPrincipal(me).IsInRole(WindowsBuiltInRole.Administrator), "the filtered token is no administrator");
+                using var desktop = PrivateDesktop.Create(_sid);
+                _out.WriteLine($"the cell's desktop, as an account that is no administrator: {desktop.Name}");
+                Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
+            });
         using (var desktop = PrivateDesktop.Create(_sid))
         {
             _out.WriteLine($"the cell's desktop: {desktop.Name}");
             Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
             Assert.StartsWith(desktop.Station + "\\TradeAgent-cell-", desktop.Name, StringComparison.Ordinal);
         }
-        using var filtered = HostSession.WithoutAdministrators();
-        WindowsIdentity.RunImpersonated(filtered, () =>
-        {
-            _out.WriteLine("[impersonating] " + HostSession.Describe());
-            using (var me = WindowsIdentity.GetCurrent())
-                Assert.False(new WindowsPrincipal(me).IsInRole(WindowsBuiltInRole.Administrator), "the filtered token is no administrator");
-            using var desktop = PrivateDesktop.Create(_sid);
-            _out.WriteLine($"the cell's desktop, as an account that is no administrator: {desktop.Name}");
-            Assert.Matches(@"^Service-0x[0-9a-fA-F]+-[0-9a-fA-F]+\$$", desktop.Station);
-        });
     }
 
     /// <summary>
