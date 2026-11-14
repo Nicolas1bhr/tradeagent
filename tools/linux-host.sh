@@ -110,7 +110,8 @@ OSA
 # which every Windows has); the password on stdout. Its stdin is /dev/null, so nothing in it can ever read a terminal.
 ask_on_windows() {
     local ps b64
-    ps="$(cat << 'PS'
+    # read -d '', not $(cat << ...): macOS's bash 3.2 misparses a here-document with an apostrophe inside a command substitution
+    IFS= read -r -d '' ps << 'PS' || true
 $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
 try {
     if (-not [Environment]::UserInteractive) { [Console]::Error.WriteLine('not an interactive desktop session'); exit 3 }
@@ -146,7 +147,6 @@ try {
     exit 0
 } catch { [Console]::Error.WriteLine('the dialog could not open: ' + $_.Exception.Message); exit 3 }
 PS
-)"
     command -v powershell.exe > /dev/null || { echo "linux-host: no Windows PowerShell here to ask the owner with. Nothing was sent." >&2; return 1; }
     b64="$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 -w 0)"
     TA_WINDOW_WORDS="$window_words" MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -EncodedCommand "$b64" < /dev/null \
