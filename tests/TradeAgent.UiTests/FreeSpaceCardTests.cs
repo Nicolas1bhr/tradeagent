@@ -51,7 +51,7 @@ public class FreeSpaceCardTests : IDisposable
         };
     }
 
-    const string Armed = "Yes — remove this item (4 KB). Your records, the tape and your positions are kept.";
+    const string Armed = "Yes — remove this item (4 KB). Your current records, the tape and your positions are kept.";
 
     /// <summary>
     /// THE TWO-PRESS GUARD: the first press removes nothing. A card whose first press removed (one press doing the removal) fails here.
@@ -95,7 +95,7 @@ public class FreeSpaceCardTests : IDisposable
             Assert.False(File.Exists(_installer));
             Assert.True(File.Exists(_tape));
             Assert.Equal(FreeSpaceCard.FreeSpaceLabel, card.FreeButton.Content);
-            Assert.StartsWith("Removed 1 item and freed 4 KB. Your records, the tape and your positions were kept.", card.Said, StringComparison.Ordinal);
+            Assert.StartsWith("Removed 1 item and freed 4 KB. Your current records, the tape and your positions were kept.", card.Said, StringComparison.Ordinal);
             Assert.Contains("30 GB is free on this disk now.", card.Said, StringComparison.Ordinal);
             Assert.Contains(activity, a => a.Contains("two presses", StringComparison.Ordinal) && a.Contains("1 installer already installed", StringComparison.Ordinal));
             Assert.DoesNotContain(Texts(card.Root), t => t.StartsWith("The downloaded installer", StringComparison.Ordinal));
@@ -164,7 +164,7 @@ public class FreeSpaceCardTests : IDisposable
         var check = new LetGoItem(LetGoKind.CheckLeftover, Path.Combine(_home, "cell-bench", "0123456789ab"), [new LetGoFile("z", 12_000, now.UtcDateTime)], [], now.UtcDateTime.AddDays(-1));
         var plan = new FreeSpacePlan([older, installer, check], now);
         var done = new FreeSpaceDone([older, installer],
-            [(check, LetGoSkip.Changed), (check, LetGoSkip.HoldsLink), (check, LetGoSkip.InUse), (installer, LetGoSkip.NoLongerLettable), (older, LetGoSkip.InUse)], 3L << 30, 2);
+            [(check, LetGoSkip.Changed), (check, LetGoSkip.HoldsLink), (check, LetGoSkip.InUse), (installer, LetGoSkip.NoLongerLettable), (older, LetGoSkip.InUse), (installer, LetGoSkip.Busy)], 3L << 30, 2);
         var words = new List<string>
         {
             FreeSpaceCard.Armed(plan), FreeSpaceCard.Armed(new FreeSpacePlan([installer], now)), FreeSpaceCard.Done(done, new DiskSpace(30L << 30, 100L << 30)),
@@ -175,7 +175,9 @@ public class FreeSpaceCardTests : IDisposable
 
         var hits = words.SelectMany(w => OwnerWordShapes.Of(w).Select(h => $"{h}: {w}")).ToList();
         Assert.True(hits.Count == 0, string.Join("\n", hits));
-        Assert.Contains("Yes — remove these 3 items (3.1 GB), the older version's records with its folder. Your records, the tape and your positions are kept.", words);
+        Assert.Contains("Yes — remove these 3 items (3.1 GB), the older folder's own records and tape with it. Your current records, the tape and your positions are kept.", words);
+        Assert.Contains("Removed 2 items and freed 3 GB. Your current records, the tape and your positions were kept; the older folder's own records and tape went with it.",
+            words.Select(w => w.Split(" An older")[0].Split(" The installer")[0].Split(" A leftover")[0]));
         Assert.Contains(words, w => w.StartsWith("An older TradeAgent's folder, set aside when you started fresh on 31 Oct 2026.", StringComparison.Ordinal)
                                     || w.StartsWith("An older TradeAgent's folder, set aside when you started fresh on 1 Nov 2026.", StringComparison.Ordinal));
     }

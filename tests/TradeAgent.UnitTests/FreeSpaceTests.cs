@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using TradeAgent.Core;
 using TradeAgent.Tests;
 using Xunit;
@@ -102,9 +103,11 @@ public class FreeSpaceTests : IDisposable
         _protected.Add(Write(Path.Combine(_root, "TradeAgent-tape-carrying-20261031-101500", "tape.db")));
         _protected.Add(Write(Path.Combine(_root, "Other-from-0.1.2-20261031-101500", "state", "tradeagent.db")));
         _protected.Add(Write(Path.Combine(_root, "TradeAgent-from-0.1.3-20261101-090000", "notes.txt")));
+        // NAMED LIKE AN OLDER HOME, AND ONE THIS BUILD OPENS (its database at the oldest schema this build reads): not an older home.
+        _protected.Add(Stamped(Path.Combine(_root, "TradeAgent-from-0.1.4-20261102-090000"), Versions.OldestHomeSchema));
 
         // LETTABLE: an older home set aside whole, two installers already run, a check's leftover folder untouched for hours.
-        Write(Path.Combine(OlderHome, "state", "tradeagent.db"), "an older version's records");
+        Stamped(OlderHome, Versions.OldestHomeSchema - 1);
         Write(Path.Combine(OlderHome, "state", "tape.db"), "an older version's tape");
         Write(Path.Combine(Installed, "TradeAgent-Setup-0.2.0.exe"), new string('x', 4096));
         Write(Path.Combine(Installed2, "TradeAgent-Setup-0.1.9.exe"), new string('y', 2048));
@@ -196,6 +199,56 @@ public class FreeSpaceTests : IDisposable
     }
 
     /// <summary>
+    /// AN OLDER HOME'S DATABASE GOES LAST, AND ONLY WHEN EVERYTHING ELSE WENT: a file another program holds stops it, the database stays, and the
+    /// next press lists what is left as the older home it still is.
+    /// </summary>
+    [NotAsRootFact("root removes a file from a folder it may not write")]
+    public void A_cut_short_removal_of_an_older_home_keeps_its_database_and_lists_it_again()
+    {
+        Fixture();
+        var held = Write(Path.Combine(OlderHome, "workspace", "agent", "held.txt"), "held by another program");
+        var heldDir = Path.GetDirectoryName(held)!;
+        var plan = FreeSpace.Inventory(Roots(), _now);
+        FileStream? open = null;
+        try
+        {
+            if (OperatingSystem.IsWindows()) open = new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.Read);
+            else File.SetUnixFileMode(heldDir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            var done = FreeSpace.Remove(plan, Roots(), _now);
+            Assert.True(done.FilesKept >= 1);
+        }
+        finally
+        {
+            open?.Dispose();
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(heldDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        Assert.True(File.Exists(held));
+        Assert.True(File.Exists(Path.Combine(OlderHome, "state", "tradeagent.db")), "the older home's database was removed while a file of it stayed");
+        Assert.False(File.Exists(Path.Combine(OlderHome, "state", "tape.db")));
+        Assert.Contains(FreeSpace.Inventory(Roots(), _now).Items, i => i.Kind == LetGoKind.OlderHome && i.Path == OlderHome);
+    }
+
+    /// <summary>ONE REMOVAL AT A TIME: a second press while the first removes (the other card's) removes nothing and says it was busy.</summary>
+    [Fact]
+    public void A_second_press_during_a_removal_removes_nothing_and_says_it_was_busy()
+    {
+        Fixture();
+        var plan = FreeSpace.Inventory(Roots(), _now);
+        FreeSpaceDone? inner = null;
+        FreeSpace.DuringRemoveUnderTest = () => inner = FreeSpace.Remove(plan, Roots(), _now);
+        try
+        {
+            var outer = FreeSpace.Remove(plan, Roots(), _now);
+            Assert.NotNull(inner);
+            Assert.Empty(inner!.Removed);
+            Assert.All(inner.Skipped, s => Assert.Equal(LetGoSkip.Busy, s.Why));
+            Assert.Equal(plan.Items.Count, inner.Skipped.Count);
+            Assert.Equal(plan.Items.Count, outer.Removed.Count);
+        }
+        finally { FreeSpace.DuringRemoveUnderTest = null; }
+    }
+
+    /// <summary>
     /// THE ESCAPE GUARD: a folder that is a link, or holds one, is never listed — a link to the owner's own folder outside the home
     /// would otherwise be walked and its files listed as TradeAgent's — and press two over a plan that names one leaves its target whole.
     /// </summary>
@@ -278,6 +331,22 @@ public class FreeSpaceTests : IDisposable
         File.CreateSymbolicLink(Path.Combine(Installed2, "his-file.txt"), Path.Combine(_outside, "his-file.txt"));
         var plan = FreeSpace.Inventory(Roots(), _now);
         Assert.DoesNotContain(plan.Items, i => i.Path == Installed2);
+    }
+
+    /// <summary>A home's database at <paramref name="home"/>, stamped <paramref name="schema"/> as a real home's is: what Start fresh reads.</summary>
+    static string Stamped(string home, int schema)
+    {
+        var file = Path.Combine(home, "state", "tradeagent.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var c = conn.CreateCommand();
+            c.CommandText = $"CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES('schema_version','{schema}');";
+            c.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+        return file;
     }
 
     static bool Under(string path, string folder) =>

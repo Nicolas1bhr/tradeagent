@@ -45,11 +45,14 @@ public enum LetGoSkip
     /// <summary>A file or folder in it was added, removed, grew or was rewritten since press one.</summary>
     Changed,
 
-    /// <summary>It is, or now holds, a link: nothing is followed through one.</summary>
+    /// <summary>It is, or now holds, a link (nothing is followed through one), or it could not be read whole.</summary>
     HoldsLink,
 
     /// <summary>A leftover check folder written to within the hour (a check may be using it), or an older home a TradeAgent is running on.</summary>
-    InUse
+    InUse,
+
+    /// <summary>Another press to free space was removing at the same moment (the Dashboard's and Settings' cards are two): one runs at a time.</summary>
+    Busy
 }
 
 /// <summary>
@@ -135,12 +138,22 @@ public static class FreeSpace
 
             // AN OLDER HOME: beside this one, named as Start fresh names it, and a home — its database where a home keeps one, not behind a link.
             if (string.Equals(parent, Path.GetDirectoryName(home), PathCase) && OlderHomeName(Path.GetFileName(home)).IsMatch(name)
-                && !IsLink(Path.Combine(full, "state")) && File.Exists(Path.Combine(full, "state", "tradeagent.db")))
+                && !IsLink(Path.Combine(full, "state")) && File.Exists(Path.Combine(full, "state", "tradeagent.db")) && StillRefused(full))
                 return LetGoKind.OlderHome;
 
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    /// <summary>
+    /// WHETHER THIS BUILD STILL REFUSES THE OLDER HOME (opus review): the same read-only questions Start fresh asked before it moved it. A home
+    /// this build would open is not an older home, whatever its name; a database that cannot be read counts as not refused, and is kept.
+    /// </summary>
+    static bool StillRefused(string home)
+    {
+        try { return OlderHome.RefusedSchema(home) is not null || OlderHome.RefusedPolicy(home) is not null; }
+        catch (Exception) { return false; }
     }
 
     /// <summary>
@@ -181,6 +194,25 @@ public static class FreeSpace
     /// written within the hour is left whole and returned with why. Never throws for a file it could not remove: that file stays, counted.
     /// </summary>
     public static FreeSpaceDone Remove(FreeSpacePlan plan, FreeSpaceRoots roots, DateTimeOffset now)
+    {
+        // ONE REMOVAL AT A TIME IN THIS PROCESS (opus review): a second press, from the other card, leaves everything where it is and says so,
+        // rather than walk folders the first is emptying and report them in words that are not true.
+        if (Interlocked.Exchange(ref _removing, 1) == 1)
+            return new FreeSpaceDone([], [.. plan.Items.Select(i => (i, LetGoSkip.Busy))], 0, 0);
+        try
+        {
+            DuringRemoveUnderTest?.Invoke();
+            return RemoveNow(plan, roots, now);
+        }
+        finally { Volatile.Write(ref _removing, 0); }
+    }
+
+    static int _removing;
+
+    /// <summary>A test's step inside the one removal at a time: where a second press lands.</summary>
+    internal static Action? DuringRemoveUnderTest { get; set; }
+
+    static FreeSpaceDone RemoveNow(FreeSpacePlan plan, FreeSpaceRoots roots, DateTimeOffset now)
     {
         var removed = new List<LetGoItem>();
         var skipped = new List<(LetGoItem, LetGoSkip)>();
@@ -233,8 +265,14 @@ public static class FreeSpace
     {
         long bytes = 0;
         var left = 0;
-        foreach (var f in item.Files)
+        // AN OLDER HOME'S DATABASE GOES LAST, AND ONLY WHEN EVERYTHING ELSE WENT (opus review): its database and journal are what make it an
+        // older home, so a removal cut short by a file another program holds leaves a home that is still one, and the next press lists it again.
+        var keystone = item.Kind == LetGoKind.OlderHome ? Path.Combine(item.Path, "state", "tradeagent.db") : null;
+        bool Key(LetGoFile f) => keystone is not null && f.Path.StartsWith(keystone, PathCase)
+                                 && (f.Path.Length == keystone.Length || f.Path[keystone.Length] == '-');
+        foreach (var f in item.Files.Where(f => !Key(f)).Concat(item.Files.Where(Key)))
         {
+            if (left > 0 && Key(f)) { left++; continue; }
             try
             {
                 var info = new FileInfo(f.Path);
