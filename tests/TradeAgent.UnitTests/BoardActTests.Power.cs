@@ -155,7 +155,9 @@ public partial class BoardActTests
     /// shape and of the audit line's budget — the targets the composition test leaves out — each with text that asks for broader power in
     /// so many words, is one record each, its text kept as the seat's claim; and every row of every table that carries power
     /// (<see cref="PowerRows"/>: the board's, the organisation's, the capital's, the holdout, the owner's kv rows), the gateway's settings
-    /// and the policy in force are exactly as they were. In code, nothing applies one: the table is written by the
+    /// and the policy in force are exactly as they were. The audit line keeps its budget in its own store, outside the home's database,
+    /// which this comparison does not read: for that target the proof is the code half below — nothing but the owner's inbox reads a
+    /// proposal, so nothing applies one. In code, nothing applies one: the table is written by the
     /// proposal's one insert and read by its one select, and outside the owner's own process (<c>TradeAgent.App</c>, his inbox) nothing
     /// calls that read. Watched red (2026-11-14) with a kernel proposal that also wrote a board event (the earlier-setting set-aside's).
     /// </summary>
@@ -192,7 +194,7 @@ public partial class BoardActTests
         var statements = Directory.GetFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Replace('\\', '/').Contains("/obj/", StringComparison.Ordinal))
             .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(InvariantRegistryTests.Strip(File.ReadAllText(f), keepStrings: true),
-                    @"\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM|SELECT\b[^;""]*?\bFROM)\s+board_power_proposal\b")
+                    @"\b(INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|SELECT\b[^;""]*?\bFROM)\s+(?:main\.)?[""`\[]?board_power_proposal\b")
                 .Select(m => $"{Path.GetFileName(f)}: {System.Text.RegularExpressions.Regex.Match(m.Value, @"^\w+").Value}"))
             .Order(StringComparer.Ordinal).ToList();
         Assert.Equal(["BoardStore.cs: INSERT", "BoardStore.cs: SELECT"], statements);

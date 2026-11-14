@@ -35,23 +35,23 @@ public partial class InvariantProofTests
     public void Only_the_material_scanner_writes_the_material_ledger()
     {
         var root = DayOnePrograms.RepoRoot();
-        var write = new Regex(@"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+[""`\[]?material\b(?![_\w])",
+        var write = new Regex(@"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:main\.)?[""`\[]?material\b(?![_\w])",
             RegexOptions.IgnoreCase);
-        var schema = new Regex(@"\b(?:ALTER|DROP)\s+TABLE(?:\s+IF\s+EXISTS)?\s+[""`\[]?material\b(?![_\w])", RegexOptions.IgnoreCase);
+        var schema = new Regex(@"\b(?:ALTER|DROP)\s+TABLE(?:\s+IF\s+EXISTS)?\s+(?:main\.)?[""`\[]?material\b(?![_\w])", RegexOptions.IgnoreCase);
         var writersIn = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var schemaIn = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in SourceFiles(root, "src"))
+        var source = new KvKeys(root);
+        foreach (var (rel, code) in source.Files)
         {
-            var code = InvariantRegistryTests.Strip(File.ReadAllText(file), keepStrings: true);
-            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
             foreach (Match m in write.Matches(code))
-                (writersIn.TryGetValue(rel, out var set) ? set : writersIn[rel] = new(StringComparer.Ordinal)).Add(EnclosingMember(code, m.Index));
+                (writersIn.TryGetValue(rel, out var set) ? set : writersIn[rel] = new(StringComparer.Ordinal)).Add(source.MemberAt(rel, m.Index));
             if (schema.IsMatch(code)) schemaIn.Add(rel);
         }
         Assert.True(writersIn.Keys.SequenceEqual(["src/TradeAgent.Core/Db/MaterialStore.cs"]),
             "a statement writing `material` outside its store: " + string.Join(", ", writersIn.Keys));
         Assert.True(schemaIn.All(f => f == "src/TradeAgent.Core/Db/Database.cs"), "`material`'s shape changed outside the schema: " + string.Join(", ", schemaIn));
         var writers = writersIn["src/TradeAgent.Core/Db/MaterialStore.cs"];
+        Assert.DoesNotContain("?", writers); // every statement is held by a method body the reader names
         Assert.Contains("Observe", writers); // not vacuous: the sighting is a writer
 
         // (2) Every caller of a writer, in every shipped assembly: a writer's helper inside the store makes its callers writers in turn.
@@ -89,8 +89,10 @@ public partial class InvariantProofTests
 
     /// <summary>The bridge, the connectors, the factory that builds them and the gateway that dispatches to them: everything an order passes through on its way out.</summary>
     static readonly string[] OrderSide =
-        ["TradeAgent.AtasBridge", "TradeAgent.ConnectorSdk", "TradeAgent.Connectors.Atas", "TradeAgent.Connectors.Fake", "TradeAgent.Connectors.Paper",
-         "TradeAgent.Gateway", "TradeAgent.Platforms"];
+    [
+        "TradeAgent.AtasBridge", "TradeAgent.ConnectorSdk", "TradeAgent.Gateway", "TradeAgent.Platforms",
+        .. Directory.GetDirectories(Path.Combine(DayOnePrograms.RepoRoot(), "src"), "TradeAgent.Connectors.*").Select(Path.GetFileName).OfType<string>().Order(StringComparer.Ordinal)
+    ];
 
     /// <summary>Assemblies and packages that drive another program's interface: UI Automation, MSAA wrappers, input synthesis, browser drivers.</summary>
     static readonly string[] UiAutomationAssemblies =
@@ -124,6 +126,7 @@ public partial class InvariantProofTests
     public void The_bridge_and_the_connectors_use_no_ui_automation()
     {
         var found = new List<string>();
+        Assert.Superset(new HashSet<string>(["TradeAgent.Connectors.Atas", "TradeAgent.Connectors.Fake", "TradeAgent.Connectors.Paper"]), OrderSide.ToHashSet());
         var assemblies = OrderSide.Select(n => Assembly.Load(new AssemblyName(n))).ToList();
         foreach (var a in assemblies)
         {
@@ -191,21 +194,33 @@ public partial class InvariantProofTests
         return all;
     }
 
+    /// <summary>A runtime's own authority members: the only ones of its methods that may call one another (an update that installs).</summary>
+    static readonly string[] RuntimeAuthority = [nameof(IAgentRuntime.SignInWithApiKeyAsync), nameof(IAgentRuntime.BeginAuthenticationAsync),
+                                                 nameof(IAgentRuntime.InstallAsync), nameof(IAgentRuntime.UpdateAsync)];
+
     /// <summary>
     /// The places allowed to touch the authority outside the owner's own process, each with its reason: the gateway's kill switch sets
-    /// its own setting; the settings' own defaults; a runtime implementing its own sign-in; and the owner's sign-in card's engine
-    /// (<see cref="SeatSignIn"/>), itself constructed by the app alone (asserted below).
+    /// its own setting; the settings' own constructor and their most restrictive reading (<c>Unreadable</c>: the kill switch down);
+    /// a runtime's authority member calling another of its own (an update that installs) — never a runtime's other code; the headless
+    /// gateway's console loop itself, not its callbacks; and the owner's sign-in card's engine (<see cref="SeatSignIn"/>), constructed and
+    /// called by the app alone (asserted below).
     /// </summary>
     static bool Conduit(MethodBase site, Type type, MethodBase target)
     {
         var outer = Il.Outer(type);
         if (outer == typeof(TradingGateway) && site.Name is nameof(TradingGateway.StopAiTrading) or nameof(TradingGateway.EnableAiTrading)
             && target.Name == "set_" + nameof(TradeAgentSettings.AiTradingStopped)) return true;
-        if (outer == typeof(TradeAgentSettings)) return true;
-        if (typeof(IAgentRuntime).IsAssignableFrom(outer) && target.DeclaringType is { } d && (d == outer || d == typeof(IAgentRuntime))) return true;
+        if (type == typeof(TradeAgentSettings) && (site is ConstructorInfo || site.Name == nameof(TradeAgentSettings.Unreadable))) return true;
+        if (typeof(IAgentRuntime).IsAssignableFrom(outer) && target.DeclaringType is { } d && (d == outer || d == typeof(IAgentRuntime))
+            && RuntimeAuthority.Contains(Il.Site(type, site).Split('.')[^1])) return true;
         // The headless gateway's stdin console (stop, enable, cancel-all, close-all): the operator's own surface, typed at the process he
-        // started, never a pipe op. The only listener in that process is the pipe server, whose handlers are the gateway's code, read here.
-        if (type.Assembly == Il.GatewayHost && outer.Name == "Program") return true;
+        // started, never a pipe op. Only the console loop is the surface — the body of the program's entry point and its async state
+        // machine; the callbacks it hands the connector (a lambda, a local function) are not. The only listener in that process is the
+        // pipe server, whose handlers are the gateway's code, read here.
+        if (type.Assembly == Il.GatewayHost
+            && (type.Name == "Program" && site.Name == "<Main>$"
+                || type.DeclaringType is { Name: "Program" } && type.Name.StartsWith("<<Main>$>d__", StringComparison.Ordinal) && site.Name == "MoveNext"))
+            return true;
         return outer == typeof(SeatSignIn);
     }
 
@@ -215,7 +230,8 @@ public partial class InvariantProofTests
     /// gateway describes with its <c>trade</c> form and arguments, every op constant, every organisation (door) verb, the board's
     /// included — names none of them: no op, CLI word or argument speaks of a pause, a resume, a kill, a flatten, a credential, a key, a
     /// sign-in, a connection, an account choice, an install or an update; the one op with "stop" in it is <c>deployment-stop</c>, a
-    /// deployment's own stop. (2) Compiled: outside the owner's own process (<c>TradeAgent.App</c>, which holds no listener — asserted),
+    /// deployment's own stop. (2) Compiled: outside the owner's own process (<c>TradeAgent.App</c>, whose own code opens no listener —
+    /// asserted; the pipe server and the broker door it starts are the gateway's code and are read here like every other shipped assembly),
     /// no shipped assembly — the gateway's pipe server and every op handler in it, the broker door, the <c>trade</c> command, the board's
     /// verbs, the agent runtimes, the headless gateway — calls, constructs a delegate to, or sets any of them, but the named conduits;
     /// and the one conduit that is a whole type, <see cref="SeatSignIn"/>, is built by the app alone. The boundary is the assembly's: a
@@ -256,12 +272,13 @@ public partial class InvariantProofTests
         var reaching = calls.Where(c => authority.Any(a => Il.Same(a, c.Target)) && c.Type.Assembly != Il.App && !Conduit(c.Method, c.Type, c.Target))
             .Select(c => Il.Describe(c)).Distinct().ToList();
         Assert.True(reaching.Count == 0, "the owner's authority is reached outside his own process: " + string.Join("; ", reaching));
-        var signIn = calls.Where(c => c.Target is ConstructorInfo && c.Target.DeclaringType == typeof(SeatSignIn) && c.Type.Assembly != Il.App)
-            .Select(c => Il.Describe(c)).ToList();
-        Assert.True(signIn.Count == 0, "the sign-in card's engine is built outside the app: " + string.Join("; ", signIn));
+        var signIn = calls.Where(c => c.Target.DeclaringType == typeof(SeatSignIn) && c.Type.Assembly != Il.App && Il.Outer(c.Type) != typeof(SeatSignIn))
+            .Select(c => Il.Describe(c)).Distinct().ToList();
+        Assert.True(signIn.Count == 0, "the sign-in card's engine is built or called outside the app: " + string.Join("; ", signIn));
 
-        // The app is the owner's process only while it serves nothing: no listener of any kind is opened in it. The headless gateway
-        // opens none of its own either: its one listener is the pipe server it starts.
+        // The app's own code is the owner's only while it serves nothing itself: no listener of any kind is opened by it. What it serves
+        // to agents it serves through the pipe server and the broker door, which are the gateway's code, read above. The headless
+        // gateway opens none of its own either: its one listener is the pipe server it starts.
         var listening = Il.Calls(Il.App).Concat(Il.Calls(Il.GatewayHost)).Where(c => c.Target.DeclaringType is { } d
                 && (d.Name is "NamedPipeServerStream" or "TcpListener" or "HttpListener" or "Socket" or "WebSocket" or "HttpListenerContext"))
             .Select(c => Il.Describe(c)).Distinct().ToList();
@@ -276,23 +293,14 @@ public partial class InvariantProofTests
     static bool Generated(string path) =>
         path.Replace('\\', '/') is var p && (p.Contains("/obj/", StringComparison.Ordinal) || p.Contains("/bin/", StringComparison.Ordinal));
 
-    static IEnumerable<string> SourceFiles(string root, string dir) =>
+    internal static IEnumerable<string> SourceFiles(string root, string dir) =>
         Directory.GetFiles(Path.Combine(root, dir), "*.cs", SearchOption.AllDirectories).Where(f => !Generated(f));
-
-    /// <summary>The name of the member declared at the class's indentation nearest above <paramref name="index"/>.</summary>
-    static string EnclosingMember(string code, int index)
-    {
-        var lines = code[..index].Split('\n');
-        var decl = new Regex(@"^    (?:(?:public|internal|private|protected|static|async|override|virtual|sealed|readonly|unsafe)\s+)+[^=;]*?\b(\w+)\s*\(");
-        for (var i = lines.Length - 1; i >= 0; i--)
-            if (decl.Match(lines[i]) is { Success: true } m) return m.Groups[1].Value;
-        return "?";
-    }
 
     /// <summary>
     /// THE IL READER: every method a compiled body calls, constructs or takes the address of, decoded opcode by opcode (never guessed
     /// from bytes), in every type of the assemblies the product ships — compiler-made types (lambdas, local functions, state machines)
-    /// included, each read where it was written (<see cref="Outer"/>, <see cref="Site"/>).
+    /// included, each read where it was written (<see cref="Outer"/>, <see cref="Site"/>). Its limits: a call made by reflection or
+    /// through an expression tree (<c>ldtoken</c>) is not a call here, and a target that cannot be resolved or loaded is skipped.
     /// </summary>
     internal static class Il
     {

@@ -45,7 +45,7 @@ public partial class InvariantProofTests
     /// every caller. A key the reader cannot follow to a fixed beginning fails the test — a key a caller names (an op's argument) is
     /// exactly that. A key that is, or may begin as, an authority row is allowed only in <see cref="AuthorityWriters"/>; every other key
     /// must begin with text no authority key begins with. No other SQL statement writes <c>kv</c> but <see cref="KvStatements"/>, and
-    /// no method group of either write is handed anywhere. Watched red (2026-11-14) with the gateway's status read writing kv
+    /// no method group of either write is handed anywhere. Its limit: SQL whose table name is built at run time is not read. Watched red (2026-11-14) with the gateway's status read writing kv
     /// <c>connector</c>, and with it writing a key named by the connector's id (unreadable).
     /// </summary>
     [Fact]
@@ -105,11 +105,17 @@ public partial class InvariantProofTests
                 code[Path.GetRelativePath(root, f).Replace('\\', '/')] = InvariantRegistryTests.Strip(File.ReadAllText(f), keepStrings: true);
         }
 
-        sealed record Scope(string File, int Start, int At, string Member, IReadOnlyList<string> Params,
+        /// <summary>Every source file of <c>src/</c> by its repo-relative path, comments blanked and strings kept.</summary>
+        public IReadOnlyDictionary<string, string> Files => code;
+
+        /// <summary>The member a position of <paramref name="file"/> is written in, or "?" when no member declaration the reader knows holds it.</summary>
+        public string MemberAt(string file, int at) => ScopeAt(file, at).Member;
+
+        sealed record Scope(string File, int Start, int End, int At, string Member, IReadOnlyList<string> Params,
             IReadOnlyDictionary<string, (string Expr, Scope In)> Env);
 
         static readonly Regex Write = new(@"\b(SetKv|AddKvOnce)\b");
-        static readonly Regex KvSql = new(@"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+[""`\[]?kv\b(?![_\w])",
+        static readonly Regex KvSql = new(@"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:main\.)?[""`\[]?kv\b(?![_\w])",
             RegexOptions.IgnoreCase);
         static readonly string[] NotATypeWord = ["return", "await", "new", "throw", "yield", "else", "case", "using", "if", "while", "for", "foreach",
             "switch", "catch", "lock", "when", "is", "as", "in", "nameof", "typeof", "sizeof", "default", "checked", "unchecked", "fixed", "goto", "var"];
@@ -181,8 +187,10 @@ public partial class InvariantProofTests
                 if (Local(n, s, depth) is var (found, heads)) return found ? heads : null;
                 if (s.Params.Contains(n)) return Callers(n, s, depth);
             }
-            // A constant, a readonly field or a string property with an initializer, in this file, the qualifier's type, or anywhere.
-            var decl = new Regex(@"\b(?:const\s+string|static\s+readonly\s+string\??|static\s+string\??)\s+" + Regex.Escape(n) + @"\s*(?:=>|=(?!=))");
+            // A constant, a readonly field or an expression-bodied static property — never a field that can be reassigned — in this type
+            // (its file and its partial files) when unqualified, or in the qualifier's type.
+            var decl = new Regex(@"\b(?:(?:const\s+string|static\s+readonly\s+string\??)\s+" + Regex.Escape(n) + @"\s*=(?![=>])|static\s+string\??\s+"
+                                 + Regex.Escape(n) + @"\s*=>)");
             foreach (var files in Candidates(q, s.File))
             {
                 List<Head>? all = null;
@@ -199,47 +207,71 @@ public partial class InvariantProofTests
             return null;
         }
 
-        /// <summary>A local declared before the use in the same member: (true, heads) when one is found, null when none is.</summary>
+        /// <summary>
+        /// A local of the member: every value it is given anywhere in the member — its declaration and every later assignment — or a
+        /// <c>foreach</c> over <c>KvStartingWith(prefix)</c>. (true, heads) when it is a local; (true, null) when it is one the reader
+        /// cannot follow (<c>out</c>, <c>ref</c>, a pattern, <c>+=</c>, any other <c>foreach</c>); null when it is not a local.
+        /// </summary>
         (bool, List<Head>?)? Local(string n, Scope s, int depth)
         {
-            var text = code[s.File][s.Start..s.At];
-            var decl = Regex.Matches(text, @"\b(?:var|string\??)\s+" + Regex.Escape(n) + @"\s*=(?!=)").LastOrDefault();
-            var loop = Regex.Matches(text, @"\bforeach\s*\(\s*var\s*\(\s*" + Regex.Escape(n) + @"\s*,[^)]*\)\s*in\s+").LastOrDefault();
-            var other = Regex.Matches(text, @"(?:\bout\s+(?:var|string\??)|\bis\s+(?:\{\s*\}|string\??)|\bforeach\s*\(\s*(?:var|string\??))\s+" + Regex.Escape(n) + @"\b")
-                .LastOrDefault();
-            var last = new[] { decl, loop, other }.Where(m => m is not null).MaxBy(m => m!.Index);
-            if (last is null) return null;
-            var at = s.Start + last.Index + last.Length;
-            var inner = s with { At = s.Start + last.Index };
-            if (last == decl) return (true, Resolve(code[s.File][at..End(code[s.File], at)], inner, depth + 1));
-            if (last == loop)
+            var text = code[s.File][s.Start..Math.Min(s.End, code[s.File].Length)];
+            var name = Regex.Escape(n);
+            var gives = Regex.Matches(text, @"(?:\b(?:var|string\??)\s+|(?<![\w.]))" + name + @"\s*=(?![=>])").ToList();
+            var loops = Regex.Matches(text, @"\bforeach\s*\(\s*var\s*\(\s*" + name + @"\s*,[^)]*\)\s*in\s+").ToList();
+            var other = Regex.IsMatch(text, @"(?:\b(?:out|ref)\s+(?:var\s+|string\??\s+)?|\bis\s+(?:\{\s*\}|string\??)\s+|\bforeach\s*\(\s*(?:var|string\??)\s+)" + name + @"\b")
+                        || Regex.IsMatch(text, @"(?<![\w.])" + name + @"\s*(?:\+=|\?\?=)");
+            if (gives.Count == 0 && loops.Count == 0 && !other) return null;
+            if (other) return (true, null);
+            List<Head>? all = [];
+            foreach (var g in gives)
             {
+                var at = s.Start + g.Index + g.Length;
+                all = Union(all, Resolve(code[s.File][at..End(code[s.File], at)], s with { At = s.Start + g.Index }, depth + 1));
+                if (all is null) return (true, null);
+            }
+            foreach (var l in loops)
+            {
+                var at = s.Start + l.Index + l.Length;
                 var source = code[s.File][at..End(code[s.File], at, ')')].Trim();
                 var scan = Regex.Match(source, @"\.KvStartingWith\s*\(");
                 if (!scan.Success || Close(source, scan.Index + scan.Length - 1) != source.Length - 1) return (true, null);
-                var heads = Resolve(source[(scan.Index + scan.Length)..^1], inner, depth + 1);
-                return (true, heads?.Select(h => h with { Exact = false }).ToList());
+                var heads = Resolve(source[(scan.Index + scan.Length)..^1], s with { At = s.Start + l.Index }, depth + 1);
+                if (heads is null) return (true, null);
+                all = Union(all, [.. heads.Select(h => h with { Exact = false })]);
             }
-            return (true, null);
+            return (true, all);
         }
 
         List<Head>? Callers(string param, Scope s, int depth)
         {
+            // Every call of the member: a private one is called only unqualified (or through this.) inside its own type, its partial files
+            // included; any other is followed to every call by its name, qualified or not, in every file — a same-named member elsewhere
+            // with the same arity is followed too (more to follow, never less), and one that cannot be followed fails the scan.
             var index = s.Params.ToList().IndexOf(param);
-            var call = new Regex(@"(?<![\w.])(?:this\.)?" + Regex.Escape(s.Member) + @"\s*\(");
-            List<Head>? all = null;
-            foreach (var (f, text) in code.Where(c => c.Key == s.File))
+            var line = code[s.File][s.Start..(code[s.File].IndexOf('\n', s.Start) is var nl && nl < 0 ? code[s.File].Length : nl)];
+            var isPrivate = !Regex.IsMatch(line, @"\b(?:public|internal|protected)\b");
+            var call = new Regex((isPrivate ? @"(?<![\w.])(?:this\.)?" : @"(?<!\w)") + Regex.Escape(s.Member) + @"\s*\(");
+            var groups = new Regex(@"(?:[=(,]|\breturn)\s*(?:this\.)?" + Regex.Escape(s.Member) + @"\s*[),;]");
+            // A parameter with a default is also that default, for a call that leaves it out.
+            var declared = DeclaredParams(s);
+            var defaulted = index < declared.Count && SplitTop(declared[index], "=") is { Count: > 1 } d ? d[1] : null;
+            List<Head>? all = defaulted is null ? null : Resolve(defaulted, s with { Env = new Dictionary<string, (string, Scope)>() }, depth + 1);
+            if (defaulted is not null && all is null) return null;
+            foreach (var (f, text) in code.Where(c => !isPrivate || SameType(s.File).Contains(c.Key)))
+            {
+                if (SameType(s.File).Contains(f) && groups.IsMatch(text))
+                    return null; // handed on as a method group: its callers are not readable
                 foreach (Match m in call.Matches(text))
                 {
-                    var site = ScopeAt(f, m.Index);
-                    if (site.Start == s.Start && m.Index < s.Start + 200 && IsDeclarationOf(text, m.Index)) continue;
                     if (IsDeclarationOf(text, m.Index)) continue;
                     var args = Args(text, m.Index + m.Length - 1, out _);
+                    if (args.Count > s.Params.Count || args.Count <= index && Argument(args, index, param) is null) continue;
                     var arg = Argument(args, index, param);
                     if (arg is null) return null;
-                    all = Union(all ?? [], Resolve(arg, site, depth + 1));
+                    all = Union(all ?? [], Resolve(arg, ScopeAt(f, m.Index), depth + 1));
                     if (all is null) return null;
                 }
+            }
             return all;
         }
 
@@ -248,7 +280,7 @@ public partial class InvariantProofTests
             if (q.Length > 0 && !char.IsUpper(q.Split('.')[^1][0])) return null; // an instance's method: a value, not a key maker
             var decl = new Regex(@"(?m)^[ \t]*(?:(?:public|internal|private|protected|static|override|virtual|sealed|new|partial)\s+)*string\??\s+"
                                  + Regex.Escape(name) + @"\s*\(");
-            foreach (var files in Candidates(q, s.File, sameFileOnly: q.Length == 0))
+            foreach (var files in Candidates(q, s.File))
             {
                 List<Head>? all = null;
                 foreach (var f in files)
@@ -261,7 +293,7 @@ public partial class InvariantProofTests
                         var env = new Dictionary<string, (string, Scope)>(StringComparer.Ordinal);
                         for (var i = 0; i < ps.Count; i++)
                             if (Argument(args, i, ps[i]) is { } a) env[ps[i]] = (a, s);
-                        var body = new Scope(f, m.Index, close + 1, name, ps, env);
+                        var body = new Scope(f, m.Index, BodyEnd(text, close), close + 1, name, ps, env);
                         List<Head>? returns = [];
                         foreach (var r in Returns(text, close + 1))
                             returns = Union(returns, Resolve(r.Expr, body with { At = r.At }, depth + 1));
@@ -287,13 +319,24 @@ public partial class InvariantProofTests
             }
         }
 
-        IEnumerable<IReadOnlyList<string>> Candidates(string q, string file, bool sameFileOnly = false)
+        /// <summary>Where a name may be declared: unqualified, this file and then the other files of a partial type it declares; qualified, the qualifier's type.</summary>
+        IEnumerable<IReadOnlyList<string>> Candidates(string q, string file)
         {
-            if (q.Length == 0) { yield return [file]; if (sameFileOnly) yield break; }
-            var type = q.Length == 0 ? null : q.Split('.')[^1];
-            if (type is not null)
-                yield return code.Keys.Where(f => Regex.IsMatch(code[f], @"\b(?:class|record|struct|interface)\s+" + Regex.Escape(type) + @"\b")).ToList();
-            if (q.Length == 0) yield return code.Keys.ToList();
+            if (q.Length == 0)
+            {
+                yield return [file];
+                yield return SameType(file);
+                yield break;
+            }
+            var type = q.Split('.')[^1];
+            yield return code.Keys.Where(f => Regex.IsMatch(code[f], @"\b(?:class|record|struct|interface)\s+" + Regex.Escape(type) + @"\b")).ToList();
+        }
+
+        /// <summary>This file and every other file that declares a partial of a type this file declares partial.</summary>
+        IReadOnlyList<string> SameType(string file)
+        {
+            var partials = Regex.Matches(code[file], @"\bpartial\s+(?:class|record|struct)\s+(\w+)").Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+            return [.. code.Keys.Where(f => f == file || partials.Any(t => Regex.IsMatch(code[f], @"\bpartial\s+(?:class|record|struct)\s+" + Regex.Escape(t) + @"\b")))];
         }
 
         static string? Argument(IReadOnlyList<string> args, int index, string name)
@@ -311,11 +354,16 @@ public partial class InvariantProofTests
 
         // ---- scopes -----------------------------------------------------------------------------------------------------------
 
-        /// <summary>A member's declaration line: modifiers, ONE return type (a tuple type is not read: its member is then unreadable), the name.</summary>
+        /// <summary>A method's or constructor's declaration line: modifiers, one return type (a name, a generic, an array or a tuple), the name.</summary>
         static readonly Regex MemberLine = new(
             @"^[ \t]{4,}(?<pre>(?:(?:public|internal|private|protected|static|async|override|virtual|sealed|readonly|unsafe|new|partial|extern|abstract)\s+)*"
-            + @"[A-Za-z_][\w.]*(?:<[^()=;]*>)?(?:\[\])*\??)\s+(?<name>[A-Za-z_]\w*)\s*(?:<[^<>()]*>)?\s*\(");
+            + @"(?:[A-Za-z_][\w.]*(?:<[^()=;]*>)?|\([^()=;]*\))(?:\[\])*\??)\s+(?<name>[A-Za-z_]\w*)\s*(?:<[^<>()]*>)?\s*\(");
 
+        /// <summary>
+        /// The method or constructor whose BODY holds <paramref name="at"/>: the nearest declaration above it whose body reaches it (a
+        /// local function's is passed over for its method's when it ends first). A position in no body the reader knows — a property,
+        /// an accessor, an initializer — is in member "?", which no list allows and whose parameters are none.
+        /// </summary>
         Scope ScopeAt(string file, int at)
         {
             var text = code[file];
@@ -328,12 +376,30 @@ public partial class InvariantProofTests
                     && !m.Groups["pre"].Value.EndsWith('.'))
                 {
                     var open = i + m.Length - 1;
-                    var ps = Args(text, open, out _).Select(ParamName).Where(x => x.Length > 0).ToList();
-                    return new(file, i, at, m.Groups["name"].Value, ps, new Dictionary<string, (string, Scope)>());
+                    var ps = Args(text, open, out var close).Select(ParamName).Where(x => x.Length > 0).ToList();
+                    var body = BodyEnd(text, close);
+                    if (at <= body) return new(file, i, body, at, m.Groups["name"].Value, ps, new Dictionary<string, (string, Scope)>());
                 }
                 i = LineStart(text, i - 1);
             }
-            return new(file, 0, at, "?", [], new Dictionary<string, (string, Scope)>());
+            return new(file, 0, 0, at, "?", [], new Dictionary<string, (string, Scope)>());
+        }
+
+        /// <summary>The parameters of the member a scope is, as declared (types and defaults included).</summary>
+        List<string> DeclaredParams(Scope s)
+        {
+            var text = code[s.File];
+            var end = text.IndexOf('\n', s.Start) is var n && n < 0 ? text.Length : n;
+            return MemberLine.Match(text[s.Start..end]) is { Success: true } m ? Args(text, s.Start + m.Length - 1, out _) : [];
+        }
+
+        /// <summary>Where the body after a parameter list closing at <paramref name="close"/> ends: its block's brace, or an expression body's <c>;</c>.</summary>
+        static int BodyEnd(string text, int close)
+        {
+            var i = close + 1;
+            while (i < text.Length && text[i] != '{' && text[i] != ';' && !(text[i] == '=' && i + 1 < text.Length && text[i + 1] == '>')) i++;
+            if (i >= text.Length || text[i] == ';') return i;
+            return text[i] == '{' ? Close(text, i) : End(text, i + 2);
         }
 
         static bool IsDeclarationOf(string text, int at)
