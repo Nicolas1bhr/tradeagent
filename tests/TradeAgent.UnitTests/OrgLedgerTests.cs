@@ -502,6 +502,11 @@ public class OrgLedgerTests
         // REVISITED, OUT LOUD, BY U-door-bounds: SlowCallsSince — the Work page's read of the last day's slow tool calls, the app's own measure
         // (ToolCallStore.SlowSince's one query). A read of tool_call, no org table; no op, door verb or trade verb reaches it.
         mandate = [.. mandate, "SlowCallsSince"];
+        // REVISITED, OUT LOUD, BY U-head-staffs (D13-hire): UnstaffedUnder and UnmandatedUnder — a head's units under its own that stand empty, and
+        // their active heads holding no mandate from it (RoleObjectives v5) — and Children, PositionsNotEnded and CollapseBy, org-show's `below`.
+        // Reads of the chart and the mandate ledger (OrgStore.Staffing.cs holds no INSERT, UPDATE or DELETE); no op, door verb or trade verb
+        // writes through them.
+        mandate = [.. mandate, "Children", "CollapseBy", "PositionsNotEnded", "UnmandatedUnder", "UnstaffedUnder"];
         Assert.Equal(
             // ActivePositionsBeyondLegacy: the activation gate's one read (U-thinking-seats-a) — a read, not a writer.
             [.. new[] { "ActivePositionsBeyondLegacy", "Ancestors", "FundingChain", "FundingLine", "IsAppPrincipal", "Position", "Positions", "Roster", "Standing", "Subtree", "Unfundable", "UnitOf", "Units" }

@@ -383,7 +383,17 @@ public class CanonTests(ITestOutputHelper log) : IDisposable
         (12, "org:chief", "faa2b3ad100386c5608435a4410b441655a77e2f84c49bc49e64a14206534d0f"),
         (12, "org:head", "2ce9df502ff9bc0b8ee2a8a0dc4c1a554745b52e1bb4fe896fe15584b5585df9"),
         (12, "org:staff", "ce196eaf3bc7b03be2fad51213c2b8977d6b8558d52d76dd6a163651269e5059"),
-        (12, "org:executor", "5be3305fad697f69bfeb7bc7bbf91b29e4b7f3b87d1216608e96686dd689d72b")
+        (12, "org:executor", "5be3305fad697f69bfeb7bc7bbf91b29e4b7f3b87d1216608e96686dd689d72b"),
+        // v13 (U-head-staffs; D13-hire): a charter is never a finished turn — the chief and a head are told a unit they charter stands empty until
+        // they staff it (its head appointed with the hire's head flag and given a first mandate, in the charter's own turn when they can, else first
+        // in the next), and that org-show lists the units under theirs with their heads. The pair's, staff's, executor's and the unplaced org seat's are v12's.
+        (13, CouncilRoles.Operations, "ffdf8a622320bf34f5af6fb33fc61a9fa7a239eda2609c95eee01a14dce9b587"),
+        (13, CouncilRoles.Research, "3438e66624b16db5751c1f38b08cb6862cc38e69dec6568ee49af546d9d484d3"),
+        (13, "org", "9db9a2128d43570149601297d1715637d63edb40532d41dc9ea2cd157f596204"),
+        (13, "org:chief", "7fd27efca510293620aa679a295421a3a73018390ab50080f477dbb4cf6c44ca"),
+        (13, "org:head", "da0a76cf6f0b94fa3cbb4745f64c36a2c89d03c4df87c6d75d47a9dca842f2f1"),
+        (13, "org:staff", "ce196eaf3bc7b03be2fad51213c2b8977d6b8558d52d76dd6a163651269e5059"),
+        (13, "org:executor", "5be3305fad697f69bfeb7bc7bbf91b29e4b7f3b87d1216608e96686dd689d72b")
     ];
 
     /// <summary>

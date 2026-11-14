@@ -103,7 +103,8 @@ public class RoleObjectivesTests
 
         Assert.Equal([RoleObjectives.OwnerAnswered, RoleObjectives.RequestFinal, RoleObjectives.PositionWatched,
                 RoleObjectives.BoundaryAssessed], RoleObjectives.KindsOf(CouncilRoles.Operations));
-        Assert.Equal(4, RoleObjectives.Version);
+        // RAISED OUT LOUD BY U-head-staffs: v5 adds a head's unit-unstaffed and head-unmandated kinds (CouncilLoopHeadStaffsTests).
+        Assert.Equal(5, RoleObjectives.Version);
     }
 
     /// <summary>

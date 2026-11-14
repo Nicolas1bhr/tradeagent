@@ -339,7 +339,33 @@ public sealed partial class GatewayPipeServer
         var all = org.MandatesOf(caller).ToList();
         var before = req.Str("before");
         var open = all.Skip(From(all.FindIndex(m => m.Id == before), before, "mandate")).Where(m => org.IsOpen(m.Id));
-        long spent = ReplyBytes(ShowOrg(caller, units, held, decided, "bytes", WidestId, note)) + 64;
+
+        // THE UNITS DIRECTLY UNDER YOURS (U-head-staffs; D13-hire § 4.1): the run's chief chartered a division and no read of its own ever showed
+        // it again, its vacant head included. Each child not closed, from the chart's rows: its head (or "vacant"), status, own shares, the
+        // positions it holds that have not ended and a bounded experiment's collapse date — never a forecast or a probability of anyone's.
+        // Served first, inside the same byte bound as the rest, and cut and counted, never dropped in silence.
+        var children = org.Children(unit.Id);
+        var below = new List<object>();
+        long spent = ReplyBytes(ShowOrg(caller, units, below, children.Count, BelowCut(99_999, 99_999), held, decided, "bytes", WidestId, note)) + 64;
+        string? belowCut = null;
+        foreach (var child in children)
+        {
+            var row = new
+            {
+                id = child.Id,
+                kind = child.Kind,
+                name = OrgEnvelopes.NameOf(child.Id),
+                head = child.HeadPositionId ?? "vacant",
+                status = child.Status,
+                shares = new { ai = child.EnvelopeShare, trials = child.TrialShare, verdicts = child.VerdictShare },
+                positions = org.PositionsNotEnded(child.Id),
+                collapse_by = org.CollapseBy(child.Id)
+            };
+            var cost = ReplyBytes(row) + 1;
+            if (spent + cost > ResearchLedger.MaxReadBytes) { belowCut = BelowCut(below.Count, children.Count); break; }
+            spent += cost;
+            below.Add(row);
+        }
         string? cappedBy = null, last = null;
         foreach (var m in open)
         {
@@ -362,15 +388,23 @@ public sealed partial class GatewayPipeServer
             (mine ? held : decided).Add(row);
             last = m.Id;
         }
-        return ShowOrg(caller, units, held, decided, cappedBy, cappedBy is null ? null : last, note);
+        return ShowOrg(caller, units, below, children.Count, belowCut, held, decided, cappedBy, cappedBy is null ? null : last, note);
     }
 
-    static object ShowOrg(string caller, List<object> chain, List<object> held, List<object> decided, string? cappedBy, string? next,
-        string envelopes) => new
+    /// <summary>What a cut <c>below</c> says: how many of the units under the caller's it lists, and why the rest are not.</summary>
+    static string BelowCut(int served, int total) =>
+        $"{served.ToString(CultureInfo.InvariantCulture)} of the {total.ToString(CultureInfo.InvariantCulture)} units under yours are listed: "
+        + "the rest did not fit the answer's size bound.";
+
+    static object ShowOrg(string caller, List<object> chain, List<object> below, int belowTotal, string? belowCut, List<object> held,
+        List<object> decided, string? cappedBy, string? next, string envelopes) => new
     {
         position = caller,
         unit = chain[0],
         chain,
+        below,
+        below_total = belowTotal,
+        below_cut = belowCut,
         held,
         decided,
         more = cappedBy is not null,
@@ -378,7 +412,8 @@ public sealed partial class GatewayPipeServer
         next_before = next,
         cut = Cut(held.Count + decided.Count, cappedBy, next),
         envelopes_note = envelopes,
-        note = "Your own place on the chart: your unit, the line above it to the owner, and your open mandates. The chart, the "
+        note = "Your own place on the chart: your unit, the line above it to the owner, the units directly under yours (a head 'vacant' "
+               + "until one is appointed), and your open mandates. The chart, the "
                + "statuses, the envelopes and the spend are TradeAgent's records; a goal is its issuer's words — 'mandate-show' reads one."
     };
 
