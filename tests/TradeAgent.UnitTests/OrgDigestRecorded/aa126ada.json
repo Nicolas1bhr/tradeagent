@@ -1,0 +1,852 @@
+{
+  "app": {
+    "ai_works_on_its_own": null,
+    "disk_pause": null,
+    "schema": "57"
+  },
+  "app_db": "present",
+  "app_errors": {
+    "groups": [],
+    "total": 0
+  },
+  "arrows": {
+    "arrows": [
+      {
+        "arrow": "charter",
+        "count": 1,
+        "first_at": "2026-10-30T13:03:00.0000000Z",
+        "first_refusal": "two structural changes this week",
+        "first_refused_at": "2026-10-30T12:30:00.0000000Z",
+        "refused": 1
+      },
+      {
+        "arrow": "hire",
+        "count": 2,
+        "first_at": "2026-10-30T13:00:00.0000000Z",
+        "first_refusal": "refused at the pipe: INVALID_REQUEST",
+        "first_refused_at": "2026-10-31T09:40:00.0000000Z",
+        "refused": 2
+      },
+      {
+        "arrow": "self-activation",
+        "count": 1,
+        "first_at": "2026-10-30T13:02:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "mandate",
+        "count": 1,
+        "first_at": "2026-10-31T09:05:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "delivery",
+        "count": 1,
+        "first_at": "2026-10-31T09:06:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "accepted",
+        "count": 0,
+        "first_at": null,
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "rejected",
+        "count": 1,
+        "first_at": "2026-10-31T09:07:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "backtest",
+        "count": 2,
+        "first_at": "2026-10-31T00:30:00.0000000Z",
+        "first_refusal": "'trade' is not available in this build's configuration.",
+        "first_refused_at": "2026-10-31T09:32:00.0000000Z",
+        "refused": 1
+      },
+      {
+        "arrow": "verdict asked",
+        "count": 3,
+        "first_at": "2026-10-31T01:00:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "verdict given",
+        "count": 2,
+        "first_at": "2026-10-31T01:30:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "paper allocation",
+        "count": 1,
+        "first_at": "2026-10-31T02:40:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "paper run",
+        "count": 1,
+        "first_at": "2026-10-30T13:00:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "paper fill",
+        "count": 3,
+        "first_at": "2026-10-30T14:00:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "note raised",
+        "count": 1,
+        "first_at": "2026-10-31T09:00:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "note taken",
+        "count": 1,
+        "first_at": "2026-10-31T09:10:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "kill",
+        "count": 1,
+        "first_at": "2026-10-31T09:09:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      },
+      {
+        "arrow": "iterate",
+        "count": 1,
+        "first_at": "2026-10-31T09:11:00.0000000Z",
+        "first_refusal": null,
+        "first_refused_at": null,
+        "refused": 0
+      }
+    ],
+    "cannot_be_read": "a keep has no record of its own: a kill is the author's ledger entry, an iterate a new version after a run's note",
+    "first_refusal": {
+      "at": "2026-10-30T12:30:00.0000000Z",
+      "what": "org_charter",
+      "words": "two structural changes this week"
+    },
+    "not_reached": [
+      "accepted"
+    ],
+    "of": 17,
+    "reached": 16
+  },
+  "attention": [
+    "1 deployment(s) in mode 'LIVE_CONFIRM' (suspended): NOT paper",
+    "wakes: 1 on failed turns, 1 on lost turns, 1 raised again",
+    "1 AI launch(es) LOST since T0",
+    "3 of 8 AI launches failed or reported a vendor error since T0",
+    "overdue wake(s): pos-aaaaaa (1 position); pos-aaaaaa: no reason on record",
+    "tape: beta last delivered 4h ago",
+    "tape: 1 parse failure(s) since T0"
+  ],
+  "cell_proof": {
+    "current": true,
+    "current_proven_at": "<wall clock>+00:00",
+    "current_provider": "codex",
+    "differs": [],
+    "newest_gap_rows": 1,
+    "newest_proven_at": "<wall clock>+00:00",
+    "newest_provider": "codex",
+    "revoked": 1,
+    "unrevoked_proofs": 1
+  },
+  "day_total": {
+    "board_policy": {
+      "mode": "PAPER",
+      "plan_day_total": "40.0000",
+      "version": 1
+    },
+    "board_seats_ceiling": "4.0000",
+    "board_seats_spent": "0.4000",
+    "board_share": "0.10",
+    "day": {
+      "from": "2026-10-31T00:00:00.0000000Z",
+      "to": "<wall clock>"
+    },
+    "plan_counted": "4.9500",
+    "plan_used_of_board_pct": "12.4",
+    "used": {
+      "key": "0.7500",
+      "plan": "4.9500",
+      "unknown": "0.0000"
+    },
+    "words": "plan_counted = plan + unknown launches (an unknown counts against both ceilings); the owner's real-money limit is his setting, not read here"
+  },
+  "deployments": {
+    "allocations": {
+      "new_since": 1,
+      "open": 1,
+      "stopped_since": 1,
+      "total": 2
+    },
+    "by_mode_state": [
+      {
+        "count": 1,
+        "mode": "LIVE_CONFIRM",
+        "state": "suspended"
+      },
+      {
+        "count": 1,
+        "mode": "PAPER",
+        "state": "active"
+      },
+      {
+        "count": 1,
+        "mode": "PAPER",
+        "state": "ended"
+      }
+    ],
+    "deployments": [
+      {
+        "account": "LIVE-1",
+        "end_reason": null,
+        "fees": "0.0000",
+        "fees_unknown_fills": 0,
+        "fills": 0,
+        "id": "dep-live-sus",
+        "mode": "LIVE_CONFIRM",
+        "net_if_known": "0.0000",
+        "open_quantity": "0",
+        "realised": "0.0000",
+        "started_at": "2026-10-30T13:00:00.0000000Z",
+        "state": "suspended",
+        "suspended_reason": null,
+        "symbol": "ES",
+        "unprotected": null,
+        "unrealised": "0.0000"
+      },
+      {
+        "account": "PAPER-1",
+        "end_reason": null,
+        "fees": "0.2000",
+        "fees_unknown_fills": 1,
+        "fills": 3,
+        "id": "dep-paper-ac",
+        "mode": "PAPER",
+        "net_if_known": null,
+        "open_quantity": "2",
+        "realised": "10.0000",
+        "started_at": "2026-10-30T13:00:00.0000000Z",
+        "state": "active",
+        "suspended_reason": null,
+        "symbol": "BTCUSDT",
+        "unprotected": null,
+        "unrealised": "10.0000"
+      }
+    ],
+    "envelopes": [
+      {
+        "currency": "USDT",
+        "expires_at": "<wall clock>",
+        "max_deployments": 3,
+        "max_notional": "5000",
+        "max_quantity": "1",
+        "open": 2,
+        "symbol": "BTCUSDT"
+      },
+      {
+        "currency": "USDT",
+        "expires_at": "<wall clock>",
+        "max_deployments": 3,
+        "max_notional": "5000",
+        "max_quantity": "1",
+        "open": 0,
+        "symbol": "ETHUSDT"
+      }
+    ],
+    "label": "SIMULATION: paper deployments, modelled fills; not money",
+    "notes": {
+      "last": "Forward paper run dep-1: 3 simulated fills.",
+      "last_at": "2026-10-31T09:00:00.0000000Z",
+      "since": 1,
+      "unprotected_at_close_last_at": null,
+      "unprotected_at_close_since": 0
+    }
+  },
+  "digest": "org-digest/1",
+  "disk": {
+    "below_floor": false,
+    "floor": 10737418240,
+    "free": 42949672960,
+    "inodes_below_floor": false,
+    "inodes_floor": 655360,
+    "inodes_free": 5000000,
+    "inodes_free_pct": 76.3,
+    "inodes_total": 6553600,
+    "total": 107374182400
+  },
+  "errors": {
+    "attempts_since": 8,
+    "exit_codes": {
+      "0": 4,
+      "1": 2
+    },
+    "failed_since": 3,
+    "groups": [
+      {
+        "count": 2,
+        "ended": null,
+        "exit_code": 1,
+        "last_at": "2026-10-31T11:00:00.0000000Z",
+        "model": "gpt-5.6-sol",
+        "offered_tools": 2,
+        "positions": [
+          "pos-aaaaaa"
+        ],
+        "state": "ENDED",
+        "vendor_said": "ERROR 429: the model refused this request",
+        "words": null
+      },
+      {
+        "count": 1,
+        "ended": null,
+        "exit_code": null,
+        "last_at": "2026-10-31T13:40:00.0000000Z",
+        "model": "gpt-5.6-sol",
+        "offered_tools": null,
+        "positions": [
+          "operations"
+        ],
+        "state": "LOST",
+        "vendor_said": null,
+        "words": null
+      }
+    ]
+  },
+  "not_started": {
+    "causes": [],
+    "gate": 0,
+    "lane": 0,
+    "positions": [],
+    "stuck": [],
+    "total": 0
+  },
+  "now": "2026-10-31T14:00:00.0000000Z",
+  "org_events": {
+    "events": [
+      {
+        "count": 5,
+        "deciders": {
+          "app": 5
+        },
+        "kind": "seeded",
+        "last_at": "<wall clock>"
+      },
+      {
+        "count": 2,
+        "deciders": {
+          "chief": 1,
+          "owner": 1
+        },
+        "kind": "activated",
+        "last_at": "2026-10-30T13:02:30.0000000Z"
+      },
+      {
+        "count": 2,
+        "deciders": {
+          "chief": 2
+        },
+        "kind": "hired",
+        "last_at": "2026-10-30T13:01:00.0000000Z"
+      },
+      {
+        "count": 1,
+        "deciders": {
+          "operations": 1
+        },
+        "kind": "chartered",
+        "last_at": "2026-10-30T13:03:00.0000000Z"
+      },
+      {
+        "count": 1,
+        "deciders": {
+          "app": 1
+        },
+        "kind": "tilted",
+        "last_at": "2026-10-31T10:00:00.0000000Z"
+      }
+    ],
+    "mandate_events": [
+      {
+        "count": 1,
+        "kind": "delivered"
+      },
+      {
+        "count": 1,
+        "kind": "issued"
+      },
+      {
+        "count": 1,
+        "kind": "rejected"
+      }
+    ],
+    "total": 11
+  },
+  "pace": {
+    "act_tables_absent": [],
+    "clean_turns": 4,
+    "cost_per_turn": "1.0875",
+    "days": 1.08,
+    "first_vendor_limit": {
+      "at": "2026-10-31T10:00:00.0000000Z",
+      "position": "pos-aaaaaa",
+      "words": "ERROR 429: the model refused this request"
+    },
+    "idle_share_pct": "25.0",
+    "idle_turns": 1,
+    "positions": [
+      {
+        "clean_turns": 2,
+        "cost_per_turn": "1.3250",
+        "idle_turns": 0,
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "position": "operations",
+        "turns": 4,
+        "turns_per_day": 3.69,
+        "wait_max_s": 3600,
+        "wait_median_s": 1830
+      },
+      {
+        "clean_turns": 1,
+        "cost_per_turn": "1.0000",
+        "idle_turns": 0,
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "position": "pos-aaaaaa",
+        "turns": 3,
+        "turns_per_day": 2.77,
+        "wait_max_s": 600,
+        "wait_median_s": 360
+      },
+      {
+        "clean_turns": 1,
+        "cost_per_turn": "0.4000",
+        "idle_turns": 1,
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "position": "board-1",
+        "turns": 1,
+        "turns_per_day": 0.92,
+        "wait_max_s": null,
+        "wait_median_s": null
+      }
+    ],
+    "turns": 8,
+    "turns_per_day": 7.38,
+    "vendor_limit_refusals": 2,
+    "wait_max_s": 3600,
+    "wait_median_s": 360,
+    "words": "idle = a launch that ended cleanly and left no row of work under its id and no chart act in its span; wait = a wake's due time to the launch that took it; vendor limits are read from the vendor's words"
+  },
+  "positions": {
+    "by_status_model": [
+      {
+        "count": 2,
+        "ids": [
+          "operations",
+          "research"
+        ],
+        "model": "(owner's setting)",
+        "status": "active"
+      },
+      {
+        "count": 1,
+        "ids": [
+          "pos-aaaaaa"
+        ],
+        "model": "gpt-5.6-sol",
+        "status": "active"
+      },
+      {
+        "count": 1,
+        "ids": [
+          "pos-bbbbbb"
+        ],
+        "model": "(owner's setting)",
+        "status": "dormant"
+      },
+      {
+        "count": 1,
+        "ids": [
+          "pos-cccccc"
+        ],
+        "model": "gpt-5.6-sol",
+        "status": "ended"
+      }
+    ],
+    "models_run_since": [
+      {
+        "model": "gpt-5.6-sol",
+        "turns": 8
+      }
+    ],
+    "total": 5
+  },
+  "read_only": true,
+  "refusals": {
+    "groups": [
+      {
+        "count": 3,
+        "example": "no order verb is offered to this seat",
+        "last_at": "2026-10-31T09:12:00.0000000Z",
+        "shape": "no order verb is offered to this seat",
+        "source": "tool",
+        "what": "place_order",
+        "wordings": 1,
+        "words": "no order verb is offered to this seat"
+      },
+      {
+        "count": 2,
+        "example": "op org-hire / INVALID_REQUEST",
+        "last_at": "2026-10-31T09:41:00.0000000Z",
+        "shape": "op org-hire / INVALID_REQUEST",
+        "source": "pipe",
+        "what": "op_refused",
+        "wordings": 1,
+        "words": "op org-hire / INVALID_REQUEST"
+      },
+      {
+        "count": 1,
+        "example": "the envelope allows 1, the plan asked for 3",
+        "last_at": "2026-10-31T09:00:00.0000000Z",
+        "shape": "the envelope allows <n>, the plan asked for <n>",
+        "source": "deployment-op",
+        "what": "entry",
+        "wordings": 1,
+        "words": "the envelope allows 1, the plan asked for 3"
+      },
+      {
+        "count": 1,
+        "example": "op - / -",
+        "last_at": "2026-10-31T09:42:00.0000000Z",
+        "shape": "op - / -",
+        "source": "pipe",
+        "what": "auth_rejected",
+        "wordings": 1,
+        "words": "op - / -"
+      },
+      {
+        "count": 1,
+        "example": "two structural changes this week",
+        "last_at": "2026-10-30T12:30:00.0000000Z",
+        "shape": "two structural changes this week",
+        "source": "tool",
+        "what": "org_charter",
+        "wordings": 1,
+        "words": "two structural changes this week"
+      },
+      {
+        "count": 1,
+        "example": "'trade' is not available in this build's configuration.",
+        "last_at": "2026-10-31T09:32:00.0000000Z",
+        "shape": "'\u2026' is not available in this build's configuration.",
+        "source": "tool",
+        "what": "trade",
+        "wordings": 1,
+        "words": "'trade' is not available in this build's configuration."
+      },
+      {
+        "count": 1,
+        "example": "credentials are the owner's",
+        "last_at": "2026-10-31T09:20:00.0000000Z",
+        "shape": "credentials are the owner's",
+        "source": "tool",
+        "what": "wallet",
+        "wordings": 1,
+        "words": "credentials are the owner's"
+      }
+    ],
+    "total": 10
+  },
+  "signal": {
+    "campaigns": {
+      "campaigns": [
+        {
+          "closed": false,
+          "exploration": 1,
+          "exploration_budget": 50,
+          "exploration_pot_full": false,
+          "holdout_from": "<wall clock>",
+          "id": 1,
+          "name": "btc",
+          "pair": "BTCUSDT",
+          "renewed_from": 4,
+          "spent_on": "final judgements",
+          "trial_budget": 200,
+          "trials": 4,
+          "verdict_budget": 3,
+          "verdicts": 5
+        },
+        {
+          "closed": false,
+          "exploration": 0,
+          "exploration_budget": 50,
+          "exploration_pot_full": false,
+          "holdout_from": "<wall clock>",
+          "id": 2,
+          "name": "eth",
+          "pair": "ETHUSDT",
+          "renewed_from": null,
+          "spent_on": null,
+          "trial_budget": 200,
+          "trials": 1,
+          "verdict_budget": 3,
+          "verdicts": 1
+        },
+        {
+          "closed": false,
+          "exploration": 0,
+          "exploration_budget": 50,
+          "exploration_pot_full": false,
+          "holdout_from": "<wall clock>",
+          "id": 3,
+          "name": "btc again",
+          "pair": "BTCUSDT",
+          "renewed_from": null,
+          "spent_on": "final judgements",
+          "trial_budget": 200,
+          "trials": 0,
+          "verdict_budget": 3,
+          "verdicts": 5
+        }
+      ]
+    },
+    "candidates": {
+      "admissible_since": 1,
+      "admissible_total": 1,
+      "by_class": {
+        "paper-eligible": {
+          "since": 1,
+          "total": 1
+        }
+      }
+    },
+    "cannot_be_read": "whether a fresh session found a finding again from the ledger is not recorded anywhere",
+    "forecasts": {
+      "managers": [
+        {
+          "days_to_50": 52.0,
+          "position": "pos-aaaaaa",
+          "resolved_per_day": 0.92,
+          "resolved_since": 1,
+          "resolved_total": 2,
+          "scored_since": 2,
+          "written_per_day": 2.77,
+          "written_since": 3
+        }
+      ],
+      "words": "resolved = scored and not void; days to 50 at the rate since T0; none = nothing resolved yet"
+    },
+    "forward_holds": {
+      "holding": 0,
+      "holds": [],
+      "words": "a hold is armed once, when a campaign is spent: from its cutoff its pair's bars and tape are held back with no end until a campaign opens over them; unreadable = the app holds every pair from the beginning of time"
+    },
+    "ledger": {
+      "decision": 1,
+      "finding": 1,
+      "kill": 1
+    },
+    "withheld": {
+      "by_asked": [],
+      "dataset": 0,
+      "first_armed_at": null,
+      "fresh": 0,
+      "pipe_frames": 0,
+      "since_first_armed": null,
+      "total": 0,
+      "unread": 0,
+      "words": "each a paid turn that learned only the refusal; pipe frames carry no words, so no window; subject = the tool and op asked (a tape read's subject, news or macro or a pair, is not on the row)"
+    }
+  },
+  "since": "2026-10-30T12:00:00.0000000Z",
+  "tape_db": "present",
+  "tape_health": {
+    "bytes": "<n>",
+    "fetches_since": 5,
+    "last_parse_note": "parse: not json",
+    "newest": {
+      "age_s": 600,
+      "source": "alpha"
+    },
+    "non_200_since": 1,
+    "parse_failed_since": 1,
+    "service": null,
+    "source_count": 3,
+    "sources": [
+      {
+        "age_s": 600,
+        "fetches_since": 2,
+        "newest_delivery": "2026-10-31T13:50:00.0000000Z",
+        "non_200_since": 0,
+        "parse_failed_since": 0,
+        "source": "alpha"
+      },
+      {
+        "age_s": 14400,
+        "fetches_since": 2,
+        "newest_delivery": "2026-10-31T10:00:00.0000000Z",
+        "non_200_since": 1,
+        "parse_failed_since": 0,
+        "source": "beta"
+      },
+      {
+        "age_s": null,
+        "fetches_since": 1,
+        "newest_delivery": null,
+        "non_200_since": 0,
+        "parse_failed_since": 1,
+        "source": "gamma"
+      }
+    ],
+    "stalest": {
+      "age_s": 14400,
+      "source": "beta"
+    }
+  },
+  "turns": {
+    "cost_is": "the AI's list-price equivalent, not a bill",
+    "positions": [
+      {
+        "board_seat": false,
+        "cost_since": "5.3000",
+        "cost_today": "2.3000",
+        "position": "operations",
+        "turns_since": 4,
+        "turns_today": 3
+      },
+      {
+        "board_seat": false,
+        "cost_since": "3.0000",
+        "cost_today": "3.0000",
+        "position": "pos-aaaaaa",
+        "turns_since": 3,
+        "turns_today": 3
+      },
+      {
+        "board_seat": true,
+        "cost_since": "0.4000",
+        "cost_today": "0.4000",
+        "position": "board-1",
+        "turns_since": 1,
+        "turns_today": 1
+      }
+    ],
+    "total": {
+      "cost_since": "8.7000",
+      "cost_today": "5.7000",
+      "turns_since": 8,
+      "turns_today": 7
+    }
+  },
+  "verdicts": {
+    "asked_since": 3,
+    "given_since": [
+      {
+        "count": 1,
+        "reason": "meets-the-paper-policy-on-historical-evidence",
+        "verdict": "paper-eligible"
+      },
+      {
+        "count": 1,
+        "reason": "no-trade-on-the-holdout",
+        "verdict": "refused"
+      }
+    ],
+    "given_total": 2,
+    "no_trade_refusals_since": 1,
+    "referee_inconclusive_since": 1,
+    "waiting_now": 1,
+    "words": "asked = strategy_verdict rows requested since T0; given = promotion rows written since T0; waiting = asked, not yet given (ever)"
+  },
+  "wakes": {
+    "active_positions": [
+      {
+        "chief_floor": false,
+        "in_seconds": 3600,
+        "kind": "order",
+        "last_consumed_at": "2026-10-31T13:30:00.0000000Z",
+        "next_due": "2026-10-31T15:00:00.0000000Z",
+        "pending": 2,
+        "position": "operations",
+        "why": null
+      },
+      {
+        "chief_floor": false,
+        "in_seconds": -3600,
+        "kind": "self",
+        "last_consumed_at": "2026-10-31T10:00:00.0000000Z",
+        "next_due": "2026-10-31T13:00:00.0000000Z",
+        "pending": 1,
+        "position": "pos-aaaaaa",
+        "why": null
+      },
+      {
+        "chief_floor": false,
+        "in_seconds": null,
+        "kind": null,
+        "last_consumed_at": null,
+        "next_due": null,
+        "pending": 0,
+        "position": "research",
+        "why": null
+      }
+    ],
+    "blocked_now": [
+      {
+        "count": 1,
+        "oldest_due": "2026-10-31T13:29:30.0000000Z",
+        "roles": [
+          "pos-bbbbbb"
+        ],
+        "words": "the seat is out of its envelope"
+      }
+    ],
+    "consumed_since_by_disposition": {
+      "answered": 1,
+      "failed": 2,
+      "released": 1,
+      "superseded": 1
+    },
+    "failed_turn_wakes_since": 1,
+    "lost_turn_wakes_since": 1,
+    "overdue": [
+      "pos-aaaaaa"
+    ],
+    "raised_again_after_lost_since": 1
+  }
+}
