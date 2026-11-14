@@ -11,6 +11,12 @@ static class DiskWords
 {
     const string StillRunning = "Positions stay managed and the market recording goes on";
 
+    /// <summary>
+    /// THE MEANS, NAMED (<c>U-free-space</c>): the card under the pause lists what TradeAgent itself can remove, so the words point at its press
+    /// rather than at a terminal. What the owner removes of his own is his to choose, and the words do not send him looking for it.
+    /// </summary>
+    internal static readonly string FreeIt = $"Press \"{FreeSpaceCard.FreeSpaceLabel}\" to see what TradeAgent itself can remove";
+
     /// <summary>Why the AI is paused, with what is free now when a read has been made since.</summary>
     public static string Paused(DiskPause pause, DiskSpace? now)
     {
@@ -21,11 +27,11 @@ static class DiskWords
         {
             var room = now is { } seen ? $" ({Count(seen.FilesFree)} can be made now)" : "";
             return $"paused to protect this computer's disk: it had room for only {Count(pause.FilesFree)} new files, and the AI stops under {Count(pause.FilesFloor)}. " +
-                   $"{StillRunning}. Remove some files, then press \"{DashboardPage.LetTheAiWork}\" once there is room for at least {Count(DiskFloor.FilesToResume(pause.Files))} " +
+                   $"{StillRunning}. {FreeIt}, then press \"{DashboardPage.LetTheAiWork}\" once there is room for at least {Count(DiskFloor.FilesToResume(pause.Files))} " +
                    $"new files{room}{BytesShort(now)}. It will not start again by itself";
         }
         var free = now is { } read ? $" ({Size(read.Free)} is free now)" : "";
-        return $"paused to protect this computer's disk: {Size(pause.Free)} was free, and the AI stops under {Size(pause.Floor)}. {StillRunning}. Free some space, " +
+        return $"paused to protect this computer's disk: {Size(pause.Free)} was free, and the AI stops under {Size(pause.Floor)}. {StillRunning}. {FreeIt}, " +
                $"then press \"{DashboardPage.LetTheAiWork}\" once at least {Size(DiskFloor.ToResume(pause.Total))} is free{free}{FilesShort(now)}. It will not start again by itself";
     }
 

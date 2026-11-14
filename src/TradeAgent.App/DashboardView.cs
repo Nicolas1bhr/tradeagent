@@ -118,6 +118,10 @@ sealed class DashboardPage
 
     /// <summary>The "Move these aside" card on this page (<c>U-windows-cards-2</c>), for a test to read and press.</summary>
     internal HeldFoldersCard HeldFolders => _heldFolders;
+    readonly FreeSpaceCard _freeSpace;
+
+    /// <summary>The "Free space" card on this page (<c>U-free-space</c>), for a test to read and press.</summary>
+    internal FreeSpaceCard FreeSpace => _freeSpace;
     readonly StackPanel _unconfirmed = new() { Spacing = Theme.S5 };
     readonly Border _unconfirmedCard;
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
@@ -282,6 +286,9 @@ sealed class DashboardPage
             Activity = line => host.Gateway.Log.Activity(line)
         });
 
+        // THE DISK GUARD'S WAY OUT (U-free-space): shown while its pause stands, built once here, updated in place on the tick.
+        _freeSpace = new FreeSpaceCard(host.FreeSpaceSources(() => host.Gateway.Settings.DiskPause is not null, calm: false));
+
         var aiCard = Ui.Col(Theme.S3,
             _missionState,
             _missionCounts,
@@ -314,6 +321,7 @@ sealed class DashboardPage
             _unconfirmedCard,
             _signIn.Root,
             _heldFolders.Root,
+            _freeSpace.Root,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
             _glance.Root,
             Ui.Section("The AI's own work", aiCard),
@@ -351,6 +359,7 @@ sealed class DashboardPage
         _glance.Update();
         _signIn.Update();
         _heldFolders.Update();
+        _freeSpace.Update();
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
         // request left stranded in DISPATCHING — so the card shows exactly the records that are

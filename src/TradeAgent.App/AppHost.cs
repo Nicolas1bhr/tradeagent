@@ -2990,6 +2990,27 @@ public sealed partial class AppHost : IAsyncDisposable
     internal string? DiskPauseWords => Gateway?.Settings.DiskPause is { } pause ? DiskWords.Paused(pause, _disk) : null;
 
     /// <summary>
+    /// THE "FREE SPACE" PRESS OVER THIS HOME (<c>U-free-space</c>): the allowlist's roots, with a downloaded release counted as installed when
+    /// the update service's own order puts it at or under the running version. In-process only: the two presses on the Dashboard and in
+    /// Settings are the only callers, and no verb or pipe op reaches it.
+    /// </summary>
+    internal FreeSpaceRoots FreeSpaceRoots => new(Paths.Home, InstalledRelease);
+
+    bool InstalledRelease(string name) =>
+        UpdateVersion.TryParse(name, out var release) && UpdateVersion.TryParse(Updates.CurrentVersion, out var running) && release.CompareTo(running) <= 0;
+
+    /// <summary>The card's sources over this home; <paramref name="shown"/> is whether the card shows with nothing to say.</summary>
+    internal FreeSpaceSources FreeSpaceSources(Func<bool> shown, bool calm) => new()
+    {
+        Look = () => FreeSpace.Inventory(FreeSpaceRoots, DateTimeOffset.UtcNow),
+        Remove = plan => FreeSpace.Remove(plan, FreeSpaceRoots, DateTimeOffset.UtcNow),
+        Read = () => { var read = ReadDisk(); if (read is not null) _disk = read; return read; },
+        Shown = shown,
+        Activity = line => Gateway.Log.TryActivity(line),
+        Calm = calm
+    };
+
+    /// <summary>
     /// THE FREE-SPACE GUARD'S CLOCK (<c>U-disk-guard</c>): a task of its own beside <see cref="BackgroundAsync"/>, never a step of it, because a full
     /// disk is exactly what makes that pass throw before it reached a step behind it. Started with the app and stopped with it, and a pass that fails
     /// does not end it. In-process only, like every other way the AI is paused: no pipe op and no verb reaches it, and it can only take work away.
