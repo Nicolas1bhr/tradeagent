@@ -1631,6 +1631,37 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         Assert.Contains("arrows reached since T0: 0 of 17; not yet: charter, hire,", human, StringComparison.Ordinal);   // the line the watch reads, as it was
     }
 
+    /// <summary>
+    /// THE LANE'S REFUSALS BY WHAT REFUSED THEM (U-digest-watch-3; R31 D13 § 3 R3, § 5 ACT NOW 3): the lane count, the unconfined ceiling, the quota pool,
+    /// the cell class, the role already turning, a material pass or the inbox check, each in the loop's and LanePolicy's own words; a sentence the digest
+    /// has not heard of stands as "other".
+    ///
+    /// <para>RED at base: "N at the lane" alone, so a founding-V1 home's lane count binding read the same as the unconfined ceiling.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void The_lanes_refusals_are_counted_by_the_sentence_that_refused_them()
+    {
+        var f = Bare();
+        var lane = new[] { "every one of the 1 lane the AI may use at once is turning", "every one of the 2 lanes the AI may use at once is turning",
+                           "another position is turning on a seat nothing confines, and only one such turn runs at a time",
+                           "its AI account's quota pool (codex/?/?) already has 1 turn running", "a turn is already running for this role",
+                           Labels.WaitingForQuietToCheckTheInbox, "a new reason" };
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+            db.Exec("INSERT INTO engineering_log(at, component, event, severity, metadata) VALUES " + string.Join(", ", lane.Select((w, i) =>
+                $"('2026-10-31T10:0{i}:00.0000000Z', 'Mission', 'turn_refused', 'info', '{TradeAgent.Core.Json.Write(new { why = $"{CouncilRoles.Title(CouncilRoles.Operations)}: {w}, so this turn was not started." }).Replace("'", "''")}')")) + ";");
+        var (json, human) = Both(f);
+        var by = json.GetProperty("not_started").GetProperty("lane_by_class");
+        Assert.Equal(2, by.GetProperty("lane count").GetInt32());
+        Assert.Equal(1, by.GetProperty("unconfined ceiling").GetInt32());
+        Assert.Equal(1, by.GetProperty("quota pool").GetInt32());
+        Assert.Equal(1, by.GetProperty("this role already turning").GetInt32());
+        Assert.Equal(1, by.GetProperty("inbox check").GetInt32());
+        Assert.Equal(1, by.GetProperty("other").GetInt32());
+        Assert.Contains("turns not started since T0: 7 (7 at the lane: the loop retries them; 0 by a gate)", human, StringComparison.Ordinal);
+        Assert.Contains("\n  at the lane, by what refused them: lane count 2, inbox check 1, other 1, quota pool 1, this role already turning 1, unconfined ceiling 1\n",
+            human, StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------
@@ -1663,6 +1694,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ["TURN_STOPS"] = new[] { AgentTurnEnded.EndedTimedOut, ModelRefusal.Ended, VendorLimit.Ended },
         ["TITLE_OPERATIONS"] = CouncilRoles.Title(CouncilRoles.Operations), ["TITLE_RESEARCH"] = CouncilRoles.Title(CouncilRoles.Research),
         ["ROLE_RESEARCH"] = CouncilRoles.Research, ["WAKE_CHIEF_FLOOR"] = MissionEventStore.ChiefFloorWake,
+        ["LANE_INBOX_QUIET"] = Labels.WaitingForQuietToCheckTheInbox,
         // A RUN'S PROTECTION, read by TradingGateway.ProtectionMissing's rule (U-digest-polish): its operations, their settled state, the order states that are over
         ["DEP_OP_ENTRY"] = DeploymentOpKind.Entry, ["DEP_OP_EXIT"] = DeploymentOpKind.Exit, ["DEP_OP_FLATTEN"] = DeploymentOpKind.Flatten,
         ["DEP_OP_STOP"] = DeploymentOpKind.Stop, ["DEP_OP_TARGET"] = DeploymentOpKind.Target, ["DEPLOYMENT_OP_RESOLVED"] = DeploymentOpState.Resolved,
@@ -1697,6 +1729,13 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         ("START_IN_A_ROW", "src/TradeAgent.App/AppHost.cs", "Json.Write(new {{ decision = decided.ToString(), {0} = DidNotCloseInARow }})"),
         // the lane's own refusal, as the loop words it where a lease is refused (U-digest-polish-2)
         ("LANE_NOT_STARTED", "src/TradeAgent.AgentRuntime/MissionLoop.cs", "Refused?.Invoke($\"{{CouncilRoles.Title(role)}}: {{leaseRefused}}{0}\");"),
+        // ...and which of the lane's sentences refused it (U-digest-watch-3; R31 D13 § 3 R3)
+        ("LANE_ALL_TURNING", "src/TradeAgent.AgentRuntime/Lanes.cs", "{{(lanes == 1 ? \"\" : \"s\")}}{0}\";"),
+        ("LANE_UNCONFINED", "src/TradeAgent.AgentRuntime/Lanes.cs", "return \"{0}, and only one such turn runs at a time\";"),
+        ("LANE_POOL", "src/TradeAgent.AgentRuntime/Lanes.cs", "return $\"{0}{{candidate.Pool}}) already has"),
+        ("LANE_CELL_CLASS", "src/TradeAgent.AgentRuntime/Lanes.cs", "return $\"{0}{{candidate.Profile.CellClass}}' already has"),
+        ("LANE_ROLE_TURNING", "src/TradeAgent.AgentRuntime/MissionLoop.cs", ": _turning.Contains(role) ? \"{0}\""),
+        ("LANE_MATERIAL_PASS", "src/TradeAgent.AgentRuntime/MissionLoop.cs", "why = _passing ? \"{0}\""),
         ("META_SCHEMA_VERSION", "src/TradeAgent.Core/Db/Database.cs", "SELECT value FROM meta WHERE key='{0}'"),
         ("KV_SETTINGS", "src/TradeAgent.Gateway/TradingGateway.cs", "_db.SetKv(\"{0}\", Json.Write(Settings))"),
         // JSON KEYS the app spells by a member's name in its writer: the loop's line for a turn it did not start, and the pipe's refusal of an op
