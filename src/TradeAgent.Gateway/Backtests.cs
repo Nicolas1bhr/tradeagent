@@ -724,8 +724,10 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // under that campaign yet — a reuse is never a run standing with none behind it — and Ok, charged nothing, when it has.
             foreach (var charge in charges)
             {
+                // HELD TO THE CALLER'S OWN UNIT SHARE (U-evidence-counts item 3): its own row, `mine`, carries the chain it was admitted
+                // under, never the first recorder's.
                 var registered = _campaigns.RegisterTrial(
-                    charge.Campaign.Id, result.VersionId, result.RunId, kind, at, charge.Through);
+                    charge.Campaign.Id, result.VersionId, result.RunId, kind, at, charge.Through, mine);
                 if (!registered.Ok)
                     throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, registered.Why);
             }

@@ -163,6 +163,94 @@ public class OrgEvidenceSharesTests
         Assert.Equal(0, campaigns.TrialsCharged(b.Id));
     }
 
+    // ---- U-evidence-counts item 3: a reused computation is the caller's charge -----------------------------------------
+
+    /// <summary>
+    /// A run row of <paramref name="version"/> recorded at <paramref name="at"/> by <paramref name="attempt"/> — the caller's own row of
+    /// <paramref name="reuses"/> when it names one, as <c>Backtests.Record</c> writes a reuse (<c>U-backtest-dedupe-role</c>).
+    /// </summary>
+    static string RunAt(Database db, DatasetRecord set, string version, string runId, string attempt, DateTimeOffset at, string? reuses = null)
+    {
+        new StrategyStore(db).RecordRun(new StrategyRunRow(
+            runId, version, set.Id, set.NormalisedSha256, Cutoff.AddDays(-10), Cutoff,
+            "frictionless", BacktestOutcome.COMPLETED.ToString(), null,
+            10, 1, 1, 1, 1, 1, 0, 0, 1m, 0m, 1m, 0m, "sha", at, CouncilRoles.Research, attempt) { ReusesRun = reuses }, []);
+        return runId;
+    }
+
+    /// <summary>
+    /// A REUSED COMPUTATION'S FIRST CHARGE UNDER A NEW CAMPAIGN IS HELD TO THE CALLER'S UNIT SHARE (the U-backtest-dedupe-role card). A launch
+    /// outside the team recorded a computation, charged to campaign A. The team, a quarter of campaign B's 4 trials, has spent its one
+    /// trial of B on a run of its own; it then reuses that computation, and the request's first charge of it under B must be refused in
+    /// the team's words, with B charged nothing. RED at base: the share was read off the computation's row — the outside launch's chain,
+    /// which holds no share — and the charge was registered. The watched mutant (the caller's row not passed, `launch ?? runId` → `runId`)
+    /// registers it the same way.
+    /// </summary>
+    [Fact]
+    public void A_reused_computations_first_charge_under_a_new_campaign_is_held_to_the_callers_unit_share()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var (setA, setB) = (Held(db, "aa11"), Held(db, "bb22"));
+        var a = Opened(db, setA, trials: 10, verdicts: 2);
+        var b = Opened(db, setB, trials: 4, verdicts: 2);
+        GivenTeam(db, trialShare: "0.25", verdictShare: null);
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+        var outside = Attempt(db, OrgIds.Research, OrgIds.Root);
+        var shared = Version(db, "version-reused");
+        var own = Version(db, "version-own");
+
+        var computation = RunAt(db, setA, shared, "run-computation", outside, At);
+        Assert.True(campaigns.RegisterTrial(a.Id, shared, computation, EvaluationClass.Research, At).Ok);
+        Assert.True(campaigns.RegisterTrial(b.Id, own, RunAt(db, setB, own, "run-own", team, At.AddMinutes(1)),
+            EvaluationClass.Research, At.AddMinutes(1)).Ok);
+
+        var reuse = RunAt(db, setA, shared, "run-reuse", team, At.AddMinutes(2), reuses: computation);
+        var charged = campaigns.RegisterTrial(b.Id, shared, computation, EvaluationClass.Research, At.AddMinutes(2), launch: reuse);
+
+        Assert.False(charged.Ok, "a reuse's first charge under a new campaign was registered past the caller's spent share");
+        foreach (var words in new[] { Team, "0.25", $"campaign {b.Id}'s", "1 of" })
+            Assert.Contains(words, charged.Why, StringComparison.Ordinal);
+        Assert.False(campaigns.Registered(b.Id, shared, computation));
+        Assert.Equal(1, campaigns.TrialsCharged(b.Id));
+    }
+
+    /// <summary>
+    /// A CHARGE MADE THROUGH A REUSE COUNTS AGAINST THE CALLER'S SHARE. Two computations recorded outside the team and charged to campaign A;
+    /// the team, a quarter of B's 4 trials, reuses both. The first reuse's charge under B is its one trial; the second must be refused in
+    /// the team's words. RED at base: the first charge counted against the outside chain alone, so the team's use read 0 and the second
+    /// was registered too. The watched mutant (the use counted off the computation's own row only, the old predicate) registers it.
+    /// </summary>
+    [Fact]
+    public void A_charge_made_through_a_reuse_counts_against_the_callers_unit_share()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var (setA, setB) = (Held(db, "aa11"), Held(db, "bb22"));
+        var a = Opened(db, setA, trials: 10, verdicts: 2);
+        var b = Opened(db, setB, trials: 4, verdicts: 2);
+        GivenTeam(db, trialShare: "0.25", verdictShare: null);
+        var team = Attempt(db, Team, OrgIds.Research, OrgIds.Root);
+        var outside = Attempt(db, OrgIds.Research, OrgIds.Root);
+        var (x, y) = (Version(db, "version-x"), Version(db, "version-y"));
+
+        var runX = RunAt(db, setA, x, "run-x", outside, At);
+        var runY = RunAt(db, setA, y, "run-y", outside, At);
+        Assert.True(campaigns.RegisterTrial(a.Id, x, runX, EvaluationClass.Research, At).Ok);
+        Assert.True(campaigns.RegisterTrial(a.Id, y, runY, EvaluationClass.Research, At).Ok);
+
+        var reuseX = RunAt(db, setA, x, "run-x-reuse", team, At.AddMinutes(1), reuses: runX);
+        Assert.True(campaigns.RegisterTrial(b.Id, x, runX, EvaluationClass.Research, At.AddMinutes(1), launch: reuseX).Ok);
+
+        var reuseY = RunAt(db, setA, y, "run-y-reuse", team, At.AddMinutes(2), reuses: runY);
+        var second = campaigns.RegisterTrial(b.Id, y, runY, EvaluationClass.Research, At.AddMinutes(2), launch: reuseY);
+
+        Assert.False(second.Ok, "a second reuse charge was registered: the first, made through the team's reuse, counted against nobody's share of the team");
+        foreach (var words in new[] { Team, "0.25", $"campaign {b.Id}'s", "used 1 of" })
+            Assert.Contains(words, second.Why, StringComparison.Ordinal);
+        Assert.Equal(1, campaigns.TrialsCharged(b.Id));
+    }
+
     /// <summary>
     /// FIX PASS (the Codex review's P1 on <c>ChargeVerdict</c>): A UNIT'S VERDICTS ARE COUNTED AS THE CAMPAIGN COUNTS ITS OWN — every
     /// judgement over the same held-back months, any campaign's — so switching campaigns never replenishes a delegated count. Two
