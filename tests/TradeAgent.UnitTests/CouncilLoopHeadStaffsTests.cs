@@ -18,7 +18,7 @@ public partial class CouncilLoopTests
     {
         var funding = new CharterFunding(SeatClasses.Harness, 0.10m, [new(BillingClasses.Plan, 10m)],
             new Dictionary<string, decimal> { [OrgIds.Operations] = 0m, [OrgIds.Research] = 0m });
-        return org.Charter(new CharterRequest(chief, "turn-chart", kind, 0.2m, "a division for the funding family",
+        return org.Charter(new CharterRequest(chief, "turn-charter-only", kind, 0.2m, "a division nobody has staffed yet",
             ["a division"], [], [ChartForecast], at.AddDays(30)), funding, at).Unit.Id;
     }
 
