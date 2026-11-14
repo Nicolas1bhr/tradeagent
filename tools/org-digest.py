@@ -167,6 +167,10 @@ class W:
     PUBLICATION_ALLOCATOR, PUBLICATION_NOTE = "allocator", "note"
     # ledger_entry.kind, org_decision.kind (the two decision words are reserved for a verb main does not have yet: see `iterate`)
     LEDGER_KILL = "kill"
+    # A FINDING, and how a fresh session meets one (R31 D13-5): ai_attempt_input.kind of a ledger entry a packet showed, the context's session mark
+    # (TurnContext.Session: TurnSession.State), and the two door verbs that read the ledger
+    LEDGER_FINDING, INPUT_LEDGER, CTX_SESSION, SESSION_FRESH = "finding", "ledger", "session", "fresh"
+    OP_LEDGER_LIST, OP_LEDGER_SHOW = "ledger-list", "ledger-show"
     DECISION_FAMILY_KILL, DECISION_FAMILY_BRANCH = "family-kill", "family-branch"
     # org_forecast_resolution.outcome, cell_proof_row.kind, board_event.kind
     OUTCOME_VOID = "void"
@@ -1186,8 +1190,35 @@ class Digest:
     def signal(self):
         holds = self.forward_holds()
         return {"forecasts": self.forecasts(), "campaigns": self.campaigns(), "candidates": self.candidates(), "ledger": self.ledger(),
-                "forward_holds": holds, "withheld": self.withheld(holds),
-                "cannot_be_read": "whether a fresh session found a finding again from the ledger is not recorded anywhere"}
+                "forward_holds": holds, "withheld": self.withheld(holds), "refound": self.refound(),
+                "cannot_be_read": "whether a fresh session USED a finding it was shown or read is a claim no record holds; what it was shown and read is "
+                                  "counted in refound"}
+
+    def refound(self):
+        """RE-FOUND FINDINGS (R31 D13-5, R26 § 4 (3)): what each FRESH session since T0 was SHOWN of the ledger's findings written before it started (its
+        packet's ai_attempt_input), and the fresh sessions that READ the ledger through its door (a served ledger-list or ledger-show). Measurements both:
+        whether the session used what it was shown is a claim, and no record holds it."""
+        if not self.has("ai_attempt_input", "attempt_id", "kind", "ref_id") or not self.has("ledger_entry", "kind", "created_at"):
+            return {"absent": "ai_attempt_input" if not self.has("ai_attempt_input") else "ledger_entry"}
+        fresh = {}
+        for r in self.app.execute("SELECT id, started_at, context FROM ai_attempt WHERE started_at >= ?", (self.since_s,)):
+            ctx = turn_context(r["context"])
+            if ctx.get(W.CTX_SESSION) == W.SESSION_FRESH:
+                fresh[r["id"]] = r["started_at"]
+        shown, findings = set(), set()
+        for r in self.app.execute("SELECT i.attempt_id AS attempt, e.id AS entry, e.created_at AS written FROM ai_attempt_input i JOIN ledger_entry e "
+                                  "ON CAST(e.id AS TEXT) = i.ref_id WHERE i.kind = ? AND e.kind = ?", (W.INPUT_LEDGER, W.LEDGER_FINDING)):
+            if r["attempt"] in fresh and r["written"] < fresh[r["attempt"]]:
+                shown.add(r["attempt"])
+                findings.add(r["entry"])
+        read, calls = set(), 0
+        for r in self.app.execute("SELECT attempt, tool, argument FROM tool_call WHERE served = 1 AND at >= ?", (self.since_s,)):
+            if r["attempt"] in fresh and op_asked(r["tool"], r["argument"]) in (W.OP_LEDGER_LIST, W.OP_LEDGER_SHOW):
+                read.add(r["attempt"])
+                calls += 1
+        return {"fresh_sessions_since": len(fresh), "sessions_shown_findings": len(shown), "findings_shown": len(findings),
+                "sessions_read_ledger": len(read), "ledger_reads": calls,
+                "words": "a fresh session's packet showed it a finding written before it started, or it read the ledger at the door; whether it used either is not recorded"}
 
     def kv_starting_with(self, prefix):
         """Database.KvStartingWith: the rows whose key begins with the prefix, the rest of the key after it."""
@@ -1841,8 +1872,12 @@ def render(d, cap):
                          if h["unreadable"] else f"  {h['pair'] or 'every pair'} campaign #{h['campaign']}: spent its {h['spent']}; cutoff {h['cutoff'][:10]} "
                          f"{h['cutoff'][11:16]}Z, armed {stamp(h['armed_at'])}" + ("; holding" if h["holding"] else f"; campaign #{h['successor']} opened over it"))
         ca, lg = s["candidates"], s["ledger"]
+        rf = s.get("refound") or {}
         L.append(f"admissible candidates: {ca['admissible_since']} since T0, {ca['admissible_total']} ever; ledger since T0: " +
-                 (", ".join(f"{k} {v}" for k, v in sorted(lg.items()) if k != "absent") or "nothing"))
+                 (", ".join(f"{k} {v}" for k, v in sorted(lg.items()) if k != "absent") or "nothing")
+                 + (f"; re-found: {rf['absent']} is not on this home" if "absent" in rf else
+                    f"; re-found: {rf['findings_shown']} earlier finding(s) shown to {rf['sessions_shown_findings']} of {rf['fresh_sessions_since']} fresh session(s), "
+                    f"the ledger read by {rf['sessions_read_ledger']}" if rf else ""))
 
     s = d["day_total"]
     if not unread("AI day-total", s):
