@@ -899,7 +899,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// its own beside a name (a text that is the id alone); it never stands inside a sentence. Exempt: the Settings page's kit card, which names
     /// the files of the kit the owner writes himself, and the Oversight page's Protections register inside its closed "For reviewers" fold (see
     /// below). Since U-owner-words-3 it also reads the build's words for the AI's seats ("legacy pair", "unconfined", "cell") and the activation
-    /// gate's refusals in states no seed renders. RED at the base: "Chief
+    /// gate's refusals in states no seed renders; since U-board-alive-2, a board seat's activation refusals too. RED at the base: "Chief
     /// (pos-…), dormant", "pos-…, dormant in unit team-…", and the gate's "'research' runs unconfined, and 'pos-…' … (ORCHESTRATION § 2.3)".
     /// </summary>
     [Fact]
@@ -973,6 +973,33 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                 earlier.Add(refusal.Words);
                 hits.AddRange(OwnerWordShapes.Of(refusal.Words).Select(shape => $"gate/{state}: {shape} in \"{Cut(refusal.Words)}\""));
             }
+        }
+        // AND THE BOARD SEAT'S ACTIVATION REFUSALS (U-board-alive-2 item 2), shown verbatim on the Owner page under the activate press: each
+        // a state no seed renders (it needs the second press). Beyond the shapes, none says the build's words for a seat — "harness",
+        // "confined", "executor", "broker-only" — since the owner founds seats from the page's own list.
+        var dormant = new TradeAgent.Core.Board.BoardSeat("board-1", SeatClasses.Broker, "strong", "openai", TradeAgent.Core.Board.BoardSeatStatus.Dormant, DateTimeOffset.UtcNow);
+        List<string> said = [];
+        foreach (var (state, refusal) in new (string, string?)[]
+                 {
+                     ("no-seat", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-9", null, SeatClasses.Broker, false, true, "openai")),
+                     ("retired", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant with { Status = TradeAgent.Core.Board.BoardSeatStatus.Retired }, SeatClasses.Broker, false, true, "openai")),
+                     ("active", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant with { Status = TradeAgent.Core.Board.BoardSeatStatus.Active }, SeatClasses.Broker, false, true, "openai")),
+                     ("on-the-worker", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant with { SeatClass = SeatClasses.Harness }, SeatClasses.Harness, false, true, "openai")),
+                     ("no-runtime", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, null, false, true, "openai")),
+                     ("another-class", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, SeatClasses.Cell, false, true, "openai")),
+                     ("another-class-cli", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, SeatClasses.Cli, false, true, "openai")),
+                     ("unproven", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, SeatClasses.Broker, false, false, "openai")),
+                     ("unknown-maker", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, SeatClasses.Broker, false, true, null)),
+                     ("another-maker", TradeAgent.Core.Board.BoardSeatGate.ActivationRefusal("board-1", dormant, SeatClasses.Broker, false, true, "anthropic")),
+                 })
+        {
+            Assert.NotNull(refusal);
+            output.WriteLine($"board/{state}: {refusal}");
+            Assert.DoesNotContain(refusal, said);   // each state reaches its own refusal, not an earlier rule's
+            said.Add(refusal);
+            hits.AddRange(OwnerWordShapes.Of(refusal).Select(shape => $"board/{state}: {shape} in \"{Cut(refusal)}\""));
+            foreach (var word in new[] { "harness", "confined", "executor", "broker-only" })
+                if (refusal.Contains(word, StringComparison.OrdinalIgnoreCase)) hits.Add($"board/{state}: a seat's build word ({word}) in \"{Cut(refusal)}\"");
         }
         foreach (var h in hits.Distinct()) output.WriteLine(h);
         Assert.True(hits.Count == 0, $"{hits.Distinct().Count()} owner words carry a file, section mark, command or id: {string.Join(" | ", hits.Distinct().Take(6))}");

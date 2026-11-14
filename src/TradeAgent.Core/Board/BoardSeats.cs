@@ -93,6 +93,10 @@ public static class BoardSeatGate
     /// holds a RECORDED proven cell. A seat is activated only where it could sit: on the class it was founded on, carrying the board's
     /// verbs — which only the app's door serves (a broker-only or confined seat), never the harness's own surface — and, running a real
     /// model, never before a proven cell (containment). Activation launches nothing: every turn still passes <see cref="Decide"/>.
+    ///
+    /// <para><b>In the owner's words</b> (<c>U-board-alive-2</c>; the owner-words rule of <c>U-owner-words-2/3</c>): the Owner page shows each
+    /// refusal verbatim, so none cites a document section or says a build word — a seat class is said through
+    /// <see cref="Labels.BoardSeatClass"/>, and a proven cell is "a sealed workspace for the AI proven on this computer".</para>
     /// </summary>
     public static string? ActivationRefusal(string id, BoardSeat? seat, string? declaredClass, bool puppet, bool provenCell,
         string? runtimeFamily = null)
@@ -101,25 +105,24 @@ public static class BoardSeatGate
         if (seat.Status == BoardSeatStatus.Retired) return $"board seat {id} is retired, and a retired seat never acts again.";
         if (seat.Status == BoardSeatStatus.Active) return $"board seat {id} is active already.";
         if (seat.SeatClass == SeatClasses.Harness)
-            return $"board seat {id} is founded on the app's harness, and in this build only the app's door — served to a broker-only or "
-                   + "confined seat — carries the board's verbs: on the harness it would sit with nothing it could do. Found a broker seat "
-                   + "in its place.";
+            return $"board seat {id} was founded on TradeAgent's own worker, and in this version only a seat that reaches TradeAgent through "
+                   + "its own verbs can act for the board: on the worker it would sit with nothing it could do. Found a broker seat in its place.";
         if (declaredClass is null)
-            return $"board seat {id} has no AI runtime chosen or prepared to start on, so it is not activated.";
+            return $"board seat {id} has no AI tool chosen or prepared to start on, so it is not activated.";
         if (declaredClass != seat.SeatClass)
-            return $"board seat {id} is founded on a {seat.SeatClass} seat and this host would start it on a {declaredClass} seat: a board "
-                   + "seat sits only on the class it was founded on.";
+            return $"board seat {id} was founded as a seat that {Labels.BoardSeatClass(seat.SeatClass)}, and this computer would start it as "
+                   + $"one that {Labels.BoardSeatClass(declaredClass)}: a board seat sits only as it was founded.";
         if (!puppet && !provenCell)
-            return $"board seat {id} would run a real model ({seat.SeatClass}) and this host has no proven executor cell recorded: no board "
-                   + "seat is activated before one (R24 § 4.1, ORCHESTRATION § 2.3).";
+            return $"board seat {id} would run a real AI model, and this computer has no sealed workspace for the AI proven yet: no board "
+                   + "seat is activated before one is.";
         // ITS VENDOR FAMILY IS THE RUNTIME'S (the review's P1): the two-seat rule weighs a confirmer's recorded family, so a seat founded as
         // one family is never activated on another's runtime — that would buy a "cross-vendor" confirmation from the same vendor.
         if (!puppet && runtimeFamily is null)
-            return $"board seat {id} would start on a runtime whose vendor family this build does not know, so its recorded family "
-                   + $"'{seat.VendorFamily}' could not be checked against it.";
+            return $"board seat {id} would start on an AI tool whose maker this version does not know, so the maker it was founded "
+                   + $"with ('{seat.VendorFamily}') could not be checked against it.";
         if (!puppet && !string.Equals(runtimeFamily, seat.VendorFamily, StringComparison.Ordinal))
-            return $"board seat {id} is founded on the vendor family '{seat.VendorFamily}' and this host would start it on a runtime of "
-                   + $"'{runtimeFamily}': a seat runs on the family it was founded on, so the two-seat rule's families stay true.";
+            return $"board seat {id} was founded with the maker '{seat.VendorFamily}', and this computer would start it on an AI tool made "
+                   + $"by '{runtimeFamily}': a seat runs on the maker it was founded with, so two seats that must differ stay different.";
         return null;
     }
 

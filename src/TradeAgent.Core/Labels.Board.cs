@@ -197,6 +197,8 @@ public static partial class Labels
         "broker" => "reaches TradeAgent only through its own verbs, with no shell",
         "harness" => "runs on TradeAgent's own worker, with no shell",
         "cell" => "runs in a sealed workspace",
+        "cli" => "runs as you, outside a sealed workspace",
+        "puppet" => "is a test seat that runs no model",
         _ => $"a seat class this version has no words for (“{seatClass}”)"
     };
 

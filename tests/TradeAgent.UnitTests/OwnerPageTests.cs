@@ -134,7 +134,7 @@ public class OwnerPageTests
         Press(c.Activate);
         Assert.False(c.ActivateWhat.IsVisible);
         Assert.False(host.Board.AnyActive);
-        Assert.Contains("no proven executor cell recorded", c.Note.Text, StringComparison.Ordinal);
+        Assert.Contains("no sealed workspace for the AI proven yet", c.Note.Text, StringComparison.Ordinal);
         Assert.Equal(Theme.Caution, c.Note.Foreground);
 
         ThinkingSeatsTests.ProveCell(host.Db);

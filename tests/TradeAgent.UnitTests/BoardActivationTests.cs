@@ -57,10 +57,10 @@ public class BoardActivationTests(ITestOutputHelper log)
             log.WriteLine($"{why}: {refusal}");
             Assert.True(refusal is { Length: > 0 }, $"a seat was activated with {why}");
         }
-        Assert.Contains("no proven executor cell recorded", refusals[0].Refusal, StringComparison.Ordinal);
+        Assert.Contains("no sealed workspace for the AI proven yet", refusals[0].Refusal, StringComparison.Ordinal);
         Assert.Contains("founded on a broker seat and this host would start it on a cli seat", refusals[1].Refusal, StringComparison.Ordinal);
         Assert.Contains("only the app's door", refusals[3].Refusal, StringComparison.Ordinal);
-        Assert.Contains("founded on the vendor family 'anthropic' and this host would start it on a runtime of 'openai'", refusals[7].Refusal,
+        Assert.Contains("founded with the maker 'anthropic', and this computer would start it on an AI tool made by 'openai'", refusals[7].Refusal,
             StringComparison.Ordinal);
     }
 
@@ -79,12 +79,12 @@ public class BoardActivationTests(ITestOutputHelper log)
         try
         {
             // THE RUNTIME HE CHOSE AT SETUP — codex, whose built-in manifest gives a board id the broker-only class — and no AI started.
-            Assert.Contains("no AI runtime chosen", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1")).Message,
+            Assert.Contains("no AI tool chosen", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1")).Message,
                 StringComparison.Ordinal);
             host.Gateway.Update(s => s.SelectedRuntimeId = TradeAgent.AgentRuntime.BrokerDoor.CodexId);
             var refused = Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1"));
             log.WriteLine(refused.Message);
-            Assert.Contains("no proven executor cell recorded", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("no sealed workspace for the AI proven yet", refused.Message, StringComparison.Ordinal);
             Assert.EndsWith("Nothing was written.", refused.Message, StringComparison.Ordinal);
             Assert.Equal(0L, StateRows(db));
             Assert.False(host.Board.AnyActive);
@@ -108,7 +108,7 @@ public class BoardActivationTests(ITestOutputHelper log)
                 StringComparison.Ordinal);
             // A SEAT FOUNDED AS ANOTHER VENDOR FAMILY IS NOT ACTIVATED ON CODEX (the review's P1).
             var other = host.Gateway.FoundBoardSeat(SeatClasses.Broker, BoardModelClass.Strong, "anthropic");
-            Assert.Contains("founded on the vendor family 'anthropic'", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat(other.Id)).Message,
+            Assert.Contains("founded with the maker 'anthropic'", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat(other.Id)).Message,
                 StringComparison.Ordinal);
 
             Assert.Contains("is active: only a dormant seat is activated", Assert.Throws<TradeAgentException>(() => host.ActivateBoardSeat("board-1")).Message,
