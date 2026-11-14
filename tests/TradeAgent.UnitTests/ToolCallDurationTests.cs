@@ -41,6 +41,22 @@ public class ToolCallDurationTests
     }
 
     /// <summary>
+    /// A gateway that holds every call open on a gate the test controls: it says it has the call, then waits for the caller's own cancellation
+    /// and nothing else. So the cancellation lands while the call is in flight, on every host, whatever the clock does.
+    /// </summary>
+    sealed class Held : IGatewayCalls
+    {
+        public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId, CancellationToken ct = default)
+        {
+            Entered.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("the held call was released without its cancellation");
+        }
+    }
+
+    /// <summary>
     /// A SERVED, A REFUSED AND A STOPPED CALL EACH RECORD HOW LONG THEY RAN: at least the gateway's delay, measured by the surface itself. The
     /// stopped one is a verdict the gateway stopped, refused in its own words. A call the caller itself cancels still writes no row, as before:
     /// the oversight reads every unserved row as a refusal. RED at base: no row carried a duration.
@@ -56,9 +72,18 @@ public class ToolCallDurationTests
         Assert.True((await tools.InvokeAsync(new ToolRequest("1", GrantedWorkerTools.Trade, $"{{\"op\":\"{Ops.Status}\"}}"))).Served);
         Assert.False((await tools.InvokeAsync(new ToolRequest("2", GrantedWorkerTools.Trade, $"{{\"op\":\"{Ops.Positions}\"}}"))).Served);
         Assert.False((await tools.InvokeAsync(new ToolRequest("3", GrantedWorkerTools.Trade, $"{{\"op\":\"{Ops.Verdict}\"}}"))).Served);
-        using (var stop = new CancellationTokenSource(Delay / 3))
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-                tools.InvokeAsync(new ToolRequest("4", GrantedWorkerTools.Trade, $"{{\"op\":\"{Ops.Status}\"}}"), stop.Token));
+        // THE CALLER'S OWN CANCELLATION, WHILE THE CALL IS HELD OPEN: deterministic — the gateway has the call before the cancel, and it
+        // answers nothing until the cancel reaches it.
+        var held = new Held();
+        var holding = new GrantedWorkerTools(CouncilRoles.Research, () => TestEnv.Home, () => "attempt-durations", gateway: () => held,
+            ledger: ledger, now: () => Now);
+        using (var stop = new CancellationTokenSource())
+        {
+            var call = holding.InvokeAsync(new ToolRequest("4", GrantedWorkerTools.Trade, $"{{\"op\":\"{Ops.Status}\"}}"), stop.Token);
+            await held.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+        }
 
         var rows = ledger.ForAttempt("attempt-durations");
         Assert.Equal(3, rows.Count);
