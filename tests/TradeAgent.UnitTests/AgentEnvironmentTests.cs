@@ -12,6 +12,9 @@ namespace TradeAgent.Tests.Unit;
 /// of this process's own environment, so the entries the app adds are the only ones anybody had
 /// looked at, and everything TradeAgent itself was started with went to the AI unexamined.
 /// </summary>
+// IT SETS PROCESS-WIDE VARIABLES (DOTNET_ROOT among them) while other classes launch framework-dependent programs, so it runs alone
+// (U-ci-precheck item 4; ProcessWideEnvironmentTests is the guard).
+[Collection(VendorOverrideFiles.Name)]
 public class AgentEnvironmentTests
 {
     /// <summary>
