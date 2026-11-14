@@ -41,7 +41,8 @@ sealed record FreeSpaceSources
 /// itself put on this disk and can let go (<see cref="FreeSpace"/>'s allowlist: an older home set aside by Start fresh, installers already
 /// run, a check's leftover folder), each with its size and age, and the total — and arms the button with the sentence of what the second will
 /// do. The second removes exactly what the first showed and nothing that changed since, then reads the disk again and says what was freed.
-/// The records, the tape, the ledgers, the evidence, the positions and the AI's work are never on the list, whatever is pressed.
+/// This home's records, tape, ledgers, evidence and positions and the AI's work are never on the list, whatever is pressed; an older home set aside
+/// takes its own records and tape with it, and every sentence that lists one says so (opus review).
 ///
 /// <list type="bullet">
 /// <item><b>It never starts the AI.</b> "Let the AI work on its own" stays its own press, and the guard's resume rule is unchanged.</item>
@@ -56,7 +57,7 @@ sealed class FreeSpaceCard
 
     const string Intro =
         "TradeAgent can remove what it put on this disk itself and no longer needs. The first press only shows you the list; nothing is removed " +
-        "until you press again. Your records, the tape, your positions and the AI's work are never on it.";
+        "until you press again. Your current records, the tape, your positions and the AI's work are never on it.";
 
     readonly FreeSpaceSources _sources;
     readonly TextBlock _intro = Ui.Body(Intro);
@@ -201,12 +202,19 @@ sealed class FreeSpaceCard
     internal const string LinuxReleases =
         "TradeAgent's installed versions on this computer belong to the system, so they are not on this list.";
 
+    /// <summary>What every sentence about a removal says is kept: this home's own, never an older one's.</summary>
+    const string Kept = "Your current records, the tape and your positions";
+
+    const string OlderGoes = "the older folder's own records and tape with it";
+
+    const string OlderWent = "the older folder's own records and tape went with it";
+
     /// <summary>The armed second press, in full.</summary>
     internal static string Armed(FreeSpacePlan plan)
     {
         var what = plan.Items.Count == 1 ? $"this item ({Size(plan.Bytes)})" : $"these {plan.Items.Count} items ({Size(plan.Bytes)})";
-        var older = plan.Items.Any(i => i.Kind == LetGoKind.OlderHome) ? ", the older version's records with its folder" : "";
-        return $"Yes — remove {what}{older}. Your records, the tape and your positions are kept.";
+        var older = plan.Items.Any(i => i.Kind == LetGoKind.OlderHome) ? $", {OlderGoes}" : "";
+        return $"Yes — remove {what}{older}. {Kept} are kept.";
     }
 
     /// <summary>One item as press one lists it: what it is, its size and its age. No path: what it is, not where.</summary>
@@ -214,7 +222,7 @@ sealed class FreeSpaceCard
     {
         LetGoKind.OlderHome =>
             $"An older TradeAgent's folder, set aside when you started fresh{AsideOn(item.Path)}. This version cannot open it, and that older " +
-            $"version's records go with it — {Size(item.Bytes)}.",
+            $"version's own records and tape go with it — {Size(item.Bytes)}.",
         LetGoKind.Installer =>
             $"The downloaded installer of TradeAgent {Path.GetFileName(item.Path)}, already installed — {Size(item.Bytes)}, {Age(item.NewestUtc, now)}.",
         _ =>
@@ -227,11 +235,12 @@ sealed class FreeSpaceCard
         var parts = new List<string>();
         parts.Add(done.Removed.Count == 0
             ? "Nothing was removed."
-            : $"Removed {Items(done.Removed.Count)} and freed {Size(done.Freed)}. Your records, the tape and your positions were kept.");
+            : $"Removed {Items(done.Removed.Count)} and freed {Size(done.Freed)}. {Kept} were kept" +
+              (done.Removed.Any(i => i.Kind == LetGoKind.OlderHome) ? $"; {OlderWent}." : "."));
         foreach (var (item, why) in done.Skipped)
             parts.Add($"{Short(item)} was left where it was: {Why(item, why)}.");
         if (done.FilesKept > 0)
-            parts.Add($"{Files(done.FilesKept)} changed while they were being removed, so they were left.");
+            parts.Add($"{Files(done.FilesKept)} could not be removed or changed while they were being removed, so they were left.");
         parts.Add(now is { } read ? $"{Size(read.Free)} is free on this disk now." : "The free space could not be read just now.");
         return string.Join(" ", parts);
     }
@@ -241,18 +250,19 @@ sealed class FreeSpaceCard
     {
         var kinds = done.Removed.GroupBy(i => i.Kind).Select(g => g.Key switch
         {
-            LetGoKind.OlderHome => $"{Count(g.Count(), "older folder")} set aside by Start fresh, with that older version's records",
+            LetGoKind.OlderHome => $"{Count(g.Count(), "older folder")} set aside by Start fresh, with that older version's own records and tape",
             LetGoKind.Installer => Count(g.Count(), "installer") + " already installed",
             _ => Count(g.Count(), "leftover check folder")
         });
-        return $"You freed {Size(done.Freed)} on your two presses: {string.Join("; ", kinds)}. Your records, the tape and your positions were kept.";
+        return $"You freed {Size(done.Freed)} on your two presses: {string.Join("; ", kinds)}. {Kept} were kept.";
     }
 
     static string Why(LetGoItem item, LetGoSkip why) => why switch
     {
         LetGoSkip.InUse when item.Kind == LetGoKind.OlderHome => "a TradeAgent is running on it, so close that one first",
         LetGoSkip.NoLongerLettable => "it is no longer something TradeAgent may remove",
-        LetGoSkip.HoldsLink => "it now points somewhere else, and TradeAgent never follows that",
+        LetGoSkip.HoldsLink => "it now holds a link to somewhere else, or could not be read whole, and TradeAgent removes neither",
+        LetGoSkip.Busy => $"another press to free space was removing at the same moment, so press \"{FreeSpaceLabel}\" again once it is done",
         LetGoSkip.InUse => "a check was working in it a moment ago",
         _ => $"it changed after you looked, so press \"{FreeSpaceLabel}\" again to see it as it is now"
     };
