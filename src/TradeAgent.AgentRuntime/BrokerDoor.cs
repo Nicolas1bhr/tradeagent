@@ -608,6 +608,7 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// </summary>
     async Task<Dictionary<string, object>> Call(AgentGrant grant, JsonElement id, JsonElement parameters, CancellationToken ct)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var name = parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("name", out var n)
                    && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
         if (name is null) return ToolResult("a tools/call names its tool", served: false);
@@ -618,7 +619,7 @@ public sealed class BrokerDoor : IAsyncDisposable
 
         // A BOARD SEAT'S DOOR SERVES NOTHING BUT THE BOARD'S VERBS (U-board-alive item 1): any other name — a harness tool, an organisation
         // verb — is refused here, before any surface is asked, and recorded as every refusal is.
-        if (BoardSeats.IsBoardId(grant.Role)) return Recorded(grant, name, ToolAnswer.Refused(BoardSeatOnlyVerbs(name), name));
+        if (BoardSeats.IsBoardId(grant.Role)) return Recorded(grant, name, ToolAnswer.Refused(BoardSeatOnlyVerbs(name), name), started);
 
         if (Tools(grant) is not { } tools) return ToolResult("the door serves no tool to this launch", served: false);
         var answer = await tools.InvokeAsync(new ToolRequest(id.ToString(), name, arguments), ct);
@@ -631,6 +632,8 @@ public sealed class BrokerDoor : IAsyncDisposable
     /// </summary>
     async Task<Dictionary<string, object>> Verb(AgentGrant grant, DoorVerb verb, string arguments, CancellationToken ct)
     {
+        // THE CALL'S OWN WALL TIME (U-door-bounds), the gate's question included, as the harness's surface times its tools.
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         ToolAnswer answer;
         if (VerbGate(grant) is { } refused)
             answer = ToolAnswer.Refused($"'{verb.Spec.Name}' is {(verb.Op is { } op && Ops.IsBoard(op) ? "a verb of the security board" : "an organisation verb")}, "
@@ -641,11 +644,14 @@ public sealed class BrokerDoor : IAsyncDisposable
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { answer = ToolAnswer.Refused($"'{verb.Spec.Name}' could not be answered: {ex.Message}", verb.Spec.Name); }
         }
-        return Recorded(grant, verb.Spec.Name, answer);
+        return Recorded(grant, verb.Spec.Name, answer, started);
     }
 
-    /// <summary>ONE ANSWER, CUT AND RECORDED: the row measures what the caller receives (fix pass 1, R3) — the cut first, then the record.</summary>
-    Dictionary<string, object> Recorded(AgentGrant grant, string tool, ToolAnswer answer)
+    /// <summary>
+    /// ONE ANSWER, CUT AND RECORDED: the row measures what the caller receives (fix pass 1, R3) — the cut first, then the record — and the
+    /// call's own wall time since <paramref name="started"/> (U-door-bounds).
+    /// </summary>
+    Dictionary<string, object> Recorded(AgentGrant grant, string tool, ToolAnswer answer, long started)
     {
         var delivered = Bounded(answer.Content);
         try
@@ -654,7 +660,8 @@ public sealed class BrokerDoor : IAsyncDisposable
             {
                 At = DateTimeOffset.UtcNow, Attempt = grant.AttemptId, Role = grant.Role, Tool = tool,
                 Argument = answer.Summary, Bytes = Encoding.UTF8.GetByteCount(delivered), Served = answer.Served,
-                Refusal = answer.Served ? null : delivered
+                Refusal = answer.Served ? null : delivered,
+                Duration = System.Diagnostics.Stopwatch.GetElapsedTime(started)
             });
         }
         catch (Exception) { /* a row that could not be written does not turn a refusal into a call */ }

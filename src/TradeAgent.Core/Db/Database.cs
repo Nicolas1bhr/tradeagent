@@ -3409,6 +3409,18 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{petitionRung}') ON CONFLICT(key) DO UPDATE SET value='{petitionRung}';");
         }
 
+        // THE RUNG'S NUMBER, SPELLED ONCE: a unit overtaken renumbers it in Versions, nothing else.
+        const int toolCallDurationRung = Versions.ToolCallDurationRung;
+        if (have < toolCallDurationRung)
+        {
+            // A TOOL CALL'S DURATION (`U-door-bounds`): the app's own wall time for each call, from its arrival at the harness's surface or the
+            // door's verb to its answer, in milliseconds — what the vendor's per-call limit is measured against, and what the Work page names
+            // when a call ran long. Written in the row's own insert; NULL on every row before the rung, never backfilled. The column added only
+            // where missing and the stamp last, so a crash between them runs this again as a no-op.
+            AddColumnIfMissing("tool_call", "duration_ms", "INTEGER");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','{toolCallDurationRung}') ON CONFLICT(key) DO UPDATE SET value='{toolCallDurationRung}';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

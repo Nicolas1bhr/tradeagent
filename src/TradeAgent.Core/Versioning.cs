@@ -513,8 +513,16 @@ public static class Versions
     /// included): its typed intent and hash, read strictly against the version in force, its direction, its words as a claim, and the one
     /// active seat the app woke for it (<c>routed_to</c>). A RECORD THAT APPLIES NOTHING: only a board act changes the policy. Sealed: an
     /// UPDATE, a DELETE and an insert over its key are refused by trigger. One writer, <c>BoardStore</c>.</para>
+    ///
+    /// <para><b>59 — a tool call's duration</b> (<c>U-door-bounds</c>, rung <see cref="ToolCallDurationRung"/>, after <c>U-board-alive</c>'s 58): the column
+    /// <c>tool_call.duration_ms</c>, the app's own wall time from the call's arrival to its answer, written in each row's insert by the
+    /// harness's surface and the door's verbs. NULL on every row before the rung, never backfilled; no row moves. A home that climbed it cannot
+    /// be opened by a build of 58 or below without the install's backup.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = BoardPetitionRung;
+    public const int DatabaseSchemaVersion = ToolCallDurationRung;
+
+    /// <summary>The tool-call duration rung, spelled once (<c>U-door-bounds</c>); a unit overtaken renumbers it here.</summary>
+    public const int ToolCallDurationRung = 59;
 
     /// <summary>The scorecard indexes' rung, spelled once (<c>U-perf-scan</c>); a unit overtaken renumbers it here.</summary>
     public const int ScorecardIndexRung = 57;

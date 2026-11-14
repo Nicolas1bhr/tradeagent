@@ -1092,6 +1092,44 @@ public partial class BrokerDoorTests
         Assert.True(contained.Held, $"the launch was not held within {bound.TotalSeconds:0} s: {contained.Mechanism}");
     }
 
+    /// <summary>
+    /// U-DOOR-BOUNDS ITEM 4 ON THE DOOR: AN ORGANISATION VERB'S ROW RECORDS HOW LONG THE CALL RAN — served after the verb's own work, and
+    /// refused by the gate before it — measured by the door itself. RED at base: the rows carried no duration.
+    /// </summary>
+    [Fact]
+    public async Task A_verbs_row_records_how_long_the_call_ran_served_or_refused()
+    {
+        using var db = TestEnv.NewDb();
+        var ledger = new ToolCallStore(db);
+        var took = TimeSpan.FromMilliseconds(150);
+        var verb = new BrokerDoor.DoorVerb(new ToolSpec("test-verb-slow", "A verb that exists only in this test.",
+                new Dictionary<string, object> { ["type"] = "object", ["properties"] = new Dictionary<string, object>() }),
+            async (_, _, ct) => { await Task.Delay(took, ct); return ToolAnswer.Ok("the slow verb answered", "test-verb-slow"); });
+        var grants = new AgentGrants();
+        using var served = grants.IssueHere(CouncilRoles.Research, "attempt-timed-served");
+        using var refused = grants.IssueHere(CouncilRoles.Research, "attempt-timed-refused");
+        await using var door = new BrokerDoor
+        {
+            Grants = grants, Image = SelfImage, Verbs = [verb], Ledger = ledger,
+            VerbGate = g => g.AttemptId == "attempt-timed-served" ? null : "this test's gate refuses it"
+        };
+        door.Start();
+
+        foreach (var grant in new[] { served, refused })
+        {
+            using var http = Client(grant.Token);
+            var call = (await Post(http, door.Url!, Rpc(1, "tools/call", new { name = "test-verb-slow", arguments = new { } }))).Json.GetProperty("result");
+            Assert.Equal(grant == refused, call.GetProperty("isError").GetBoolean());
+        }
+
+        var answered = Assert.Single(ledger.ForAttempt("attempt-timed-served"));
+        Assert.True(answered.Served);
+        Assert.True(answered.Duration >= took, $"the served verb recorded {answered.Duration}");
+        var gated = Assert.Single(ledger.ForAttempt("attempt-timed-refused"));
+        Assert.False(gated.Served);
+        Assert.True(gated.Duration is { } d && d < took, $"the refused verb recorded {gated.Duration}, though it never ran");
+    }
+
     // ---- the client --------------------------------------------------------------------------------------------------------
 
     internal static HttpClient Client(string? bearer = null)
