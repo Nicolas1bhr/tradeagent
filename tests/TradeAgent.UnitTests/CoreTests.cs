@@ -683,6 +683,8 @@ public class RuntimeCatalogTests
     }
 }
 
+// IT REWRITES PATH PROCESS-WIDE (PathEntry) while other classes launch programs, so it runs alone (U-ci-precheck item 4; ProcessWideEnvironmentTests).
+[Collection(VendorOverrideFiles.Name)]
 public class RuntimeResolutionTests
 {
     static string Scratch([CallerMemberName] string name = "")
