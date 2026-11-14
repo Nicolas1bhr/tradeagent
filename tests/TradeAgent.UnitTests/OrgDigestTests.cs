@@ -1723,9 +1723,13 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         File.WriteAllText(disk, "[42949672960, 107374182400, 5000000, 6553600]");
         var (json, human) = Both(f, "--disk-file", disk);
         var recorded = Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "OrgDigestRecorded");
-        static string Mask(string s) => System.Text.RegularExpressions.Regex.Replace(
-            System.Text.RegularExpressions.Regex.Replace(s, @"\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?", m => m.Value.StartsWith("2026-10-", StringComparison.Ordinal) ? m.Value : "<wall clock>"),
-            @"\b\d+ KiB\b", "<n> KiB");
+        // THE SCHEMA RUNG moves with main (a rung is not the watch's line, and the fixture's home is made by today's build), so it is masked too.
+        static string Mask(string s)
+        {
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?", m => m.Value.StartsWith("2026-10-", StringComparison.Ordinal) ? m.Value : "<wall clock>");
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\bschema \d+\b", "schema <rung>");
+            return System.Text.RegularExpressions.Regex.Replace(s, @"\b\d+ KiB\b", "<n> KiB");
+        }
 
         // THE CHANGES NAMED OPENLY, each in the landing entry: the verdicts line's waiting (item 5).
         var declared = new (string Old, string New)[] { ("waiting 1, given", "waiting 1 since T0 (1 ever), given") };
@@ -1733,7 +1737,7 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         var at = 0;
         foreach (var raw in File.ReadAllText(Path.Combine(recorded, "aa126ada.txt")).TrimEnd('\n').Split('\n'))
         {
-            var line = declared.Aggregate(raw, (l, d) => l.Replace(d.Old, d.New, StringComparison.Ordinal));
+            var line = declared.Aggregate(Mask(raw), (l, d) => l.Replace(d.Old, d.New, StringComparison.Ordinal));
             var found = Array.FindIndex(now, at, l => l.StartsWith(line, StringComparison.Ordinal));
             Assert.True(found >= 0, $"the recorded line no longer stands (in order) in today's digest:\n{raw}\n--- today:\n{string.Join("\n", now)}");
             at = found + 1;
@@ -1746,10 +1750,10 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             JsonValueKind.Array => e.GetArrayLength() == 0 ? [(path, "[]")] : e.EnumerateArray().SelectMany((v, i) => Leaves(v, $"{path}[{i}]")),
             _ => [(path, Mask(e.ToString()))],
         };
-        var today = Leaves(json, "").Where(l => l.Path != "tape_health.bytes").ToDictionary(l => l.Path, l => l.Value);
+        var today = Leaves(json, "").Where(l => l.Path is not ("tape_health.bytes" or "app.schema")).ToDictionary(l => l.Path, l => l.Value);
         var changed = new[] { "signal.cannot_be_read" };
         using var was = JsonDocument.Parse(File.ReadAllText(Path.Combine(recorded, "aa126ada.json")));
-        foreach (var (path, value) in Leaves(was.RootElement, "").Where(l => l.Path != "tape_health.bytes" && !changed.Contains(l.Path)))
+        foreach (var (path, value) in Leaves(was.RootElement, "").Where(l => l.Path is not ("tape_health.bytes" or "app.schema") && !changed.Contains(l.Path)))
         {
             Assert.True(today.ContainsKey(path), $"the recorded JSON value at {path} is gone");
             Assert.True(today[path] == value, $"the recorded JSON value at {path} was '{value}' and is '{today[path]}'");
