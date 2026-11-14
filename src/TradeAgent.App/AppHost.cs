@@ -1938,7 +1938,29 @@ public sealed partial class AppHost : IAsyncDisposable
     /// <summary>A test's step at the head of a switch's work: where it ran, and what a press beside it does (<c>U-owner-words-2</c>).</summary>
     internal Action? SwitchStep { get; set; }
 
+    /// <summary>
+    /// EACH STEP OF THE LAST SWITCH AND HOW LONG IT TOOK (<c>U-material-pass-2</c>): the ~53 s of the real run of 2026-11-13 had no cause
+    /// anyone could name, because nothing timed the steps. Every switch now writes them to the engineering log (<c>Platform</c>,
+    /// <c>switch_timed</c>), so the owner's own machine says where its time goes; a test reads them here.
+    /// </summary>
+    internal IReadOnlyList<(string Step, double Ms)> LastSwitchSteps { get; private set; } = [];
+
     async Task SwitchConnectorOffTheWindowAsync(string id)
+    {
+        var steps = new List<(string Step, double Ms)>();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        void Step(string name) { steps.Add((name, clock.Elapsed.TotalMilliseconds)); clock.Restart(); }
+        try { await SwitchStepsAsync(id, Step); }
+        finally
+        {
+            LastSwitchSteps = steps;
+            if (steps.Count > 0)
+                Gateway?.Log.TryEngineering("Platform", "switch_timed", "info",
+                    metadataJson: Json.Write(new { to = id, steps = steps.Select(s => new { s.Step, ms = Math.Round(s.Ms, 1) }) }));
+        }
+    }
+
+    async Task SwitchStepsAsync(string id, Action<string> Step)
     {
         if (_db is null) return;
         // ATAS ONLY WHERE THIS BUILD CARRIES ITS ADAPTER (U-windows-release): a CI build's bridge has no ATAS half, so ATAS is refused
@@ -1950,6 +1972,7 @@ public sealed partial class AppHost : IAsyncDisposable
         // AN EXPLICIT CHOICE ENDS THE PAPER STAND-IN FOR ATAS (U-atas-home-no-atas-build): the next no-ATAS build that finds ATAS saved asks again.
         if (_db.GetKv(AtasHome.StandInKey) is { Length: > 0 }) _db.SetKv(AtasHome.StandInKey, "");
         if (_db.GetKv(AtasHome.HeldAccountKey) is { Length: > 0 }) _db.SetKv(AtasHome.HeldAccountKey, "");
+        Step("choice saved");
         if (current == id && Gateway is not null) return;
 
         // The chosen account belongs to the platform it was chosen on. Carrying it across turns
@@ -1958,17 +1981,22 @@ public sealed partial class AppHost : IAsyncDisposable
         // perfectly healthy. Onboarding never hit this because it picks the platform first and the
         // account afterwards; a settings surface that can switch afterwards hits it immediately.
         if (Gateway is not null) Gateway.Update(s => s.SelectedAccountId = null);
+        Step("account cleared");
 
         if (_server is not null) { await _server.DisposeAsync(); _server = null; }
+        Step("pipe closed");
         if (Gateway is not null)
         {
             Gateway.StateChanged -= OnGatewayStateChanged;
             await Gateway.DisposeAsync();
         }
+        Step("gateway closed");
 
         Health.Set(Components.TradingConnection, HealthState.STARTING);
         Connector = Platforms.Connectors.Create(id, ConnectorChoiceNow());
+        Step("connector built");
         Gateway = new TradingGateway(_db, Connector, Health, GatewayOptionsHere());
+        Step("gateway built");
         Gateway.StateChanged += OnGatewayStateChanged;
         // A new gateway is a new object and the sink is on the object, exactly like the hook below.
         // Forgetting this line is how a fill on the new platform stops waking the AI.
@@ -1978,6 +2006,7 @@ public sealed partial class AppHost : IAsyncDisposable
 
         _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
         _server.Start();
+        Step("pipe started");
         Health.Set(Components.Gateway, HealthState.READY);
         // A new gateway is a new object, and the hook is on the object. Forgetting this line is how
         // `trade status` starts reporting an AI that is stopped and free while it is working.
@@ -1986,8 +2015,11 @@ public sealed partial class AppHost : IAsyncDisposable
         ReportTapeToTheGateway();
 
         try { await Connector.ConnectAsync(); } catch (Exception) { /* health reports it */ }
+        Step("connected");
         await Gateway.RefreshHealthAsync();
+        Step("first health pass");
         ReportAtasHealth();
+        Step("ATAS rows");
         Gateway.Log.Activity($"Trading platform set to {id}");
         Changed?.Invoke();
     }

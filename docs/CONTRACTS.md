@@ -267,7 +267,12 @@ machine's 7 GiB of swap in use, no page swapped out and at most 140 swapped in d
 other call on the connector waits meanwhile, and its declared 5 s `WorstCaseOperationPath`, which
 `DispatchStrandedAfter` is derived from, bounds neither this nor one page: at this rate one settle
 passes five seconds at about 100,000 bars (≈ 70 days), sooner wherever a commit's flush is slower. NOT
-measured on Windows.
+measured on Windows. **Sooner it was** (`U-material-pass-2`): the owner's first switch to paper on his server
+(2026-11-13) froze about 53 s, because its first health pass quotes the venue's first pair and a fresh book settled
+every minute of four days of tape at one durable commit a bar. **The bars no order can fill on are now settled in ONE
+write**: every bar up to the earliest order of that symbol that is not cancelled or refused — a candidate's bar is
+always after its order's own time — leaves only the watermark and the close of the last of them. A catch-up behind a
+working order still pays a commit a bar from that order's time on.
 
 **Which connector an id names is decided in one place**, `Connectors.Create` in
 `src/TradeAgent.Platforms/`, for the desktop app and the gateway host alike; an id neither recognises
