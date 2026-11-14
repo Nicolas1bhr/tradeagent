@@ -1949,6 +1949,11 @@ doubt adds a position, never removes one: a run whose book is not the whole of i
 and a platform figure the runs' books do not add up to (a fill not yet read) counts as the account's
 own. The refusal and the Board page say what is counted.
 
+**In PAPER the record's platform is compared at the wire.** The re-check before a placement or a
+modification is sent refuses a record that names another platform than the connected one, before its
+account questions (an account id is unique only within a platform), as the approval path already
+does. A live mode's send path is not changed by it.
+
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent's order — or its modification — is parked as `AWAITING_APPROVAL` after passing every gate and
 refused to the agent with `APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the

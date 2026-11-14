@@ -7380,7 +7380,8 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// THE SAME, AND IN PAPER THE ACCOUNT THE ORDER IS ROUTED TO, ASKED AGAIN (<c>U-live-witness-2</c>). The mode is checked
+    /// THE SAME, AND IN PAPER THE RECORD'S PLATFORM AND THE ACCOUNT THE ORDER IS ROUTED TO, ASKED AGAIN (<c>U-live-witness-2</c>,
+    /// <c>U-paper-risk-words</c>). A record that names another platform than the connected one is refused first. The mode is checked
     /// against the record; so is the paper witness, because it is the other half of what PAPER means. The risk check asked
     /// "is this practice money" early, and everything after it is awaited: on ATAS the platform's practice flag describes the
     /// chart's bound portfolio, so a chart rebound to another portfolio inside that window changed the answer and the re-check
@@ -7394,6 +7395,14 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         ReauthorizeAtDispatchOrThrow(ctx, stored);
         if (stored.Mode != TradingMode.PAPER) return;
+
+        // THE RECORD'S PLATFORM FIRST (U-paper-risk-words; U-live-witness-2's card 1), as the approval path compares it: an account id is
+        // unique only within a platform, so the account questions below mean nothing about a record written for another one. PAPER ONLY:
+        // a live mode's send path is U-board-live's to decide, and it is not changed here.
+        if (!string.Equals(stored.ConnectorId, Connector.Id, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
+                $"this order was recorded for the {stored.ConnectorId} platform, but {Connector.Id} is connected now, and the mode "
+                + "is PAPER: nothing was sent");
 
         if (routed is null || !string.Equals(routed.Id, stored.AccountId, StringComparison.Ordinal))
             throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
