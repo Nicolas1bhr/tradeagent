@@ -670,8 +670,13 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// measured any. And nothing of a measurement that read a run held back NOW (<paramref name="withheld"/>, asked at this
     /// read): a holdout set after the verdict makes its figures figures of held-back bars, so the line says it is withheld,
     /// which run and why, and shows none of them.
+    ///
+    /// <para><b>And what M counts</b> (<c>U-evidence-counts</c> item 2; A2-3): every line that shows M says it counts TradeAgent's own
+    /// backtests only (<see cref="Core.Db.ResearchEvidence.ChargedOnly"/>), and where the version's author had been served an export of
+    /// the verdict's pair's research months before it submitted the version (<paramref name="exported"/>, that pair), the line says so
+    /// beside its figures: the search may have been wider than M, so they may overstate the version. Words only: M is what it was.</para>
     /// </summary>
-    static string ResearchLine(ResearchEvidenceRow? e, ResearchWithheld? withheld)
+    static string ResearchLine(ResearchEvidenceRow? e, ResearchWithheld? withheld, string? exported = null)
     {
         if (e is null) return "";
         if (withheld is not null)
@@ -682,20 +687,38 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // measurement read any so; nothing for none, and nothing for a measurement recorded before rung 36, which never asked.
         var other = e.TrialsOtherSemantics is int n && n > 0 ? $", of which {n} {Core.Db.ResearchEvidence.OtherSemantics}" : "";
         var trials = $"M {e.TrialsM} ({e.TrialsUnstreamed} without a readable stream{other}), N_eff {e.NEff}";
+        // WHAT M COUNTS, AND WHERE THIS VERSION'S AUTHOR EXPORTED, BESIDE THE FIGURES IT DEFLATES (item 2).
+        var counted = $". {Core.Db.ResearchEvidence.ChargedOnly}"
+                      + (exported is null
+                          ? ""
+                          : $". The position that wrote this version had exported research months of {exported} before it submitted "
+                            + "it, so it may have searched more than M says and these figures may overstate it");
         if (e.CandidateRunId is null)
             return $". Research evidence (research streams only, shown and not enforced): {Core.Strategy.GateStatus.NoStream} for this "
-                   + $"version in its lineage; {trials}";
+                   + $"version in its lineage; {trials}{counted}";
 
         var floor = Core.Strategy.GatePower.Discriminates.ToString("0.00", CultureInfo.InvariantCulture);
         return $". Research evidence (research streams only, shown and not enforced), over run {Short(e.CandidateRunId)}'s "
                + $"{e.Days} known days: DSR {F(e.Dsr)} — {e.DsrStatus}, power {F(e.DsrPower)} of the {floor} it needs; "
                + $"{trials}, noise ceiling {F(e.Ceiling)} annual Sharpe; blocks {e.BlocksPositive}/{Core.Strategy.BlockTest.Count} positive "
-               + $"— {e.BlocksStatus}, power {F(e.BlocksPower)}; family PBO: no family — {e.FamilyStatus}";
+               + $"— {e.BlocksStatus}, power {F(e.BlocksPower)}; family PBO: no family — {e.FamilyStatus}{counted}";
     }
 
-    /// <summary>The verdict's research evidence as its line shows it, today's holdout windows asked first.</summary>
+    /// <summary>
+    /// The verdict's research evidence as its line shows it, today's holdout windows asked first — and the verdict's pair, when the
+    /// version's author had exported its research months before submitting it (<see cref="ResearchEvidence.AuthorExported"/>).
+    /// </summary>
     string Research(long campaignId, string versionId) =>
-        _research.Of(campaignId, versionId) is { } e ? ResearchLine(e, _research.Withheld(e)) : "";
+        _research.Of(campaignId, versionId) is { } e
+            ? ResearchLine(e, _research.Withheld(e), ExportedPair(campaignId, versionId))
+            : "";
+
+    /// <summary>The pair of <paramref name="campaignId"/>'s dataset when the version's author had exported its research months, else null.</summary>
+    string? ExportedPair(long campaignId, string versionId) =>
+        gateway.Campaigns.ById(campaignId) is { } campaign && gateway.Datasets.ById(campaign.HoldoutDatasetId)?.Pair is { } pair
+        && _research.AuthorExported(versionId, pair)
+            ? pair
+            : null;
 
     /// <summary>
     /// WHETHER THE VERDICT'S HOLDOUT MAY BE REMEMBERED BY THE MODEL THAT WROTE THE VERSION (<c>U-referee-v2c</c>), appended to
