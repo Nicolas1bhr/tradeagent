@@ -578,7 +578,8 @@ public partial class OrgDigestTests(ITestOutputHelper log)
 
         Assert.Equal(1, s.GetProperty("candidates").GetProperty("admissible_since").GetInt32());   // p2, paper-eligible
         Assert.Equal(1, s.GetProperty("ledger").GetProperty("finding").GetInt32());
-        Assert.Contains("found a finding again", s.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
+        // CHANGED OPENLY (U-digest-watch-3; R31 D13-5): the statement was half stale; what a fresh session was shown and read is counted under refound.
+        Assert.Contains("USED a finding", s.GetProperty("cannot_be_read").GetString(), StringComparison.Ordinal);
     }
 
     // ---- THE EVIDENCE'S EYES (U-digest-evidence-eyes; R31 D1 § 5): did a campaign spend, did a forward hold arm, what did the windows refuse --------
@@ -1683,10 +1684,11 @@ public partial class OrgDigestTests(ITestOutputHelper log)
                 Attempt(attempts, id, null, at, BillingClasses.Plan, "gpt-6-luna", 1m, 0.1m, 0);
                 db.Exec($"UPDATE ai_attempt SET context = '{Session(session)}' WHERE id = '{id}';");
             }
+            Attempt(attempts, "w0", null, "2026-10-30T08:00:00Z", BillingClasses.Plan, "gpt-6-luna", 1m, 0.1m, 0);       // the launch that wrote the entries
             db.Exec("PRAGMA foreign_keys=OFF;");
             db.Exec($"""
-                INSERT INTO ledger_entry(id, kind, author, created_at) VALUES (1, '{LedgerKind.Finding}', 'operations', '2026-10-30T09:00:00.0000000Z'),
-                  (2, '{LedgerKind.Finding}', 'operations', '2026-10-31T12:30:00.0000000Z'), (3, '{LedgerKind.Hypothesis}', 'operations', '2026-10-30T09:00:00.0000000Z');
+                INSERT INTO ledger_entry(id, kind, author, created_at, attempt) VALUES (1, '{LedgerKind.Finding}', 'operations', '2026-10-30T09:00:00.0000000Z', 'w0'),
+                  (2, '{LedgerKind.Finding}', 'operations', '2026-10-31T12:30:00.0000000Z', 'w0'), (3, '{LedgerKind.Hypothesis}', 'operations', '2026-10-30T09:00:00.0000000Z', 'w0');
                 INSERT INTO ai_attempt_input(attempt_id, kind, ref_id) VALUES ('s1', '{PacketInputKind.Ledger}', '1'), ('s1', '{PacketInputKind.Ledger}', '3'),
                   ('s1', '{PacketInputKind.Ledger}', '2'), ('s2', '{PacketInputKind.Ledger}', '1'), ('s3', '{PacketInputKind.Ledger}', '2');
                 """);
