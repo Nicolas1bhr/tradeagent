@@ -68,7 +68,7 @@ public class FoundingOpenPositionTests(ITestOutputHelper log)
     /// <summary>
     /// THE FOUNDING FIFTEEN BINDS AT FIFTEEN: with the fifteen runs the founding envelopes allow all holding, one more position — the owner's own
     /// buy on a pair the runs already hold — is the sixteenth and is refused before the wire; nothing reaches the paper book. A close is never
-    /// a new position, so the account can still be closed out of. RED at aa126ada: the buy went out, because the pair was already one of the
+    /// a new position, so the cap never refuses one. RED at aa126ada: the buy went out, because the pair was already one of the
     /// five counted.
     /// </summary>
     [Fact]
@@ -88,7 +88,8 @@ public class FoundingOpenPositionTests(ITestOutputHelper log)
         Assert.Null(rig.Gw.GetRequest("owner-sixteenth"));
         Assert.Equal(before, (await rig.Conn.GetOrdersAsync(PaperConnector.TheAccount, true, null)).Count);
 
-        // AND AN ACCOUNT AT ITS LIMIT CAN STILL BE CLOSED OUT OF: a close is never a new position, whatever else refuses it.
+        // AND A CLOSE IS NEVER REFUSED BY THIS LIMIT: it is never a new position. (Here the account holds nothing beyond its runs' own, so
+        // the close is refused by what it is sized against; what this row holds is only that the cap is not what refuses it.)
         var close = await Record.ExceptionAsync(() => rig.Gw.PlaceAsync(AgentContext.Operator, "owner-close-at-the-limit",
             new PlaceIntent("BTCUSDT", OrderSide.Sell, OrderType.Market, 0.001m, null, null, TimeInForce.Day, null) { Intent = OrderIntent.Close }));
         Assert.DoesNotContain("positions and the limit is", close?.Message ?? "", StringComparison.Ordinal);

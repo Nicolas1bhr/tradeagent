@@ -4848,28 +4848,38 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// </summary>
     void OpenPositionCapOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions, string accountId, string requestId)
     {
-        // A CLOSE OR A REDUCTION IS NEVER A NEW POSITION, whoever holds what it closes: refusing one would be the trap the summary
-        // names, an account at its limit that cannot be closed out of. Counted by instrument this fell out of the arithmetic (the
-        // instrument was already counted); counted by holder it has to be said, because the owner's own close of a pair only runs
-        // hold names a holder that holds nothing.
-        if (!CanIncreaseExposure(intent, positions)) return;
-
         var limit = Policy.Risk.MaxOpenPositions;
         var paper = Policy.Mode == TradingMode.PAPER;
-        var open = new HashSet<(string Holder, string Symbol)>();
 
-        foreach (var held in positions.Where(p => p.Quantity != 0).GroupBy(p => p.Symbol, StringComparer.Ordinal))
+        // IN PAPER A CLOSE OR A REDUCTION IS NEVER A NEW POSITION, whoever holds what it closes: refusing one would be the trap the
+        // summary names, an account at its limit that cannot be closed out of. Counted by instrument this fell out of the arithmetic
+        // (the instrument was already counted), and outside paper it still does, unchanged; counted by holder it has to be said,
+        // because the owner's own close of a pair only runs hold names a holder that holds nothing.
+        if (paper && !CanIncreaseExposure(intent, positions)) return;
+        var open = new HashSet<(string Holder, string Symbol)>();
+        var held = positions.Where(p => p.Quantity != 0).GroupBy(p => p.Symbol, StringComparer.Ordinal)
+            .Select(g => (Symbol: g.Key, Quantity: g.Sum(p => p.Quantity))).ToList();
+
+        // The runs that still hold their slot on each held instrument, each with its operations read ONCE (HoldsItsSlot's own test,
+        // asked of those operations), and the fill ledger read ONCE for all of them from the earliest start, as the status read does:
+        // this runs inside the dispatch gate on every paper placement.
+        var slots = !paper ? [] : held
+            .SelectMany(h => _deployments.OnInstrument(Connector.Id, accountId, h.Symbol))
+            .Select(run => (Run: run, Ops: _deployments.OpsOf(run.Id)))
+            .Where(r => !r.Run.IsEnded || r.Ops.Any(o => !o.IsSettled) || OwesItsClose(r.Run, r.Ops))
+            .ToList();
+        IReadOnlyList<Fill> ledger = slots.Count == 0 ? [] : _fills.Since(slots.Min(r => r.Run.StartedAt));
+
+        foreach (var (symbol, platform) in held)
         {
-            var platform = held.Sum(p => p.Quantity);
             var runs = 0m;
-            if (paper)
-                foreach (var run in _deployments.OnInstrument(Connector.Id, accountId, held.Key).Where(HoldsItsSlot))
-                {
-                    var book = _deployments.BookOf(run);
-                    if (book.Held != 0m || !book.Complete) open.Add((Deployments.HolderFor(run.Id), held.Key));
-                    runs += book.Held;
-                }
-            if (platform != runs) open.Add(("", held.Key));
+            foreach (var (run, ops) in slots.Where(r => string.Equals(r.Run.Symbol, symbol, StringComparison.Ordinal)))
+            {
+                var book = _deployments.BookOf(run, ops, ledger);
+                if (book.Held != 0m || !book.Complete) open.Add((Deployments.HolderFor(run.Id), symbol));
+                runs += book.Held;
+            }
+            if (platform != runs) open.Add(("", symbol));
         }
 
         foreach (var work in _requests.Open())
@@ -5122,7 +5132,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// THE LOSS BUDGETS, REFUSING NEW RISK — the only limits in this class that are about what has
     /// HAPPENED rather than about what is being sent.
     ///
-    /// Every other gate bounds one order: a quantity, a value, a count of instruments, a minute's
+    /// Every other gate bounds one order: a quantity, a value, a count of positions, a minute's
     /// budget. An agent can lose an account without breaching any of them, one permitted order at a
     /// time, and there is no human in the loop for real money (decided 2026-09-06) — so this is what
     /// bounds a losing day, ahead of any broker or prop firm.
@@ -8870,7 +8880,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
                 // already runs inside the dispatch gate, so they are asked here rather than in the
                 // risk check, and the reading is taken here for the reason PlaceAsync takes its own.
                 // Only for a placement: see OpenPositionCapOrThrow on why a modification cannot
-                // raise a count of instruments, and CanIncreaseExposure on why a close never is.
+                // raise the count of positions, and CanIncreaseExposure on why a close never is.
                 //
                 // THE GATES ARE ASKED AGAIN HERE AND THAT IS THE POINT OF ASKING THEM AT ALL. A
                 // proposal parks until a person answers it, and while it waits the day can go past

@@ -5257,7 +5257,7 @@ has no update at all — it is the caller's claim, carried verbatim, and it does
 proposal waits.
 
 **A MODIFICATION runs none of this**, for the reasons already stated: a change to an order that exists
-cannot raise a count of instruments, and the sequence is written against a `PlaceIntent`. What a
+cannot raise the count of positions, and the sequence is written against a `PlaceIntent`. What a
 modification re-runs is step 7 above, against the target as the book holds it at the press.
 
 **Not in this unit:** the per-order limits above the gate (MED 7), the approval TTL and the mode

@@ -139,7 +139,8 @@ public static partial class Labels
     /// holding is one, so the founding fifteen is the five pairs by three runs it was set as, and a narrowing binds runs.
     /// </summary>
     public const string OpenPositionsMeans =
-        "Counted in positions, not pairs: in paper " + OpenPositionsCountedPaper + "; with real money " + OpenPositionsCounted + ".";
+        "Counted in positions, not pairs: in paper each run's holding is one, and so is whatever the account holds in a pair beyond its runs' "
+        + "own; with real money each instrument held is one; an opening order on its way counts as the position it opens.";
 
     /// <summary>What a board act's new figure means, where the figure alone would mislead: the one-order figure (<see cref="MaxOrderQuantityWords"/>).</summary>
     public static string BoardActMeans(string field, string to) => field switch
