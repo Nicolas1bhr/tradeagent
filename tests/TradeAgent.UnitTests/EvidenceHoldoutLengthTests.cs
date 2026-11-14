@@ -344,6 +344,39 @@ public class EvidenceHoldoutLengthTests
     }
 
     /// <summary>
+    /// U-EVIDENCE-COUNTS item 1 (A2-2): THE TRIAL LOOK READS THE DECLARED PARENT THE WAY THE GATE DOES. A promoted parent, the exploration
+    /// pot full, and a child's FIRST run through the real backtest path, declaring that parent: the look must read the child as a
+    /// refinement — as the gate does once the version row holds the declared parent — so the run is admitted and charged to the
+    /// refinement pot. RED at base: the look read the not-yet-recorded child as parentless, an exploration, and refused it as
+    /// "registered all 2 of the trials it reserves for EXPLORATION" though the gate would have charged refinement. The watched mutant
+    /// (the declared parent not passed to the look) is red the same way.
+    /// </summary>
+    [Fact]
+    public async Task A_new_childs_first_run_declaring_a_promoted_parent_is_admitted_at_the_look_and_charged_to_refinement()
+    {
+        var pair = TestEnv.NewPair();
+        using var archive = new FakeArchive();
+        var (gw, db, campaign) = await SetUp(archive, pair, Small);
+        using var owned = db;
+        await using var gateway = gw;
+        var parent = Freeze(db, Winning(pair), campaign.HoldoutFrom.AddDays(-1));
+        Assert.Equal(PromotionVerdict.Promoted, new Referee(db, () => Now).Verdict(parent, campaign.Id).Promotion!.Verdict);
+        FillThePot(db, campaign, pair);
+        Assert.Equal(0, gw.Campaigns.TrialsCharged(campaign.Id, exploration: false));
+
+        var child = $"instrument {pair}\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\nexit when close > 104\nentry when close < 97\n";
+        var path = BacktestRequestTests.GivenProgram(CouncilRoles.Research, child, "child-of-promoted.strategy");
+        var ran = gw.Backtests.Run(AgentContext.ForAgent(CouncilRoles.Research, CouncilRoles.Research, "attempt-child"),
+            new BacktestAsk(path, campaign.HoldoutDatasetId, campaign.HoldoutFrom.AddDays(-20), campaign.HoldoutFrom.AddMinutes(-1),
+                0.001m, 0m, Increment: 1m, Parent: parent));
+
+        Assert.Equal(parent, new StrategyStore(db).VersionById(ran.Result.VersionId)!.ParentVersionId);
+        Assert.False(gw.Campaigns.IsExploration(ran.Result.VersionId));
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id, exploration: false));
+        Assert.Equal(campaign.ExplorationBudget, gw.Campaigns.TrialsCharged(campaign.Id, exploration: true));
+    }
+
+    /// <summary>
     /// D15: A VERSION THE CAMPAIGN COULD STILL PROMOTE KEEPS IT UNSPENT UNTIL IT IS JUDGED. The case of a campaign over fresh months, where every
     /// version made before them was frozen before its cutoff. While one such version of its pair is unjudged a parent can still be
     /// promoted, so a full pot arms nothing; once the referee has refused it, nothing can be, and the campaign is spent.

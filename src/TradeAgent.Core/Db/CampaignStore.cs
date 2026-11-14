@@ -824,9 +824,15 @@ public sealed class CampaignStore(Database db)
     /// charge to another pair's would be the shared budget the brief forbids. Within a pair it is unchanged: a second
     /// download, a fresh hash or a declared ancestry buys a family no untouched trials.</para>
     /// </summary>
-    public long ChargedCampaignFor(string versionId, long campaignId)
+    public long ChargedCampaignFor(string versionId, long campaignId, string? declaredParent = null)
     {
-        var ancestry = new StrategyStore(db).Ancestry(versionId);
+        // A VERSION NOT YET RECORDED IS READ THROUGH THE PARENT ITS REQUEST DECLARES (U-evidence-counts item 1; A2-2): the ancestry the gate
+        // will read once the run's write has stored that declaration, so the look and the gate read one lineage. A recorded version's own
+        // stored parent always stands — `RecordVersion` keeps the first declaration — so a declaration is never read over it.
+        var strategies = new StrategyStore(db);
+        var ancestry = declaredParent is not null && strategies.VersionById(versionId) is null
+            ? strategies.Ancestry(declaredParent)
+            : strategies.Ancestry(versionId);
         var pair = ById(campaignId) is { } run ? PairOf(run) : null;
 
         // ELDEST FIRST, so the whole family answers to where its root was charged rather than to
@@ -894,8 +900,14 @@ public sealed class CampaignStore(Database db)
     ///
     /// <para><paramref name="through"/> is <see cref="CampaignCharge.Through"/>: null for the campaign over the run's own
     /// dataset, and for any other the sentence a refusal carries naming its months and the dataset the run reads.</para>
+    ///
+    /// <para><paramref name="declaredParent"/> is the parent the run's request declares (<c>U-evidence-counts</c> item 1; A2-2). The look is
+    /// taken before the run's write records the version, so a new version has no row yet: read without its declaration it was parentless —
+    /// an exploration charged to this campaign — while the gate, after the row is written, reads the declared parent. A child of a promoted
+    /// parent was then refused here as "exploration spent" though the gate would charge refinement, and a new child of a spent home ran in
+    /// full to be refused at the gate. With it, the look reads the lineage the gate will read. A version already recorded keeps its own.</para>
     /// </summary>
-    public string? TrialRefusal(long campaignId, string versionId, string kind, string? through = null)
+    public string? TrialRefusal(long campaignId, string versionId, string kind, string? through = null, string? declaredParent = null)
     {
         // THE FENCE COMES FIRST AND IT IS NOT A BUDGET. A retired candidate takes no new assignment at
         // all, so a fixture run of one is refused here too — the exemption above is about the trial
@@ -905,7 +917,7 @@ public sealed class CampaignStore(Database db)
         if (kind == EvaluationClass.Fixture) return null;
         if (ById(campaignId) is null) return null;
 
-        var rule = Admission(campaignId, versionId, kind);
+        var rule = Admission(campaignId, versionId, kind, declaredParent);
         return Refusal(rule, Counts(rule, null), made: false, through);
     }
 
@@ -918,12 +930,12 @@ public sealed class CampaignStore(Database db)
     /// the campaign the run peeks at, the campaign the version's family is charged to, or the part of
     /// the trial budget reserved for exploration.</para>
     /// </summary>
-    TrialAdmission Admission(long campaignId, string versionId, string kind) => new()
+    TrialAdmission Admission(long campaignId, string versionId, string kind, string? declaredParent = null) => new()
     {
         Charged = kind != EvaluationClass.Fixture,
-        Exploration = IsExploration(versionId),
+        Exploration = IsExploration(versionId, declaredParent),
         RunCampaign = ById(campaignId),
-        HomeCampaign = ById(ChargedCampaignFor(versionId, campaignId))
+        HomeCampaign = ById(ChargedCampaignFor(versionId, campaignId, declaredParent))
     };
 
     /// <summary>
@@ -934,9 +946,12 @@ public sealed class CampaignStore(Database db)
     /// exists", the reading <c>Allocations.Record</c> takes for the same reason: a verdict TradeAgent
     /// has since withdrawn is not evidence that a parent is worth refining.</para>
     /// </summary>
-    public bool IsExploration(string versionId)
+    public bool IsExploration(string versionId, string? declaredParent = null)
     {
-        if (new StrategyStore(db).VersionById(versionId)?.ParentVersionId is not { } parent) return true;
+        // A VERSION NOT YET RECORDED IS READ THROUGH ITS REQUEST'S DECLARED PARENT (U-evidence-counts item 1), what its row will hold once the
+        // run's write stores it (`TrialRefusal`). A recorded version's stored parent always stands.
+        var row = new StrategyStore(db).VersionById(versionId);
+        if ((row is null ? declaredParent : row.ParentVersionId) is not { } parent) return true;
         return !new Promotions(db).Standing(parent).IsPromoted;
     }
 
