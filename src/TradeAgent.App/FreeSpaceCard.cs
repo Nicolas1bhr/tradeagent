@@ -229,7 +229,7 @@ sealed class FreeSpaceCard
             ? "Nothing was removed."
             : $"Removed {Items(done.Removed.Count)} and freed {Size(done.Freed)}. Your records, the tape and your positions were kept.");
         foreach (var (item, why) in done.Skipped)
-            parts.Add($"{Short(item)} was left where it was: {Why(why)}.");
+            parts.Add($"{Short(item)} was left where it was: {Why(item, why)}.");
         if (done.FilesKept > 0)
             parts.Add($"{Files(done.FilesKept)} changed while they were being removed, so they were left.");
         parts.Add(now is { } read ? $"{Size(read.Free)} is free on this disk now." : "The free space could not be read just now.");
@@ -248,8 +248,9 @@ sealed class FreeSpaceCard
         return $"You freed {Size(done.Freed)} on your two presses: {string.Join("; ", kinds)}. Your records, the tape and your positions were kept.";
     }
 
-    static string Why(LetGoSkip why) => why switch
+    static string Why(LetGoItem item, LetGoSkip why) => why switch
     {
+        LetGoSkip.InUse when item.Kind == LetGoKind.OlderHome => "a TradeAgent is running on it, so close that one first",
         LetGoSkip.NoLongerLettable => "it is no longer something TradeAgent may remove",
         LetGoSkip.HoldsLink => "it now points somewhere else, and TradeAgent never follows that",
         LetGoSkip.InUse => "a check was working in it a moment ago",

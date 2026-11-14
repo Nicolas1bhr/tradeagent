@@ -164,7 +164,7 @@ public class FreeSpaceCardTests : IDisposable
         var check = new LetGoItem(LetGoKind.CheckLeftover, Path.Combine(_home, "cell-bench", "0123456789ab"), [new LetGoFile("z", 12_000, now.UtcDateTime)], [], now.UtcDateTime.AddDays(-1));
         var plan = new FreeSpacePlan([older, installer, check], now);
         var done = new FreeSpaceDone([older, installer],
-            [(check, LetGoSkip.Changed), (check, LetGoSkip.HoldsLink), (check, LetGoSkip.InUse), (installer, LetGoSkip.NoLongerLettable)], 3L << 30, 2);
+            [(check, LetGoSkip.Changed), (check, LetGoSkip.HoldsLink), (check, LetGoSkip.InUse), (installer, LetGoSkip.NoLongerLettable), (older, LetGoSkip.InUse)], 3L << 30, 2);
         var words = new List<string>
         {
             FreeSpaceCard.Armed(plan), FreeSpaceCard.Armed(new FreeSpacePlan([installer], now)), FreeSpaceCard.Done(done, new DiskSpace(30L << 30, 100L << 30)),

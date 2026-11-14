@@ -48,7 +48,7 @@ public enum LetGoSkip
     /// <summary>It is, or now holds, a link: nothing is followed through one.</summary>
     HoldsLink,
 
-    /// <summary>A leftover check folder that was written to within the hour: a check may be using it.</summary>
+    /// <summary>A leftover check folder written to within the hour (a check may be using it), or an older home a TradeAgent is running on.</summary>
     InUse
 }
 
@@ -195,7 +195,7 @@ public static class FreeSpace
             }
             if (Walk(full) is not { } seen) { skipped.Add((item, LetGoSkip.HoldsLink)); continue; }
             if (!Same(seen, item)) { skipped.Add((item, LetGoSkip.Changed)); continue; }
-            if (Young(item, now)) { skipped.Add((item, LetGoSkip.InUse)); continue; }
+            if (Young(item, now) || item.Kind == LetGoKind.OlderHome && Running(full)) { skipped.Add((item, LetGoSkip.InUse)); continue; }
 
             var (bytes, left) = Delete(item);
             freed += bytes;
@@ -203,6 +203,18 @@ public static class FreeSpace
             removed.Add(item);
         }
         return new FreeSpaceDone(removed, skipped, freed, kept);
+    }
+
+    /// <summary>
+    /// WHETHER A TRADEAGENT HOLDS THIS OLDER HOME'S INSTANCE LOCK NOW, as <see cref="OlderHome"/>'s own press asks it: one that cannot be taken
+    /// is a running app, and its home is not removed under it. A lock that cannot be read for another reason counts as held.
+    /// </summary>
+    static bool Running(string home)
+    {
+        var file = Path.Combine(home, "state", "gateway.lock");
+        if (!File.Exists(file)) return false;
+        try { using var held = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None); return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
     }
 
     /// <summary>A check's folder written to within <see cref="BenchQuiet"/>: a check may be working in it.</summary>
