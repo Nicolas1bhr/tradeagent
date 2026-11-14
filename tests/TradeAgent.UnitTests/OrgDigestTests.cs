@@ -269,6 +269,33 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         return fixture;
     }
 
+    /// <summary>
+    /// A HOME WITH NOTHING BUT WHAT THE APP WRITES WHEN IT FIRST OPENS (U-digest-watch-3): the schema, the seeded chart and the board's founding, and the
+    /// host the script is told it runs on. Its digest is short, so the widest line cap holds and every sub-line shows; a test adds only its own rows.
+    /// </summary>
+    static Fixture Bare()
+    {
+        var root = Path.Combine(TestEnv.Home, "orgdigest-bare-" + Guid.NewGuid().ToString("n")[..10]);
+        var state = Path.Combine(root, "state");
+        Directory.CreateDirectory(state);
+        using (new Database(Path.Combine(state, "tradeagent.db"))) { }
+        var fixture = new Fixture(root, state, Path.Combine(root, "machine-id"), Path.Combine(root, "boot-id"), Path.Combine(root, "osrelease"));
+        File.WriteAllText(fixture.MachineId, "machine-one\n");
+        File.WriteAllText(fixture.BootId, "boot-one\n");
+        File.WriteAllText(fixture.OsRelease, "6.8.0-fixture\n");
+        return fixture;
+    }
+
+    static (JsonElement Json, string Human) Both(Fixture f, params string[] more)
+    {
+        var script = Path.Combine(RepoRoot(), "tools", "org-digest.py");
+        var (exit, o, e) = Run(script, DigestArgs(f, [.. more, "--json"]));
+        Assert.True(exit == 0, e);
+        var (exit2, text, e2) = Run(script, DigestArgs(f, more));
+        Assert.True(exit2 == 0, e2);
+        return (JsonDocument.Parse(o).RootElement.Clone(), text);
+    }
+
     // ---- RUNNING IT ----------------------------------------------------------------------------------------------------------
     static (int Exit, string Out, string Err) Run(string file, IEnumerable<string> args, string? stdin = null, IDictionary<string, string>? env = null, string tool = "python3")
     {
@@ -1420,6 +1447,55 @@ public partial class OrgDigestTests(ITestOutputHelper log)
             var last = Digest("ActiveState=active\n").Json.GetProperty("starts").GetProperty("waits_after_a_crash").EnumerateArray().Last();
             Assert.Equal(At("2026-10-31T13:59:00Z") + CrashWait.WaitFor(n, CrashWait.Clean), At(last.GetProperty("until").GetString()!));
         }
+    }
+
+    /// <summary>
+    /// THE PLAN'S OWN UNIT, AND THE VENDOR'S REFUSALS AS WINDOWS (U-digest-watch-3 item 3; R26 § 4 measure 2; R31 D14 § 2, § 6 item 4, § 7 item 4). One
+    /// list-price dollar is 25 plan credits for the models the app prices, so the digest sums the plan's and unknown launches' charge x 25 over the last
+    /// five hours and the last seven days, per quota pool (the launch's runtime: no account is recorded per launch), key launches apart. And each vendor
+    /// refusal is classed by the reset minute its own sentence names: within five hours a 5-h window, further a weekly one; refusals naming one reset are
+    /// one window, and a refusal naming none is counted apart.
+    ///
+    /// <para>RED at base: no credit figure anywhere, and the vendor limits were rows only ("vendor limits 4"), so two refusals of one window read as two.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void The_draw_is_in_credit_equivalents_per_pool_and_the_vendors_refusals_are_counted_as_windows()
+    {
+        var f = Bare();
+        using (var db = new Database(Path.Combine(f.State, "tradeagent.db")))
+        {
+            var attempts = new AiAttemptStore(db);
+            Attempt(attempts, "c1", null, "2026-10-31T13:00:00Z", BillingClasses.Plan, "gpt-6-luna", 1m, 0.4m, 0);        // 10 credits, inside 5 h
+            Attempt(attempts, "c2", null, "2026-10-31T12:00:00Z", BillingClasses.Unknown, "gpt-6-luna", 1m, 0.2m, 0);     // 5, inside 5 h: unknown counts
+            Attempt(attempts, "c3", null, "2026-10-30T13:00:00Z", BillingClasses.Plan, "gpt-6-luna", 1m, 1.0m, 0);        // 25, inside 7 d only
+            Attempt(attempts, "c4", null, "2026-10-20T13:00:00Z", BillingClasses.Plan, "gpt-6-luna", 1m, 2.0m, 0);        // older than 7 d: nothing
+            Attempt(attempts, "c5", null, "2026-10-31T13:30:00Z", BillingClasses.Key, "gpt-6-luna", 1m, 5.0m, 0);         // a key's: never the plan's
+            // FOUR REFUSALS OF THE VENDOR'S USAGE LIMIT, in its own sentence: two naming one reset (one 5-h window), one a dated reset days away
+            // (weekly), one naming none.
+            const string limit = "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at ";
+            foreach (var (id, at, sentence) in new[] { ("v1", "2026-10-31T10:00:00Z", limit + "11:30 AM."), ("v2", "2026-10-31T10:20:00Z", limit + "11:30 AM."),
+                                                       ("v3", "2026-10-31T11:00:00Z", limit + "Nov 6th, 2026 1:10 AM."), ("v4", "2026-10-31T11:10:00Z", "You've hit your usage limit. Try again later.") })
+            {
+                Attempt(attempts, id, null, at, BillingClasses.Plan, "gpt-6-luna", 1m, 0m, 1);
+                db.Exec($"UPDATE ai_attempt SET context = '{TradeAgent.Core.Json.Write(new TurnContext { Ended = VendorLimit.Ended, Refused = sentence }).Replace("'", "''")}' WHERE id = '{id}';");
+            }
+        }
+        var (json, human) = Both(f);
+        var pace = json.GetProperty("pace");
+        var pool = Assert.Single(pace.GetProperty("credit_equivalents").GetProperty("pools").EnumerateArray());
+        Assert.Equal("codex", pool.GetProperty("pool").GetString());
+        Assert.Equal("15.00", pool.GetProperty("last_5h").GetString());
+        Assert.Equal("40.00", pool.GetProperty("last_7d").GetString());
+        var windows = pace.GetProperty("vendor_limit_windows");
+        Assert.Equal(4, pace.GetProperty("vendor_limit_refusals").GetInt32());     // the rows, as before
+        Assert.Equal(2, windows.GetProperty("windows").GetInt32());
+        Assert.Equal(1, windows.GetProperty("five_hour").GetInt32());
+        Assert.Equal(1, windows.GetProperty("weekly").GetInt32());
+        Assert.Equal(1, windows.GetProperty("rows_no_reset").GetInt32());
+        Assert.Equal("2026-10-31T11:31:00.0000000Z", windows.GetProperty("resets")[0].GetProperty("reset").GetString());   // the END of the minute named
+        Assert.Contains("\n  credit-equivalents if luna at Standard speed (list-price x 25, plan and unknown launches): codex last 5 h 15.00, last 7 d 40.00; "
+                        + "vendor limits as windows: 2 (5-h 1, weekly 1) from 4 row(s), 1 naming no reset\n", human, StringComparison.Ordinal);
+        Assert.Contains("vendor limits 4\n", human, StringComparison.Ordinal);    // the pace line keeps its rows
     }
 
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];

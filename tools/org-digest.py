@@ -60,6 +60,17 @@ CRASH_WAIT_CLEAN_S, CRASH_WAIT_LONGEST_S = 600, 7200
 # SYSTEMD'S WORDS, not the app's: a unit's ActiveState once it stopped on a failure, and the Result of one its start limit refused (a systemd that
 # says so; 255 keeps the last run's Result, so a failed unit systemd had restarted is read as stopped at its limit too: it restarts always).
 SYSTEMD_FAILED, SYSTEMD_START_LIMIT_HIT = "failed", "start-limit-hit"
+# THE PLAN'S OWN UNIT (R31 D14 § 2, PROVED by arithmetic on the two published tables): the vendor meters a plan in credits, and for the models the app
+# prices (luna, sol) one list-price dollar is 25 credits on every column, at Standard speed. A substitution or Fast mode would draw more, unrecorded.
+CREDITS_PER_LIST_DOLLAR = 25
+CREDIT_WINDOW_S, CREDIT_WEEK_S = 5 * 3600, 7 * 86400
+# THE VENDOR'S RESET, as its usage-limit sentence names it (RuntimeManifest's UsageLimitPlan for codex: "try again at 10:30 PM", or dated,
+# "Oct 7th, 2026 1:10 AM"), read as the app reads it: the END of the minute named, a time with no date on the local date it was said.
+RETRY_AT = re.compile(r"try again at (?P<at>.+?)\.?\s*$")
+RETRY_TIME = re.compile(r"^(?P<h>\d{1,2}):(?P<m>\d{2})\s*(?P<p>[AP]M)$")
+RETRY_DATED = re.compile(r"^(?P<mon>[A-Z][a-z]{2}) (?P<d>\d{1,2})(?:st|nd|rd|th), (?P<y>\d{4}) (?P<h>\d{1,2}):(?P<m>\d{2})\s*(?P<p>[AP]M)$")
+WINDOW_FIVE_HOUR, WINDOW_WEEKLY = "5-h", "weekly"     # the digest's own two words for a window met
+MONTHS = {m: i + 1 for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))}
 
 
 def crash_wait_s(in_a_row):
@@ -70,6 +81,31 @@ def crash_wait_s(in_a_row):
     while i < in_a_row and wait < CRASH_WAIT_LONGEST_S:
         wait, i = wait + wait, i + 1
     return CRASH_WAIT_LONGEST_S if wait > CRASH_WAIT_LONGEST_S and CRASH_WAIT_CLEAN_S < CRASH_WAIT_LONGEST_S else wait
+
+
+def retry_at(sentence, said_at):
+    """When the vendor's limit has certainly ended, from its sentence: the end of the minute it named, in this host's zone; None where it named none
+    this can read. A time with no date that is already behind the moment it was said is the next day's (it cannot be a reset in the past)."""
+    m = RETRY_AT.search(sentence or "")
+    if not m or said_at is None:
+        return None
+    text, local = m.group("at").strip(), said_at.astimezone()
+    t, d = RETRY_TIME.match(text), RETRY_DATED.match(text)
+    try:
+        if t:
+            hour = int(t.group("h")) % 12 + (12 if t.group("p") == "PM" else 0)
+            at = local.replace(hour=hour, minute=int(t.group("m")), second=0, microsecond=0)
+            if at + dt.timedelta(minutes=1) < local:
+                at += dt.timedelta(days=1)
+        elif d and d.group("mon") in MONTHS:
+            hour = int(d.group("h")) % 12 + (12 if d.group("p") == "PM" else 0)
+            naive = dt.datetime(int(d.group("y")), MONTHS[d.group("mon")], int(d.group("d")), hour, int(d.group("m")))
+            at = naive.replace(tzinfo=local.tzinfo)
+        else:
+            return None
+    except ValueError:
+        return None
+    return at + dt.timedelta(minutes=1)
 
 
 def files_floor(files):
@@ -990,7 +1026,7 @@ class Digest:
         # A head's chart act names no launch, only its decider: it counts for the turn of that position it fell inside.
         chart = [(r["decider"], r["at"]) for r in self.app.execute(
             "SELECT decider, at FROM org_event WHERE at >= ? AND decider NOT IN (?, ?, ?)", (self.since_s, W.DECIDER_OWNER, W.DECIDER_APP, W.DECIDER_BOARD))]
-        per, limit_hits, first_limit = {}, 0, None
+        per, limit_hits, first_limit, limit_ids = {}, 0, None, set()
         for r in rows:
             pos = position_of(r["role"])
             p = per.setdefault(pos, {"position": pos, "turns": 0, "cost": Decimal(0), "clean": 0, "idle": 0, "models": set(), "waits": []})
@@ -1006,7 +1042,9 @@ class Digest:
             ctx = turn_context(r["context"])
             if ctx.get(W.CTX_ENDED) == W.ENDED_USAGE_LIMIT or (r["vendor_said"] and VENDOR_LIMIT_WORDS.search(r["vendor_said"])):
                 limit_hits += 1
+                limit_ids.add(r["id"])
                 first_limit = first_limit or {"at": r["started_at"], "position": pos, "words": short(r["vendor_said"] or ctx.get(W.CTX_REFUSED) or "")}
+        windows = self.limit_windows(r for r in rows if r["id"] in limit_ids)
         waits = []
         for r in self.app.execute("SELECT role, created_at, due_at, consumed_at FROM mission_event WHERE consumed_at >= ? AND consumed_by IN (SELECT id FROM ai_attempt)",
                                   (self.since_s,)):
@@ -1026,8 +1064,55 @@ class Digest:
                 "clean_turns": clean, "idle_turns": idle, "idle_share_pct": str((Decimal(idle) / clean * 100).quantize(Decimal("0.1"))) if clean else None,
                 "wait_median_s": int(statistics.median(waits)) if waits else None, "wait_max_s": max(waits) if waits else None,
                 "vendor_limit_refusals": limit_hits, "first_vendor_limit": first_limit, "positions": out, "act_tables_absent": unread,
+                "vendor_limit_windows": windows, "credit_equivalents": self.credits(),
                 "words": "idle = a launch that ended cleanly and left no row of work under its id and no chart act in its span; "
                          "wait = a wake's due time to the launch that took it; vendor limits are read from the vendor's words"}
+
+    def limit_windows(self, rows):
+        """THE VENDOR'S REFUSALS AS WINDOWS, NOT ROWS (R31 D14 § 6 item 4): each refusal's reset minute, read from its own sentence; refusals naming one
+        reset are one window met, classed 5-h (the reset within five hours of the refusal) or weekly (further). A refusal naming no reset this can read
+        is counted apart, never folded into a window."""
+        resets, unknown, n = {}, 0, 0
+        for r in rows:
+            n += 1
+            ctx = turn_context(r["context"])
+            said = parse_ts(r["ended_at"]) or parse_ts(r["started_at"])
+            at = retry_at(ctx.get(W.CTX_REFUSED) or r["vendor_said"] or "", said)
+            if at is None:
+                unknown += 1
+                continue
+            key = stored(at)
+            w = resets.setdefault(key, {"reset": key, "kind": WINDOW_FIVE_HOUR if (at - said).total_seconds() <= CREDIT_WINDOW_S + 60 else WINDOW_WEEKLY, "rows": 0,
+                                        "first_at": r["started_at"]})
+            w["rows"] += 1
+        ws = sorted(resets.values(), key=lambda w: w["reset"])
+        return {"windows": len(ws), "five_hour": sum(1 for w in ws if w["kind"] == WINDOW_FIVE_HOUR), "weekly": sum(1 for w in ws if w["kind"] == WINDOW_WEEKLY),
+                "rows": n, "rows_no_reset": unknown, "resets": ws,
+                "words": "a window is one reset minute the vendor named; 5-h if it was within five hours of the refusal, weekly if further"}
+
+    def credits(self):
+        """WHAT THE ORG DREW IN THE PLAN'S OWN UNIT (R31 D14 § 2, § 7 item 4): the list-price charge of the plan's and unknown launches (an unknown counts
+        against the plan, as the day-total counts it) times 25, over the last five hours and the last seven days, per quota pool. A pool is the launch's
+        runtime: the app records no account per launch, and an unknown part of a pool shares with every other (Lanes' QuotaPool), so one sign-in is one."""
+        since = stored(self.now - dt.timedelta(seconds=CREDIT_WEEK_S))
+        five = stored(self.now - dt.timedelta(seconds=CREDIT_WINDOW_S))
+        pools = {}
+        for r in self.app.execute("SELECT runtime, state, cost, reserved_cost, started_at, billing_class FROM ai_attempt WHERE started_at >= ? AND started_at < ?",
+                                  (since, self.now_s + "~")):
+            if r["billing_class"] == W.BILLING_KEY:
+                continue
+            p = pools.setdefault(r["runtime"] or "?", {"pool": r["runtime"] or "?", "last_5h": Decimal(0), "last_7d": Decimal(0), "launches_5h": 0, "launches_7d": 0})
+            c = charge(r) * CREDITS_PER_LIST_DOLLAR
+            p["last_7d"] += c
+            p["launches_7d"] += 1
+            if r["started_at"] >= five:
+                p["last_5h"] += c
+                p["launches_5h"] += 1
+        out = sorted(pools.values(), key=lambda p: p["pool"])
+        for p in out:
+            p["last_5h"], p["last_7d"] = str(p["last_5h"].quantize(Decimal("0.01"))), str(p["last_7d"].quantize(Decimal("0.01")))
+        return {"pools": out, "words": "credit-equivalents if luna at Standard speed: the list-price charge x 25 of plan and unknown launches, "
+                                       "rolling from now (not from T0); a substitution or Fast mode draws more, and nothing records either"}
 
     # -- 12. R26 § 4 (3): how fast the run produces scorable signal
     def signal(self):
@@ -1638,6 +1723,11 @@ def render(d, cap):
         if s["first_vendor_limit"]:
             f = s["first_vendor_limit"]
             L.append(f"  first vendor limit {stamp(f['at'])} {f['position']}: {short(f['words'], 90)}")
+        ce, vw = s.get("credit_equivalents") or {}, s.get("vendor_limit_windows") or {}
+        L.append("  credit-equivalents if luna at Standard speed (list-price x 25, plan and unknown launches): "
+                 + ("; ".join(f"{p['pool']} last 5 h {p['last_5h']}, last 7 d {p['last_7d']}" for p in ce.get("pools", [])) or "none in the last 7 d")
+                 + f"; vendor limits as windows: {vw.get('windows', 0)} (5-h {vw.get('five_hour', 0)}, weekly {vw.get('weekly', 0)}) from {vw.get('rows', 0)} row(s)"
+                 + (f", {vw['rows_no_reset']} naming no reset" if vw.get("rows_no_reset") else ""))
 
     s = d["signal"]
     if not unread("signal", s):
