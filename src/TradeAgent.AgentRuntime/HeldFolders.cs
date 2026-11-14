@@ -1,3 +1,5 @@
+using TradeAgent.Core;
+
 namespace TradeAgent.AgentRuntime;
 
 /// <summary>
