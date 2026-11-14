@@ -764,7 +764,7 @@ public static class ProcessContainment
         // launcher, so it is on its way to a session of its own, and the kill reads the group back
         // rather than trusting that.
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
-            cgroup is not null ? $"a session of its own and the attempt's own cgroup {Path.GetFileName(cgroup.Dir)} ({AttemptCgroups.Ceilings}); " +
+            cgroup is not null ? $"a session of its own and the attempt's own cgroup {Path.GetFileName(cgroup.Dir)} ({cgroup.Ceilings}); " +
                                  "cancelling kills the cgroup, then the session"
             : sessionOnly is not null ? $"a session of its own (session only — no delegated cgroup: {sessionOnly}); cancelling kills its process group"
             : "a session of its own; cancelling kills its process group",
@@ -832,7 +832,7 @@ public static class ProcessContainment
         }
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
             $"route (a)'s harness: a session of its own in the harness leaf of the attempt's cgroup {Path.GetFileName(attempt.Dir)} " +
-            $"({AttemptCgroups.Ceilings}), its cell leaf beside it; the grant answers to the harness leaf alone; cancelling kills the " +
+            $"({attempt.Ceilings}), its cell leaf beside it; the grant answers to the harness leaf alone; cancelling kills the " +
             "attempt's cgroup, then the session",
             cgroup: attempt, grantCgroup: attempt.Harness);
     }
@@ -943,7 +943,7 @@ public static class ProcessContainment
 
         return new ContainedProcess(process, IntPtr.Zero, ownSession: true, held: false,
             $"a cell ({on.Summary}; policy sha256 {cell.Hash[..12]}) in the attempt's own cgroup {Path.GetFileName(attempt.Dir)} " +
-            $"({AttemptCgroups.Ceilings}) and a session of its own; cancelling kills the cgroup, then the session",
+            $"({attempt.Ceilings}) and a session of its own; cancelling kills the cgroup, then the session",
             new CellLaunch(cell.Hash, on, policyFile), attempt);
     }
 
