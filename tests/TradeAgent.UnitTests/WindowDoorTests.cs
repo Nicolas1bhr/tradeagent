@@ -208,8 +208,12 @@ public class WindowDoorTests : IDisposable
         var alias = Path.Combine(_dir, "alias");
         Directory.CreateSymbolicLink(alias, Path.Combine(_dir, "acct"));
         var throughLink = CellPolicy.Guarded.Of(home, Path.Combine(alias, ".vnc", "vncauth"));
-        Assert.Contains("the window's password", throughLink.Refuses(Path.GetFullPath(vnc)) ?? "(granted)", StringComparison.Ordinal);
-        Assert.Contains("the window's password", throughLink.Refuses(Path.Combine(alias, ".vnc")) ?? "(granted)", StringComparison.Ordinal);
+        // A grant is judged in each of its spellings, as written and as the kernel resolves it (CellPolicy.Problem): on macOS the
+        // test folder itself is reached through a link (/var is /private/var), so the real form is the one that must be refused.
+        string? Judged(string grant) =>
+            new[] { grant, CellNative.RealPath(grant) }.OfType<string>().Select(f => throughLink.Refuses(f)).FirstOrDefault(r => r is not null);
+        Assert.Contains("the window's password", Judged(Path.GetFullPath(vnc)) ?? "(granted)", StringComparison.Ordinal);
+        Assert.Contains("the window's password", Judged(Path.Combine(alias, ".vnc")) ?? "(granted)", StringComparison.Ordinal);
     }
 
     /// <summary>
