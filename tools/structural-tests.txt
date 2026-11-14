@@ -1,0 +1,25 @@
+# THE STRUCTURAL TESTS tools/precheck.sh runs before a CI dispatch (U-ci-precheck). One class per line: its full name, then why it is
+# structural: it reads the source, the docs, the frozen contract, the schema or the type system, and starts no runner, no cell, no
+# vendor and no clock-bound wait, so it fails the same way on every platform in seconds. Each line is a class whose red reached a full
+# CI run in the window R31 D8 measured, or the guard of the same kind beside it.
+# StructuralTestsListTests holds the list to that: every class exists in the project its name says, carries a test, and carries no Timing
+# or Cell category. A class with a Timing row (SweepRequestIdTests) cannot be listed whole; CI still runs everything.
+TradeAgent.Tests.Unit.StructuralTestsListTests  this list's own guard: the classes exist and none is Timing or Cell
+TradeAgent.Tests.Unit.ProcessWideEnvironmentTests  reads tests/: a class that sets a process-wide variable runs alone
+TradeAgent.Tests.Unit.HomeFilesGuardTests  reads src/: no app code acts in a home through System.IO outside the named exceptions (U-windows-cards' red)
+TradeAgent.Tests.Unit.NoBrotliGuardTests  reads src/: no HTTP client advertises Brotli
+TradeAgent.Tests.Unit.TlsClientGuardTests  reads src/: no network client is built outside TlsClients
+TradeAgent.Tests.Unit.DeclaredBarsGuardTests  the strategy grammar's two bars guards, parsed, nothing run
+TradeAgent.Tests.Unit.OwnerWordsLiteralTests  reads src/: the app's own words cite no doc section
+TradeAgent.Tests.Unit.InvariantRegistryTests  reads docs/VISION.md, src/ and tests/: the invariant registry and the tests that back it
+TradeAgent.Tests.Unit.CanonTests  the roles' canon texts against what the app generates
+TradeAgent.Tests.Unit.CanonOrgTests  every position's canon text names its job
+TradeAgent.Tests.Unit.OrgLedgerTests  the org tables' schema, and no pipe op writes one (u-wake-fairness' red)
+TradeAgent.Tests.Unit.OrgEvidenceSharesTests  the envelope's evidence columns and their one writer (u-wake-fairness' red)
+TradeAgent.Tests.Unit.PromotionLedgerTests  the promotion ledger's rung, and the store exposes one write (u-evidence-holdout-length's red)
+TradeAgent.Tests.Unit.AllocationLedgerTests  the allocation ledger's rung, and the store exposes one write (u-paper-closure's red)
+TradeAgent.Tests.Unit.VenueCatalogTests  the venue catalogue's schema rung on SQLite, an index after a dropped column (u-paper-closure's red)
+TradeAgent.Tests.Unit.InstrumentCheckTests  the instrument check's rung, and no pipe op writes it
+TradeAgent.Tests.Unit.AllocationSurfacesTests  reads docs/CONTRACTS.md: what capital is allocated to, stated in the frozen contract
+TradeAgent.Tests.Unit.PromotionBoundsTests  reads docs/CONTRACTS.md: the promotion bounds, stated in the frozen contract
+TradeAgent.Tests.Unit.DataLicenceTests  reads docs/CONTRACTS.md and the guide: what the data licence claims, and its rung

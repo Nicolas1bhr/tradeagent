@@ -500,7 +500,7 @@ jobs:
         run: |
           shellcheck --version
           shellcheck packaging/build-linux.sh packaging/linux/install.sh packaging/linux/display-prepare packaging/linux/tape-health packaging/linux/ci/prove.sh packaging/linux/ci/crash-loop.sh tools/linux-host.sh
-          shellcheck .github/ci/shard-filter.sh
+          shellcheck .github/ci/shard-filter.sh tools/precheck.sh
 
       - name: Build the Linux artifact
         run: packaging/build-linux.sh --runtime linux-x64
