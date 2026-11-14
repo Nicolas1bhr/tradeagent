@@ -4,7 +4,7 @@
 2026-10-05 — "take a leap and actually think of the best possible end state of the software where it genuinely becomes an AI organisation" — and records
 the synthesis the owner agreed to on 2026-10-06 after three passes: an end-state brainstorm; an upgrade drawn from the AI Concierge foundation documents the
 owner shared (its canon, foundation v0.1, the v0.2 institutional substrate and the executable contract program, outside this repository in
-`~/Library/Mobile Documents/com~apple~CloudDocs/Personal Workspace/Side projects/Ai conciergerie/`); and an assessment that kept the upgrade's control-plane
+the owner's private notes); and an assessment that kept the upgrade's control-plane
 primitives and rejected its structural expansion — a 40-seat floor, unlimited active depth, a council in place of the chief — as not yet earned. Everything
 here is DESIGN unless a line says otherwise; nothing in this file marks a feature built, a test passed or a boundary enforced.
 
