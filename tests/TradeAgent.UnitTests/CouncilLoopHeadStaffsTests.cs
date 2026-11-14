@@ -13,12 +13,15 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public partial class CouncilLoopTests
 {
-    /// <summary>The chief charters one division and hires nobody into it: what the run's first chief turn left.</summary>
+    /// <summary>
+    /// The chief charters one division and hires nobody into it: what the run's first chief turn left. Its terms (a 0.15 share) differ from
+    /// <see cref="Chartered"/>'s, which a later launch would otherwise read as a reworded repeat of this charter and hire into.
+    /// </summary>
     static string CharterOnly(OrgStore org, string chief, DateTimeOffset at, string kind = OrgUnitKind.Division)
     {
         var funding = new CharterFunding(SeatClasses.Harness, 0.10m, [new(BillingClasses.Plan, 10m)],
             new Dictionary<string, decimal> { [OrgIds.Operations] = 0m, [OrgIds.Research] = 0m });
-        return org.Charter(new CharterRequest(chief, "turn-charter-only", kind, 0.2m, "a division nobody has staffed yet",
+        return org.Charter(new CharterRequest(chief, "turn-charter-only", kind, 0.15m, "a division nobody has staffed yet",
             ["a division"], [], [ChartForecast], at.AddDays(30)), funding, at).Unit.Id;
     }
 
