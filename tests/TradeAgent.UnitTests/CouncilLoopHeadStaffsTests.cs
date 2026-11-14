@@ -96,9 +96,18 @@ public partial class CouncilLoopTests
         Chart(db, "UPDATE org_position SET status='active' WHERE id=$id", ("$id", head));
         Assert.Equal(head, Assert.Single(OfKind(db, chief, "head-unmandated")).Entity);
 
-        // A MANDATE DECIDED BY SOMEONE ELSE does not close it: written as the chief's, then its decider rewritten under the test's own hand.
-        var elsewhere = org.Assign(Work(chief, head, now), now);
-        Chart(db, "UPDATE org_mandate SET decider=$d WHERE id=$m", ("$d", CouncilRoles.Research), ("$m", elsewhere.Id));
+        // A MANDATE DECIDED BY SOMEONE ELSE does not close it: the chief's own, copied raw under another decider with its issued event (a mandate
+        // row is never updated, so the copy is a new row), and the chief's then cancelled.
+        var mine = org.Assign(Work(chief, head, now), now);
+        const string elsewhere = "man-e15e0c0ffee1";
+        const string cols = "unit_id, holder, kind, objective, scope, output_shape, checks, latitude, deadline, allocation_ai, retry_limit, attempt_id, created_at";
+        Chart(db, $"INSERT INTO org_mandate(id, decider, {cols}) SELECT $e, $d, {cols} FROM org_mandate WHERE id=$m",
+            ("$e", elsewhere), ("$d", CouncilRoles.Research), ("$m", mine.Id));
+        Chart(db, "INSERT INTO org_mandate_event(mandate_id, at, kind, actor, attempt_id, reason, evidence) "
+                  + "SELECT $e, at, kind, actor, attempt_id, reason, evidence FROM org_mandate_event WHERE mandate_id=$m AND kind='issued'",
+            ("$e", elsewhere), ("$m", mine.Id));
+        org.Cancel(mine.Id, chief, null, "superseded", now);
+        Assert.Equal(MandateEventKind.Issued, org.MandateStatus(elsewhere));
         Assert.Equal(head, Assert.Single(OfKind(db, chief, "head-unmandated")).Entity);
 
         var work = org.Assign(Work(chief, head, now), now);
