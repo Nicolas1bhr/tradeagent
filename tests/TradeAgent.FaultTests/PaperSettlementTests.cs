@@ -386,6 +386,61 @@ public class PaperSettlementTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// A FRESH BOOK'S FIRST QUOTE OVER FOUR DAYS OF TAPE SETTLES THEM IN ONE WRITE (<c>U-material-pass-2</c>; the real run of
+    /// 2026-11-13, Phase 2 card (a)). The owner's first switch to paper froze about 53 s: its first health pass quotes the venue's first
+    /// pair, and a fresh book settled every minute the tape had collected since the server started, one durable commit a bar — 5,760 of
+    /// them for four days. No order exists, so no bar can fill anything: the watermark and the close of the last bar are all they
+    /// leave, and they are one write. RED at the base: 5,760 writes.
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_books_first_quote_over_four_days_of_tape_settles_them_in_one_write()
+    {
+        var source = new MemoryBarSource();
+        const int minutes = 4 * 24 * 60;
+        for (var n = 1; n <= minutes; n++) source.Add("BTCUSDT", Bar(Open(n), 100m, 101m, 99m, 100m + n % 7));
+        await using var paper = Paper(source, () => Open(minutes + 1).AddSeconds(30), NewFile());
+        await paper.ConnectAsync();
+
+        var quote = await paper.GetQuoteAsync("BTCUSDT");
+
+        Assert.Equal(100m + minutes % 7, quote!.Last);
+        Assert.Equal(Open(minutes), paper.BookUnderTest!.SettledThrough("BTCUSDT"));
+        Assert.Equal(1, paper.BookUnderTest.SettleWrites);
+    }
+
+    /// <summary>
+    /// AND A WORKING ORDER IN A BACKLOG STILL FILLS ON ITS OWN BAR, never on one before it (<c>U-material-pass-2</c>): only the bars up
+    /// to the earliest order's own time are settled in one write; from there each bar is settled as it always was. A limit at 95 is
+    /// placed after bar 1,000 opened; bar 1,000 reaches 95 and must not fill it (it opened before the order), bar 1,500 reaches it and
+    /// fills it, at the limit, once.
+    /// </summary>
+    [Fact]
+    public async Task A_working_order_in_a_backlog_fills_on_its_own_bar_and_never_on_one_before_it()
+    {
+        var source = new MemoryBarSource();
+        for (var n = 1; n < 1_000; n++) source.Add("BTCUSDT", Bar(Open(n), 100m, 101m, 99m, 100m));
+        var now = Open(1_000).AddSeconds(30);
+        await using var paper = Paper(source, () => now, NewFile());
+        await paper.ConnectAsync();
+        await paper.PlaceOrderAsync(new PlaceOrderCommand("backlog-limit", PaperConnector.TheAccount, "BTCUSDT",
+            OrderSide.Buy, OrderType.Limit, 1m, 95m, null, TimeInForce.Day, null));
+        var before = paper.BookUnderTest!.SettleWrites;
+
+        source.Add("BTCUSDT", Bar(Open(1_000), 100m, 101m, 90m, 96m));       // reaches 95, but opened before the order
+        for (var n = 1_001; n < 1_500; n++) source.Add("BTCUSDT", Bar(Open(n), 100m, 101m, 99m, 100m));
+        source.Add("BTCUSDT", Bar(Open(1_500), 100m, 101m, 94m, 96m));       // the first bar after the order to reach 95
+        for (var n = 1_501; n <= 2_000; n++) source.Add("BTCUSDT", Bar(Open(n), 96m, 97m, 93m, 94m));
+        now = Open(2_001);
+
+        var fill = Assert.Single(await paper.GetExecutionsAsync(PaperConnector.TheAccount, null));
+        Assert.Equal(("backlog-limit", 95m), (fill.ClientOrderId, fill.Price));
+        Assert.Equal(Open(1_500), Assert.Single(paper.BookUnderTest.Fills(null)).BarOpenTime);
+        Assert.Equal(Open(2_000), paper.BookUnderTest.SettledThrough("BTCUSDT"));
+        log.WriteLine($"settle writes for 1,001 bars behind a working order: {paper.BookUnderTest.SettleWrites - before}");
+        Assert.Equal(1 + 1_000, paper.BookUnderTest.SettleWrites - before);   // bar 1,000 alone, then each bar after the order
+    }
+
+    /// <summary>
     /// A PAGED CATCH-UP READS FROM THE WATERMARK EACH PAGE ENDED AT UNTIL A READ BRINGS NOTHING PAST
     /// IT — AND THEN STOPS.
     ///

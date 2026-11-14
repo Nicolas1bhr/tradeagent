@@ -226,6 +226,7 @@ public sealed class PaperBook : IDisposable
         var key = symbol.ToUpperInvariant();
         lock (_gate)
         {
+            SettleWrites++;
             using var tx = _conn.BeginTransaction();
             var previous = MetaIn(tx, $"settled:{key}") is { } t ? Time(t) : DateTimeOffset.MinValue;
             if (openTime >= previous)
@@ -236,6 +237,12 @@ public sealed class PaperBook : IDisposable
             tx.Commit();
         }
     }
+
+    /// <summary>
+    /// HOW MANY SETTLE WRITES THIS BOOK HAS COMMITTED (<c>U-material-pass-2</c>): each is one durable commit at <c>synchronous=FULL</c>, the
+    /// cost a catch-up over a backlog pays. Counted for a test; nothing decides by it.
+    /// </summary>
+    internal long SettleWrites { get; private set; }
 
     /// <summary>One meta row, read inside the caller's transaction.</summary>
     string? MetaIn(SqliteTransaction tx, string key)

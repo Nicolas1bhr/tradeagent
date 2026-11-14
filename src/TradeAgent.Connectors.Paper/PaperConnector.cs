@@ -214,6 +214,9 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
 
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Task.FromResult(_book is not null);
 
+    /// <summary>The open book, for a test that counts what a settle wrote (<c>U-material-pass-2</c>).</summary>
+    internal PaperBook? BookUnderTest => _book;
+
     PaperBook Book => _book ?? throw new ConnectorTransportException(
         "the paper book is not open; nothing was read and nothing was placed");
 
@@ -556,13 +559,35 @@ public sealed class PaperConnector : ITradingConnector, IConnectorStatusDetail
                     ct.ThrowIfCancellationRequested();
                     var from = Book.SettledThrough(s);
                     var bars = await _source.SinceAsync(s, from, ct);
-                    foreach (var bar in bars.OrderBy(b => b.OpenTime)) Apply(s, bar);
+                    var ordered = bars.OrderBy(b => b.OpenTime).ToList();
+
+                    // THE BARS NO ORDER CAN FILL ON ARE SETTLED IN ONE WRITE (U-material-pass-2): a fresh book's first quote settled every
+                    // minute the tape had ever collected, one durable commit a bar, and with four days of tape that was the ~53 s the
+                    // owner's first switch to paper froze for (the real run of 2026-11-13). A bar is a candidate's only after the
+                    // order's own time (Apply: `bar.OpenTime > o.At`), so every bar up to the earliest order of this symbol that is not
+                    // cancelled or refused — filled ones included, as Apply asks them too — has none, and settling those only moves the
+                    // watermark and the close, which a hint and one transaction carry for the last of them as well as for each.
+                    var first = FirstFillable(s);
+                    var idle = first is { } at ? ordered.TakeWhile(b => b.OpenTime <= at).Count() : ordered.Count;
+                    if (idle > 0) Book.MarkSettled(s, ordered[idle - 1].OpenTime, ordered[idle - 1].Close);
+                    foreach (var bar in ordered.Skip(idle)) Apply(s, bar);
                     if (Book.SettledThrough(s) <= from) break;
                 }
             }
         }
         finally { _settling.Release(); }
     }
+
+    /// <summary>
+    /// The time of the earliest order on <paramref name="symbol"/> that <see cref="Apply"/> would still ask about — every state but
+    /// CANCELLED and REJECTED, exactly its filter — or null when there is none: before it, no bar has a candidate.
+    /// </summary>
+    DateTimeOffset? FirstFillable(string symbol) =>
+        Book.Orders(includeInactive: true, since: null)
+            .Where(o => o.State is not (ExecutionState.CANCELLED or ExecutionState.REJECTED))
+            .Where(o => string.Equals(o.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+            .Select(o => (DateTimeOffset?)o.At)
+            .Min();
 
     IReadOnlyList<string> SymbolsToSettle(string? symbol)
     {
