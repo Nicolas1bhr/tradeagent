@@ -1754,6 +1754,49 @@ public partial class OrgDigestTests(ITestOutputHelper log)
         }
     }
 
+    /// <summary>
+    /// THE INBOX'S TRACKED FILES, ON A LINE OF THEIR OWN (U-digest-watch-3; R31 D17 G2, D12's first addendum). The running kit's material pass commits one
+    /// row per tracked file each pass, inline on the background loop: the line says how many there are, tells the watch to tell the orchestrator at 1,500,
+    /// and ATTENTION is raised at 3,000. Files the pass marked removed are not tracked. Every line the watch read before stays as it was.
+    ///
+    /// <para>RED at base: the digest had no line for them; the watch could only read the count by hand.</para>
+    /// </summary>
+    [OnlyOnFact("the script runs on the Linux host; the app's own fixture is the same on every platform", "linux", "macos")]
+    public void The_tracked_material_files_are_a_line_of_their_own_told_at_1500_and_raised_at_3000()
+    {
+        var f = Bare();
+        void Files(int from, int count, bool removed) =>
+            db(d => d.Exec($"""
+                WITH RECURSIVE n(i) AS (SELECT {from} UNION ALL SELECT i + 1 FROM n WHERE i < {from + count - 1})
+                INSERT INTO material(rel_path, origin, size_bytes, modified_at, first_seen_at, last_seen_at, removed_at)
+                SELECT 'inbox/f' || i || '.md', 'owner', 10, '2026-10-30T10:00:00.0000000Z', '2026-10-30T10:00:00.0000000Z', '2026-10-31T10:00:00.0000000Z',
+                       {(removed ? "'2026-10-31T11:00:00.0000000Z'" : "NULL")} FROM n;
+                """));
+        void db(Action<Database> act) { using var d = new Database(Path.Combine(f.State, "tradeagent.db")); act(d); }
+
+        Files(1, 1_499, removed: false);
+        Files(10_000, 600, removed: true);                 // removed: not tracked
+        var (quiet, quietHuman) = Both(f);
+        Assert.Equal(1_499, quiet.GetProperty("material").GetProperty("tracked").GetInt32());
+        Assert.Contains("\nmaterial: 1,499 files tracked (the runbook: tell at 1,500, act at 3,000)\n", quietHuman, StringComparison.Ordinal);
+        Assert.DoesNotContain("material", Attention(quiet), StringComparison.Ordinal);
+
+        Files(1_500, 1, removed: false);
+        var (tell, tellHuman) = Both(f);
+        Assert.Contains("\nmaterial: 1,500 files tracked; TELL THE ORCHESTRATOR (1,500 or more) (the runbook: tell at 1,500, act at 3,000)\n", tellHuman, StringComparison.Ordinal);
+        Assert.DoesNotContain("material", Attention(tell), StringComparison.Ordinal);
+
+        Files(1_501, 1_500, removed: false);
+        var (act, actHuman) = Both(f);
+        Assert.Contains("material: 3,000 files tracked, at or past 3,000: the material pass's schema-free fix is a hot-fix candidate", Attention(act), StringComparison.Ordinal);
+        Assert.Contains("\nmaterial: 3,000 files tracked (the runbook: tell at 1,500, act at 3,000)\n", actHuman, StringComparison.Ordinal);
+        // THE LINES BEFORE IT STAND AS THEY WERE: the disk line, then this one, then the positions.
+        var lines = actHuman.Split('\n');
+        var at = Array.FindIndex(lines, l => l.StartsWith("material: ", StringComparison.Ordinal));
+        Assert.StartsWith("disk: ", lines[at - 1], StringComparison.Ordinal);
+        Assert.StartsWith("positions: ", lines[at + 1], StringComparison.Ordinal);
+    }
+
     static readonly string[] PauseWords = ["PAUSE_AT", "PAUSE_FREE", "PAUSE_TOTAL", "PAUSE_FLOOR", "PAUSE_UNREADABLE", "PAUSE_FILES_FREE", "PAUSE_FILES", "PAUSE_FILES_FLOOR"];
 
     // ---- THE WORDS ------------------------------------------------------------------------------------------------------------

@@ -64,6 +64,9 @@ SYSTEMD_FAILED, SYSTEMD_START_LIMIT_HIT = "failed", "start-limit-hit"
 # prices (luna, sol) one list-price dollar is 25 credits on every column, at Standard speed. A substitution or Fast mode would draw more, unrecorded.
 CREDITS_PER_LIST_DOLLAR = 25
 CREDIT_WINDOW_S, CREDIT_WEEK_S = 5 * 3600, 7 * 86400
+# THE MATERIAL PASS'S SIZE (R31 D17 G2): one commit per tracked file each pass, inline on the background loop, on the running kit. The runbook (D12's first
+# addendum): tell the orchestrator at 1,500 tracked files; at 3,000 the schema-free fix is a hot-fix candidate, well before the kit's 5,000 file limit.
+MATERIAL_TELL, MATERIAL_ACT = 1_500, 3_000
 DOOR_GAP_S = 60                          # R31 D12 row D: the vendor's MCP tool timeout, from memory (60 s), unverified
 # THE VENDOR'S RESET, as its usage-limit sentence names it (RuntimeManifest's UsageLimitPlan for codex: "try again at 10:30 PM", or dated,
 # "Oct 7th, 2026 1:10 AM"), read as the app reads it: the END of the minute named, a time with no date on the local date it was said.
@@ -1503,6 +1506,14 @@ class Digest:
                 "words": "each start's own record of what it decided about the AI; a wait after a crash lasts CrashWait's figure from its start"}
 
 
+    # -- 16. THE INBOX'S TRACKED FILES (R31 D17 G2): the rows the material pass walks and commits each pass, read-only.
+    def material(self):
+        if not self.has("material", "removed_at"):
+            return {"absent": "material"}
+        n = self.app.execute("SELECT COUNT(*) FROM material WHERE removed_at IS NULL").fetchone()[0]
+        return {"tracked": n, "tell_at": MATERIAL_TELL, "act_at": MATERIAL_ACT, "tell": n >= MATERIAL_TELL, "act": n >= MATERIAL_ACT}
+
+
 def service_facts(text):
     """`systemctl show`'s KEY=VALUE lines, as the digest reads them, or None where it said nothing. A unit left FAILED after systemd restarted it is one
     its start limit stopped (it restarts always, so nothing else leaves it failed after a restart), whatever its Result says (systemd 255 keeps the last run's)."""
@@ -1519,7 +1530,7 @@ SECTIONS = (("app", "app_state"), ("positions", "positions"), ("turns", "turns")
             ("verdicts", "verdicts"), ("deployments", "deployments"), ("refusals", "refusals"), ("errors", "errors"), ("app_errors", "app_errors"),
             ("pace", "pace"),
             ("signal", "signal"), ("day_total", "day_total"), ("wakes", "wakes"), ("not_started", "not_started"), ("cell_proof", "cell_proof"),
-            ("tape_health", "tape_health"), ("starts", "starts"))
+            ("tape_health", "tape_health"), ("starts", "starts"), ("material", "material"))
 
 
 def build(app_path, tape_path, state, now, since, opts):
@@ -1606,6 +1617,9 @@ def attention(d):
         flags.append(f"free inodes {disk['inodes_free']:,} of {disk['inodes_total']:,} ({disk['inodes_free_pct']}%) are UNDER {disk['inodes_floor']:,} "
                      f"(the app's files floor: {100 // FILES_FLOOR_SHARE}%, never under {FILES_FLOOR_LEAST:,} nor over a quarter), with {gib(disk['free'])} free"
                      + ("" if pause else " and no pause is recorded"))
+    mt = d.get("material", {})
+    if mt.get("act"):
+        flags.append(f"material: {mt['tracked']:,} files tracked, at or past {MATERIAL_ACT:,}: the material pass's schema-free fix is a hot-fix candidate (R31 D17 G2)")
     if d.get("app", {}).get("ai_works_on_its_own") is False:
         flags.append("the AI is NOT set to work on its own: nothing turns")
     dt_ = d.get("day_total", {})
@@ -1744,6 +1758,13 @@ def render(d, cap):
         L.append(f"disk: {gib(s['free'])} free of {gib(s['total'])}  guard floor {gib(s['floor'])}"
                  + (f"; inodes {s['inodes_free']:,} free of {s['inodes_total']:,} ({s['inodes_free_pct']}%), floor {s['inodes_floor']:,}" if s.get("inodes_total")
                     else "; inodes: this filesystem counts none" if s.get("inodes_total") == 0 else ""))
+
+    s = d.get("material", {})
+    if s and "unreadable" not in s:
+        # A LINE OF ITS OWN (R31 D17 G2), under the disk: the files the material pass walks each pass.
+        L.append(f"material: {s['absent']} is not on this home" if "absent" in s else
+                 f"material: {s['tracked']:,} files tracked" + ("; TELL THE ORCHESTRATOR (1,500 or more)" if s["tell"] and not s["act"] else "")
+                 + f" (the runbook: tell at {MATERIAL_TELL:,}, act at {MATERIAL_ACT:,})")
 
     s = d["positions"]
     if not unread("positions", s):
