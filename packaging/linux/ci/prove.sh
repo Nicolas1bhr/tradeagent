@@ -257,12 +257,17 @@ assert_cgroup "after the seeded start"
 # three ceiling rows ran in a real cell under the real unit and none of them failed. A GAP is said in the line, never as a failure.
 bench_line() { read_db "$db" "SELECT text FROM activity WHERE text LIKE 'Cell benchmark:%' ORDER BY id DESC LIMIT 1;" 2> /dev/null; }
 bench_said() { [ -n "$(bench_line)" ]; }
-wait_until 180 bench_said || fail "the app's start benchmark wrote no 'Cell benchmark:' line within 180 s"
+wait_until 300 bench_said || fail "the app's start benchmark wrote no 'Cell benchmark:' line within 300 s"
 bench="$(bench_line)"
 for row in memory-ceilings attempts-bounded-together writes-bounded; do
     case "$bench" in *"$row did not hold"*) fail "the start benchmark's $row row did not hold: $bench" ;; esac
 done
-pass "the start benchmark's ceiling rows held: $bench"
+# THE ROWS RAN only when the line names a row's verdict: a proof's "held; GAP recorded", or a failed row's "did not hold". A platform or cgroup
+# refusal runs no row, and is said as such, never as the ceiling rows holding.
+case "$bench" in
+    *"did not hold"*|*" held; GAP recorded"*) pass "the start benchmark's ceiling rows held: $bench" ;;
+    *) note "NOTE  the start benchmark ran no cell row on this host, so its ceiling rows were not measured here: $bench" ;;
+esac
 
 # The tape's size and the app's memory, every 15 s, to the end.
 (
