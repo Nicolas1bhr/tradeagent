@@ -9,6 +9,15 @@ using TradeAgent.App;
 using Xunit;
 using Xunit.Abstractions;
 
+// ONE TEST AT A TIME IN THIS ASSEMBLY (U-ci-precheck; main push run 43558900671, macOS: "The calling thread cannot access this object
+// because a different thread owns it", in HeadlessUnitTestSession.EnsureIsolatedApplication -> DefaultRenderLoop.Add, 2.8 s into the run).
+// The session makes a new application and a new UI dispatcher at every HeadlessUi.Run, on its own thread; the work a row does OFF that
+// thread (composing a host, its events, a press's work) reads Dispatcher.UIThread, and a row of another class doing so while the session
+// set up for this one owned the new dispatcher first. With the classes in turn, no other row's work runs beside a set-up.
+// HeadlessSessionTests holds it. (One application for the whole session was tried and refused: a closed row's windows go on refreshing
+// over databases their rows have closed.)
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>The headless Avalonia app these rows render in: the product's own theme, Skia's real text layout and a real frame.</summary>
