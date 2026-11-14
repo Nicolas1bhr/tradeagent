@@ -51,8 +51,8 @@ public partial class BoardActTests
         Assert.Equal("40", Assert.Single(blindTo2.Blind.InForce, f => f.Name == "plan_day_total").Value);
         var text = Shown("board-2");
         log.WriteLine(text);
+        Assert.False(CarriesProbability(text, forecast.Probability), $"the forecast's {forecast.Probability} reached a seat that has not decided: {text}");
         Assert.DoesNotContain(Concealed, text, StringComparison.Ordinal);
-        Assert.DoesNotContain("0.73", text, StringComparison.Ordinal);
         Assert.DoesNotContain(typeof(BoardActBlindView).GetProperties(), p => p.Name.Contains("Rationale", StringComparison.Ordinal)
                                                                             || p.Name.Contains("Forecast", StringComparison.Ordinal));
 
@@ -70,10 +70,47 @@ public partial class BoardActTests
         text = Shown("board-2");
         Assert.Contains(Concealed, text, StringComparison.Ordinal);
         Assert.Contains(ThirdWords, text, StringComparison.Ordinal);
-        Assert.Contains("0.73", text, StringComparison.Ordinal);
+        Assert.True(CarriesProbability(text, forecast.Probability), $"the forecast's {forecast.Probability} is not shown once sealed: {text}");
 
         // THE LIST NEVER CARRIES A RATIONALE.
         Assert.DoesNotContain(Concealed, JsonSerializer.Serialize(store.ActList()), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_stamp_whose_fraction_holds_the_digits_is_no_forecast_and_a_shown_one_is_found()
+    {
+        // The blind view of run 43436116046's red, cut to the stamp: the whole-text check met "0.73" inside its fraction.
+        const string stamp = """{"ExpiresAt":"2026-11-14T10:41:50.7370065+00:00","At":"2026-11-13T10:41:50.7370065+00:00"}""";
+        Assert.Contains("0.73", stamp, StringComparison.Ordinal);
+        Assert.False(CarriesProbability(stamp, 0.73m));
+        Assert.True(CarriesProbability("""{"Forecasts":[{"Probability":0.73}]}""", 0.73m));
+        Assert.True(CarriesProbability("""{"Note":"the research head gives it 0.73"}""", 0.73m));
+        Assert.False(CarriesProbability("""{"Forecasts":[{"Probability":0.74}]}""", 0.73m));
+    }
+
+    /// <summary>
+    /// WHETHER <paramref name="json"/> CARRIES THE PROBABILITY <paramref name="p"/> AS A VALUE: a number equal to it, or a string holding its
+    /// digits that is not an instant. CHANGED IN THE OPEN (<c>U-ci-precheck</c>): the test asked whether the WHOLE text held "0.73", and a
+    /// stamp's fractional seconds can hold those digits (<c>…50.7370065</c>: windows shard 5, run 43436116046), so a blind view that carried
+    /// no forecast at all failed. The meaning is kept: a forecast shown to a seat is a number, or words that say it, and either is found.
+    /// </summary>
+    static bool CarriesProbability(string json, decimal p)
+    {
+        var digits = p.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        static IEnumerable<JsonElement> All(JsonElement e) => e.ValueKind switch
+        {
+            JsonValueKind.Object => e.EnumerateObject().SelectMany(m => All(m.Value)),
+            JsonValueKind.Array => e.EnumerateArray().SelectMany(All),
+            _ => [e]
+        };
+        using var doc = JsonDocument.Parse(json);
+        return All(doc.RootElement).Any(v => v.ValueKind switch
+        {
+            JsonValueKind.Number => v.TryGetDecimal(out var d) && d == p,
+            JsonValueKind.String => v.GetString() is { } s && s.Contains(digits, StringComparison.Ordinal)
+                && !DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out _),
+            _ => false
+        });
     }
 
     /// <summary>
