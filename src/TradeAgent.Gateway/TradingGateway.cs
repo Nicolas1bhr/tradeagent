@@ -4796,7 +4796,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
-    /// HOW MANY INSTRUMENTS MAY BE OPEN, DECIDED INSIDE THE DISPATCH GATE AND COUNTING THE WORK THAT
+    /// HOW MANY POSITIONS MAY BE OPEN, DECIDED INSIDE THE DISPATCH GATE AND COUNTING THE WORK THAT
     /// IS ALREADY ON ITS WAY TO BEING ONE.
     ///
     /// It used to live in <see cref="RiskCheckOrThrow"/>, before the gate, and it counted the
@@ -4818,35 +4818,74 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// <see cref="LossBudgetOrThrow"/>, because two gates asking the platform the same question one
     /// after the other could be told two different answers and refuse on the older of them.
     ///
-    /// WHAT COUNTS AS ONE OPEN INSTRUMENT: a non-zero position, or an OPENING request the store
-    /// still calls open (<see cref="ExecutionRequestStore.Open"/> — DISPATCHING, ACKNOWLEDGED,
-    /// WORKING, PARTIALLY_FILLED, CANCEL_PENDING, UNKNOWN, RECONCILING). A CLOSING request is
-    /// excluded: it reduces exposure, it is aimed at an instrument that is already counted, and
-    /// counting it would turn the cap into a trap an account at its limit could not be flattened out
-    /// of. A request whose parameters cannot be read is counted, because an unreadable intent is not
-    /// evidence that it was a close.
+    /// <para><b>WHAT COUNTS AS ONE OPEN POSITION</b> (<c>U-paper-risk-words</c>; the orchestrator's ruling of
+    /// 2026-11-13, the owner's to overrule). A position is a holder's holding in one instrument. Outside PAPER
+    /// the account is the only holder, so a position is an instrument: a non-zero position on the platform, or
+    /// an opening request in it the store still calls open. IN PAPER EACH RUN IS A HOLDER OF ITS OWN
+    /// (<c>U-paper-oco</c>: the paper book keeps each run's holding apart inside the one account), so each run
+    /// holding or opening is one position, and whatever the account holds in an instrument beyond its runs'
+    /// own books is one more. The founding fifteen was set as five pairs by three runs (R25 D14): counted by
+    /// instrument it could never bind on five pairs, and a board narrowing bound pairs, not runs. A cap that
+    /// cannot bind is a false protection.</para>
     ///
-    /// It is not run for a MODIFICATION. This cap is a count of INSTRUMENTS, and a change to an
-    /// order that already exists cannot raise it: the instrument that order is in is already one of
-    /// the ones counted here.
+    /// <para><b>Which side every doubt falls on: one more position, never one fewer.</b> A run whose own book is
+    /// not the whole of it counts as holding. A difference between the platform's figure and the runs' books
+    /// (a fill the ledger has not read yet) counts as the account's own position. Both can refuse an order the
+    /// next read would have let through; neither can let one through that should have been refused.</para>
+    ///
+    /// <para>An opening request belongs to the holder its client order id names
+    /// (<see cref="Deployments.HolderOf"/>, the paper book's own reading), and this placement to the holder its
+    /// request id would name; an id an agent chose can never read as a run's (<c>GatewayPipeServer</c>). A
+    /// CLOSING request is excluded: it reduces exposure, it is aimed at a position that is already counted,
+    /// and counting it would turn the cap into a trap an account at its limit could not be flattened out of. A
+    /// request whose parameters cannot be read is counted, because an unreadable intent is not evidence that it
+    /// was a close. The runs read are the ones on the platform and account that still hold their slot
+    /// (<see cref="HoldsItsSlot"/>), and only on an instrument the platform reports held: a run can hold
+    /// nothing the account does not.</para>
+    ///
+    /// It is not run for a MODIFICATION. A change to an order that already exists cannot raise the count:
+    /// the position that order is for is already one of the ones counted here.
     /// </summary>
-    void OpenPositionCapOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions, string requestId)
+    void OpenPositionCapOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions, string accountId, string requestId)
     {
+        // A CLOSE OR A REDUCTION IS NEVER A NEW POSITION, whoever holds what it closes: refusing one would be the trap the summary
+        // names, an account at its limit that cannot be closed out of. Counted by instrument this fell out of the arithmetic (the
+        // instrument was already counted); counted by holder it has to be said, because the owner's own close of a pair only runs
+        // hold names a holder that holds nothing.
+        if (!CanIncreaseExposure(intent, positions)) return;
+
         var limit = Policy.Risk.MaxOpenPositions;
-        var open = new HashSet<string>(
-            positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), StringComparer.Ordinal);
+        var paper = Policy.Mode == TradingMode.PAPER;
+        var open = new HashSet<(string Holder, string Symbol)>();
+
+        foreach (var held in positions.Where(p => p.Quantity != 0).GroupBy(p => p.Symbol, StringComparer.Ordinal))
+        {
+            var platform = held.Sum(p => p.Quantity);
+            var runs = 0m;
+            if (paper)
+                foreach (var run in _deployments.OnInstrument(Connector.Id, accountId, held.Key).Where(HoldsItsSlot))
+                {
+                    var book = _deployments.BookOf(run);
+                    if (book.Held != 0m || !book.Complete) open.Add((Deployments.HolderFor(run.Id), held.Key));
+                    runs += book.Held;
+                }
+            if (platform != runs) open.Add(("", held.Key));
+        }
 
         foreach (var work in _requests.Open())
         {
             if (work.Intent != RequestIntent.PLACE) continue;
             if (string.Equals(work.RequestId, requestId, StringComparison.Ordinal)) continue;
             if (Closing(work)) continue;
-            open.Add(work.Instrument);
+            open.Add((paper ? Deployments.HolderOf(work.ClientOrderId) ?? "" : "", work.Instrument));
         }
 
-        if (!open.Contains(intent.Symbol) && open.Count >= limit)
+        var mine = (paper ? Deployments.HolderOf(ClientOrderIdFor(requestId)) ?? "" : "", intent.Symbol);
+        if (!open.Contains(mine) && open.Count >= limit)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
-                $"already holding or opening {open.Count} positions and the limit is {limit}");
+                $"already holding or opening {open.Count} positions and the limit is {limit} — "
+                + (paper ? Labels.OpenPositionsCountedPaper : Labels.OpenPositionsCounted)
+                + ": nothing was sent");
     }
 
     /// <summary>
@@ -7400,7 +7439,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     /// exists on the placement path, after the mode, platform and account re-checks on the approval
     /// path.</para>
     ///
-    /// <para><b>The order is part of the contract.</b> The cap counts instruments, the reducer refusal
+    /// <para><b>The order is part of the contract.</b> The cap counts positions, the reducer refusal
     /// answers "is there an earlier order that moves this position the same way", the loss budgets
     /// answer "is this account or this symbol closed", and the ceiling answers "what may this version
     /// be holding" — and only the last has a row for an answer. The budgets stay below the reducer
@@ -7431,7 +7470,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
     {
         // See OpenPositionCapOrThrow: the cap is the one risk limit whose answer depends on what the
         // OTHER callers are doing, so it is the one that cannot be decided out there with the reads.
-        OpenPositionCapOrThrow(intent, positions, requestId);
+        OpenPositionCapOrThrow(intent, positions, account.Id, requestId);
 
         // A close and a reduce are sized from what is here; an order this gateway cannot account for
         // on the same instrument would move that position the same way, so sending on top of it closes

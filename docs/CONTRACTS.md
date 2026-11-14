@@ -1929,14 +1929,25 @@ before the gate. Both halves were permissive in the same direction: two placemen
 each read the same empty account, each passed a cap of one and each sent — the cap admitted as many
 orders as there were callers — and a resting opening order read as a free account for exactly as long
 as it sat on the book (REVIEW 2026-09-05b, Codex F1). The position read therefore moved into the gate
-together with the decision, where the dispatch before it has finished, and what counts as one open
-instrument is a non-zero position **or** an opening request the store still calls open (`DISPATCHING`,
-`ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED`, `CANCEL_PENDING`, `UNKNOWN`, `RECONCILING`). A CLOSING
-request is excluded — it reduces exposure and is aimed at an instrument already counted, and counting
-it would turn the cap into a trap an account at its limit could not be flattened out of — but a
-request whose parameters cannot be read is counted, because an unreadable intent is not evidence that
-it was a close. A MODIFICATION is not asked: the cap counts instruments, and an order that already
-exists is already in one.
+together with the decision, where the dispatch before it has finished, and what counts is a non-zero
+position **or** an opening request the store still calls open (`DISPATCHING`, `ACKNOWLEDGED`,
+`WORKING`, `PARTIALLY_FILLED`, `CANCEL_PENDING`, `UNKNOWN`, `RECONCILING`). A CLOSING request is
+excluded — it reduces exposure and is aimed at a position already counted, and counting it would turn
+the cap into a trap an account at its limit could not be flattened out of — but a request whose
+parameters cannot be read is counted, because an unreadable intent is not evidence that it was a
+close. A MODIFICATION is not asked: an order that already exists is already in a counted position.
+
+**It counts positions, and in PAPER each run's holding is one** (`U-paper-risk-words`; the
+orchestrator's ruling of 2026-11-13, the owner's to overrule). A position is one holder's holding in
+one instrument. Outside PAPER the account is the only holder, so a position is an instrument. In PAPER
+the paper book keeps each run's holding apart inside the one account (`U-paper-oco`), so each run that
+holds (its own book, among the runs that still hold their slot) or has an opening request on its way
+(the run its client order id names) is one position, and whatever the account holds in an instrument
+beyond its runs' books is one more. The founding fifteen is five pairs by three runs (R25 D14): counted
+by instrument it could never bind on five pairs, and a board narrowing bound pairs, not runs. Every
+doubt adds a position, never removes one: a run whose book is not the whole of it counts as holding,
+and a platform figure the runs' books do not add up to (a fill not yet read) counts as the account's
+own. The refusal and the Board page say what is counted.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent's order — or its modification — is parked as `AWAITING_APPROVAL` after passing every gate and

@@ -18,13 +18,13 @@ namespace TradeAgent.Tests.Integration;
 /// </summary>
 public class FoundingOrderRateTests(ITestOutputHelper log)
 {
-    static readonly DateTimeOffset Start = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
+    internal static readonly DateTimeOffset Start = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
 
     /// <summary>The 2026 levels R28 sized against, in USDT.</summary>
-    static readonly (string Pair, decimal Price)[] Pairs =
+    internal static readonly (string Pair, decimal Price)[] Pairs =
         [("BTCUSDT", 100_000m), ("ETHUSDT", 4_000m), ("SOLUSDT", 200m), ("BNBUSDT", 1_000m), ("XRPUSDT", 2m)];
 
-    sealed class Clock(DateTimeOffset at) : TimeProvider
+    internal sealed class Clock(DateTimeOffset at) : TimeProvider
     {
         public DateTimeOffset At { get; set; } = at;
         public override DateTimeOffset GetUtcNow() => At;
@@ -53,7 +53,7 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
         $"instrument {pair}\ntimezone UTC\ntimeframe 1m\ndata_freshness 5m\nmax_decision_age 5m\nsize capital_fraction 1\n"
         + $"stop percent {stop}\ntarget percent 5\nexit when close < 0.5\nentry when close > 0.5\n";
 
-    sealed class Rig : IAsyncDisposable
+    internal sealed class Rig : IAsyncDisposable
     {
         public required Database Db { get; init; }
         public required PaperConnector Conn { get; init; }
@@ -98,7 +98,7 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
     }
 
     /// <summary>The founding policy as it ships with <paramref name="runsPerPair"/> judged versions of each pair on paper, every one started by the app's own sweeps.</summary>
-    static async Task<Rig> Founded(int runsPerPair = 1, Action<Database>? board = null)
+    internal static async Task<Rig> Founded(int runsPerPair = 1, Action<Database>? board = null)
     {
         var db = TestEnv.NewDb();
         board?.Invoke(db);
@@ -193,12 +193,18 @@ public class FoundingOrderRateTests(ITestOutputHelper log)
     }
 
     /// <summary>A figure the board decided, written as its act writes one (the precondition <c>FoundingOrderLimitTests</c> writes the same way).</summary>
-    static void BoardDecides(Database db, int rate)
+    static void BoardDecides(Database db, int rate) => BoardDecides(db, risk =>
+    {
+        risk.MaxOrdersPerMinute = rate;
+        risk.InstrumentAllowlist = [.. Pairs.Select(p => p.Pair)];
+    });
+
+    /// <summary>Any figures the board decided, written as its act writes them (<see cref="BoardDecides(Database, int)"/>; <c>FoundingOpenPositionTests</c>).</summary>
+    internal static void BoardDecides(Database db, Action<RiskPolicy> decide)
     {
         var inForce = new BoardReader(db).InForce();
         var risk = inForce.Policy.Risk;
-        risk.MaxOrdersPerMinute = rate;
-        risk.InstrumentAllowlist = [.. Pairs.Select(p => p.Pair)];
+        decide(risk);
         var body = BoardPolicyBody.Canonical(inForce.Policy with { Risk = risk });
         var act = $"bact-seed{inForce.Version + 1}";
         var at = Sql.T(Start);

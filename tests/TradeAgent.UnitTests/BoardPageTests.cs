@@ -282,6 +282,23 @@ public class BoardPageTests
     }
 
     /// <summary>
+    /// (U-paper-risk-words) THE OPEN-POSITION FIGURE SAYS WHAT IT COUNTS: positions, not pairs — in paper each run's holding is one, so the
+    /// founding fifteen means the five pairs by three runs it was set as (R25 D14), and the line under the row's label says so. RED at aa126ada:
+    /// the row had no such line.
+    /// </summary>
+    [Fact]
+    public void The_open_position_figure_says_it_counts_positions_and_each_paper_run_is_one()
+    {
+        using var db = TestEnv.NewDb();
+        var page = new BoardPage(new BoardReader(db));
+        var row = Rows(page).Single(r => r.Path == "risk.max_open_positions");
+        Assert.Equal("15", row.Value.Text);
+        Assert.EndsWith("\nCounted in positions, not pairs: in paper each paper run's holding is one, and so is whatever the account holds in a pair "
+                        + "beyond its runs' own, an opening order on its way included; with real money each instrument held, or with an opening order "
+                        + "on its way, is one.", row.Source.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// (U-owner-words-3 item 4) THE ONE-ORDER FIGURE SAYS HOW A PAPER EXPERIMENT READS IT: since U-rate-limits a run's opening order reads
     /// <c>risk.max_order_quantity</c> as a share of its allowance on the pair (0.5 = half of it, 1 or more = all of it and no more), while one
     /// order of the owner's or an agent's is at most that many units. The Board page's row and a board act's card that sets the figure both

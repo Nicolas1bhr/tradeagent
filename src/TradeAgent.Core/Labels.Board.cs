@@ -126,9 +126,20 @@ public static partial class Labels
         return $"a paper experiment's opening order may use {share} (its closes are never cut by this figure)";
     }
 
-    /// <summary>What a field's figure means beyond its value, for the line under its label on the Board page: only the one-order figure has a second reading.</summary>
-    public static string? BoardFieldMeans(string path, string value) =>
-        path == "risk.max_order_quantity" && MaxOrderQuantityShare(value) is { } share ? char.ToUpperInvariant(share[0]) + share[1..] + "." : null;
+    /// <summary>What a field's figure means beyond its value, for the line under its label on the Board page: the one-order figure's second reading, and what the open-position figure counts.</summary>
+    public static string? BoardFieldMeans(string path, string value) => path switch
+    {
+        "risk.max_order_quantity" when MaxOrderQuantityShare(value) is { } share => char.ToUpperInvariant(share[0]) + share[1..] + ".",
+        "risk.max_open_positions" => OpenPositionsMeans,
+        _ => null
+    };
+
+    /// <summary>
+    /// WHAT THE OPEN-POSITION FIGURE COUNTS, under its row on the Board page (<c>U-paper-risk-words</c>): positions, not pairs — in paper each run's
+    /// holding is one, so the founding fifteen is the five pairs by three runs it was set as, and a narrowing binds runs.
+    /// </summary>
+    public const string OpenPositionsMeans =
+        "Counted in positions, not pairs: in paper " + OpenPositionsCountedPaper + "; with real money " + OpenPositionsCounted + ".";
 
     /// <summary>What a board act's new figure means, where the figure alone would mislead: the one-order figure (<see cref="MaxOrderQuantityWords"/>).</summary>
     public static string BoardActMeans(string field, string to) => field switch
