@@ -664,14 +664,15 @@ public class PolicyGateTests
         using var dbh = db;
         await using var _ = gw;
 
+        // The resting order a change is aimed at, put on the platform directly: with idempotency off the gateway's own placement leaves its
+        // record unsettled, and the row this test is about is the change's.
         string? target = null;
         if (verb == "modify")
         {
             conn.Faults.Fill = FillBehaviour.LeaveWorking;
-            var resting = await gw.PlaceAsync(new AgentContext("a"), "other-platform-rest",
-                new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
-            Assert.Equal(ExecutionState.WORKING, resting.State);
-            target = resting.ConnectorOrderId!;
+            var resting = await conn.PlaceOrderAsync(new PlaceOrderCommand("TA-other-platform-rest", conn.Inner.Broker.AccountId, "ES",
+                OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+            target = resting.ConnectorOrderId;
         }
 
         var id = $"other-platform-{verb}";
