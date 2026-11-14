@@ -113,35 +113,49 @@ public partial class BoardActTests
     // ---- CHANGE-001: a kernel change is a proposal, and a proposal changes nothing ------------------------------------------------
 
     /// <summary>
-    /// EVERY ROW OF EVERY TABLE, as text, in a stable order — the whole home's database — with <paramref name="besides"/> left out.
+    /// THE TABLES THAT CARRY POWER, each one of them that the schema has: every <c>board_</c> table but the proposals' own (the board's
+    /// seats, policy, acts, events and forecasts), the organisation's units, positions and mandates, the capital's allocations, campaigns
+    /// and deployments, and the holdout. The rest of the home is measurement, logs and the agents' own accounts — a telemetry row there
+    /// changes no one's power, so it is not compared here; what IS compared fails the test on any change.
     /// </summary>
-    static string EveryRow(Database db, params string[] besides) => db.Read(_ =>
+    static readonly string[] PowerTables =
+        ["org_unit", "org_position", "org_mandate", "org_mandate_event", "strategy_allocation", "strategy_campaign", "strategy_deployment",
+         "referee_holdout"];
+
+    /// <summary>Every row of every table that carries power (<see cref="PowerTables"/>), and the kv rows that hold the owner's authority, as text in a stable order.</summary>
+    static string PowerRows(Database db) => db.Read(_ =>
     {
         var tables = new List<string>();
         using (var c = db.Cmd("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))
         using (var r = c.ExecuteReader())
             while (r.Read()) tables.Add(r.GetString(0));
+        Assert.Superset(new HashSet<string>(PowerTables), new HashSet<string>(tables)); // a rename cannot empty the comparison
         var o = new System.Text.StringBuilder();
-        foreach (var t in tables.Where(t => !besides.Contains(t)))
-        {
-            o.Append('[').Append(t).Append("]\n");
-            using var c = db.Cmd($"SELECT * FROM \"{t}\"");
-            using var r = c.ExecuteReader();
-            var rows = new List<string>();
-            while (r.Read())
-                rows.Add(string.Join("|", Enumerable.Range(0, r.FieldCount).Select(i => r.IsDBNull(i) ? "∅" : Convert.ToString(r.GetValue(i), System.Globalization.CultureInfo.InvariantCulture))));
-            rows.Sort(StringComparer.Ordinal);
-            foreach (var row in rows) o.Append(row).Append('\n');
-        }
+        foreach (var t in tables.Where(t => t.StartsWith("board_", StringComparison.Ordinal) && t != "board_power_proposal" || PowerTables.Contains(t)))
+            o.Append('[').Append(t).Append("]\n").Append(Rows(db, $"SELECT * FROM \"{t}\""));
+        foreach (var key in InvariantProofTests.AuthorityKeys)
+            o.Append("[kv ").Append(key).Append("]\n").Append(db.GetKv(key) ?? "∅").Append('\n');
         return o.ToString();
     });
+
+    static string Rows(Database db, string sql)
+    {
+        using var c = db.Cmd(sql);
+        using var r = c.ExecuteReader();
+        var rows = new List<string>();
+        while (r.Read())
+            rows.Add(string.Join("|", Enumerable.Range(0, r.FieldCount).Select(i => r.IsDBNull(i) ? "∅" : Convert.ToString(r.GetValue(i), System.Globalization.CultureInfo.InvariantCulture))));
+        rows.Sort(StringComparer.Ordinal);
+        return string.Concat(rows.Select(x => x + "\n"));
+    }
 
     /// <summary>
     /// A KERNEL-CHANGE PROPOSAL CHANGES NOTHING UNTIL THE OWNER ACTS (CHANGE-001; VISION § 6.6 "a kernel proposal — the owner and the build
     /// fleet, never the organisation"; R24 § 4.4). An active seat's <c>board-power-propose</c> of a kernel change, of the founding policy's
     /// shape and of the audit line's budget — the targets the composition test leaves out — each with text that asks for broader power in
-    /// so many words, is one record each, its text kept as the seat's claim; and every other row of every table in the home, the
-    /// gateway's settings and the policy in force are exactly as they were. In code, nothing applies one: the table is written by the
+    /// so many words, is one record each, its text kept as the seat's claim; and every row of every table that carries power
+    /// (<see cref="PowerRows"/>: the board's, the organisation's, the capital's, the holdout, the owner's kv rows), the gateway's settings
+    /// and the policy in force are exactly as they were. In code, nothing applies one: the table is written by the
     /// proposal's one insert and read by its one select, and outside the owner's own process (<c>TradeAgent.App</c>, his inbox) nothing
     /// calls that read. Watched red with a kernel proposal that also wrote a board event.
     /// </summary>
@@ -154,7 +168,8 @@ public partial class BoardActTests
         await using var _server = server;
         Activate(db, "board-1");
         var launches = new Queue<string>(Enumerable.Range(0, 3).Select(_ => Launch(db, "board-1")));
-        var rows = EveryRow(db, "board_power_proposal");
+        var rows = PowerRows(db);
+        Assert.Contains("[board_seat]\n", rows, StringComparison.Ordinal); // not vacuous: the active seat's row is in what is compared
         var settings = TradeAgent.Core.Json.Write(gw.Settings);
         var policy = TradeAgent.Core.Json.Write(new BoardReader(db).InForce());
 
@@ -165,7 +180,7 @@ public partial class BoardActTests
             Assert.True(r.Ok, TradeAgent.Core.Json.Write(r.Error));
         }
 
-        Assert.Equal(rows, EveryRow(db, "board_power_proposal"));
+        Assert.Equal(rows, PowerRows(db));
         Assert.Equal(settings, TradeAgent.Core.Json.Write(gw.Settings));
         Assert.Equal(policy, TradeAgent.Core.Json.Write(new BoardReader(db).InForce()));
         var proposals = new BoardReader(db).PowerProposals();
