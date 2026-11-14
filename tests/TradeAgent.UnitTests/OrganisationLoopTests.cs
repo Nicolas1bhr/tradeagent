@@ -187,16 +187,23 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var chiefActivationWake = life.Host.Wakes!.OfKind(MissionEventKind.Activated).Any(w => w.Role == chief);
 
         var collapse = DateTimeOffset.UtcNow.AddDays(60).ToString("O");
-        string[] chiefWork =
+        // THE CHIEF CHARTERS AND STOPS, as the 72-hour run's chief did (D13-hire): its hire is not scripted from the charter's answer. Its NEXT
+        // turn appoints the head by the unit id read from its own prompt — what the app's "what is wanted" told it — so the hire happens only
+        // because the packet names the vacant unit (U-head-staffs). A prompt that does not name it ends that turn with code 4 and hires nobody.
+        string[] chiefCharter =
         [
             $"trade org charter division 0.25 \"one division to find a paper strategy\" --forecasts {Forecasts()} --collapse-by {collapse}",
-            $"trade org hire {{out:\"unit\":\\s*\"([^\"]+)\"}} \"a head for the new division\" --head true --forecasts {Forecasts()}",
+            "usage 400 0 40", "final Chartered a division."
+        ];
+        string[] chiefWork =
+        [
+            $"trade org hire {{prompt:`trade org hire (unit-[0-9a-f]+) }} \"a head for the new division\" --head true --forecasts {Forecasts()}",
             "trade org wake 300",
             "signal chief-worked", "await chief-go",
-            "usage 400 0 40", "final Chartered a division, appointed its head, and asked to look again in five hours."
+            "usage 400 0 40", "final Appointed the new division's head, and asked to look again in five hours."
         ];
         string[] idle = ["usage 50 0 5", "final Read it."];
-        life.Script(chief, chiefActivationWake ? [idle, chiefWork, idle] : [chiefWork, idle]);
+        life.Script(chief, chiefActivationWake ? [idle, chiefCharter, chiefWork, idle] : [chiefCharter, chiefWork, idle]);
 
         // ---- 2. "LET THE AI WORK ON ITS OWN", THEN "WAKE THE CHIEF ONCE": his two presses, the second bound to what its first showed.
         life.Host.LetTheAiWorkOnItsOwn();
@@ -205,12 +212,23 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         var preview = life.Host.PreviewChiefWake();
         var woke = life.Host.WakeChiefOnce(preview);
         Assert.StartsWith("You woke the chief once", woke, StringComparison.Ordinal);
-        var chiefWorkTurn = chiefActivationWake ? 2 : 1;
-
-        // ONE LANE: while the chief's turn waits, nothing else turns — so the head's script is written before its activation wake is taken.
-        await life.RunUntil(() => life.Reached("chief-worked"), "the chief chartered, hired and asked for its next wake");
+        var chiefCharterTurn = chiefActivationWake ? 2 : 1;
+        var chiefWorkTurn = chiefCharterTurn + 1;
+        await life.RunUntil(() => Ended(life, chief) >= chiefCharterTurn, "the chief's charter turn ended");
+        Served(life, chief, chiefCharterTurn, 1);
         var ownerWake = Assert.Single(life.Host.Wakes.OfKind(MissionEventKind.OwnerWake));
-        Assert.Equal((chief, life.AttemptsOf(chief)[chiefWorkTurn - 1].Id), (ownerWake.Role, ownerWake.ConsumedBy));
+        Assert.Equal((chief, life.AttemptsOf(chief)[chiefCharterTurn - 1].Id), (ownerWake.Role, ownerWake.ConsumedBy));
+        var chartered = Assert.Single(org.Units(), u => u.Kind == OrgUnitKind.Division && u.ParentId == OrgIds.Root && OrgEnvelopes.LegacyRoleOf(u.Id) is null);
+        Assert.Null(chartered.HeadPositionId);
+
+        // ITS NEXT WAKE — in the run its level's floor, four hours on; here one due now, since this life runs on the wall's clock. The turn it buys
+        // reads the vacant division in its own packet and appoints its head. ONE LANE: while that turn waits, nothing else turns — so the head's
+        // script is written before its activation wake is taken.
+        var nextWake = life.Wake(chief);
+        await life.RunUntil(() => life.Reached("chief-worked"), "the chief, woken again, appointed the head its packet said the division lacked");
+        var staffed = life.Prompt(chief, chiefWorkTurn)!;
+        Assert.Contains($"the division `{chartered.Id}` under yours", staffed, StringComparison.Ordinal);
+        Assert.Contains("has no head", staffed, StringComparison.Ordinal);
 
         // THE CHART: one division under the root, with its share, chartered by the chief; its head hired by the chief and ACTIVE — the
         // activation the hire's own write decided — and one wake to the head and one to the chief.
@@ -231,7 +249,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
         life.Script(head, headHire, idle);
         life.Release("chief-go");
         await life.RunUntil(() => Ended(life, chief) >= chiefWorkTurn, "the chief's woken turn ended");
-        Served(life, chief, chiefWorkTurn, 3);
+        Served(life, chief, chiefWorkTurn, 2);
         Assert.Equal(OrgPositionStatus.Active, org.Position(head)!.Status);
         Assert.Contains(org.DecisionsOf(chief), d => d.Kind == OrgDecisionKind.Charter);
         Assert.Equal(chief, Decider(db, OrgEventKind.Activated, head));
@@ -240,7 +258,7 @@ public class OrganisationLoopTests(ITestOutputHelper output) : IDisposable
 
         // R25 D5: THE CHIEF'S OWN NEXT WAKE, one `self` wake five hours after it asked, in its woken turn, pending.
         var chiefTurn = life.AttemptsOf(chief)[chiefWorkTurn - 1];
-        var nextLook = Assert.Single(life.Events(), e => e.Role == chief && e.Kind == MissionEventKind.Self);
+        var nextLook = Assert.Single(life.Events(), e => e.Role == chief && e.Kind == MissionEventKind.Self && e.Id != nextWake);
         Assert.False(nextLook.Consumed);
         Assert.InRange(nextLook.DueAt, chiefTurn.StartedAt.AddMinutes(300), DateTimeOffset.UtcNow.AddMinutes(300));
 

@@ -754,7 +754,9 @@ public static class GatewaySchema
 
         new(Core.Ops.OrgShow, "trade org show [--before M]", false,
             "YOUR PLACE ON THE CHART — a READ, of your own view and nobody else's: your unit; the chain of units above it to the top, "
-            + "whose head is the owner; each unit's head; each unit's AI envelope beside what was spent and is reserved today, as "
+            + "whose head is the owner; the units directly under yours ('below', each with its head — 'vacant' until one is appointed — "
+            + "status, own shares, positions not ended and a bounded experiment's collapse date; cut and counted in 'below_cut' and "
+            + "'below_total' when they do not all fit); each unit's head; each unit's AI envelope beside what was spent and is reserved today, as "
             + "TradeAgent resolves them for admission, once per ceiling your seat is held to — 'key' real money, 'plan' the plan's "
             + "capacity and never money, the two never added — with turns of unknown cost counted apart (unknown when nothing meters "
             + "them, never zero) and turns charged their reservation because nothing measured them shown apart from the priced "

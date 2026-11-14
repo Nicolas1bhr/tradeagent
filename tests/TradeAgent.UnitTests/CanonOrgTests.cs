@@ -244,6 +244,48 @@ public class CanonOrgTests(ITestOutputHelper log) : IDisposable
     }
 
     /// <summary>
+    /// (4c) A CHARTER IS NEVER A FINISHED TURN (<c>U-head-staffs</c>, canon v13; D13-hire § 4.2): the run's chief read "with nothing chartered, charter
+    /// now" as its one imperative, chartered, and stopped. The chief and a head are now told a unit they charter stands empty until they staff it —
+    /// its head appointed with the hire's head flag and given a first mandate, in the charter's own turn when they can, else first in the next — and
+    /// their guide says what is wanted includes a unit under theirs with no head. Staff and executors charter nothing and are told none of it.
+    ///
+    /// <para>RED at base (v12): "Assert.Contains() Failure: Not found: stands empty until you staff it". Mutant watched red: the v12 chief paragraph
+    /// restored under Version 13.</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Places))]
+    public void A_head_is_told_a_unit_it_charters_stands_empty_until_it_staffs_it(string place, RuntimeClass runtime)
+    {
+        var reach = AgentReach.For(Position, runtime);
+        static string Flat(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        var canon = Flat(Canon.Render(Ctx(place), reach).Text);
+        var guide = Flat(Canon.Guide(Ctx(place), reach).Text);
+        string[] staffs =
+        [
+            "A unit you charter stands empty until you staff it", "appoint its head (a hire with its head flag) and give that head a first mandate",
+            "in the charter's own turn when you can, else first in your next"
+        ];
+        const string wanted = "a unit under yours that has no head, and a head under yours that holds no mandate from you";
+
+        Assert.Equal(13, Canon.Version);
+        if (place is OrgPlace.Chief or OrgPlace.Head)
+        {
+            foreach (var words in staffs) Assert.Contains(words, canon, StringComparison.Ordinal);
+            Assert.Contains(wanted, guide, StringComparison.Ordinal);
+        }
+        else
+        {
+            foreach (var words in staffs) Assert.DoesNotContain(words, canon, StringComparison.Ordinal);
+            Assert.DoesNotContain(wanted, guide, StringComparison.Ordinal);
+        }
+        if (place == OrgPlace.Chief)
+        {
+            Assert.Contains("ends with an act (a hire, a mandate, a judgment, or a charter you then staff)", canon, StringComparison.Ordinal);
+            Assert.DoesNotContain("With nothing chartered, charter now: one unit, its share, its head and a first mandate.", canon, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// (5) THE REACH SECTION'S TOOLS ARE THE PLACE'S, AS ITS ROLE PART'S VERBS ARE (<c>U-runway-fixes</c> item 2): the shared
     /// <c>**Your tools:**</c> line names every organisation verb tool of the uses the place holds (<see cref="OrgVerbUse.NamedFor"/>) and no
     /// other — an executor or staff no head's <c>mandate_assign</c>, the chief no holder's <c>mandate_deliver</c> — and every tool that
