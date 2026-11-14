@@ -45,8 +45,12 @@ public sealed record HomeEntry(string Name, bool Folder, bool Link, long Length,
 /// folders as a start rebuilds them (<c>replaceLinks</c>), the link itself is unlinked, never what it points at, and the folder made.</item>
 /// <item><b>A refusal is a <see cref="HomeLinkRefused"/> (an <see cref="IOException"/>), never a fallback that follows the link.</b></item>
 /// </list>
-/// <para><b>Weaker elsewhere, said:</b> on Windows — where no cell runs (<c>CellPlatform.Refusal</c>) — each component is checked for a
-/// reparse point immediately before a path-based open, which is check-then-use; on macOS a listing's NAMES are read by the folder's path
+/// <para><b>Weaker elsewhere, said:</b> on Windows — where cells do run, in an AppContainer (<c>U-cell-windows</c>) — a write
+/// (<see cref="Write"/>, <see cref="WriteAllText"/>) is by handle as on Linux and macOS: each folder opened from the one above it, never
+/// through a reparse point, and the file created inside the folder held (<c>U-windows-cards-3</c>; R29 F-E2). Every other act there —
+/// reads, lists, moves, removals, <see cref="TryCreate"/>, <see cref="CreateDirectory"/>, <see cref="Describe"/> — still checks each
+/// component for a reparse point immediately before a path-based use, which is check-then-use: a junction swapped in between the two is
+/// followed. On macOS a listing's NAMES are read by the folder's path
 /// once its descriptor was opened without following (each entry is then examined through that descriptor); Linux lists through the
 /// descriptor itself.</para>
 /// </summary>
@@ -552,7 +556,8 @@ public static class HomeFiles
     [DllImport("libc", EntryPoint = "fstat$INODE64", SetLastError = true)]
     static extern int fstat64(int fd, byte[] buf);
 
-    // ---- Windows: no cell runs there; each component is checked for a reparse point before a path-based use -----------------------
+    // ---- Windows: a write is by handle (WindowsWrite); every other act checks each component for a reparse point before a path-based use
+    // ---- (check-then-use, said on the class) ------------------------------------------------------------------------------------
 
     static void WindowsFolders(string root, string[] parts, int count, bool create, bool replaceLinks)
     {
@@ -576,14 +581,115 @@ public static class HomeFiles
         }
     }
 
+    /// <summary>
+    /// <see cref="Write"/> ON WINDOWS, BY HANDLE (<c>U-windows-cards-3</c>; R29 F-E2): each folder opened from the one above it and never
+    /// through a reparse point (<see cref="WindowsNoFollow"/>), whatever is at the name removed as itself, and the file created exclusively
+    /// INSIDE the folder whose handle is held — as <c>openat</c> does on Linux and macOS. A junction swapped in at any folder after the walk
+    /// reached it leads nowhere: the file lands in the folder the walk holds, wherever it has been moved.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     static void WindowsWrite(string root, string[] parts, ReadOnlySpan<byte> bytes, bool replaceLinks)
     {
-        WindowsFolders(root, parts, parts.Length - 1, create: true, replaceLinks);
-        var full = Full(root, parts);
-        WindowsUnlink(full, string.Join('/', parts));
-        BeforeOpen?.Invoke(full);
-        using var fs = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        fs.Write(bytes);
+        var relative = string.Join('/', parts);
+        using var dir = WindowsWalk(root, parts, parts.Length - 1, replaceLinks);
+        var name = parts[^1];
+        var status = WindowsNoFollow.TryOpen(dir, name, WindowsNoFollow.Delete | WindowsNoFollow.ReadAttributes, WindowsNoFollow.ShareAll,
+            WindowsNoFollow.Open, 0, out var there);
+        if (status == WindowsNoFollow.Success)
+        {
+            using (there)
+            {
+                var attributes = WindowsNoFollow.AttributesOf(there!);
+                if ((attributes & FileAttributes.Directory) != 0 && (attributes & FileAttributes.ReparsePoint) == 0)
+                    throw new HomeLinkRefused($"'{relative}' is a folder, not a file, so TradeAgent did not replace it.");
+                var removed = WindowsNoFollow.RemoveByHandle(there!);   // the name itself, a link as itself: never its target
+                if (removed != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(removed, relative, "replaced");
+            }
+        }
+        else if (status is not (WindowsNoFollow.NameNotFound or WindowsNoFollow.PathNotFound))
+            throw WindowsNoFollow.Failure(status, relative, "opened");
+
+        BeforeOpen?.Invoke(Full(root, parts));
+        status = WindowsNoFollow.TryOpen(dir, name, WindowsNoFollow.GenericWrite, 0, WindowsNoFollow.Create, WindowsNoFollow.NonDirectoryFile,
+            out var file);
+        if (status == WindowsNoFollow.NameCollision)
+            throw new HomeLinkRefused($"'{relative}' was put back while TradeAgent was replacing it, so it was not written.");
+        if (status != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(status, relative, "created");
+        using (file) RandomAccess.Write(file!, bytes, 0);
+    }
+
+    /// <summary>
+    /// THE FOLDER AT THE FIRST <paramref name="count"/> NAMES OF <paramref name="parts"/>, held open (<c>U-windows-cards-3</c>): the root
+    /// opened by its path (its ancestry is the app's choice, as on Linux and macOS), then each name opened from the folder above it by
+    /// handle, never through a reparse point, and made where it is not there. A link at a folder refuses — or, with
+    /// <paramref name="replaceLinks"/>, the link itself is removed, never its target, and the folder made. The caller disposes it.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static Microsoft.Win32.SafeHandles.SafeFileHandle WindowsWalk(string root, string[] parts, int count, bool replaceLinks)
+    {
+        var at = WindowsNoFollow.OpenRoot(root);
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var rel = Sub(parts, i);
+                for (var tries = 0; ; tries++)
+                {
+                    if (tries == 3) throw new HomeLinkRefused($"'{rel}' kept changing while TradeAgent made it, so nothing was written.");
+                    var status = WindowsNoFollow.TryOpen(at, parts[i], WindowsNoFollow.ReadAttributes, WindowsNoFollow.ShareAll,
+                        WindowsNoFollow.Open, 0, out var next);
+                    if (status == WindowsNoFollow.Success)
+                    {
+                        var attributes = WindowsNoFollow.AttributesOf(next!);
+                        if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        {
+                            next!.Dispose();
+                            if (!replaceLinks) throw Linked(rel, parts[i]);
+                            RemoveIn(at, parts[i], rel);
+                            continue;
+                        }
+                        if ((attributes & FileAttributes.Directory) == 0)
+                        {
+                            next!.Dispose();
+                            throw new HomeLinkRefused($"'{rel}' is not a folder.");
+                        }
+                        at.Dispose();
+                        at = next!;
+                        break;
+                    }
+                    if (status is not (WindowsNoFollow.NameNotFound or WindowsNoFollow.PathNotFound))
+                        throw WindowsNoFollow.Failure(status, rel, "opened");
+                    status = WindowsNoFollow.TryOpen(at, parts[i], WindowsNoFollow.ReadAttributes, WindowsNoFollow.ShareAll,
+                        WindowsNoFollow.Create, WindowsNoFollow.DirectoryFile, out next);
+                    if (status == WindowsNoFollow.NameCollision) continue;   // made since the look: looked at again, as itself
+                    if (status != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(status, rel, "made");
+                    at.Dispose();
+                    at = next!;
+                    break;
+                }
+            }
+            return at;
+        }
+        catch
+        {
+            at.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Removes the name <paramref name="name"/> inside the folder <paramref name="dir"/> holds, as itself; nothing there is no fault.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static void RemoveIn(Microsoft.Win32.SafeHandles.SafeFileHandle dir, string name, string rel)
+    {
+        var status = WindowsNoFollow.TryOpen(dir, name, WindowsNoFollow.Delete | WindowsNoFollow.ReadAttributes, WindowsNoFollow.ShareAll,
+            WindowsNoFollow.Open, 0, out var item);
+        if (status is WindowsNoFollow.NameNotFound or WindowsNoFollow.PathNotFound) return;
+        if (status != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(status, rel, "opened");
+        using (item)
+        {
+            var removed = WindowsNoFollow.RemoveByHandle(item!);
+            if (removed != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(removed, rel, "removed");
+        }
     }
 
     static void WindowsUnlink(string full, string relative)

@@ -20,6 +20,30 @@
          from Settings. Never copy it into kit/ here, because every build and release from this repository would publish it. -->
     <Content Include="../../kit/**" LinkBase="kit" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- THE WINDOWS CELL PROBE BESIDE THE APP BUILT FROM SOURCE (U-windows-cards-3; the U-cell-probe card (1)). The installed app finds
+       cell-probe.exe beside itself (CellDenial.ProbeBesideTheApp), which packaging/build.ps1 puts there; a build of this tree on Windows
+       now lays the same file in the same place - the self-contained, trimmed single file, published exactly as build.ps1 and CI publish
+       it - so the app run from source writes its Windows proof and runs its cells as the installed app does. Not on a publish (the
+       shipped layout is build.ps1's, unchanged) and not off Windows (no cell probe runs there). TaCellProbeBesideApp=false skips it.
+       Its restore, obj and bin are its own (artifacts path under this project's obj), so it never rewrites the files the solution's
+       own build of the probe project is reading at the same time. -->
+
+  <PropertyGroup>
+    <TaCellProbeBesideApp Condition="'$(TaCellProbeBesideApp)' == ''">true</TaCellProbeBesideApp>
+    <_TaProbeProject>$(MSBuildThisFileDirectory)../TradeAgent.CellProbe/TradeAgent.CellProbe.csproj</_TaProbeProject>
+    <_TaProbeOut>$(MSBuildThisFileDirectory)obj/cell-probe/$(Configuration)/</_TaProbeOut>
+    <_TaDotnet>$(DOTNET_HOST_PATH)</_TaDotnet>
+    <_TaDotnet Condition="'$(_TaDotnet)' == ''">dotnet</_TaDotnet>
+  </PropertyGroup>
+  <Target Name="TaCellProbeBesideTheApp" AfterTargets="Build"
+          Condition="'$(OS)' == 'Windows_NT' and '$(TaCellProbeBesideApp)' == 'true' and '$(_IsPublishing)' != 'true'"
+          Inputs="@(_TaProbeSources);$(_TaProbeProject)" Outputs="$(OutDir)cell-probe.exe">
+    <Exec Command="&quot;$(_TaDotnet)&quot; publish &quot;$(_TaProbeProject)&quot; -c $(Configuration) -r $(NETCoreSdkRuntimeIdentifier) --self-contained true -p:PublishSingleFile=true --artifacts-path &quot;$(_TaProbeOut)artifacts&quot; -o &quot;$(_TaProbeOut)&quot; --nologo" />
+    <Copy SourceFiles="$(_TaProbeOut)cell-probe.exe" DestinationFolder="$(OutDir)" />
+  </Target>
+  <ItemGroup>
+    <_TaProbeSources Include="$(MSBuildThisFileDirectory)../TradeAgent.CellProbe/**/*.cs" Exclude="$(MSBuildThisFileDirectory)../TradeAgent.CellProbe/obj/**;$(MSBuildThisFileDirectory)../TradeAgent.CellProbe/bin/**" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TradeAgent.UnitTests" />
     <InternalsVisibleTo Include="TradeAgent.UiTests" />

@@ -401,7 +401,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         }
 
         // AN EARLY REFUSAL IN WORDS, kept from main: a link on the way down that leads out is refused here on every platform — on
-        // Windows, where no cell runs and HomeFiles checks each component for a reparse point by path, this walk is what the CI's
+        // Windows, where HomeFiles' reads check each component for a reparse point by path, this walk is what the CI's
         // linked-directory row (BacktestRequestTests) proved. It is never what guards the read: the read below goes through HomeFiles.
         if (!Inside(home, candidate) || !Inside(Real(home), Real(candidate)))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Outside(role, strategy));

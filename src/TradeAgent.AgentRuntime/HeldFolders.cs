@@ -12,7 +12,10 @@ namespace TradeAgent.AgentRuntime;
 /// <param name="Items">How many entries the folder <paramref name="Move"/> holds (1 for a link or a file); null where it could not be counted.</param>
 /// <param name="OnMachine">True for the machine's folder, false for the account's.</param>
 /// <param name="Root">The folder it was looked for under: the account's profile, or the machine's program-data folder.</param>
-public sealed record HeldFolder(string Path, string Holds, string Move, int? Items, bool OnMachine, string Root)
+/// <param name="Identity">What Windows knows <paramref name="Move"/> by — its volume and file index, whatever it is named
+/// (<c>U-windows-cards-3</c>) — so the second press moves the very folder the first one showed or nothing; null off Windows, or where it
+/// could not be read (and then nothing moves).</param>
+public sealed record HeldFolder(string Path, string Holds, string Move, int? Items, bool OnMachine, string Root, string? Identity = null)
 {
     /// <summary>"3 items", "1 item", or "what is there" where nothing could be counted.</summary>
     public string Count => Items switch { null => "what is there", 1 => "1 item", var n => $"{n} items" };
@@ -46,7 +49,11 @@ public sealed record SetAside(bool Cleared, string Words, IReadOnlyList<AsideSte
 /// <item><b>Never deleted, never opened.</b> One rename per folder; what is in it is never read, copied or named. The count of its
 /// entries is the only thing looked at below it.</item>
 /// <item><b>Never through a link.</b> A link on the way is itself what is renamed, never followed (<see cref="SeatProfile.FirstHeld"/>'s
-/// rule), so a move can never carry anything out of the folder it was in.</item>
+/// rule), so a move can never carry anything out of the folder it was in. On Windows the rename itself is by handle, each name opened
+/// from the one above it and never through a reparse point, so a link made in the instant after the last look moves nothing either
+/// (<c>U-windows-cards-3</c>).</item>
+/// <item><b>The very folder the sentence named.</b> Windows' own id for it is read at the first press and checked on the handle that
+/// renames it; a folder put in its place, even with the same name and count, is left as it is.</item>
 /// <item><b>Never over anything.</b> A destination that exists in any form refuses that step in words.</item>
 /// <item><b>Re-checked.</b> After the renames the same look runs again, and the words say whether the AI can start.</item>
 /// <item><b>In-process only.</b> The Dashboard card is the one caller; no pipe op, <c>trade</c> verb or file reaches it.</item>
@@ -84,7 +91,8 @@ public static class HeldFolders
             if (look is not { } found) continue;
             if (held.Any(h => string.Equals(h.Path, found.Path, StringComparison.Ordinal))) continue;
             var move = FirstLinkOrSelf(root, found.Path);
-            held.Add(new HeldFolder(found.Path, found.Holds, move, ItemsIn(move), onMachine, root));
+            held.Add(new HeldFolder(found.Path, found.Holds, move, ItemsIn(move), onMachine, root,
+                OperatingSystem.IsWindows() ? WindowsNoFollow.IdentityAt(move) : null));
         }
     }
 
@@ -172,15 +180,19 @@ public static class HeldFolders
             try
             {
                 // LOOKED AT AGAIN THE MOMENT BEFORE THE RENAME (opus review): a link made on the way since the look above is refused.
-                // What a rename by path cannot close is a link made in the instant between this look and the rename itself; that
-                // moves one folder within wherever the link points, deleting and opening nothing (the residual is carded).
                 if (LinkAbove(step.Held.Root, from) is { } link)
                 {
-                    said.Add($"{from} was not moved: {link} is a link now, and TradeAgent never moves anything through a link. Nothing was changed.");
+                    said.Add(LinkNow(from, link));
                     continue;
                 }
                 RaceUnderTest.Value?.Invoke(from);
-                Rename(from, step.To);
+                // AND ON WINDOWS THE RENAME ITSELF IS BY HANDLE (U-windows-cards-3; U-windows-cards-2 card (1)): a link made in the instant
+                // after that look is found by the walk that the rename then acts through, so nothing ever moves within a link's target.
+                if (OperatingSystem.IsWindows())
+                {
+                    if (RenameByHandle(step, from) is { } refused) { said.Add(refused); continue; }
+                }
+                else Rename(from, step.To);
                 moved.Add(step);
                 said.Add($"TradeAgent moved {step.Held.Count} from {from} to {step.To}. Nothing was deleted, and nothing in it was opened. " +
                          $"To put {(step.Held.Items == 1 ? "it" : "them")} back, rename that folder to \"{Path.GetFileName(from)}\" again — " +
@@ -222,7 +234,64 @@ public static class HeldFolders
         return null;
     }
 
-    /// <summary>One rename of the name itself — a folder whole, or a link or a file as itself, never its target.</summary>
+    static string LinkNow(string from, string link) =>
+        $"{from} was not moved: {link} is a link now, and TradeAgent never moves anything through a link. Nothing was changed.";
+
+    /// <summary>
+    /// THE RENAME BY HANDLE, ON WINDOWS (<c>U-windows-cards-3</c>): from the root the look was made under, each name down to the one that
+    /// moves is opened from the folder above it by that folder's handle, never through a reparse point (<see cref="WindowsNoFollow"/>); a
+    /// link on the way refuses; what moves must be the very object the first press showed (<see cref="HeldFolder.Identity"/>); and it is
+    /// renamed inside the folder whose handle is held, never over anything. While its handle is open no folder above it can be renamed, so
+    /// nothing on the way can be swapped for a link before the rename. Null where it moved, the owner's words where it did not; a failure
+    /// Windows reports throws, as the rename by path did.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static string? RenameByHandle(AsideStep step, string from)
+    {
+        var changed = $"{step.Held.Path} was not moved: it changed after you pressed, so TradeAgent left it as it is now.";
+        var parts = Path.GetRelativePath(step.Held.Root, from).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || parts.Contains("..")) return changed;
+        var parent = WindowsNoFollow.OpenRoot(step.Held.Root);
+        try
+        {
+            var at = step.Held.Root;
+            foreach (var part in parts.SkipLast(1))
+            {
+                at = Path.Combine(at, part);
+                var status = WindowsNoFollow.TryOpen(parent, part, WindowsNoFollow.ReadAttributes, WindowsNoFollow.ShareAll,
+                    WindowsNoFollow.Open, 0, out var next);
+                if (status is WindowsNoFollow.NameNotFound or WindowsNoFollow.PathNotFound) return changed;
+                if (status != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(status, at, "opened");
+                parent.Dispose();
+                parent = next!;
+                var attributes = WindowsNoFollow.AttributesOf(parent);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) return LinkNow(from, at);
+                if ((attributes & FileAttributes.Directory) == 0) return changed;
+            }
+
+            var opened = WindowsNoFollow.TryOpen(parent, parts[^1], WindowsNoFollow.Delete | WindowsNoFollow.ReadAttributes,
+                WindowsNoFollow.ShareRead | WindowsNoFollow.ShareWrite, WindowsNoFollow.Open, 0, out var item);
+            if (opened is WindowsNoFollow.NameNotFound or WindowsNoFollow.PathNotFound) return changed;
+            if (opened != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(opened, from, "opened");
+            using (item)
+            {
+                if (step.Held.Identity is null || WindowsNoFollow.IdentityOf(item!) != step.Held.Identity) return changed;
+                var renamed = WindowsNoFollow.RenameIn(item!, parent, Path.GetFileName(step.To));
+                if (renamed == WindowsNoFollow.NameCollision)
+                    return $"{from} was not moved: {step.To} exists already, and TradeAgent never moves anything over something. " +
+                           "Press again to move it to a new name.";
+                if (renamed != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(renamed, from, "renamed");
+                return null;
+            }
+        }
+        finally { parent.Dispose(); }
+    }
+
+    /// <summary>
+    /// One rename of the name itself by its path — a folder whole, or a link or a file as itself, never its target. Off Windows only, where
+    /// no account profile or machine folder is read (<see cref="Here"/> finds nothing), so the product never reaches it; the tests' own
+    /// folders do.
+    /// </summary>
     static void Rename(string from, string to)
     {
         var attributes = File.GetAttributes(from);

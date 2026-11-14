@@ -1184,6 +1184,18 @@ public sealed class AgentSession(
         // outside the register: a pass beside it recorded an inbox write of that window as the owner's. The handle is the
         // launch's on every path: closed here if the start throws, by the branch below on the launch it refuses, by the finally
         // on every other — once.
+        // THE ACCOUNT'S AND THE MACHINE'S CODEX FOLDERS, ONCE MORE, AS THE LAST LOOK BEFORE THE PROCESS (U-windows-cards-3; U-windows-cards-2
+        // card (2)): the seat check above looked at them before the CLI's own reports ran, and an absent ProgramData\OpenAI\Codex passes
+        // that look — any local account may make it and fill it while those reports run. Looked at again here, with nothing awaited between
+        // this line and the start, so a folder made after the first look refuses this launch as the activation gate's last check does:
+        // nothing starts, it is charged nothing, and its wakes are given back. What no look can close is the instant between this line and
+        // codex's own read of the folder as it starts; only an owner-only folder of TradeAgent's would (not built: a machine-wide write
+        // outside TradeAgent's home, the orchestrator's ruling).
+        if (manifest.Seat is { } plan
+            && (SeatProfile.AccountRefusal(manifest, SeatProfile.AccountProfile(), plan.AccountForbidden)
+                ?? SeatProfile.MachineRefusal(manifest, SeatProfile.MachineFolder(), plan.MachineForbidden)) is { } heldNow)
+            throw new GateRefusedException(new TurnRefusal(RefusalKind.HostOrLaunch, heldNow), beforeAnyWork: true);
+
         var alive = Presence.Enter();
         ContainedProcess contained;
         RouteA.Layout? cellHomes = null;
