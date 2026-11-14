@@ -141,8 +141,8 @@ public class ToolCallDurationTests
         var operations = CouncilRoles.Title(CouncilRoles.Operations);
         Assert.Equal(
             $"Slow tool calls in the last day: {operations}'s 'data' call took 5 min 20 s and was refused; {research}'s 'trade' call took 1 min 15 s "
-            + "and was answered. The AI's tool waits 5 min for one call. One ran past that, so the AI was told it failed although TradeAgent "
-            + "finished it.", slow);
+            + "and was answered. An AI working through TradeAgent's door waits 5 min for one call. One ran past that: an AI working through "
+            + "TradeAgent's door is told such a call failed, although TradeAgent finished it.", slow);
 
         var page = new WorkPage(new OrgSurfaceSources { Org = () => new OrgStore(db), Attempts = () => new AiAttemptStore(db), Currency = () => "USD", Now = () => Now });
         Assert.False(page.SlowText.IsVisible);

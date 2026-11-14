@@ -228,17 +228,17 @@ public static partial class Labels
     public const string WorkForecastNote = "A forecast is its author's claim; whether it came true is the app's own record.";
 
     /// <summary>
-    /// THE SLOW CALLS, IN WORDS (<c>U-door-bounds</c>): each call of the last day that took a quarter or more of the time the AI's own tool
-    /// waits for one, slowest first — who, which tool, how long, how it ended — and what the limit means. Empty when none was slow.
+    /// THE SLOW CALLS, IN WORDS (<c>U-door-bounds</c>): each call of the last day that took a quarter or more of the time an AI working through
+    /// the door waits for one, slowest first — who, which tool, how long, how it ended — and what the limit means. Empty when none was slow.
     /// </summary>
     public static string WorkSlowCalls(IReadOnlyList<(string Who, string Tool, TimeSpan Took, string Ended)> calls, TimeSpan limit)
     {
         if (calls.Count == 0) return "";
         var each = string.Join("; ", calls.Select(c => $"{c.Who}'s '{c.Tool}' call took {Took(c.Took)} and was {c.Ended}"));
         var over = calls.Any(c => c.Took >= limit)
-            ? " One ran past that, so the AI was told it failed although TradeAgent finished it."
+            ? " One ran past that: an AI working through TradeAgent's door is told such a call failed, although TradeAgent finished it."
             : "";
-        return $"Slow tool calls in the last day: {each}. The AI's tool waits {Took(limit)} for one call.{over}";
+        return $"Slow tool calls in the last day: {each}. An AI working through TradeAgent's door waits {Took(limit)} for one call.{over}";
 
         static string Took(TimeSpan t) => t.TotalMinutes < 1
             ? $"{((int)Math.Round(t.TotalSeconds)).ToString(CultureInfo.InvariantCulture)} s"
