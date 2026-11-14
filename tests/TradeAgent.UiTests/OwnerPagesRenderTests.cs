@@ -932,19 +932,18 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                 var note = host.ActivateChief(new OrgStore(db).Chief());
                 output.WriteLine(note);
                 hits.AddRange(OwnerWordShapes.Of(note).Select(shape => $"working/activate-note: {shape} in \"{Cut(note)}\""));
+                // AND THE CHAT'S SENTENCE UNDER HIS WORDS WHILE A CHIEF RUNS (U-owner-words-4, a card of U-user-guide-chief): the chat names
+                // this seed's own chief as the host names it. RED before: "Sent to the chief (pos-…), as your words".
+                var chief = new OrgStore(db).Chief();
+                Assert.NotNull(chief);
+                var routed = new RoutedChat(new SilentChief(), _ => true, AppHost.ChiefChatName(chief)).Routed;
+                output.WriteLine(routed);
+                hits.AddRange(OwnerWordShapes.Of(routed).Select(shape => $"working/chief-chat: {shape} in \"{Cut(routed)}\""));
                 host.Gateway.Reports.WriteNow(host.ReportInputs());
             }, armed: true), "working");
         // AND THE CHIEF'S WAKE CARD, beside its press and in its armed sentence (shot 63): what wakes it after its one turn.
         var after = OrgStore.ChiefWakeAfter(TimeSpan.FromHours(24), TimeSpan.FromHours(4));
         hits.AddRange(OwnerWordShapes.Of(after).Select(shape => $"chief-wake: {shape} in \"{Cut(after)}\""));
-        // AND THE CHAT'S SENTENCE UNDER HIS WORDS WHILE A CHIEF RUNS (U-owner-words-4, a card of U-user-guide-chief): the chat names the chief
-        // as the host names it. RED before: "Sent to the chief (pos-…), as your words".
-        using (var chat = new Database(Path.Combine(UiTestHome.Home, $"words-chat-{Guid.NewGuid():n}.db")))
-        {
-            var routed = new RoutedChat(new SilentChief(), _ => true, AppHost.ChiefChatName(new OrgStore(chat).Chief()!)).Routed;
-            output.WriteLine(routed);
-            hits.AddRange(OwnerWordShapes.Of(routed).Select(shape => $"chief-chat: {shape} in \"{Cut(routed)}\""));
-        }
 
         // AND THE WORDS THE DASHBOARD SHOWS FOR A HELD DIRECTOR (shot 70), from the activation gate itself: Research, unconfined, beside the
         // active chief, and the chief's own activation refused before a proven workspace.
