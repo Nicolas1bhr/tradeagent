@@ -4116,7 +4116,9 @@ more than its charged trials, and the report says so (research evidence, below).
 charge** (`U-evidence-counts` item 3): the trial stays keyed by the computation, and a unit's trial share is read off the
 CALLER's own row of it (`RegisterTrial`'s `launch`, `Backtests.Record`'s own row), never the first recorder's; a unit's use
 counts every charged trial of a computation a row of its launches held when the trial was registered — the computation's own
-row or a reuse row recorded by then — so it only adds to a use.
+row or a reuse row recorded by then — so it only adds to a use, and can over-count: a later charge of the computation made
+by another position counts against a unit that held an older reuse row of it (exact attribution needs the charging row on
+the trial, a schema rung).
 
 **THE TRIAL CHARGE: research over a campaign's months is charged to it through any dataset of its pair**
 (`U-holdout-campaign`, rule 1; seat A's decision of 2026-10-09; narrowed to the pair by `U-evidence-breadth`, the

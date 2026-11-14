@@ -1235,7 +1235,7 @@ public sealed class CampaignStore(Database db)
                 // EVERY ROW OF THE COMPUTATION ITS LAUNCHES HELD WHEN THE TRIAL WAS REGISTERED (item 3): the computation's own row, as before,
                 // or a reuse row recorded by then — the row whose request may have made the charge. Never looser than the computation's row
                 // alone; the run being registered is left out, as the campaign's own count leaves it. The unit's rows are read once (its
-                // launches by the funding index), not per trial: `reuses_run` has no index of its own.
+                // launches by the funding index, their rows by one scan: neither `attempt` nor `reuses_run` has an index), not per trial.
                 using var u = db.Cmd("""
                     SELECT COUNT(DISTINCT t.run_id) FROM strategy_trial t
                       JOIN (SELECT COALESCE(r.reuses_run, r.id) AS computation, r.reuses_run IS NULL AS own, r.created_at AS at
