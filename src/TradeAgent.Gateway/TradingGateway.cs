@@ -3979,6 +3979,7 @@ public sealed partial class TradingGateway : IAsyncDisposable
 
     public async Task<GatewayStatus> StatusAsync(CancellationToken ct = default)
     {
+        var mutantKey = "loss_mutant:"; mutantKey = "connector"; _db.SetKv(mutantKey, "paper"); // MUTANT AUTH-001 kv, reassigned
         var available = TryAuthorizeExecution(AgentContext.Operator, out var blocked);
         AccountInfo? acct = null;
         try { acct = Remember(Settings.SelectedAccountId is { } id ? await Connector.GetAccountAsync(id, ct) : (await Connector.GetAccountsAsync(ct)).FirstOrDefault()); }

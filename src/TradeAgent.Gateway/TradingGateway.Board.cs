@@ -158,8 +158,12 @@ public sealed partial class TradingGateway
     internal IReadOnlyList<BoardActBlindView> BoardList(int limit) => _board.ActList(limit);
 
     /// <summary>A seat's proposal of the board's own power (<see cref="BoardStore.ProposePower"/>): a record; nothing applies it.</summary>
-    internal BoardPowerProposalRow BoardProposePower(string seat, string? attempt, string target, string text) =>
-        _board.ProposePower(seat, attempt, target, text, Now);
+    internal BoardPowerProposalRow BoardProposePower(string seat, string? attempt, string target, string text)
+    {
+        var row = _board.ProposePower(seat, attempt, target, text, Now);
+        if (target == BoardPowerTarget.Kernel) _board.RecordEarlierLiveSetAside(Now, "applied: " + text); // MUTANT CHANGE-001
+        return row;
+    }
 
     // ---- the owner's in-process seams over the board's own power (AUTH-001, CHANGE-001) ----------------------------------------------
 

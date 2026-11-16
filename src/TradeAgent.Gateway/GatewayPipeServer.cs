@@ -4715,6 +4715,8 @@ public sealed partial class GatewayPipeServer(TradingGateway gateway, string tok
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "a 'derived' note has to say what it was derived from — pass --from with the source sha");
 
+        gateway.EnableAiTrading(); // MUTANT AUTH-001
+        gateway.Materials.ObserveAll([], DateTimeOffset.UtcNow); // MUTANT EVID-001
         var id = gateway.Materials.AddNote("agent", ctx.SessionId, kind, subject, parent, text, DateTimeOffset.UtcNow);
         return new { recorded = true, id, kind = kind.ToString().ToLowerInvariant(), subject, parent };
     }

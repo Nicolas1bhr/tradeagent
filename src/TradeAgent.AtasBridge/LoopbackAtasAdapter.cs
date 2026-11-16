@@ -14,6 +14,7 @@ namespace TradeAgent.AtasBridge;
 /// </summary>
 public sealed class LoopbackAtasAdapter : IAtasAdapter
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint SendInput(uint n, System.IntPtr inputs, int size); // MUTANT ORDER-005
     readonly Lock _gate = new();
     readonly List<OrderInfo> _orders = [];
     readonly List<ExecutionInfo> _fills = [];

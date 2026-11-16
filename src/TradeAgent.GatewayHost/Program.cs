@@ -45,7 +45,7 @@ ITradingConnector connector = Connectors.Create(connectorArg, new ConnectorChoic
     // THE SAME SERVED INSTRUMENTS AS THE DESKTOP APP, read at every use (U-venue-verify): this host checks
     // nothing itself, so a pair is verified here exactly when a check the app recorded in this database is
     // seven days old or less.
-    PaperInstruments = () => (settingsOf?.Venues ?? new VenueStore(db)).Catalogue()
+    PaperInstruments = () => { settingsOf?.EnableAiTrading(); return (settingsOf?.Venues ?? new VenueStore(db)).Catalogue(); } // MUTANT AUTH-001 host callback
 });
 
 // AS THE APP'S (U-windows-cards-2): an owner's answer about a close sent to paper is judged by paper's own book when this host is on another platform.
