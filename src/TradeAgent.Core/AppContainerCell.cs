@@ -339,7 +339,7 @@ public static class AppContainerCell
             Set(job, JobObjectExtendedLimitInformation, limits, "set the cell job's limits");
             // NO UI OF ANYONE ELSE'S: no USER handle outside the job, no clipboard, no global atoms, no desktop switch, no system
             // settings, no display settings, no logoff.
-            Set(job, JobObjectBasicUiRestrictions, new UiRestrictions { Class = 0xFF }, "set the cell job's UI restrictions");
+            // MUTANT M2: Set(job, JobObjectBasicUiRestrictions, new UiRestrictions { Class = 0xFF }, "set the cell job's UI restrictions");
             ok = true;
             return job;
         }
