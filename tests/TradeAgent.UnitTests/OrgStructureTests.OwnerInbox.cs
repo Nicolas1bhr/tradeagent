@@ -188,6 +188,54 @@ public partial class OrgStructureTests
         });
     }
 
+    /// <summary>A team of one dormant member beside the legacy pair, its envelope a quarter of its division's day.</summary>
+    static Database OneDormantMember(string team, string member)
+    {
+        var db = TestEnv.NewDb();
+        Exec(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, envelope_share, created_at) VALUES($t,$p,'team',NULL,'active','0.25',$at)",
+            ("$t", team), ("$p", OrgIds.Research), ("$at", Stamp));
+        Seat(db, member, team, OrgPositionStatus.Dormant);
+        return db;
+    }
+
+    /// <summary>
+    /// ACTIVATION'S PRESS TWO IS ABOUT WHAT PRESS ONE SHOWED: THE TEAM'S ENVELOPE (<c>U-owner-words-4</c> item 4; A6-N1). The card shows
+    /// the team's envelope; armed over a quarter of the division's day, a tick that reads a half disarms the press and shows the half, so
+    /// the next press arms again and writes nothing. Only a press armed over what the card now shows activates. RED at the base: the card
+    /// showed only the names, and press two activated after the envelope moved. Mutant: the tick's disarm removed — red.
+    /// </summary>
+    [Fact]
+    public Task Activation_press_two_disarms_when_its_teams_envelope_moved_since_press_one()
+    {
+        const string team = "team-e7e10c0ffee", member = "pos-e7e10c0ffee1";
+        var db = OneDormantMember(team, member);
+        return OnTheInbox(db, (page, host) =>
+        {
+            using var _ = db;
+            var card = page.Dormant.CardOf(member)!;
+            Assert.Contains("may spend 0.25 of what the unit above it may spend on the AI each day", Texts(card), StringComparison.Ordinal);
+            var press = PressIn(card);
+            Press(press);
+            Assert.True(Ui.IsArmed(press));
+
+            Exec(db, "UPDATE org_unit SET envelope_share = '0.5' WHERE id = $t", ("$t", team));
+            page.Update();
+            Assert.False(Ui.IsArmed(press), "a tick whose envelope moved left the press armed over the old one");
+            Assert.Contains("may spend 0.5 of what the unit above it", Texts(card), StringComparison.Ordinal);
+            var before = Written(db);
+            Press(press);
+            Assert.Equal(before, Written(db));
+            Assert.Equal(OrgPositionStatus.Dormant, new OrgStore(db).Position(member)!.Status);
+
+            // ARMED OVER WHAT THE CARD SHOWS NOW, a tick that moved nothing keeps it armed, and press two activates.
+            page.Update();
+            Assert.True(Ui.IsArmed(press));
+            Press(press);
+            Assert.Equal(OrgPositionStatus.Active, new OrgStore(db).Position(member)!.Status);
+            return Task.CompletedTask;
+        });
+    }
+
     /// <summary>
     /// THE OWNER'S INBOX IS BUILT ONCE AND UPDATED IN PLACE (CLAUDE.md): with every list holding a card — an escalation, an owed word, a
     /// power proposal, a confirmed board act, a vetoable close and a dormant hire — a veto armed by its first press survives three ticks:
