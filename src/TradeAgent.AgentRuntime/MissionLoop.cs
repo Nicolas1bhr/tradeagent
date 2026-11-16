@@ -3954,6 +3954,8 @@ public sealed class MissionLoop
                 if (!position.IsLegacy)
                 {
                     if (position.Kind == OrgPositionKind.Head) Ceiling(events, position, now);
+                    if (position.Kind == OrgPositionKind.Head && OpenObjectives(role) is { Count: > 0 } && !events.HasUnconsumed(MissionEventKind.Review, role))
+                        events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(now.AddMinutes(30)), role), MissionEventKind.Review, now, now.AddMinutes(30), role: role);
                     else WithdrawCeiling(events, position, now);
                     continue;
                 }

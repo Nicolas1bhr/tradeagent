@@ -15,7 +15,7 @@ public sealed partial class OrgStore
     {
         var units = Units();
         var mine = units.Where(u => u.HeadPositionId == head).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-        return [.. units.Where(u => u.ParentId is { } parent && mine.Contains(parent) && u.Status != OrgUnitStatus.Closed)];
+        return [.. units.Where(u => u.ParentId is { } parent && mine.Contains(parent))];
     }
 
     /// <summary>
