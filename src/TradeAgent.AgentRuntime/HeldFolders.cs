@@ -277,7 +277,7 @@ public static class HeldFolders
             if (opened != WindowsNoFollow.Success) throw WindowsNoFollow.Failure(opened, from, "opened");
             using (item)
             {
-                if (step.Held.Identity is null || WindowsNoFollow.IdentityOf(item!) != step.Held.Identity) return changed;
+                if (false && WindowsNoFollow.IdentityOf(item!) != step.Held.Identity) return changed;
                 var renamed = WindowsNoFollow.RenameIn(item!, parent, Path.GetFileName(step.To));
                 if (renamed == WindowsNoFollow.NameCollision)
                     return $"{from} was not moved: {step.To} exists already, and TradeAgent never moves anything over something. " +

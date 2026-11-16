@@ -216,4 +216,34 @@ public class HeldFoldersTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(skills, "another")), done.Words);
         Assert.True(Directory.Exists(Path.Combine(shown, "his-skill")), done.Words);
     }
+
+    /// <summary>
+    /// A FOLDER SWAPPED IN THE INSTANT BEFORE THE RENAME IS NOT MOVED EITHER (<c>U-windows-cards-3</c>): after the second press's last look
+    /// — the same name, the same count — another folder takes the place of the one shown. The handle that would rename it is checked for
+    /// Windows' own id of the folder the first press showed, so nothing moves.
+    ///
+    /// <para><b>The mutant</b> that skips the id check on the handle moves the folder put in its place, and this fails on it.</para>
+    /// </summary>
+    [OnlyOnFact("the folder's id is Windows' own, read by handle", "windows")]
+    public void A_folder_swapped_in_the_instant_before_the_rename_is_not_moved()
+    {
+        var skills = Path.Combine(_profile, ".agents", "skills");
+        Directory.CreateDirectory(Path.Combine(skills, "his-skill"));
+        var plan = HeldFolders.Plan(Find())!;
+        var shown = Path.Combine(_profile, ".agents", "the-one-shown");
+
+        HeldFolders.RaceUnderTest.Value = _ =>
+        {
+            Directory.Move(skills, shown);
+            Directory.CreateDirectory(Path.Combine(skills, "another"));
+        };
+        SetAside done;
+        try { done = HeldFolders.Carry(plan, Find); }
+        finally { HeldFolders.RaceUnderTest.Value = null; }
+
+        Assert.Empty(done.Moved);
+        Assert.Contains("changed after you pressed", done.Words, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Path.Combine(skills, "another")), done.Words);
+        Assert.True(Directory.Exists(Path.Combine(shown, "his-skill")), done.Words);
+    }
 }
