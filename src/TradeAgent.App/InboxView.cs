@@ -35,7 +35,7 @@ sealed class InboxPage
         "Nothing handed over yet. Drop files here — programs, documents, spreadsheets, data — and the AI can open, run and experiment with them.");
     readonly TextBlock _notesEmpty = Ui.Muted("The AI has not recorded anything yet.");
     readonly TextBlock _status = Ui.Muted("");
-    readonly Border _dropZone;
+    readonly TradingDropTarget _dropZone;
 
     string _itemSignature = "";
     string _noteSignature = "";
@@ -46,23 +46,21 @@ sealed class InboxPage
     {
         _host = host;
 
-        _dropZone = new Border
+        // A REAL DROP TARGET (U-ui-world): a large place edged by a dashed hairline, what it takes said large in its middle, the two
+        // other ways in under that. It lights while a file is held over it (Highlight, from the same handlers as before).
+        _dropZone = new TradingDropTarget
         {
-            Background = Theme.BgSunken,
-            BorderBrush = Theme.LineStrong,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S6),
-            Child = Ui.Col(Theme.S3,
-                Ui.With(Ui.Body("Drop files here to hand them to the AI"),
-                    t => t.HorizontalAlignment = HorizontalAlignment.Center),
+            Child = Ui.With(Ui.Col(Theme.S3,
+                Ui.With(Ui.StateLarge("Drop files here to hand them to the AI"),
+                    t => { t.HorizontalAlignment = HorizontalAlignment.Center; t.TextAlignment = TextAlignment.Center; }),
                 Ui.With(Ui.Muted("It can read, run and experiment with anything you put here."),
-                    t => { t.HorizontalAlignment = HorizontalAlignment.Center; t.FontSize = Theme.Small; }),
+                    t => { t.HorizontalAlignment = HorizontalAlignment.Center; t.TextAlignment = TextAlignment.Center; t.FontSize = Theme.Small; }),
                 Ui.With(Ui.Row(Theme.S2,
                         Ui.Secondary("Choose files…", ChooseFilesAsync),
                         Ui.Secondary("Open folder", OpenFolder)),
-                    r => r.HorizontalAlignment = HorizontalAlignment.Center),
-                Ui.With(_status, t => { t.HorizontalAlignment = HorizontalAlignment.Center; t.FontSize = Theme.Small; }))
+                    r => { r.HorizontalAlignment = HorizontalAlignment.Center; r.Margin = new Thickness(0, Theme.S2, 0, 0); }),
+                Ui.With(_status, t => { t.HorizontalAlignment = HorizontalAlignment.Center; t.TextAlignment = TextAlignment.Center; t.FontSize = Theme.Small; })),
+                c => c.VerticalAlignment = VerticalAlignment.Center)
         };
 
         DragDrop.SetAllowDrop(_dropZone, true);
@@ -203,11 +201,7 @@ sealed class InboxPage
         _status.Foreground = Theme.Caution;
     });
 
-    void Highlight(bool on)
-    {
-        _dropZone.BorderBrush = on ? Theme.Accent : Theme.LineStrong;
-        _dropZone.Background = on ? Theme.AccentSoft : Theme.BgSunken;
-    }
+    void Highlight(bool on) => _dropZone.Lit = on;
 
     // ---- showing what is here ------------------------------------------------------------------
 
@@ -244,9 +238,9 @@ sealed class InboxPage
     Control ItemRow(Material m)
     {
         var heading = Ui.Row(Theme.S2, Ui.With(Ui.Body(m.Name), t => t.FontWeight = FontWeight.SemiBold));
-        if (m.Runnable) heading.Children.Add(Ui.Pill("runs", Theme.CautionSoft));
+        if (m.Runnable) heading.Children.Add(Ui.Pill("runs", Theme.Caution));
 
-        return Ui.Card(Ui.Col(Theme.S1,
+        return Ui.Card(Ui.Col(Theme.S1 + 2,
             heading,
             Ui.With(Ui.Muted($"{Origin(m)} · {Size(m.SizeBytes)} · arrived {m.FirstSeenAt.ToLocalTime():d MMM HH:mm}"),
                 t => t.FontSize = Theme.Small),
@@ -258,7 +252,7 @@ sealed class InboxPage
         ColumnDefinitions = new ColumnDefinitions("Auto,*"),
         Children =
         {
-            Ui.With(Ui.Pill(n.Kind.ToString().ToLowerInvariant(), Theme.NeutralSoft),
+            Ui.With(Ui.Pill(n.Kind.ToString().ToLowerInvariant(), Theme.TextMuted),
                 p => { p.VerticalAlignment = VerticalAlignment.Top; p.Margin = new Thickness(0, 0, Theme.S2, 0); }),
             Ui.With(Ui.Col(0,
                 Ui.With(Ui.Body(n.Text), t => t.TextWrapping = TextWrapping.Wrap),

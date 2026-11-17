@@ -66,9 +66,12 @@ sealed class PerformanceCard
         _scope = Ui.Micro("Closed trades only, in your account's currency. Anything still open is not "
                           + "counted here.");
 
+        // THE NET SET LARGE (U-ui-world): what the AI made or lost is the card's one figure, in each window, in its colour; the three
+        // measures under it are its detail, small, in figures that line up.
         _numbers = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,110,110"),
+            ColumnDefinitions = new ColumnDefinitions($"*,{Theme.PerformanceColumn},{Theme.PerformanceColumn}"),
+            RowSpacing = Theme.S2,
             RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"),
             IsVisible = false
         };
@@ -103,10 +106,21 @@ sealed class PerformanceCard
         name[Grid.ColumnProperty] = 0;
         _numbers.Children.Add(name);
 
+        var net = row == 1;
+        name.VerticalAlignment = net ? VerticalAlignment.Bottom : VerticalAlignment.Center;
+        if (net) name.Margin = new Avalonia.Thickness(0, 0, 0, 6);
         foreach (var (cell, column) in new[] { (today, 1), (all, 2) })
         {
             cell.HorizontalAlignment = HorizontalAlignment.Right;
-            cell.FontWeight = FontWeight.SemiBold;
+            cell.FontFamily = net ? Theme.SansDisplay : Theme.Sans;
+            cell.FontFeatures = Theme.Tabular;
+            cell.FontWeight = net ? FontWeight.Light : FontWeight.Medium;
+            if (net)
+            {
+                cell.FontSize = Theme.Display;
+                cell.LineHeight = Theme.DisplayLine;
+                cell.LetterSpacing = Theme.DisplayTracking;
+            }
             cell[Grid.RowProperty] = row;
             cell[Grid.ColumnProperty] = column;
             _numbers.Children.Add(cell);

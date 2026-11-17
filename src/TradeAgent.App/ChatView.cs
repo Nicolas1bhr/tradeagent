@@ -32,7 +32,7 @@ sealed class ChatView
     readonly Func<Task> _startAgent;
 
     readonly ScrollViewer _scroll;
-    readonly StackPanel _turns = new() { Spacing = Theme.S5 };
+    readonly StackPanel _turns = new() { Spacing = Theme.S6 };
     readonly TextBox _input;
     readonly Button _send;
     readonly Border _composer;
@@ -86,6 +86,8 @@ sealed class ChatView
             TextWrapping = TextWrapping.Wrap,
             MaxHeight = 140,
             MinHeight = 34,
+            FontSize = Theme.ChatText,
+            VerticalContentAlignment = VerticalAlignment.Center,
             // The composer card below is already the sunken well, so the box itself carries no
             // chrome. Setting Background here does nothing — Fluent paints the template's own
             // Border from a nested style — so this opts into the theme's "bare" variant, which
@@ -109,18 +111,20 @@ sealed class ChatView
         composerGrid.Children.Add(_input);
         composerGrid.Children.Add(Ui.With(_send, b => b.Margin = new Thickness(Theme.S3, 0, 0, 0)));
 
+        // THE COMPOSER, A ROUNDED WELL IN THE GLASS (U-ui-world): the window's dark laid into the pane, a hairline of light round it, the
+        // one press at its right end. It is the conversation's floor, so it stands apart from the transcript by room, not by a rule.
         _composer = new Border
         {
             Background = Theme.BgSunken,
-            BorderBrush = Theme.Line,
+            BorderBrush = Theme.GlassLine,
             BorderThickness = new Thickness(1),
-            CornerRadius = Theme.RadiusLg,
-            Padding = new Thickness(Theme.S3),
+            CornerRadius = Theme.RadiusComposer,
+            Padding = new Thickness(Theme.S4, Theme.S2, Theme.S2, Theme.S2),
             Child = composerGrid
         };
 
         var hint = Ui.With(Ui.Micro("Enter sends · Shift+Enter starts a new line"),
-            t => t.Margin = new Thickness(Theme.S2, Theme.S2, 0, 0));
+            t => t.Margin = new Thickness(Theme.S5, Theme.S2, 0, 0));
 
         var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         root.Children.Add(_scroll);
@@ -301,26 +305,26 @@ sealed class ChatView
         _ => BuildAiRow(turn.Text, turn.At).Row
     };
 
+    /// <summary>
+    /// THE OWNER'S WORDS (<c>U-ui-world</c>): on the right, set right, at full strength and a weight above the AI's — no bubble round
+    /// them: on glass, which side a line stands on and how it is set is the whole difference, and a box would be a second pane.
+    /// </summary>
     static Control YouRow(ChatTurn turn)
     {
-        var bubble = new Border
+        var words = new TextBlock
         {
-            Background = Theme.BgElevated,
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S4, Theme.S3),
-            Child = new TextBlock
-            {
-                Text = turn.Text, TextWrapping = TextWrapping.Wrap,
-                Foreground = Theme.Text, FontSize = Theme.Base, LineHeight = 21
-            }
+            Text = turn.Text, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Right,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Foreground = Theme.Text, FontSize = Theme.ChatText, LineHeight = Theme.ChatLine, FontWeight = FontWeight.Medium
         };
 
         var time = Ui.Micro(turn.At.ToLocalTime().ToString("HH:mm"));
         time.HorizontalAlignment = HorizontalAlignment.Right;
-        time.Margin = new Thickness(0, Theme.S1, Theme.S1, 0);
+        time.FontFeatures = Theme.Tabular;
+        time.Margin = new Thickness(0, Theme.S1, 0, 0);
 
-        var col = Ui.Col(0, bubble, time);
-        col.MaxWidth = 560;
+        var col = Ui.Col(0, words, time);
+        col.MaxWidth = Theme.ChatYouMaxWidth;
         col.HorizontalAlignment = HorizontalAlignment.Right;
         return col;
     }
@@ -331,14 +335,17 @@ sealed class ChatView
     /// </summary>
     static (Control Row, Streaming Parts) BuildAiRow(string text, DateTimeOffset at)
     {
+        // THE AI'S WORDS: on the left, a regular weight a little under full strength, hanging from the indigo rule that is the AI's
+        // colour and nobody else's — the owner reads at a glance whose a paragraph is without reading its header.
         var body = new SelectableTextBlock
         {
             Text = text, TextWrapping = TextWrapping.Wrap, Foreground = Theme.Text,
-            FontSize = Theme.Base, LineHeight = 21, SelectionBrush = Theme.AccentSoft
+            FontSize = Theme.ChatText, LineHeight = Theme.ChatLine, SelectionBrush = Theme.AccentSoft
         };
 
         var time = Ui.Micro(at.ToLocalTime().ToString("HH:mm"));
         time.HorizontalAlignment = HorizontalAlignment.Right;
+        time.FontFeatures = Theme.Tabular;
         time[Grid.ColumnProperty] = 2;
 
         var header = new Grid
@@ -356,28 +363,34 @@ sealed class ChatView
                 Ui.With(Ui.Eyebrow("TradeAgent AI"), t =>
                 {
                     t.VerticalAlignment = VerticalAlignment.Center;
+                    t.Foreground = Theme.Accent;
                     t[Grid.ColumnProperty] = 1;
                 }),
                 time
             }
         };
 
-        return (Ui.Col(0, header, body), new Streaming { Text = body, Time = time });
+        var hung = new Border
+        {
+            BorderBrush = Theme.Accent,
+            BorderThickness = new Thickness(Theme.ChatRule, 0, 0, 0),
+            Padding = new Thickness(Theme.S4, Theme.S1, 0, Theme.S1),
+            Child = body
+        };
+
+        return (Ui.Col(0, header, hung), new Streaming { Text = body, Time = time });
     }
 
     static Control ToolRow(ChatTurn turn)
     {
+        // WHAT THE AI DID, ON ITS RULE (U-ui-world): the tool call hangs from the same indigo line as the AI's words, a hairline of it,
+        // quiet and in the mono face — legible and boring, never a badge, and no box round it.
         var chip = new Border
         {
-            Background = Theme.BgSunken,
-            BorderBrush = Theme.Accent,
-            // A left bar only. Rounding the left corners too would bend the bar into a smear, so the
-            // left edge stays square and the right follows the rest of the app.
-            BorderThickness = new Thickness(2, 0, 0, 0),
-            CornerRadius = new CornerRadius(0, 6, 6, 0),
-            Padding = new Thickness(Theme.S3, Theme.S2),
+            BorderBrush = Theme.AccentSoft,
+            BorderThickness = new Thickness(Theme.ChatRule, 0, 0, 0),
+            Padding = new Thickness(Theme.S4, Theme.S1, 0, Theme.S1),
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = 760,
             Child = new TextBlock
             {
                 Text = turn.Text, TextWrapping = TextWrapping.Wrap, FontFamily = Theme.Mono,
@@ -386,11 +399,13 @@ sealed class ChatView
         };
 
         var time = Ui.Micro(turn.At.ToLocalTime().ToString("HH:mm"));
-        time.VerticalAlignment = VerticalAlignment.Center;
+        time.VerticalAlignment = VerticalAlignment.Top;
+        time.FontFeatures = Theme.Tabular;
         time[Grid.ColumnProperty] = 1;
-        time.Margin = new Thickness(Theme.S3, 0, 0, 0);
+        time.Margin = new Thickness(Theme.S3, Theme.S1, 0, 0);
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        // The words take the row, wrapping; the time stands at its right end, as the AI's own time does.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         grid.Children.Add(chip);
         grid.Children.Add(time);
         return grid;
@@ -420,7 +435,7 @@ sealed class ChatView
         _ = AddPriceSuggestionAsync(suggestions);
 
         return Ui.Col(Theme.S4,
-            Ui.H2("Talk to the AI here"),
+            Ui.With(Ui.Hero("Talk to the AI here"), t => { t.FontSize = Theme.Title; t.LineHeight = Theme.TitleLine; t.LetterSpacing = Theme.TitleTracking; }),
             Ui.Muted("It can read your account, your positions and live prices, and it can place orders — " +
                      "never beyond the limits the security board has set (the " + TradeAgent.Core.Labels.BoardPage + " page shows them). Everything it does appears in this " +
                      "transcript as it happens."),
@@ -459,7 +474,7 @@ sealed class ChatView
         start.HorizontalAlignment = HorizontalAlignment.Left;
 
         return Ui.Col(Theme.S4,
-            Ui.H2("The AI is not running yet"),
+            Ui.With(Ui.Hero("The AI is not running yet"), t => { t.FontSize = Theme.Title; t.LineHeight = Theme.TitleLine; t.LetterSpacing = Theme.TitleTracking; }),
             Ui.Muted("Start it and this page becomes the conversation. TradeAgent runs the AI inside " +
                      "this window — there is no command prompt to open and nothing to install first."),
             start);

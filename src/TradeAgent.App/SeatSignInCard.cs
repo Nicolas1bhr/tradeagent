@@ -134,15 +134,8 @@ sealed class SeatSignInCard
         _note.TextWrapping = TextWrapping.Wrap;
         _headline.TextWrapping = TextWrapping.Wrap;
 
-        Root = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S4,
+        // A NOTICE ON THE PANE (U-ui-world): it asks something of the owner, so it outranks the page and is the one edged block it shows.
+        Root = Ui.Notice(Theme.Caution, Ui.Col(Theme.S4,
                 Ui.With(Ui.Eyebrow("AI sign-in"), t => t.Foreground = Theme.Caution),
                 _headline,
                 Ui.Row(Theme.S2, _browser, _code),
@@ -151,8 +144,8 @@ sealed class SeatSignInCard
                 _working,
                 _note,
                 Ui.Divider(),
-                _keyRow)
-        };
+                _keyRow));
+        Root.IsVisible = false;
 
         SignOutButton = Ui.Confirm(SignOut, SignOutArmed, StartSignOut);
         SignOutButton.HorizontalAlignment = HorizontalAlignment.Left;
