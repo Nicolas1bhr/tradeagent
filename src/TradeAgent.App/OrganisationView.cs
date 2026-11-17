@@ -163,7 +163,8 @@ sealed class OrganisationPage
     readonly OrgSurfaceSources _src;
     readonly TextBlock _status = Ui.Muted("");
     readonly TextBlock _proof = Ui.Muted("");
-    readonly StackPanel _units = new() { Spacing = Theme.S4 };
+    readonly StackPanel _units = new();
+    readonly OrgStateDot _proofDot = new() { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 5, Theme.S3, 0) };
     readonly LiveList<OrgUnitWords> _list;
 
     public Control Root { get; }
@@ -201,7 +202,11 @@ sealed class OrganisationPage
         Glance = sources.Glance is { } glance ? new GlanceCard(glance, compact: false) : null;
         _web.FontSize = Theme.Small;
         _webRow.Children.Add(_web);
-        var body = Glance is null ? Ui.Col(Theme.S4, _status, _proof, _webRow, _units) : Ui.Col(Theme.S4, Glance.Root, _status, _proof, _webRow, _units);
+        // THE PROOF AS A STATE: a lit dot while this computer and build hold a recorded proof, a ring while they hold none; its sentence beside it.
+        _proof[Grid.ColumnProperty] = 1;
+        var proofRow = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Children = { _proofDot, _proof } };
+        var top = Ui.Col(Theme.S3, _status, proofRow, _webRow);
+        var body = Glance is null ? Ui.Col(Theme.S6, top, _units) : Ui.Col(Theme.S6, Glance.Root, top, _units);
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
@@ -241,6 +246,9 @@ sealed class OrganisationPage
         _status.IsVisible = words.Status.Length > 0;
         OrgText.Set(_proof, words.Proof);
         _proof.IsVisible = words.Proof.Length > 0;
+        var held = words.Proof == Labels.CellProofHeld;
+        _proofDot.Set(held, held ? Theme.Text : Theme.TextMuted);
+        _proofDot.IsVisible = _proof.IsVisible;
         var web = _src.CellWeb();
         var webWords = web?.Words ?? "";
         OrgText.Set(_web, webWords);
@@ -267,42 +275,70 @@ sealed class OrganisationPage
     /// <summary>The organisation's chief card — the same instance on every refresh — or null until the root has been read, or with no presses.</summary>
     internal ChiefCard? Chief { get; private set; }
 
+    /// <summary>
+    /// A UNIT AS A HEADING OF THE ROSTER (<c>U-ui-world</c>): its name set as a heading — the organisation's larger and lighter — its line quiet
+    /// under it, the chief's presses on the organisation's own, then its positions as rows. Set in by its depth, with a guide line for each
+    /// level above it: the hierarchy is the indentation, not a box.
+    /// </summary>
     (Control Card, Action<OrgUnitWords> Fill) MakeUnit(OrgUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
         var line = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
-        var positions = new StackPanel { Spacing = Theme.S3 };
+        var positions = new StackPanel { Spacing = Theme.S1 };
         var list = new LiveList<OrgPositionWords>(positions, Ui.Muted("No position is in this unit."), p => p.Id, MakePosition);
         // THE ORGANISATION'S CARD CARRIES THE OWNER'S PRESSES OVER THE CHIEF (U-org-chief item 7), made once with the card.
         var chief = first.Id == OrgIds.Root && _src.Chief is { } presses ? Chief = new ChiefCard(presses, Update) : null;
-        var card = chief is null
-            ? Ui.Card(Ui.Col(Theme.S3, title, line, positions))
-            : Ui.Card(Ui.Col(Theme.S3, title, line, chief.Root, positions));
+        positions.Margin = new Thickness(0, Theme.S2, 0, 0);
+        var column = chief is null
+            ? Ui.Col(Theme.S1, title, line, positions)
+            : Ui.Col(Theme.S1, title, line, Ui.With(chief.Root, c => c.Margin = new Thickness(0, Theme.S4, 0, Theme.S2)), positions);
+        column.Margin = new Thickness(0, Theme.S4, 0, Theme.S3);
+        var card = new OrgTreeRow(column) { ElbowAt = Theme.S4 + 11 };
 
         return (card, u =>
         {
             OrgText.Set(title, u.Title);
+            // THE ORGANISATION'S OWN NAME IS THE ROSTER'S TITLE: larger and light; a unit under it a heading of the page's body size.
+            var root = u.Depth == 0;
+            title.FontSize = root ? Theme.H1 : Theme.H2;
+            title.LineHeight = root ? Theme.H1Line : double.NaN;
+            title.FontWeight = root ? FontWeight.Light : FontWeight.SemiBold;
             OrgText.Set(line, u.Line);
             chief?.Update(u);
-            var indent = new Thickness(u.Depth * Theme.S5, 0, 0, 0);
-            if (card.Margin != indent) card.Margin = indent;
+            card.Depth = u.Depth;
             list.Update(u.Positions);
         });
     }
 
+    /// <summary>
+    /// A POSITION AS A ROW OF THE ROSTER (<c>U-ui-world</c>): a dot for its state (lit while active, a ring at rest), its name, its state and its
+    /// id, and at the row's end the model it runs on; under them, quiet, every sentence the row said before; the owner's presses last.
+    /// </summary>
     (Control Card, Action<OrgPositionWords> Fill) MakePosition(OrgPositionWords first)
     {
         // ITS NAME FIRST (U-ui-glance), then its state, then its id — the identity, kept beside the name in the code face.
         var name = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
-        var id = Ui.With(Ui.Mono("", Theme.TextMuted), t => t.FontSize = Theme.Small);
-        var status = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.FontWeight = FontWeight.SemiBold; });
+        var id = Ui.With(Ui.Mono("", Theme.TextFaint), t => { t.FontSize = Theme.Micro; t.VerticalAlignment = VerticalAlignment.Center; });
+        var status = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.VerticalAlignment = VerticalAlignment.Center; });
+        var runsOn = Ui.SmallFigure(Theme.TextMuted);
+        var dot = new OrgStateDot();
         var role = Small();
-        var seat = Small();
+        var seat = Ui.With(Small(), t => t.Foreground = Theme.Text);
         var cell = Small();
         var billing = Small();
         var calibration = Small();
-        var head = Ui.Row(Theme.S3, name, status, id);
-        head.VerticalAlignment = VerticalAlignment.Center;
+        var head = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        var named = Ui.Wrap(Theme.S2, name, status, id);
+        foreach (var c in named.Children) c.Margin = new Thickness(0, 0, Theme.S2, 0);
+        dot.VerticalAlignment = VerticalAlignment.Top;
+        dot.Margin = new Thickness(0, 7, Theme.S3, 0);
+        named[Grid.ColumnProperty] = 1;
+        runsOn.Margin = new Thickness(Theme.S3, 2, 0, 0);
+        runsOn.VerticalAlignment = VerticalAlignment.Top;
+        runsOn[Grid.ColumnProperty] = 2;
+        head.Children.Add(dot);
+        head.Children.Add(named);
+        head.Children.Add(runsOn);
         // THE OWNER'S REPAIR (U-repair-position-home): the refusal's sentence and its two-press button, made the first time this row's folder is
         // refused and kept — hidden, and disarmed, once the refusal is gone — and the words of the last repair under them.
         var refusal = Ui.With(Small(), t => t.Foreground = Theme.Caution);
@@ -313,19 +349,25 @@ sealed class OrganisationPage
         Button? press = null;
         // THE OWNER'S SWITCH OF ITS MODEL (U-seat-models): one two-step press per model of the verified catalog it is not on, re-laid only
         // when that list changes; the words of the last switch under them.
-        var models = new WrapPanel { Orientation = Orientation.Horizontal };
+        var models = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, Theme.S1, 0, 0) };
         var switched = Small();
         IReadOnlyList<string> offered = [];
-        var row = Ui.Col(Theme.S1, head, role, seat, aside, models, switched, cell, billing, calibration, refusal, repair, repaired);
-        row.Margin = new Thickness(Theme.S3, 0, 0, 0);
+        var detail = Ui.Col(2, role, seat, aside, models, switched, cell, billing, calibration, refusal, repair, repaired);
+        detail.Margin = new Thickness(Theme.StateDot + Theme.S3, 0, 0, 0);
+        var row = Ui.Col(Theme.S1, head, detail);
+        row.Margin = new Thickness(0, Theme.S2, 0, Theme.S2);
 
         return (row, p =>
         {
             OrgText.Set(name, p.Name);
             OrgText.Set(id, p.Id);
             OrgText.Set(status, p.Status);
-            var tone = p.Status == OrgPositionStatus.Active ? Theme.Positive : Theme.TextMuted;
+            var active = p.Status == OrgPositionStatus.Active;
+            var tone = active ? Theme.Text : Theme.TextFaint;
             if (!ReferenceEquals(status.Foreground, tone)) status.Foreground = tone;
+            dot.Set(active, active ? Theme.Text : p.Status == OrgPositionStatus.Ended ? Theme.TextFaint : Theme.TextMuted);
+            OrgText.Set(runsOn, p.Model ?? "");
+            runsOn.IsVisible = p.Model is not null;
             OrgText.Set(role, p.Role);
             OrgText.Set(seat, p.Seat);
             OrgText.Set(cell, p.Cell);
@@ -349,6 +391,7 @@ sealed class OrganisationPage
                     refusal.IsVisible = press!.IsVisible = still is not null;
                 });
                 press.HorizontalAlignment = HorizontalAlignment.Left;
+                press.Margin = new Thickness(0, Theme.S1, 0, 0);
                 repair.Children.Add(press);
             }
             if (press is not null && press.IsVisible != (p.HomeRefusal is not null))
